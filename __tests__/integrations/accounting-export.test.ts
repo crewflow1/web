@@ -4,6 +4,10 @@ import {
   money2,
   filterInvoicesByTaxPoint,
   invoiceTaxPointDate,
+  bucketInvoiceTaxLines,
+  effectiveVatRate,
+  derivedVatRate,
+  UnknownVatRateError,
   type CanonicalInvoiceInput,
   type CanonicalPaymentInput,
 } from "@/lib/integrations/accounting/canonical";
@@ -203,6 +207,127 @@ describe("filterInvoicesByTaxPoint — windows on the tax point, not created_at"
     ).toEqual(["AFTER", "ON-FROM", "ON-TO"]);
     // No window ⇒ everything.
     expect(filterInvoicesByTaxPoint(all, {})).toHaveLength(4);
+  });
+});
+
+describe("effectiveVatRate — fail loud on an unmappable derived rate", () => {
+  it("derives the clean whole-percent rate for 0 / 5 / 20", () => {
+    expect(effectiveVatRate(100, 20)).toBe(20);
+    expect(effectiveVatRate(100, 5)).toBe(5);
+    expect(effectiveVatRate(100, 0)).toBe(0);
+    // A zero / missing net is a valid 0-VAT line, never a throw.
+    expect(effectiveVatRate(0, 0)).toBe(0);
+  });
+
+  it("THROWS on a blended rate that is not 0/5/20 (the mixed-header mis-post)", () => {
+    // The defect (a): net=6000 vat=200 → round(3.33)=3, which the OLD code mapped
+    // to EXEMPTOUTPUT / 'Exempt (0%)' and posted the whole invoice exempt.
+    expect(() => effectiveVatRate(6000, 200)).toThrow(UnknownVatRateError);
+    // A crafted 17.5% header also refuses.
+    expect(() => effectiveVatRate(100, 17.5)).toThrow(UnknownVatRateError);
+    // derivedVatRate is the raw, non-throwing arithmetic (used where the caller validates).
+    expect(derivedVatRate(6000, 200)).toBe(3);
+  });
+});
+
+describe("bucketInvoiceTaxLines — per-rate buckets that reconcile to the header", () => {
+  it("splits a MIXED 20% + 5% invoice into two reconciling buckets", () => {
+    const buckets = bucketInvoiceTaxLines(
+      [
+        { vat_rate: 20, line_total: 100 },
+        { vat_rate: 5, line_total: 100 },
+      ],
+      { net: 200, vat: 25 },
+    );
+    // Sorted by rate ascending; each carries its own rate + net + vat.
+    expect(buckets).toEqual([
+      { rate: 5, net: "100.00", vat: "5.00" },
+      { rate: 20, net: "100.00", vat: "20.00" },
+    ]);
+    // Σ bucket nets + vats == header net + vat.
+    const sumNet = buckets.reduce((s, b) => s + Number(b.net), 0);
+    const sumVat = buckets.reduce((s, b) => s + Number(b.vat), 0);
+    expect(sumNet).toBeCloseTo(200, 2);
+    expect(sumVat).toBeCloseTo(25, 2);
+  });
+
+  it("merges multiple lines at the SAME rate into one bucket (per-line rounding)", () => {
+    const buckets = bucketInvoiceTaxLines(
+      [
+        { vat_rate: 20, line_total: "33.33" },
+        { vat_rate: 20, line_total: "33.34" },
+        { vat_rate: 0, line_total: "10.00" },
+      ],
+      // header vat = round2(33.33*.2) + round2(33.34*.2) = 6.67 + 6.67 = 13.34
+      { net: 76.67, vat: 13.34 },
+    );
+    expect(buckets).toEqual([
+      { rate: 0, net: "10.00", vat: "0.00" },
+      { rate: 20, net: "66.67", vat: "13.34" },
+    ]);
+  });
+
+  it("THROWS when the line buckets do not reconcile to the header (corrupt snapshot)", () => {
+    // Lines sum to net 100 / vat 20 but the header claims vat 25 — refuse to post.
+    expect(() =>
+      bucketInvoiceTaxLines([{ vat_rate: 20, line_total: 100 }], { net: 100, vat: 25 }),
+    ).toThrow(/reconcile/i);
+  });
+});
+
+describe("toCanonicalRows — per-line VAT threads into taxLines (push path only)", () => {
+  it("emits per-rate taxLines for a MIXED invoice when source_id + line_items are present", () => {
+    const [row] = toCanonicalRows(
+      [
+        inv({
+          source_id: "inv-mixed",
+          amount: 200,
+          vat_total: 25,
+          total: 225,
+          line_items: [
+            { vat_rate: 20, line_total: 100 },
+            { vat_rate: 5, line_total: 100 },
+          ],
+        }),
+      ],
+      [],
+      { todayIso: TODAY },
+    );
+    expect(row?.sourceId).toBe("inv-mixed");
+    expect(row?.taxLines).toEqual([
+      { rate: 5, net: "100.00", vat: "5.00" },
+      { rate: 20, net: "100.00", vat: "20.00" },
+    ]);
+    // The header split is unchanged (CSV/legacy still reads net/vat/gross).
+    expect(row?.net).toBe("200.00");
+    expect(row?.vat).toBe("25.00");
+  });
+
+  it("a line-less push invoice falls back to a single header-derived bucket", () => {
+    const [row] = toCanonicalRows(
+      [inv({ source_id: "inv-noline", amount: 100, vat_total: 20, total: 120 })],
+      [],
+      { todayIso: TODAY },
+    );
+    expect(row?.taxLines).toEqual([{ rate: 20, net: "100.00", vat: "20.00" }]);
+  });
+
+  it("the CSV path (no source_id) emits NO taxLines — header-total row only", () => {
+    const [row] = toCanonicalRows(
+      [
+        inv({
+          amount: 200,
+          vat_total: 25,
+          line_items: [
+            { vat_rate: 20, line_total: 100 },
+            { vat_rate: 5, line_total: 100 },
+          ],
+        }),
+      ],
+      [],
+      { todayIso: TODAY },
+    );
+    expect(row?.taxLines).toBeUndefined();
   });
 });
 

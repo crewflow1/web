@@ -14,11 +14,36 @@
  * for a bad row, so this never emits NaN.
  */
 
-import { effectiveVatRate, type CanonicalAccountingRow } from "./canonical";
+import {
+  assertKnownVatRate,
+  effectiveVatRate,
+  type CanonicalAccountingRow,
+  type CanonicalTaxLine,
+} from "./canonical";
 
 function amount(v: string): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+/** Sum a list of 2dp money strings, rounded back to 2dp (no float drift). */
+function sumMoney(values: readonly string[]): number {
+  const pence = values.reduce((s, v) => s + Math.round(amount(v) * 100), 0);
+  return pence / 100;
+}
+
+/**
+ * The per-rate buckets a provider INVOICE body posts, one line each. On the push
+ * path the canonical row already carries `taxLines` (bucketed by
+ * buildAccountingExport); a directly-constructed row without them falls back to a
+ * single header-derived bucket (the rate VALIDATED via effectiveVatRate — fail loud
+ * on an unknown header rate).
+ */
+function invoiceTaxBuckets(row: CanonicalAccountingRow): CanonicalTaxLine[] {
+  if (row.taxLines && row.taxLines.length > 0) return row.taxLines;
+  const net = amount(row.net || row.gross);
+  const vat = amount(row.vat);
+  return [{ rate: effectiveVatRate(net, vat), net: row.net || row.gross || "0.00", vat: row.vat || "0.00" }];
 }
 
 // ── VAT tax-code mappings (rate → each provider's own code) ───────────────────
@@ -34,10 +59,17 @@ function amount(v: string): number {
  * remap, but every standard UK org resolves them.
  */
 export function xeroSalesTaxType(rate: number): string {
-  if (rate === 20) return "OUTPUT2"; // 20% VAT on Income
-  if (rate === 5) return "RROUTPUT"; // 5% reduced-rate VAT on Income
-  if (rate === 0) return "ZERORATEDOUTPUT"; // Zero Rated Income
-  return "EXEMPTOUTPUT"; // Exempt / unmappable → Exempt Income
+  // FAIL LOUD: an unmappable rate throws (UnknownVatRateError) rather than
+  // silently falling through to EXEMPTOUTPUT — posting VAT under an exempt code
+  // mis-states the return. The adapter catches this and aborts the push.
+  switch (assertKnownVatRate(rate, "Xero sales TaxType")) {
+    case 20:
+      return "OUTPUT2"; // 20% VAT on Income
+    case 5:
+      return "RROUTPUT"; // 5% reduced-rate VAT on Income
+    case 0:
+      return "ZERORATEDOUTPUT"; // Zero Rated Income
+  }
 }
 
 /**
@@ -49,10 +81,18 @@ export function xeroSalesTaxType(rate: number): string {
  * them needs the operator to remap.
  */
 export function qboSalesTaxCodeName(rate: number): string {
-  if (rate === 20) return "20.0% S (VAT on Income)";
-  if (rate === 5) return "5.0% R (VAT on Income)";
-  if (rate === 0) return "0.0% Z (VAT on Income)";
-  return "Exempt (0%)";
+  // FAIL LOUD: an unmappable rate throws (UnknownVatRateError) rather than naming
+  // 'Exempt (0%)' — which would post VAT-bearing income out of scope / exempt.
+  // The adapter catches this and aborts the push. rate 0 resolves the ZERO-rated
+  // code (so zero-rated income posts zero-rated, not out-of-scope).
+  switch (assertKnownVatRate(rate, "QuickBooks sales VAT code")) {
+    case 20:
+      return "20.0% S (VAT on Income)";
+    case 5:
+      return "5.0% R (VAT on Income)";
+    case 0:
+      return "0.0% Z (VAT on Income)";
+  }
 }
 
 // ── Xero ─────────────────────────────────────────────────────────────────────
@@ -68,40 +108,38 @@ export function qboSalesTaxCodeName(rate: number): string {
  * ACCOUNT + TAX CODE. An AUTHORISED ACCREC line MUST name a revenue account —
  * Xero rejects the invoice otherwise — so every line carries `AccountCode` (the
  * configured sales account, the exact twin of the bank code on the payments
- * body). `TaxType` is set from the line's effective VAT rate so Xero honours the
- * manual `TaxAmount`; without it Xero recalculates and non-standard rates
+ * body). `TaxType` is set PER LINE from that bucket's own VAT rate so Xero honours
+ * the manual `TaxAmount`; without it Xero recalculates and non-standard rates
  * (0% / 5% / exempt) post the wrong gross.
+ *
+ * ONE LINE PER VAT-RATE BUCKET. A mixed-rate invoice (`taxLines` with more than
+ * one bucket) posts as ONE Xero invoice with one LineItem per rate, each naming
+ * the correct TaxType — never a single blended-rate line. `LineAmountTypes:
+ * Exclusive` means Xero's gross = Σ(UnitAmount + TaxAmount) = header net + vat.
+ * An unknown bucket rate makes `xeroSalesTaxType` throw, aborting the push.
  */
 export function buildXeroInvoicesBody(
   rows: readonly CanonicalAccountingRow[],
   salesAccountCode: string,
 ): { Invoices: unknown[] } {
   return {
-    Invoices: rows.map((r) => {
-      const net = amount(r.net || r.gross);
-      const vat = amount(r.vat);
-      return {
-        Type: "ACCREC",
-        Contact: { Name: r.customer || "Unknown customer" },
-        Date: r.date,
-        InvoiceNumber: r.invoice_number,
-        Reference: r.invoice_number,
-        Status: "AUTHORISED",
-        LineAmountTypes: "Exclusive",
-        LineItems: [
-          {
-            Description: r.invoice_number
-              ? `Invoice ${r.invoice_number}`
-              : "Sales invoice",
-            Quantity: 1,
-            UnitAmount: net,
-            TaxAmount: vat,
-            AccountCode: salesAccountCode,
-            TaxType: xeroSalesTaxType(effectiveVatRate(net, vat)),
-          },
-        ],
-      };
-    }),
+    Invoices: rows.map((r) => ({
+      Type: "ACCREC",
+      Contact: { Name: r.customer || "Unknown customer" },
+      Date: r.date,
+      InvoiceNumber: r.invoice_number,
+      Reference: r.invoice_number,
+      Status: "AUTHORISED",
+      LineAmountTypes: "Exclusive",
+      LineItems: invoiceTaxBuckets(r).map((bucket) => ({
+        Description: r.invoice_number ? `Invoice ${r.invoice_number}` : "Sales invoice",
+        Quantity: 1,
+        UnitAmount: amount(bucket.net),
+        TaxAmount: amount(bucket.vat),
+        AccountCode: salesAccountCode,
+        TaxType: xeroSalesTaxType(bucket.rate),
+      })),
+    })),
   };
 }
 
@@ -136,18 +174,75 @@ export function buildXeroPaymentsBody(
  *
  * VAT. Canonical amounts are ex-VAT, so the body declares
  * `GlobalTaxCalculation: "TaxExcluded"` and QBO adds tax on top. A bare
- * `TotalTax` is IGNORED for a UK company unless a tax code is named, so when the
- * line bears VAT the caller resolves the org's `TxnTaxCodeRef` (by rate) and
- * passes it in; the txn then carries both the code and the exact `TotalTax`, so
- * QBO's gross equals canonical `gross`. A zero-VAT line carries no TxnTaxDetail
- * (TaxExcluded ⇒ gross == net).
+ * `TotalTax` is IGNORED for a UK company unless a tax code is named, so every
+ * emitted line names its own `TaxCodeRef` (resolved by the caller, by rate) —
+ * INCLUDING a zero-rated line, which names the '0.0% Z' code so it posts
+ * ZERO-RATED, not out-of-scope.
+ *
+ * PER-RATE LINES. When the row carries `taxLines` (the push path) the body emits
+ * ONE SalesItemLineDetail per rate bucket, each with its own `TaxCodeRef` from
+ * `refs.taxCodeByRate`, and a header `TxnTaxDetail.TotalTax` = Σ bucket VAT — so a
+ * mixed-rate invoice posts each line under the correct code and QBO's gross equals
+ * the header gross. A row WITHOUT taxLines (a directly-built single line) keeps the
+ * legacy single-code shape via `refs.taxCodeId` for backward compatibility.
  */
 export function buildQboInvoiceBody(
   row: CanonicalAccountingRow,
-  refs: { customerId: string; itemId: string; taxCodeId?: string | null },
+  refs: {
+    customerId: string;
+    itemId: string;
+    /** Legacy single-line path (no taxLines): the one resolved code, when VAT-bearing. */
+    taxCodeId?: string | null;
+    /** Push path: resolved QBO TaxCode id per whole-percent rate (incl. 0). */
+    taxCodeByRate?: ReadonlyMap<number, string>;
+  },
 ): Record<string, unknown> {
-  const net = amount(row.net || row.gross);
-  const vat = amount(row.vat);
+  const description = row.invoice_number ? `Invoice ${row.invoice_number}` : "Sales invoice";
+  const multi = !!(row.taxLines && row.taxLines.length > 0);
+
+  let Line: Record<string, unknown>[];
+  let txnTaxDetail: Record<string, unknown> | undefined;
+
+  if (multi) {
+    const buckets = row.taxLines!;
+    Line = buckets.map((bucket) => {
+      const codeId = refs.taxCodeByRate?.get(bucket.rate) ?? null;
+      return {
+        DetailType: "SalesItemLineDetail",
+        Amount: amount(bucket.net),
+        Description: description,
+        SalesItemLineDetail: {
+          ItemRef: { value: refs.itemId },
+          // Per-line code — resolved for EVERY rate incl. 0 so a zero-rated line
+          // posts zero-rated (a code is named) rather than out-of-scope.
+          ...(codeId ? { TaxCodeRef: { value: codeId } } : {}),
+        },
+      };
+    });
+    const totalTax = sumMoney(buckets.map((b) => b.vat));
+    // Per-line codes drive QBO's calculation; the header TotalTax pins the exact
+    // total. No single header TxnTaxCodeRef — the lines carry mixed rates.
+    txnTaxDetail = totalTax > 0 ? { TotalTax: totalTax } : undefined;
+  } else {
+    const net = amount(row.net || row.gross);
+    const vat = amount(row.vat);
+    Line = [
+      {
+        DetailType: "SalesItemLineDetail",
+        Amount: net,
+        Description: description,
+        SalesItemLineDetail: {
+          ItemRef: { value: refs.itemId },
+          ...(refs.taxCodeId ? { TaxCodeRef: { value: refs.taxCodeId } } : {}),
+        },
+      },
+    ];
+    txnTaxDetail =
+      vat > 0 && refs.taxCodeId
+        ? { TxnTaxCodeRef: { value: refs.taxCodeId }, TotalTax: vat }
+        : undefined;
+  }
+
   return {
     DocNumber: row.invoice_number,
     TxnDate: row.date,
@@ -155,26 +250,8 @@ export function buildQboInvoiceBody(
     // Canonical amounts are ex-VAT; tell QBO to add tax rather than derive it
     // as tax-inclusive (a UK company defaults otherwise).
     GlobalTaxCalculation: "TaxExcluded",
-    Line: [
-      {
-        DetailType: "SalesItemLineDetail",
-        Amount: net,
-        Description: row.invoice_number
-          ? `Invoice ${row.invoice_number}`
-          : "Sales invoice",
-        SalesItemLineDetail: {
-          ItemRef: { value: refs.itemId },
-          // Name the line's tax code too when known, so QBO applies the rate.
-          ...(refs.taxCodeId ? { TaxCodeRef: { value: refs.taxCodeId } } : {}),
-        },
-      },
-    ],
-    // Canonical splits VAT out; QBO honours the explicit TotalTax only when the
-    // tax code is named. No code (or no VAT) ⇒ no TxnTaxDetail.
-    TxnTaxDetail:
-      vat > 0 && refs.taxCodeId
-        ? { TxnTaxCodeRef: { value: refs.taxCodeId }, TotalTax: vat }
-        : undefined,
+    Line,
+    TxnTaxDetail: txnTaxDetail,
   };
 }
 
