@@ -203,6 +203,8 @@ describe("upload action — emits once, only on full success", () => {
 
   it("still scopes the invoice ownership check to this org AND customer", () => {
     expect(ACTION).toMatch(/\.eq\("org_id", customer\.org_id\)/);
-    expect(ACTION).toMatch(/inv\.quote\?\.customer_id !== customer\.id/);
+    // Ownership resolves via the ONE authority (invoiceCustomerId), not the
+    // quote-only chain — so a quote-less invoice still authorises its owner.
+    expect(ACTION).toMatch(/invoiceCustomerId\(inv\) !== customer\.id/);
   });
 });

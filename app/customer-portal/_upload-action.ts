@@ -9,6 +9,7 @@ import { consume, DEFAULT_LIMITS } from "@/lib/security/rate-limit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { notifyOnPaymentProofUploaded } from "@/lib/notifications/events";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { invoiceCustomerId } from "@/lib/invoices/customer";
 
 /**
  * Phase 3 — Portal payment-proof upload.
@@ -16,8 +17,9 @@ import { readFailure } from "@/lib/supabase/read-failure";
  * Customer attaches a PDF / JPG / PNG (proof of bank transfer or
  * similar). We:
  *   1. Validate the token + load the customer.
- *   2. Re-verify the invoice belongs to this customer (via the
- *      quote→customer FK chain) so a crafted URL can't attach a
+ *   2. Re-verify the invoice belongs to this customer via the ONE
+ *      customer authority (invoiceCustomerId: the invoice's own
+ *      customer_id, quote fallback) so a crafted URL can't attach a
  *      proof to a different org's invoice.
  *   3. Upload the bytes to the `portal-uploads` bucket.
  *   4. Insert a `portal_uploads` row capturing the link.
@@ -83,11 +85,17 @@ export async function uploadPaymentProof(formData: FormData): Promise<void> {
 
   const admin = createAdminClient();
 
-  // Re-verify the invoice is for this customer. Invoices don't have a
-  // direct customer_id column; we join via quote.
+  // Re-verify the invoice is for this customer. Resolve the customer via the ONE
+  // authority (Issue #349 Phase 1): the invoice's own customer_id first, quote
+  // fallback — the same way the portal PDF route and the invoices list scope.
+  // The direct customer_id is authoritative and survives quote loss: because
+  // invoices.quote_id is ON DELETE SET NULL, a deleted quote yields a
+  // quote-less invoice whose customer_id still points here. Gating on
+  // quote.customer_id ALONE wrongly rejected that invoice's legitimate owner
+  // (and could accept the wrong owner if a stale quote pointed elsewhere).
   const { data: invoiceRow, error: invoiceError } = await admin
     .from("invoices")
-    .select("id, number, quote:quotes ( customer_id )")
+    .select("id, number, customer_id, quote:quotes ( customer_id )")
     .eq("id", invoiceId)
     .eq("org_id", customer.org_id)
     .maybeSingle();
@@ -100,10 +108,11 @@ export async function uploadPaymentProof(formData: FormData): Promise<void> {
   type InvJoined = {
     id: string;
     number: string | null;
+    customer_id: string | null;
     quote?: { customer_id: string } | null;
   };
   const inv = invoiceRow as unknown as InvJoined | null;
-  if (!inv || inv.quote?.customer_id !== customer.id) {
+  if (!inv || invoiceCustomerId(inv) !== customer.id) {
     backTo(token, invoiceId, "invoice_not_yours");
   }
 
