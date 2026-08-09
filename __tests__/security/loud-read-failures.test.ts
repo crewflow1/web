@@ -516,7 +516,15 @@ const RATCHET: Array<{
     // 1000-row clamp was truncating the CEO/triage figures; see the F-1 bare-select
     // guard's HIGH_VALUE_TABLES (support_tickets/support_messages added same wave).
     // 4 soft-data retired. See docs/loud-read-failures.md.
-    softData: 55,
+    // 55 → 54 (same wave, live-read guard proof): once the F-1 bare-select guard
+    // learned the `function table(name){ return c.from(name) }` DECLARATION-wrapper
+    // form, it bit the LIVE cross-tenant support_tickets read in
+    // server/services/hq-health-deep-dive.ts (`table("support_tickets")…in(org_id)…
+    // order()`, counted per-org in JS). That read now pages via fetchAllRows and
+    // binds + logs its error, so its `ticketsRes.data ?? []` leaves the ledger. Its
+    // sibling org/health-event/billing/notification reads carry the same risk and
+    // are tracked for the reported detection follow-up. 1 soft-data retired.
+    softData: 54,
     // 4 → 5: server/services/hq-outreach.ts `countOutreach` is a head:true count read
     // for the CEO metrics tile, mirroring countResearch/countQualification — an honest
     // zero when nothing has run yet is the correct reassuring answer here.

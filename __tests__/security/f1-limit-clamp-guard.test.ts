@@ -431,9 +431,13 @@ function producerReadIndices(src: string): Array<{ table: string; index: number 
   while ((wm = arrowRe.exec(src))) if (wm[1]) wrapperNames.add(wm[1]);
   while ((wm = fnRe.exec(src))) if (wm[1]) wrapperNames.add(wm[1]);
   for (const name of wrapperNames) {
-    // `table<...>(client, "table")` — allow an optional generic before the call.
+    // `table<...>(client, "table")` — allow an optional generic before the call —
+    // OR the single-arg form `adminTable("table")` where the literal is the ONLY
+    // arg (the declaration-wrapper shape hq-support-snapshot / hq-health-deep-dive
+    // use; without the optional first arg this guard shared the bare-select guard's
+    // single-arg blind spot).
     const callRe = new RegExp(
-      escapeReg(name) + `(?:<[^()]*?>)?\\s*\\(\\s*[^,()]+,\\s*["'\`]([a-z_]+)["'\`]\\s*\\)`,
+      escapeReg(name) + `(?:<[^()]*?>)?\\s*\\(\\s*(?:[^,()]+,\\s*)?["'\`]([a-z_]+)["'\`]\\s*\\)`,
       "g",
     );
     let cm: RegExpExecArray | null;

@@ -209,9 +209,39 @@ function regionAround(src: string, fromIdx: number): string {
  * as if it were `.from("TABLE")`: an arrow (or function) whose body calls
  * `<something>.from(<param>)` is a `.from` wrapper, and its call sites are
  * indirect reads that must satisfy the same paged/single-row/count rule.
+ *
+ * TWO wrapper SHAPES are recognised. The DECLARATION form (below) was added by
+ * the F-1 support wave: server/services/hq-support-snapshot.ts and
+ * hq-health-deep-dive.ts BOTH hid their cross-tenant reads behind a
+ *   `function adminTable(name){ return admin.from(name as never) }`
+ *   `function table(name){ return c.from(name as never) }`
+ * DECLARATION, called with the table literal as its ONLY arg
+ * (`adminTable("support_tickets")`). The arrow-only regex never matched it, so
+ * adding support_tickets/support_messages to HIGH_VALUE_TABLES was VACUOUS for
+ * the live reads — a green guard that protected nothing (the C57 trap). A
+ * delete-the-fix probe on the LIVE listSupportTicketRowsForHq now proves the
+ * guard bites the real read, not just a fixture.
+ *
+ * NOTE — the OTHER blind spot (the direct `.from("x" as never)` CAST used by
+ * customer-support-service.ts / customer-portal, and by 6 pre-existing bounded
+ * money-table reads) is deliberately NOT taught here: doing so turns the suite
+ * red across tables out of this wave's scope. It is deferred to the reported
+ * detection follow-up. This wave teaches ONLY the declaration-wrapper form, which
+ * covers the support reads this PR fixed without surfacing those other offenders.
  */
 const WRAPPER_DEF_RE =
   /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*(?::[^=;]*?)?=>\s*[^;{}]*?\.from\(/g;
+
+/**
+ * Function-DECLARATION `.from` wrapper: `function NAME(param, …){ … return
+ * <client>.from(param … ) … }`. The captured first PARAM must be the value
+ * passed to `.from(` (the `\2` backreference) — that is what distinguishes a real
+ * table wrapper from an incidental `.from(` (e.g. `Array.from(x)`, further
+ * excluded by the negative lookahead). Bounded 300-char body look-ahead so a
+ * large function that merely touches `.from` far below isn't misread.
+ */
+const WRAPPER_FN_DECL_RE =
+  /function\s+([A-Za-z_$][\w$]*)\s*\(\s*([A-Za-z_$][\w$]*)[^)]*\)[^{]*\{[\s\S]{0,300}?\breturn\s+(?!Array\b|Object\b)[A-Za-z_$][\w$]*\.from\(\s*\2\b/g;
 
 function escapeReg(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -295,17 +325,24 @@ function offendersIn(rel: string, raw: string): string[] {
   let m: RegExpExecArray | null;
   while ((m = fromRe.exec(src))) consider(m[1], m.index, `.from("${m[1]}").select(...)`);
 
-  // 2. The indirection form: a local `.from` wrapper + `wrapper(<x>, "table")`.
+  // 2. The indirection form: a local `.from` wrapper (arrow const OR function
+  //    declaration) + `wrapper([client, ] "table")` — the table literal may be
+  //    the ONLY arg (`adminTable("support_tickets")`) or the LAST of several
+  //    (`table(admin, "weather_watches")`).
   const wrapperNames = new Set<string>();
   let wm: RegExpExecArray | null;
   WRAPPER_DEF_RE.lastIndex = 0;
   while ((wm = WRAPPER_DEF_RE.exec(src))) if (wm[1]) wrapperNames.add(wm[1]);
+  WRAPPER_FN_DECL_RE.lastIndex = 0;
+  while ((wm = WRAPPER_FN_DECL_RE.exec(src))) if (wm[1]) wrapperNames.add(wm[1]);
   for (const name of wrapperNames) {
-    // `table(admin, "weather_watches")` — 2nd arg is the table-name literal.
-    const callRe = new RegExp(escapeReg(name) + `\\(\\s*[^,()]+,\\s*["'\`]([a-z_]+)["'\`]\\s*\\)`, "g");
+    const callRe = new RegExp(
+      escapeReg(name) + `\\(\\s*(?:[^,()]+,\\s*)?["'\`]([a-z_]+)["'\`]\\s*\\)`,
+      "g",
+    );
     let cm: RegExpExecArray | null;
     while ((cm = callRe.exec(src))) {
-      consider(cm[1], cm.index, `${name}(<client>, "${cm[1]}") [.from wrapper].select(...)`);
+      consider(cm[1], cm.index, `${name}(…"${cm[1]}") [.from wrapper].select(...)`);
     }
   }
 
