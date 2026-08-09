@@ -287,6 +287,135 @@ function offendersIn(rel: string, raw: string): string[] {
   return offenders;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// F-1 .rpc() AGGREGATE BLIND SPOT
+// ═══════════════════════════════════════════════════════════════════════════
+// The scan above is STRUCTURALLY BLIND to `.rpc()`: it only inspects `.from(`
+// reads, and its region gate (`if (!/\.select\(/…) return`) treats `.rpc` as
+// "not a truncation-prone read". But a SET-RETURNING RPC (a `RETURNS TABLE`
+// rollup called with `p_org_id = null`, one row per org) is clamped at
+// PostgREST `max_rows = 1000` EXACTLY like a bare select — there is no GUC
+// override — and if its rows are then summed/reduced/iterated, the estate total
+// SILENTLY UNDER-REPORTS once >1000 orgs have spend. That is the live defect on
+// `ai_invocations_month_totals` / `ai_reservations_month_totals` this wave fixed.
+//
+// RULE: a `.rpc(fn, …)` whose result is consumed as a SET — materialised into a
+// collection (`new Map(rows.map(…))`, spread), or fed to `.reduce`/`.map`/a
+// `for…of`/aggregate — MUST be paged (`fetchAllRows` / `.range(`) UNLESS it
+// returns a single pre-aggregated row (`data[0]` / `rows[0]` / `.single(`) or a
+// scalar, or is allowlisted as genuinely bounded (a CLOSED grouping set).
+
+// "file:line" → reason. Genuinely bounded / self-healing set-returning RPCs only.
+const RPC_ALLOWLIST: Record<string, string> = {
+  // Groups by `feature`, a CLOSED registry set (lib/ai/governor/registry.ts) —
+  // tens of rows at most, structurally incapable of crossing 1000. The per-ORG
+  // sibling rollups (grouped by org_id, unbounded) ARE paged; this one is not,
+  // and correctly so.
+  "server/services/ai-cost-snapshot.ts:475":
+    "bounded: ai_invocations_month_by_feature groups by the CLOSED feature registry (tens of rows), never near the 1000 cap",
+};
+
+// `.range(` / `fetchAllRows` anywhere around the call = it IS paged (the fix).
+const RPC_BOUND: RegExp[] = [/\.range\(/, /fetchAllRows/];
+
+/** Set-consumption of a specific result variable `v`: mapped, reduced, iterated,
+ * or spread into a collection. These are what SUM/aggregate the whole set. */
+function setMarkersFor(v: string): RegExp[] {
+  const e = escapeReg(v);
+  return [
+    new RegExp(`\\b${e}\\s*\\.\\s*(?:map|reduce|forEach|flatMap|filter)\\(`),
+    new RegExp(`new Map\\(\\s*${e}\\b`),
+    new RegExp(`for\\s*\\(\\s*const\\s+[^;)]*\\bof\\s+${e}\\b`),
+    new RegExp(`\\[\\s*\\.\\.\\.\\s*${e}\\b`),
+    new RegExp(`\\b${e}\\s*\\.\\s*length\\b`),
+  ];
+}
+/** Single-row consumption of `v`: only element [0] is ever read → bounded. */
+function singleRowMarkersFor(v: string): RegExp[] {
+  const e = escapeReg(v);
+  return [
+    new RegExp(`\\b${e}\\s*\\?\\.\\s*\\[\\s*0\\s*\\]`),
+    new RegExp(`\\b${e}\\s*\\[\\s*0\\s*\\]`),
+  ];
+}
+
+/** The variable that holds the RPC's returned ROWS, read from the assignment
+ * immediately preceding `.rpc(`. Returns the array of aliases to track (the
+ * `data` binding plus any local `const rows = data ?? [] / Array.isArray(data)…`
+ * re-binding), or [] when the result is unbound / `{ error }`-only. */
+function rpcResultVars(pre: string, after: string): string[] {
+  // `const { data: X, error } = await …rpc(`  — destructured result.
+  let base: string | null = null;
+  const dest = /(?:const|let|var)\s*\{([^{}]*)\}\s*=\s*(?:await\s+)?[^;{}]*$/.exec(pre);
+  if (dest) {
+    const dm = /\bdata\b(?:\s*:\s*([A-Za-z_$][\w$]*))?/.exec(dest[1]!);
+    if (!dm) return []; // destructured but no `data` (e.g. `{ error }`) → no rows read
+    base = dm[1] ?? "data";
+  } else {
+    // `const R = (await …rpc(` — rows live on `R.data`.
+    const named = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[^;{}=]*$/.exec(pre);
+    if (named) base = `${named[1]}.data`;
+  }
+  if (!base) return [];
+  const vars = [base];
+  // Track one hop of re-binding: `const rows = <base> ?? [] | Array.isArray(<base>)… | <base> as …[]`.
+  const bre = new RegExp(
+    `(?:const|let)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*[^;\\n]*\\b${escapeReg(base)}\\b`,
+    "g",
+  );
+  let bm: RegExpExecArray | null;
+  while ((bm = bre.exec(after))) if (bm[1]) vars.push(bm[1]);
+  return vars;
+}
+
+/** End index of the `.rpc(` argument list, so consumption is scanned AFTER the
+ * args (a `.map(` inside the RPC's own arguments is not result consumption). */
+function callEnd(src: string, openParenIdx: number): number {
+  let depth = 0;
+  for (let i = openParenIdx; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === "(") depth++;
+    else if (ch === ")") {
+      depth--;
+      if (depth === 0) return i + 1;
+    }
+  }
+  return src.length;
+}
+
+/** Every set-consuming, un-paged `.rpc()` offender in one file's (raw) source. */
+function rpcOffendersIn(rel: string, raw: string): string[] {
+  if (!raw.includes(".rpc(")) return [];
+  const src = stripComments(raw);
+  const offenders: string[] = [];
+  const re = /\.rpc\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src))) {
+    const openParen = m.index + ".rpc".length; // the "(" of the call
+    const before = src.slice(Math.max(0, m.index - 400), m.index);
+    if (RPC_BOUND.some((r) => r.test(before))) continue; // paged wrapper — the fix
+    const vars = rpcResultVars(before, src.slice(callEnd(src, openParen), m.index + 900));
+    if (vars.length === 0) continue; // rows never bound → can't materialise a set
+    const after = src.slice(callEnd(src, openParen), m.index + 900);
+    if (RPC_BOUND.some((r) => r.test(after))) continue; // `.range(` on the call chain
+    // Bounded if any tracked var is read only at [0] (single pre-aggregated row).
+    if (vars.some((v) => singleRowMarkersFor(v).some((r) => r.test(after)))) continue;
+    // Dangerous only if a tracked var is consumed as a whole set.
+    const consumed = vars.some((v) => setMarkersFor(v).some((r) => r.test(after)));
+    if (!consumed) continue;
+    const line = src.slice(0, m.index).split("\n").length;
+    const key = `${rel}:${line}`;
+    if (RPC_ALLOWLIST[key]) continue;
+    const fnMatch = /\.rpc\(\s*(["'`][^"'`]+["'`]|[A-Za-z_$][\w$]*)/.exec(src.slice(m.index));
+    const fn = fnMatch?.[1] ?? "?";
+    offenders.push(
+      `${key} → set-returning .rpc(${fn}) feeds an aggregate/collection with no ` +
+        `.range/fetchAllRows paging (silent max_rows=1000 truncation)`,
+    );
+  }
+  return offenders;
+}
+
 describe("F-1 bare-select guard — high-value table reads must page or be single-row", () => {
   const files: string[] = [];
   for (const d of SCAN_DIRS) walk(resolve(ROOT, d), files);
@@ -391,5 +520,86 @@ describe("F-1 bare-select guard — high-value table reads must page or be singl
       `);`,
     ].join("\n");
     expect(offendersIn("lib/invoices/overdue-scheduler.ts", paged)).toEqual([]);
+  });
+
+  // ── the .rpc() aggregate blind spot ─────────────────────────────────────────
+  it("no set-consuming .rpc() feeds an aggregate without paging (repo-wide)", () => {
+    const offenders: string[] = [];
+    for (const file of files) {
+      const rel = file.slice(ROOT.length + 1);
+      offenders.push(...rpcOffendersIn(rel, readFileSync(file, "utf8")));
+    }
+    expect(
+      offenders,
+      `F-1 .rpc() truncation: a set-returning RPC (a RETURNS TABLE rollup called ` +
+        `estate-wide) is materialised/summed but silently capped at PostgREST ` +
+        `max_rows=1000. Page it via fetchAllRows/.range with a deterministic ORDER BY, ` +
+        `return a single pre-aggregated row, or allowlist it if the grouping set is ` +
+        `genuinely bounded:\n` + offenders.join("\n"),
+    ).toEqual([]);
+  });
+
+  it("has TEETH: flags the pre-fix estate rollup .rpc() reads (orgTotalsFor / orgReservationsFor)", () => {
+    // The exact shape ai-cost-snapshot.ts shipped before this fix: an estate
+    // rollup (p_org_id: null) whose EVERY row is spread into a Map, with no
+    // paging. The estate total summed over that Map truncates at 1000 orgs.
+    const preFixTotals = [
+      `const { data, error } = await db(createAdminClient()).rpc("ai_invocations_month_totals", {`,
+      `  p_org_id: null,`,
+      `  p_month: probe,`,
+      `});`,
+      `const rows = Array.isArray(data) ? (data as Row[]) : [];`,
+      `return new Map(rows.map((r) => [String(r.org_id), r]));`,
+    ].join("\n");
+    expect(rpcOffendersIn("server/services/ai-cost-snapshot.ts", preFixTotals).length).toBeGreaterThan(0);
+
+    const preFixReservations = [
+      `const { data, error } = await db(createAdminClient()).rpc("ai_reservations_month_totals", {`,
+      `  p_org_id: null,`,
+      `  p_month: probe,`,
+      `});`,
+      `const rows = Array.isArray(data) ? (data as Row[]) : [];`,
+      `return new Map(rows.map((r) => [String(r.org_id), r]));`,
+    ].join("\n");
+    expect(
+      rpcOffendersIn("server/services/ai-cost-snapshot.ts", preFixReservations).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("does not flag the PAGED estate rollup fix (fetchAllRows + .range + .order)", () => {
+    const paged = [
+      `const { data, error } = await fetchAllRows<Row>(`,
+      `  (from, to) =>`,
+      `    db(admin)`,
+      `      .rpc(fn, { p_org_id: null, p_month: probe })`,
+      `      .order("org_id", { ascending: true })`,
+      `      .range(from, to) as PromiseLike<PageResult<Row>>,`,
+      `);`,
+      `if (error) throw error;`,
+      `return new Map(data.map((r) => [String(r.org_id), r]));`,
+    ].join("\n");
+    expect(rpcOffendersIn("server/services/ai-cost-snapshot.ts", paged)).toEqual([]);
+  });
+
+  it("does not false-positive a single-row or scalar .rpc()", () => {
+    // Single pre-aggregated row (the governor's per-org budget read).
+    const singleRow = [
+      `const { data, error } = await db(createAdminClient()).rpc("ai_invocations_month_totals", {`,
+      `  p_org_id: orgId,`,
+      `  p_month: probe,`,
+      `});`,
+      `const rows = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];`,
+      `const total = rows[0]?.total_cost_pence;`,
+    ].join("\n");
+    expect(rpcOffendersIn("lib/ai/governor.ts", singleRow)).toEqual([]);
+
+    // Scalar return (a next-number / write RPC).
+    const scalar = [
+      `const { data, error } = await db.rpc("advance_material_request_fulfilment", {`,
+      `  p_request_id: requestId,`,
+      `});`,
+      `return typeof data === "string" ? data : null;`,
+    ].join("\n");
+    expect(rpcOffendersIn("server/services/material-fulfilment.ts", scalar)).toEqual([]);
   });
 });
