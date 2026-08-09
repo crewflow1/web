@@ -24,10 +24,20 @@ import {
  *      column-redacted out of the export; credential TABLES never appear.
  *   4. MANIFEST CORRECT — table set, per-table counts, totals are accurate and
  *      deterministic for an injected generated-at.
- *   5. DRIFT GUARD — the hand-maintained snapshot matches the LIVE base-table
- *      schema, so a new org-scoped table forces an explicit classification.
+ *   5. DRIFT GUARD (BIDIRECTIONAL) — the hand-maintained snapshot matches the
+ *      LIVE base-table schema in BOTH directions against real Postgres:
+ *        FORWARD  (KNOWN ⊆ LIVE): every snapshot table still exists live, so a
+ *                 dropped/renamed table is caught rather than silently skipped.
+ *        REVERSE  (LIVE ⊆ KNOWN): every live org-scoped BASE table is classified
+ *                 in KNOWN (⇒ explicitly exported or excluded), so a NEW
+ *                 org-scoped table cannot be silently dropped from a statutory
+ *                 export. This closes the vacuity that let accounting_pushed_
+ *                 entities ship unclassified with green CI.
  *   6. AUDIT LOG — admin insert into gdpr_export_log succeeds; a non-admin
  *      member insert is refused by RLS (the export-log admin-write gate).
+ *   7. INTROSPECTION RPC LOCKDOWN — the reverse-guard's catalog RPC is
+ *      service_role only (anon/authenticated denied), so it can never be
+ *      re-exposed by a CREATE OR REPLACE re-applying Supabase default privileges.
  */
 
 type Res<T> = { data: T | null; error: { message: string } | null };
@@ -270,11 +280,12 @@ describeIntegration("gdpr export · org-pinned, redacted, isolated", () => {
     expect(m.excluded_tables.find((e) => e.table === "api_keys")).toBeTruthy();
   });
 
-  it("5. every snapshot-exported table exists in the LIVE schema", async () => {
+  it("5. FORWARD: every snapshot-exported table exists in the LIVE schema", async () => {
     // A dropped/renamed table would make the export silently skip it; probe each
     // exported table with a service-role limit-0 read and assert it is NOT a
-    // missing-relation. (The opposite direction — a NEW org-scoped table — is
-    // caught at snapshot-regeneration time via the query in export-tables.ts.)
+    // missing-relation. This is the KNOWN ⊆ LIVE direction; the REVERSE
+    // (LIVE ⊆ KNOWN) is asserted against Postgres in test 5b below — together
+    // they make the drift guard bidirectional (no longer green-but-vacuous).
     const svc = db(serviceClient());
     const missing: string[] = [];
     for (const table of ORG_EXPORT_TABLES) {
@@ -297,6 +308,55 @@ describeIntegration("gdpr export · org-pinned, redacted, isolated", () => {
     for (const t of ORG_EXPORT_TABLES) expect(known.has(t)).toBe(true);
     for (const t of Object.keys(EXCLUDED_FROM_EXPORT))
       expect(known.has(t)).toBe(true);
+  });
+
+  it("5b. REVERSE: every LIVE org-scoped base table is classified in KNOWN", async () => {
+    // THE DIRECTION THE GUARD WAS MISSING. Enumerate every public BASE table
+    // (relkind='r') carrying an org_id column — the live universe the KNOWN
+    // snapshot is meant to mirror — and assert each is a member of KNOWN. A live
+    // org-scoped table absent from KNOWN is, by construction, silently dropped
+    // from the DSAR export (ORG_EXPORT_TABLES = KNOWN minus EXCLUDED), so this
+    // FAILS CI until the author adds it to org-tables.json and classifies it
+    // export-or-exclude. (EXCLUDED ⊆ KNOWN is proven by the partition closure in
+    // test 5, so membership in KNOWN == "explicitly classified".)
+    //
+    // supabase-js cannot run arbitrary SQL, so the enumeration lives in the
+    // catalog-only RPC public._introspect_org_scoped_tables() (migration
+    // 20261117000000), mirroring _introspect_bare_cross_tenant_fks /
+    // _introspect_secdef_org_rpcs. service_role only.
+    const svc = serviceClient() as unknown as {
+      rpc: (
+        fn: string,
+        args?: Record<string, unknown>,
+      ) => Promise<{ data: unknown; error: { message: string } | null }>;
+    };
+    const res = await svc.rpc("_introspect_org_scoped_tables", {});
+    if (res.error) {
+      throw new Error(
+        `introspection RPC failed: ${res.error.message}. This test needs ` +
+          "public._introspect_org_scoped_tables() (migration 20261117000000).",
+      );
+    }
+    const live = ((res.data as { table_name: string }[]) ?? []).map(
+      (r) => r.table_name,
+    );
+    expect(
+      live.length,
+      "introspection returned no org-scoped tables — the RPC or query is wrong",
+    ).toBeGreaterThan(0);
+
+    const known = new Set<string>(KNOWN_ORG_SCOPED_TABLES);
+    const unclassified = live.filter((t) => !known.has(t));
+    expect(
+      unclassified,
+      `LIVE org-scoped base table(s) NOT classified in lib/gdpr/org-tables.json ` +
+        `— each is SILENTLY DROPPED from every tenant's DSAR export:\n` +
+        `${unclassified.join("\n")}\n\n` +
+        `Fix: add each to "known" in org-tables.json, then EITHER leave it in the ` +
+        `export (subject-access-relevant tenant data) OR add it to "excluded" with ` +
+        `a documented reason (credentials / government ids / platform billing / ` +
+        `service telemetry). ORG_EXPORT_TABLES re-derives automatically.`,
+    ).toEqual([]);
   });
 
   it("6. audit log: admin insert allowed, non-admin member refused (RLS)", async () => {
@@ -327,3 +387,99 @@ describeIntegration("gdpr export · org-pinned, redacted, isolated", () => {
     expect(refused.error, "non-admin insert must be refused").not.toBeNull();
   });
 });
+
+/**
+ * PRIVILEGE LOCKDOWN GUARD for public._introspect_org_scoped_tables().
+ *
+ * The reverse-drift-guard's catalog RPC lists the org-scoped-table universe, so —
+ * exactly like _introspect_bare_cross_tenant_fks (20261113/20261114) and
+ * _introspect_secdef_org_rpcs (20261116) — it must be service_role only. Its
+ * migration (20261117000000) does the explicit `revoke execute ... from anon,
+ * authenticated` up front, but a future CREATE OR REPLACE re-applies Supabase
+ * default privileges (role-specific EXECUTE to anon + authenticated) which
+ * `revoke ... from public` does NOT strip. This pins the boundary via the
+ * authoritative execution path (the PostgREST /rpc route) so a re-exposure fails
+ * CI rather than silently shipping.
+ */
+async function introspectOrgTablesAs(
+  client: ReturnType<typeof serviceClient>,
+): Promise<{ data: unknown; error: { code?: string; message: string } | null }> {
+  return (
+    client as unknown as {
+      rpc: (
+        fn: string,
+      ) => Promise<{
+        data: unknown;
+        error: { code?: string; message: string } | null;
+      }>;
+    }
+  ).rpc("_introspect_org_scoped_tables");
+}
+
+describeIntegration(
+  "_introspect_org_scoped_tables · privilege lockdown (service_role only)",
+  () => {
+    const T = `gdpr-introspect-acl-${Date.now()}`;
+    let userToken = "";
+    let userId = "";
+
+    beforeAll(async () => {
+      const email = `${T}@x.test`;
+      const created = await serviceClient().auth.admin.createUser({
+        email,
+        password: `Pw-${T}`,
+        email_confirm: true,
+      });
+      if (created.error) throw new Error(created.error.message);
+      userId = created.data.user?.id ?? "";
+      const s = await anonClient().auth.signInWithPassword({
+        email,
+        password: `Pw-${T}`,
+      });
+      if (s.error) throw new Error(s.error.message);
+      userToken = s.data.session?.access_token ?? "";
+      expect(userToken, "test setup: authenticated token").not.toBe("");
+    });
+
+    afterAll(async () => {
+      if (userId) await serviceClient().auth.admin.deleteUser(userId);
+    });
+
+    it("anon is DENIED (proacl excludes anon)", async () => {
+      const res = await introspectOrgTablesAs(anonClient());
+      expect(
+        res.error,
+        "anon must NOT execute the introspection RPC — it discloses the " +
+          "org-scoped-table universe. A null error means the anon EXECUTE grant " +
+          "was re-added (a CREATE OR REPLACE re-applying Supabase default " +
+          "privileges without a follow-up revoke).",
+      ).not.toBeNull();
+      expect(res.error?.code, "expected 42501 insufficient_privilege").toBe(
+        "42501",
+      );
+    });
+
+    it("authenticated is DENIED (proacl excludes authenticated)", async () => {
+      const res = await introspectOrgTablesAs(userClient(userToken));
+      expect(
+        res.error,
+        "a signed-in (authenticated) user must NOT execute the introspection RPC.",
+      ).not.toBeNull();
+      expect(res.error?.code, "expected 42501 insufficient_privilege").toBe(
+        "42501",
+      );
+    });
+
+    it("service_role is ALLOWED (the reverse-drift guard calls it)", async () => {
+      const res = await introspectOrgTablesAs(serviceClient());
+      expect(
+        res.error,
+        "service_role MUST retain EXECUTE — test 5b calls this RPC as service_role.",
+      ).toBeNull();
+      expect(
+        (res.data as unknown[])?.length ?? 0,
+        "service_role call returned no rows — the RPC or its grant is wrong",
+      ).toBeGreaterThan(0);
+    });
+  },
+);
