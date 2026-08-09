@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { loadJobForOrg } from "@/lib/jobs/load";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { listStaffForOrg } from "../../jobs/_form-helpers";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
@@ -121,11 +122,13 @@ export default async function SnagDetailPage({
 
   let jobName: string | null = null;
   if (snag.job_id) {
-    const { data: job } = await supabase
-      .from("jobs")
-      .select("id, customer:customers ( name )")
-      .eq("id", snag.job_id)
-      .maybeSingle();
+    // ACTIVE-org pin (#456 read-side class): the snag is already pinned, but its
+    // job_id label resolve must stay inside the active org. Route through the
+    // org-scoped jobs chokepoint.
+    const job = await loadJobForOrg<{
+      id: string;
+      customer: { name: string | null } | null;
+    }>(supabase, snag.job_id, ctx.org.id, "id, customer:customers ( name )");
     jobName = job?.customer?.name ?? "Job";
   }
 

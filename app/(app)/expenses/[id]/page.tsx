@@ -66,7 +66,9 @@ export default async function ExpenseDraftPage({
     supabase.from("expense_drafts" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: DraftRow | null; error: SupabaseReadError | null }>;
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{ data: DraftRow | null; error: SupabaseReadError | null }>;
+          };
         };
       };
     }
@@ -75,6 +77,11 @@ export default async function ExpenseDraftPage({
       "id, upload_id, supplier_id, supplier_name, amount, vat_rate, vat_total, total, category, invoice_date, reference, ai_confidence, status, finance_id, created_at, approved_at, rejected_at, rejection_reason",
     )
     .eq("id", id)
+    // ACTIVE-org pin (#456 read-side class). RLS admits every org the viewer
+    // belongs to; without this a dual-org member could review (and post to
+    // Finances) another org's expense draft — supplier, amount, VAT, reference —
+    // inside this org's shell. The supplier picker below was already pinned.
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (rowError) throw readFailure("expense draft: detail", rowError);

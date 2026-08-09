@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { loadJobForOrg } from "@/lib/jobs/load";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { formatDiaryDate } from "@/lib/site-diary/schema";
 import type { ReportContent, ReportSnapshot } from "@/lib/site-reports/schema";
@@ -128,11 +129,13 @@ export default async function SiteReportDetailPage({
 
   let jobName: string | null = null;
   if (report.job_id) {
-    const { data: job } = await supabase
-      .from("jobs")
-      .select("id, customer:customers ( name )")
-      .eq("id", report.job_id)
-      .maybeSingle();
+    // ACTIVE-org pin (#456 read-side class): the report is already pinned, but
+    // its job_id label resolve must stay inside the active org. Route through
+    // the org-scoped jobs chokepoint.
+    const job = await loadJobForOrg<{
+      id: string;
+      customer: { name: string | null } | null;
+    }>(supabase, report.job_id, ctx.org.id, "id, customer:customers ( name )");
     jobName = job?.customer?.name ?? "Job";
   }
 

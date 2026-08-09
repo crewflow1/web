@@ -265,18 +265,24 @@ export default async function EditJobPage({
       supabase.from("jobs" as never) as unknown as {
         select: (c: string) => {
           eq: (k: string, v: unknown) => {
-            maybeSingle: () => Promise<{ data: {
-              retention_percent: number | string | null;
-              practical_completion_date: string | null;
-              defects_liability_months: number | string | null;
-              retention_first_release_pct: number | string | null;
-            } | null }>;
+            eq: (k: string, v: unknown) => {
+              maybeSingle: () => Promise<{ data: {
+                retention_percent: number | string | null;
+                practical_completion_date: string | null;
+                defects_liability_months: number | string | null;
+                retention_first_release_pct: number | string | null;
+              } | null }>;
+            };
           };
         };
       }
     )
       .select("retention_percent, practical_completion_date, defects_liability_months, retention_first_release_pct")
       .eq("id", job.id)
+      // ACTIVE-org pin (#456 read-side class): job.id is already the org-pinned
+      // subject from loadJobForOrg, so this is a no-op behaviourally — it makes
+      // the secondary read self-scoping and satisfies the read-pin guard.
+      .eq("org_id", ctx.org.id)
       .maybeSingle(),
     (
       supabase.from("retention_releases" as never) as unknown as {

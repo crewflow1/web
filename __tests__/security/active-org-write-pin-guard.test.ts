@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, join } from "node:path";
+import { deriveOrgScopedTables } from "./org-scoped-tables";
 
 /**
  * ACTIVE-ORG WRITE-PIN GUARD — the systemic backstop for the write slice.
@@ -45,35 +46,19 @@ import { resolve, join } from "node:path";
 const ROOT = resolve(__dirname, "..", "..");
 
 // ---------------------------------------------------------------------------
-// Org-scoped table set — derived from the migrations (the source of truth),
-// exactly like the cross-tenant-fk introspection reasons about org columns.
-// A table is "org-scoped" if a migration creates it with an `org_id` column or
-// adds one later. Deriving it (rather than hard-coding) means a NEW org-scoped
-// table is protected the moment its migration lands — no guard edit required.
+// Org-scoped table set — derived from the migrations (the source of truth) by
+// the SHARED, quoted-identifier-aware helper in ./org-scoped-tables. A table is
+// "org-scoped" if a migration creates it with an `org_id` column or adds one
+// later; deriving it means a NEW org-scoped table is protected the moment its
+// migration lands.
+//
+// HISTORY: this guard originally carried its OWN copy of the derivation regex
+// that matched only UNQUOTED identifiers, so since C40 it silently did not cover
+// by-id writes to the baseline's quoted-identifier tables (`public."quotes" (`,
+// `"customers"`, `"leads"`, …) — the highest-value org-scoped rows. The shared
+// helper is quoted-identifier aware and is used by BOTH the write-pin and
+// read-pin guards so the two can never drift again.
 // ---------------------------------------------------------------------------
-function deriveOrgScopedTables(): Set<string> {
-  const dir = join(ROOT, "supabase/migrations");
-  const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
-  const set = new Set<string>();
-  for (const f of files) {
-    const sql = readFileSync(join(dir, f), "utf8");
-    const createRe =
-      /create table (?:if not exists )?(?:public\.)?([a-z_][a-z0-9_]*)\s*\(([\s\S]*?)\n\);/gi;
-    let m: RegExpExecArray | null;
-    while ((m = createRe.exec(sql))) {
-      const table = m[1] ?? "";
-      const body = m[2] ?? "";
-      if (table && /\borg_id\b/.test(body)) set.add(table);
-    }
-    const alterRe =
-      /alter table (?:only )?(?:public\.)?([a-z_][a-z0-9_]*)[\s\S]{0,120}?add column (?:if not exists )?org_id/gi;
-    let m2: RegExpExecArray | null;
-    while ((m2 = alterRe.exec(sql))) {
-      if (m2[1]) set.add(m2[1]);
-    }
-  }
-  return set;
-}
 
 // ---------------------------------------------------------------------------
 // A small, string-aware source scanner. It walks method chains starting at a
@@ -364,12 +349,69 @@ describe("active-org write-pin guard · org-scoped table derivation", () => {
       expect(orgTables.has(t), `${t} should be recognised as org-scoped`).toBe(true);
     }
   });
+
+  it("covers the QUOTED-IDENTIFIER baseline tables (the C40 vacuity fix)", () => {
+    // These are created as `create table … public."quotes" (` etc. Until this
+    // guard adopted the shared quoted-identifier-aware derivation, they were
+    // SILENTLY excluded — so a by-id tenant write to any of them was never
+    // checked. They are the highest-value org-scoped rows in the schema.
+    for (const t of ["quotes", "customers", "leads", "properties", "quote_line_items"]) {
+      expect(orgTables.has(t), `${t} (quoted-identifier baseline) must now be covered`).toBe(true);
+    }
+  });
+
+  it("the OLD unquoted-only regex would have MISSED those tables (proves the fix is real)", () => {
+    // Reconstruct the pre-fix derivation (no `"?` around the identifier) and
+    // show it drops the quoted-identifier baseline tables — the exact silent gap
+    // this change closes. If the schema ever stopped quoting these, this test
+    // would go stale and force a re-check.
+    const dir = join(ROOT, "supabase/migrations");
+    const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
+    const oldSet = new Set<string>();
+    for (const f of files) {
+      const sql = readFileSync(join(dir, f), "utf8");
+      const oldCreate =
+        /create table (?:if not exists )?(?:public\.)?([a-z_][a-z0-9_]*)\s*\(([\s\S]*?)\n\);/gi;
+      let m: RegExpExecArray | null;
+      while ((m = oldCreate.exec(sql))) {
+        if (m[1] && /\borg_id\b/.test(m[2] ?? "")) oldSet.add(m[1]);
+      }
+    }
+    // The bug: the old regex never saw these...
+    for (const t of ["quotes", "customers", "leads"]) {
+      expect(oldSet.has(t), `pre-fix set unexpectedly contained ${t}`).toBe(false);
+      // ...but the shared (new) derivation does.
+      expect(orgTables.has(t), `post-fix set must contain ${t}`).toBe(true);
+    }
+  });
 });
 
 describe("active-org write-pin guard · detector calibration (synthetic)", () => {
   // These fixtures pin the DETECTOR's behaviour so the guard cannot be quietly
   // weakened. They are the shapes the hostile audit found unpinned.
   const org = new Set(["job_billing_stages", "job_documents", "blueprint_pins"]);
+
+  it("FLAGS an unpinned by-id tenant write to a QUOTED-IDENTIFIER table (C40 vacuity)", () => {
+    // The regression this whole follow-up closes: with `quotes` now in the
+    // derived set, an unpinned by-id tenant write to it is caught. Before the
+    // fix `quotes` was absent from the set, so this exact write was invisible.
+    const org2 = new Set(["quotes", "customers", "leads"]);
+    const bad =
+      'const supabase = await createClient();\n' +
+      'await supabase.from("quotes").update({ status: "sent" }).eq("id", id);';
+    const found = findOffendersInSource("fixture.ts", bad, org2);
+    expect(found).toHaveLength(1);
+    expect(found[0]?.table).toBe("quotes");
+    // Same write, pinned → clean.
+    const good =
+      'await supabase.from("quotes").update({ status: "sent" }).eq("id", id).eq("org_id", ctx.org.id);';
+    expect(findOffendersInSource("fixture.ts", good, org2)).toHaveLength(0);
+    // Same write on the public/anonymous service-role path → out of scope.
+    const pub =
+      'const admin = createAdminClient();\n' +
+      'await admin.from("quotes").update({ status: "expired" }).eq("id", quote.id);';
+    expect(findOffendersInSource("fixture.ts", pub, org2)).toHaveLength(0);
+  });
 
   it("FLAGS a by-id tenant DELETE with no org pin", () => {
     const bad =
