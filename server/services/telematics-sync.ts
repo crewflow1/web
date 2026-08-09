@@ -60,6 +60,19 @@ const REFRESH_SKEW_SECONDS = 120;
 
 const READINGS_CONFLICT = "org_id,connection_id,source_event_id";
 
+/**
+ * Max rows per telematics_readings upsert statement — BATCH-POISONING containment.
+ * The whole mapped set was written in ONE statement, so a single uninsertable row
+ * aborted the entire org's write (0 rows). The mapper now guarantees no CHECK
+ * violation, but a FUTURE CHECK it does not yet mirror must NOT be able to strand
+ * an org: chunking bounds the blast radius and the per-row fallback below isolates
+ * the one bad row. Mirrors the bank-sync chunked-write posture.
+ */
+const READINGS_WRITE_CHUNK = 500;
+
+/** Postgres check_violation. A row the DB's CHECK rejects — never a transient blip. */
+const CHECK_VIOLATION = "23514";
+
 export type TelematicsConnectionSyncOutcome = {
   connectionId: string;
   orgId: string;
@@ -132,7 +145,7 @@ type LooseDb = {
     upsert(
       rows: Record<string, unknown>[],
       opts: { onConflict: string; ignoreDuplicates: boolean; count?: string },
-    ): PromiseLike<{ error: { message: string } | null; count: number | null }>;
+    ): PromiseLike<{ error: { message: string; code?: string } | null; count: number | null }>;
     update(row: Record<string, unknown>): UpdateChain;
   };
 };
@@ -324,21 +337,53 @@ async function syncOneConnection(
 
   let written = 0;
   if (result.readings.length > 0) {
-    const { error: insErr, count } = await loose.from("telematics_readings").upsert(result.readings, {
-      onConflict: READINGS_CONFLICT,
-      ignoreDuplicates: true,
-      count: "exact",
-    });
-    if (insErr) {
-      await recordConnectionError(loose, conn.id, conn.org_id, insErr.message);
-      return { ...base, outcome: "error", written: 0, refreshed, message: `readings write failed: ${insErr.message}` };
+    const write = await writeReadingsChunked(loose, result.readings);
+    written = write.written;
+
+    if (write.transientError !== null) {
+      // A NON-constraint write failure (network / 5xx / read glitch) — not a bad
+      // row. Keep the connection 'connected' (default terminal=false) so a later
+      // tick self-heals; never strand a live feed on a blip.
+      await recordConnectionError(loose, conn.id, conn.org_id, write.transientError);
+      return {
+        ...base,
+        outcome: "error",
+        written,
+        refreshed,
+        message: `readings write failed: ${write.transientError}`,
+      };
     }
-    written = count ?? 0;
 
     // Forward the newest odometer per vehicle onto the fleet register (forward-only
-    // guard inside). Driven off the mapped readings — even a fully-deduped re-run
-    // (written === 0) is safe: the guard makes a repeat a no-op.
-    await forwardUpdateOdometers(loose, conn.org_id, result.readings, currentOdometerByAsset);
+    // guard inside). Driven off the rows that actually LANDED — never a row a CHECK
+    // dropped — so a glitch odometer that was rejected can't advance the register.
+    // Even a fully-deduped re-run (written === 0) is safe: the guard makes a repeat
+    // a no-op.
+    await forwardUpdateOdometers(loose, conn.org_id, write.landedRows, currentOdometerByAsset);
+
+    if (write.constraintError !== null) {
+      // A row survived the mapper yet the DB's CHECK rejected it (23514). The
+      // mapper is contracted to mirror EVERY CHECK, so this means schema drift — a
+      // CHECK the mapper does not yet enforce. TERMINAL: the offending sample would
+      // re-deliver every tick (Samsara /stats is a snapshot), so flip status='error'
+      // to surface reconnect/repair instead of silently retrying the same poison
+      // forever. The good rows above were still written; do NOT markSynced (it would
+      // re-assert 'connected' and clear this terminal error).
+      await recordConnectionError(
+        loose,
+        conn.id,
+        conn.org_id,
+        `readings CHECK violation (rows dropped): ${write.constraintError}`,
+        true,
+      );
+      return {
+        ...base,
+        outcome: "error",
+        written,
+        refreshed,
+        message: `readings CHECK violation (rows dropped): ${write.constraintError}`,
+      };
+    }
   }
 
   await markSynced(loose, conn.id, conn.org_id);
@@ -349,6 +394,84 @@ async function syncOneConnection(
     refreshed,
     message: `${result.readingCount} mapped, ${written} newly written`,
   };
+}
+
+/** The outcome of writing a mapped batch, splitting transient from constraint errors. */
+type ReadingsWriteResult = {
+  /** Newly-inserted rows (duplicates ignored), summed across chunks/rows. */
+  written: number;
+  /** Rows that landed OR were idempotent duplicates — i.e. NOT rejected by a CHECK. */
+  landedRows: TelematicsReadingInsert[];
+  /** A non-constraint (network/5xx/read) write error — caller keeps the connection connected. */
+  transientError: string | null;
+  /** A CHECK (23514) violation was seen and contained via per-row fallback — TERMINAL. */
+  constraintError: string | null;
+};
+
+/**
+ * Write a mapped batch to telematics_readings with BATCH-POISONING containment.
+ *
+ * The mapper already guarantees no row violates any current CHECK, so the happy
+ * path is plain chunked upserts with the idempotent ON CONFLICT DO NOTHING
+ * contract (onConflict + ignoreDuplicates + count:"exact") — chunking preserves
+ * those semantics exactly (per-chunk dedupe, counts summed = one big statement's
+ * count), so C50 idempotency is untouched.
+ *
+ * DEFENSE IN DEPTH: if a FUTURE CHECK the mapper does not yet mirror is added, a
+ * chunk upsert can 23514. Rather than let ONE bad row abort the org's whole batch
+ * (the exact defect this closes), fall back to per-row upserts for that chunk:
+ * good rows land, the offending row(s) are dropped, and a constraintError is
+ * surfaced so the caller can mark the connection TERMINAL (stop the silent retry
+ * loop). Any OTHER error (transient/network/5xx) is not a bad-row problem — bail
+ * immediately so the caller keeps the connection connected and self-heals.
+ */
+async function writeReadingsChunked(
+  loose: LooseDb,
+  readings: readonly TelematicsReadingInsert[],
+): Promise<ReadingsWriteResult> {
+  let written = 0;
+  const landedRows: TelematicsReadingInsert[] = [];
+  let constraintError: string | null = null;
+
+  for (let i = 0; i < readings.length; i += READINGS_WRITE_CHUNK) {
+    const chunk = readings.slice(i, i + READINGS_WRITE_CHUNK);
+    const { error, count } = await loose.from("telematics_readings").upsert(chunk, {
+      onConflict: READINGS_CONFLICT,
+      ignoreDuplicates: true,
+      count: "exact",
+    });
+    if (!error) {
+      written += count ?? 0;
+      landedRows.push(...chunk);
+      continue;
+    }
+    // A non-CHECK error is a transient/infra failure, not a bad row — bail so the
+    // caller keeps the connection connected and a later tick retries.
+    if (error.code !== CHECK_VIOLATION) {
+      return { written, landedRows, transientError: error.message, constraintError };
+    }
+    // 23514: at least one row in this chunk is uninsertable. Isolate it row-by-row
+    // so the rest of the org's batch still lands.
+    constraintError = error.message;
+    for (const row of chunk) {
+      const { error: rowErr, count: rowCount } = await loose
+        .from("telematics_readings")
+        .upsert([row], { onConflict: READINGS_CONFLICT, ignoreDuplicates: true, count: "exact" });
+      if (!rowErr) {
+        written += rowCount ?? 0;
+        landedRows.push(row);
+        continue;
+      }
+      // A transient failure on the single-row retry — bail as transient.
+      if (rowErr.code !== CHECK_VIOLATION) {
+        return { written, landedRows, transientError: rowErr.message, constraintError };
+      }
+      // else: this single row violates a CHECK — DROP it (do not land it, do not
+      // advance its odometer). constraintError is already set for the caller.
+    }
+  }
+
+  return { written, landedRows, transientError: null, constraintError };
 }
 
 /**

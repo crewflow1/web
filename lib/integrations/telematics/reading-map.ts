@@ -73,6 +73,26 @@ export type ReadingMapTarget = {
   connectionId: string;
 };
 
+// ── telematics_readings CHECK-constraint bounds (20261103) ───────────────────
+// The mapper MUST mirror EVERY range CHECK the table declares, so it can never
+// emit a row the DB would reject (one such row aborts the whole ingest upsert →
+// the org writes zero readings, tick after tick). Each constant below is bound to
+// its migration CHECK; a NEW CHECK added to the table REQUIRES a matching guard
+// here (and a matching assertion in telematics-reading-map.test.ts).
+//   • latitude  numeric(9,6) check (latitude  is null or latitude  between -90  and 90)
+const LAT_MIN = -90;
+const LAT_MAX = 90;
+//   • longitude numeric(9,6) check (longitude is null or longitude between -180 and 180)
+const LNG_MIN = -180;
+const LNG_MAX = 180;
+//   • odometer_miles integer  check (odometer_miles is null or odometer_miles between 0 and 3000000)
+const ODOMETER_MIN = 0;
+const ODOMETER_MAX = 3_000_000;
+// The remaining two CHECKs are STRUCTURAL, not range, and are enforced by the
+// pair/has-signal logic below rather than a numeric bound:
+//   • telematics_readings_latlng_pair   check ((latitude is null) = (longitude is null))
+//   • telematics_readings_has_signal    check (latitude is not null or longitude is not null or odometer_miles is not null)
+
 /** Round a coordinate to 6dp (~11cm) — the numeric(9,6) column precision. Pure. */
 function coord(value: number | null | undefined): number | null {
   if (value === null || value === undefined) return null;
@@ -82,12 +102,23 @@ function coord(value: number | null | undefined): number | null {
   return rounded === 0 ? 0 : rounded;
 }
 
-/** Round an odometer to a whole mile, clamped to >= 0. Pure; null passes through. */
+/**
+ * Round an odometer to a whole mile within the CHECK range [0, 3,000,000]. The
+ * lower bound clamps a small negative glitch to 0 (still a real "at the start"
+ * reading); the UPPER bound cannot be clamped honestly — an odometer above
+ * 3,000,000 miles is a corrupt/glitch sensor value, not a real mileage, so it is
+ * dropped to null (no-signal) rather than manufactured into a row the
+ * odometer_miles CHECK would reject and thereby poison the whole batch. Pure;
+ * null passes through.
+ */
 function miles(value: number | null | undefined): number | null {
   if (value === null || value === undefined) return null;
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
-  return Math.max(0, Math.round(n));
+  const rounded = Math.max(ODOMETER_MIN, Math.round(n));
+  // Upper CHECK bound: a value above the ceiling is not insertable — drop it.
+  if (rounded > ODOMETER_MAX) return null;
+  return rounded;
 }
 
 /**
@@ -95,7 +126,13 @@ function miles(value: number | null | undefined): number | null {
  *
  * The latitude/longitude are treated as a PAIR (both present or both null) to
  * satisfy the telematics_readings_latlng_pair CHECK: a lone coordinate is not a
- * fix, so a half-fix is dropped to null/null.
+ * fix, so a half-fix is dropped to null/null. The pair is ALSO range-validated
+ * here — latitude within [-90, 90] AND longitude within [-180, 180] — because the
+ * two coordinates have DIFFERENT ranges, so `coord()` alone cannot decide the
+ * pair. A coordinate outside its range (corrupt NMEA reporting lat 99 / lng 200)
+ * is not a fix: the WHOLE pair collapses to null/null so no row can violate the
+ * latitude/longitude range CHECKs. A resulting all-null row (no fix, no odometer)
+ * is then dropped by the has-signal filter in mapSamplesToReadings.
  */
 export function mapSampleToReading(
   sample: TelematicsSample,
@@ -103,8 +140,15 @@ export function mapSampleToReading(
 ): TelematicsReadingInsert {
   const lat = coord(sample.latitude);
   const lng = coord(sample.longitude);
-  // A fix needs BOTH coordinates; drop a half-fix so the pair CHECK holds.
-  const hasFix = lat !== null && lng !== null;
+  // A fix needs BOTH coordinates AND each within its own CHECK range; otherwise
+  // it is not a fix — drop the whole pair so the pair + range CHECKs hold.
+  const hasFix =
+    lat !== null &&
+    lng !== null &&
+    lat >= LAT_MIN &&
+    lat <= LAT_MAX &&
+    lng >= LNG_MIN &&
+    lng <= LNG_MAX;
   return {
     org_id: target.orgId,
     vehicle_id: sample.vehicleId,
@@ -121,7 +165,13 @@ export function mapSampleToReading(
  * Map a whole batch of provider samples onto telematics_readings insert rows.
  * Pure. Samples carrying NEITHER a fix NOR an odometer are dropped — the
  * telematics_readings_has_signal CHECK would reject them, so the mapper filters
- * them here rather than manufacturing a row that cannot be inserted.
+ * them here rather than manufacturing a row that cannot be inserted. This filter
+ * is ALSO what drops a sample whose only signals were out-of-range and therefore
+ * nulled by mapSampleToReading (bad coordinate pair) / miles() (odometer above
+ * the ceiling): once every signal is nulled the row carries no signal, so a
+ * single glitchy vehicle can never contribute an uninsertable row to the batch.
+ * NET GUARANTEE: the returned set can never contain a row that violates any
+ * telematics_readings CHECK (range, latlng-pair, or has-signal).
  */
 export function mapSamplesToReadings(
   samples: readonly TelematicsSample[],
