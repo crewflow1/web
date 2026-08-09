@@ -187,7 +187,18 @@ describe("Phase 7 — portal upload safety", () => {
   });
 
   it("re-verifies invoice belongs to customer (no crafted-URL abuse)", () => {
-    expect(upload).toMatch(/inv\.quote\?\.customer_id !== customer\.id/);
+    // Ownership resolves through the ONE authority invoiceCustomerId (invoice's
+    // own customer_id, quote fallback) — NOT quote.customer_id alone. quote_id
+    // is ON DELETE SET NULL, so gating on the quote chain wrongly rejected the
+    // owner of a quote-less invoice. A crafted URL for a foreign invoice still
+    // fails: invoiceCustomerId(inv) won't equal this customer's id, and the
+    // read is scoped to customer.org_id.
+    expect(upload).toMatch(/from "@\/lib\/invoices\/customer"/);
+    expect(upload).toMatch(/invoiceCustomerId\(inv\) !== customer\.id/);
+    expect(upload).toMatch(/\.eq\("org_id", customer\.org_id\)/);
+    expect(upload).toMatch(/invoice_not_yours/);
+    // The old quote-only gate must be gone.
+    expect(upload).not.toMatch(/inv\.quote\?\.customer_id !== customer\.id/);
   });
 });
 
