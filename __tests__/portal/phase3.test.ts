@@ -334,8 +334,17 @@ describe("Phase 3 — payment proof upload", () => {
     expect(UPLOAD_ACTION).toMatch(/bad_file_type/);
   });
 
-  it("re-verifies invoice belongs to the customer (no cross-org abuse)", () => {
-    expect(UPLOAD_ACTION).toMatch(/inv\.quote\?\.customer_id !== customer\.id/);
+  it("re-verifies invoice belongs to the customer via the ONE authority (no cross-org abuse)", () => {
+    // Ownership resolves through invoiceCustomerId (invoice's own customer_id,
+    // quote fallback) — NOT quote.customer_id alone. quote_id is ON DELETE SET
+    // NULL, so a quote-less invoice must still authorise its legitimate owner.
+    expect(UPLOAD_ACTION).toMatch(/invoiceCustomerId\(inv\) !== customer\.id/);
+    expect(UPLOAD_ACTION).toMatch(
+      /from "@\/lib\/invoices\/customer"/,
+    );
+    // The quote-only ownership gate must be gone (it wrongly rejected the owner
+    // of a quote-less invoice).
+    expect(UPLOAD_ACTION).not.toMatch(/inv\.quote\?\.customer_id !== customer\.id/);
     expect(UPLOAD_ACTION).toMatch(/invoice_not_yours/);
   });
 
