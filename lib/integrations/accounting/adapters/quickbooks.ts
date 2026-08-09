@@ -166,10 +166,32 @@ export class QuickBooksAdapter implements AccountingAdapter {
     for (const row of input.rows) {
       const customer = await this.resolveCustomerId(ctx, realmId, row.customer);
       if (!customer.ok) return this.err(customer.message, pushed);
-      // Link to the invoice by its DocNumber when it exists in QBO; else record
-      // an unapplied payment (still an honest receipt).
-      const invoiceId = await this.resolveInvoiceId(ctx, realmId, row.invoice_number);
-      const body = buildQboPaymentBody(row, { customerId: customer.id, invoiceId });
+      // Resolve the QBO invoice this payment links to (by DocNumber). Every
+      // payment that reaches this adapter has already passed the syncToProvider
+      // PAYMENT-LINK GATE (c53), which only lets a payment through once its invoice
+      // EXISTS at QBO — created this run or on a prior successful run. So the
+      // lookup MUST find it; anything else is anomalous and MUST NOT post:
+      //   • {ok:false}  — a transient transport failure (5xx / network / refresh
+      //     dead). Posting anyway is impossible (we have no id), and QBO would
+      //     accept a LinkedTxn-less body as a 2xx UNAPPLIED receipt that every
+      //     future export then excludes — stranding it forever. Fail instead so it
+      //     retries next sync (mirrors Xero's non-2xx self-heal).
+      //   • {ok:true,id:null} — a genuine empty QueryResponse. For a GATED-IN
+      //     payment the invoice is guaranteed to exist, so an empty result is
+      //     either eventual-consistency lag on an invoice created seconds ago or a
+      //     real anomaly; either way, recording an unapplied payment would strand
+      //     it, so fail and retry rather than post unlinked.
+      const invoice = await this.resolveInvoiceId(ctx, realmId, row.invoice_number);
+      if (!invoice.ok) return this.err(invoice.message, pushed);
+      if (!invoice.id) {
+        return this.err(
+          `QuickBooks could not find invoice "${row.invoice_number}" for a payment whose ` +
+            "invoice is guaranteed to exist (payment-link gate); not posting an unapplied " +
+            "receipt. It will retry on the next sync.",
+          pushed,
+        );
+      }
+      const body = buildQboPaymentBody(row, { customerId: customer.id, invoiceId: invoice.id });
       // Seed off the immutable payment row id, NOT the body. Two distinct
       // invoice_payments rows on one invoice for the same customer, day and amount
       // (real: two identical part-payments/deposits) serialise to a byte-identical
@@ -318,13 +340,26 @@ export class QuickBooksAdapter implements AccountingAdapter {
     return { ok: true, id };
   }
 
-  /** Resolve a QBO invoice id by DocNumber, or null when absent (unapplied payment). */
+  /**
+   * Resolve a QBO invoice id by DocNumber. Returns a DISCRIMINATED result,
+   * mirroring resolveCustomerId / resolveServiceItemId / resolveTaxCodeId so a
+   * TRANSPORT failure is never conflated with a genuine not-found:
+   *   • {ok:false, message}   — a transport error (!res.ok: 5xx / network /
+   *     refresh dead). The caller must NOT treat this as "invoice absent".
+   *   • {ok:true, id:string}  — the invoice was found.
+   *   • {ok:true, id:null}    — a genuine empty QueryResponse (or no DocNumber).
+   *
+   * Historically this returned a bare `string | null` and mapped `!res.ok → null`,
+   * making a transient blip indistinguishable from a real absence — which let
+   * pushPayments post an UNAPPLIED payment that then stranded forever. The
+   * discriminated result restores the loud-error posture of its siblings.
+   */
   private async resolveInvoiceId(
     ctx: AuthCtx,
     realmId: string,
     docNumber: string,
-  ): Promise<string | null> {
-    if (!docNumber) return null;
+  ): Promise<{ ok: true; id: string | null } | { ok: false; message: string }> {
+    if (!docNumber) return { ok: true, id: null };
     const res = await this.authedJson(
       ctx,
       "GET",
@@ -332,8 +367,8 @@ export class QuickBooksAdapter implements AccountingAdapter {
         `select Id from Invoice where DocNumber = '${q(docNumber)}'`,
       )}`,
     );
-    if (!res.ok) return null;
-    return firstEntityId(res.json, "Invoice");
+    if (!res.ok) return { ok: false, message: this.reason("invoice lookup", res) };
+    return { ok: true, id: firstEntityId(res.json, "Invoice") };
   }
 
   // ── HTTP with shared single-refresh ────────────────────────────────────────
