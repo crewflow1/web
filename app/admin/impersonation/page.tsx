@@ -6,6 +6,7 @@ import {
 } from "@/server/services/impersonation";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import {
   startImpersonation,
   endImpersonation,
@@ -38,17 +39,23 @@ export default async function HqImpersonationPage({
   const active = sessions.filter((s) => s.ended_at === null);
 
   const admin = createAdminClient();
-  const { data: orgs, error: orgsError } = await admin
-    .from("organizations")
-    .select("id, name" as never)
-    .order("name", { ascending: true });
+  type OrgOption = { id: string; name: string };
+  // PAGED (F-1): the impersonation picker must list EVERY org — a bare read is
+  // silently clamped at max_rows=1000, so past 1000 orgs an operator could not
+  // impersonate the tail of the estate at all. Stable total order (name, id).
+  const { data: orgs, error: orgsError } = await fetchAllRows<OrgOption>(
+    (from, to) =>
+      admin
+        .from("organizations")
+        .select("id, name" as never)
+        .order("name", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<OrgOption>>,
+  );
   if (orgsError) {
     throw readFailure("admin impersonation: organizations", orgsError);
   }
-  const orgList = ((orgs ?? []) as unknown) as Array<{
-    id: string;
-    name: string;
-  }>;
+  const orgList = orgs;
 
   const banner = (() => {
     if (sp.saved === "ended")

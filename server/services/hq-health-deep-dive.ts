@@ -81,37 +81,53 @@ type NotificationRow = { org_id: string; created_at: string; audience: string };
 // ---------------------------------------------------------------------
 
 export async function listHealthDeepDive(): Promise<HealthDeepDiveRow[]> {
-  // 1. Orgs.
-  const orgsRes = await table("organizations")
-    .select(
-      [
-        "id",
-        "name",
-        "status",
-        "setup_fee_status",
-        "mrr_gbp",
-        "last_login_at",
-        "onboarding_percent",
-        "migration_percent",
-        "health_score",
-        "health_recomputed_at",
-        "created_at",
-      ].join(", "),
-    )
-    .order("name", { ascending: true });
-  const orgs = (orgsRes.data ?? []) as unknown as OrgRow[];
+  // 1. Orgs — PAGED (F-1): every org is a deep-dive row; a bare read is silently
+  //    clamped at max_rows=1000, so past 1000 orgs the tail of the estate never
+  //    appears. Stable total order (name, id).
+  const orgsRes = await fetchAllRows<OrgRow>(
+    (from, to) =>
+      table("organizations")
+        .select(
+          [
+            "id",
+            "name",
+            "status",
+            "setup_fee_status",
+            "mrr_gbp",
+            "last_login_at",
+            "onboarding_percent",
+            "migration_percent",
+            "health_score",
+            "health_recomputed_at",
+            "created_at",
+          ].join(", "),
+        )
+        .order("name", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as PromiseLike<PageResult<OrgRow>>,
+  );
+  const orgs = orgsRes.data;
   if (orgs.length === 0) return [];
 
   const orgIds = orgs.map((o) => o.id);
 
-  // 2. Health events for trend (last 5 per org — fetched as one
-  // batched query, bucketed in memory).
-  const eventsRes = await table("health_score_events")
-    .select("org_id, new_score, recomputed_at")
-    .in("org_id", orgIds)
-    .order("recomputed_at", { ascending: false })
-    .limit(1000); // bounded sample; PostgREST clamps to max_rows=1000; per-org slice below
-  const events = (eventsRes.data ?? []) as unknown as HealthEventRow[];
+  // 2. Health events for trend (last 5 per org — bucketed in memory below).
+  //    PAGED (F-1): the old `.limit(1000)` sat ON the PostgREST cap and, at >200
+  //    orgs (1000 / 5-per-org), silently starved the tail of the estate of ANY
+  //    trend. Paging reads the complete cross-tenant set; the global desc order
+  //    (recomputed_at, id) still puts each org's newest 5 first for the slice.
+  const { data: events, error: eventsError } = await fetchAllRows<HealthEventRow>(
+    (from, to) =>
+      table("health_score_events")
+        .select("org_id, new_score, recomputed_at")
+        .in("org_id", orgIds)
+        .order("recomputed_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as PromiseLike<PageResult<HealthEventRow>>,
+  );
+  if (eventsError) {
+    console.error("[health-deep-dive] health_score_events read failed", eventsError);
+  }
   const trendByOrg = new Map<
     string,
     Array<{ recomputed_at: string; score: number }>
@@ -156,12 +172,22 @@ export async function listHealthDeepDive(): Promise<HealthDeepDiveRow[]> {
     ticketStats.set(t.org_id, cur);
   }
 
-  // 4. Billing invoices — outstanding + failed-90d.
-  const invRes = await table("billing_invoices")
-    .select("org_id, status, amount_gbp, failed_at")
-    .in("org_id", orgIds)
-    .order("created_at", { ascending: false });
-  const invoices = (invRes.data ?? []) as unknown as InvoiceRow[];
+  // 4. Billing invoices — outstanding + failed-90d. PAGED (F-1): summed per org
+  //    into the outstanding_gbp / failed_90d money figures; a max_rows=1000 clamp
+  //    silently understates the estate's arrears. Stable total order
+  //    (created_at, id).
+  const { data: invoices, error: invoicesError } = await fetchAllRows<InvoiceRow>(
+    (from, to) =>
+      table("billing_invoices")
+        .select("id, org_id, status, amount_gbp, failed_at")
+        .in("org_id", orgIds)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as PromiseLike<PageResult<InvoiceRow>>,
+  );
+  if (invoicesError) {
+    console.error("[health-deep-dive] billing_invoices read failed", invoicesError);
+  }
   const billingStats = new Map<
     string,
     { outstanding: number; failed_90d: number }
@@ -185,15 +211,25 @@ export async function listHealthDeepDive(): Promise<HealthDeepDiveRow[]> {
     billingStats.set(i.org_id, stats);
   }
 
-  // 5. HQ notifications 7d.
+  // 5. HQ notifications 7d. PAGED (F-1): the old `.limit(1000)` sat ON the
+  //    PostgREST cap and, across a busy estate, silently under-counted the 7-day
+  //    notification volume per org. Paging reads the complete cross-tenant set;
+  //    the 7-day cutoff is still applied in JS. Stable total order
+  //    (created_at, id).
   const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
-  const notifRes = await table("notifications")
-    .select("org_id, created_at, audience")
-    .in("org_id", orgIds)
-    .in("audience", ["hq", "both"])
-    .order("created_at", { ascending: false })
-    .limit(1000);
-  const notifs = (notifRes.data ?? []) as unknown as NotificationRow[];
+  const { data: notifs, error: notifsError } = await fetchAllRows<NotificationRow>(
+    (from, to) =>
+      table("notifications")
+        .select("id, org_id, created_at, audience")
+        .in("org_id", orgIds)
+        .in("audience", ["hq", "both"])
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as PromiseLike<PageResult<NotificationRow>>,
+  );
+  if (notifsError) {
+    console.error("[health-deep-dive] notifications read failed", notifsError);
+  }
   const notifsByOrg = new Map<string, number>();
   for (const n of notifs) {
     if (n.created_at >= sevenDaysAgo) {

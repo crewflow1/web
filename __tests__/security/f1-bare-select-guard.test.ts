@@ -112,6 +112,23 @@ const HIGH_VALUE_TABLES = new Set<string>([
   // stop line, so it is deferred to its own wave rather than mass-edited here.
   "support_tickets",
   "support_messages",
+  // ── HQ estate / cross-tenant completeness audit (the .from(as never) cast wave).
+  // These post-date the generated types and are read almost exclusively via the
+  // `.from("x" as never)` cast or the untypedAdminTable(...) wrapper — invisible to
+  // the guard until the cast-form matcher was taught. Each has a CROSS-TENANT,
+  // estate-wide set read that is mapped/summed in JS into an HQ figure:
+  //   organizations       — the estate roster (hq-snapshot, hq-analytics, hq-alerts,
+  //                         retention/health snapshots): every org mapped into KPIs.
+  //   billing_invoices    — every billing invoice across the estate, folded into
+  //                         MRR / outstanding_gbp / failed_90d money (hq-analytics,
+  //                         hq-alerts, hq-billing, health-deep-dive).
+  //   notifications       — per-org and cross-tenant (HQ bell) recency reads; the
+  //                         .limit(Math.min(limit,1000)) sits on the PostgREST cap.
+  //   health_score_events — per-org health timeline; same .limit(1000) boundary.
+  "organizations",
+  "billing_invoices",
+  "notifications",
+  "health_score_events",
 ]);
 
 // "file:line" → reason. Keep tight; every entry is a documented smell.
@@ -159,6 +176,47 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: the 'Today's jobs' panel query — one org × one calendar day (.eq('scheduled_date', todayIso)), a handful of rows, never near the cap. The paginated list query above it is windowed via .range().",
   "app/(app)/leads/page.tsx:51":
     "paged: the pipeline read IS complete — executed via fetchAllRows((from,to) => query.range(from,to)) at the bottom of the fn; the builder pattern places the .range terminator beyond the static region window, so the analyser can't see it",
+
+  // ── .from(as never) CAST-FORM WAVE — genuinely-bounded per-parent-row reads
+  //    surfaced only once the cast-form matcher was taught. Each is a single
+  //    parent entity's child set (a job's / a PO's), never a cross-tenant scan:
+  //    cardinality is bounded by the parent and cannot approach the 1000 cap.
+  "app/(app)/jobs/[id]/commercial/page.tsx:168":
+    "bounded: ONE job's purchase orders (.eq('job_id')) — feeds the committed-costs tile for a single job; a job has a handful to dozens of POs, never near 1000",
+  "app/(app)/jobs/[id]/page.tsx:307":
+    "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap",
+  "app/(app)/jobs/retention-actions.ts:163":
+    "bounded: ONE job's invoices (.eq('job_id')) — folded into the retention position for a single job; a job's invoices are a handful",
+  "app/(app)/purchase-orders/[id]/page.tsx:149":
+    "bounded: ONE purchase order's supplier bills (.eq('purchase_order_id')) — a single PO has a handful of finance entries, never near 1000",
+  // Two enrichment lookups keyed by a ≤500-row parent's distinct org ids: the
+  // parent read is capped (.limit(500)), so the distinct-org id set handed to
+  // `.in('id', …)` is ≤500 — well below the cap. Not a cross-tenant estate scan.
+  "app/admin/ai-receptionist/deliveries/page.tsx:76":
+    "bounded: org-name enrichment (.in('id', distinct orgs)) for the newest-500 lifecycle rows — ≤500 distinct orgs, analyser can't see the .limit(500) parent bound",
+  "app/admin/ai-receptionist/review/page.tsx:57":
+    "bounded: org-name enrichment (.in('id', distinct orgs)) for listReviewQueue({limit:500}) — ≤500 distinct orgs, analyser can't see the parent bound",
+  // Single-row read whose bound markers fall outside the region window: the long
+  // select list + the active-org comment push `.eq('id')`/`.maybeSingle()` past
+  // the 1100-char AFTER window, so the region-scan can't see the bound.
+  "server/services/customer-support-service.ts:143":
+    "bounded: ONE ticket (.eq('org_id').eq('id').maybeSingle()) — a single-row read; the long select list + active-org comment push the .eq('id')/.maybeSingle bound markers past the region window",
+  // Per-org billing invoices for the /admin/billing expand-row: an org's billing
+  // invoices are monthly-cadence (≈12/yr), so ≤1000 would take ~83 years.
+  "server/services/hq-billing-snapshot.ts:258":
+    "bounded: ONE org's billing invoices (.eq('org_id')) for the /admin/billing inline expand-row — monthly cadence, structurally far below 1000",
+  // Recent-N estate health events: the read is ordered `recomputed_at desc` and
+  // the caller (admin/analytics) slices the newest `limit` (15) in JS. Because it
+  // is ordered DESC, the PostgREST 1000-clamp can only ever drop rows OLDER than
+  // the top-N, so the sliced result is identical whether the table has 100 or
+  // 100k events — a genuinely-bounded recent-N display, not a set read.
+  "server/services/hq-health-recompute.ts:308":
+    "bounded: recent-N estate health events — ordered recomputed_at DESC then .slice(0, limit) (caller passes 15) in JS; the desc order means the 1000-clamp can only drop rows past the top-N, so the result is complete",
+  // NOT A READ: `.from('notifications').insert(payload).select(ALL_COLS)` — an
+  // INSERT…RETURNING. The returned set is bounded by the payload it just wrote,
+  // so it cannot truncate; it trips only because the region carries `.select(`.
+  "server/services/notifications-service.ts:140":
+    "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read",
 };
 
 function walk(dir: string, out: string[]): void {
@@ -320,8 +378,15 @@ function offendersIn(rel: string, raw: string): string[] {
     );
   };
 
-  // 1. The direct form: `.from("high_value_table").select(...)`.
-  const fromRe = /\.from\(\s*["'`]([a-z_]+)["'`]\s*\)/g;
+  // 1. The direct form: `.from("high_value_table").select(...)`, INCLUDING the
+  //    `.from("table" as never)` / `.from("table" as any)` CAST idiom used for
+  //    tables that post-date the generated Supabase types. The optional
+  //    `(?:as\s+(?:never|any))?` after the backreferenced table literal makes the
+  //    cast form detected EXACTLY like a plain `.from("table")` — it still only
+  //    fires when the captured name is a tracked HIGH_VALUE_TABLE (via consider()).
+  //    Without this, a cross-tenant read written as `admin.from("organizations" as
+  //    never).select(...)` was structurally invisible to the guard.
+  const fromRe = /\.from\(\s*["'`]([a-z_]+)["'`]\s*(?:as\s+(?:never|any)\s*)?\)/g;
   let m: RegExpExecArray | null;
   while ((m = fromRe.exec(src))) consider(m[1], m.index, `.from("${m[1]}").select(...)`);
 

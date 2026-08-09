@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireHqPage } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { TURNOVER_LABELS } from "@/lib/demo/schema";
 import { setOrganizationStatus, setDemoRequestStatus } from "../actions";
 import { ConfirmForm } from "../_confirm-form";
@@ -140,12 +141,21 @@ export default async function AdminOrganizationsPage({
   const admin = createAdminClient();
 
   const [orgsRes, demosRes] = await Promise.all([
-    admin
-      .from("organizations")
-      .select(
-        "id, name, slug, phone, email, created_at, status, plan, trial_ends_at, approved_at, cancelled_at, suspended_at, rejection_reason" as never,
-      )
-      .order("created_at", { ascending: false }),
+    // PAGED (F-1): this is the full estate roster, filtered/sorted client-side, so
+    // it must be COMPLETE; a bare read is silently clamped at max_rows=1000 and
+    // past 1000 orgs the tail simply disappears from /admin/organizations. Stable
+    // total order (created_at, id).
+    fetchAllRows<OrgRow>(
+      (from, to) =>
+        admin
+          .from("organizations")
+          .select(
+            "id, name, slug, phone, email, created_at, status, plan, trial_ends_at, approved_at, cancelled_at, suspended_at, rejection_reason" as never,
+          )
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to) as unknown as PromiseLike<PageResult<OrgRow>>,
+    ),
     admin
       .from("demo_requests")
       .select(
@@ -160,7 +170,7 @@ export default async function AdminOrganizationsPage({
   if (demosRes.error) {
     throw readFailure("admin organizations: demo_requests", demosRes.error);
   }
-  const orgs = ((orgsRes.data ?? []) as unknown as OrgRow[]);
+  const orgs = orgsRes.data;
   const demos = ((demosRes.data ?? []) as unknown as DemoRow[]);
 
   // Resolve owner email/name per-org via a second query — no relational

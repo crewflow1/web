@@ -1,5 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
+import { readFailure } from "@/lib/supabase/read-failure";
 import type { SupportTicketRow } from "@/lib/hq/support";
 
 /**
@@ -63,35 +65,52 @@ export async function listMySupportTickets(
   orgId: string,
 ): Promise<CustomerSupportTicket[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("support_tickets" as never)
-    .select(
-      [
-        "id",
-        "org_id",
-        "ticket_number",
-        "subject",
-        "status",
-        "priority",
-        "category",
-        "created_by",
-        "last_reply_at",
-        "last_reply_kind",
-        "resolved_at",
-        "closed_at",
-        "created_at",
-        // Distinguishes a portal conversation with the org's own customer from
-        // the org's helpdesk thread with CrewFlow — the two share this table.
-        "customer_id",
-      ].join(", "),
-    )
-    .eq("org_id", orgId)
-    .order("created_at", { ascending: false });
-  if (error) {
-    console.error("[customer-support] listMySupportTickets failed", error);
-    return [];
-  }
-  return (data ?? []).map((t: Record<string, unknown>) => ({
+  const cols = [
+    "id",
+    "org_id",
+    "ticket_number",
+    "subject",
+    "status",
+    "priority",
+    "category",
+    "created_by",
+    "last_reply_at",
+    "last_reply_kind",
+    "resolved_at",
+    "closed_at",
+    "created_at",
+    // Distinguishes a portal conversation with the org's own customer from
+    // the org's helpdesk thread with CrewFlow — the two share this table.
+    "customer_id",
+  ].join(", ");
+  // PAGED (F-1): the ORG's full support ticket list is mapped in JS; a bare read
+  // is silently clamped at max_rows=1000, so an org with a long ticket history
+  // would silently lose its oldest tickets. Stable total order (created_at, id).
+  // Loud read: a failed DB read must not render as "no tickets".
+  const { data, error } = await fetchAllRows<Record<string, unknown>>(
+    (from, to) =>
+      (
+        supabase.from("support_tickets" as never) as unknown as {
+          select: (c: string) => {
+            eq: (k: string, v: unknown) => {
+              order: (k: string, o: { ascending: boolean }) => {
+                order: (
+                  k: string,
+                  o: { ascending: boolean },
+                ) => { range: (f: number, t: number) => PromiseLike<PageResult<Record<string, unknown>>> };
+              };
+            };
+          };
+        }
+      )
+        .select(cols)
+        .eq("org_id", orgId)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+  );
+  if (error) throw readFailure("customer support: my tickets", error);
+  return data.map((t: Record<string, unknown>) => ({
     id: t.id as string,
     org_id: t.org_id as string,
     org_name: null, // not surfaced on the tenant side
@@ -163,25 +182,42 @@ export async function loadMySupportTicket(
   // Fetch messages. RLS policy filters internal=true away from
   // tenant SELECTs automatically — we don't have to (and shouldn't
   // try to) replicate that filter here.
-  const { data: msgs, error: msgsError } = await supabase
-    .from("support_messages" as never)
-    .select(
-      [
-        "id",
-        "ticket_id",
-        "author_id",
-        "author_kind",
-        "body",
-        "created_at",
-        "author:users ( full_name )",
-      ].join(", "),
-    )
-    .eq("ticket_id", ticketId)
-    .order("created_at", { ascending: true });
-  if (msgsError) {
-    console.error("[customer-support] loadMySupportTicket messages failed", msgsError);
-    return null;
-  }
+  const msgCols = [
+    "id",
+    "ticket_id",
+    "author_id",
+    "author_kind",
+    "body",
+    "created_at",
+    "author:users ( full_name )",
+  ].join(", ");
+  // PAGED (F-1): the full message thread for this ticket is mapped in JS; a bare
+  // read is silently clamped at max_rows=1000, so a long conversation would drop
+  // its newest replies. Stable total order (created_at, id). Loud read: a DB
+  // error must not masquerade as an empty thread.
+  const { data: msgs, error: msgsError } = await fetchAllRows<Record<string, unknown>>(
+    (from, to) =>
+      (
+        supabase.from("support_messages" as never) as unknown as {
+          select: (c: string) => {
+            eq: (k: string, v: unknown) => {
+              order: (k: string, o: { ascending: boolean }) => {
+                order: (
+                  k: string,
+                  o: { ascending: boolean },
+                ) => { range: (f: number, t: number) => PromiseLike<PageResult<Record<string, unknown>>> };
+              };
+            };
+          };
+        }
+      )
+        .select(msgCols)
+        .eq("ticket_id", ticketId)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+  );
+  if (msgsError) throw readFailure("customer support: ticket messages", msgsError);
 
   // On a portal thread, 'customer' is the END-CUSTOMER (author_id is null —
   // they have no user row), not this org. Name them from the ticket's customer

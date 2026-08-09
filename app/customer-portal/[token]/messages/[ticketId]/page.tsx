@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { loadCustomerByPortalToken } from "../../../_helpers";
 import { PortalShell } from "../../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
@@ -93,28 +94,34 @@ export default async function PortalThreadPage({
   type MsgQuery = {
     eq: (k: string, v: unknown) => MsgQuery;
     in: (k: string, v: unknown[]) => MsgQuery;
-    order: (
-      k: string,
-      opts: { ascending: boolean },
-    ) => Promise<{
+    order: (k: string, opts: { ascending: boolean }) => MsgQuery;
+    range: (from: number, to: number) => PromiseLike<{
       data: unknown[] | null;
-      error: { message: string } | null;
+      error: unknown;
     }>;
   };
-  const { data: msgsRaw, error: msgsError } = await (
-    admin.from("support_messages" as never) as unknown as {
-      select: (cols: string) => MsgQuery;
-    }
-  )
-    .select("id, body, author_kind, internal, created_at")
-    .eq("ticket_id", ticket.id)
-    .eq("org_id", customer.org_id)
-    .eq("internal", false)
-    // Only the two parties to THIS conversation. 'hq' is CrewFlow talking to
-    // the org on its own helpdesk — never addressed to the customer, and
-    // previously rendered to them as though the org had written it.
-    .in("author_kind", ["customer", "org"])
-    .order("created_at", { ascending: true });
+  // PAGED (F-1): the full customer-portal thread is rendered; a bare read is
+  // silently clamped at max_rows=1000, so a long conversation would drop its
+  // newest replies. Stable total order (created_at, id).
+  const { data: msgsRaw, error: msgsError } = await fetchAllRows<Record<string, unknown>>(
+    (from, to) =>
+      (
+        admin.from("support_messages" as never) as unknown as {
+          select: (cols: string) => MsgQuery;
+        }
+      )
+        .select("id, body, author_kind, internal, created_at")
+        .eq("ticket_id", ticket.id)
+        .eq("org_id", customer.org_id)
+        .eq("internal", false)
+        // Only the two parties to THIS conversation. 'hq' is CrewFlow talking to
+        // the org on its own helpdesk — never addressed to the customer, and
+        // previously rendered to them as though the org had written it.
+        .in("author_kind", ["customer", "org"])
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as PromiseLike<PageResult<Record<string, unknown>>>,
+  );
   if (msgsError) {
     throw readFailure("portal thread: messages", msgsError);
   }

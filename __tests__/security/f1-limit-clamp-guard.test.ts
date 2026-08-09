@@ -117,6 +117,14 @@ const PRODUCER_TABLES = new Set<string>([
   // (F-1 support wave; see the detection-limitation note in the bare-select guard.)
   "support_tickets",
   "support_messages",
+  // HQ estate / cross-tenant completeness audit (the .from(as never) cast wave) —
+  // mirrors the bare-select guard's HIGH_VALUE_TABLES. organizations (estate
+  // roster), billing_invoices (estate MRR/outstanding money), notifications and
+  // health_score_events (the .limit(Math.min(limit,1000)) boundary reads).
+  "organizations",
+  "billing_invoices",
+  "notifications",
+  "health_score_events",
 ]);
 
 /** "file:line" → reason. Only GENUINELY-bounded top-1000 samples belong here.
@@ -168,8 +176,8 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
     "bounded: 'my recent 20 jobs' widget on the profile page — a top-N display",
   "server/services/fleet-snapshot.ts:568":
     "bounded: last-50 telematics readings for a vehicle track display (recent-N sample)",
-  "server/services/hq-customer-snapshot.ts:215":
-    "bounded: last-10 payments for an HQ customer snapshot display (top-N)",
+  "server/services/hq-customer-snapshot.ts:216":
+    "bounded: last-10 payments for an HQ customer snapshot display (top-N). (Moved 215→216 when a fetchAllRows import was added for the .from(as never) cast-form wave.)",
 
   // NEW-form recency pickers — no saved reference is re-rendered through the list
   // (the EDIT counterpart resolves it separately), so no picker silent-null.
@@ -234,6 +242,21 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // Per-request id-set lookup.
   "server/services/stock.ts:233":
     "bounded: receipt movements for a specific GRN's line-id set (.in('grn_line_id', grnLineIds)) — request-sized lookup; the balance-fold read (listStockMovements) is separately paged via fetchAllRows",
+
+  // ── .from(as never) CAST-FORM WAVE — genuinely-bounded recency / per-scope
+  //    reads surfaced once notifications / health_score_events joined
+  //    PRODUCER_TABLES. Each is a recent-N display or a single-scope read, never
+  //    a complete-set aggregation, so the sub-cap .limit is honest.
+  "app/(app)/layout.tsx:32":
+    "bounded: the top nav notification bell — recent-30 notifications for ONE user in the active org (.eq('org_id').eq('user_id').limit(30)), a per-user top-N display",
+  "app/customer-portal/_future-work.ts:57":
+    "bounded: ONE customer's own portal future-work requests (.eq('org_id').eq('customer_id').eq('source','portal').limit(50)) — token-scoped to a single customer, a recent-50 display",
+  "server/services/hq-health-deep-dive.ts:298":
+    "bounded: ONE org's health-score timeline (.eq('org_id').limit(Math.min(limit,1000))) — listHealthHistoryForOrg, a per-org recent-N display (caller passes 50), not a cross-tenant set",
+  "server/services/notifications-service.ts:293":
+    "bounded: recent notifications for ONE org (.eq('org_id').order(created_at desc).limit(Math.min(limit,1000))) — getLatestNotificationsForCustomer, a top-N display (caller passes 200)",
+  "server/services/notifications-service.ts:329":
+    "bounded: recent HQ-audience notifications for the HQ bell (.in('audience',['hq','both']).order(created_at desc).limit(Math.min(limit,1000))) — getLatestNotificationsForHq, a top-N display (caller passes 200), counted/displayed not summed",
 };
 
 /** Strip block + line comments so historical `.limit(...)` mentions in prose
@@ -418,7 +441,11 @@ function escapeReg(s: string): string {
 function producerReadIndices(src: string): Array<{ table: string; index: number }> {
   const out: Array<{ table: string; index: number }> = [];
 
-  const fromRe = /\.from\(\s*["'`]([a-z_]+)["'`]\s*\)/g;
+  // Includes the `.from("table" as never)` / `.from("table" as any)` CAST idiom
+  // (tables that post-date the generated types), detected identically to a plain
+  // `.from("table")` — the optional `(?:as\s+(?:never|any))?` after the
+  // backreferenced literal. Table membership is still gated by PRODUCER_TABLES.
+  const fromRe = /\.from\(\s*["'`]([a-z_]+)["'`]\s*(?:as\s+(?:never|any)\s*)?\)/g;
   let m: RegExpExecArray | null;
   while ((m = fromRe.exec(src))) out.push({ table: m[1]!, index: m.index });
 

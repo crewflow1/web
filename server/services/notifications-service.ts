@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { queueNotificationEmail } from "@/lib/notifications/email";
 import { resolveEmailRecipient } from "@/lib/notifications/email-routing";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import {
   notificationCategoryForType,
   type NotificationRow,
@@ -247,15 +248,25 @@ async function fetchOrgEmails(
   const out = new Map<string, string | null>();
   if (orgIds.length === 0) return out;
   const c = createAdminClient();
-  const { data, error } = await c
-    .from("organizations")
-    .select("id, email")
-    .in("id", orgIds);
+  // PAGED (F-1): a cross-org emit (e.g. an estate-wide broadcast) can resolve
+  // emails for >1000 orgs in one `.in(id)` read; a max_rows=1000 clamp would
+  // silently drop recipients so those orgs never receive the email. Stable
+  // total order on the unique `id`.
+  type OrgEmailRow = { id: string; email: string | null };
+  const { data, error } = await fetchAllRows<OrgEmailRow>(
+    (from, to) =>
+      c
+        .from("organizations")
+        .select("id, email")
+        .in("id", orgIds)
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<OrgEmailRow>>,
+  );
   if (error) {
-    console.error("[notifications] fetchOrgEmails failed", error.message);
+    console.error("[notifications] fetchOrgEmails failed", (error as { message?: string }).message ?? String(error));
     return out;
   }
-  for (const r of data ?? []) {
+  for (const r of data) {
     out.set(r.id, r.email ?? null);
   }
   return out;

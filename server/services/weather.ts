@@ -38,6 +38,7 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { reportReadFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import {
   assessAll,
   getWeatherReadiness,
@@ -218,16 +219,41 @@ export async function buildWeatherSnapshot(input: {
   // of the caller's orgs watches this district, and reading through the tenant
   // client is what makes that boundary real rather than decorative. A service
   // client here would quietly bypass it.
-  const { data, error } = await supabase
-    .from("weather_readings" as never)
-    .select(
-      "postcode_district, kind, valid_at, air_temp_c, wind_speed_ms, wind_gust_ms, " +
-        "precip_rate_mm_h, precip_total_mm, precip_prob_pct, humidity_pct, visibility_m",
-    )
-    .eq("postcode_district", district)
-    .gte("valid_at", input.from.toISOString())
-    .lt("valid_at", input.to.toISOString())
-    .order("valid_at", { ascending: true });
+  // PAGED (F-1): the window is caller-controlled (arbitrary from/to) and readings
+  // accumulate per district, so a bare read is silently clamped at max_rows=1000 —
+  // a wide window would drop the tail of the window and quietly under-report the
+  // assessment. Stable total order (valid_at, id).
+  const { data, error } = await fetchAllRows<WeatherReadingRow>(
+    (from, to) =>
+      (
+        supabase.from("weather_readings" as never) as unknown as {
+          select: (c: string) => {
+            eq: (k: string, v: unknown) => {
+              gte: (k: string, v: unknown) => {
+                lt: (k: string, v: unknown) => {
+                  order: (k: string, o: { ascending: boolean }) => {
+                    order: (
+                      k: string,
+                      o: { ascending: boolean },
+                    ) => { range: (f: number, t: number) => PromiseLike<PageResult<WeatherReadingRow>> };
+                  };
+                };
+              };
+            };
+          };
+        }
+      )
+        .select(
+          "postcode_district, kind, valid_at, air_temp_c, wind_speed_ms, wind_gust_ms, " +
+            "precip_rate_mm_h, precip_total_mm, precip_prob_pct, humidity_pct, visibility_m",
+        )
+        .eq("postcode_district", district)
+        .gte("valid_at", input.from.toISOString())
+        .lt("valid_at", input.to.toISOString())
+        .order("valid_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+  );
 
   if (error) {
     // A failed read must NEVER render as an empty forecast — that is the exact
@@ -285,11 +311,32 @@ export async function buildWeatherSnapshot(input: {
 export async function readWeatherWatches(orgId: string): Promise<ReadonlyArray<WeatherWatchRow>> {
   const supabase = await createClient();
 
-  const { data, error } = await supabase
-    .from("weather_watches" as never)
-    .select("id, postcode_district, job_id, site_id, label, active")
-    .eq("org_id", orgId)
-    .order("postcode_district", { ascending: true });
+  // PAGED (F-1): watches are anchored per (org, job, district) — a large org
+  // accumulates a watch per job, so a bare read is silently clamped at
+  // max_rows=1000 and the operator's watch list would be truncated. Stable total
+  // order (postcode_district, id).
+  const { data, error } = await fetchAllRows<WeatherWatchRow>(
+    (from, to) =>
+      (
+        supabase.from("weather_watches" as never) as unknown as {
+          select: (c: string) => {
+            eq: (k: string, v: unknown) => {
+              order: (k: string, o: { ascending: boolean }) => {
+                order: (
+                  k: string,
+                  o: { ascending: boolean },
+                ) => { range: (f: number, t: number) => PromiseLike<PageResult<WeatherWatchRow>> };
+              };
+            };
+          };
+        }
+      )
+        .select("id, postcode_district, job_id, site_id, label, active")
+        .eq("org_id", orgId)
+        .order("postcode_district", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+  );
 
   if (error) {
     reportReadFailure("weather watches", error);

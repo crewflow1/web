@@ -507,8 +507,26 @@ async function featureTotals(month: MonthKey): Promise<AiCostFeatureRow[]> {
 async function orgNames(ids: ReadonlyArray<string>): Promise<Map<string, string>> {
   if (ids.length === 0) return new Map();
   try {
-    const { data } = await db(createAdminClient()).from("organizations").select("id, name").in("id", ids);
-    return new Map((data ?? []).map((r) => [String(r.id), String(r.name ?? r.id)]));
+    // PAGED (F-1): across a large estate the set of orgs with AI spend can exceed
+    // 1000, and a bare `.in(id)` read is silently clamped at max_rows=1000 —
+    // dropping names for the tail. Stable total order on the unique `id`.
+    type OrgNameRow = { id: string; name: string | null };
+    const { data } = await fetchAllRows<OrgNameRow>(
+      (from, to) =>
+        (
+          db(createAdminClient()).from("organizations").select("id, name") as unknown as {
+            in: (k: string, v: unknown[]) => {
+              order: (k: string, o: { ascending: boolean }) => {
+                range: (f: number, t: number) => PromiseLike<PageResult<OrgNameRow>>;
+              };
+            };
+          }
+        )
+          .in("id", ids as string[])
+          .order("id", { ascending: true })
+          .range(from, to),
+    );
+    return new Map(data.map((r) => [String(r.id), String(r.name ?? r.id)]));
   } catch (e) {
     console.error("[ai-cost-snapshot] org names failed", e);
     return new Map();
