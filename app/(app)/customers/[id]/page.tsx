@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { loadCustomerFinancials } from "@/lib/customers/financials";
 import { requireOrgContext } from "@/server/auth/session";
 import { updateCustomer, deleteCustomer, rotateCustomerPortalToken } from "../actions";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
@@ -41,8 +42,8 @@ export default async function EditCustomerPage({
     // ACTIVE-org pin. RLS admits every org the viewer belongs to, so org B's
     // customer opened inside org A's shell — complete with their portal token.
     // Pinning the SUBJECT also makes every rollup below derived-safe: the
-    // quote/job/lead lists key off this customer_id, and the invoice/payment
-    // lists off those quote ids.
+    // quote/job/lead lists key off this customer_id, and the invoice rollup off
+    // the same durable invoices.customer_id anchor (see loadCustomerFinancials).
     .eq("org_id", ctx.org.id)
     .maybeSingle();
 
@@ -105,75 +106,21 @@ export default async function EditCustomerPage({
   if (jobsRes.error) throw readFailure("customer detail: jobs", jobsRes.error);
   if (leadsRes.error) throw readFailure("customer detail: leads", leadsRes.error);
 
-  const quoteIds = (quotesRes.data ?? []).map((q) => q.id);
-  let invoiceRows: Array<{
-    id: string;
-    number: string;
-    status: string;
-    total: number | string | null;
-    due_date: string | null;
-    paid_at: string | null;
-    created_at: string;
-  }> = [];
-  let paymentRows: Array<{
-    id: string;
-    invoice_id: string;
-    amount: number | string | null;
-    paid_at: string;
-    reference: string | null;
-  }> = [];
-  if (quoteIds.length > 0) {
-    // F-1: page the full set — a big customer can exceed the 1000-row PostgREST
-    // cap, and these rows feed money totals (invoiced/paid/outstanding) that
-    // would silently under-report from a clamped first page.
-    const { data: invs, error: invsError } = await fetchAllRows<
-      (typeof invoiceRows)[number]
-    >(
-      (from, to) =>
-        supabase
-          .from("invoices")
-          .select("id, number, status, total, due_date, paid_at, created_at")
-          .in("quote_id", quoteIds)
-          .order("created_at", { ascending: false })
-          .order("id", { ascending: true })
-          .range(from, to) as unknown as PromiseLike<{
-          data: (typeof invoiceRows)[number][] | null;
-          error: unknown;
-        }>,
-    );
-    if (invsError) throw readFailure("customer detail: invoices", invsError);
-    invoiceRows = invs;
-    if (invoiceRows.length > 0) {
-      const { data: pays, error: paysError } = await fetchAllRows<
-        (typeof paymentRows)[number]
-      >(
-        (from, to) =>
-          supabase
-            .from("invoice_payments")
-            .select("id, invoice_id, amount, paid_at, reference")
-            .in(
-              "invoice_id",
-              invoiceRows.map((i) => i.id),
-            )
-            .order("id", { ascending: true })
-            .range(from, to) as unknown as PromiseLike<{
-            data: (typeof paymentRows)[number][] | null;
-            error: unknown;
-          }>,
-      );
-      if (paysError) throw readFailure("customer detail: payments", paysError);
-      paymentRows = pays;
-    }
-  }
-
-  // Totals
-  const totalInvoiced = invoiceRows.reduce((s, i) => s + Number(i.total ?? 0), 0);
-  const totalPaid = paymentRows.reduce((s, p) => s + Number(p.amount ?? 0), 0);
-  const outstanding = Math.max(0, totalInvoiced - totalPaid);
-  // Lifetime revenue = sum of paid invoice totals.
-  const lifetimeRevenue = invoiceRows
-    .filter((i) => i.status === "paid")
-    .reduce((s, i) => s + Number(i.total ?? 0), 0);
+  // Money rollup — anchored on the DURABLE invoices.customer_id, not the
+  // nullable quote_id. The old quote-join read (`.in("quote_id", quoteIds)`,
+  // gated on quoteIds.length) silently dropped every quote-less invoice — i.e.
+  // ALL stage/progress-billing invoices from generate_stage_invoice
+  // (quote_id NULL, customer_id set) — so a customer on stage billing had their
+  // Total invoiced / Paid / Outstanding / Lifetime revenue under-reported.
+  // loadCustomerFinancials pages the full set (F-1) and throws loud on error.
+  const {
+    invoiceRows,
+    paymentRows,
+    totalInvoiced,
+    totalPaid,
+    outstanding,
+    lifetimeRevenue,
+  } = await loadCustomerFinancials(supabase, id);
 
   // Timeline — merge quotes / invoices / jobs / payments / leads.
   type TimelineEntry = {
