@@ -411,7 +411,13 @@ const RATCHET: Array<{
   {
     scope: "app/(app)",
     dirs: ["app/(app)"],
-    discard: 60 /* +4 inherited from Trains 24-26, see docs/loud-read-failures.md */,
+    // 60 → 57 (#456 active-org read-side class): diary/[id], snags/[id] and
+    // site-reports/[id] each resolved their job-name label with a discarding
+    // `const { data: job } = await supabase.from("jobs")…` (error dropped, then
+    // `job?.customer?.name ?? "Job"` rendered on failure). All three were routed
+    // through the LOUD lib/jobs/load.ts chokepoint (loadJobForOrg — binds `error`
+    // and throws readFailure), which also pins the active org. 3 discards retired.
+    discard: 57 /* +4 inherited from Trains 24-26, see docs/loud-read-failures.md */,
     // 52 → 49: the job hub's H&S panel (_job-safety.tsx) bound `error` on all
     // three of its reads (RAMS, permits, toolbox talks), so their `?? []` now
     // sits behind a real check and stops counting as debt. A SAFETY control

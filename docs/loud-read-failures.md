@@ -284,3 +284,23 @@ fail-CLOSED active-org assert to `app/(app)/jobs/[id]/billing/actions.ts`
   (`addBillingStage`'s plan/existing reads, `deleteBillingStage`'s guard read),
   which are already in this baseline. Baseline raised in the same commit, per the
   UP rule.
+
+## Baseline lower — 2026-08-09: active-org read-side class (#456) chokepoint routing
+
+Closing the #456 active-org read-side class (`fix/activeorg-read-side-class-guard`)
+routed three detail-page job-name resolves through the LOUD `lib/jobs/load.ts`
+chokepoint (`loadJobForOrg` — binds `error`, throws `readFailure`, and pins the
+active org), retiring the discarding `const { data: job } = await
+supabase.from("jobs")…` shape at each. So the `app/(app)` discard ledger moves
+DOWN by exactly 3 (a loudness win — take it, per the DOWN rule):
+
+- **discard 60 → 57** — `diary/[id]/page.tsx`, `snags/[id]/page.tsx` and
+  `site-reports/[id]/page.tsx` each resolved their job label with
+  `const { data: job } = await supabase.from("jobs").select("id, customer:customers ( name )").eq("id", <parent>.job_id).maybeSingle()`,
+  discarding `error` and rendering `job?.customer?.name ?? "Job"` on failure.
+  Each now calls `loadJobForOrg(supabase, <parent>.job_id, ctx.org.id, …)`, so a
+  transient read failure throws to the route-group error boundary instead of a
+  silent benign label. (`toolbox/[id]/page.tsx`'s sibling resolve was already a
+  `Promise.all`-tuple read, not the discard shape; it only gained the in-chain
+  active-org pin, so no ledger movement there.) soft-data and count-only
+  unchanged. Baseline lowered in the same commit, per the DOWN rule.
