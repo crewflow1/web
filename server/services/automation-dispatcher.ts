@@ -9,7 +9,10 @@ import {
   loadRuleOverridesBestEffort,
 } from "@/server/services/automation-rules";
 import { invoiceDueDate } from "@/lib/invoices/due-date";
-import type { NotificationCreate } from "@/lib/notifications/types";
+import type {
+  NotificationCreate,
+  NotificationEmailDirective,
+} from "@/lib/notifications/types";
 import {
   AUTOMATION_RULES,
   correlationIdFor,
@@ -457,6 +460,28 @@ async function runSendEmailQueue(
   rule: AutomationRule,
 ): Promise<Record<string, unknown>> {
   const audience = event.type.startsWith("demo.") ? "hq" : "customer";
+
+  // Recipient directive. The default `{}` means "resolve from the audience" —
+  // for a customer/both audience that is `organizations.email`, the ORG's OWN
+  // inbox (see resolveEmailRecipient). That default is fine for a generic
+  // customer-audience notice, but WRONG for a `payment.recorded` receipt, which
+  // is FOR the paying customer and must reach THEM, not the org's own inbox.
+  //
+  // So for payment.recorded we resolve the payer's email explicitly (org-pinned,
+  // service-role — mirroring runCreateInvoiceDraft's resolution in this file) and
+  // set it as the directive `to`, so resolveEmailRecipient's explicit-to branch
+  // wins. If NO customer email is resolvable we SKIP-with-ok rather than let the
+  // blank-to default silently route the receipt to organizations.email — that
+  // silent org fallback was the defect this fixes.
+  let email: NotificationEmailDirective = {};
+  if (event.type === "payment.recorded") {
+    const customerEmail = await resolvePaymentCustomerEmail(event);
+    if (!customerEmail) {
+      return { ok: true, kind: "email_skipped_no_customer_email" };
+    }
+    email = { to: customerEmail };
+  }
+
   const note: NotificationCreate = {
     org_id: event.org_id,
     user_id: null,
@@ -471,11 +496,119 @@ async function runSendEmailQueue(
     source_id: event.source_id,
     metadata: { rule_id: rule.id, event_type: event.type, channel: "email" },
     // The opt-in directive that makes emitNotifications ALSO queue an email.
-    // Recipient resolved from the audience → the org's contact email.
-    email: {},
+    email,
   };
   await emitNotifications([note]);
   return { ok: true, kind: "email_queued", audience };
+}
+
+/**
+ * Resolve the PAYING customer's email for a `payment.recorded` event.
+ *
+ * A payment receipt is a customer-facing document — it must reach the customer
+ * who paid, never the org's own inbox. The `payment.recorded` payload carries no
+ * customer id/email, so we resolve it from the durable rows, org-pinned on every
+ * hop (mirroring runCreateInvoiceDraft): a foreign/absent id reads as nothing, so
+ * a crafted cross-org source_id can never leak another tenant's customer.
+ *
+ * Two source shapes, matching the dispatch sites:
+ *   - source_table = "payments"          → payments.customer_id → customers.email
+ *   - source_table = "invoice_payments"  → invoice_payments.invoice_id →
+ *                                          invoices.customer_id → customers.email
+ *
+ * Returns the trimmed email, or null when it cannot be resolved (unknown source,
+ * missing row, no linked customer, or a blank/absent customer email). A null is a
+ * deliberate SKIP signal — the caller must NOT fall back to the org address.
+ * Genuine DB read errors throw, so the run is recorded failed + retryable rather
+ * than silently swallowed.
+ */
+async function resolvePaymentCustomerEmail(
+  event: AutomationEvent,
+): Promise<string | null> {
+  const admin = createAdminClient();
+  let customerId: string | null = null;
+
+  if (event.source_table === "payments") {
+    const row = await readOneOrgScoped<{ customer_id: string | null }>(
+      admin,
+      "payments",
+      "customer_id",
+      event.source_id,
+      event.org_id,
+    );
+    customerId = row?.customer_id ?? null;
+  } else if (event.source_table === "invoice_payments") {
+    const ip = await readOneOrgScoped<{ invoice_id: string | null }>(
+      admin,
+      "invoice_payments",
+      "invoice_id",
+      event.source_id,
+      event.org_id,
+    );
+    if (ip?.invoice_id) {
+      const inv = await readOneOrgScoped<{ customer_id: string | null }>(
+        admin,
+        "invoices",
+        "customer_id",
+        ip.invoice_id,
+        event.org_id,
+      );
+      customerId = inv?.customer_id ?? null;
+    }
+  } else {
+    // Unknown payment source — do not guess a recipient.
+    return null;
+  }
+
+  if (!customerId) return null;
+
+  const customer = await readOneOrgScoped<{ email: string | null }>(
+    admin,
+    "customers",
+    "email",
+    customerId,
+    event.org_id,
+  );
+  const email = customer?.email;
+  return typeof email === "string" && email.trim().length > 0
+    ? email.trim()
+    : null;
+}
+
+/**
+ * Read a single row by (id, org_id) via the service-role client. Every hop in
+ * recipient resolution is org-pinned through this helper, so a foreign id can
+ * never resolve. A genuine read error throws; a not-found reads as null.
+ */
+async function readOneOrgScoped<T extends Record<string, unknown>>(
+  admin: ReturnType<typeof createAdminClient>,
+  table: string,
+  cols: string,
+  id: string,
+  orgId: string,
+): Promise<T | null> {
+  const res = await (
+    admin.from(table as never) as unknown as {
+      select: (c: string) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{
+              data: T | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
+      };
+    }
+  )
+    .select(cols)
+    .eq("id", id)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (res.error) {
+    throw new Error(`payment_receipt ${table} read failed: ${res.error.message}`);
+  }
+  return res.data;
 }
 
 /**

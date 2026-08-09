@@ -161,9 +161,30 @@ describe("enable-state is resolved per-org, pinned to the event's org", () => {
 describe("the wired stub actions are org-scoped + idempotent", () => {
   const disp = codeOf(read(DISPATCHER));
 
-  it("send_email_queue emits to the EVENT's org via the notification→email bridge", () => {
+  it("send_email_queue is org-scoped to the EVENT's org; payment.recorded routes to the CUSTOMER", () => {
     expect(disp).toMatch(/runSendEmailQueue\(/);
-    expect(disp).toMatch(/org_id: event\.org_id[\s\S]*?email: \{\}/);
+    // INVARIANT (must NOT weaken): the emitted notification is org-scoped to the
+    // event's org — the notification→email bridge only ever acts within one tenant.
+    expect(disp).toMatch(/const note[\s\S]*?org_id: event\.org_id/);
+    // NON-payment triggers keep the blank directive → audience routing (the org's
+    // own contact email), byte-for-byte the prior behaviour.
+    expect(disp).toMatch(/let email[^\n]*=\s*\{\}/);
+    // payment.recorded resolves the PAYING CUSTOMER's email and sets it as the
+    // explicit `to`, so the receipt reaches the customer, NOT organizations.email.
+    expect(disp).toMatch(/event\.type === "payment\.recorded"/);
+    expect(disp).toMatch(/resolvePaymentCustomerEmail\(event\)/);
+    expect(disp).toMatch(/email = \{ to: customerEmail \}/);
+    // …and when no customer email is resolvable it SKIPS — never falls back to the
+    // org address (the defect). No silent org receipt.
+    expect(disp).toMatch(/email_skipped_no_customer_email/);
+  });
+
+  it("payment.recorded recipient resolution is org-pinned on every hop", () => {
+    // Resolution reads by (id, org_id) via readOneOrgScoped, pinned to event.org_id
+    // on each hop — a foreign source_id can never resolve another tenant's customer.
+    expect(disp).toMatch(/resolvePaymentCustomerEmail\(/);
+    expect(disp).toMatch(/readOneOrgScoped[\s\S]*?event\.org_id/);
+    expect(disp).toMatch(/\.eq\("id", id\)[\s\S]*?\.eq\("org_id", orgId\)/);
   });
 
   it("create_invoice_draft pins event.org_id on read, alloc and insert", () => {
