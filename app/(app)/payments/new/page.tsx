@@ -4,6 +4,7 @@ import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { computeInvoiceBalance } from "@/lib/payments/allocation";
+import { OUTSTANDING_STATUSES } from "@/lib/invoices/schema";
 import { AllocatePaymentForm, type OutstandingInvoice } from "./_allocate-form";
 
 /**
@@ -30,7 +31,8 @@ export default async function NewPaymentPage() {
       // ACTIVE-org pin — recording a payment against the other org's invoice is a
       // money defect; the picker must only offer this org's outstanding invoices.
       .eq("org_id", ctx.org.id)
-      .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"])
+      // Canonical outstanding set — the picker must offer every unpaid invoice.
+      .in("status", OUTSTANDING_STATUSES)
       .order("due_date", { ascending: true })
       .order("id", { ascending: true })
       .range(from, to),

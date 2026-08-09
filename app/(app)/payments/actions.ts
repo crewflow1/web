@@ -8,6 +8,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { parseBankCsv, scoreInvoiceMatch } from "@/lib/payments/schema";
+import { OUTSTANDING_STATUSES } from "@/lib/invoices/schema";
 import { formError, formSuccess, type FormState } from "@/lib/forms/state";
 
 const uuid = z.string().uuid();
@@ -120,7 +121,8 @@ export async function uploadBankCsv(_prev: FormState, formData: FormData): Promi
       `,
       )
       .eq("org_id", ctx.org.id)
-      .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"])
+      // Canonical outstanding set — never a hardcoded subset.
+      .in("status", OUTSTANDING_STATUSES)
       .order("id", { ascending: true })
       .range(from, to),
   );

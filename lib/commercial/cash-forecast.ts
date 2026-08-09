@@ -1,5 +1,9 @@
 import { round2, toPounds } from "@/lib/money";
-import { invoiceBusinessToday, isInvoiceOverdue } from "@/lib/invoices/overdue";
+import {
+  OVERDUE_COLLECTABLE_STATUSES,
+  invoiceBusinessToday,
+  isInvoiceOverdue,
+} from "@/lib/invoices/overdue";
 
 /**
  * Deterministic short-horizon cash forecast (H2-CASH M3) — PURE.
@@ -40,8 +44,13 @@ import { invoiceBusinessToday, isInvoiceOverdue } from "@/lib/invoices/overdue";
  * The outlook total never adds retention in, so nothing is double-counted.
  */
 
-/** GROSS-collectable invoice statuses (money is still owed). */
-const COLLECTABLE = new Set(["sent", "awaiting_payment", "partially_paid", "overdue"]);
+/**
+ * GROSS-collectable invoice statuses (money is still owed) — derived from the
+ * canonical authority (lib/invoices/overdue.OVERDUE_COLLECTABLE_STATUSES), not a
+ * local copy, so awaiting_payment / partially_paid can never be dropped from the
+ * forecast's overdue/due buckets.
+ */
+const COLLECTABLE = new Set<string>(OVERDUE_COLLECTABLE_STATUSES);
 /** Non-draft = "billed" (issued to the customer). */
 const INVOICE_RAISED = new Set(["sent", "awaiting_payment", "partially_paid", "paid", "overdue"]);
 const ACCEPTED = "accepted";
