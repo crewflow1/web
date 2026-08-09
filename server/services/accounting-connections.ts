@@ -491,8 +491,13 @@ export async function syncToProvider(
   }
 
   // PUSH-ONCE: only rows not already in the ledger for this provider, each row
-  // carrying its immutable CrewFlow id as `sourceId`.
-  const { rows } = await buildAccountingExport({ orgId, excludePushedFor: provider });
+  // carrying its immutable CrewFlow id as `sourceId`. `pushedInvoiceNumbers` is
+  // the numbers of invoices created on a PRIOR successful run (excluded from
+  // `rows`) — the payment-link gate below needs them.
+  const { rows, pushedInvoiceNumbers } = await buildAccountingExport({
+    orgId,
+    excludePushedFor: provider,
+  });
   const invoiceRows = rows.filter((r) => r.type === "invoice");
   const paymentRows = rows.filter((r) => r.type === "payment");
   const base = {
@@ -502,23 +507,54 @@ export async function syncToProvider(
     refresh,
   };
   const invRes = await adapter.pushInvoices({ ...base, rows: invoiceRows });
-  const payRes = await adapter.pushPayments({ ...base, rows: paymentRows });
 
-  // The count the provider ACCEPTED for each kind — full count on ok, the
-  // reported prefix on a partial failure, 0 otherwise. Rows are pushed in input
-  // order, so the accepted rows are exactly the leading `accepted` of each array.
+  // The count of invoices the provider ACCEPTED — full count on ok, the reported
+  // prefix on a partial failure, 0 otherwise. Rows push in input order, so the
+  // accepted invoices are exactly the leading `invAccepted` of `invoiceRows`.
   const invAccepted = invRes.ok ? invRes.pushed : invRes.pushed ?? 0;
+
+  // ── PAYMENT-LINK GATE (launch blocker c53) ─────────────────────────────────
+  // A payment may only be pushed once its invoice EXISTS at the provider: either
+  // created in THIS run (the accepted invoice prefix) OR on a prior successful run
+  // (already in the push-once ledger — `pushedInvoiceNumbers`). WITHOUT this gate,
+  // pushing a payment whose invoice was NOT created strands it FOREVER: QBO accepts
+  // a payment carrying no LinkedTxn as a 2xx UNAPPLIED receipt, we record it in the
+  // ledger, and every future export excludes it — so the later-created invoice
+  // never receives its payment. The gate keys on `invoice_number`, exactly what
+  // each adapter resolves the invoice by (QBO DocNumber / Xero InvoiceNumber).
+  //
+  // SHARED, so it protects Xero too, without regressing Xero's self-heal: Xero
+  // already returns non-2xx for a missing invoice, so a stranded payment was never
+  // recorded there and retried. Under the gate that payment is simply not sent
+  // this run; being neither pushed NOR recorded, it reappears in the next sync's
+  // export and links once its invoice has landed — same end state, no wasted
+  // failing POST that would also abort the rest of the payment batch.
+  const createdInvoiceNumbers = new Set<string>(pushedInvoiceNumbers);
+  for (const r of invoiceRows.slice(0, invAccepted)) {
+    if (r.invoice_number) createdInvoiceNumbers.add(r.invoice_number);
+  }
+  const pushablePayments = paymentRows.filter((r) =>
+    createdInvoiceNumbers.has(r.invoice_number),
+  );
+
+  const payRes = await adapter.pushPayments({ ...base, rows: pushablePayments });
+
+  // The count of payments the provider accepted — over the GATED set, in input
+  // order, so the accepted payments are the leading `payAccepted` of
+  // `pushablePayments` (never the un-pushed, gated-out tail).
   const payAccepted = payRes.ok ? payRes.pushed : payRes.pushed ?? 0;
 
   // Record EXACTLY what landed — the accepted prefix — so it is excluded next
-  // sync and a re-run never re-sends it. A row without a sourceId (never on this
-  // path) is skipped defensively rather than mis-recorded.
+  // sync and a re-run never re-sends it. Payments are recorded from the GATED
+  // set, so a gated-out payment is never recorded and re-links next sync once its
+  // invoice exists. A row without a sourceId (never on this path) is skipped
+  // defensively rather than mis-recorded.
   const accepted: PushedEntity[] = [
     ...invoiceRows
       .slice(0, invAccepted)
       .filter((r) => r.sourceId)
       .map((r) => ({ entityType: "invoice" as const, entityId: r.sourceId! })),
-    ...paymentRows
+    ...pushablePayments
       .slice(0, payAccepted)
       .filter((r) => r.sourceId)
       .map((r) => ({ entityType: "payment" as const, entityId: r.sourceId! })),
