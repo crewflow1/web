@@ -37,7 +37,11 @@ export function Stat({
   const body = (
     <>
       <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-      <p className={`mt-1 text-xl font-bold tabular-nums sm:text-2xl ${accent ?? "text-slate-900"}`}>
+      {/* `truncate` clips a wide GBP token (a comma-grouped 7-figure fuel
+          spend has no soft-wrap opportunity) so it can never push its
+          `min-w-0` grid track past the 375px viewport. See the money-tile
+          overflow guard and e2e/fleet-mobile.spec.ts. */}
+      <p className={`mt-1 truncate text-xl font-bold tabular-nums sm:text-2xl ${accent ?? "text-slate-900"}`}>
         {value}
       </p>
       {hint ? <p className="mt-0.5 text-xs text-slate-500">{hint}</p> : null}
