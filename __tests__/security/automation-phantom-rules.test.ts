@@ -364,12 +364,18 @@ function exportedFunctionBodies(src: string): Map<string, string> {
  *
  * LIMITATION (documented, per the mandate): detection is source-shape heuristic,
  * not a type-checked dataflow. `setsStatusLiteral` keys on a `status:"<x>"` object
- * property scoped to a `from("<table>")` reference in the same function; a status
- * transition written by an unusual shape (a SECURITY DEFINER RPC that flips the
- * status server-side, or a computed status variable) would not be seen. That is
- * why (b) exists: it pins the FILE SET, so any new write-path file is forced
- * through (a). The enumerated `files` list is the authority — add a row when a new
- * write path for one of these entities lands.
+ * property scoped to a `from("<table>")` reference in the same function. The
+ * VARIABLE-status shape (`status: result.data.status` gated on
+ * `=== "completed"`) — which the jobs producers use and which made the old
+ * literal-only job.completed detector VACUOUS — is now handled by
+ * `setsJobStatusCompleted`; but a status transition written by a still-unusual
+ * shape (a SECURITY DEFINER RPC that flips the status server-side) would not be
+ * seen. That is why (b) exists: it pins the FILE SET, so any new write-path file
+ * is forced through (a). The enumerated `files` list is the authority — add a row
+ * when a new write path for one of these entities lands. Detectors must be kept
+ * NON-VACUOUS: a detector that matches zero real producers protects nothing (the
+ * exact latent gap this guard was rewritten to close), so §3.5 below pins each
+ * known producer directly.
  */
 
 /** True when `body` writes `status:"<status>"` as an object property AND
@@ -401,6 +407,76 @@ function insertsIntoTable(body: string, table: string): boolean {
     if (fm && fm[1] === table) return true;
   }
   return false;
+}
+
+/** True when `body` sets `<table>`'s status column to a VARIABLE (not a string
+ *  literal) via an insert/update — the shape the jobs producers use. For each
+ *  `.insert(`/`.update(` we resolve the NEAREST preceding `from("<x>")` (same
+ *  discipline as insertsIntoTable), require it to be `<table>`, then require a
+ *  `status: <identifier>` object property (e.g. `status: result.data.status`) in
+ *  the write object that follows. A comparison (`status === "…"`) has no colon
+ *  and is never matched; a literal (`status:"…"`) is handled by the caller's own
+ *  literal branch, not here. */
+function writesVarStatusToTable(body: string, table: string): boolean {
+  const opRe = /\.(?:insert|update)\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = opRe.exec(body))) {
+    const before = body.slice(0, m.index);
+    const lastFrom = before.lastIndexOf("from(");
+    if (lastFrom === -1) continue;
+    const fm = /from\(\s*"([a-z_]+)"/.exec(before.slice(lastFrom, lastFrom + 80));
+    if (!fm || fm[1] !== table) continue;
+    const after = body.slice(m.index, m.index + 800);
+    if (/status:\s*[A-Za-z_$][\w$.]*/.test(after)) return true;
+  }
+  return false;
+}
+
+/**
+ * True when `body` transitions a jobs row to "completed".
+ *
+ * THE C56-vacuity fix. The original job.completed detector was
+ * `setsStatusLiteral(body,"jobs","completed")`, which requires the literal regex
+ * `status:"completed"` in the body. But BOTH real producers write the status via
+ * a VALIDATED VARIABLE, never a literal:
+ *
+ *   createJob  → `.from("jobs").insert({ … status: result.data.status … })`
+ *                dispatched inside `if (result.data.status === "completed")`
+ *   updateJob  → `.from("jobs").update({ … status: result.data.status … })`
+ *                dispatched inside `if (result.data.status === "completed")`
+ *
+ * So `status:"completed"` appeared NOWHERE and the detector matched ZERO
+ * functions — making both C56 assertions (a) per-function coverage and (b)
+ * tree-wide containment silently vacuous for the flagship producer-coverage
+ * verb. Live behaviour was correct (both paths dispatch), so this was a latent
+ * guard-integrity gap, not a live defect — but the guard protected nothing.
+ *
+ * This detector keys on the WRITE INTENT instead: a `from("jobs")` reference,
+ * plus EITHER a future-proof literal `status:"completed"` write OR the real
+ * producer shape — a validated-variable status write into jobs
+ * (writesVarStatusToTable) gated on `status === "completed"`. It matches exactly
+ * createJob + updateJob and no read/aggregate (e.g. lib/reports/aggregates.ts
+ * `jobsPerWeek`, which only `.select`s and compares `j.status === "completed"`
+ * with no status-column write, is correctly NOT matched).
+ *
+ * IMPORT/COMMIT-PATH EXCLUSION (deliberate): the CSV import commit
+ * (app/(app)/imports/actions.ts) can write a jobs row with an arbitrary status —
+ * including "completed" — via the non-exported `insertOne` helper
+ * (`.from("jobs").insert({ … status: (mapped.status as string) ?? "new" … })`).
+ * It is a BULK MIGRATION path and fires ONE `import.completed` for the session,
+ * NOT a per-row `job.completed` (mirroring the schedule-drain exclusion). It is
+ * excluded here three ways: it is not an exported function (so the per-function
+ * sweep never sees it), it carries no `status === "completed"` gate, and its
+ * status value `(mapped.status …)` begins with `(` so `status:\s*[A-Za-z_$]`
+ * does not match it. If a future refactor ever surfaces it as a matched write
+ * path, add it to the job.completed `allow` map with this exclusion reason —
+ * do NOT wire a per-row dispatch onto the import path.
+ */
+function setsJobStatusCompleted(body: string): boolean {
+  if (!/from\(\s*"jobs"/.test(body)) return false;
+  if (/status:\s*"completed"/.test(body)) return true; // future-proof literal write
+  const completedGate = /status\s*===\s*["']completed["']/.test(body);
+  return completedGate && writesVarStatusToTable(body, "jobs");
 }
 
 type WritePathClass = {
@@ -452,10 +528,19 @@ const WRITE_PATH_CLASSES: WritePathClass[] = [
   },
   {
     verb: "job.completed",
-    write: 'a jobs row written to status:"completed"',
-    detect: (b) => setsStatusLiteral(b, "jobs", "completed"),
+    // The producers write the status via a VALIDATED VARIABLE
+    // (`status: result.data.status`) gated on `=== "completed"`, never a literal
+    // `status:"completed"` — see setsJobStatusCompleted for why the old
+    // literal-only detector was vacuous here.
+    write: 'a jobs row transitioned to "completed" (validated-variable status write, gated)',
+    detect: setsJobStatusCompleted,
     files: [
-      // operator create + update (the original C55 both-path site).
+      // operator create + update (the original C55 both-path site). The CSV
+      // import commit path (app/(app)/imports/actions.ts) ALSO writes jobs.status
+      // but is a bulk-migration path deliberately excluded — it fires one
+      // import.completed per session, not per-row job.completed. It is not caught
+      // by the detector (non-exported insertOne, no completed-gate, `status: (…`);
+      // see setsJobStatusCompleted's IMPORT/COMMIT-PATH EXCLUSION note.
       "app/(app)/jobs/actions.ts",
     ],
     allow: {},
@@ -524,6 +609,89 @@ describe("producer coverage — EVERY write path that reaches a verb's trigger d
             `Add each to the files list so its per-function dispatch coverage is ` +
             `enforced.`,
         ).toBe(0);
+      });
+    });
+  }
+});
+
+// ===========================================================================
+// 3.5 Direct per-function producer pins — non-vacuous by construction (C57)
+// ===========================================================================
+
+/**
+ * THE C57 CLASS (guard-integrity): a shape-class detector (§3) can silently go
+ * VACUOUS — match ZERO real producers — if the code writes a shape the detector
+ * doesn't recognise. That happened to job.completed: the producers write
+ * `status: result.data.status` (a validated VARIABLE) while the detector required
+ * a literal `status:"completed"`, so `cls.detect` matched nothing, `offenders`
+ * was always 0, `filesPerformingWrite` returned nothing, and BOTH §3 assertions
+ * passed green while protecting nothing. Deleting createJob's dispatch (the exact
+ * C55 regression) still left CI green.
+ *
+ * This block is the backstop against that failure mode. For each KNOWN producer
+ * we assert TWO things DIRECTLY, without going through the heuristic gate:
+ *
+ *   1. the function body literally dispatches `type: "<verb>"` — so deleting ANY
+ *      known producer's dispatch fails CI immediately (red-if-regressed), even
+ *      when a file-level `toMatch` would still find another producer's literal;
+ *   2. the class detector RECOGNISES this producer's body — so if a future edit
+ *      changes the write shape out from under the detector (re-introducing the
+ *      vacuity), THIS fails, forcing the detector to be fixed rather than the
+ *      guard quietly falling asleep.
+ *
+ * Enumerate every producer here when one lands. This is the authority that keeps
+ * §3 honest.
+ */
+type ProducerSite = { verb: string; file: string; fn: string };
+const PRODUCER_SITES: ProducerSite[] = [
+  // job.completed — the two originally-vacuous producers (variable status write).
+  { verb: "job.completed", file: "app/(app)/jobs/actions.ts", fn: "createJob" },
+  { verb: "job.completed", file: "app/(app)/jobs/actions.ts", fn: "updateJob" },
+  // quote.accepted — operator + primary customer-portal token path.
+  { verb: "quote.accepted", file: "app/(app)/quotes/actions.ts", fn: "acceptQuoteAsOwner" },
+  { verb: "quote.accepted", file: "app/(app)/quotes/actions.ts", fn: "acceptQuoteByToken" },
+  // support.ticket.created — operator create + both portal ticket-creators.
+  { verb: "support.ticket.created", file: "app/(app)/support/actions.ts", fn: "createSupportTicket" },
+  { verb: "support.ticket.created", file: "app/customer-portal/_message-action.ts", fn: "sendPortalMessage" },
+  { verb: "support.ticket.created", file: "app/customer-portal/_preferences-action.ts", fn: "requestProfileUpdate" },
+];
+
+describe("producer coverage — direct per-function producer pins (C57 non-vacuity backstop)", () => {
+  for (const site of PRODUCER_SITES) {
+    const cls = WRITE_PATH_CLASSES.find((c) => c.verb === site.verb);
+    const verbLiteral = new RegExp(`type:\\s*"${site.verb.replace(/\./g, "\\.")}"`);
+
+    describe(`${site.verb} @ ${site.fn}`, () => {
+      const bodies = exportedFunctionBodies(codeOf(read(site.file)));
+      const body = bodies.get(site.fn);
+
+      it("the producer function exists", () => {
+        expect(
+          body,
+          `${site.fn} not found in ${site.file} — a known ${site.verb} producer ` +
+            `was renamed or removed. Update PRODUCER_SITES (and any dispatch).`,
+        ).toBeTruthy();
+      });
+
+      it(`dispatches type "${site.verb}" (red if this producer's dispatch is deleted)`, () => {
+        expect(
+          verbLiteral.test(body ?? ""),
+          `${site.fn} @ ${site.file} no longer dispatches "${site.verb}". This is a ` +
+            `known producer — deleting its dispatchAutomation call silently kills the ` +
+            `enabled rule on this path. Restore the best-effort, correlation-id-` +
+            `idempotent dispatchAutomation({ type: "${site.verb}", … }).`,
+        ).toBe(true);
+      });
+
+      it("is recognised by its class detector (guards against the detector going vacuous)", () => {
+        expect(cls, `no WRITE_PATH_CLASSES entry for ${site.verb}`).toBeTruthy();
+        expect(
+          cls!.detect(body ?? ""),
+          `The ${site.verb} detector does NOT recognise known producer ${site.fn} — ` +
+            `the detector has gone vacuous for this shape (the C56 job.completed ` +
+            `latent gap). Fix the detector to match the real write shape; do NOT ` +
+            `weaken this assertion.`,
+        ).toBe(true);
       });
     });
   }
