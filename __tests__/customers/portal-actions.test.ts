@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildPortalActionItems,
-  isInvoiceOverdue,
-  money,
-} from "@/lib/customers/portal-actions";
+import { buildPortalActionItems, money } from "@/lib/customers/portal-actions";
 
 const TODAY = "2026-07-20";
 const TOKEN = "11111111-1111-4111-8111-111111111111";
@@ -13,15 +9,6 @@ describe("money", () => {
     expect(money(2400)).toBe("£2,400.00");
     expect(money("850.5")).toBe("£850.50");
     expect(money(null)).toBe("£0.00");
-  });
-});
-
-describe("isInvoiceOverdue", () => {
-  it("derived overdue: persisted status OR sent past its due date", () => {
-    expect(isInvoiceOverdue({ status: "overdue", due_date: null }, TODAY)).toBe(true);
-    expect(isInvoiceOverdue({ status: "sent", due_date: "2026-07-19" }, TODAY)).toBe(true);
-    expect(isInvoiceOverdue({ status: "sent", due_date: "2026-07-20" }, TODAY)).toBe(false);
-    expect(isInvoiceOverdue({ status: "paid", due_date: "2026-01-01" }, TODAY)).toBe(false);
   });
 });
 
@@ -73,6 +60,70 @@ describe("buildPortalActionItems", () => {
         { id: "q2", number: null, status: "sent", total: 100, valid_until: null, public_token: null },
       ],
       invoices: [],
+      reports: [],
+    });
+    expect(items).toHaveLength(0);
+  });
+
+  // ── Class defect: the local overdue authority recognised only {overdue, sent},
+  // so awaiting_payment / partially_paid invoices (the latter stamped by the
+  // payment-sync trigger on ANY deposit) appeared in NEITHER list. These fixtures
+  // FAIL on the pre-fix local-authority code and pass once every collectable
+  // status spans overdue + due-soon, labelled NET of payments. ──────────────────
+
+  it("a partially_paid PAST-DUE invoice APPEARS as overdue with the NET remaining label", () => {
+    const items = buildPortalActionItems({
+      token: TOKEN,
+      todayIso: TODAY,
+      quotes: [],
+      // £10k billed, £3k deposit received → owes £7k, past its due date.
+      invoices: [
+        { id: "i1", number: "INV-PP", status: "partially_paid", total: 10_000, due_date: "2026-07-01", paid: 3000 },
+      ],
+      reports: [],
+    });
+    expect(items.map((i) => i.kind)).toEqual(["invoice_overdue"]);
+    // NET, not gross £10,000.00 — and never dropped from "Needs your attention".
+    expect(items[0]!.label).toBe("Payment of £7,000.00 is overdue — invoice INV-PP");
+  });
+
+  it("an awaiting_payment PAST-DUE invoice APPEARS as overdue (not just {overdue,sent})", () => {
+    const items = buildPortalActionItems({
+      token: TOKEN,
+      todayIso: TODAY,
+      quotes: [],
+      invoices: [
+        { id: "i1", number: "INV-AW", status: "awaiting_payment", total: 2000, due_date: "2026-07-10", paid: 0 },
+      ],
+      reports: [],
+    });
+    expect(items.map((i) => i.kind)).toEqual(["invoice_overdue"]);
+    expect(items[0]!.label).toBe("Payment of £2,000.00 is overdue — invoice INV-AW");
+  });
+
+  it("a partially_paid NOT-yet-due invoice APPEARS as due-soon with the NET remaining label", () => {
+    const items = buildPortalActionItems({
+      token: TOKEN,
+      todayIso: TODAY,
+      quotes: [],
+      // £5k billed, £1k paid → owes £4k, due in the future.
+      invoices: [
+        { id: "i1", number: "INV-DUE", status: "partially_paid", total: 5000, due_date: "2026-08-01", paid: 1000 },
+      ],
+      reports: [],
+    });
+    expect(items.map((i) => i.kind)).toEqual(["invoice_due"]);
+    expect(items[0]!.label).toBe("Payment of £4,000.00 is due — invoice INV-DUE");
+  });
+
+  it("a fully-settled invoice still carrying a collectable status is NOT surfaced (no £0 item)", () => {
+    const items = buildPortalActionItems({
+      token: TOKEN,
+      todayIso: TODAY,
+      quotes: [],
+      invoices: [
+        { id: "i1", number: "INV-Z", status: "partially_paid", total: 4000, due_date: "2026-07-01", paid: 4000 },
+      ],
       reports: [],
     });
     expect(items).toHaveLength(0);

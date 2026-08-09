@@ -5,6 +5,11 @@ import {
   computePortalPayments,
   type PortalInvoiceLite,
 } from "@/lib/customers/portal-payments";
+import {
+  buildPortalActionItems,
+  type PortalActionInvoice,
+} from "@/lib/customers/portal-actions";
+import { OVERDUE_COLLECTABLE_STATUSES } from "@/lib/invoices/overdue";
 
 /**
  * CROSS-SURFACE MONEY CONSISTENCY — the customer portal HOME "Outstanding" tile
@@ -93,6 +98,66 @@ describe("portal money surfaces agree (home Outstanding == invoices Due now)", (
     // The whole point: the old home number and the invoices-tab number DISAGREED.
     // On the unified authority they are identical.
     expect(preFixHomeOutstanding).not.toBe(summary.dueNow);
+  });
+
+  it("the OVERVIEW page feeds buildPortalActionItems the netted paid map (no gross labels, no same-page contradiction)", () => {
+    // The action centre and the Outstanding tile describe the SAME balances on
+    // the SAME page. Pre-fix the tile netted via computePortalPayments while the
+    // action centre got the RAW invoices array (paidByInvoice NOT passed) and
+    // labelled gross — the exact same-page contradiction C53 exists to end.
+    expect(OVERVIEW).toMatch(/buildPortalActionItems\(/);
+    // The paidByInvoice map the tile builds must reach the action centre.
+    expect(OVERVIEW).toMatch(/invoices: invoices\.map\([\s\S]{0,160}?paidByInvoice\.get\(/);
+  });
+});
+
+describe("action centre surfaces EVERY outstanding status, always NET (customer surface)", () => {
+  const TODAY = "2026-07-20";
+  const TOKEN = "11111111-1111-4111-8111-111111111111";
+  const inv = (o: Partial<PortalActionInvoice>): PortalActionInvoice => ({
+    id: o.id ?? "i1",
+    number: o.number ?? "INV-1",
+    status: o.status ?? "sent",
+    total: o.total ?? 0,
+    due_date: o.due_date ?? null,
+    paid: o.paid ?? 0,
+  });
+
+  it("EVERY OVERDUE_COLLECTABLE_STATUSES member, past due, appears in 'Needs your attention'", () => {
+    // The pre-fix local authority accepted only {overdue, sent} — awaiting_payment
+    // and partially_paid (trigger-stamped on any deposit) vanished from BOTH lists.
+    for (const status of OVERDUE_COLLECTABLE_STATUSES) {
+      const items = buildPortalActionItems({
+        token: TOKEN,
+        todayIso: TODAY,
+        quotes: [],
+        invoices: [inv({ status, total: 1000, due_date: "2026-07-01", paid: 0 })],
+        reports: [],
+      });
+      expect(items.map((i) => i.kind), `status=${status} must surface`).toEqual([
+        "invoice_overdue",
+      ]);
+    }
+  });
+
+  it("a partially-paid invoice is NEVER labelled at its gross total (labels are net remaining)", () => {
+    const items = buildPortalActionItems({
+      token: TOKEN,
+      todayIso: TODAY,
+      quotes: [],
+      invoices: [
+        inv({ status: "partially_paid", total: 10_000, due_date: "2026-07-01", paid: 9000 }), // owes 1,000
+        inv({ id: "i2", number: "INV-2", status: "partially_paid", total: 5000, due_date: "2026-08-01", paid: 1000 }), // owes 4,000
+      ],
+      reports: [],
+    });
+    for (const item of items) {
+      expect(item.label, "gross total must never leak into a label").not.toMatch(
+        /£10,000\.00|£5,000\.00/,
+      );
+    }
+    expect(items.find((i) => i.kind === "invoice_overdue")!.label).toContain("£1,000.00");
+    expect(items.find((i) => i.kind === "invoice_due")!.label).toContain("£4,000.00");
   });
 
   it("nets payments across a mixed set (paging correctness of the aggregate)", () => {

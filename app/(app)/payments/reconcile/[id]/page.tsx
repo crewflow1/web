@@ -6,6 +6,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { confirmBankMatch, ignoreBankLine } from "../../actions";
 import { StateForm } from "@/components/forms/StateForm";
+import { OUTSTANDING_STATUSES } from "@/lib/invoices/schema";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -66,7 +67,8 @@ export default async function ReconcilePage({
         .from("invoices")
         .select("id, number, total, status")
         .eq("org_id", ctx.org.id)
-        .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"])
+        // Canonical outstanding set — the full candidate ledger for matching.
+        .in("status", OUTSTANDING_STATUSES)
         .order("id", { ascending: true })
         .range(from, to),
     ),

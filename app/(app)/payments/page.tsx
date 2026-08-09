@@ -6,6 +6,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { uploadBankCsv } from "./actions";
 import { StateForm } from "@/components/forms/StateForm";
 import { computeReceivables } from "@/lib/invoices/receivables";
+import { OUTSTANDING_STATUSES } from "@/lib/invoices/schema";
 
 /**
  * Payments overview — entry point for bank reconciliation.
@@ -55,7 +56,9 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
         .from("invoices")
         .select("id, number, total, due_date, status")
         .eq("org_id", ctx.org.id)
-        .in("status", ["sent", "awaiting_payment", "partially_paid", "overdue"])
+        // Canonical outstanding set — never a hardcoded subset (which would drop
+        // trigger-stamped awaiting_payment / partially_paid from the total).
+        .in("status", OUTSTANDING_STATUSES)
         .order("due_date", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to),

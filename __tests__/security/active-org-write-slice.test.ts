@@ -306,7 +306,7 @@ describe("payments — the bank matcher must score one company's ledger", () => 
     expect(
       F,
       "unpinned, org A's bank lines were auto-matched to org B's invoices",
-    ).toMatch(/from\("invoices"\)[\s\S]*?\.eq\("org_id", ctx\.org\.id\)\s*\.in\("status"/);
+    ).toMatch(/from\("invoices"\)[\s\S]*?\.eq\("org_id", ctx\.org\.id\)[\s\S]*?\.in\("status"/);
   });
 
   it("uploadBankCsv no longer claims RLS scopes that read", () => {

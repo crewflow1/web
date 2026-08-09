@@ -187,7 +187,11 @@ export default async function PortalOverviewPage({
     token,
     todayIso: today,
     quotes: allQuotes,
-    invoices,
+    // Pass the SAME per-invoice paid map the Outstanding tile nets through, so
+    // the action centre labels the NET balance owed (invoiceRemaining) and can
+    // never contradict the tile on the same page — the C53 same-page rule, now
+    // enforced on a customer surface.
+    invoices: invoices.map((i) => ({ ...i, paid: paidByInvoice.get(i.id) ?? 0 })),
     reports: [],
   });
 

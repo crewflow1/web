@@ -168,9 +168,13 @@ describe("payments uploadBankCsv — the match-scoring read is pinned", () => {
     // Unpinned, the scorer could write a 'suggested' match naming the OTHER
     // company's invoice onto this org's bank line. (The confirm path's own
     // org re-check is owned by bank-match-invoice-org-scope.test.ts.)
+    //
+    // The status filter is now the canonical OUTSTANDING_STATUSES, not a copyable
+    // hardcoded ["sent",…] literal (a copy can silently drop awaiting_payment /
+    // partially_paid — see invoice-outstanding-authority-guard.test.ts).
     const F = fn(src("app/(app)/payments/actions.ts"), "uploadBankCsv");
     expect(F).toMatch(
-      /\.from\("invoices"\)[\s\S]{0,300}?\.eq\("org_id", ctx\.org\.id\)\s*\.in\("status", \["sent", "awaiting_payment", "partially_paid", "overdue"\]\)/,
+      /\.from\("invoices"\)[\s\S]{0,300}?\.eq\("org_id", ctx\.org\.id\)[\s\S]{0,120}?\.in\("status", OUTSTANDING_STATUSES\)/,
     );
   });
 });

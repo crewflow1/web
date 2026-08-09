@@ -1,5 +1,6 @@
 import { round2, sumMoney } from "@/lib/money";
 import { labelled, type LabelledMetric } from "@/lib/intelligence/provenance";
+import { OUTSTANDING_STATUSES } from "@/lib/invoices/schema";
 
 /**
  * CUSTOMER LIFETIME VALUE — deterministic, two-certainty. PURE.
@@ -55,8 +56,14 @@ import { labelled, type LabelledMetric } from "@/lib/intelligence/provenance";
 
 /** Fully settled — the realised value. */
 const REALISED_STATUS = new Set(["paid"]);
-/** Issued but not yet fully settled — the committed value. Draft excluded. */
-const COMMITTED_STATUS = new Set(["sent", "awaiting_payment", "partially_paid", "overdue"]);
+/**
+ * Issued but not yet fully settled — the committed value. Draft excluded, paid
+ * excluded. This IS the canonical outstanding set (lib/invoices/schema.
+ * OUTSTANDING_STATUSES = sent · awaiting_payment · partially_paid · overdue);
+ * derived from it, never a local copy, so a trigger-stamped partially_paid /
+ * awaiting_payment deposit can never silently drop out of committed value.
+ */
+const COMMITTED_STATUS = new Set<string>(OUTSTANDING_STATUSES);
 
 export const CUSTOMER_LTV_TOP_N = 8;
 export const UNATTRIBUTED_LABEL = "Unattributed";
