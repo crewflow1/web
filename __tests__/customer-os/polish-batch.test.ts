@@ -109,14 +109,23 @@ describe("list pages accept ?customer= filter", () => {
     expect(f).toMatch(/\.eq\("customer_id", customerFilter\)/);
   });
 
-  it("/invoices accepts the customer UUID + joins through quotes", () => {
+  it("/invoices accepts the customer UUID + filters by invoices.customer_id", () => {
     const f = read("app/(app)/invoices/page.tsx");
     expect(f).toMatch(/customer\?:\s*string/);
     expect(f).toMatch(/UUID_RE/);
-    // Invoices join via quotes.customer_id since invoices doesn't have
-    // its own customer_id column.
-    expect(f).toMatch(/quote:quotes!inner/);
-    expect(f).toMatch(/\.eq\("quote\.customer_id", customerFilter\)/);
+    // Invoices filter on the DURABLE invoices.customer_id anchor (composite FK,
+    // migration 20260915000000) — NOT through a quotes!inner join. The old join
+    // dropped every quote-less stage/progress-billing invoice (quote_id NULL,
+    // generate_stage_invoice) from both the list and its exact count. See
+    // __tests__/security/invoices-customer-filter-anchor.test.ts for the guard.
+    expect(f).toMatch(/\.eq\("customer_id", customerFilter\)/);
+    // Strip comments before the negative checks: the file's comments explain the
+    // old shape (`quote:quotes!inner`), which must not count as a re-offence.
+    const code = f
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+    expect(code).not.toMatch(/quote:quotes!inner/);
+    expect(code).not.toMatch(/\.eq\("quote\.customer_id", customerFilter\)/);
   });
 
   it("invalid UUIDs are rejected, falling back to null (no filter)", () => {
