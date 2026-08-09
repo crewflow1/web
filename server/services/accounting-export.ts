@@ -79,6 +79,15 @@ export type AccountingExport = {
    * note) and the service already reported it loudly.
    */
   truncated: boolean;
+  /**
+   * PUSH PATH ONLY (`excludePushedFor` set): the `invoice_number`s of invoices
+   * ALREADY recorded in the push-once ledger — i.e. created on a PRIOR successful
+   * run and therefore EXCLUDED from `rows` this run. The sync's payment-link gate
+   * needs these so a payment whose invoice landed on an earlier sync (but is no
+   * longer in this batch) is still recognised as linkable. Empty/undefined on the
+   * CSV path, which pushes nothing and reads no ledger.
+   */
+  pushedInvoiceNumbers?: Set<string>;
 };
 
 /**
@@ -215,10 +224,24 @@ export async function buildAccountingExport(params: {
   // the push-once ledger so the batch contains ONLY not-yet-pushed rows. LOUD:
   // a failed read throws (never a silent "nothing excluded" that would re-push
   // the whole history and duplicate every invoice).
-  let invDbRows = invCap.rows as ReadonlyArray<{ id?: string }>;
+  let invDbRows = invCap.rows as ReadonlyArray<{ id?: string; number?: string | null }>;
   let payDbRows = payCap.rows as ReadonlyArray<{ id?: string }>;
+  // The invoice numbers of invoices ALREADY at the provider (created on a prior
+  // successful run). Threaded to the result so the sync's payment-link gate can
+  // recognise a payment whose invoice landed earlier — that invoice is excluded
+  // from `rows` below, so its number would otherwise be invisible this run.
+  let pushedInvoiceNumbers: Set<string> | undefined;
   if (excludePushedFor) {
     const pushed = await readPushedEntityIds(supabase, orgId, excludePushedFor);
+    // Compute the already-pushed invoice numbers from the FULL (pre-exclusion)
+    // invoice set — mapping the ledger's invoice source ids back to the numbers
+    // the providers link payments by (QBO DocNumber / Xero InvoiceNumber).
+    pushedInvoiceNumbers = new Set<string>();
+    for (const r of invDbRows) {
+      if (pushed.invoice.has(String(r.id)) && r.number) {
+        pushedInvoiceNumbers.add(String(r.number));
+      }
+    }
     invDbRows = invDbRows.filter((r) => !pushed.invoice.has(String(r.id)));
     payDbRows = payDbRows.filter((r) => !pushed.payment.has(String(r.id)));
   }
@@ -279,6 +302,7 @@ export async function buildAccountingExport(params: {
     invoiceCount: windowedInvoices.length,
     paymentCount: payments.length,
     truncated,
+    pushedInvoiceNumbers,
   };
 }
 

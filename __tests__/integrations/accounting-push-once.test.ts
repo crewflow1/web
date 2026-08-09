@@ -163,6 +163,12 @@ const adapterCfg = {
   payResult: null as unknown,
   invRows: [] as Row[],
   payRows: [] as Row[],
+  // When true, pushPayments accepts EVERY row it is given (pushed == input length).
+  // This models QBO's defect substrate: it returns a 2xx even for a payment whose
+  // invoice does not exist (recording it UNAPPLIED). The payment-link gate lives in
+  // syncToProvider, so with this on the test proves the gate — not the adapter — is
+  // what stops a stranded unapplied payment being sent + recorded.
+  payAcceptsAll: false,
 };
 
 vi.mock("@/lib/integrations/accounting/adapters", () => ({
@@ -175,6 +181,9 @@ vi.mock("@/lib/integrations/accounting/adapters", () => ({
     },
     pushPayments: async (input: { rows: Row[] }) => {
       adapterCfg.payRows = input.rows;
+      if (adapterCfg.payAcceptsAll) {
+        return { ok: true, provider: "xero", pushed: input.rows.length };
+      }
       return adapterCfg.payResult;
     },
   }),
@@ -215,6 +224,30 @@ function invoiceRow(id: string, number: string, sentAt: string): Row {
   };
 }
 
+function paymentRow(id: string, invoiceNumber: string, paidAt: string): Row {
+  return {
+    id,
+    amount: 120,
+    paid_at: paidAt,
+    invoice: { number: invoiceNumber, customer: { name: "Acme Ltd" }, quote: null },
+  };
+}
+
+/**
+ * Mirror what a successful sync recorded (pushedUpserts) into the in-memory
+ * ledger, so a SUBSEQUENT buildAccountingExport sees those rows as already
+ * pushed — the fake upsert only captures, it does not mutate `ledger`. Lets a
+ * two-sync sequence be proven end-to-end.
+ */
+function commitLedger() {
+  for (const batch of dbState.pushedUpserts) {
+    for (const r of batch) {
+      dbState.ledger.push({ entity_type: r.entity_type, entity_id: r.entity_id });
+    }
+  }
+  dbState.pushedUpserts = [];
+}
+
 beforeEach(() => {
   resetDb();
   adapterCfg.available = true;
@@ -222,6 +255,7 @@ beforeEach(() => {
   adapterCfg.payResult = null;
   adapterCfg.invRows = [];
   adapterCfg.payRows = [];
+  adapterCfg.payAcceptsAll = false;
 });
 
 afterEach(() => {
@@ -433,5 +467,153 @@ describe("disconnect / rebind resets the push-once ledger", () => {
     const filters = Object.fromEntries(dbState.ledgerDeletes[0]!.filters);
     expect(filters.org_id).toBe(ORG);
     expect(filters.provider).toBe("quickbooks");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E. PAYMENT-LINK GATE (launch blocker c53) — a payment is pushed ONLY once its
+//    invoice exists at the provider.
+//
+// THE BUG. `syncToProvider` ran `pushInvoices` then `pushPayments` back-to-back
+// with NO gate: pushPayments received ALL payment rows even when the invoice push
+// failed. QBO accepts a payment whose invoice was never created as a 2xx UNAPPLIED
+// receipt; syncToProvider counted it and recorded its id in the push-once ledger,
+// and `excludePushedFor` then dropped it from every future export — so the payment
+// was stranded UNAPPLIED FOREVER, even after the invoice was created on a retry.
+// The most reachable trigger is the FIRST sync of a QBO realm with no Service item
+// / VAT code: invoices fail at pushed=0 while ALL payments record unapplied, and
+// the surfaced error mentions invoices only, so the loss is silent.
+//
+// THE FIX, proven here (`payAcceptsAll` models QBO's graceful acceptance):
+//   (a) a mid-batch OR complete invoice failure ⇒ payments referencing a
+//       not-yet-created invoice are NOT sent and NOT recorded;
+//   (b) a subsequent sync, after the invoices succeed, DOES push + link them;
+//   (c) in the SAME run, a payment whose invoice WAS created still pushes.
+// ---------------------------------------------------------------------------
+
+describe("payment-link gate: never push a payment whose invoice was not created", () => {
+  it("(a) COMPLETE invoice failure (pushed=0, e.g. no Service item) sends + records NO payment", async () => {
+    dbState.secrets = connectedSecrets();
+    dbState.invoices = [
+      invoiceRow("inv-A", "INV-A", "2026-07-01T09:00:00Z"),
+      invoiceRow("inv-B", "INV-B", "2026-07-02T09:00:00Z"),
+    ];
+    // Both payments reference invoices that this run FAILS to create.
+    dbState.payments = [
+      paymentRow("pay-A", "INV-A", "2026-07-05"),
+      paymentRow("pay-B", "INV-B", "2026-07-06"),
+    ];
+    dbState.ledger = [];
+    // The QBO trigger: the invoice push fails up front at pushed=0.
+    adapterCfg.invResult = {
+      ok: false,
+      provider: "xero",
+      reason: "error",
+      message:
+        "QuickBooks has no Service item to post invoice lines against; create one first.",
+      pushed: 0,
+    };
+    adapterCfg.payAcceptsAll = true; // QBO would accept the payments UNAPPLIED.
+
+    const res = await syncToProvider(ORG, "xero", "actor-1");
+    expect(res.ok).toBe(false);
+
+    // The gate stopped BOTH payments from ever reaching the adapter…
+    expect(adapterCfg.payRows).toEqual([]);
+    // …and nothing (invoice or payment) was recorded in the push-once ledger, so
+    // the next sync re-attempts everything (no stranded unapplied payment).
+    const recorded = dbState.pushedUpserts.flat();
+    expect(recorded).toHaveLength(0);
+  });
+
+  it("(a) MID-BATCH invoice failure ⇒ (c) the created invoice's payment pushes, the failed one's does NOT", async () => {
+    dbState.secrets = connectedSecrets();
+    dbState.invoices = [
+      invoiceRow("inv-A", "INV-A", "2026-07-01T09:00:00Z"),
+      invoiceRow("inv-B", "INV-B", "2026-07-02T09:00:00Z"),
+    ];
+    dbState.payments = [
+      paymentRow("pay-A", "INV-A", "2026-07-05"), // invoice A IS created this run
+      paymentRow("pay-B", "INV-B", "2026-07-06"), // invoice B FAILS this run
+    ];
+    dbState.ledger = [];
+    // A accepted (pushed:1), then B failed.
+    adapterCfg.invResult = {
+      ok: false,
+      provider: "xero",
+      reason: "error",
+      message: "QuickBooks invoice push returned 400",
+      pushed: 1,
+    };
+    adapterCfg.payAcceptsAll = true;
+
+    const res = await syncToProvider(ORG, "xero", "actor-1");
+    expect(res.ok).toBe(false);
+
+    // Only pay-A (invoice created this run) was sent; pay-B was gated out.
+    expect(adapterCfg.payRows.map((r) => r.sourceId)).toEqual(["pay-A"]);
+    // Recorded: invoice A + payment A only. B (invoice) and pay-B are absent, so
+    // both retry next sync — pay-B is never stranded unapplied.
+    const recorded = dbState.pushedUpserts.flat();
+    expect(
+      recorded.filter((r) => r.entity_type === "invoice").map((r) => r.entity_id),
+    ).toEqual(["inv-A"]);
+    expect(
+      recorded.filter((r) => r.entity_type === "payment").map((r) => r.entity_id),
+    ).toEqual(["pay-A"]);
+  });
+
+  it("(b) end-to-end: fail → nothing; retry after invoices succeed → payment pushes + links", async () => {
+    dbState.secrets = connectedSecrets();
+    dbState.invoices = [invoiceRow("inv-A", "INV-A", "2026-07-01T09:00:00Z")];
+    dbState.payments = [paymentRow("pay-A", "INV-A", "2026-07-05")];
+    dbState.ledger = [];
+    adapterCfg.payAcceptsAll = true;
+
+    // ── Sync 1: no Service item → invoices fail at 0; payment must not strand. ──
+    adapterCfg.invResult = {
+      ok: false,
+      provider: "xero",
+      reason: "error",
+      message: "QuickBooks has no Service item; create one first.",
+      pushed: 0,
+    };
+    const first = await syncToProvider(ORG, "xero", "actor-1");
+    expect(first.ok).toBe(false);
+    expect(adapterCfg.payRows).toEqual([]);
+    expect(dbState.pushedUpserts.flat()).toHaveLength(0);
+    commitLedger(); // records nothing — ledger stays empty.
+
+    // ── Sync 2: operator created the Service item → invoices now succeed. ──
+    adapterCfg.invResult = { ok: true, provider: "xero", pushed: 1 };
+    const second = await syncToProvider(ORG, "xero", "actor-1");
+    expect(second.ok).toBe(true);
+
+    // Now the invoice was created this run, so its payment pushes and links.
+    expect(adapterCfg.payRows.map((r) => r.sourceId)).toEqual(["pay-A"]);
+    const recorded = dbState.pushedUpserts.flat();
+    expect(recorded.map((r) => r.entity_id).sort()).toEqual(["inv-A", "pay-A"]);
+  });
+
+  it("(b/prior-run) a payment whose invoice is ALREADY in the ledger pushes even though no invoice is in this batch", async () => {
+    dbState.secrets = connectedSecrets();
+    // Invoice A was created on a PRIOR run (in the ledger); it is excluded from
+    // this run's export, so the batch carries no invoice rows.
+    dbState.invoices = [invoiceRow("inv-A", "INV-A", "2026-07-01T09:00:00Z")];
+    dbState.payments = [paymentRow("pay-A", "INV-A", "2026-07-05")];
+    dbState.ledger = [{ entity_type: "invoice", entity_id: "inv-A" }];
+    // No invoice rows to push this run.
+    adapterCfg.invResult = { ok: true, provider: "xero", pushed: 0 };
+    adapterCfg.payAcceptsAll = true;
+
+    const res = await syncToProvider(ORG, "xero", "actor-1");
+    expect(res.ok).toBe(true);
+
+    // The adapter was asked to push NO invoices…
+    expect(adapterCfg.invRows).toEqual([]);
+    // …but pay-A is recognised as linkable (its invoice number is in
+    // pushedInvoiceNumbers) and is pushed + recorded.
+    expect(adapterCfg.payRows.map((r) => r.sourceId)).toEqual(["pay-A"]);
+    expect(dbState.pushedUpserts.flat().map((r) => r.entity_id)).toEqual(["pay-A"]);
   });
 });
