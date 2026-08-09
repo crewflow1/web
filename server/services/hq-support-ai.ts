@@ -41,8 +41,9 @@ export type SupportBoardResult = {
  * Assemble the deterministic support triage board. Super-admin gated
  * (`requireHqPage` → /login for anonymous, 404 for non-allowlisted), then reads
  * the tickets cross-tenant on the service-role path and attaches the (dark)
- * narrative. Loud reads: the underlying snapshot logs and degrades rather than
- * throwing on a read error.
+ * narrative. Loud reads: the underlying snapshot (`listSupportTicketRowsForHq`)
+ * pages the full cross-tenant set and THROWS `readFailure` on a read error — a
+ * silently-partial (or empty) triage board is never presented as fact.
  */
 export async function loadSupportBoard(): Promise<SupportBoardResult> {
   await requireHqPage(); // HQ-only; never mixes with tenant auth.

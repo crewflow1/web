@@ -110,6 +110,13 @@ const PRODUCER_TABLES = new Set<string>([
   // Sites/addresses — a quote/job reference picker; a capped read nulls an
   // out-of-cap property_id on edit. (F-1 picker-class wave.)
   "properties",
+  // Support OS — CROSS-TENANT service-role reads mapped + counted in JS into the
+  // /admin/support board, the /admin/support-ai triage board, and hq-product's CEO
+  // demand aggregation; mirrors the bare-select guard's HIGH_VALUE_TABLES. A
+  // `.limit(1000)`-on-the-boundary clamp here is the same silent-truncation trap.
+  // (F-1 support wave; see the detection-limitation note in the bare-select guard.)
+  "support_tickets",
+  "support_messages",
 ]);
 
 /** "file:line" → reason. Only GENUINELY-bounded top-1000 samples belong here.

@@ -87,6 +87,31 @@ const HIGH_VALUE_TABLES = new Set<string>([
   // sites from the builder and — on an edit — nulls an out-of-cap property_id.
   // (F-1 picker-class wave.)
   "properties",
+  // Support OS: CROSS-TENANT service-role reads (createAdminClient, no org pin)
+  // whose FULL row set is mapped + counted in JS into figures the pure layers
+  // label "fact" — the live /admin/support board + KPI tiles, the /admin/support-ai
+  // triage board, and hq-product's CEO demand aggregation. A clamped read silently
+  // truncated all three at 1000 cross-tenant rows. (F-1 support wave; the fix paged
+  // every set read in server/services/hq-support-snapshot.ts via fetchAllRows.)
+  // support_messages: the batched per-ticket thread reads (list preview +
+  // internal-notes flag, and the full HQ detail thread) — a clamp drops the
+  // newest replies and corrupts the derived flags.
+  //
+  // KNOWN DETECTION LIMITATION (reported for a scoped follow-up, NOT closed here):
+  // every real support read uses either a `.from("support_tickets" as never)` CAST
+  // (the idiom for tables that post-date the generated types) or a
+  // `function adminTable(name){ return admin.from(name as never) }` /
+  // `function table(name){…}` DECLARATION-wrapper called with a single literal arg
+  // — and BOTH forms are invisible to the direct/arrow-wrapper matchers below. So
+  // listing these tables makes the guard bite the STANDARD literal shape (proved by
+  // the delete-the-fix test) and any future literal read, but does NOT yet police
+  // the existing cast/decl-wrapper reads. Teaching the matchers those two forms
+  // surfaces 11 offenders across 6+ tables (6 pre-existing bounded money-table
+  // reads hidden by the cast, plus support reads in hq-health-deep-dive.ts /
+  // customer-support-service.ts / customer-portal) — over the wave's 10-offender
+  // stop line, so it is deferred to its own wave rather than mass-edited here.
+  "support_tickets",
+  "support_messages",
 ]);
 
 // "file:line" → reason. Keep tight; every entry is a documented smell.
@@ -468,6 +493,72 @@ describe("F-1 bare-select guard — high-value table reads must page or be singl
       `);`,
     ].join("\n");
     expect(offendersIn("server/services/weather-fetch.ts", postFix)).toEqual([]);
+  });
+
+  // ── SUPPORT OS teeth (delete-the-fix) ───────────────────────────────────────
+  // The F-1 defect that motivated adding support_tickets/support_messages: HQ
+  // cross-tenant reads (server/services/hq-support-snapshot.ts) mapped + counted
+  // the FULL row set into "fact" figures on the live /admin/support board and
+  // hq-product's CEO demand aggregation, but read with a bare `.select().order()`
+  // that PostgREST silently clamps to max_rows=1000. If someone deletes the paging
+  // fix (page → unpage), the guard MUST flag it again — proved here for both
+  // tables, in the standard literal read shape.
+  it("has TEETH: flags UNPAGED support_tickets / support_messages set reads (delete-the-fix)", () => {
+    // support_tickets — the triage-board / demand read, unpaged (the pre-fix shape).
+    const ticketsUnpaged = [
+      `const res = await admin`,
+      `  .from("support_tickets")`,
+      `  .select("id, category, status, created_at")`,
+      `  .order("created_at", { ascending: false });`,
+      `return (res.data ?? []);`,
+    ].join("\n");
+    const tFlagged = offendersIn("server/services/hq-support-snapshot.ts", ticketsUnpaged);
+    expect(
+      tFlagged.some((o) => o.includes("support_tickets")),
+      "unpaged support_tickets set read must be flagged",
+    ).toBe(true);
+
+    // support_messages — the batched per-ticket thread read, unpaged.
+    const messagesUnpaged = [
+      `const msgRes = await admin`,
+      `  .from("support_messages")`,
+      `  .select("id, ticket_id, body, internal, created_at")`,
+      `  .in("ticket_id", ticketIds)`,
+      `  .order("created_at", { ascending: false });`,
+      `return (msgRes.data ?? []);`,
+    ].join("\n");
+    const mFlagged = offendersIn("server/services/hq-support-snapshot.ts", messagesUnpaged);
+    expect(
+      mFlagged.some((o) => o.includes("support_messages")),
+      "unpaged support_messages set read must be flagged",
+    ).toBe(true);
+  });
+
+  it("does not flag the PAGED support reads (the shipped fetchAllRows fix)", () => {
+    const ticketsPaged = [
+      `const { data, error } = await fetchAllRows((from, to) =>`,
+      `  admin`,
+      `    .from("support_tickets")`,
+      `    .select("id, category, status, created_at")`,
+      `    .order("created_at", { ascending: false })`,
+      `    .order("id", { ascending: false })`,
+      `    .range(from, to),`,
+      `);`,
+    ].join("\n");
+    expect(offendersIn("server/services/hq-support-snapshot.ts", ticketsPaged)).toEqual([]);
+
+    const messagesPaged = [
+      `const { data, error } = await fetchAllRows((from, to) =>`,
+      `  admin`,
+      `    .from("support_messages")`,
+      `    .select("id, ticket_id, body, internal, created_at")`,
+      `    .in("ticket_id", chunk)`,
+      `    .order("created_at", { ascending: false })`,
+      `    .order("id", { ascending: false })`,
+      `    .range(from, to),`,
+      `);`,
+    ].join("\n");
+    expect(offendersIn("server/services/hq-support-snapshot.ts", messagesPaged)).toEqual([]);
   });
 
   // The .limit(1000) BOUNDARY teeth: the exact shape the live invoice.overdue
