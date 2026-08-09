@@ -148,12 +148,37 @@ describeIntegration("automation engine · overrides, wired actions, drain", () =
 
   // ── B. send_email_queue is wired + org-scoped ────────────────────────────────
 
-  it("send_email_queue queues a real email row for the event's org", async () => {
+  it("send_email_queue queues a real receipt email addressed to the CUSTOMER (org-scoped)", async () => {
+    // The org's OWN contact address — the receipt must NOT land here (the defect).
     const org = await makeOrg("Email Probe", "receipts@probe.test");
     orgs.push(org);
     await setOverride(org, "payment_recorded_email_receipt", true);
 
-    const src = uuid();
+    // Seed a real paying customer WITH an email, and a payment linked to them.
+    // A payment receipt is FOR the payer, so resolution goes
+    // payments.customer_id → customers.email, and the queued email must be
+    // addressed to THAT customer — never the org's own inbox.
+    const customerEmail = `payer-${Math.random().toString(36).slice(2, 8)}@customer.test`;
+    const cust = await svc()
+      .from("customers")
+      .insert({ org_id: org, name: "Paying Customer", email: customerEmail })
+      .select("id")
+      .single();
+    expect(cust.error, cust.error?.message).toBeNull();
+    const payment = await svc()
+      .from("payments")
+      .insert({
+        org_id: org,
+        customer_id: cust.data?.id,
+        amount: 120,
+        paid_at: new Date().toISOString().slice(0, 10),
+        method: "bank_transfer",
+      })
+      .select("id")
+      .single();
+    expect(payment.error, payment.error?.message).toBeNull();
+    const src = String(payment.data?.id);
+
     const res = await dispatchAutomation({
       type: "payment.recorded" as never,
       org_id: org,
@@ -174,14 +199,17 @@ describeIntegration("automation engine · overrides, wired actions, drain", () =
     expect(note.data?.org_id).toBe(org);
     expect(String(note.data?.type)).toBe("automation.payment.recorded.email");
 
-    // …and a REAL row landed on the email queue for THIS org.
+    // …and a REAL row landed on the email queue for THIS org, addressed to the
+    // CUSTOMER — NOT organizations.email (which was the org-fallback defect).
     const q = await svc()
       .from("notification_email_queue")
-      .select("id, org_id, notification_id")
+      .select("id, org_id, notification_id, to_email")
       .eq("org_id", org)
       .eq("notification_id", note.data?.id as string);
     expect(q.error, q.error?.message).toBeNull();
     expect((q.data ?? []).length).toBe(1);
+    expect(String((q.data ?? [])[0]?.to_email)).toBe(customerEmail);
+    expect(String((q.data ?? [])[0]?.to_email)).not.toBe("receipts@probe.test");
   });
 
   // ── C. create_invoice_draft is wired + org-scoped + idempotent ───────────────
