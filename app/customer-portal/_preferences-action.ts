@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadCustomerByPortalToken } from "./_helpers";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { consume, DEFAULT_LIMITS } from "@/lib/security/rate-limit";
 import {
   buildProfileUpdateTicketBody,
@@ -210,6 +211,29 @@ export async function requestProfileUpdate(formData: FormData): Promise<void> {
       customer_name: customer.name,
       source: "customer_portal",
     },
+  });
+
+  // Automation OS — a portal profile-update request opens a NEW support ticket
+  // (category "account"), the same `support.ticket.created` transition the enabled
+  // "Support ticket opened" rule watches. Same shape and rationale as
+  // sendPortalMessage: this path only ever INSERTs a fresh support_tickets row, so
+  // the dispatch is unconditional and can never fire on a reply. Reached only
+  // after the ticket insert succeeded (ticket.id known). Idempotent via
+  // correlation support.ticket.created:support_tickets:<id>; org-pinned to the
+  // customer's org; best-effort so a dispatch failure never derails the request.
+  await dispatchAutomation({
+    type: "support.ticket.created",
+    org_id: customer.org_id,
+    source_table: "support_tickets",
+    source_id: ticket.id,
+    payload: {
+      via: "customer_portal",
+      customer_name: customer.name,
+      kind: "profile_update_request",
+    },
+    actor_email: customer.email ?? null,
+  }).catch((e) => {
+    console.error("[portal/profile-request] automation dispatch failed", e);
   });
 
   revalidatePath(`/customer-portal/${token}/profile`);

@@ -299,14 +299,15 @@ describe("C29 honest-disable — demo.booked stays off until a real producer exi
 });
 
 // ===========================================================================
-// 3. Producer coverage across BOTH write paths (C55)
+// 3. Producer coverage across ALL write paths — the shape-class guard (C56)
 // ===========================================================================
 
 /**
  * Slice a source file into its top-level exported function bodies, keyed by
  * function name. The plain verb sweep (§1) proves a verb is produced SOMEWHERE;
- * this lets the both-path guard prove a producer fires INSIDE a specific action
- * (e.g. createJob) and not merely somewhere in a file that ALSO holds updateJob.
+ * this lets the all-paths guard prove a producer fires INSIDE a specific action
+ * (e.g. acceptQuoteByToken) and not merely somewhere in a file that ALSO holds
+ * acceptQuoteAsOwner.
  */
 function exportedFunctionBodies(src: string): Map<string, string> {
   const bodies = new Map<string, string>();
@@ -323,73 +324,206 @@ function exportedFunctionBodies(src: string): Map<string, string> {
 }
 
 /**
- * THE C55 CLASS: a status-transition automation verb whose producer exists on
- * only SOME of the write paths that can reach its triggering state. job.completed
- * was WIRED on updateJob but OMITTED on createJob — yet the create form offers a
- * "Completed" status, so a job logged already-completed from /jobs/new reached the
- * terminal state, emitted the event NEVER, and the "job completed → suggest
- * invoice" owner prompt silently never fired. The §1 phantom guard was blind to it
- * (updateJob satisfied the some-producer assertion).
+ * THE C56 CLASS (generalises C55): a status-transition / creation automation verb
+ * whose producer exists on only SOME of the write paths that reach its triggering
+ * state. Three real instances, all customer-facing and all silently dead before
+ * this fix:
  *
- * This table lists every enabled status-transition verb whose target state is
- * REACHABLE at create (the create form/schema actually accepts it) AND on update.
- * Each such verb MUST dispatch its producer on BOTH paths. A future create action
- * that can set the target status without dispatching fails CI here.
+ *   - quote.accepted        → wired on the OPERATOR paths (acceptQuoteAsOwner,
+ *     signatures.recordSignature) but MISSING from the PRIMARY customer path
+ *     acceptQuoteByToken (reached from the emailed /q/[token] portal link). A
+ *     customer accepting via the portal notified the owner NEVER.
+ *   - support.ticket.created → wired only on operator createSupportTicket; MISSING
+ *     from the two portal ticket-creators sendPortalMessage (portal message) and
+ *     requestProfileUpdate (portal profile-update request).
  *
- * Verbs deliberately ABSENT because their target state is NOT create-reachable
- * (adding a create-path dispatch would be a FABRICATED event):
- *   - quote.accepted     → createQuote hardcodes status:"draft"; "accepted" is
- *                          only reached by acceptQuoteAsOwner / the portal accept.
- *   - import.completed    → createImport sets no status; "committed" is only
- *                          reached by commitImport.
- *   - onboarding.completed → an org is created pre-onboarding; 100% is only
- *                          reached by markCompleted.
- *   - invoice.overdue     → a derived threshold state (due_date elapsed), no
- *                          create form status; producer is the scheduler.
- *   - support.ticket.created → a CREATE verb (fires on creation itself), not a
- *                          transition-into-status; symmetric by definition.
+ * The C55 guard was ITSELF incomplete: it only checked operator create-vs-update
+ * for job.completed and EXPLICITLY excluded quote.accepted ("only reached by … the
+ * portal accept") and support.ticket.created ("symmetric by definition") — the
+ * exact two verbs that were broken on the portal. This rewrite drops those false
+ * premises.
+ *
+ * THE GUARD SHAPE — for each enabled entity-pinned verb we declare its TRIGGERING
+ * WRITE as a source-shape detector (a status literal written to the entity, OR an
+ * INSERT of the entity), NOT a specific helper call. That is what makes it
+ * resilient to the raw-admin bypass: acceptQuoteByToken writes the signature via a
+ * raw `admin.from("signatures").insert()` rather than recordSignature, but it is
+ * detected on its `status:"accepted"` write to quotes, so the bypass cannot hide
+ * it. Two assertions per verb:
+ *
+ *   (a) PER-FUNCTION COVERAGE — across the enumerated write-path modules (operator
+ *       actions + token/public-portal actions + service-role helpers), EVERY
+ *       exported function whose body performs the triggering write MUST dispatch
+ *       the verb, unless it is allowlisted with a documented reason.
+ *   (b) TREE-WIDE CONTAINMENT (the recurrence backstop) — a scan of the whole
+ *       app/lib/server tree must find NO file performing the triggering write that
+ *       is not in the enumerated module set. A brand-new file introducing the
+ *       write (the next portal/token bypass) therefore fails CI with a message
+ *       telling the author to enumerate it here, so this residual class cannot
+ *       recur even though static enumeration of "all write paths" is imperfect.
+ *
+ * LIMITATION (documented, per the mandate): detection is source-shape heuristic,
+ * not a type-checked dataflow. `setsStatusLiteral` keys on a `status:"<x>"` object
+ * property scoped to a `from("<table>")` reference in the same function; a status
+ * transition written by an unusual shape (a SECURITY DEFINER RPC that flips the
+ * status server-side, or a computed status variable) would not be seen. That is
+ * why (b) exists: it pins the FILE SET, so any new write-path file is forced
+ * through (a). The enumerated `files` list is the authority — add a row when a new
+ * write path for one of these entities lands.
  */
-const BOTH_PATH_STATUS_VERBS: Array<{
+
+/** True when `body` writes `status:"<status>"` as an object property AND
+ *  references `from("<table>")` — i.e. it sets that entity to that status.
+ *  Distinguishes a WRITE (`status: "accepted"`) from a COMPARISON
+ *  (`existing?.status === "accepted"`), and from a same-named status on an
+ *  unrelated table (service helpers that `return { status: "accepted" }` never
+ *  reference `from("quotes")`, so they are not matched). */
+function setsStatusLiteral(body: string, table: string, status: string): boolean {
+  const hasStatusWrite = new RegExp(`status:\\s*"${status}"`).test(body);
+  const touchesTable = new RegExp(`from\\(\\s*"${table}"`).test(body);
+  return hasStatusWrite && touchesTable;
+}
+
+/** True when `body` performs an INSERT whose target table is `<table>`. For each
+ *  `.insert(` we resolve the NEAREST preceding `from("<x>")` — so a function that
+ *  reads `from("support_tickets").select()` and then `from("support_messages")
+ *  .insert()` (a reply) is NOT counted as inserting a ticket. Handles the inline
+ *  `from(...) as unknown as {…}).insert(` type-cast shape both portal creators use,
+ *  because the cast contains no intervening `from(`. */
+function insertsIntoTable(body: string, table: string): boolean {
+  const insertRe = /\.insert\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = insertRe.exec(body))) {
+    const before = body.slice(0, m.index);
+    const lastFrom = before.lastIndexOf("from(");
+    if (lastFrom === -1) continue;
+    const fm = /from\(\s*"([a-z_]+)"/.exec(before.slice(lastFrom, lastFrom + 80));
+    if (fm && fm[1] === table) return true;
+  }
+  return false;
+}
+
+type WritePathClass = {
   verb: string;
-  file: string;
-  createFn: string;
-  updateFn: string;
-}> = [
+  /** Human description of the triggering write, for failure messages. */
+  write: string;
+  /** Source-shape detector run on each function body AND on whole files. */
+  detect: (body: string) => boolean;
+  /**
+   * Every module that holds a write path for this entity — operator actions,
+   * token/public-portal actions (app/q, app/customer-portal) and service-role
+   * helpers. This is the enumerated authority; the tree-wide backstop refuses any
+   * write-performing file NOT listed here.
+   */
+  files: string[];
+  /** Functions that perform the write but legitimately DON'T dispatch, each with a
+   *  specific documented reason (e.g. a genuinely internal-only path). */
+  allow: Record<string, string>;
+};
+
+const WRITE_PATH_CLASSES: WritePathClass[] = [
+  {
+    verb: "quote.accepted",
+    write: 'a quotes row written to status:"accepted"',
+    detect: (b) => setsStatusLiteral(b, "quotes", "accepted"),
+    files: [
+      // operator: acceptQuoteAsOwner + the token/public-portal helper
+      // acceptQuoteByToken (which also holds the raw admin signature-insert
+      // bypass — detected on its status write, not the helper it skips).
+      "app/(app)/quotes/actions.ts",
+      // service-role e-sign path (recordSignature) — a producer, though it does
+      // not itself write the quote status, so it is scanned here for completeness.
+      "server/services/signatures.ts",
+    ],
+    allow: {},
+  },
+  {
+    verb: "support.ticket.created",
+    write: "an INSERT into support_tickets",
+    detect: (b) => insertsIntoTable(b, "support_tickets"),
+    files: [
+      // operator create path.
+      "app/(app)/support/actions.ts",
+      // portal ticket creators — the two that were silently missing the producer.
+      "app/customer-portal/_message-action.ts",
+      "app/customer-portal/_preferences-action.ts",
+    ],
+    allow: {},
+  },
   {
     verb: "job.completed",
-    file: "app/(app)/jobs/actions.ts",
-    createFn: "createJob",
-    updateFn: "updateJob",
+    write: 'a jobs row written to status:"completed"',
+    detect: (b) => setsStatusLiteral(b, "jobs", "completed"),
+    files: [
+      // operator create + update (the original C55 both-path site).
+      "app/(app)/jobs/actions.ts",
+    ],
+    allow: {},
   },
 ];
 
-describe("status-transition producer coverage — BOTH the create AND the update write path (C55)", () => {
-  for (const { verb, file, createFn, updateFn } of BOTH_PATH_STATUS_VERBS) {
-    describe(`${verb} @ ${file}`, () => {
-      const bodies = exportedFunctionBodies(codeOf(read(file)));
-      const verbLiteral = new RegExp(`type:\\s*"${verb.replace(/\./g, "\\.")}"`);
+/**
+ * Whole-tree scan: files under app/lib/server that hold a FUNCTION whose body
+ * performs `detect`. Granularity matches assertion (a) — per exported-function
+ * body, not per whole file — so a file where `status:"completed"` lives in a
+ * completeJobDocument() writing `job_documents` while a DIFFERENT function merely
+ * reads `from("jobs")` is NOT falsely flagged as a jobs-completion write path.
+ */
+function filesPerformingWrite(detect: (b: string) => boolean): string[] {
+  const files = ["app", "lib", "server"].flatMap((d) => walk(resolve(ROOT, d)));
+  const hits: string[] = [];
+  for (const file of files) {
+    const bodies = exportedFunctionBodies(codeOf(readFileSync(file, "utf8")));
+    for (const body of bodies.values()) {
+      if (detect(body)) {
+        hits.push(file.slice(ROOT.length + 1));
+        break;
+      }
+    }
+  }
+  return hits;
+}
 
-      it(`the create path (${createFn}) dispatches ${verb}`, () => {
-        const body = bodies.get(createFn);
-        expect(body, `${createFn} must exist in ${file}`).toBeTruthy();
+describe("producer coverage — EVERY write path that reaches a verb's trigger dispatches it (C56 shape-class guard)", () => {
+  for (const cls of WRITE_PATH_CLASSES) {
+    const verbLiteral = new RegExp(`type:\\s*"${cls.verb.replace(/\./g, "\\.")}"`);
+
+    describe(`${cls.verb} — ${cls.write}`, () => {
+      it("(a) every enumerated write path dispatches the verb (or is allowlisted)", () => {
+        const offenders: string[] = [];
+        for (const file of cls.files) {
+          const bodies = exportedFunctionBodies(codeOf(read(file)));
+          for (const [fn, body] of bodies) {
+            if (!cls.detect(body)) continue; // not a triggering write path
+            if (cls.allow[fn]) continue; // documented internal-only exemption
+            if (!verbLiteral.test(body)) {
+              offenders.push(`${fn} @ ${file}`);
+            }
+          }
+        }
         expect(
-          verbLiteral.test(body!),
-          `${createFn} can set the entity to the "${verb}" target state at create ` +
-            `time (the create form/schema offers it) but never dispatches ${verb}. ` +
-            `An entity created already in that state then emits the event NEVER and ` +
-            `the rule silently never fires — the C55 producer-coverage defect. ` +
-            `Mirror ${updateFn}'s dispatch on the create path (guarded by the same ` +
-            `status check; correlation-id idempotency keeps it at-most-once).`,
-        ).toBe(true);
+          offenders.length,
+          `These write paths perform ${cls.write} but never dispatch ` +
+            `"${cls.verb}", so the enabled rule watching that trigger is silently ` +
+            `dead on them:\n  ${offenders.join("\n  ")}\n` +
+            `Add a best-effort, correlation-id-idempotent dispatchAutomation(` +
+            `{ type: "${cls.verb}", … }) on each (mirror the operator path), or ` +
+            `allowlist it in WRITE_PATH_CLASSES with a documented reason.`,
+        ).toBe(0);
       });
 
-      it(`the update path (${updateFn}) dispatches ${verb}`, () => {
-        const body = bodies.get(updateFn);
-        expect(body, `${updateFn} must exist in ${file}`).toBeTruthy();
+      it("(b) no write path exists OUTSIDE the enumerated module set (recurrence backstop)", () => {
+        const known = new Set(cls.files);
+        const stray = filesPerformingWrite(cls.detect).filter((f) => !known.has(f));
         expect(
-          verbLiteral.test(body!),
-          `${updateFn} must dispatch ${verb} on the transition into that state.`,
-        ).toBe(true);
+          stray.length,
+          `These files perform ${cls.write} but are NOT enumerated in ` +
+            `WRITE_PATH_CLASSES["${cls.verb}"].files, so assertion (a) never ` +
+            `checked whether they dispatch "${cls.verb}" — the exact way the ` +
+            `portal bypass recurred:\n  ${stray.join("\n  ")}\n` +
+            `Add each to the files list so its per-function dispatch coverage is ` +
+            `enforced.`,
+        ).toBe(0);
       });
     });
   }

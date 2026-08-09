@@ -6,6 +6,7 @@ import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadCustomerByPortalToken } from "./_helpers";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { consume, DEFAULT_LIMITS } from "@/lib/security/rate-limit";
 
 /**
@@ -136,6 +137,32 @@ export async function sendPortalMessage(formData: FormData): Promise<void> {
       customer_name: customer.name,
       source: "customer_portal",
     },
+  });
+
+  // Automation OS — a customer opening a ticket from the portal is a REAL
+  // `support.ticket.created` transition and must fire the enabled "Support ticket
+  // opened" rule, exactly like the operator createSupportTicket path. Before this
+  // the ONLY producer was operator-side, so the rule's advertised purpose ("notify
+  // the company when a customer opens a ticket") never fired for portal-created
+  // tickets — a portal REPLY notifies via replyToPortalThread, but a brand-new
+  // portal ticket notified no one.
+  //
+  // FIRES ONLY ON A NEW TICKET: sendPortalMessage always INSERTs a fresh
+  // support_tickets row (portal replies go through replyToPortalThread, which
+  // appends a support_messages row and never touches support_tickets), so this
+  // dispatch is on the sole ticket-creation path and can never fire on a reply.
+  // Reached only after the ticket insert succeeded (ticketId known). Idempotent
+  // via correlation support.ticket.created:support_tickets:<id>; org-pinned to the
+  // customer's org; best-effort so a dispatch failure never derails the send.
+  await dispatchAutomation({
+    type: "support.ticket.created",
+    org_id: customer.org_id,
+    source_table: "support_tickets",
+    source_id: ticketId,
+    payload: { via: "customer_portal", customer_name: customer.name },
+    actor_email: customer.email ?? null,
+  }).catch((e) => {
+    console.error("[portal/message] automation dispatch failed", e);
   });
 
   revalidatePath(`/customer-portal/${token}/messages`);
