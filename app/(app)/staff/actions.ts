@@ -608,7 +608,9 @@ export async function reviewLeaveRequest(
 
   const decision = String(formData.get("decision") ?? "");
   if (decision !== "approved" && decision !== "rejected") {
-    redirect(`/staff/leave/${requestId}?error=invalid_decision`);
+    // No /staff/leave/[id] detail route exists — a per-id redirect lands on
+    // not-found and drops the ?error. The /staff/leave list renders the banner.
+    redirect(`/staff/leave?error=invalid_decision`);
   }
   const note = String(formData.get("review_note") ?? "").trim() || null;
 
@@ -631,10 +633,10 @@ export async function reviewLeaveRequest(
     .maybeSingle();
   if (error) {
     console.error("[leave] review failed", error);
-    redirect(`/staff/leave/${requestId}?error=review_failed`);
+    redirect(`/staff/leave?error=review_failed`);
   }
   if (count === 0 || !updated) {
-    redirect(`/staff/leave/${requestId}?error=already_reviewed`);
+    redirect(`/staff/leave?error=already_reviewed`);
   }
 
   // Email the requester (in-app notification handled by DB triggers).
@@ -651,7 +653,6 @@ export async function reviewLeaveRequest(
   });
 
   revalidatePath("/staff/leave");
-  revalidatePath(`/staff/leave/${requestId}`);
   redirect(`/staff/leave?saved=${decision}`);
 }
 
@@ -669,10 +670,10 @@ export async function cancelLeaveRequest(requestId: string) {
     .eq("status", "pending");
   if (error) {
     console.error("[leave] cancel failed", error);
-    redirect(`/staff/leave/${requestId}?error=cancel_failed`);
+    redirect(`/staff/leave?error=cancel_failed`);
   }
   if (count === 0) {
-    redirect(`/staff/leave/${requestId}?error=cannot_cancel`);
+    redirect(`/staff/leave?error=cannot_cancel`);
   }
 
   revalidatePath("/staff/leave");

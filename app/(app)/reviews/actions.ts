@@ -236,7 +236,10 @@ export async function emailReviewRequestNow(id: string): Promise<void> {
   }
   const recipientEmail = review!.customer?.email;
   if (!recipientEmail) {
-    redirect(`/reviews/${id}?error=no_email`);
+    // The /reviews list already renders this error banner (ERROR_MAP).
+    // There is no /reviews/[id] detail route — a per-id redirect 404s and
+    // drops the ?error, so point at the list that can actually show it.
+    redirect(`/reviews?error=no_email`);
   }
 
   // Look up org name + a friendly review URL.
@@ -276,7 +279,8 @@ export async function emailReviewRequestNow(id: string): Promise<void> {
 
   if (!result.sent) {
     console.error("[reviews] email send failed", result);
-    redirect(`/reviews/${id}?error=email_${result.reason}`);
+    // List route, not a non-existent /reviews/[id] — see the no_email note.
+    redirect(`/reviews?error=email_${result.reason}`);
   }
 
   // Stamp sent_at + status='sent' so the cron skips this row.
