@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
-import { isInvoiceOverdue } from "@/lib/invoices/overdue";
+import { computeReceivables } from "@/lib/invoices/receivables";
 import { computeRetentionDueRollup } from "@/lib/retentions/rollup";
 import { ActivityFeed } from "./_activity-feed";
 import type { ActivityRow } from "@/lib/activity/render";
@@ -226,7 +226,7 @@ export default async function DashboardPage() {
   // page already pages through `fetchAllRows`; these two were the holdouts. On
   // error they THROW (not `?? []`): an errored money/reconciliation read must
   // never render as a reassuring low number.
-  const [paymentsRes, unmatchedRes] = await Promise.all([
+  const [paymentsRes, unmatchedRes, allPaymentsRes] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("invoice_payments")
@@ -247,13 +247,39 @@ export default async function DashboardPage() {
         .order("id", { ascending: true })
         .range(from, to),
     ),
+    // ALL payments (not just this month): the Outstanding / Overdue / Due-this-week
+    // / Expected-incoming tiles NET each invoice's balance (total − Σ payments) via
+    // the shared receivables authority. A partial payment lands whenever it lands,
+    // so netting needs the WHOLE ledger, not a monthly slice. PAGED + LOUD (F-1):
+    // an errored money read must never render as a reassuring low Outstanding.
+    fetchAllRows((from, to) =>
+      supabase
+        .from("invoice_payments")
+        .select("invoice_id, amount")
+        .eq("org_id", ctx.org.id)
+        .order("invoice_id", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
   if (paymentsRes.error)
     throw readFailure("dashboard: invoice payments (cash-in)", paymentsRes.error);
   if (unmatchedRes.error)
     throw readFailure("dashboard: unmatched bank lines", unmatchedRes.error);
+  if (allPaymentsRes.error)
+    throw readFailure("dashboard: invoice payments (receivables netting)", allPaymentsRes.error);
   const paymentsThisMonth = paymentsRes.data;
   const unmatchedLines = unmatchedRes.data;
+  // Per-invoice paid map for netting the receivables tiles.
+  const paidByInvoice = new Map<string, number>();
+  for (const p of allPaymentsRes.data ?? []) {
+    const row = p as unknown as { invoice_id: string | null; amount: number | string | null };
+    if (!row.invoice_id) continue;
+    paidByInvoice.set(
+      row.invoice_id,
+      (paidByInvoice.get(row.invoice_id) ?? 0) + Number(row.amount ?? 0),
+    );
+  }
 
   // Wave 4 — time + payroll rollups (last 30 days of time entries is plenty
   // for "this week" + "this month" tiles).
@@ -425,54 +451,43 @@ export default async function DashboardPage() {
   }
 
   let invoicedThisMonth = 0;
-  let outstandingCount = 0;
-  let outstandingTotal = 0;
-  let overdueCount = 0;
-  let overdueTotal = 0;
-  let dueThisWeekCount = 0;
-  let dueThisWeekTotal = 0;
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const weekFromNowIso = new Date(Date.now() + 7 * 86_400_000)
-    .toISOString()
-    .slice(0, 10);
   for (const inv of invoices) {
-    const total = Number(inv.total ?? 0);
-    // M1: this tile is now an accrual ("invoiced") figure keyed off
-    // created_at, NOT an inv.status === "paid" sum. A mis-marked or
-    // synthetic invoice (status "paid" with no invoice_payments rows) used
-    // to inflate "Revenue this month" to figures that money-in never backs.
-    // Cash actually collected is tracked separately via cashInThisMonth,
-    // which sums invoice_payments — the only source of truth for money in.
+    // M1: this tile is an accrual ("invoiced") figure keyed off created_at, NOT
+    // an inv.status === "paid" sum. A mis-marked or synthetic invoice (status
+    // "paid" with no invoice_payments rows) used to inflate "Revenue this month"
+    // to figures that money-in never backs. Cash actually collected is tracked
+    // separately via cashInThisMonth (sum of invoice_payments).
     if (inv.created_at && inv.created_at >= monthStart) {
-      invoicedThisMonth += total;
-    }
-    // Overdue is DERIVED by the one authority (lib/invoices/overdue.ts) and
-    // counted OUTSIDE the outstanding gate below. That gate admits only
-    // `sent`/`overdue`, but money is equally owed on `awaiting_payment` and
-    // `partially_paid` — so counting overdue inside it would keep this tile
-    // selecting a narrower population than its own drill-through
-    // (/invoices?status=overdue), which is the mismatch this change ends. The
-    // outstanding / due-this-week tiles keep their existing status gate: they
-    // are different metrics and not in scope here.
-    const overdue = isInvoiceOverdue(inv, todayIso);
-    if (overdue) {
-      overdueCount++;
-      overdueTotal += total;
-    }
-    if (inv.status === "sent" || inv.status === "overdue") {
-      outstandingCount++;
-      outstandingTotal += total;
-      if (
-        !overdue &&
-        inv.due_date &&
-        inv.due_date >= todayIso &&
-        inv.due_date <= weekFromNowIso
-      ) {
-        dueThisWeekCount++;
-        dueThisWeekTotal += total;
-      }
+      invoicedThisMonth += Number(inv.total ?? 0);
     }
   }
+
+  // Receivables — Outstanding / Overdue / Due-this-week / Expected-incoming — go
+  // through the ONE shared authority (lib/invoices/receivables). It gates on the
+  // canonical OUTSTANDING_STATUSES (sent · awaiting_payment · partially_paid ·
+  // overdue) and NETS each invoice's balance against the payment ledger
+  // (max(0, total − Σ payments)). The old inline gate admitted only
+  // `sent`/`overdue` and summed GROSS `total`, so a £10k invoice with a £3k
+  // deposit (trigger-stamped `partially_paid`) vanished from Outstanding yet was
+  // counted overdue at its full £10k — three tiles that disagreed with each
+  // other and with /cash. This authority makes Outstanding a true superset of
+  // Overdue and reconciles with /cash Collectable-now and the customer portal.
+  const receivables = computeReceivables(
+    invoices.map((inv) => ({
+      status: inv.status,
+      total: inv.total,
+      due_date: inv.due_date,
+      paid: paidByInvoice.get(inv.id) ?? 0,
+    })),
+  );
+  const {
+    outstandingTotal,
+    outstandingCount,
+    overdueTotal,
+    overdueCount,
+    dueThisWeekTotal,
+    dueThisWeekCount,
+  } = receivables;
 
   // VAT this quarter — the SINGLE authority (lib/tax/compute.ts). Output VAT
   // (paid invoices) and input VAT (logged finance rows) are BOTH gated to the
@@ -578,9 +593,9 @@ export default async function DashboardPage() {
     if (p.source === "bank_csv") cashInFromBank += amt;
   }
   const unmatchedSuggestions = (unmatchedLines ?? []).length;
-  // Expected incoming = unpaid invoice totals minus what's already been
-  // partially paid against them. Use outstandingTotal for the overall pool.
-  const expectedIncoming = outstandingTotal;
+  // Expected incoming = the netted outstanding pool (total − Σ payments over the
+  // canonical OUTSTANDING statuses), straight from the receivables authority.
+  const expectedIncoming = receivables.expectedIncoming;
 
   // ---- profitability ---------------------------------------------------
   // Per-job rollup. Invoices contribute revenue via job_id; finances
@@ -799,7 +814,7 @@ export default async function DashboardPage() {
         <Kpi
           label="Outstanding"
           value={GBP.format(outstandingTotal)}
-          href="/invoices?status=sent"
+          href="/invoices?status=outstanding"
           sub={`${outstandingCount} ${outstandingCount === 1 ? "invoice" : "invoices"}`}
         />
         <Kpi
@@ -815,7 +830,7 @@ export default async function DashboardPage() {
         <Kpi
           label="Total outstanding"
           value={GBP.format(outstandingTotal)}
-          href="/invoices?status=sent"
+          href="/invoices?status=outstanding"
           sub={`${outstandingCount} unpaid ${outstandingCount === 1 ? "invoice" : "invoices"}`}
         />
         <Kpi
@@ -827,7 +842,7 @@ export default async function DashboardPage() {
         <Kpi
           label="Due this week"
           value={GBP.format(dueThisWeekTotal)}
-          href="/invoices?status=sent"
+          href="/invoices?status=outstanding"
           sub={`${dueThisWeekCount} ${dueThisWeekCount === 1 ? "invoice" : "invoices"} in next 7 days`}
         />
         <Kpi
@@ -857,7 +872,7 @@ export default async function DashboardPage() {
         <Kpi
           label="Expected incoming"
           value={GBP.format(expectedIncoming)}
-          href="/invoices?status=sent"
+          href="/invoices?status=outstanding"
           sub={`${outstandingCount} unpaid ${outstandingCount === 1 ? "invoice" : "invoices"}`}
         />
         <Kpi

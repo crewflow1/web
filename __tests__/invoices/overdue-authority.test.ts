@@ -15,6 +15,13 @@ import {
   WRITABLE_INVOICE_STATUSES,
   updateInvoiceSchema,
 } from "@/lib/invoices/schema";
+import {
+  computeReceivables,
+  invoiceRemaining,
+  isOutstandingStatus,
+} from "@/lib/invoices/receivables";
+import { computePortalPayments } from "@/lib/customers/portal-payments";
+import { computeOrgCashSummary, type OrgCashInvoice } from "@/lib/commercial/org-cash";
 
 /**
  * The canonical overdue authority.
@@ -246,7 +253,6 @@ describe("no path can persist overdue any more", () => {
 
 describe("consumers share one definition", () => {
   const consumers = [
-    "app/(app)/dashboard/page.tsx",
     "app/(app)/invoices/page.tsx",
     "app/(app)/invoices/[id]/page.tsx",
     "app/customer-portal/[token]/invoices/page.tsx",
@@ -260,14 +266,16 @@ describe("consumers share one definition", () => {
     });
   }
 
-  it("the dashboard no longer derives overdue inline", () => {
-    expect(read("app/(app)/dashboard/page.tsx")).toMatch(
-      /isInvoiceOverdue\(inv, todayIso\)/,
-    );
-    // The old inline predicate must be gone from the CODE.
-    expect(readCode("app/(app)/dashboard/page.tsx")).not.toMatch(
-      /due_date < todayIso/,
-    );
+  it("the dashboard delegates receivables to the shared netting authority", () => {
+    // The dashboard no longer derives overdue inline NOR re-implements the
+    // outstanding/overdue/due-this-week tiles by hand. It goes through
+    // computeReceivables (lib/invoices/receivables), which itself uses the
+    // overdue authority and nets payments — one authority, not an inline copy.
+    const src = read("app/(app)/dashboard/page.tsx");
+    expect(src).toMatch(/from "@\/lib\/invoices\/receivables"/);
+    expect(src).toMatch(/computeReceivables\(/);
+    // The old inline predicates must be gone from the CODE.
+    expect(readCode("app/(app)/dashboard/page.tsx")).not.toMatch(/due_date < todayIso/);
   });
 
   it("the AI aggregates no longer use sent_at + 30d", () => {
@@ -299,16 +307,21 @@ describe("dashboard tile and its drill-through select the same population", () =
     expect(src).toMatch(/\.lt\("due_date", todayIso\)/);
   });
 
-  it("the dashboard counts overdue OUTSIDE the narrower outstanding gate", () => {
-    // The outstanding gate admits only sent/overdue; counting overdue inside it
-    // would silently exclude partially_paid and awaiting_payment, re-creating
-    // the mismatch with the list filter above.
-    const src = read("app/(app)/dashboard/page.tsx");
-    const overdueIdx = src.indexOf("const overdue = isInvoiceOverdue(inv, todayIso)");
-    const gateIdx = src.indexOf('if (inv.status === "sent" || inv.status === "overdue")');
-    expect(overdueIdx).toBeGreaterThan(-1);
-    expect(gateIdx).toBeGreaterThan(-1);
-    expect(overdueIdx).toBeLessThan(gateIdx);
+  it("the dashboard Outstanding tile uses the collectable set and nets payments — NOT the sent/overdue gross gate", () => {
+    // This pin previously ACCEPTED the buggy `inv.status === "sent" || inv.status
+    // === "overdue"` gate that summed gross `total`. That gate is why a
+    // partially_paid deposit invoice vanished from Outstanding while being counted
+    // overdue at full gross. The corrected dashboard must:
+    const code = readCode("app/(app)/dashboard/page.tsx");
+    // (a) no longer carry the narrow sent/overdue outstanding gate;
+    expect(code).not.toMatch(/inv\.status === "sent" \|\| inv\.status === "overdue"/);
+    // (b) net the ledger — it builds a per-invoice paid map and hands it to the authority;
+    expect(code).toMatch(/paidByInvoice/);
+    expect(code).toMatch(/paid: paidByInvoice\.get\(inv\.id\)/);
+    // (c) point the Outstanding drill-through at the true outstanding population,
+    //     never `?status=sent` (which drops awaiting_payment / partially_paid).
+    expect(code).not.toMatch(/invoices\?status=sent/);
+    expect(code).toMatch(/invoices\?status=outstanding/);
   });
 
   it("both select exactly the collectable statuses the authority accepts", () => {
@@ -318,5 +331,175 @@ describe("dashboard tile and its drill-through select the same population", () =
     for (const s of OVERDUE_NON_COLLECTABLE_STATUSES) {
       expect(isInvoiceOverdue({ status: s, due_date: YESTERDAY }, TODAY)).toBe(false);
     }
+  });
+
+  it("the /invoices list resolves the dashboard's ?status=outstanding drill-through to the canonical set", () => {
+    const src = read("app/(app)/invoices/page.tsx");
+    expect(src).toMatch(/status === "outstanding"/);
+    expect(src).toMatch(/\.in\("status", OUTSTANDING_STATUSES/);
+  });
+});
+
+// =====================================================================
+// The receivables-netting authority — one authority, all surfaces agree
+// =====================================================================
+
+describe("computeReceivables — the shared netting authority", () => {
+  const NOW = new Date("2026-07-16T12:00:00Z"); // TODAY = 2026-07-16
+
+  it("nets a partial payment: a £10k invoice with a £3k deposit owes £7k, not £10k", () => {
+    // partially_paid is what the payment-sync trigger stamps on ANY deposit.
+    const r = computeReceivables(
+      [{ status: "partially_paid", total: 10000, due_date: TOMORROW, paid: 3000 }],
+      NOW,
+    );
+    expect(r.outstandingTotal).toBe(7000);
+    expect(r.outstandingCount).toBe(1);
+    expect(r.expectedIncoming).toBe(7000);
+  });
+
+  it("keeps the trigger-stamped statuses the old sent/overdue gate dropped", () => {
+    for (const status of ["awaiting_payment", "partially_paid"]) {
+      const r = computeReceivables([{ status, total: 500, due_date: TOMORROW, paid: 0 }], NOW);
+      expect(r.outstandingTotal).toBe(500);
+    }
+    expect(isOutstandingStatus("awaiting_payment")).toBe(true);
+    expect(isOutstandingStatus("partially_paid")).toBe(true);
+  });
+
+  it("excludes draft (not issued) and paid (settled) from the debtor book", () => {
+    const r = computeReceivables(
+      [
+        { status: "draft", total: 9999, due_date: YESTERDAY, paid: 0 },
+        { status: "paid", total: 4321, due_date: YESTERDAY, paid: 4321 },
+      ],
+      NOW,
+    );
+    expect(r.outstandingTotal).toBe(0);
+    expect(r.outstandingCount).toBe(0);
+  });
+
+  it("Outstanding is always a SUPERSET of Overdue — both netted", () => {
+    // A partially_paid invoice past due contributes its NET balance to BOTH.
+    const r = computeReceivables(
+      [{ status: "partially_paid", total: 10000, due_date: YESTERDAY, paid: 3000 }],
+      NOW,
+    );
+    expect(r.overdueTotal).toBe(7000);
+    expect(r.outstandingTotal).toBe(7000);
+    expect(r.outstandingTotal).toBeGreaterThanOrEqual(r.overdueTotal);
+  });
+
+  it("never lets an overpayment on one invoice pay down another (per-invoice cap)", () => {
+    const r = computeReceivables(
+      [
+        { status: "sent", total: 100, due_date: TOMORROW, paid: 500 }, // capped at 0
+        { status: "sent", total: 400, due_date: TOMORROW, paid: 0 },
+      ],
+      NOW,
+    );
+    expect(r.outstandingTotal).toBe(400);
+    expect(invoiceRemaining({ total: 100, paid: 500 })).toBe(0);
+  });
+});
+
+describe("cross-surface consistency — dashboard, /cash and the customer portal agree", () => {
+  const NOW = new Date("2026-07-16T12:00:00Z");
+  // ONE partially-paid, past-due fixture: £10k billed, £3k received → £7k owed.
+  const total = 10000;
+  const paid = 3000;
+  const REMAINING = 7000;
+
+  it("all three receivables authorities reconcile on the same £7k for a partially-paid invoice", () => {
+    // Dashboard authority.
+    const dash = computeReceivables(
+      [{ status: "partially_paid", total, due_date: YESTERDAY, paid }],
+      NOW,
+    );
+
+    // /cash authority (no retention → collectableNow === owedNow).
+    const cashInvoice: OrgCashInvoice = {
+      id: "inv-1", number: "INV-1", status: "partially_paid",
+      total, due_date: YESTERDAY, paid, jobId: null, jobLabel: null,
+    };
+    const cash = computeOrgCashSummary({
+      invoices: [cashInvoice],
+      retentionHeld: 0, retentionDueNow: 0, readyToInvoice: 0, now: NOW,
+    });
+
+    // Customer-portal authority.
+    const portal = computePortalPayments(
+      [{ status: "partially_paid", total, due_date: YESTERDAY, paid }],
+      NOW,
+    );
+
+    // Outstanding / owed / dueNow all agree to the penny.
+    expect(dash.outstandingTotal).toBe(REMAINING);
+    expect(cash.owedNow).toBe(REMAINING);
+    expect(cash.collectableNow).toBe(REMAINING);
+    expect(portal.dueNow).toBe(REMAINING);
+    expect(new Set([dash.outstandingTotal, cash.owedNow, cash.collectableNow, portal.dueNow]).size).toBe(1);
+
+    // And the overdue portion agrees too.
+    expect(dash.overdueTotal).toBe(REMAINING);
+    expect(cash.overdue).toBe(REMAINING);
+    expect(portal.overdue).toBe(REMAINING);
+  });
+
+  it("the PRE-FIX dashboard logic would have DISAGREED — proving the class defect", () => {
+    // Replicate the exact removed dashboard code: gross `total`, gate on
+    // sent/overdue only, overdue counted at gross outside the gate.
+    const inv = { status: "partially_paid", total, due_date: YESTERDAY };
+    let preOutstanding = 0;
+    let preOverdue = 0;
+    if (isInvoiceOverdue(inv, TODAY)) preOverdue += inv.total; // gross
+    if (inv.status === "sent" || inv.status === "overdue") preOutstanding += inv.total;
+
+    // Outstanding DROPPED the invoice entirely (partially_paid not in the gate)…
+    expect(preOutstanding).toBe(0);
+    // …while Overdue counted it at FULL GROSS — Outstanding was not a superset.
+    expect(preOverdue).toBe(10000);
+    // Both are wrong; the netted authority says £7k for both.
+    expect(preOutstanding).not.toBe(REMAINING);
+    expect(preOverdue).not.toBe(REMAINING);
+  });
+});
+
+// =====================================================================
+// Static class guard — every operator money-receivables surface must
+// route through the shared authority (net + canonical status set)
+// =====================================================================
+
+describe("operator receivables surfaces route through the shared authority", () => {
+  // Each surface computes an outstanding/overdue/receivable/expected-income
+  // figure from customer invoices. Every one must reference the shared authority
+  // (computeReceivables or its invoiceRemaining primitive) rather than summing
+  // gross `inv.total` over a hardcoded status subset.
+  const surfaces: Array<{ path: string; token: RegExp }> = [
+    { path: "app/(app)/dashboard/page.tsx", token: /computeReceivables/ },
+    { path: "app/(app)/payments/page.tsx", token: /computeReceivables/ },
+    { path: "lib/customers/financials.ts", token: /computeReceivables/ },
+    { path: "server/services/briefing.ts", token: /invoiceRemaining/ },
+    // Already-correct authorities that own the primitive.
+    { path: "lib/commercial/org-cash.ts", token: /invoiceRemaining/ },
+    { path: "lib/commercial/cash.ts", token: /Math\.max\(0, toPounds\(inv\.total\)/ },
+  ];
+
+  for (const { path, token } of surfaces) {
+    it(`${path} nets receivables via the shared rule`, () => {
+      expect(readCode(path)).toMatch(token);
+    });
+  }
+
+  it("the /payments Outstanding headline no longer sums gross invoice totals", () => {
+    // The removed defect: `.reduce((s, i) => s + Number(i.total ?? 0), 0)`.
+    const code = readCode("app/(app)/payments/page.tsx");
+    expect(code).not.toMatch(/reduce\(\s*\(s, i\) => s \+ Number\(i\.total/);
+  });
+
+  it("the org-cash COLLECTABLE set derives from OUTSTANDING_STATUSES, not a hardcoded subset", () => {
+    const code = readCode("lib/commercial/org-cash.ts");
+    expect(code).toMatch(/new Set<string>\(OUTSTANDING_STATUSES\)/);
+    expect(code).not.toMatch(/new Set\(\["sent", "awaiting_payment"/);
   });
 });
