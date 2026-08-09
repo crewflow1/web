@@ -44,6 +44,17 @@ const STATUS_STYLES: Record<string, string> = {
   cancelled: "bg-slate-100 text-slate-700",
 };
 
+// Friendly copy for the error codes the leave actions redirect back with.
+// Unknown keys still fall back to the raw (decoded) code below, so this only
+// upgrades the wording — it never hides an error.
+const ERROR_MAP: Record<string, string> = {
+  invalid_decision: "Please choose approve or reject.",
+  review_failed: "Couldn't record that decision. Please try again.",
+  already_reviewed: "That request was already reviewed by someone else.",
+  cancel_failed: "Couldn't cancel that request. Please try again.",
+  cannot_cancel: "That request can no longer be cancelled.",
+};
+
 const TYPE_LABEL: Record<string, string> = {
   holiday: "Holiday",
   sick: "Sick",
@@ -105,7 +116,9 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
     "id" | "user_id" | "type" | "starts_at" | "ends_at" | "status"
   >[];
 
-  const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
+  const errorMessage = sp.error
+    ? ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)
+    : null;
   const savedMessage = sp.saved
     ? sp.saved === "requested"
       ? "Leave request submitted."

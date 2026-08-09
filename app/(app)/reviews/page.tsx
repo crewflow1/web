@@ -55,7 +55,10 @@ const ERROR_MAP: Record<string, string> = {
   update_failed: "Couldn't update the request.",
   not_found: "Review request not found.",
   already_resolved: "This request is already done.",
+  no_email: "This customer has no email address on file, so we couldn't send the request.",
   email_no_key: "Email isn't configured — set RESEND_API_KEY in Vercel to send.",
+  email_self_loop: "We couldn't send — the sender and recipient addresses are the same.",
+  email_error: "Something went wrong sending the email. Please try again.",
 };
 
 type SP = Promise<{ status?: string; saved?: string; error?: string }>;
