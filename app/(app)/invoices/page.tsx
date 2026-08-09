@@ -45,18 +45,24 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
   const offset = (page - 1) * PAGE_SIZE;
   const status = sp.status;
   const todayIso = invoiceBusinessToday();
-  // Invoices link to customers via their source quote (quotes.customer_id).
-  // The filter joins through quote:quotes!inner so the eq() applies to the
-  // join's customer_id without exposing it as a column on invoices itself.
+  // Filter directly on the DURABLE `invoices.customer_id` anchor (composite FK
+  // (customer_id, org_id) -> customers, migration 20260915000000). The prior
+  // shape filtered through `quote:quotes!inner (customer_id)`, but PostgREST's
+  // !inner join requires a matching quotes row — so every stage/progress-billing
+  // invoice (`generate_stage_invoice`, migration 20261039000000, inserts
+  // quote_id = NULL with customer_id set) was silently DROPPED from both this
+  // list AND its exact count, under-reporting the customer's money. customer_id
+  // is the same anchor the customer-detail rollup uses (lib/customers/financials.ts).
   const customerFilter =
     sp.customer && UUID_RE.test(sp.customer) ? sp.customer : null;
 
   const supabase = await createClient();
-  // The customer filter has to walk through quotes (invoices has no
-  // direct customer_id). Generated supabase types reject the
-  // `quote:quotes!inner (...)` join inside a typed .select(), so we
-  // cast past the typed client for this query only. RLS still scopes
-  // the read; cross-tenant rows are unreachable regardless of cast.
+  // This query orders BEFORE applying the conditional status/customer filters,
+  // and the generated typed builder narrows to a transform builder after
+  // `.order()` (dropping `.eq`/`.in`/`.lt`), so we describe the builder shape
+  // explicitly and cast past the typed client for this query only. RLS still
+  // scopes the read; cross-tenant rows are unreachable regardless of cast, and
+  // the composite FK guarantees a matched customer_id is this org's own.
   type UntypedQ = {
     select: (cols: string, opts?: unknown) => UntypedQ;
     eq: (k: string, v: unknown) => UntypedQ;
@@ -81,9 +87,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
       error: { message: string } | null;
     }>;
   };
-  const cols = customerFilter
-    ? "id, number, status, amount, vat_total, total, due_date, created_at, quote:quotes!inner ( customer_id )"
-    : "id, number, status, amount, vat_total, total, due_date, created_at";
+  const cols = "id, number, status, amount, vat_total, total, due_date, created_at";
   let q = (supabase.from("invoices" as never) as unknown as UntypedQ)
     .select(cols, { count: "exact" })
     // ACTIVE-org pin. RLS admits every org the viewer belongs to, so a dual-org
@@ -110,7 +114,9 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
     q = q.eq("status", status as InvoiceStatus);
   }
   if (customerFilter) {
-    q = q.eq("quote.customer_id", customerFilter);
+    // Durable anchor — includes quote-less stage invoices. The count:'exact'
+    // header is derived from this same filtered query, so headline and list agree.
+    q = q.eq("customer_id", customerFilter);
   }
 
   const finalQuery = q.range(offset, offset + PAGE_SIZE - 1);
