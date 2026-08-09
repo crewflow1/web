@@ -70,6 +70,15 @@ function makeDb(opts: {
   connections: Conn[];
   vehicles: Vehicle[];
   readingCounts?: number[];
+  /**
+   * Optional bespoke handler for a telematics_readings upsert (per statement). Used
+   * to model a 23514 CHECK-violation chunk + the per-row fallback. Receives the rows
+   * of THIS upsert statement; returns the {error, count} that statement resolves to.
+   */
+  readingsUpsert?: (rows: Record<string, unknown>[]) => {
+    error: { message: string; code?: string } | null;
+    count: number | null;
+  };
 }) {
   const upserts: Upsert[] = [];
   const updates: Record<string, unknown>[] = [];
@@ -116,6 +125,9 @@ function makeDb(opts: {
         return {
           upsert: (rows: Record<string, unknown>[], o: Record<string, unknown>) => {
             upserts.push({ rows, opts: o });
+            if (opts.readingsUpsert) {
+              return Promise.resolve(opts.readingsUpsert(rows));
+            }
             const count = counts.length > 0 ? counts.shift()! : rows.length;
             return Promise.resolve({ error: null, count });
           },
@@ -582,6 +594,122 @@ describe("runTelematicsSync — terminal vs transient auth failure (GAP 3)", () 
     // The reactive refresh WAS attempted exactly once (token endpoint hit).
     const calls = fetchMock.mock.calls.map((c) => String(c[0]));
     expect(calls.filter((u) => u.includes("/oauth2/token")).length).toBe(1);
+  });
+});
+
+describe("runTelematicsSync — batch-poisoning containment (defense in depth)", () => {
+  // The ingest wrote the whole mapped set in ONE statement, so a single
+  // uninsertable row aborted the org's ENTIRE batch (0 rows), tick after tick. The
+  // mapper now guarantees no CHECK violation; these prove the write-path also
+  // survives a FUTURE CHECK the mapper does not yet mirror — one bad row is
+  // isolated (per-row fallback) and the connection surfaces reconnect/repair
+  // (TERMINAL) rather than silently re-delivering the poison forever.
+  const VEH_B = "22222222-2222-2222-2222-222222222222";
+  const statusWrites = (updates: Record<string, unknown>[], v: string) =>
+    updates.filter((u) => u.status === v);
+
+  const STAT_A = {
+    id: "sam-1",
+    externalIds: { vin: "vin123" },
+    gps: { latitude: 51.5074, longitude: -0.1278, time: "2026-07-15T09:30:00Z" },
+    obdOdometerMeters: { time: "2026-07-15T09:30:00Z", value: 1609344 },
+  };
+  const STAT_B = {
+    id: "sam-2",
+    externalIds: { vin: "vin456" },
+    gps: { latitude: 52.0, longitude: 0.2, time: "2026-07-15T09:31:00Z" },
+    obdOdometerMeters: { time: "2026-07-15T09:31:00Z", value: 3218688 },
+  };
+  const POISON_EVENT = "sam-2:2026-07-15T09:31:00Z";
+
+  it("a 23514 chunk falls back per-row: good rows land, the bad row is dropped, connection goes TERMINAL", async () => {
+    connectableEnv();
+    const db = makeDb({
+      connections: [
+        {
+          id: CONN_A,
+          org_id: ORG_A,
+          provider: "samsara",
+          external_account_id: "samsara-org-9",
+          access_token: encryptToken("live-access-token"),
+          refresh_token: null,
+          token_expires_at: null,
+          last_sync_at: null,
+        },
+      ],
+      vehicles: [
+        { asset_id: VEH_A, vin: "VIN123" },
+        { asset_id: VEH_B, vin: "VIN456" },
+      ],
+      // Model a FUTURE CHECK the mapper does not mirror: the multi-row chunk 23514s;
+      // the per-row fallback lands the good row (count 1) and 23514s the poison row.
+      readingsUpsert: (rows) => {
+        if (rows.length > 1) {
+          return { error: { message: "new_check_violation", code: "23514" }, count: null };
+        }
+        const isPoison = rows[0]?.source_event_id === POISON_EVENT;
+        return isPoison
+          ? { error: { message: "new_check_violation", code: "23514" }, count: null }
+          : { error: null, count: 1 };
+      },
+    });
+    admin.client = db.client;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ data: [STAT_A, STAT_B] }), { status: 200 })),
+    );
+
+    const summary = await runTelematicsSync();
+
+    // The good row still landed — the org's feed is NOT stranded at zero.
+    expect(summary.written).toBe(1);
+    expect(summary.outcomes[0]!.outcome).toBe("error");
+    // The write path: 1 chunk upsert (2 rows) + 2 per-row fallback upserts.
+    expect(db.upserts).toHaveLength(3);
+    expect(db.upserts[0]!.rows).toHaveLength(2);
+    expect(db.upserts[1]!.rows).toHaveLength(1);
+    expect(db.upserts[2]!.rows).toHaveLength(1);
+    // TERMINAL: a persistent CHECK violation flips status='error' (reconnect/repair)…
+    expect(statusWrites(db.updates, "error").length).toBe(1);
+    // …and the connection is NOT self-healed back to 'connected' this pass.
+    expect(statusWrites(db.updates, "connected").length).toBe(0);
+    expect(db.updates.find((u) => "last_sync_at" in u)).toBeUndefined();
+  });
+
+  it("a TRANSIENT (non-23514) write error keeps status='connected' to self-heal", async () => {
+    connectableEnv();
+    const db = makeDb({
+      connections: [
+        {
+          id: CONN_A,
+          org_id: ORG_A,
+          provider: "samsara",
+          external_account_id: "samsara-org-9",
+          access_token: encryptToken("live-access-token"),
+          refresh_token: null,
+          token_expires_at: null,
+          last_sync_at: null,
+        },
+      ],
+      vehicles: [{ asset_id: VEH_A, vin: "VIN123" }],
+      // A DB connection blip (not a bad row) — must NOT strand the feed terminally.
+      readingsUpsert: () => ({ error: { message: "server closed the connection", code: "08006" }, count: null }),
+    });
+    admin.client = db.client;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ data: [STAT_A] }), { status: 200 })),
+    );
+
+    const summary = await runTelematicsSync();
+    expect(summary.outcomes[0]!.outcome).toBe("error");
+    // No terminal flip — the connection stays selectable so a later tick retries.
+    expect(statusWrites(db.updates, "error").length).toBe(0);
+    // last_error is stamped (status untouched) so the blip is visible.
+    const errStamp = db.updates.find((u) => "last_error" in u && u.status === undefined);
+    expect(errStamp).toBeTruthy();
+    // No per-row fallback for a transient error — one chunk attempt, then bail.
+    expect(db.upserts).toHaveLength(1);
   });
 });
 

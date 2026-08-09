@@ -131,6 +131,136 @@ describe("mapSamplesToReadings — batch + has-signal filter", () => {
   });
 });
 
+describe("mapSampleToReading — RANGE CHECK compliance (out-of-range → no insertable-violating row)", () => {
+  // These pin the class the red-team wave found: the mapper enforced only the
+  // latlng-pair + has-signal CHECKs, so an out-of-range coordinate/odometer flowed
+  // straight through into a row the DB's range CHECK rejects — and ONE such row in
+  // the single-statement ingest upsert aborts the org's ENTIRE batch (0 rows).
+
+  it("lat=91 (> 90) collapses the WHOLE pair to null/null — latitude CHECK", () => {
+    const row = mapSampleToReading(
+      sample({ latitude: 91, longitude: 10, odometerMiles: 100 }),
+      TARGET,
+    );
+    expect(row.latitude).toBeNull();
+    expect(row.longitude).toBeNull();
+    expect(row.odometer_miles).toBe(100); // a valid odometer still survives
+  });
+
+  it("lat=-91 (< -90) collapses the WHOLE pair to null/null — latitude CHECK", () => {
+    const row = mapSampleToReading(
+      sample({ latitude: -91, longitude: 10, odometerMiles: 100 }),
+      TARGET,
+    );
+    expect(row.latitude).toBeNull();
+    expect(row.longitude).toBeNull();
+  });
+
+  it("lng=200 (> 180) collapses the WHOLE pair to null/null — longitude CHECK", () => {
+    const row = mapSampleToReading(
+      sample({ latitude: 10, longitude: 200, odometerMiles: 100 }),
+      TARGET,
+    );
+    expect(row.latitude).toBeNull();
+    expect(row.longitude).toBeNull();
+  });
+
+  it("lng=-200 (< -180) collapses the WHOLE pair to null/null — longitude CHECK", () => {
+    const row = mapSampleToReading(
+      sample({ latitude: 10, longitude: -200, odometerMiles: 100 }),
+      TARGET,
+    );
+    expect(row.latitude).toBeNull();
+    expect(row.longitude).toBeNull();
+  });
+
+  it("odometer=3,000,001 (> 3,000,000) is dropped to null — odometer_miles CHECK", () => {
+    const row = mapSampleToReading(
+      sample({ latitude: 51.5, longitude: -0.1, odometerMiles: 3_000_001 }),
+      TARGET,
+    );
+    expect(row.odometer_miles).toBeNull();
+    // The valid fix is untouched — only the out-of-range odometer is dropped.
+    expect(row.latitude).toBe(51.5);
+    expect(row.longitude).toBe(-0.1);
+  });
+
+  it("keeps the exact CHECK BOUNDARIES (90 / -90 / 180 / -180 / 3,000,000)", () => {
+    const north = mapSampleToReading(sample({ latitude: 90, longitude: 180, odometerMiles: 3_000_000 }), TARGET);
+    expect(north.latitude).toBe(90);
+    expect(north.longitude).toBe(180);
+    expect(north.odometer_miles).toBe(3_000_000);
+    const south = mapSampleToReading(sample({ latitude: -90, longitude: -180, odometerMiles: 0 }), TARGET);
+    expect(south.latitude).toBe(-90);
+    expect(south.longitude).toBe(-180);
+    expect(south.odometer_miles).toBe(0);
+  });
+
+  it("a sample whose ONLY signal is out-of-range is DROPPED by the has-signal filter", () => {
+    // Bad coordinate + no odometer → coordinate nulled → all-null → dropped, so a
+    // single glitchy vehicle can never contribute an uninsertable row to the batch.
+    const badFixOnly = mapSamplesToReadings(
+      [sample({ eventId: "badfix", latitude: 99, longitude: 200, odometerMiles: null })],
+      TARGET,
+    );
+    expect(badFixOnly).toHaveLength(0);
+    // Glitch odometer + no fix → odometer nulled → all-null → dropped.
+    const badOdoOnly = mapSamplesToReadings(
+      [sample({ eventId: "bado", latitude: null, longitude: null, odometerMiles: 9_999_999 })],
+      TARGET,
+    );
+    expect(badOdoOnly).toHaveLength(0);
+  });
+
+  it("one poison sample in a batch drops ONLY itself — the rest still map", () => {
+    // The pre-fix mapper would have emitted the poison row (lat 99 / lng 200),
+    // which the single-statement ingest upsert then rejects → 0 rows for the whole
+    // org. Post-fix, the poison row is dropped and the good samples still map.
+    const rows = mapSamplesToReadings(
+      [
+        sample({ eventId: "good-1", latitude: 51.5, longitude: -0.1, odometerMiles: 100 }),
+        sample({ eventId: "poison", latitude: 99, longitude: 200, odometerMiles: 9_999_999 }),
+        sample({ eventId: "good-2", latitude: 52.0, longitude: 0.2, odometerMiles: 200 }),
+      ],
+      TARGET,
+    );
+    expect(rows.map((r) => r.source_event_id)).toEqual(["good-1", "good-2"]);
+  });
+
+  // ── SHAPE GUARD: the mapper MUST mirror EVERY range CHECK the table declares ──
+  // Each entry ties a telematics_readings CHECK (20261103) to an out-of-range
+  // value the mapper MUST reject (coordinate nulled / odometer nulled). If a
+  // FUTURE migration adds a range CHECK the mapper does not mirror, add its row
+  // here AND a matching guard in reading-map.ts — a new CHECK without a mapper
+  // guard is exactly the class this test exists to catch. (Full DB introspection
+  // is out of the unit tier; this explicit enumeration is the guard.)
+  const RANGE_CHECKS: ReadonlyArray<{
+    check: string;
+    field: "latitude" | "longitude" | "odometer_miles";
+    over: Partial<TelematicsSample>;
+  }> = [
+    { check: "latitude between -90 and 90 (upper)", field: "latitude", over: { latitude: 90.0001, longitude: 0 } },
+    { check: "latitude between -90 and 90 (lower)", field: "latitude", over: { latitude: -90.0001, longitude: 0 } },
+    { check: "longitude between -180 and 180 (upper)", field: "longitude", over: { latitude: 0, longitude: 180.0001 } },
+    { check: "longitude between -180 and 180 (lower)", field: "longitude", over: { latitude: 0, longitude: -180.0001 } },
+    { check: "odometer_miles between 0 and 3000000 (upper)", field: "odometer_miles", over: { odometerMiles: 3_000_001 } },
+  ];
+
+  it.each(RANGE_CHECKS)(
+    "rejects a value outside CHECK: $check (never emits an insertable-violating field)",
+    ({ field, over }) => {
+      const row = mapSampleToReading(sample(over), TARGET);
+      if (field === "odometer_miles") {
+        expect(row.odometer_miles).toBeNull();
+      } else {
+        // An out-of-range coordinate nulls the whole pair (pair CHECK).
+        expect(row.latitude).toBeNull();
+        expect(row.longitude).toBeNull();
+      }
+    },
+  );
+});
+
 describe("normalizeSamsaraSamples — native shape → agnostic shape", () => {
   const RESOLVE = (id: string) =>
     id === "sam-1" ? "33333333-3333-3333-3333-333333333333" : null;
