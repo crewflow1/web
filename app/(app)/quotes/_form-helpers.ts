@@ -40,15 +40,42 @@ export async function listCustomersForQuote(orgId: string): Promise<CustomerOpti
   return data ?? [];
 }
 
+type PropertyRow = {
+  id: string;
+  customer_id: string | null;
+  // Supabase types this jsonb column as `Json`; narrow when we build the label.
+  address: unknown;
+};
+type LeadRow = {
+  id: string;
+  customer_id: string | null;
+  service: string | null;
+  postcode: string | null;
+  urgency: string | null;
+  created_at: string;
+};
+
 export async function listPropertiesForQuote(orgId: string): Promise<PropertyOption[]> {
   const supabase = await createClient();
-  // Properties = sites/addresses. Best-effort human label from the
-  // jsonb address ({ line1, postcode } shape).
-  const { data, error } = await supabase
-    .from("properties")
-    .select("id, customer_id, address")
-    .eq("org_id", orgId)
-    .limit(1000);
+  // Properties = sites/addresses. Best-effort human label from the jsonb
+  // address ({ line1, postcode } shape).
+  //
+  // COMPLETE read (F-1). The old `.limit(1000)` sat EXACTLY on the PostgREST
+  // clamp, so an org past the cap lost properties from the picker AND — worse —
+  // the quote EDIT path silently NULLED an out-of-cap `property_id`: the builder
+  // <select> renders options only from this list, so a saved-but-missing site
+  // has no matching option, the browser falls back to value='' and any unrelated
+  // save writes property_id = null. Paging the WHOLE list under the cap makes
+  // every site selectable and guarantees the currently-set one is present.
+  // (Mirrors listCustomersForQuote; scale follow-up: a name-prefix typeahead.)
+  const { data, error } = await fetchAllRows<PropertyRow>((from, to) =>
+    supabase
+      .from("properties")
+      .select("id, customer_id, address")
+      .eq("org_id", orgId)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (error) throw readFailure("quote form: properties", error);
   return (data ?? []).map((p) => {
     const addr =
@@ -60,12 +87,21 @@ export async function listPropertiesForQuote(orgId: string): Promise<PropertyOpt
 
 export async function listLeadsForQuote(orgId: string): Promise<LeadOption[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("leads")
-    .select("id, customer_id, service, postcode, urgency, created_at")
-    .eq("org_id", orgId)
-    .order("created_at", { ascending: false })
-    .limit(500);
+  // COMPLETE read (F-1). The old `.limit(500)` capped the lead picker: an org
+  // past the cap lost older leads AND the quote EDIT path silently NULLED an
+  // out-of-cap `lead_id` (same mechanism as properties above — the builder
+  // <select> has no option for a saved-but-missing lead, so an untouched save
+  // blanks the link). Page the WHOLE org-scoped set with a deterministic order
+  // so every lead is selectable and the currently-set one is always present.
+  const { data, error } = await fetchAllRows<LeadRow>((from, to) =>
+    supabase
+      .from("leads")
+      .select("id, customer_id, service, postcode, urgency, created_at")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (error) throw readFailure("quote form: leads", error);
   return (data ?? []).map((l) => ({
     id: l.id,

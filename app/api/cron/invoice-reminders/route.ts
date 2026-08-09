@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { sendInvoiceEmail } from "@/lib/email/send-invoice";
 import { isCronAuthorised } from "@/lib/cron/auth";
 import { env } from "@/lib/env";
@@ -109,21 +110,30 @@ async function runReminders() {
     const lowerIso = new Date(now - (days + WINDOW_DAYS) * 86_400_000).toISOString();
 
     // Candidates: not paid + sent_at within [lower, upper].
-    const { data: rowsRaw, error } = await admin
-      .from("invoices")
-      .select(
-        `
+    //
+    // COMPLETE read (F-1). The old `.limit(500)` silently STARVED reminders once
+    // the standing candidate backlog for a stage crossed 500 globally (this is a
+    // cross-org admin scan) — the same class as the invoice.overdue scan that
+    // starved on `.limit(1000)`. Page the whole candidate set; the per-stage
+    // dedupe below + the partial unique index prevent any double-send.
+    const { data: rowsRaw, error } = await fetchAllRows((from, to) =>
+      admin
+        .from("invoices")
+        .select(
+          `
           id, org_id, number, status, sent_at, amount, vat_total, total,
           due_date, paid_at, notes, quote_id,
           customer:customers!invoices_customer_org_fkey ( email ),
           quote:quotes ( customer:customers ( email ) )
         `,
-      )
-      .neq("status", "paid")
-      .not("sent_at", "is", null)
-      .lte("sent_at", upperIso)
-      .gte("sent_at", lowerIso)
-      .limit(500);
+        )
+        .neq("status", "paid")
+        .not("sent_at", "is", null)
+        .lte("sent_at", upperIso)
+        .gte("sent_at", lowerIso)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
     const rows = rowsRaw as unknown as CandidateRow[] | null;
 
     if (error) {

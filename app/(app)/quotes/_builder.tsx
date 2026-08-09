@@ -20,6 +20,7 @@ import {
 import { SubmitButton } from "@/components/forms/FormShell";
 import { NumericInput } from "@/components/forms/NumericInput";
 import { QuoteWriterPanel } from "./_quote-writer-panel";
+import { withPreservedOption } from "@/lib/quotes/preserve-option";
 import type { QuoteWriterReadiness } from "@/lib/ai/quote-writer-readiness";
 
 /**
@@ -151,19 +152,39 @@ export function QuoteBuilder({
     router.refresh();
   }, [state.ok, state.redirectTo, state.submittedAt, router]);
 
+  // The reference actually selected when this form mounts: a server echo (after
+  // a failed submit) wins over the edit-time default. This is the value the
+  // <select> will try to show — so it MUST always have a matching <option>.
+  const selectedPropertyId = echoed.property_id ?? defaultPropertyId;
+  const selectedLeadId = echoed.lead_id ?? defaultLeadId;
+
+  // DEFENCE-IN-DEPTH against the picker-class silent-null (F-1). Even with the
+  // lists now paged complete, a customer filter (or a future cap/typeahead)
+  // could exclude the currently-saved site/lead. `withPreservedOption` pre-injects
+  // the selected id when it is missing, so an edit can NEVER drop an out-of-list
+  // reference — the browser keeps the value and updateQuote re-writes the same id
+  // instead of nulling it. See lib/quotes/preserve-option.ts.
   const propertyOptions = useMemo(() => {
-    if (!customerId) return properties;
-    return properties.filter(
-      (p) => !p.customer_id || p.customer_id === customerId,
-    );
-  }, [properties, customerId]);
+    const base = !customerId
+      ? properties
+      : properties.filter((p) => !p.customer_id || p.customer_id === customerId);
+    return withPreservedOption(base, selectedPropertyId, (id) => ({
+      id,
+      label: "Current site",
+      customer_id: null,
+    }));
+  }, [properties, customerId, selectedPropertyId]);
 
   const leadOptions = useMemo(() => {
-    if (!customerId) return leads;
-    return leads.filter(
-      (l) => !l.customer_id || l.customer_id === customerId,
-    );
-  }, [leads, customerId]);
+    const base = !customerId
+      ? leads
+      : leads.filter((l) => !l.customer_id || l.customer_id === customerId);
+    return withPreservedOption(base, selectedLeadId, (id) => ({
+      id,
+      label: "Current lead",
+      customer_id: null,
+    }));
+  }, [leads, customerId, selectedLeadId]);
 
   const totals = useMemo(() => computeTotals(items), [items]);
 
@@ -253,7 +274,7 @@ export function QuoteBuilder({
             <select
               id="property_id"
               name="property_id"
-              defaultValue={echoed.property_id ?? defaultPropertyId}
+              defaultValue={selectedPropertyId}
               className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
             >
               <option value="">— None —</option>
@@ -273,7 +294,7 @@ export function QuoteBuilder({
             <select
               id="lead_id"
               name="lead_id"
-              defaultValue={echoed.lead_id ?? defaultLeadId}
+              defaultValue={selectedLeadId}
               className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
             >
               <option value="">— None —</option>

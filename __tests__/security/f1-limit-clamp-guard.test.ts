@@ -58,14 +58,24 @@ const CLAMP = 1000; // PostgREST max_rows
 const ALLOWLIST: Record<string, string> = {};
 
 /**
- * THE .limit(1000) BOUNDARY net (companion to the bare-select guard's boundary
- * rule). A `.limit(N<=1000)` is "honest" to the clamp sweep above — but a
- * `.limit` resolving to EXACTLY 1000 on a HIGH-VALUE / PRODUCER read is
- * indistinguishable from silent truncation: a genuine top-1000 sample and a
- * 5000-row set clamped to 1000 look identical. That is exactly how the LIVE
- * invoice.overdue producer scan starved — `.limit(1000)` sat on the boundary and
- * passed both F-1 guards. So such a read must page via fetchAllRows (COMPLETE) or
- * be allowlisted as a genuinely-bounded top-1000 display sample WITH a reason.
+ * THE PRODUCER-.limit net (companion to the bare-select guard). A `.limit(N)` is
+ * "honest" to the clamp sweep above whenever N <= 1000 — but on a HIGH-VALUE /
+ * PRODUCER table that is NOT enough. Two ways an honest-looking `.limit` still
+ * hides a bug:
+ *   - the .limit(1000) BOUNDARY: a `.limit` resolving to EXACTLY 1000 is
+ *     indistinguishable from silent truncation (a genuine top-1000 sample and a
+ *     5000-row set clamped to 1000 look identical). This is how the LIVE
+ *     invoice.overdue scan starved — `.limit(1000)` passed both F-1 guards.
+ *   - the SUB-cap producer cap: a `.limit(500)`/`.limit(200)` on a set a picker
+ *     or aggregation is supposed to see COMPLETELY still drops rows past the cap.
+ *     This is how the quote property (`.limit(1000)`) and lead (`.limit(500)`)
+ *     pickers silently nulled an out-of-cap reference on an unrelated edit save.
+ *
+ * So the rule is tightened: a PRODUCER-table read that materialises a SET may
+ * carry NO `.limit(N)` at all (N >= 2) — it must page via fetchAllRows (COMPLETE)
+ * or carry a BOUNDARY_ALLOWLIST reason declaring it a genuinely-bounded sample (a
+ * top-N display, a per-scope batch). A `.limit(1)` is exempt: a single-row read
+ * is not a truncatable set.
  *
  * Mirrors the bare-select guard's HIGH_VALUE_TABLES: money / ledger /
  * reconciliation / export / cross-tenant producer tables whose completeness
@@ -97,6 +107,9 @@ const PRODUCER_TABLES = new Set<string>([
   "jobs",
   "leads",
   "customers",
+  // Sites/addresses — a quote/job reference picker; a capped read nulls an
+  // out-of-cap property_id on edit. (F-1 picker-class wave.)
+  "properties",
 ]);
 
 /** "file:line" → reason. Only GENUINELY-bounded top-1000 samples belong here.
@@ -122,6 +135,96 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
     "bounded: per-org fleet_vehicles count sample (.eq(org_id)) — an org's fleet is tens of vehicles",
   "server/services/van-stock.ts:105":
     "bounded: per-org fleet_vehicles picker (.eq(org_id)) — an org's fleet is tens of vehicles",
+
+  // ── PRODUCER-.limit sweep (the ANY-.limit tightening) ─────────────────────
+  // Every entry below is a GENUINELY-bounded sample the static analyser can't
+  // recognise: a top-N display, a per-scope (per-customer / per-job / per-GRN)
+  // read, a global-search result cap, or a NEW-form recency picker whose EDIT
+  // counterpart re-shows the saved reference some OTHER way (a single .eq('id')
+  // lookup, or a preserve-injected <option>). None is a complete-set read whose
+  // truncation would drop rows a picker/aggregation must see — those were PAGED.
+
+  // Detail-page display lists (recent-N, read-only, no write-back).
+  "app/(app)/assets/[id]/page.tsx:226":
+    "bounded: recent-200 jobs referencing this asset — detail-page display list, not a write-back picker",
+  "app/(app)/delays/_data.ts:111":
+    "bounded: recent-200 jobs sample for the delays report display",
+  "app/(app)/diary/_data.ts:21":
+    "bounded: recent-200 jobs sample for the diary register display",
+  "app/(app)/quality/_data.ts:260":
+    "bounded: recent-200 jobs sample for the quality report display",
+  "app/(app)/dashboard/page.tsx:181":
+    "bounded: dashboard 'recent 5 leads' widget — an intentional top-5 display",
+  "app/(app)/leads/[id]/page.tsx:132":
+    "bounded: this lead's related quotes — top-5 display on the lead detail page",
+  "app/(app)/me/page.tsx:126":
+    "bounded: 'my recent 20 jobs' widget on the profile page — a top-N display",
+  "server/services/fleet-snapshot.ts:568":
+    "bounded: last-50 telematics readings for a vehicle track display (recent-N sample)",
+  "server/services/hq-customer-snapshot.ts:215":
+    "bounded: last-10 payments for an HQ customer snapshot display (top-N)",
+
+  // NEW-form recency pickers — no saved reference is re-rendered through the list
+  // (the EDIT counterpart resolves it separately), so no picker silent-null.
+  "app/(app)/reviews/new/page.tsx:54":
+    "bounded: recent-200 completed-jobs sample on the NEW review form (no saved ref re-rendered); the customer picker beside it IS paged complete",
+  "app/(app)/site-reports/new/page.tsx:33":
+    "bounded: recent-200 jobs sample on the NEW site-report form; the EDIT page resolves the saved job via a single .eq('id') lookup, so no picker silent-null",
+  "app/(app)/snags/new/page.tsx:38":
+    "bounded: recent-200 jobs sample on the NEW snag form; the EDIT page resolves the saved job via a single .eq('id') lookup",
+  "app/(app)/toolbox/_form-options.ts:41":
+    "bounded: recent-200 jobs sample for the toolbox-talk picker; the EDIT form (_talk-form.tsx) preserve-injects the saved job_id so an out-of-sample link can never be dropped",
+  "server/services/rota.ts:81":
+    "bounded: recent-50 jobs for the assign-shift picker; assigning is a create action, not an edit re-render of a saved reference",
+
+  // In-page link picker with preserve-option + explicit onChange write.
+  "app/(app)/invoices/[id]/page.tsx:93":
+    "bounded: recent-50 link-to-job picker; a controlled per-control select whose write fires only on explicit onChange (no shared-form save), and the linked job is preserve-injected in page.tsx so it always displays",
+
+  // Global-search result caps (intentional top-N over the whole tenant).
+  "app/api/search/route.ts:153":
+    "bounded: global search top-50 customer results (intentional result cap)",
+  "app/api/search/route.ts:208":
+    "bounded: global search top-50 job results (intentional result cap)",
+  "app/api/search/route.ts:217":
+    "bounded: global search top-50 quote results (intentional result cap)",
+  "app/api/search/route.ts:223":
+    "bounded: global search top-8 lead results (per-type cap)",
+  "app/api/search/route.ts:292":
+    "bounded: global search top-8 invoice results (per-type cap)",
+  "app/(app)/jobs/page.tsx:92":
+    "bounded: search-match helper — collects up to 200 matching customer ids to fold into the .range()-paged jobs query; a name-search sub-sample, not a materialised set",
+
+  // Customer-portal reads — each is scoped to ONE customer (token-authorised), so
+  // bounded by customer scope, and a top-N display of that customer's own docs.
+  "app/customer-portal/[token]/documents/page.tsx:48":
+    "bounded: ONE customer's own quotes (token-scoped to a single customer), top-100 display",
+  "app/customer-portal/[token]/documents/page.tsx:60":
+    "bounded: ONE customer's own invoices (token-scoped), top-100 display",
+  "app/customer-portal/[token]/invoices/page.tsx:98":
+    "bounded: ONE customer's own invoices (token-scoped), top-200 display",
+  "app/customer-portal/[token]/jobs/page.tsx:152":
+    "bounded: ONE customer's own jobs (token-scoped), top-100 display",
+  "app/customer-portal/[token]/page.tsx:68":
+    "bounded: ONE customer's recent quotes on the portal home (token-scoped), top-50",
+  "app/customer-portal/[token]/page.tsx:82":
+    "bounded: ONE customer's recent invoices on the portal home (token-scoped), top-50",
+  "app/customer-portal/[token]/quotes/page.tsx:66":
+    "bounded: ONE customer's own quotes (token-scoped), top-200 display",
+  "lib/customers/portal-bulk-download.ts:153":
+    "bounded: ONE customer's invoices for a portal ZIP bulk-download (.eq org_id+customer_id), top-200",
+  "lib/customers/portal-bulk-download.ts:168":
+    "bounded: ONE customer's quotes for a portal ZIP bulk-download (.eq org_id+customer_id), top-200",
+  "app/q/[token]/page.tsx:199":
+    "bounded: sibling variation quotes for ONE job (.eq org_id+customer_id+job_id) — a single job's variations, a handful; scoped, not a standing set",
+
+  // All GRNs on ONE purchase order — bounded by the single-PO scope.
+  "app/(app)/purchase-orders/_receiving-data.ts:58":
+    "bounded: every goods-received note for ONE purchase order (.eq('purchase_order_id')) — a PO has a handful of deliveries, top-200",
+
+  // Per-request id-set lookup.
+  "server/services/stock.ts:233":
+    "bounded: receipt movements for a specific GRN's line-id set (.in('grn_line_id', grnLineIds)) — request-sized lookup; the balance-fold read (listStockMovements) is separately paged via fetchAllRows",
 };
 
 /** Strip block + line comments so historical `.limit(...)` mentions in prose
@@ -330,14 +433,18 @@ function producerReadIndices(src: string): Array<{ table: string; index: number 
   return out;
 }
 
-/** Boundary offenders in one file: a high-value read materialising a set, capped
- * at EXACTLY .limit(1000) (literal or same-file const), that neither pages
- * (.range/fetchAllRows) nor is allowlisted.
+/** Producer-.limit offenders in one file: a PRODUCER-table read materialising a
+ * SET that carries ANY `.limit(N)` with N >= 2 (a bounded cap where the picker /
+ * aggregation is supposed to see the COMPLETE set), that neither pages
+ * (.range/fetchAllRows) nor is allowlisted. A `.limit(1)` is a single-row read
+ * and is exempt. An unprovable `.limit(x)` is also flagged here (fail-closed) —
+ * it is separately caught by the clamp sweep, but a producer read must resolve
+ * to paged-or-allowlisted regardless.
  *
- * LIMIT-ANCHORED (not region-scanned): each boundary `.limit()` is bound to the
- * NEAREST PRECEDING `.from`/wrapper read in the SAME statement (no intervening
- * `;`). A pure region window bled a `.limit(1000)` onto an adjacent read and
- * misreported the line — anchoring on the limit is exact. */
+ * LIMIT-ANCHORED (not region-scanned): each `.limit()` is bound to the NEAREST
+ * PRECEDING `.from`/wrapper read in the SAME statement (no intervening `;`). A
+ * pure region window bled a `.limit()` onto an adjacent read and misreported the
+ * line — anchoring on the limit is exact. */
 function boundaryOffendersIn(rel: string, raw: string): string[] {
   if (!raw.includes(".limit(")) return [];
   const src = stripComments(raw);
@@ -347,7 +454,10 @@ function boundaryOffendersIn(rel: string, raw: string): string[] {
   const offenders = new Set<string>();
 
   for (const { arg, index: limIdx } of extractCalls(src, "limit")) {
-    if (provableUpperBound(arg, env) !== CLAMP) continue; // not on the boundary
+    // A `.limit(1)` is a single-row read, not a truncatable set — exempt it.
+    // Everything else (a provable N in 2..1000, the 1000 boundary, over-cap, or
+    // an unprovable/dynamic arg) is a producer cap that must page or be justified.
+    if (provableUpperBound(arg, env) === 1) continue;
     // Nearest producer read whose `.from`/wrapper starts before this `.limit`.
     let pRead: { table: string; index: number } | undefined;
     for (const r of reads) {
@@ -364,8 +474,8 @@ function boundaryOffendersIn(rel: string, raw: string): string[] {
     const key = `${rel}:${line}`;
     if (BOUNDARY_ALLOWLIST[key]) continue;
     offenders.add(
-      `${key} → .from("${pRead.table}") read capped at exactly .limit(${CLAMP}) — ` +
-        `page via fetchAllRows or add a BOUNDARY_ALLOWLIST reason`,
+      `${key} → .from("${pRead.table}") producer read capped at .limit(${arg}) — a set a ` +
+        `picker/aggregation must see COMPLETE: page via fetchAllRows or add a BOUNDARY_ALLOWLIST reason`,
     );
   }
   return [...offenders];
@@ -437,7 +547,7 @@ describe("F-1 guard — every .limit / .range is provably <= 1000", () => {
     ).toEqual([]);
   });
 
-  it("no high-value/producer read capped at exactly .limit(1000) (page or allowlist)", () => {
+  it("no producer read carries any .limit(N>=2) (page or allowlist)", () => {
     const offenders: string[] = [];
     for (const file of files) {
       const rel = file.slice(ROOT.length + 1);
@@ -445,18 +555,22 @@ describe("F-1 guard — every .limit / .range is provably <= 1000", () => {
     }
     expect(
       offenders,
-      `F-1 .limit(1000) BOUNDARY trap. A high-value/producer read capped at EXACTLY ` +
-        `the PostgREST clamp is indistinguishable from silent truncation (a genuine ` +
-        `top-1000 sample vs a larger set clamped to 1000 look identical). Page it via ` +
-        `fetchAllRows for a COMPLETE read, or add a BOUNDARY_ALLOWLIST entry with a ` +
-        `written reason if it is a genuinely-bounded top-1000 sample:\n` +
+      `F-1 producer .limit trap. A read of a high-value/producer table that ` +
+        `materialises a SET must not carry a flat .limit(N>=2): a picker or ` +
+        `aggregation is meant to see the COMPLETE set, and any cap (the .limit(1000) ` +
+        `boundary OR a sub-cap .limit(500)/.limit(200)) silently drops rows past it — ` +
+        `exactly how the quote property/lead pickers nulled an out-of-cap reference on ` +
+        `edit, and how the invoice.overdue scan starved. Page it via fetchAllRows for a ` +
+        `COMPLETE read, or add a BOUNDARY_ALLOWLIST entry with a written reason if it is ` +
+        `a genuinely-bounded sample (top-N display, per-scope batch):\n` +
         offenders.join("\n"),
     ).toEqual([]);
   });
 
-  // TEETH: the boundary net must flag the exact live shape (the invoice.overdue
-  // producer scan) and go green on the paged fix — literal AND same-file const.
-  it("boundary net has TEETH: flags a producer scan at exactly .limit(1000), passes when paged", () => {
+  // TEETH: the producer-.limit net must flag the invoice.overdue boundary shape,
+  // the SUB-cap producer cap (the quote-picker class), and go green on the paged
+  // fix + the single-row .limit(1) exemption.
+  it("producer-.limit net has TEETH: flags .limit(1000) boundary AND sub-cap .limit(N), passes when paged", () => {
     const litPreFix = [
       `const { data } = await admin`,
       `  .from("invoices")`,
@@ -476,6 +590,26 @@ describe("F-1 guard — every .limit / .range is provably <= 1000", () => {
     ].join("\n");
     expect(boundaryOffendersIn("lib/invoices/overdue-scheduler.ts", constPreFix).length).toBeGreaterThan(0);
 
+    // NEW: a SUB-cap producer cap is now ALSO flagged — the exact quote-picker
+    // class (properties `.limit(1000)`, leads `.limit(500)`). A .limit(500) on a
+    // producer set is no longer "honest": it drops rows past the cap.
+    const subCapProps = [
+      `const { data } = await supabase`,
+      `  .from("properties")`,
+      `  .select("id, customer_id, address")`,
+      `  .eq("org_id", orgId)`,
+      `  .limit(1000);`,
+    ].join("\n");
+    expect(boundaryOffendersIn("app/(app)/quotes/_form-helpers.ts", subCapProps).some((o) => o.includes("properties"))).toBe(true);
+    const subCapLeads = [
+      `const { data } = await supabase`,
+      `  .from("leads")`,
+      `  .select("id, customer_id")`,
+      `  .eq("org_id", orgId)`,
+      `  .limit(500);`,
+    ].join("\n");
+    expect(boundaryOffendersIn("app/(app)/quotes/_form-helpers.ts", subCapLeads).some((o) => o.includes("leads"))).toBe(true);
+
     // The COMPLETE-read fix pages via fetchAllRows → clean.
     const pagedFix = [
       `const { data, error } = await fetchAllRows((from, to) =>`,
@@ -490,14 +624,15 @@ describe("F-1 guard — every .limit / .range is provably <= 1000", () => {
     ].join("\n");
     expect(boundaryOffendersIn("lib/invoices/overdue-scheduler.ts", pagedFix)).toEqual([]);
 
-    // An honest sub-cap sample is NOT a boundary trap.
-    const honest = [
+    // A single-row .limit(1) is a bounded lookup, NOT a truncatable set → exempt.
+    const singleRow = [
       `const { data } = await admin`,
       `  .from("invoices")`,
       `  .select("id, org_id")`,
-      `  .limit(500);`,
+      `  .eq("customer_id", cid)`,
+      `  .limit(1);`,
     ].join("\n");
-    expect(boundaryOffendersIn("lib/invoices/overdue-scheduler.ts", honest)).toEqual([]);
+    expect(boundaryOffendersIn("x.ts", singleRow)).toEqual([]);
 
     // Catches the function-declaration `.from`-wrapper form too (the shape the
     // goods_received_notes reader uses), not just literal `.from`.

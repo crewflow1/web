@@ -57,6 +57,10 @@ function makeMockSupabase() {
     "gte",
     "order",
     "match",
+    // The candidate scan now pages via fetchAllRows, so the terminal method is
+    // `.range(from, to)` (returns the chain; awaiting it resolves the page). Test
+    // data is a handful of rows — a single short page — so one `then` per stage.
+    "range",
   ]);
 
   function makeChain(table: string): Record<string, unknown> {
