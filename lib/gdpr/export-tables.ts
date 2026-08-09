@@ -39,10 +39,21 @@
  *
  * `ORG_EXPORT_TABLES` is DERIVED — `KNOWN` minus `EXCLUDED`, sorted — so the
  * manifest is deterministic and the two lists can never silently overlap or
- * gap. A dedicated security test asserts `EXPORT ∪ EXCLUDED === KNOWN` with no
- * overlap, and an integration test compares `KNOWN` against the LIVE schema, so
- * a newly-added org-scoped table forces an explicit include/exclude decision
- * rather than being silently exported (or silently dropped).
+ * gap. Two tiers of test back this, and together they are BIDIRECTIONAL against
+ * the live schema:
+ *   • the hermetic security tier asserts `EXPORT ∪ EXCLUDED === KNOWN` with no
+ *     overlap (pure list algebra — no database);
+ *   • the integration tier (real Postgres) asserts BOTH directions against the
+ *     live catalogue — FORWARD (`KNOWN ⊆ LIVE`: every snapshot table still
+ *     exists, catching a dropped/renamed table) and REVERSE (`LIVE ⊆ KNOWN`:
+ *     every live org-scoped BASE table is in `KNOWN`, via the catalog RPC
+ *     `_introspect_org_scoped_tables`). So a newly-added org-scoped table FAILS
+ *     CI until it is explicitly included or excluded, rather than being silently
+ *     dropped from a statutory export.
+ *
+ * Historic note: the REVERSE direction was NOT enforced until the guard was made
+ * bidirectional — `accounting_pushed_entities` shipped org-scoped, unclassified,
+ * and silently absent from every DSAR while CI stayed green. That gap is closed.
  *
  * Anything not in `KNOWN` is, by construction, never exported — the safe
  * default for a table that has not yet been classified.

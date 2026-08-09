@@ -3,6 +3,7 @@
   "known": [
     "accounting_connections",
     "accounting_export_log",
+    "accounting_pushed_entities",
     "activity_log",
     "admin_alert_state",
     "ai_cost_reservations",
@@ -178,6 +179,7 @@
     "whatsapp_webhook_events": "provider webhook payloads/secrets (service-internal)",
     "asset_qr_identities": "credentials: QR access token",
     "staff_secrets": "government identifiers (NI numbers) — separate controlled subject-export path, never bulk-dumped",
+    "accounting_pushed_entities": "service telemetry: provider-sync push-once high-water-mark (org/provider/entity_type/entity_id/pushed_at) — internal integration bookkeeping, no tenant business data; the referenced invoices/payments are themselves exported via their own tables",
     "ai_cost_reservations": "service telemetry: AI budget internals",
     "ai_invocations": "service telemetry: AI invocation ledger",
     "ai_reply_audits": "AI reply transport internals",
