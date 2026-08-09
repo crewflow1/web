@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, join } from "node:path";
+import { deriveOrgScopedTables } from "./org-scoped-tables";
 
 /**
  * ACTIVE-ORG READ-PIN GUARD — the systemic backstop for the read slice (#456).
@@ -55,41 +56,14 @@ import { resolve, join } from "node:path";
 const ROOT = resolve(__dirname, "..", "..");
 
 // ---------------------------------------------------------------------------
-// Org-scoped table set — derived from the migrations (the source of truth),
-// exactly like the write-pin guard. A table is "org-scoped" if a migration
-// creates it with an `org_id` column or adds one later. Deriving it (rather
-// than hard-coding) means a NEW org-scoped table is protected the moment its
-// migration lands.
-//
-// NOTE vs the write-pin guard: this derivation ALSO matches quoted identifiers
-// (`create table … public."quotes" (`). The baseline schema quotes the earliest
-// (and highest-value) tables — quotes, customers, leads, properties, invoices'
-// ancestors — and an unquoted-only regex silently drops them, which would make
-// this guard vacuous for exactly the rows that matter most.
+// Org-scoped table set — derived from the migrations by the SHARED,
+// quoted-identifier-aware helper in ./org-scoped-tables (used by the write-pin
+// guard too, so the two derivations can never drift). Quoted-identifier
+// awareness matters here: the baseline schema quotes the earliest and
+// highest-value tables (`public."quotes" (`, `"customers"`, `"leads"`,
+// `"properties"`), and an unquoted-only regex silently drops them — which would
+// make this guard vacuous for exactly the rows that matter most.
 // ---------------------------------------------------------------------------
-function deriveOrgScopedTables(): Set<string> {
-  const dir = join(ROOT, "supabase/migrations");
-  const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
-  const set = new Set<string>();
-  for (const f of files) {
-    const sql = readFileSync(join(dir, f), "utf8");
-    const createRe =
-      /create table (?:if not exists )?(?:public\.)?"?([a-z_][a-z0-9_]*)"?\s*\(([\s\S]*?)\n\);/gi;
-    let m: RegExpExecArray | null;
-    while ((m = createRe.exec(sql))) {
-      const table = m[1] ?? "";
-      const body = m[2] ?? "";
-      if (table && /\borg_id\b/.test(body)) set.add(table);
-    }
-    const alterRe =
-      /alter table (?:only )?(?:public\.)?"?([a-z_][a-z0-9_]*)"?[\s\S]{0,120}?add column (?:if not exists )?org_id/gi;
-    let m2: RegExpExecArray | null;
-    while ((m2 = alterRe.exec(sql))) {
-      if (m2[1]) set.add(m2[1]);
-    }
-  }
-  return set;
-}
 
 // ---------------------------------------------------------------------------
 // Source scanning helpers (string-aware). Comments are blanked so prose that
