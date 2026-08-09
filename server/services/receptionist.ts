@@ -2547,6 +2547,136 @@ async function extractFields(rawText: string, orgId: string): Promise<InboundExt
 }
 
 /**
+ * TERMINAL VOICE RE-EXTRACTION — the fix for the empty-transcript defect.
+ *
+ * The origination extraction runs at call START, when the caller has said NOTHING
+ * yet: `processInboundEnquiry` extracts over `raw_text ?? ""`, and both voice edges
+ * pass no raw_text, so the voice lead + enquiry land with the deterministic
+ * "New enquiry — no transcript captured." sentinel summary and null triage. The
+ * caller's words are captured LATER, turn by turn, into `call_events` and the
+ * enquiry's `raw_text` — but nothing re-ran extraction over that content, so the
+ * flagship voice channel produced empty summaries + null urgency/job_type/postcode
+ * forever, though the full transcript was available.
+ *
+ * On the TERMINAL call transition — once the composed transcript
+ * (`composeCallTranscript(loadRecentSpokenTurns(...))`) is available — the webhook
+ * calls this to re-run the SAME GOVERNED extraction (`extractFields`, through
+ * `invokeWithGovernor`: the £100/month/org ceiling, dedupe and ledger — NO new /
+ * ungoverned model call site) over the REAL transcript, then refresh:
+ *  - the enquiry (`inbound_enquiries`): ai_summary / ai_confidence / job_type /
+ *    urgency / postcode / budget_gbp
+ *  - the lead: ai_summary / urgency / service / postcode
+ * both keyed on (org_id, provider_message_id = CallSid) → the linked lead_id.
+ *
+ * The refreshed enquiry summary is then folded onto `calls.ai_summary` by the
+ * webhook's existing `loadEnquirySummary` read — so the governed summary reaches the
+ * tenant-facing calls row without a second model call.
+ *
+ * EMPTY TRANSCRIPT IS A DELIBERATE NO-OP: a call with no spoken turns must NOT have
+ * its origination summary overwritten with another empty extraction. Org-pinned on
+ * every read and write (defence in depth over the RLS-bypassing admin client). Fails
+ * loud like its ingestion siblings; the webhook wraps it best-effort.
+ */
+export async function refreshVoiceExtractionFromTranscript(args: {
+  orgId: string;
+  providerCallId: string;
+  transcript: string;
+}): Promise<{ refreshed: boolean }> {
+  const transcript = args.transcript.trim();
+  // No captured speech ⇒ leave the origination summary as-is. Re-extracting the
+  // empty string would just re-derive the sentinel and clobber nothing useful.
+  if (!transcript) return { refreshed: false };
+
+  const admin = createAdminClient();
+
+  // Locate the origination enquiry (keyed exactly as it was created and as the
+  // spoken-turn loop folds raw_text) to reach its linked lead. Org-pinned.
+  const existing = await (
+    admin.from("inbound_enquiries" as never) as unknown as {
+      select: (c: string) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{
+              data: { id: string; lead_id: string | null } | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
+      };
+    }
+  )
+    .select("id, lead_id")
+    .eq("org_id", args.orgId)
+    .eq("provider_message_id", args.providerCallId)
+    .maybeSingle();
+  if (existing.error) {
+    throw readFailure(
+      "receptionist: voice re-extract enquiry lookup",
+      existing.error as SupabaseReadError,
+    );
+  }
+  const enquiryId = existing.data?.id ?? null;
+  const leadId = existing.data?.lead_id ?? null;
+  // No enquiry under this CallSid ⇒ nothing to refresh (a benign no-op).
+  if (!enquiryId) return { refreshed: false };
+
+  // GOVERNED — the SAME entry the origination extraction used, so the ceiling /
+  // dedupe / ledger are all in the path. When a tier is unbound (dark) this degrades
+  // to the deterministic extraction over the REAL transcript, which is exactly what
+  // fixes the sentinel summary + null triage even before activation.
+  const extraction = await extractFields(transcript, args.orgId);
+
+  // Refresh the enquiry triage (org-pinned).
+  const enqUpd = await (
+    admin.from("inbound_enquiries" as never) as unknown as {
+      update: (row: unknown) => {
+        eq: (k: string, v: unknown) => {
+          eq: (
+            k: string,
+            v: unknown,
+          ) => Promise<{ error: { message: string } | null }>;
+        };
+      };
+    }
+  )
+    .update({
+      ai_summary: extraction.summary,
+      ai_confidence: extraction.confidence,
+      job_type: extraction.job_type,
+      urgency: extraction.urgency,
+      postcode: extraction.postcode,
+      budget_gbp: extraction.budget_gbp,
+    })
+    .eq("id", enquiryId)
+    .eq("org_id", args.orgId);
+  if (enqUpd.error) {
+    throw readFailure(
+      "receptionist: voice re-extract enquiry update",
+      enqUpd.error as SupabaseReadError,
+    );
+  }
+
+  // Refresh the lead triage, if the enquiry resolved to one (org-pinned). The lead
+  // column mapping mirrors the origination insert: summary→ai_summary,
+  // job_type→service, urgency→urgency, postcode→postcode.
+  if (leadId) {
+    const { error: leadError } = await admin
+      .from("leads")
+      .update({
+        ai_summary: extraction.summary,
+        urgency: extraction.urgency,
+        service: extraction.job_type,
+        postcode: extraction.postcode,
+      })
+      .eq("id", leadId)
+      .eq("org_id", args.orgId);
+    if (leadError) throw readFailure("receptionist: voice re-extract lead update", leadError);
+  }
+
+  return { refreshed: true };
+}
+
+/**
  * The provider leg, isolated so the governor can time it and account for it.
  * Reports the vendor's own billed token counts; throws on any provider failure.
  */

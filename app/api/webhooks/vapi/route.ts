@@ -27,7 +27,10 @@ import {
   updateCallAssociation,
   updateCallCompletion,
 } from "@/server/services/telephony";
-import { processInboundEnquiry } from "@/server/services/receptionist";
+import {
+  processInboundEnquiry,
+  refreshVoiceExtractionFromTranscript,
+} from "@/server/services/receptionist";
 import type { NormalizedInboundCall } from "@/lib/telephony/types";
 
 /**
@@ -234,6 +237,29 @@ export async function POST(request: Request): Promise<NextResponse> {
     const orgId = report.to ? await resolveOrgForDialedNumber(report.to) : null;
     if (!orgId) return NextResponse.json({ ok: true, unrouted: true });
     try {
+      // ── Terminal re-extraction (the empty-transcript fix) ────────────────────
+      // The origination extraction ran at call START over an EMPTY transcript, so
+      // the lead + enquiry carry the "no transcript captured" sentinel summary + null
+      // triage. Now that the call has ended, re-run the SAME GOVERNED extraction over
+      // the CAPTURED transcript (Vapi's own end-of-call transcript is the authoritative
+      // record of what the caller said) and refresh the lead (ai_summary / urgency /
+      // service / postcode) + enquiry (ai_summary / ai_confidence / job_type / urgency
+      // / postcode / budget_gbp), org-pinned by (org_id, provider_message_id = the Vapi
+      // call id). Empty transcript ⇒ a deliberate no-op (never overwrite the
+      // origination summary with another empty extraction). No new / ungoverned model
+      // call — extractFields goes through the SAME governor entry as origination.
+      // Best-effort within the enclosing try (degrades to enriched:false, never 500).
+      if (report.callId) {
+        await refreshVoiceExtractionFromTranscript({
+          orgId,
+          providerCallId: report.callId,
+          transcript: report.transcript ?? "",
+        });
+      }
+      // Enrich the calls row. Vapi supplies its OWN structured transcript + analysis
+      // summary on the terminal report; those remain the calls-row artifacts (the lead
+      // + enquiry triage above is what the origination-empty defect actually broke).
+      // The write is org-pinned, keyed on the Vapi call id and idempotent.
       await updateCallCompletion(orgId, report.callId!, {
         recordingUrl: report.recordingUrl,
         transcript: report.transcript,
