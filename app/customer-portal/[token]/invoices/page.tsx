@@ -94,19 +94,12 @@ export default async function PortalInvoicesPage({
   // an invoice whose quote was deleted keeps its customer_id, so it still
   // appears here instead of vanishing. org_id + customer_id keeps it strictly
   // this customer's, on the RLS-bypassing admin client.
-  const { data: invoicesData, error: invoicesError } = await admin
-    .from("invoices")
-    .select(
-      "id, number, status, amount, vat_total, total, due_date, sent_at, paid_at, created_at",
-    )
-    .eq("org_id", customer.org_id)
-    .eq("customer_id", customer.id)
-    .order("created_at", { ascending: false })
-    .limit(200);
-  if (invoicesError) {
-    throw readFailure("portal invoices: invoices", invoicesError);
-  }
-  const invoices: Array<{
+  // F-1: page the FULL invoice set (fetchAllRows, stable created_at + id order).
+  // This read feeds computePortalPayments below (the paid/dueNow/overdue money
+  // tiles), so a capped .limit() would silently truncate a MONEY aggregate once
+  // a customer's invoice history crosses the 1000-row PostgREST cap. The child
+  // invoice_payments read was already paged; the parent was the straggler.
+  type ListInvoice = {
     id: string;
     number: string;
     status: string;
@@ -117,7 +110,27 @@ export default async function PortalInvoicesPage({
     sent_at: string | null;
     paid_at: string | null;
     created_at: string;
-  }> = invoicesData ?? [];
+  };
+  const { data: invoicesData, error: invoicesError } = await fetchAllRows<ListInvoice>(
+    (from, to) =>
+      admin
+        .from("invoices")
+        .select(
+          "id, number, status, amount, vat_total, total, due_date, sent_at, paid_at, created_at",
+        )
+        .eq("org_id", customer.org_id)
+        .eq("customer_id", customer.id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: ListInvoice[] | null;
+        error: unknown;
+      }>,
+  );
+  if (invoicesError) {
+    throw readFailure("portal invoices: invoices", invoicesError);
+  }
+  const invoices: ListInvoice[] = invoicesData;
 
   // Paid-so-far per invoice for the partial-payment display.
   const paidByInvoice = new Map<string, number>();
