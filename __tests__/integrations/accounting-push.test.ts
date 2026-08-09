@@ -772,6 +772,200 @@ describe("QuickBooks adapter push", () => {
 });
 
 // ---------------------------------------------------------------------------
+// RESOLVER ERROR PROPAGATION (defect class c54) — an entity lookup that hits a
+// TRANSPORT error (5xx / network / refresh-dead) must NEVER be swallowed into a
+// silently-usable not-found/null.
+//
+// THE BUG. resolveInvoiceId mapped `!res.ok → null` (its siblings return a hard
+// {ok:false}). pushPayments passed that null to buildQboPaymentBody, which omits
+// LinkedTxn when invoiceId is null, so a transient 5xx on the invoice lookup made
+// QBO record an UNAPPLIED payment (a graceful 2xx) — counted, ledgered, then
+// excluded from every future export: STRANDED FOREVER with no re-link path. The
+// payment-link gate (c53) guarantees the invoice EXISTS for every payment that
+// reaches this adapter, so a lookup that ERRORS or comes back EMPTY is anomalous
+// and must FAIL (retry next sync, like Xero's non-2xx self-heal), never post
+// unapplied. These tests prove RED against the pre-fix `!res.ok → null`.
+// ---------------------------------------------------------------------------
+describe("QBO resolver error propagation (no transport error swallowed to not-found)", () => {
+  const payInput = (over: Partial<AccountingPushInput> = {}): AccountingPushInput => ({
+    rows: [PAYMENT_ROW],
+    accessToken: "ACCESS-1",
+    tenantId: null,
+    realmId: "REALM-1",
+    refresh: vi.fn(async () => null),
+    ...over,
+  });
+  const invInput = (over: Partial<AccountingPushInput> = {}): AccountingPushInput => ({
+    rows: [INVOICE_ROW],
+    accessToken: "ACCESS-1",
+    tenantId: null,
+    realmId: "REALM-1",
+    refresh: vi.fn(async () => null),
+    ...over,
+  });
+  const posted = (fetchMock: ReturnType<typeof vi.fn>): boolean =>
+    fetchMock.mock.calls.some(
+      (c) => String(c[0]).includes("/payment") && (c[1] as RequestInit).method === "POST",
+    );
+
+  it("a gated-in payment whose invoice lookup 5xxs is NOT posted (pushed 0, no /payment POST)", async () => {
+    enableQbo();
+    const fetchMock = qboRouter({
+      customerQuery: () => jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } }),
+      invoiceQuery: () => jsonResponse({ Fault: {} }, 503), // TRANSIENT transport error
+      paymentCreate: () => jsonResponse({ Payment: { Id: "22" } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await getAccountingAdapter("quickbooks").pushPayments(payInput());
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.pushed).toBe(0);
+      expect(res.message).toMatch(/503|invoice/i);
+    }
+    // The payment was NEVER posted — no unapplied receipt recorded at QBO.
+    expect(posted(fetchMock)).toBe(false);
+  });
+
+  it("a NETWORK error on the invoice lookup also fails without posting", async () => {
+    enableQbo();
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && url.includes("Customer")) {
+        return jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } });
+      }
+      if (method === "GET" && url.includes("Invoice")) {
+        throw new Error("ECONNRESET"); // raw() catches → {ok:false, networkError}
+      }
+      return jsonResponse({ Payment: { Id: "22" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await getAccountingAdapter("quickbooks").pushPayments(payInput());
+    expect(res.ok).toBe(false);
+    expect(posted(fetchMock)).toBe(false);
+  });
+
+  it("a gated-in payment whose invoice lookup returns EMPTY (anomalous) is NOT posted unapplied", async () => {
+    enableQbo();
+    // Genuine empty QueryResponse. Under the c53 gate the invoice is guaranteed to
+    // exist, so an empty result is eventual-consistency lag or a real anomaly —
+    // either way we must NOT record an unapplied payment.
+    const fetchMock = qboRouter({
+      customerQuery: () => jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } }),
+      invoiceQuery: () => jsonResponse({ QueryResponse: {} }),
+      paymentCreate: () => jsonResponse({ Payment: { Id: "22" } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await getAccountingAdapter("quickbooks").pushPayments(payInput());
+    expect(res.ok).toBe(false);
+    // The unapplied-payment branch of buildQboPaymentBody is never taken.
+    expect(posted(fetchMock)).toBe(false);
+  });
+
+  it("REGRESSION: a 5xx invoice lookup this sync, then a healthy sync → links (self-heal, no strand)", async () => {
+    enableQbo();
+    // ── Sync 1: invoice lookup 5xx → payment not posted, pushed 0. ──
+    const fetch1 = qboRouter({
+      customerQuery: () => jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } }),
+      invoiceQuery: () => jsonResponse({ Fault: {} }, 500),
+      paymentCreate: () => jsonResponse({ Payment: { Id: "22" } }),
+    });
+    vi.stubGlobal("fetch", fetch1);
+    const first = await getAccountingAdapter("quickbooks").pushPayments(payInput());
+    expect(first.ok).toBe(false);
+    if (!first.ok) expect(first.pushed).toBe(0);
+    expect(posted(fetch1)).toBe(false);
+
+    // ── Sync 2: the lookup now succeeds → the payment posts and LINKS. ──
+    vi.unstubAllGlobals();
+    const fetch2 = qboRouter({
+      customerQuery: () => jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } }),
+      invoiceQuery: () => jsonResponse({ QueryResponse: { Invoice: [{ Id: "11" }] } }),
+      paymentCreate: () => jsonResponse({ Payment: { Id: "22" } }),
+    });
+    vi.stubGlobal("fetch", fetch2);
+    const second = await getAccountingAdapter("quickbooks").pushPayments(payInput());
+    expect(second.ok).toBe(true);
+    if (second.ok) expect(second.pushed).toBe(1);
+    const payCall = fetch2.mock.calls.find(
+      (c) => String(c[0]).includes("/payment") && (c[1] as RequestInit).method === "POST",
+    )!;
+    const body = JSON.parse((payCall[1] as RequestInit).body as string);
+    expect(body.Line[0].LinkedTxn[0].TxnId).toBe("11"); // linked, not unapplied
+  });
+
+  it("class sweep: EVERY QBO GET resolver propagates a 5xx as a hard error (never a usable value)", async () => {
+    enableQbo();
+    // item lookup 5xx (invoice push resolves the Service item first).
+    {
+      const fetchMock = qboRouter({ itemQuery: () => jsonResponse({ Fault: {} }, 500) });
+      vi.stubGlobal("fetch", fetchMock);
+      const res = await getAccountingAdapter("quickbooks").pushInvoices(invInput());
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.message).toMatch(/item lookup|500/i);
+      vi.unstubAllGlobals();
+    }
+    // customer lookup 5xx.
+    {
+      const fetchMock = qboRouter({
+        itemQuery: () => jsonResponse({ QueryResponse: { Item: [{ Id: "7" }] } }),
+        customerQuery: () => jsonResponse({ Fault: {} }, 502),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const res = await getAccountingAdapter("quickbooks").pushInvoices(invInput());
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.message).toMatch(/customer lookup|502/i);
+      vi.unstubAllGlobals();
+    }
+    // tax code lookup 5xx (VAT-bearing invoice).
+    {
+      const fetchMock = qboRouter({
+        itemQuery: () => jsonResponse({ QueryResponse: { Item: [{ Id: "7" }] } }),
+        customerQuery: () => jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } }),
+        taxCodeQuery: () => jsonResponse({ Fault: {} }, 503),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const res = await getAccountingAdapter("quickbooks").pushInvoices(invInput());
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.message).toMatch(/tax code lookup|503/i);
+      vi.unstubAllGlobals();
+    }
+    // invoice lookup 5xx (payment path) — the c54 fix.
+    {
+      const fetchMock = qboRouter({
+        customerQuery: () => jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } }),
+        invoiceQuery: () => jsonResponse({ Fault: {} }, 500),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const res = await getAccountingAdapter("quickbooks").pushPayments(payInput());
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.message).toMatch(/invoice lookup|500/i);
+      expect(posted(fetchMock)).toBe(false);
+    }
+  });
+
+  it("Xero has no swallowing resolver: a missing invoice → non-2xx → error (self-heal, never a silent unapplied)", async () => {
+    enableXero();
+    // Xero links payments by InvoiceNumber inline (no GET lookup); a payment whose
+    // invoice is absent is refused with a non-2xx, so it is neither counted nor
+    // recorded and simply retries — the behaviour QBO now matches.
+    const fetchMock = vi.fn(async () => jsonResponse({ Elements: [{ ValidationErrors: [] }] }, 404));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await getAccountingAdapter("xero").pushPayments({
+      rows: [PAYMENT_ROW],
+      accessToken: "ACCESS-1",
+      tenantId: "TENANT-1",
+      realmId: null,
+      refresh: vi.fn(async () => null),
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.pushed).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // QUICKBOOKS PUSH-ONCE — per-entity, row-id-seeded requestid (the QBO fix)
 // ---------------------------------------------------------------------------
 
