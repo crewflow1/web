@@ -1,7 +1,11 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
-import { INVOICE_STATUSES, type InvoiceStatus } from "@/lib/invoices/schema";
+import {
+  INVOICE_STATUSES,
+  OUTSTANDING_STATUSES,
+  type InvoiceStatus,
+} from "@/lib/invoices/schema";
 import {
   OVERDUE_COLLECTABLE_STATUSES,
   invoiceBusinessToday,
@@ -110,6 +114,13 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
     q = q
       .in("status", OVERDUE_COLLECTABLE_STATUSES as unknown as string[])
       .lt("due_date", todayIso);
+  } else if (status === "outstanding") {
+    // The true outstanding (unpaid) population — the canonical OUTSTANDING_STATUSES
+    // set (sent · awaiting_payment · partially_paid · overdue), NOT a `.eq("status",
+    // "sent")` subset that silently drops awaiting_payment / partially_paid. This is
+    // the drill-through target for the dashboard Outstanding / Expected-incoming
+    // tiles, so the list population matches the tile's netted count.
+    q = q.in("status", OUTSTANDING_STATUSES as unknown as string[]);
   } else if (status && (INVOICE_STATUSES as readonly string[]).includes(status)) {
     q = q.eq("status", status as InvoiceStatus);
   }
@@ -216,6 +227,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
             className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           >
             <option value="">All</option>
+            <option value="outstanding">outstanding (unpaid)</option>
             {INVOICE_STATUSES.map((s) => (
               <option key={s} value={s}>
                 {s}

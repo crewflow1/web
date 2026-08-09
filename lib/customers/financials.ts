@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
+import { computeReceivables } from "@/lib/invoices/receivables";
 
 /**
  * The customer's financial standing — invoiced / paid / outstanding / lifetime.
@@ -114,7 +115,25 @@ export async function loadCustomerFinancials(
 
   const totalInvoiced = invoiceRows.reduce((s, i) => s + Number(i.total ?? 0), 0);
   const totalPaid = paymentRows.reduce((s, p) => s + Number(p.amount ?? 0), 0);
-  const outstanding = Math.max(0, totalInvoiced - totalPaid);
+  // Outstanding is a RECEIVABLE, so it goes through the shared authority: per-
+  // invoice netting (max(0, total − Σ payments)) over the canonical OUTSTANDING
+  // statuses. The old `max(0, totalInvoiced − totalPaid)` netted at the AGGREGATE,
+  // which (a) counted DRAFT invoice totals as owed and (b) let an overpayment on
+  // one invoice silently pay down another — the exact cross-subsidy defect the
+  // ledger-truthful surfaces exist to avoid. totalInvoiced / totalPaid /
+  // lifetimeRevenue stay as-is; they answer different questions.
+  const paidByInvoice = new Map<string, number>();
+  for (const p of paymentRows) {
+    paidByInvoice.set(p.invoice_id, (paidByInvoice.get(p.invoice_id) ?? 0) + Number(p.amount ?? 0));
+  }
+  const { outstandingTotal: outstanding } = computeReceivables(
+    invoiceRows.map((i) => ({
+      status: i.status,
+      total: i.total,
+      due_date: i.due_date,
+      paid: paidByInvoice.get(i.id) ?? 0,
+    })),
+  );
   // Lifetime revenue = sum of paid invoice totals.
   const lifetimeRevenue = invoiceRows
     .filter((i) => i.status === "paid")

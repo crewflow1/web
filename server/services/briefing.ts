@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { invoiceBusinessToday, invoiceDaysOverdue, isInvoiceOverdue } from "@/lib/invoices/overdue";
+import { invoiceRemaining } from "@/lib/invoices/receivables";
+import { round2 } from "@/lib/money";
 import { computeRetentionDueRollup } from "@/lib/retentions/rollup";
 import { buildOrgCash } from "./org-cash";
 import { buildHealthSafetySnapshot } from "./health-safety-snapshot";
@@ -144,6 +146,7 @@ export async function buildDailyBriefing(
       supplierBillVariance,
       scheduleWeather,
       dismissRes,
+      paymentRows,
     ] = await Promise.all([
       pagedRows(db, "invoices", "id, status, total, amount, due_date, job_id", "id", orgId),
       pagedRows(db, "quotes", "id, total, sent_at, accepted_at, declined_at", "id", orgId),
@@ -212,6 +215,11 @@ export async function buildDailyBriefing(
       // line in the viewer's other org. Every sibling read in this batch is
       // already org-pinned; this one was the exception.
       db.from("briefing_dismissals").select("item_key").eq("org_id", orgId).eq("user_id", userId).eq("dismissed_on", todayIso),
+      // The overdue-invoices money line must NET the payment ledger, not sum gross
+      // `total`: a £10k invoice with a £3k deposit owes £7k, not £10k. Org-pinned
+      // and paged like its siblings; pagedRows throws loud on error so the whole
+      // briefing degrades to the honest empty state rather than overstating debt.
+      pagedRows(db, "invoice_payments", "invoice_id, amount", "invoice_id", orgId),
     ]);
 
     // LOUD-OR-WHOLE for the direct (non-pagedRows) reads in the batch above.
@@ -225,14 +233,25 @@ export async function buildDailyBriefing(
     if (dismissRes.error) throw readFailure("briefing: dismissals", dismissRes.error as SupabaseReadError);
 
     // --- Overdue invoices --------------------------------------------------
+    // NET each overdue invoice's balance (max(0, total − Σ payments)) via the
+    // shared receivables primitive — never gross `total`. Zero-balance rows are
+    // skipped so a fully-settled-but-late invoice never inflates the money line.
+    const paidByInvoice = new Map<string, number>();
+    for (const p of paymentRows) {
+      const pid = p.invoice_id == null ? "" : String(p.invoice_id);
+      if (!pid) continue;
+      paidByInvoice.set(pid, (paidByInvoice.get(pid) ?? 0) + num(p.amount));
+    }
     let overdueCount = 0;
     let overdueTotal = 0;
     let overdueMaxDays = 0;
     for (const inv of invoiceRows) {
       const judge = { status: inv.status as string | null, due_date: inv.due_date as string | null };
       if (!isInvoiceOverdue(judge, todayIso)) continue;
+      const remaining = invoiceRemaining({ total: inv.total as number | string | null, paid: paidByInvoice.get(String(inv.id)) ?? 0 });
+      if (remaining <= 0) continue;
       overdueCount += 1;
-      overdueTotal += num(inv.total);
+      overdueTotal = round2(overdueTotal + remaining);
       overdueMaxDays = Math.max(overdueMaxDays, invoiceDaysOverdue(judge, todayIso) ?? 0);
     }
 

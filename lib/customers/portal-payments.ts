@@ -1,5 +1,6 @@
 import { round2, toPounds } from "@/lib/money";
 import { invoiceBusinessToday, isInvoiceOverdue } from "@/lib/invoices/overdue";
+import { invoiceRemaining } from "@/lib/invoices/receivables";
 
 /**
  * H2-CASH M2 — customer-facing payments summary (PURE, customer-safe).
@@ -34,10 +35,10 @@ export function computePortalPayments(invoices: PortalInvoiceLite[], now: Date =
   let overdue = 0;
   for (const inv of invoices) {
     if (inv.status === "draft") continue; // not issued to the customer
-    const total = toPounds(inv.total);
     const paid = round2(toPounds(inv.paid));
     paidToDate = round2(paidToDate + paid);
-    const remaining = round2(Math.max(0, total - paid));
+    // Shared netting primitive — byte-identical to the prior max(0, total − paid).
+    const remaining = invoiceRemaining(inv);
     if (remaining <= 0) continue;
     dueNow = round2(dueNow + remaining);
     if (isInvoiceOverdue({ status: inv.status, due_date: inv.due_date }, todayIso)) {

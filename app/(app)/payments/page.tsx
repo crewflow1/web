@@ -5,6 +5,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { uploadBankCsv } from "./actions";
 import { StateForm } from "@/components/forms/StateForm";
+import { computeReceivables } from "@/lib/invoices/receivables";
 
 /**
  * Payments overview — entry point for bank reconciliation.
@@ -64,10 +65,36 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
   // Money figure — a failed read must not render "£0.00 outstanding".
   if (outstandingError) throw readFailure("payments: outstanding invoices", outstandingError);
 
-  const outstandingTotal = (outstandingRows ?? []).reduce(
-    (s, i) => s + Number(i.total ?? 0),
-    0,
+  // Payments already recorded against those invoices — the Outstanding headline
+  // must NET them (max(0, total − Σ payments)), not sum gross `total`. A £10k
+  // invoice with a £3k deposit is `partially_paid` and owes £7k, not £10k. PAGED
+  // + LOUD: an errored money read must not render a reassuring low Outstanding.
+  const { data: paymentRows, error: paymentsError } = await fetchAllRows((from, to) =>
+    supabase
+      .from("invoice_payments")
+      .select("invoice_id, amount")
+      .eq("org_id", ctx.org.id)
+      .order("invoice_id", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
   );
+  if (paymentsError) throw readFailure("payments: recorded payments", paymentsError);
+  const paidByInvoice = new Map<string, number>();
+  for (const p of paymentRows ?? []) {
+    const row = p as unknown as { invoice_id: string | null; amount: number | string | null };
+    if (!row.invoice_id) continue;
+    paidByInvoice.set(row.invoice_id, (paidByInvoice.get(row.invoice_id) ?? 0) + Number(row.amount ?? 0));
+  }
+  const receivables = computeReceivables(
+    (outstandingRows ?? []).map((i) => ({
+      status: i.status,
+      total: i.total,
+      due_date: i.due_date,
+      paid: paidByInvoice.get(i.id) ?? 0,
+    })),
+  );
+  const outstandingTotal = receivables.outstandingTotal;
+  const outstandingCount = receivables.outstandingCount;
 
   const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
   const savedMessage = sp.saved
@@ -102,7 +129,7 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
               {GBP.format(outstandingTotal)}
             </div>
             <div className="text-xs text-slate-500">
-              {(outstandingRows ?? []).length} unpaid invoices
+              {outstandingCount} unpaid {outstandingCount === 1 ? "invoice" : "invoices"}
             </div>
           </div>
           <Link

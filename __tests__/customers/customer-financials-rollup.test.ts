@@ -129,10 +129,14 @@ function buildFixture() {
     },
     // Stage / progress-billing invoice — quote_id NULL, customer_id set
     // (exactly what generate_stage_invoice inserts). Pre-fix read MISSED this.
+    // £300 of its £500 is received, so its status is `partially_paid` — the state
+    // the payment-sync trigger stamps for 0 < paid < total (a `paid` status would
+    // mean fully settled, which £300-of-£500 is not). This exercises the
+    // per-invoice receivables netting: it owes £200, not £500.
     {
       id: "inv-stage",
       number: "INV-002",
-      status: "paid",
+      status: "partially_paid",
       total: 500,
       due_date: "2026-02-15",
       paid_at: "2026-02-10",
@@ -226,8 +230,13 @@ describe("customer financial rollup — the fix (loadCustomerFinancials)", () =>
     // Totals INCLUDE the stage invoice (would be 1000 / 1000 / 0 / 1000 pre-fix).
     expect(f.totalInvoiced).toBe(1500); // 1000 + 500
     expect(f.totalPaid).toBe(1300); // 1000 + 300
-    expect(f.outstanding).toBe(200); // 1500 - 1300
-    expect(f.lifetimeRevenue).toBe(1500); // both invoices are 'paid'
+    // Outstanding is the RECEIVABLE — per-invoice net over the canonical
+    // OUTSTANDING statuses (shared authority): inv-quote is `paid` → owes £0;
+    // inv-stage is `partially_paid` £500−£300 → owes £200. Total £200.
+    expect(f.outstanding).toBe(200);
+    // Lifetime revenue = Σ paid-status invoice totals: only inv-quote (£1000);
+    // the partially_paid stage invoice is not yet settled revenue.
+    expect(f.lifetimeRevenue).toBe(1000);
     expect(f.paymentRows).toHaveLength(2);
   });
 

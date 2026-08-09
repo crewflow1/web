@@ -1,5 +1,7 @@
 import { round2, toPounds } from "@/lib/money";
 import { invoiceBusinessToday, invoiceDaysOverdue, isInvoiceOverdue } from "@/lib/invoices/overdue";
+import { OUTSTANDING_STATUSES } from "@/lib/invoices/schema";
+import { invoiceRemaining as sharedInvoiceRemaining } from "@/lib/invoices/receivables";
 
 /**
  * H2-CASH M2 — org-wide cash visibility, PURE.
@@ -55,12 +57,18 @@ export interface OrgCashSummary {
   invoiceCount: number;
 }
 
-/** Remaining owed on one invoice — the one rule (total − paid), never negative. */
+/**
+ * Remaining owed on one invoice — the one rule (total − paid), never negative.
+ * Re-exported from the shared receivables authority so this module, the operator
+ * dashboard and the customer portal all net with the same primitive.
+ */
 export function invoiceRemaining(inv: Pick<OrgCashInvoice, "total" | "paid">): number {
-  return round2(Math.max(0, toPounds(inv.total) - round2(toPounds(inv.paid))));
+  return sharedInvoiceRemaining(inv);
 }
 
-const COLLECTABLE = new Set(["sent", "awaiting_payment", "partially_paid", "overdue"]);
+// The canonical OUTSTANDING status set (schema authority), not a hardcoded
+// subset — sent · awaiting_payment · partially_paid · overdue.
+const COLLECTABLE = new Set<string>(OUTSTANDING_STATUSES);
 
 function endOfMonthIso(now: Date): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
