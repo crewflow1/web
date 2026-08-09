@@ -131,8 +131,8 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
     "bounded: correction movements for ONE request's issued set (.in(rows.map(id))) — request-sized, well below 1000",
   // sites/van-stock: per-ORG fleet_vehicles scans (.eq(org_id)) for site-usage
   // counts / a van picker. An SME org's fleet is tens of vehicles, not thousands.
-  "server/services/sites.ts:159":
-    "bounded: per-org fleet_vehicles count sample (.eq(org_id)) — an org's fleet is tens of vehicles",
+  "server/services/sites.ts:187":
+    "bounded: per-org fleet_vehicles count sample (.eq(org_id)) — an org's fleet is tens of vehicles. (Moved 159→187 when listSitesForOrg was split into a bounded + paged (fetchAllRows) picker read for the F-1 picker-completion wave.)",
   "server/services/van-stock.ts:105":
     "bounded: per-org fleet_vehicles picker (.eq(org_id)) — an org's fleet is tens of vehicles",
 

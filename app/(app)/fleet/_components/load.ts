@@ -6,6 +6,7 @@ import {
   type SiteOption,
   type SitesClient,
 } from "@/server/services/sites";
+import { listSuppliersForOrg, type SuppliersClient } from "@/server/services/suppliers";
 import type { SupplierOption } from "./vehicle-form";
 
 /**
@@ -31,25 +32,16 @@ export async function loadVehicleForOrg(
 export async function loadSupplierOptions(orgId: string): Promise<SupplierOption[]> {
   try {
     const supabase = await createClient();
-    const { data } = await (
-      supabase.from("suppliers" as never) as unknown as {
-        select: (c: string) => {
-          eq: (
-            k: string,
-            v: unknown,
-          ) => {
-            order: (
-              c: string,
-              o: { ascending: boolean },
-            ) => Promise<{ data: Array<{ id: string; name: string }> | null }>;
-          };
-        };
-      }
-    )
-      .select("id, name")
-      .eq("org_id", orgId)
-      .order("name", { ascending: true });
-    return (data ?? []).map((s) => ({ id: s.id, name: s.name }));
+    // COMPLETE read (F-1 picker class). This used to be a bare
+    // `.from("suppliers").select("id, name")` with NO paging, so PostgREST
+    // silently clamped it at 1000 — an org past the cap dropped suppliers from
+    // the vehicle form AND, worse, the record-service picker on the vehicle
+    // detail page would NULL an out-of-cap saved provider on an untouched save.
+    // Route through the paged chokepoint so every supplier is present.
+    return await listSuppliersForOrg<SupplierOption>(
+      supabase as unknown as SuppliersClient,
+      orgId,
+    );
   } catch {
     // A missing supplier list must never block adding a vehicle — the field is
     // optional, so degrade to "no options" rather than failing the page.

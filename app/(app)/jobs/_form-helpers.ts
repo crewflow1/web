@@ -59,14 +59,30 @@ export async function listCustomersForOrg(
 
 export async function listStaffForOrg(orgId: string): Promise<StaffOption[]> {
   const supabase = await createClient();
-  // Read memberships in the ACTIVE org; PostgREST joins to users via the FK.
-  const { data, error } = await supabase
-    .from("memberships")
-    .select("user:users ( id, full_name, email )")
-    .eq("org_id", orgId)
-    .limit(500);
+  // COMPLETE read (F-1 picker class). The old `.limit(500)` capped the assignee
+  // picker exactly like the pre-fix customer reader above: for an org past the
+  // cap, out-of-cap members were unassignable AND — worse — the EDIT path
+  // silently NULLED an out-of-cap existing assignment, because updateJob writes
+  // `assigned_to ?? null` straight from the submitted <select> and a current
+  // assignee missing from the options submits empty on an untouched save. Page
+  // the WHOLE membership set under the PostgREST cap with a STABLE order (the
+  // unique `user_id` per membership row), then sort by display name in TS. The
+  // form ALSO preserve-injects the saved assignee (belt-and-braces) — see
+  // lib/quotes/preserve-option.ts.
+  const { data, error } = await fetchAllRows<{ user: StaffOption | null }>(
+    (from, to) =>
+      supabase
+        .from("memberships")
+        .select("user:users ( id, full_name, email )")
+        .eq("org_id", orgId)
+        .order("user_id", { ascending: true })
+        .range(from, to),
+  );
   if (error) throw readFailure("job form: staff", error);
   return (data ?? [])
     .map((row) => row.user)
-    .filter((u): u is StaffOption => !!u && !!u.id);
+    .filter((u): u is StaffOption => !!u && !!u.id)
+    .sort((a, b) =>
+      (a.full_name ?? a.email).localeCompare(b.full_name ?? b.email),
+    );
 }

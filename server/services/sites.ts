@@ -1,5 +1,7 @@
 import "server-only";
 
+import { fetchAllRows } from "@/lib/supabase/paginate";
+
 /**
  * Sites — the read layer behind /sites, its detail route, and every site
  * picker embedded in other domains (the fleet vehicle form, the custody
@@ -43,10 +45,12 @@ type SitesBuilder = PromiseLike<{ data: Row[] | null; error: unknown }> & {
   eq: (k: string, v: unknown) => SitesBuilder;
   order: (k: string, o: { ascending: boolean }) => SitesBuilder;
   limit: (n: number) => SitesBuilder;
+  range: (from: number, to: number) => SitesBuilder;
   maybeSingle: () => Promise<{ data: Row | null; error: unknown }>;
 };
 
-/** How many sites the register and the pickers read at most. */
+/** How many sites a BOUNDED sample reads at most. The pickers do NOT use this —
+ * they page the whole register (default path). */
 export const SITE_LIST_LIMIT = 500;
 
 /** Columns every list surface and picker needs. */
@@ -104,14 +108,38 @@ export async function listSitesForOrg<T = SiteRow>(
   orgId: string,
   opts: { columns?: string; limit?: number } = {},
 ): Promise<T[]> {
-  const { data } = await db
-    .from("sites")
-    .select(opts.columns ?? SITE_LIST_COLUMNS)
-    .eq("org_id", orgId)
-    .order("name", { ascending: true })
-    // F-1: bounded sample — cap provably (PostgREST clamps every read to 1000),
-    // so a large `opts.limit` can never masquerade as a complete list.
-    .limit(Math.min(opts.limit ?? SITE_LIST_LIMIT, SITE_LIST_LIMIT));
+  const columns = opts.columns ?? SITE_LIST_COLUMNS;
+
+  // BOUNDED sample — a caller that passes an explicit `opts.limit` wants a capped
+  // read. Cap it provably (below the PostgREST clamp) so a large `opts.limit`
+  // cannot masquerade as a complete list.
+  if (opts.limit !== undefined) {
+    const { data } = await db
+      .from("sites")
+      .select(columns)
+      .eq("org_id", orgId)
+      .order("name", { ascending: true })
+      .limit(Math.min(opts.limit, SITE_LIST_LIMIT));
+    return (data ?? []) as unknown as T[];
+  }
+
+  // COMPLETE read (F-1 picker class) — the default path the pickers use. The
+  // fleet vehicle form's home-site <select> (and listSiteOptionsForOrg's keepId
+  // preservation) re-render a SAVED site id on edit; the old `.limit(500)` cap
+  // dropped an out-of-cap saved site from the options — and keepId could not
+  // rescue it because the READ itself was truncated — so an untouched edit-save
+  // NULLED home_site_id. Page the whole register under the cap with a STABLE
+  // order (name plus a unique `id` tiebreaker) so every site is selectable and
+  // the saved one is always present.
+  const { data } = await fetchAllRows<Row>((from, to) =>
+    db
+      .from("sites")
+      .select(columns)
+      .eq("org_id", orgId)
+      .order("name", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   return (data ?? []) as unknown as T[];
 }
 

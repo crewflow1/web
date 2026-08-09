@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { listSuppliersForOrg, type SuppliersClient } from "@/server/services/suppliers";
+import { withPreservedOption } from "@/lib/quotes/preserve-option";
 import { approveExpenseDraftAction, rejectExpenseDraft } from "../actions";
 import { AmountInput } from "./_amount-input";
 
@@ -96,6 +97,15 @@ export default async function ExpenseDraftPage({
   const suppliers = await listSuppliersForOrg<SupplierRow>(
     supabase as unknown as SuppliersClient,
     ctx.org.id,
+  );
+  // DEFENCE-IN-DEPTH against the picker-class silent-null (F-1). The reader pages
+  // the roster complete, but the saved supplier must never be droppable from the
+  // <select> — otherwise approving/editing this bill would NULL a valid supplier
+  // link on a save that never touched the picker. Preserve-inject the saved id.
+  const supplierOptions = withPreservedOption(
+    suppliers,
+    row.supplier_id ?? undefined,
+    (id) => ({ id, name: "Current supplier" }),
   );
 
   const errorMessage = sp.error ? ERROR_MAP[sp.error] ?? sp.error : null;
@@ -230,7 +240,7 @@ export default async function ExpenseDraftPage({
               className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 disabled:bg-slate-100"
             >
               <option value="">— No supplier —</option>
-              {suppliers.map((s) => (
+              {supplierOptions.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
                 </option>

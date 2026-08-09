@@ -36,6 +36,7 @@ import {
   secondaryButtonClass,
 } from "../../_components/ui";
 import { errorMessage, savedMessage } from "../../_components/messages";
+import { withPreservedOption } from "@/lib/quotes/preserve-option";
 
 export const dynamic = "force-dynamic";
 
@@ -469,7 +470,14 @@ export default async function VehiclePage({
                               className={inputClass}
                             >
                               <option value="">Not set</option>
-                              {suppliers.map((o) => (
+                              {/* Preserve the schedule's saved provider even if it
+                                  falls outside the (paged) supplier list, so
+                                  recording a service can never NULL it. */}
+                              {withPreservedOption(
+                                suppliers,
+                                s.supplierId ?? undefined,
+                                (id) => ({ id, name: "Current provider" }),
+                              ).map((o) => (
                                 <option key={o.id} value={o.id}>
                                   {o.name}
                                 </option>

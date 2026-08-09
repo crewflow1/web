@@ -304,3 +304,28 @@ DOWN by exactly 3 (a loudness win — take it, per the DOWN rule):
   `Promise.all`-tuple read, not the discard shape; it only gained the in-chain
   active-org pin, so no ledger movement there.) soft-data and count-only
   unchanged. Baseline lowered in the same commit, per the DOWN rule.
+
+## 2026-08-09: F-1 picker-completion class (fix/staff-picker-completion-class)
+
+Closing the picker-completion silent-NULL class (staff / supplier / site / job
+option-source readers whose cap dropped an out-of-cap SAVED reference, so an
+untouched edit-save wrote NULL) moved the discard ledger on two scopes. Net
+across the codebase is neutral, and both moved shapes are strictly more correct
+(complete paged reads replacing clamped bare ones).
+
+- **app/(app) discard 57 → 56** (DOWN — take it): `fleet/_components/load.ts`
+  `loadSupplierOptions` dropped its inline bare
+  `const { data } = await supabase.from("suppliers").select("id, name")…`
+  (which PostgREST silently clamped at 1000) and now routes through the paged,
+  org-pinned `listSuppliersForOrg` chokepoint (binds + throws `error`). One
+  discard retired.
+
+- **server + lib + components discard 35 → 36** (UP — best-effort, ledgered):
+  `server/services/sites.ts` `listSitesForOrg` was split into a BOUNDED sample
+  branch and a COMPLETE paged (`fetchAllRows`) picker branch, so the reader's one
+  original `const { data } = await …` swallow becomes two (one per branch). This
+  reader is best-effort BY DESIGN: every picker reaches it via
+  `listSiteOptionsForOrg`'s `try/catch` (degrades to `[]`), and the fleet
+  home-site `<select>` preserve-injects the saved id, so a partial/empty list can
+  never silent-NULL a saved site. Per the UP rule, baseline raised in the same
+  commit with this reason.

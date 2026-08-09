@@ -115,8 +115,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: stock issue movements for ONE material request (.in(lineIds)) — request-sized, well below 1000",
   "server/services/material-fulfilment.ts:150":
     "bounded: correction movements for ONE request's issued set (.in(rows.map(id))) — request-sized, well below 1000",
-  "server/services/sites.ts:159":
-    "bounded: per-org fleet_vehicles count sample (.eq(org_id)) — an org's fleet is tens of vehicles",
+  "server/services/sites.ts:187":
+    "bounded: per-org fleet_vehicles count sample (.eq(org_id)) — an org's fleet is tens of vehicles. (Moved 159→187 when listSitesForOrg was split into a bounded + paged (fetchAllRows) picker read for the F-1 picker-completion wave.)",
   "server/services/van-stock.ts:105":
     "bounded: per-org fleet_vehicles picker (.eq(org_id)) — an org's fleet is tens of vehicles",
   // CRM wave (jobs/leads/customers joined HIGH_VALUE_TABLES). Each is either a

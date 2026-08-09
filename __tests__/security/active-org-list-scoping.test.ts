@@ -639,7 +639,13 @@ describe("the pins do not change anything else", () => {
     expect(src("app/(app)/jobs/_form-helpers.ts"), "#456").toMatch(ARG_PIN);
     expect(src("app/(app)/purchase-orders/_data.ts"), "#463").toMatch(ARG_PIN);
     expect(src("app/(app)/assets/new/page.tsx"), "#464").toMatch(CTX_PIN);
-    expect(src("app/(app)/fleet/_components/load.ts"), "#465").toMatch(ARG_PIN);
+    // #465 pinned loadSupplierOptions with an inline `.eq("org_id", orgId)`.
+    // The F-1 picker-completion wave routes it through the org-pinned + PAGED
+    // listSuppliersForOrg chokepoint instead (the inline read was clamped at
+    // 1000); the org scope is preserved there, so assert the delegation.
+    expect(src("app/(app)/fleet/_components/load.ts"), "#465").toMatch(
+      /listSuppliersForOrg[\s\S]*?orgId/,
+    );
     expect(src("app/(app)/staff/page.tsx")).toMatch(CTX_PIN);
     expect(src("app/(app)/staff/leave/page.tsx")).toMatch(CTX_PIN);
     expect(src("server/services/org-cash.ts")).toMatch(ARG_PIN);

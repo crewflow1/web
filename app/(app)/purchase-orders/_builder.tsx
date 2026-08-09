@@ -4,6 +4,7 @@ import { useActionState, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { INITIAL_FORM_STATE, type FormState } from "@/lib/forms/state";
 import { computeTotals } from "@/lib/quotes/totals";
+import { withPreservedOption } from "@/lib/quotes/preserve-option";
 import { PO_VAT_RATES, type PurchaseOrderFormInput } from "@/lib/purchase-orders/schema";
 
 type Option = { id: string; name: string };
@@ -81,6 +82,22 @@ export function PurchaseOrderBuilder({
   const setRow = (i: number, patch: Partial<Row>) =>
     setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
 
+  // DEFENCE-IN-DEPTH against the picker-class silent-null (F-1). The supplier list
+  // is paged complete and the job list is a bounded recent-N sample; either way an
+  // out-of-list SAVED id (editing an existing PO) must keep its <option>, or an
+  // untouched save would NULL supplier_id / job_id. Preserve-inject both.
+  const selectedSupplierId = initial?.supplier_id ?? "";
+  const selectedJobId = initial?.job_id ?? "";
+  const supplierOptions = withPreservedOption(
+    suppliers,
+    selectedSupplierId,
+    (id) => ({ id, name: "Current supplier" }),
+  );
+  const jobOptions = withPreservedOption(jobs, selectedJobId, (id) => ({
+    id,
+    name: "Current job",
+  }));
+
   return (
     <form action={formAction} className="space-y-5">
       {state.error ? (
@@ -101,11 +118,11 @@ export function PurchaseOrderBuilder({
           Supplier
           <select
             name="supplier_id"
-            defaultValue={initial?.supplier_id ?? ""}
+            defaultValue={selectedSupplierId}
             className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900"
           >
             <option value="">— None —</option>
-            {suppliers.map((s) => (
+            {supplierOptions.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
               </option>
@@ -116,11 +133,11 @@ export function PurchaseOrderBuilder({
           Job (optional)
           <select
             name="job_id"
-            defaultValue={initial?.job_id ?? ""}
+            defaultValue={selectedJobId}
             className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900"
           >
             <option value="">— None —</option>
-            {jobs.map((j) => (
+            {jobOptions.map((j) => (
               <option key={j.id} value={j.id}>
                 {j.name}
               </option>
