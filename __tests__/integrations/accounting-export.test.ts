@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   toCanonicalRows,
   money2,
+  filterInvoicesByTaxPoint,
+  invoiceTaxPointDate,
   type CanonicalInvoiceInput,
   type CanonicalPaymentInput,
 } from "@/lib/integrations/accounting/canonical";
@@ -109,6 +111,98 @@ describe("toCanonicalRows — invoice rows", () => {
       todayIso: TODAY,
     });
     expect(row?.customer).toBe("");
+  });
+});
+
+describe("filterInvoicesByTaxPoint — windows on the tax point, not created_at", () => {
+  // The whole defect: an invoice's tax point is `sent_at ?? created_at`, and
+  // `sent_at >= created_at`. Windowing the read on `created_at` (the pre-fix bug)
+  // silently DROPS an invoice created before `from` yet issued within the window,
+  // and over-includes one issued after `to`. These fixtures pin the correct,
+  // tax-point-based bound. `invoiceTaxPointDate` is the SAME helper the mapper
+  // stamps onto the row `date`, so the filter and the booked date cannot diverge.
+
+  const createdMarSentApr = inv({
+    number: "INV-BOUNDARY-LOWER",
+    created_at: "2026-03-31T23:30:00Z",
+    sent_at: "2026-04-02T09:00:00Z",
+  });
+  const createdJunSentJul = inv({
+    number: "INV-BOUNDARY-UPPER",
+    created_at: "2026-06-30T23:30:00Z",
+    sent_at: "2026-07-02T09:00:00Z",
+  });
+
+  it("(a) created 31 Mar / issued 2 Apr APPEARS in a from=2026-04-01 export", () => {
+    // Tax point is 2 Apr, so it belongs to the April-onwards period even though
+    // created_at (31 Mar) is before the window. RED on the created_at-windowed
+    // code (created_at < from ⇒ dropped); GREEN on the tax-point filter.
+    expect(invoiceTaxPointDate(createdMarSentApr)).toBe("2026-04-02");
+    const kept = filterInvoicesByTaxPoint([createdMarSentApr], {
+      from: "2026-04-01",
+    });
+    expect(kept.map((i) => i.number)).toEqual(["INV-BOUNDARY-LOWER"]);
+  });
+
+  it("(a) created 31 Mar / issued 2 Apr is EXCLUDED from a to=2026-03-31 export", () => {
+    // Its tax point (2 Apr) is after the March period, so it must not appear —
+    // the created_at-windowed read would wrongly include it (created_at 31 Mar).
+    const kept = filterInvoicesByTaxPoint([createdMarSentApr], {
+      to: "2026-03-31",
+    });
+    expect(kept).toEqual([]);
+  });
+
+  it("(b) created 30 Jun / issued 2 Jul is EXCLUDED from a to=2026-06-30 export", () => {
+    // Tax point 2 Jul is past the June upper bound; must be excluded.
+    expect(invoiceTaxPointDate(createdJunSentJul)).toBe("2026-07-02");
+    const kept = filterInvoicesByTaxPoint([createdJunSentJul], {
+      to: "2026-06-30",
+    });
+    expect(kept).toEqual([]);
+  });
+
+  it("(c) sent_at NULL falls back to created_at for the window", () => {
+    const notYetIssued = inv({
+      number: "INV-DRAFTLIKE",
+      sent_at: null,
+      created_at: "2026-04-10T09:00:00Z",
+    });
+    expect(invoiceTaxPointDate(notYetIssued)).toBe("2026-04-10");
+    // Kept when the fallback created_at is inside the window …
+    expect(
+      filterInvoicesByTaxPoint([notYetIssued], {
+        from: "2026-04-01",
+        to: "2026-04-30",
+      }).map((i) => i.number),
+    ).toEqual(["INV-DRAFTLIKE"]);
+    // … and dropped when it is not.
+    expect(
+      filterInvoicesByTaxPoint([notYetIssued], { from: "2026-05-01" }),
+    ).toEqual([]);
+  });
+
+  it("applies both bounds inclusively and respects a one-sided window", () => {
+    const onFrom = inv({ number: "ON-FROM", sent_at: "2026-04-01T00:00:00Z" });
+    const onTo = inv({ number: "ON-TO", sent_at: "2026-06-30T23:59:00Z" });
+    const before = inv({ number: "BEFORE", sent_at: "2026-03-31T23:59:00Z" });
+    const after = inv({ number: "AFTER", sent_at: "2026-07-01T00:01:00Z" });
+    const all = [onFrom, onTo, before, after];
+
+    // Inclusive both ends.
+    expect(
+      filterInvoicesByTaxPoint(all, { from: "2026-04-01", to: "2026-06-30" })
+        .map((i) => i.number)
+        .sort(),
+    ).toEqual(["ON-FROM", "ON-TO"]);
+    // Only `from` given ⇒ upper side unbounded.
+    expect(
+      filterInvoicesByTaxPoint(all, { from: "2026-04-01" })
+        .map((i) => i.number)
+        .sort(),
+    ).toEqual(["AFTER", "ON-FROM", "ON-TO"]);
+    // No window ⇒ everything.
+    expect(filterInvoicesByTaxPoint(all, {})).toHaveLength(4);
   });
 });
 

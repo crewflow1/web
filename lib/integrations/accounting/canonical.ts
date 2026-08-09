@@ -147,6 +147,53 @@ function dateOnly(value: string | null | undefined): string {
 }
 
 /**
+ * THE canonical tax-point date of an invoice, `YYYY-MM-DD` (or "" when it has
+ * neither timestamp): `sent_at` (when the invoice was ISSUED) preferred, else
+ * `created_at`. Pure. This is the SINGLE definition of an invoice's tax point —
+ * the mapper stamps it onto the row's `date` and the windowed export filters on
+ * it — so the date an accountant books can never disagree with the date the
+ * period filter uses.
+ */
+export function invoiceTaxPointDate(
+  inv: Pick<CanonicalInvoiceInput, "sent_at" | "created_at">,
+): string {
+  return dateOnly(inv.sent_at) || dateOnly(inv.created_at);
+}
+
+/** True for a bare `YYYY-MM-DD` calendar day. */
+function isDayString(v: string | null | undefined): v is string {
+  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+}
+
+/**
+ * Keep only the invoices whose TAX POINT (`sent_at ?? created_at`) falls within
+ * an inclusive `[from, to]` calendar-day window. Pure. Either bound may be
+ * omitted, in which case only the provided side is applied; an invoice with no
+ * derivable tax point is KEPT (it cannot be placed in a period, and silently
+ * dropping it is the exact lie the windowed export must not tell).
+ *
+ * WHY THE TAX POINT, NOT `created_at`. Because `sent_at >= created_at`, an
+ * invoice created 31 Mar but ISSUED 2 Apr has an April tax point: a `created_at`
+ * window would drop it from a `from = 2 Apr` export (created_at < from) and, at
+ * the upper bound, over-include one issued after `to`. The DB read is only a
+ * COARSE `created_at <= to` superset (safe because the tax point can never be
+ * earlier than `created_at`); THIS filter is the exact bound the accountant sees.
+ */
+export function filterInvoicesByTaxPoint(
+  invoices: readonly CanonicalInvoiceInput[],
+  window: { from?: string | null; to?: string | null },
+): CanonicalInvoiceInput[] {
+  const { from, to } = window;
+  return invoices.filter((inv) => {
+    const taxPoint = invoiceTaxPointDate(inv);
+    if (!taxPoint) return true;
+    if (isDayString(from) && taxPoint < from) return false;
+    if (isDayString(to) && taxPoint > to) return false;
+    return true;
+  });
+}
+
+/**
  * THE mapper. CrewFlow invoices + payments -> canonical accounting rows,
  * deterministically.
  *
@@ -169,7 +216,7 @@ export function toCanonicalRows(
         ? Number(inv.total)
         : net + vat;
     const row: CanonicalAccountingRow = {
-      date: dateOnly(inv.sent_at) || dateOnly(inv.created_at),
+      date: invoiceTaxPointDate(inv),
       type: "invoice",
       customer: inv.customer_name ?? "",
       net: money2(net),

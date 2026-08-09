@@ -9,6 +9,7 @@ import {
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import {
   toCanonicalRows,
+  filterInvoicesByTaxPoint,
   type CanonicalAccountingRow,
   type CanonicalInvoiceInput,
   type CanonicalPaymentInput,
@@ -137,12 +138,17 @@ export async function buildAccountingExport(params: {
         // the future provider push). Keep every real status (sent /
         // awaiting_payment / partially_paid / paid / overdue).
         .neq("status", "draft");
-      // Window on the tax point (sent_at when issued, else created_at). We can
-      // only range one column in PostgREST, so bound created_at and let the exact
-      // tax point fall out of the mapper — a conservative superset the accountant
-      // filters. Filters applied BEFORE the transform methods so the builder
-      // stays a filter builder through the conditionals.
-      if (dayOk(from)) q = q.gte("created_at", `${from}T00:00:00Z`);
+      // COARSE UPPER-BOUND PRE-FILTER ONLY. The canonical tax point is
+      // `sent_at ?? created_at` (canonical.ts), and `sent_at >= created_at`, so:
+      //   - `created_at <= to` is a SAFE superset — an invoice created after `to`
+      //     can never have a tax point <= to, so none is wrongly kept;
+      //   - a `created_at >= from` lower bound is NOT safe — an invoice created
+      //     before `from` may still be ISSUED (sent_at) within the window, so
+      //     bounding the read below `from` would silently DROP an in-period
+      //     invoice. It is therefore deliberately ABSENT here.
+      // The EXACT `[from, to]` bound on the tax point is enforced in the pure
+      // layer below (filterInvoicesByTaxPoint), not at this query. Filters applied
+      // BEFORE the transform methods so the builder stays a filter builder.
       if (dayOk(to)) q = q.lte("created_at", `${to}T23:59:59Z`);
       // The nested customer/quote embed defeats PostgREST's row-type inference
       // (it resolves to GenericStringError); cast to the paged shape — the rows
@@ -260,10 +266,17 @@ export async function buildAccountingExport(params: {
     };
   });
 
-  const rows = toCanonicalRows(invoices, payments, { todayIso });
+  // EXACT tax-point window (the DB read above is only a coarse `created_at <= to`
+  // superset). Filter invoices on their canonical tax point (`sent_at ??
+  // created_at`) so an invoice created before `from` but ISSUED within the window
+  // is KEPT, and one issued after `to` is EXCLUDED — the created_at-windowed read
+  // could do neither. Payments already window exactly on `paid_at` at the query.
+  const windowedInvoices = filterInvoicesByTaxPoint(invoices, { from, to });
+
+  const rows = toCanonicalRows(windowedInvoices, payments, { todayIso });
   return {
     rows,
-    invoiceCount: invoices.length,
+    invoiceCount: windowedInvoices.length,
     paymentCount: payments.length,
     truncated,
   };
