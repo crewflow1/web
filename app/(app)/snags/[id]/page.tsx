@@ -5,6 +5,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { loadJobForOrg } from "@/lib/jobs/load";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { listStaffForOrg } from "../../jobs/_form-helpers";
+import { withPreservedOption } from "@/lib/quotes/preserve-option";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
   SNAG_PRIORITIES,
@@ -116,6 +117,16 @@ export default async function SnagDetailPage({
   const assigneeName = snag.assigned_to
     ? (staffMap.get(snag.assigned_to) ?? "Someone")
     : null;
+  // DEFENCE-IN-DEPTH against the picker-class silent-null (F-1). The staff reader
+  // now pages complete, but the reassign <select> must never drop the currently-
+  // assigned member — otherwise a reassign submitted without touching the picker
+  // (or with a stale list) would NULL a valid assignment. Preserve-inject the
+  // saved assignee so it always has a matching <option>.
+  const reassignStaffOptions = withPreservedOption(
+    staff,
+    snag.assigned_to ?? undefined,
+    (id) => ({ id, full_name: "Current assignee", email: "" }),
+  );
   const reporterName = snag.reported_by
     ? (staffMap.get(snag.reported_by) ?? null)
     : null;
@@ -272,7 +283,7 @@ export default async function SnagDetailPage({
                 className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
               >
                 <option value="">Unassigned</option>
-                {staff.map((s) => (
+                {reassignStaffOptions.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.full_name || s.email}
                   </option>

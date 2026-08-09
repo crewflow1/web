@@ -6,6 +6,7 @@ import { FormErrorBanner, FormSuccessBanner } from "@/components/forms/Field";
 import { SubmitButton } from "@/components/forms/FormShell";
 import { Field, SelectField, TextareaField } from "../../_components/field";
 import { INITIAL_FORM_STATE, type FormState } from "@/lib/forms/state";
+import { withPreservedOption } from "@/lib/quotes/preserve-option";
 import { COMMON_STOCK_UNITS } from "@/lib/stock/schema";
 
 /**
@@ -70,6 +71,16 @@ export function StockItemForm({
   }, [state.ok, state.redirectTo, state.submittedAt]);
 
   const fieldErrors = state.fieldErrors ?? {};
+
+  // DEFENCE-IN-DEPTH against the picker-class silent-null (F-1). The supplier list
+  // is paged complete, but the preferred-supplier <select> re-renders a SAVED id
+  // on edit; that id must never be droppable, or an untouched save would NULL it.
+  const selectedSupplierId = defaults?.preferred_supplier_id ?? "";
+  const supplierOptions = withPreservedOption(
+    suppliers,
+    selectedSupplierId,
+    (id) => ({ id, name: "Current supplier" }),
+  );
 
   return (
     <form
@@ -198,9 +209,9 @@ export function StockItemForm({
             label="Usual supplier"
             options={[
               { value: "", label: "— none —" },
-              ...suppliers.map((s) => ({ value: s.id, label: s.name })),
+              ...supplierOptions.map((s) => ({ value: s.id, label: s.name })),
             ]}
-            defaultValue={defaults?.preferred_supplier_id ?? ""}
+            defaultValue={selectedSupplierId}
             error={fieldErrors.preferred_supplier_id}
           />
           <Field

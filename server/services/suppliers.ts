@@ -36,6 +36,7 @@ import "server-only";
  */
 
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 type Row = Record<string, unknown>;
 
@@ -46,10 +47,12 @@ type SuppliersBuilder = PromiseLike<{ data: Row[] | null; error: SupabaseReadErr
   eq: (k: string, v: unknown) => SuppliersBuilder;
   order: (k: string, o: { ascending: boolean }) => SuppliersBuilder;
   limit: (n: number) => SuppliersBuilder;
+  range: (from: number, to: number) => SuppliersBuilder;
   maybeSingle: () => Promise<{ data: Row | null; error: SupabaseReadError | null }>;
 };
 
-/** How many suppliers the address book and the pickers read at most. */
+/** How many suppliers a BOUNDED sample (address book display / compare table)
+ * reads at most. The pickers do NOT use this — they page the whole roster. */
 export const SUPPLIER_LIST_LIMIT = 500;
 
 /**
@@ -90,14 +93,43 @@ export async function listSuppliersForOrg<T = { id: string; name: string }>(
     limit?: number;
   } = {},
 ): Promise<T[]> {
-  const { data, error } = await db
-    .from("suppliers")
-    .select(opts.columns ?? "id, name")
-    .eq("org_id", orgId)
-    .order(opts.orderBy ?? "name", { ascending: opts.ascending ?? true })
-    // F-1: bounded sample — cap provably (PostgREST clamps every read to 1000),
-    // so a large `opts.limit` can never masquerade as a complete list.
-    .limit(Math.min(opts.limit ?? SUPPLIER_LIST_LIMIT, SUPPLIER_LIST_LIMIT));
+  const columns = opts.columns ?? "id, name";
+  const orderBy = opts.orderBy ?? "name";
+  const ascending = opts.ascending ?? true;
+
+  // BOUNDED sample — a caller that passes an explicit `opts.limit` wants a capped
+  // read (the address book display, the compare table). Cap it provably (below
+  // the PostgREST clamp) so a large `opts.limit` can never masquerade as a
+  // complete list.
+  if (opts.limit !== undefined) {
+    const { data, error } = await db
+      .from("suppliers")
+      .select(columns)
+      .eq("org_id", orgId)
+      .order(orderBy, { ascending })
+      .limit(Math.min(opts.limit, SUPPLIER_LIST_LIMIT));
+    if (error) throw readFailure("suppliers: supplier list", error);
+    return (data ?? []) as unknown as T[];
+  }
+
+  // COMPLETE read (F-1 picker class) — the default path the pickers use. A
+  // supplier picker renders `<select defaultValue={savedSupplierId}>` (expense
+  // bills, PO builder, stock item, fleet). The old `.limit(500)` dropped an
+  // out-of-cap saved supplier from the options, so an untouched edit-save
+  // submitted '' and NULLED the reference — the same silent-null the customer
+  // pickers had. Page the whole roster under the cap with a STABLE order (the
+  // requested sort key plus a unique `id` tiebreaker) so every supplier is
+  // selectable and the saved one is always present. The forms ALSO preserve-
+  // inject the saved id (belt-and-braces). See lib/quotes/preserve-option.ts.
+  const { data, error } = await fetchAllRows<Row>((from, to) =>
+    db
+      .from("suppliers")
+      .select(columns)
+      .eq("org_id", orgId)
+      .order(orderBy, { ascending })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (error) throw readFailure("suppliers: supplier list", error);
   return (data ?? []) as unknown as T[];
 }

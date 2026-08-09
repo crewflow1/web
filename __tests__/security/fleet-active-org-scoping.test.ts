@@ -83,7 +83,12 @@ describe("fleet by-id loads go through the scoped chokepoint", () => {
   });
 
   it("the supplier options read is org-pinned", () => {
-    expect(LOAD).toMatch(/\.eq\("org_id", orgId\)/);
+    // loadSupplierOptions now routes through the org-pinned, PAGED chokepoint
+    // listSuppliersForOrg (F-1 picker-completion wave) instead of an inline bare
+    // `.eq("org_id", orgId)` read that PostgREST silently clamped at 1000. The
+    // org pin lives in that service (covered by the supplier-active-org RLS
+    // integration test); here we assert the read is scoped to orgId via it.
+    expect(LOAD).toMatch(/listSuppliersForOrg[\s\S]*?orgId/);
   });
 
   const pages: Array<[string, string]> = [

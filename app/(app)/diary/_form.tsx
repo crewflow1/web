@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import type { JobOption } from "./_data";
+import { withPreservedOption } from "@/lib/quotes/preserve-option";
 import {
   enqueue,
   isWriteQueueSupported,
@@ -175,6 +176,17 @@ export function DiaryForm({
     "mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-base placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 sm:text-sm";
   const label = "block text-sm font-medium text-slate-800";
 
+  // DEFENCE-IN-DEPTH against the picker-class silent-null (F-1). The job list is a
+  // bounded recent-N sample (like the toolbox picker), so when EDITING a diary
+  // entry a saved job_id can be absent from it — an older job. Without a matching
+  // <option> the <select> falls back to '' and updateDiaryEntry would NULL the
+  // link on ANY save. Preserve-inject the saved job_id.
+  const selectedJobId = d.job_id ?? "";
+  const jobOptions = withPreservedOption(jobs, selectedJobId, (id) => ({
+    id,
+    label: "Current job",
+  }));
+
   return (
     <form
       action={action}
@@ -255,11 +267,11 @@ export function DiaryForm({
           <select
             id="job_id"
             name="job_id"
-            defaultValue={d.job_id ?? ""}
+            defaultValue={selectedJobId}
             className={input}
           >
             <option value="">No job (general)</option>
-            {jobs.map((j) => (
+            {jobOptions.map((j) => (
               <option key={j.id} value={j.id}>
                 {j.label}
               </option>

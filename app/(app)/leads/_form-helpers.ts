@@ -45,14 +45,28 @@ export async function listCustomersForLead(
 export async function listStaffForLead(
   orgId: string,
 ): Promise<{ id: string; full_name: string | null; email: string }[]> {
+  type StaffRow = { id: string; full_name: string | null; email: string };
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("memberships")
-    .select("user:users ( id, full_name, email )")
-    .eq("org_id", orgId)
-    .limit(500);
+  // COMPLETE read (F-1 picker class). The old `.limit(500)` capped the assignee
+  // picker exactly like the pre-fix customer reader above: an out-of-cap current
+  // assignee was absent from the options, so an untouched edit-save submitted ''
+  // and updateLead NULLED a valid `assigned_to`. Page the whole membership set
+  // under the PostgREST cap (stable order on the unique `user_id`), then sort by
+  // display name in TS. The form ALSO preserve-injects the saved assignee.
+  const { data, error } = await fetchAllRows<{ user: StaffRow | null }>(
+    (from, to) =>
+      supabase
+        .from("memberships")
+        .select("user:users ( id, full_name, email )")
+        .eq("org_id", orgId)
+        .order("user_id", { ascending: true })
+        .range(from, to),
+  );
   if (error) throw readFailure("lead form: staff", error);
   return (data ?? [])
     .map((row) => row.user)
-    .filter((u): u is { id: string; full_name: string | null; email: string } => !!u?.id);
+    .filter((u): u is StaffRow => !!u?.id)
+    .sort((a, b) =>
+      (a.full_name ?? a.email).localeCompare(b.full_name ?? b.email),
+    );
 }

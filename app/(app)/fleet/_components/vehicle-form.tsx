@@ -17,6 +17,7 @@ import type { SiteOption } from "@/server/services/sites";
 import { siteKindLabel } from "@/lib/sites/schema";
 import { INITIAL_FORM_STATE, isPristine, type FormState } from "@/lib/forms/state";
 import { FormErrorBanner } from "@/components/forms/Field";
+import { withPreservedOption } from "@/lib/quotes/preserve-option";
 import { inputClass, labelClass, primaryButtonClass, secondaryButtonClass } from "./ui";
 
 /**
@@ -73,6 +74,33 @@ export function VehicleForm({
   const val = (key: string, fallback: string | number | null | undefined): string | number =>
     pristine ? (fallback ?? "") : (state.values[key] ?? "");
   const errs = state.fieldErrors;
+
+  // DEFENCE-IN-DEPTH against the picker-class silent-null (F-1). The supplier
+  // reader pages complete, but the two supplier <select>s below (bought/hired-from
+  // and finance provider) re-render a SAVED id on edit; the saved id must never be
+  // droppable, or an untouched save would NULL it. Preserve-inject each saved id.
+  const selectedSupplierId = String(val("supplier_id", v?.supplierId) || "");
+  const selectedFinanceProviderId = String(
+    val("finance_provider_id", v?.financeProviderId) || "",
+  );
+  const supplierOptions = withPreservedOption(
+    suppliers,
+    selectedSupplierId,
+    (id) => ({ id, name: "Current supplier" }),
+  );
+  const financeProviderOptions = withPreservedOption(
+    suppliers,
+    selectedFinanceProviderId,
+    (id) => ({ id, name: "Current provider" }),
+  );
+  // Home site: the reader (listSiteOptionsForOrg) now pages complete and keeps the
+  // saved id, but preserve-inject here too so the <select> can never drop it.
+  const selectedHomeSiteId = String(val("home_site_id", v?.homeSiteId) || "");
+  const siteOptions = withPreservedOption(
+    sites,
+    selectedHomeSiteId,
+    (id) => ({ id, name: "Current site", kind: "", active: true }),
+  );
 
   return (
     <form action={formAction} className="space-y-5">
@@ -267,11 +295,11 @@ export function VehicleForm({
             <select
               id="home_site_id"
               name="home_site_id"
-              defaultValue={v?.homeSiteId ?? ""}
+              defaultValue={selectedHomeSiteId}
               className={inputClass}
             >
               <option value="">Not set</option>
-              {sites.map((s) => (
+              {siteOptions.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name} — {siteKindLabel(s.kind)}
                   {s.active ? "" : " (retired)"}
@@ -358,11 +386,11 @@ export function VehicleForm({
             <select
               id="finance_provider_id"
               name="finance_provider_id"
-              defaultValue={val("finance_provider_id", v?.financeProviderId)}
+              defaultValue={selectedFinanceProviderId}
               className={inputClass}
             >
               <option value="">Not set</option>
-              {suppliers.map((s) => (
+              {financeProviderOptions.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
                 </option>
@@ -414,11 +442,11 @@ export function VehicleForm({
             <select
               id="supplier_id"
               name="supplier_id"
-              defaultValue={val("supplier_id", v?.supplierId)}
+              defaultValue={selectedSupplierId}
               className={inputClass}
             >
               <option value="">Not set</option>
-              {suppliers.map((s) => (
+              {supplierOptions.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
                 </option>

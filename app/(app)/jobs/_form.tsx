@@ -17,6 +17,7 @@ import {
   TextareaField,
   SelectField,
 } from "../_components/field";
+import { withPreservedOption } from "@/lib/quotes/preserve-option";
 
 type JobValues = Record<string, unknown>;
 
@@ -65,6 +66,25 @@ export function JobForm({
     return String(fromDefaults);
   };
 
+  // DEFENCE-IN-DEPTH against the picker-class silent-null (F-1). The readers now
+  // page these lists complete, but a future cap/typeahead — or simply a saved id
+  // that is not in the fetched set — must never let the <select> fall back to ''
+  // and NULL a valid reference on an untouched save. `withPreservedOption`
+  // guarantees the currently-set id always has a matching <option>. See
+  // lib/quotes/preserve-option.ts.
+  const selectedCustomerId = pick("customer_id");
+  const selectedAssignee = pick("assigned_to");
+  const customerOptions = withPreservedOption(
+    customers,
+    selectedCustomerId,
+    (id) => ({ id, name: "Current customer" }),
+  );
+  const staffOptions = withPreservedOption(
+    staff,
+    selectedAssignee,
+    (id) => ({ id, full_name: "Current assignee", email: "" }),
+  );
+
   return (
     <form
       action={formAction}
@@ -82,14 +102,14 @@ export function JobForm({
       <SelectField
         name="customer_id"
         label="Customer"
-        defaultValue={pick("customer_id")}
+        defaultValue={selectedCustomerId}
         error={fe.customer_id}
         options={[
           {
             value: "",
             label: customers.length === 0 ? "— No customers yet —" : "— None —",
           },
-          ...customers.map((c) => ({ value: c.id, label: c.name })),
+          ...customerOptions.map((c) => ({ value: c.id, label: c.name })),
         ]}
         help={
           customers.length === 0
@@ -100,11 +120,11 @@ export function JobForm({
       <SelectField
         name="assigned_to"
         label="Assigned to"
-        defaultValue={pick("assigned_to")}
+        defaultValue={selectedAssignee}
         error={fe.assigned_to}
         options={[
           { value: "", label: "— Unassigned —" },
-          ...staff.map((s) => ({
+          ...staffOptions.map((s) => ({
             value: s.id,
             label: s.full_name ?? s.email,
           })),

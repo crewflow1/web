@@ -21,6 +21,7 @@ import {
   LEAD_SOURCES,
   LEAD_URGENCIES,
 } from "@/lib/leads/schema";
+import { withPreservedOption } from "@/lib/quotes/preserve-option";
 
 /**
  * Client form for create/edit-lead. Drives a server action via
@@ -79,6 +80,23 @@ export function LeadForm({
     if (fromDefaults === undefined || fromDefaults === null) return fallback;
     return String(fromDefaults);
   };
+
+  // DEFENCE-IN-DEPTH against the picker-class silent-null (F-1). The readers page
+  // these lists complete, but the saved id must never be droppable — otherwise an
+  // untouched edit-save submits '' and NULLs a valid customer/assignee.
+  // `withPreservedOption` guarantees the currently-set id always has an <option>.
+  const selectedCustomerId = pick("customer_id");
+  const selectedAssignee = pick("assigned_to");
+  const customerOptions = withPreservedOption(
+    customers,
+    selectedCustomerId,
+    (id) => ({ id, name: "Current customer" }),
+  );
+  const staffOptions = withPreservedOption(
+    staff,
+    selectedAssignee,
+    (id) => ({ id, full_name: "Current assignee", email: "" }),
+  );
 
   return (
     <form
@@ -164,20 +182,20 @@ export function LeadForm({
         <SelectField
           name="customer_id"
           label="Customer"
-          defaultValue={pick("customer_id")}
+          defaultValue={selectedCustomerId}
           options={[
             { value: "", label: "— None / new enquirer —" },
-            ...customers.map((c) => ({ value: c.id, label: c.name })),
+            ...customerOptions.map((c) => ({ value: c.id, label: c.name })),
           ]}
           error={fe.customer_id}
         />
         <SelectField
           name="assigned_to"
           label="Assigned to"
-          defaultValue={pick("assigned_to")}
+          defaultValue={selectedAssignee}
           options={[
             { value: "", label: "— Unassigned —" },
-            ...staff.map((s) => ({
+            ...staffOptions.map((s) => ({
               value: s.id,
               label: s.full_name ?? s.email,
             })),

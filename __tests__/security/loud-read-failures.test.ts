@@ -417,7 +417,12 @@ const RATCHET: Array<{
     // `job?.customer?.name ?? "Job"` rendered on failure). All three were routed
     // through the LOUD lib/jobs/load.ts chokepoint (loadJobForOrg — binds `error`
     // and throws readFailure), which also pins the active org. 3 discards retired.
-    discard: 57 /* +4 inherited from Trains 24-26, see docs/loud-read-failures.md */,
+    // 57 → 56 (F-1 picker-completion wave): app/(app)/fleet/_components/load.ts
+    // ::loadSupplierOptions dropped its inline bare `const { data } = await
+    // supabase.from("suppliers")…` (a read PostgREST silently clamped at 1000)
+    // and now routes through the paged, org-pinned listSuppliersForOrg chokepoint,
+    // which binds + throws `error`. 1 discard retired.
+    discard: 56 /* +4 inherited from Trains 24-26, see docs/loud-read-failures.md */,
     // 52 → 49: the job hub's H&S panel (_job-safety.tsx) bound `error` on all
     // three of its reads (RAMS, permits, toolbox talks), so their `?? []` now
     // sits behind a real check and stops counting as debt. A SAFETY control
@@ -466,7 +471,15 @@ const RATCHET: Array<{
     // `error` from fetchAllRows and now THROWS readFailure on a (mid-page) read error
     // instead of `const { data } = await …` discarding it — a partial paged set was
     // silently under-counting one signal into a false all-clear. 1 discard retired.
-    discard: 35,
+    // 35 → 36 (F-1 picker-completion wave): server/services/sites.ts::listSitesForOrg
+    // was split into a BOUNDED sample branch and a COMPLETE paged (fetchAllRows)
+    // picker branch — the old single `const { data } = await …` swallow becomes two
+    // (one per branch). This reader is best-effort BY DESIGN: every picker reaches it
+    // via listSiteOptionsForOrg's try/catch (degrades to []), and the fleet home-site
+    // <select> preserve-injects the saved id, so a partial/empty list can never
+    // silent-NULL a saved site. The net across the codebase is neutral (app/(app)
+    // retired one clamped bare read, above). See docs/loud-read-failures.md (C ledger).
+    discard: 36,
     // 61 → 62: server/services/hq-support-snapshot.ts `listSupportTicketRowsForHq`
     // is the lean, message-free board reader (HQ Support AI) — it degrades to `[]`
     // exactly like its sibling `listSupportTicketsForHq` in the same file, and the
