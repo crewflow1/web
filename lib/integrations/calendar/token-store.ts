@@ -322,3 +322,42 @@ export async function deleteEventLink(
     throw new Error(`calendar event-link delete failed: ${error.message}`);
   }
 }
+
+/**
+ * Delete EVERY event-link row for one connection (all local kinds/ids at once) —
+ * the RECLAIM half of a disconnect. disconnectCalendarProvider clears the tokens
+ * and flips status back to 'disconnected', but the callback upsert's
+ * onConflict('org_id,provider') REUSES the SAME connection row id on a later
+ * reconnect. Without this, every stale (connection, entity) → external_event_id
+ * mapping SURVIVES the disconnect and, after a reconnect (especially to a
+ * DIFFERENT account), resolves to a dead external event id — so the next save
+ * PATCHes an event that no longer exists (404 forever). Wiping the links here makes
+ * each entity's first post-reconnect save a fresh INSERT. Org + connection pinned;
+ * idempotent (removing zero links is a no-op success). Service-role.
+ */
+export async function deleteEventLinksForConnection(
+  orgId: string,
+  connectionId: string,
+): Promise<void> {
+  const admin = createAdminClient();
+  const loose = admin as unknown as {
+    from: (t: string) => {
+      delete: () => {
+        eq: (col: string, val: string) => {
+          eq: (
+            col: string,
+            val: string,
+          ) => PromiseLike<{ error: { message: string } | null }>;
+        };
+      };
+    };
+  };
+  const { error } = await loose
+    .from("calendar_event_links")
+    .delete()
+    .eq("org_id", orgId)
+    .eq("connection_id", connectionId);
+  if (error) {
+    throw new Error(`calendar event-link connection-wide delete failed: ${error.message}`);
+  }
+}

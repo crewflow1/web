@@ -307,6 +307,75 @@ describe("pushEventToProvider", () => {
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.terminal).toBeFalsy();
   });
+
+  // ── STALE-MAPPING classification (the disconnect/reconnect 404-loop fix) ──────
+  // A PATCH of an existing external event that 404/410s means the mapped provider
+  // event is GONE (a disconnect/reconnect reused the connection id, or a user
+  // manually deleted the CrewFlow event). Before the fix this was mis-scored as a
+  // generic transient (classifyEventApiFailure treats 404/410 — neither 401 nor 403
+  // — as terminal:false), so the caller kept PATCHing the DEAD id forever and the
+  // job silently never landed. It must now surface a DISTINCT `stale` outcome.
+  for (const status of [404, 410] as const) {
+    it(`a PATCH that ${status}s is STALE (not a generic transient) so the caller re-INSERTs`, async () => {
+      fetchMock.mockResolvedValueOnce(jsonRes(status, { error: "gone" }));
+      const res = await pushEventToProvider({
+        provider: "google",
+        tokens: { accessToken: "AT", refreshToken: "RT" },
+        payload: buildEventPayload(JOB)!,
+        externalEventId: "evt-dead",
+      });
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.stale).toBe(true);
+        // Stale is NOT terminal (the grant is fine — re-consent would be wrong).
+        expect(res.terminal).toBeFalsy();
+      }
+      // A 404/410 never enters the 401-only refresh path — exactly one call.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0]!;
+      expect(url).toBe("https://www.googleapis.com/calendar/v3/calendars/primary/events/evt-dead");
+      expect((init as RequestInit).method).toBe("PATCH");
+    });
+  }
+
+  it("a 410 PATCH on Microsoft Graph is also STALE", async () => {
+    fetchMock.mockResolvedValueOnce(jsonRes(410, { error: "gone" }));
+    const res = await pushEventToProvider({
+      provider: "microsoft",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      payload: buildEventPayload(JOB)!,
+      externalEventId: "evt-dead",
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.stale).toBe(true);
+  });
+
+  it("a POST (INSERT) that 404s is NOT stale — there is no mapping to reclaim", async () => {
+    fetchMock.mockResolvedValueOnce(jsonRes(404, { error: "not found" }));
+    const res = await pushEventToProvider({
+      provider: "google",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      payload: buildEventPayload(JOB)!,
+      externalEventId: null,
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.stale).toBeFalsy();
+  });
+
+  it("a PATCH 5xx blip is TRANSIENT, NOT stale (retries the SAME id, self-heals)", async () => {
+    fetchMock.mockResolvedValueOnce(jsonRes(503, { error: "unavailable" }));
+    const res = await pushEventToProvider({
+      provider: "google",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      payload: buildEventPayload(JOB)!,
+      externalEventId: "evt-live",
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.stale).toBeFalsy();
+      expect(res.terminal).toBeFalsy();
+    }
+  });
 });
 
 describe("deleteEventFromProvider", () => {

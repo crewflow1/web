@@ -23,6 +23,7 @@ import {
   findEventLink,
   upsertEventLink,
   deleteEventLink,
+  deleteEventLinksForConnection,
 } from "@/lib/integrations/calendar/token-store";
 
 /**
@@ -169,12 +170,51 @@ export async function getCalendarConnection(
  * Disconnect a provider: clear the tokens + account handle and set status back
  * to `disconnected`. Admin-gated by RLS (runs under the caller's JWT). Org-pinned.
  * Idempotent — disconnecting an already-disconnected provider is a no-op success.
+ *
+ * RECLAIMS STALE EVENT LINKS. The callback upsert's onConflict('org_id,provider')
+ * REUSES the same connection row id on a later reconnect, so clearing the tokens is
+ * not enough: every calendar_event_links row for this connection would survive and,
+ * after a reconnect (especially to a DIFFERENT account), PATCH a dead external event
+ * id forever. So we resolve the connection id and wipe its event links here, making
+ * each entity's first post-reconnect save a fresh INSERT.
  */
 export async function disconnectCalendarProvider(
   orgId: string,
   provider: CalendarProvider,
 ): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
+
+  // Resolve the connection row id first (org + provider pinned, loud) so we can
+  // reclaim its event links after the token clear. `id` is NOT a token column, so
+  // this stays within the service's token-free-read invariant.
+  const idQ = supabase as unknown as {
+    from: (t: string) => {
+      select: (c: string) => {
+        eq: (col: string, val: string) => {
+          eq: (col: string, val: string) => {
+            maybeSingle: () => PromiseLike<{
+              data: { id: string } | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
+      };
+    };
+  };
+  const { data: existing, error: idErr } = await idQ
+    .from("calendar_connections")
+    .select("id")
+    .eq("org_id", orgId)
+    .eq("provider", provider)
+    .maybeSingle();
+  if (idErr) {
+    console.error("[calendar] disconnect id read failed", {
+      provider,
+      message: idErr.message,
+    });
+    return { ok: false, error: idErr.message };
+  }
+
   const loose = supabase as unknown as {
     from: (t: string) => {
       update: (row: Record<string, unknown>) => {
@@ -203,6 +243,21 @@ export async function disconnectCalendarProvider(
   if (error) {
     console.error("[calendar] disconnect failed", { provider, message: error.message });
     return { ok: false, error: error.message };
+  }
+
+  // Reclaim the stale event links (service-role) so a subsequent connect — which
+  // reuses this same connection row id — starts each entity as a fresh INSERT
+  // rather than PATCHing a dead external event id.
+  if (existing?.id) {
+    try {
+      await deleteEventLinksForConnection(orgId, existing.id);
+    } catch (e) {
+      // The tokens ARE cleared (the connection is disconnected), but the stale
+      // links remain — surface it so the caller knows the reclaim did not complete.
+      const message = e instanceof Error ? e.message : "event-link reclaim failed";
+      console.error("[calendar] disconnect link reclaim failed", { provider, message });
+      return { ok: false, error: message };
+    }
   }
   return { ok: true };
 }
@@ -342,12 +397,37 @@ export async function pushJobToCalendar(
   // Existing mapping → PATCH that event; none → INSERT a new one (idempotent).
   const existingEventId = await findEventLink(orgId, stored.connectionId, "job", jobId);
 
-  const pushed = await pushEventToProvider({
+  let pushed = await pushEventToProvider({
     provider: active.provider,
     tokens,
     payload,
     externalEventId: existingEventId,
   });
+
+  // STALE LINK → DROP + RE-INSERT. The mapped event was deleted provider-side (a
+  // disconnect/reconnect reusing the connection id, or a user manually removing the
+  // CrewFlow event), so a PATCH 404/410s forever. Drop the dead mapping and retry
+  // as a fresh INSERT so the job actually lands, instead of looping on the dead id.
+  // A genuine transient (5xx/429/network) is NOT stale — it keeps the same id and
+  // self-heals — and terminal auth (401/403) still flips status='error' below.
+  if (!pushed.ok && pushed.stale && existingEventId) {
+    // Persist any token refreshed during the failed PATCH so the re-INSERT (and the
+    // store) use the live access token rather than repeating the refresh.
+    if (pushed.refreshed) {
+      await persistRefreshedTokens(orgId, active.provider, pushed.refreshed);
+    }
+    await deleteEventLink(orgId, stored.connectionId, "job", jobId);
+    const retryTokens = pushed.refreshed
+      ? { accessToken: pushed.refreshed.accessToken, refreshToken: pushed.refreshed.refreshToken }
+      : tokens;
+    pushed = await pushEventToProvider({
+      provider: active.provider,
+      tokens: retryTokens,
+      payload,
+      externalEventId: null,
+    });
+  }
+
   if (!pushed.ok) {
     // TERMINAL failure (dead grant — refresh token revoked/expired) ⇒ persist
     // status='error' so the admin sees "reconnect required" and pushes stop
@@ -555,12 +635,33 @@ export async function pushRotaToCalendar(
   // Existing mapping → PATCH that event; none → INSERT a new one (idempotent).
   const existingEventId = await findEventLink(orgId, stored.connectionId, "rota", rotaId);
 
-  const pushed = await pushEventToProvider({
+  let pushed = await pushEventToProvider({
     provider: active.provider,
     tokens,
     payload,
     externalEventId: existingEventId,
   });
+
+  // STALE LINK → DROP + RE-INSERT (mirrors pushJobToCalendar). A PATCH of a
+  // provider-deleted event 404/410s forever; drop the dead mapping and re-INSERT so
+  // the shift lands. Transient blips keep the same id and self-heal; terminal auth
+  // still flips status='error' below.
+  if (!pushed.ok && pushed.stale && existingEventId) {
+    if (pushed.refreshed) {
+      await persistRefreshedTokens(orgId, active.provider, pushed.refreshed);
+    }
+    await deleteEventLink(orgId, stored.connectionId, "rota", rotaId);
+    const retryTokens = pushed.refreshed
+      ? { accessToken: pushed.refreshed.accessToken, refreshToken: pushed.refreshed.refreshToken }
+      : tokens;
+    pushed = await pushEventToProvider({
+      provider: active.provider,
+      tokens: retryTokens,
+      payload,
+      externalEventId: null,
+    });
+  }
+
   if (!pushed.ok) {
     // TERMINAL failure (dead grant — refresh token revoked/expired) ⇒ persist
     // status='error' so the admin sees "reconnect required" and pushes stop
