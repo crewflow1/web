@@ -1118,6 +1118,29 @@ export async function acceptQuoteByToken(
       .eq("id", quote.lead_id);
   }
 
+  // Automation OS — a customer accepting via the public portal link is a REAL
+  // `quote.accepted` transition and must fire the enabled "Quote accepted" rule,
+  // exactly like the operator accept path (acceptQuoteAsOwner, ~line 928).
+  // Before this the producer lived ONLY on the operator paths, so a quote
+  // accepted from the emailed portal link notified the owner NEVER, added NO
+  // internal note, and left NO automation_runs audit row — the enabled rule was
+  // silently dead on the PRIMARY customer path. Placed on the single genuine
+  // status→accepted success return (the early "not found / already accepted /
+  // declined / expired / update-error" returns above never reach here), so it
+  // fires once per real acceptance. Idempotent via correlation
+  // quote.accepted:quotes:<id> — at-most-once even though the operator path and
+  // the signatures service can also dispatch it. Org-pinned to the quote's org;
+  // best-effort so a dispatch failure never derails the accept.
+  await dispatchAutomation({
+    type: "quote.accepted",
+    org_id: quote.org_id,
+    source_table: "quotes",
+    source_id: quote.id,
+    payload: { signer: signerName, accepted_at: now, via: "public_portal" },
+  }).catch((e) => {
+    console.error("[quotes] public automation dispatch failed", e);
+  });
+
   return { ok: true, quoteId: quote.id };
 }
 
