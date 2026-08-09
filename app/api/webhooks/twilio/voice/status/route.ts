@@ -13,6 +13,7 @@ import {
   recordInboundCall,
   updateCallCompletion,
 } from "@/server/services/telephony";
+import { refreshVoiceExtractionFromTranscript } from "@/server/services/receptionist";
 
 /**
  * Twilio inbound-VOICE STATUS callback (Wave 8).
@@ -125,6 +126,18 @@ export async function POST(request: Request): Promise<NextResponse> {
       try {
         const turns = await loadRecentSpokenTurns(orgId, callId);
         const transcript = composeCallTranscript(turns);
+        // The origination extraction ran at call START over an EMPTY transcript, so
+        // the lead + enquiry carry the "no transcript captured" sentinel summary +
+        // null triage. Now that the caller's words are available, re-run the SAME
+        // GOVERNED extraction over the composed transcript and refresh the lead +
+        // enquiry (no-op when the transcript is empty). loadEnquirySummary below then
+        // folds the REFRESHED governed summary onto calls.ai_summary — no new /
+        // ungoverned model call is made here.
+        await refreshVoiceExtractionFromTranscript({
+          orgId,
+          providerCallId: call.providerCallId,
+          transcript,
+        });
         const aiSummary = await loadEnquirySummary(orgId, call.providerCallId);
         await updateCallCompletion(orgId, call.providerCallId, {
           durationSec: call.durationSec,

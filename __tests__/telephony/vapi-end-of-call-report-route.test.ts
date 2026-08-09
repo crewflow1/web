@@ -37,6 +37,10 @@ vi.mock("@/server/services/telephony", () => ({
 }));
 vi.mock("@/server/services/receptionist", () => ({
   processInboundEnquiry: vi.fn(),
+  // Terminal re-extraction over the captured transcript (the empty-transcript fix):
+  // refreshes the lead + enquiry triage. Mocked so this hermetic route test never
+  // reaches Supabase; asserted below to prove the branch calls it.
+  refreshVoiceExtractionFromTranscript: vi.fn(),
 }));
 
 async function loadRoute() {
@@ -47,6 +51,11 @@ async function routerMock() {
 }
 async function updateMock() {
   return vi.mocked((await import("@/server/services/telephony")).updateCallCompletion);
+}
+async function reextractMock() {
+  return vi.mocked(
+    (await import("@/server/services/receptionist")).refreshVoiceExtractionFromTranscript,
+  );
 }
 
 const SECRET = "whsec_vapi_test";
@@ -93,11 +102,13 @@ describe("POST /api/webhooks/vapi — end-of-call-report enrichment", () => {
     vi.stubEnv("COMMS_VOICE_PROVIDER", "vapi");
     vi.stubEnv("VAPI_WEBHOOK_SECRET", SECRET);
     (await updateMock()).mockResolvedValue(undefined);
+    (await reextractMock()).mockResolvedValue({ refreshed: true });
   });
   afterEach(async () => {
     vi.unstubAllEnvs();
     (await routerMock()).mockReset();
     (await updateMock()).mockReset();
+    (await reextractMock()).mockReset();
   });
 
   it("enriches the calls row with ALL fields, org-pinned by the DIALED number", async () => {
@@ -118,6 +129,13 @@ describe("POST /api/webhooks/vapi — end-of-call-report enrichment", () => {
       aiSummary: "Caller reported a leaking boiler and wants a callback.",
       durationSec: 42,
       endedAt: "2026-08-01T10:00:00.000Z",
+    });
+    // The lead + enquiry triage is refreshed via the GOVERNED re-extraction over the
+    // CAPTURED transcript, org-pinned by the Vapi call id — the empty-transcript fix.
+    expect(await reextractMock()).toHaveBeenCalledWith({
+      orgId: "org-1",
+      providerCallId: "vapi-call-1",
+      transcript: "AI: Thank you for calling.\nUser: My boiler is leaking.",
     });
   });
 

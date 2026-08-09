@@ -43,6 +43,13 @@ vi.mock("@/server/services/telephony", async (importActual) => {
     loadEnquirySummary: vi.fn(),
   };
 });
+// The terminal re-extraction over the captured transcript (the empty-transcript fix)
+// refreshes the lead + enquiry triage before loadEnquirySummary folds the refreshed
+// governed summary onto the calls row. Mocked so this hermetic route test never
+// reaches Supabase; asserted below to prove the branch calls it.
+vi.mock("@/server/services/receptionist", () => ({
+  refreshVoiceExtractionFromTranscript: vi.fn(),
+}));
 
 async function loadRoute() {
   return import("@/app/api/webhooks/twilio/voice/status/route");
@@ -64,6 +71,11 @@ async function turnsMock() {
 }
 async function summaryMock() {
   return vi.mocked((await import("@/server/services/telephony")).loadEnquirySummary);
+}
+async function reextractMock() {
+  return vi.mocked(
+    (await import("@/server/services/receptionist")).refreshVoiceExtractionFromTranscript,
+  );
 }
 
 const TOKEN = "voice_status_auth_token_abc123";
@@ -118,6 +130,7 @@ describe("POST /api/webhooks/twilio/voice/status — completion enrichment", () 
     // transcript / ai_summary UNWRITTEN (undefined), never blanking captured data.
     (await turnsMock()).mockResolvedValue([]);
     (await summaryMock()).mockResolvedValue(null);
+    (await reextractMock()).mockResolvedValue({ refreshed: false });
   });
 
   afterEach(async () => {
@@ -128,6 +141,7 @@ describe("POST /api/webhooks/twilio/voice/status — completion enrichment", () 
     (await updateMock()).mockReset();
     (await turnsMock()).mockReset();
     (await summaryMock()).mockReset();
+    (await reextractMock()).mockReset();
   });
 
   it("enriches duration_sec + ended_at on a signed `completed` callback, org-pinned by CallSid", async () => {
@@ -176,6 +190,18 @@ describe("POST /api/webhooks/twilio/voice/status — completion enrichment", () 
 
     // The turns were loaded org-pinned by the resolved call row id…
     expect(await turnsMock()).toHaveBeenCalledWith("org-1", "call-1");
+    // …the GOVERNED re-extraction ran over the COMPOSED transcript (org-pinned by
+    // CallSid) to refresh the lead + enquiry triage BEFORE the summary is read back —
+    // the empty-transcript fix — so loadEnquirySummary folds the REFRESHED summary…
+    expect(await reextractMock()).toHaveBeenCalledWith({
+      orgId: "org-1",
+      providerCallId: "CA-status-1",
+      transcript:
+        "Caller: Hi, my boiler is leaking\n" +
+        "Receptionist: I can help with that. Where are you?\n" +
+        "Caller: In Leeds, LS1\n" +
+        "Receptionist: Thanks — the team will call you back.",
+    });
     // …the governed summary was reused org-pinned by CallSid (no new AI call)…
     expect(await summaryMock()).toHaveBeenCalledWith("org-1", "CA-status-1");
     // …and the composed transcript + structured turns + summary were folded onto
