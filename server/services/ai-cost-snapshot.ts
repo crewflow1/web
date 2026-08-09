@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import {
   AI_MONTHLY_CEILING_PENCE,
   budgetPercent,
@@ -146,11 +147,19 @@ export type AiCostSnapshot = {
 };
 
 type Row = Record<string, unknown>;
+type RpcResult = { data: unknown; error: { message: string } | null };
+/**
+ * A set-returning RPC call that can be PAGED. `.order()` gives it the stable,
+ * unique ordering `fetchAllRows` requires; `.range()` is the per-page window.
+ * The builder is itself awaitable so an un-paged single-row call (governor,
+ * feature rollup) can still `await db(c).rpc(fn, args)` unchanged.
+ */
+type RpcBuilder = PromiseLike<RpcResult> & {
+  order(col: string, opts?: { ascending?: boolean }): RpcBuilder;
+  range(from: number, to: number): PromiseLike<RpcResult>;
+};
 type Rpc = {
-  rpc(
-    fn: string,
-    args: Record<string, unknown>,
-  ): PromiseLike<{ data: unknown; error: { message: string } | null }>;
+  rpc(fn: string, args: Record<string, unknown>): RpcBuilder;
   from(t: string): {
     select(cols: string): {
       in(col: string, vals: readonly string[]): PromiseLike<{ data: Row[] | null; error: unknown }>;
@@ -158,6 +167,33 @@ type Rpc = {
   };
 };
 const db = (c: unknown) => c as unknown as Rpc;
+
+/**
+ * Read EVERY per-org row from an estate-wide rollup RPC (`p_org_id = null`),
+ * paged under the PostgREST cap.
+ *
+ * THE F-1 TRUNCATION THIS CLOSES. The two estate rollups group by `org_id` —
+ * one row per org with spend — and PostgREST clamps any set-returning response
+ * at `max_rows = 1000` (supabase/config.toml) with NO error and NO GUC override.
+ * The rollups carry no ORDER BY, so once >1000 orgs have AI spend in a month an
+ * un-paged read returns a NONDETERMINISTIC 1000 rows, and the estate
+ * total/invocations/failures summed over them SILENTLY UNDER-REPORT. Paging with
+ * a deterministic `order("org_id")` (unique — the rollup emits one row per org)
+ * makes the read complete for any org count. Throws on any page error so the
+ * caller degrades to an empty map rather than aggregating a partial set.
+ */
+async function pagedEstateRollup(fn: string, probe: string): Promise<Row[]> {
+  const admin = createAdminClient();
+  const { data, error } = await fetchAllRows<Row>(
+    (from, to) =>
+      db(admin)
+        .rpc(fn, { p_org_id: null, p_month: probe })
+        .order("org_id", { ascending: true })
+        .range(from, to) as PromiseLike<PageResult<Row>>,
+  );
+  if (error) throw error;
+  return data;
+}
 
 const num = (v: unknown): number => {
   const n = typeof v === "number" ? v : Number(v ?? 0);
@@ -177,18 +213,12 @@ async function orgTotalsFor(month: MonthKey): Promise<Map<string, Row>> {
   const probe = probeDateFor(month);
   if (!probe) return new Map();
   try {
-    const { data, error } = await db(createAdminClient()).rpc("ai_invocations_month_totals", {
-      p_org_id: null,
-      p_month: probe,
-    });
-    if (error) {
-      console.error("[ai-cost-snapshot] org totals failed", error);
-      return new Map();
-    }
-    const rows = Array.isArray(data) ? (data as Row[]) : [];
+    // PAGED estate read — see pagedEstateRollup for the F-1 truncation this
+    // closes. One row per org, so the org_id key is unique across all pages.
+    const rows = await pagedEstateRollup("ai_invocations_month_totals", probe);
     return new Map(rows.map((r) => [String(r.org_id), r]));
   } catch (e) {
-    console.error("[ai-cost-snapshot] org totals threw", e);
+    console.error("[ai-cost-snapshot] org totals failed", e);
     return new Map();
   }
 }
@@ -206,18 +236,12 @@ async function orgReservationsFor(month: MonthKey): Promise<Map<string, Row>> {
   const probe = probeDateFor(month);
   if (!probe) return new Map();
   try {
-    const { data, error } = await db(createAdminClient()).rpc("ai_reservations_month_totals", {
-      p_org_id: null,
-      p_month: probe,
-    });
-    if (error) {
-      console.error("[ai-cost-snapshot] reservation totals failed", error);
-      return new Map();
-    }
-    const rows = Array.isArray(data) ? (data as Row[]) : [];
+    // PAGED estate read — same F-1 truncation guard as orgTotalsFor. The
+    // reservation rollup also groups by org_id, so the key is unique per page.
+    const rows = await pagedEstateRollup("ai_reservations_month_totals", probe);
     return new Map(rows.map((r) => [String(r.org_id), r]));
   } catch (e) {
-    console.error("[ai-cost-snapshot] reservation totals threw", e);
+    console.error("[ai-cost-snapshot] reservation totals failed", e);
     return new Map();
   }
 }
