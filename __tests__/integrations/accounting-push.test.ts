@@ -770,3 +770,224 @@ describe("QuickBooks adapter push", () => {
     expect(body.Line[0].LinkedTxn[0].TxnId).toBe("11");
   });
 });
+
+// ---------------------------------------------------------------------------
+// QUICKBOOKS PUSH-ONCE — per-entity, row-id-seeded requestid (the QBO fix)
+// ---------------------------------------------------------------------------
+
+/**
+ * The QBO create idempotency key (`requestid`, carried in the POST URL query) must
+ * be seeded by the immutable CrewFlow row id (`sourceId`), NOT a hash of the
+ * request body. A QBO payment body is only {TxnDate (day), TotalAmt, CustomerRef,
+ * Line[].{Amount, LinkedTxn.TxnId}}, so two DISTINCT invoice_payments rows for the
+ * same customer/day/amount/invoice (a real double part-payment/deposit) serialise
+ * byte-identically. Under body-seeding they share a requestid, Intuit drops the
+ * second as an idempotent replay, and the payment is silently, permanently lost.
+ * Row-id seeding keeps them distinct while a genuine re-push of the SAME row reuses
+ * its requestid. Mirrors the Xero per-entity idempotency suite above.
+ */
+describe("QuickBooks per-entity idempotency (requestid seeded by row id)", () => {
+  const withId = (row: CanonicalAccountingRow, sourceId: string): CanonicalAccountingRow => ({
+    ...row,
+    sourceId,
+  });
+
+  const base = (rows: CanonicalAccountingRow[]): AccountingPushInput => ({
+    rows,
+    accessToken: "ACCESS-1",
+    tenantId: null,
+    realmId: "REALM-1",
+    refresh: vi.fn(async () => null),
+  });
+
+  /** The `requestid` query value of every POST to `endpoint` ("/invoice" | "/payment"). */
+  function requestIdsFrom(
+    fetchMock: ReturnType<typeof vi.fn>,
+    endpoint: "/invoice" | "/payment",
+  ): string[] {
+    return fetchMock.mock.calls
+      .filter((c) => String(c[0]).includes(endpoint) && (c[1] as RequestInit)?.method === "POST")
+      .map((c) => new URL(String(c[0])).searchParams.get("requestid") ?? "");
+  }
+
+  it("two IDENTICAL-body payments with DIFFERENT sourceIds get DISTINCT requestids and BOTH create", async () => {
+    enableQbo();
+    // Same customer, day, amount and linked invoice ⇒ byte-identical body; only the
+    // immutable row id differs. This is the real double-deposit scenario.
+    const P1 = withId(PAYMENT_ROW, "pay-1");
+    const P2 = withId(PAYMENT_ROW, "pay-2");
+    const fetchMock = qboRouter({
+      customerQuery: () => jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } }),
+      invoiceQuery: () => jsonResponse({ QueryResponse: { Invoice: [{ Id: "11" }] } }),
+      paymentCreate: () => jsonResponse({ Payment: { Id: "22" } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await getAccountingAdapter("quickbooks").pushPayments(base([P1, P2]));
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.pushed).toBe(2);
+
+    // Prove the bodies really are byte-identical (the whole point of the scenario).
+    const payPosts = fetchMock.mock.calls.filter(
+      (c) => String(c[0]).includes("/payment") && (c[1] as RequestInit).method === "POST",
+    );
+    expect(payPosts).toHaveLength(2); // both POST — one create each, no dedup at our layer
+    expect((payPosts[0]![1] as RequestInit).body).toBe((payPosts[1]![1] as RequestInit).body);
+
+    const ids = requestIdsFrom(fetchMock, "/payment");
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toBeTruthy();
+    // The regression guard: distinct rows ⇒ distinct requestids, so Intuit creates
+    // BOTH payments instead of replaying the first. Body-seeding fails here.
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
+  it("the SAME payment row re-pushed yields the IDENTICAL requestid, even when a later batch adds a second row", async () => {
+    enableQbo();
+    const P1 = withId(PAYMENT_ROW, "pay-1");
+    // A distinct second payment (different invoice/amount AND sourceId) in the later batch.
+    const P2 = withId(
+      { ...PAYMENT_ROW, invoice_number: "INV-002", gross: "50.00" },
+      "pay-2",
+    );
+
+    const router = () =>
+      qboRouter({
+        customerQuery: () => jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } }),
+        invoiceQuery: () => jsonResponse({ QueryResponse: { Invoice: [{ Id: "11" }] } }),
+        paymentCreate: () => jsonResponse({ Payment: { Id: "22" } }),
+      });
+
+    const fetch1 = router();
+    vi.stubGlobal("fetch", fetch1);
+    await getAccountingAdapter("quickbooks").pushPayments(base([P1]));
+    const idFirst = requestIdsFrom(fetch1, "/payment")[0];
+
+    // A LATER sync whose batch ALSO contains P2 must NOT change P1's requestid —
+    // this is exactly the batch-hash scenario: the key is seeded by the row id.
+    const fetch2 = router();
+    vi.stubGlobal("fetch", fetch2);
+    await getAccountingAdapter("quickbooks").pushPayments(base([P1, P2]));
+    const idForP1OnSecondSync = requestIdsFrom(fetch2, "/payment")[0];
+
+    expect(idForP1OnSecondSync).toBe(idFirst);
+  });
+
+  it("two IDENTICAL-body invoices with DIFFERENT sourceIds get DISTINCT requestids (same class as payments)", async () => {
+    enableQbo();
+    // Same DocNumber, customer, net/vat/gross ⇒ byte-identical invoice body.
+    const A = withId(INVOICE_ROW, "inv-A");
+    const B = withId(INVOICE_ROW, "inv-B");
+    const fetchMock = qboRouter({
+      itemQuery: () => jsonResponse({ QueryResponse: { Item: [{ Id: "7" }] } }),
+      customerQuery: () => jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } }),
+      invoiceCreate: () => jsonResponse({ Invoice: { Id: "11" } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await getAccountingAdapter("quickbooks").pushInvoices(base([A, B]));
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.pushed).toBe(2);
+
+    const invPosts = fetchMock.mock.calls.filter(
+      (c) => String(c[0]).includes("/invoice") && (c[1] as RequestInit).method === "POST",
+    );
+    expect(invPosts).toHaveLength(2);
+    expect((invPosts[0]![1] as RequestInit).body).toBe((invPosts[1]![1] as RequestInit).body);
+
+    const ids = requestIdsFrom(fetchMock, "/invoice");
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
+  it("the SAME invoice row re-pushed yields the IDENTICAL requestid", async () => {
+    enableQbo();
+    const A = withId(INVOICE_ROW, "inv-A");
+    const router = () =>
+      qboRouter({
+        itemQuery: () => jsonResponse({ QueryResponse: { Item: [{ Id: "7" }] } }),
+        customerQuery: () => jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } }),
+        invoiceCreate: () => jsonResponse({ Invoice: { Id: "11" } }),
+      });
+
+    const fetch1 = router();
+    vi.stubGlobal("fetch", fetch1);
+    await getAccountingAdapter("quickbooks").pushInvoices(base([A]));
+    const idFirst = requestIdsFrom(fetch1, "/invoice")[0];
+
+    const fetch2 = router();
+    vi.stubGlobal("fetch", fetch2);
+    await getAccountingAdapter("quickbooks").pushInvoices(base([A]));
+    const idSecond = requestIdsFrom(fetch2, "/invoice")[0];
+
+    expect(idSecond).toBe(idFirst);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CROSS-PROVIDER INVARIANT — every adapter seeds its create key off the row id
+// ---------------------------------------------------------------------------
+
+/**
+ * A behavioural, provider-agnostic guard: drive TWO identical-body invoice rows
+ * that differ ONLY by `sourceId` through each adapter's PUBLIC pushInvoices, and
+ * assert each adapter emits TWO DISTINCT create idempotency keys. Any current or
+ * FUTURE adapter that reverts to hashing the body (which is identical here) would
+ * emit ONE key and fail this — catching the whole defect class, not one instance.
+ * Kept behavioural (not a source grep) so it cannot be trivially evaded.
+ */
+describe("cross-provider: create idempotency key is seeded by the row id, not the body", () => {
+  const A: CanonicalAccountingRow = { ...INVOICE_ROW, sourceId: "row-A" };
+  const B: CanonicalAccountingRow = { ...INVOICE_ROW, sourceId: "row-B" };
+
+  it("Xero: two identical-body invoices with different sourceIds → two DISTINCT Idempotency-Keys", async () => {
+    enableXero();
+    const fetchMock = vi.fn(async () => jsonResponse({ Invoices: [] }, 200));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await getAccountingAdapter("xero").pushInvoices({
+      rows: [A, B],
+      accessToken: "ACCESS-1",
+      tenantId: "TENANT-1",
+      realmId: null,
+      refresh: vi.fn(async () => null),
+    });
+    expect(res.ok).toBe(true);
+
+    const posts = fetchMock.mock.calls
+      .map((c) => c as unknown as [string, RequestInit])
+      .filter((c) => c[1].method === "POST");
+    // Bodies are byte-identical; only sourceId differs.
+    expect(posts[0]![1].body).toBe(posts[1]![1].body);
+    const keys = posts.map((c) => (c[1].headers as Record<string, string>)["Idempotency-Key"]);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  it("QuickBooks: two identical-body invoices with different sourceIds → two DISTINCT requestids", async () => {
+    enableQbo();
+    const fetchMock = qboRouter({
+      itemQuery: () => jsonResponse({ QueryResponse: { Item: [{ Id: "7" }] } }),
+      customerQuery: () => jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } }),
+      invoiceCreate: () => jsonResponse({ Invoice: { Id: "11" } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await getAccountingAdapter("quickbooks").pushInvoices({
+      rows: [A, B],
+      accessToken: "ACCESS-1",
+      tenantId: null,
+      realmId: "REALM-1",
+      refresh: vi.fn(async () => null),
+    });
+    expect(res.ok).toBe(true);
+
+    const posts = fetchMock.mock.calls.filter(
+      (c) => String(c[0]).includes("/invoice") && (c[1] as RequestInit).method === "POST",
+    );
+    expect((posts[0]![1] as RequestInit).body).toBe((posts[1]![1] as RequestInit).body);
+    const ids = posts.map((c) => new URL(String(c[0])).searchParams.get("requestid") ?? "");
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+});
