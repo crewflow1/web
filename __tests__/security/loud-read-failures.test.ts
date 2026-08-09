@@ -505,7 +505,26 @@ const RATCHET: Array<{
     // now sits before its `<res>.data ?? []`, so all three leave the soft-data
     // ledger. A swallowed error on any of them was a false all-clear / dropped
     // dismissals while the rest of the briefing rendered healthy. 3 soft-data retired.
-    softData: 59,
+    // 59 → 55 (F-1 HQ support paging): server/services/hq-support-snapshot.ts had
+    // FOUR unpaged cross-tenant `<res>.data ?? []` reads whose full row set was
+    // mapped/counted into "fact" figures on live HQ surfaces — the tickets +
+    // messages reads in `listSupportTicketsForHq` (res, msgRes), the board reader
+    // `listSupportTicketRowsForHq` (res), and the detail thread in
+    // `loadSupportTicketDetailForHq` (mRes). All four now page via fetchAllRows and
+    // bind + THROW `readFailure` on error (`listFeatureSignalRowsForHq` keeps its
+    // null-degrade, already guarded), so their `?? []` is gone entirely. A silent
+    // 1000-row clamp was truncating the CEO/triage figures; see the F-1 bare-select
+    // guard's HIGH_VALUE_TABLES (support_tickets/support_messages added same wave).
+    // 4 soft-data retired. See docs/loud-read-failures.md.
+    // 55 → 54 (same wave, live-read guard proof): once the F-1 bare-select guard
+    // learned the `function table(name){ return c.from(name) }` DECLARATION-wrapper
+    // form, it bit the LIVE cross-tenant support_tickets read in
+    // server/services/hq-health-deep-dive.ts (`table("support_tickets")…in(org_id)…
+    // order()`, counted per-org in JS). That read now pages via fetchAllRows and
+    // binds + logs its error, so its `ticketsRes.data ?? []` leaves the ledger. Its
+    // sibling org/health-event/billing/notification reads carry the same risk and
+    // are tracked for the reported detection follow-up. 1 soft-data retired.
+    softData: 54,
     // 4 → 5: server/services/hq-outreach.ts `countOutreach` is a head:true count read
     // for the CEO metrics tile, mirroring countResearch/countQualification — an honest
     // zero when nothing has run yet is the correct reassuring answer here.

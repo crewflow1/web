@@ -87,6 +87,31 @@ const HIGH_VALUE_TABLES = new Set<string>([
   // sites from the builder and — on an edit — nulls an out-of-cap property_id.
   // (F-1 picker-class wave.)
   "properties",
+  // Support OS: CROSS-TENANT service-role reads (createAdminClient, no org pin)
+  // whose FULL row set is mapped + counted in JS into figures the pure layers
+  // label "fact" — the live /admin/support board + KPI tiles, the /admin/support-ai
+  // triage board, and hq-product's CEO demand aggregation. A clamped read silently
+  // truncated all three at 1000 cross-tenant rows. (F-1 support wave; the fix paged
+  // every set read in server/services/hq-support-snapshot.ts via fetchAllRows.)
+  // support_messages: the batched per-ticket thread reads (list preview +
+  // internal-notes flag, and the full HQ detail thread) — a clamp drops the
+  // newest replies and corrupts the derived flags.
+  //
+  // KNOWN DETECTION LIMITATION (reported for a scoped follow-up, NOT closed here):
+  // every real support read uses either a `.from("support_tickets" as never)` CAST
+  // (the idiom for tables that post-date the generated types) or a
+  // `function adminTable(name){ return admin.from(name as never) }` /
+  // `function table(name){…}` DECLARATION-wrapper called with a single literal arg
+  // — and BOTH forms are invisible to the direct/arrow-wrapper matchers below. So
+  // listing these tables makes the guard bite the STANDARD literal shape (proved by
+  // the delete-the-fix test) and any future literal read, but does NOT yet police
+  // the existing cast/decl-wrapper reads. Teaching the matchers those two forms
+  // surfaces 11 offenders across 6+ tables (6 pre-existing bounded money-table
+  // reads hidden by the cast, plus support reads in hq-health-deep-dive.ts /
+  // customer-support-service.ts / customer-portal) — over the wave's 10-offender
+  // stop line, so it is deferred to its own wave rather than mass-edited here.
+  "support_tickets",
+  "support_messages",
 ]);
 
 // "file:line" → reason. Keep tight; every entry is a documented smell.
@@ -184,9 +209,39 @@ function regionAround(src: string, fromIdx: number): string {
  * as if it were `.from("TABLE")`: an arrow (or function) whose body calls
  * `<something>.from(<param>)` is a `.from` wrapper, and its call sites are
  * indirect reads that must satisfy the same paged/single-row/count rule.
+ *
+ * TWO wrapper SHAPES are recognised. The DECLARATION form (below) was added by
+ * the F-1 support wave: server/services/hq-support-snapshot.ts and
+ * hq-health-deep-dive.ts BOTH hid their cross-tenant reads behind a
+ *   `function adminTable(name){ return admin.from(name as never) }`
+ *   `function table(name){ return c.from(name as never) }`
+ * DECLARATION, called with the table literal as its ONLY arg
+ * (`adminTable("support_tickets")`). The arrow-only regex never matched it, so
+ * adding support_tickets/support_messages to HIGH_VALUE_TABLES was VACUOUS for
+ * the live reads — a green guard that protected nothing (the C57 trap). A
+ * delete-the-fix probe on the LIVE listSupportTicketRowsForHq now proves the
+ * guard bites the real read, not just a fixture.
+ *
+ * NOTE — the OTHER blind spot (the direct `.from("x" as never)` CAST used by
+ * customer-support-service.ts / customer-portal, and by 6 pre-existing bounded
+ * money-table reads) is deliberately NOT taught here: doing so turns the suite
+ * red across tables out of this wave's scope. It is deferred to the reported
+ * detection follow-up. This wave teaches ONLY the declaration-wrapper form, which
+ * covers the support reads this PR fixed without surfacing those other offenders.
  */
 const WRAPPER_DEF_RE =
   /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*(?::[^=;]*?)?=>\s*[^;{}]*?\.from\(/g;
+
+/**
+ * Function-DECLARATION `.from` wrapper: `function NAME(param, …){ … return
+ * <client>.from(param … ) … }`. The captured first PARAM must be the value
+ * passed to `.from(` (the `\2` backreference) — that is what distinguishes a real
+ * table wrapper from an incidental `.from(` (e.g. `Array.from(x)`, further
+ * excluded by the negative lookahead). Bounded 300-char body look-ahead so a
+ * large function that merely touches `.from` far below isn't misread.
+ */
+const WRAPPER_FN_DECL_RE =
+  /function\s+([A-Za-z_$][\w$]*)\s*\(\s*([A-Za-z_$][\w$]*)[^)]*\)[^{]*\{[\s\S]{0,300}?\breturn\s+(?!Array\b|Object\b)[A-Za-z_$][\w$]*\.from\(\s*\2\b/g;
 
 function escapeReg(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -270,17 +325,24 @@ function offendersIn(rel: string, raw: string): string[] {
   let m: RegExpExecArray | null;
   while ((m = fromRe.exec(src))) consider(m[1], m.index, `.from("${m[1]}").select(...)`);
 
-  // 2. The indirection form: a local `.from` wrapper + `wrapper(<x>, "table")`.
+  // 2. The indirection form: a local `.from` wrapper (arrow const OR function
+  //    declaration) + `wrapper([client, ] "table")` — the table literal may be
+  //    the ONLY arg (`adminTable("support_tickets")`) or the LAST of several
+  //    (`table(admin, "weather_watches")`).
   const wrapperNames = new Set<string>();
   let wm: RegExpExecArray | null;
   WRAPPER_DEF_RE.lastIndex = 0;
   while ((wm = WRAPPER_DEF_RE.exec(src))) if (wm[1]) wrapperNames.add(wm[1]);
+  WRAPPER_FN_DECL_RE.lastIndex = 0;
+  while ((wm = WRAPPER_FN_DECL_RE.exec(src))) if (wm[1]) wrapperNames.add(wm[1]);
   for (const name of wrapperNames) {
-    // `table(admin, "weather_watches")` — 2nd arg is the table-name literal.
-    const callRe = new RegExp(escapeReg(name) + `\\(\\s*[^,()]+,\\s*["'\`]([a-z_]+)["'\`]\\s*\\)`, "g");
+    const callRe = new RegExp(
+      escapeReg(name) + `\\(\\s*(?:[^,()]+,\\s*)?["'\`]([a-z_]+)["'\`]\\s*\\)`,
+      "g",
+    );
     let cm: RegExpExecArray | null;
     while ((cm = callRe.exec(src))) {
-      consider(cm[1], cm.index, `${name}(<client>, "${cm[1]}") [.from wrapper].select(...)`);
+      consider(cm[1], cm.index, `${name}(…"${cm[1]}") [.from wrapper].select(...)`);
     }
   }
 
@@ -468,6 +530,72 @@ describe("F-1 bare-select guard — high-value table reads must page or be singl
       `);`,
     ].join("\n");
     expect(offendersIn("server/services/weather-fetch.ts", postFix)).toEqual([]);
+  });
+
+  // ── SUPPORT OS teeth (delete-the-fix) ───────────────────────────────────────
+  // The F-1 defect that motivated adding support_tickets/support_messages: HQ
+  // cross-tenant reads (server/services/hq-support-snapshot.ts) mapped + counted
+  // the FULL row set into "fact" figures on the live /admin/support board and
+  // hq-product's CEO demand aggregation, but read with a bare `.select().order()`
+  // that PostgREST silently clamps to max_rows=1000. If someone deletes the paging
+  // fix (page → unpage), the guard MUST flag it again — proved here for both
+  // tables, in the standard literal read shape.
+  it("has TEETH: flags UNPAGED support_tickets / support_messages set reads (delete-the-fix)", () => {
+    // support_tickets — the triage-board / demand read, unpaged (the pre-fix shape).
+    const ticketsUnpaged = [
+      `const res = await admin`,
+      `  .from("support_tickets")`,
+      `  .select("id, category, status, created_at")`,
+      `  .order("created_at", { ascending: false });`,
+      `return (res.data ?? []);`,
+    ].join("\n");
+    const tFlagged = offendersIn("server/services/hq-support-snapshot.ts", ticketsUnpaged);
+    expect(
+      tFlagged.some((o) => o.includes("support_tickets")),
+      "unpaged support_tickets set read must be flagged",
+    ).toBe(true);
+
+    // support_messages — the batched per-ticket thread read, unpaged.
+    const messagesUnpaged = [
+      `const msgRes = await admin`,
+      `  .from("support_messages")`,
+      `  .select("id, ticket_id, body, internal, created_at")`,
+      `  .in("ticket_id", ticketIds)`,
+      `  .order("created_at", { ascending: false });`,
+      `return (msgRes.data ?? []);`,
+    ].join("\n");
+    const mFlagged = offendersIn("server/services/hq-support-snapshot.ts", messagesUnpaged);
+    expect(
+      mFlagged.some((o) => o.includes("support_messages")),
+      "unpaged support_messages set read must be flagged",
+    ).toBe(true);
+  });
+
+  it("does not flag the PAGED support reads (the shipped fetchAllRows fix)", () => {
+    const ticketsPaged = [
+      `const { data, error } = await fetchAllRows((from, to) =>`,
+      `  admin`,
+      `    .from("support_tickets")`,
+      `    .select("id, category, status, created_at")`,
+      `    .order("created_at", { ascending: false })`,
+      `    .order("id", { ascending: false })`,
+      `    .range(from, to),`,
+      `);`,
+    ].join("\n");
+    expect(offendersIn("server/services/hq-support-snapshot.ts", ticketsPaged)).toEqual([]);
+
+    const messagesPaged = [
+      `const { data, error } = await fetchAllRows((from, to) =>`,
+      `  admin`,
+      `    .from("support_messages")`,
+      `    .select("id, ticket_id, body, internal, created_at")`,
+      `    .in("ticket_id", chunk)`,
+      `    .order("created_at", { ascending: false })`,
+      `    .order("id", { ascending: false })`,
+      `    .range(from, to),`,
+      `);`,
+    ].join("\n");
+    expect(offendersIn("server/services/hq-support-snapshot.ts", messagesPaged)).toEqual([]);
   });
 
   // The .limit(1000) BOUNDARY teeth: the exact shape the live invoice.overdue

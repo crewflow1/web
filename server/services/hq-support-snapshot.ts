@@ -1,5 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import type { SupportTicketRow } from "@/lib/hq/support";
 
 /**
@@ -8,9 +10,18 @@ import type { SupportTicketRow } from "@/lib/hq/support";
  * Service-role only — callers MUST have confirmed isSuperAdminEmail.
  * Reads cross-tenant by design.
  *
- * Two queries (no N+1):
- *   1. support_tickets joined to organizations (name lookup)
- *   2. support_messages for a specific ticket (detail view only)
+ * F-1 COMPLETENESS. Every list read here is CROSS-TENANT (service-role, no
+ * `org_id` pin) and its full row set is then mapped / counted in JS to produce
+ * figures the pure board/demand layers label "fact". PostgREST clamps every
+ * response at `max_rows=1000` (supabase/config.toml) — the service-role path is
+ * NOT exempt — so a bare `.select().order()` silently truncates to the first
+ * 1000 rows once the cumulative cross-tenant volume crosses that line, and the
+ * board/demand figures under-report with no error. So every set read pages via
+ * `fetchAllRows` on a stable total order (`created_at`, then a unique `id`
+ * tiebreaker), and the message batch chunks its `.in(ticketIds)` AND pages each
+ * chunk. LOUD: a paged read binds the `error` and throws `readFailure` — a
+ * partial set is never returned as fact (the product feature-signal reader keeps
+ * its documented loud-DEGRADE-to-null contract instead, see its own doc).
  */
 
 type AnyQuery = {
@@ -24,6 +35,10 @@ type AnyQuery = {
     data: unknown | null;
     error: { message: string } | null;
   }>;
+  range: (from: number, to: number) => PromiseLike<{
+    data: unknown[] | null;
+    error: unknown;
+  }>;
   limit: (n: number) => Promise<{
     data: unknown[] | null;
     error: { message: string } | null;
@@ -36,6 +51,28 @@ function adminTable(name: string) {
     select: (cols: string) => AnyQuery;
   };
 }
+
+/**
+ * Read every row of a paged cross-tenant query, LOUD. `fetchAllRows` hands back
+ * the partial set plus the error on a mid-page failure; we bind that error and
+ * throw `readFailure` rather than aggregating over a silently-partial set (a
+ * truncated ticket board presented as fact is the honesty defect this file
+ * exists to avoid). The `.range(from, to)` builder must carry a stable total
+ * order so no row shifts across a page boundary.
+ */
+async function pagedRows<T>(
+  context: string,
+  build: (from: number, to: number) => PromiseLike<PageResult<T>>,
+): Promise<T[]> {
+  const { data, error } = await fetchAllRows<T>(build);
+  if (error) throw readFailure(context, error as SupabaseReadError);
+  return data;
+}
+
+/** Chunk size for the `.in("ticket_id", …)` message batch — a chunk of this many
+ * ticket ids is itself well below the 1000-row id-list limit, and each chunk's
+ * MESSAGE result is then fully paged (a busy chunk can carry >1000 messages). */
+const MSG_TICKET_CHUNK = 500;
 
 // ---------------------------------------------------------------------
 // HQ-side row shapes
@@ -84,30 +121,10 @@ export type HqSupportTicketDetail = HqSupportTicketRow & {
 // ---------------------------------------------------------------------
 
 export async function listSupportTicketsForHq(): Promise<HqSupportTicketRow[]> {
-  // 1. Pull every ticket joined with org name.
-  const res = await adminTable("support_tickets")
-    .select(
-      [
-        "id",
-        "org_id",
-        "ticket_number",
-        "subject",
-        "status",
-        "priority",
-        "category",
-        "created_by",
-        "assigned_to",
-        "last_reply_at",
-        "last_reply_kind",
-        "resolved_at",
-        "closed_at",
-        "created_at",
-        "updated_at",
-        "org:organizations ( name )",
-      ].join(", "),
-    )
-    .order("created_at", { ascending: false });
-  const tickets = (res.data ?? []) as unknown as Array<{
+  // 1. Pull every ticket joined with org name — PAGED (cross-tenant, mapped to
+  //    the list UI + KPI tiles; a 1000-row clamp would drop tickets and
+  //    under-count the tiles).
+  const tickets = await pagedRows<{
     id: string;
     org_id: string;
     ticket_number: number;
@@ -124,25 +141,71 @@ export async function listSupportTicketsForHq(): Promise<HqSupportTicketRow[]> {
     created_at: string;
     updated_at: string | null;
     org: { name: string | null } | null;
-  }>;
+  }>(
+    "hq-support: tickets",
+    (from, to) =>
+      adminTable("support_tickets")
+        .select(
+          [
+            "id",
+            "org_id",
+            "ticket_number",
+            "subject",
+            "status",
+            "priority",
+            "category",
+            "created_by",
+            "assigned_to",
+            "last_reply_at",
+            "last_reply_kind",
+            "resolved_at",
+            "closed_at",
+            "created_at",
+            "updated_at",
+            "org:organizations ( name )",
+          ].join(", "),
+        )
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to) as PromiseLike<PageResult<never>>,
+  );
 
   if (tickets.length === 0) return [];
 
-  // 2. Fetch all messages for these tickets in ONE batched query so
-  //    we can compute "last reply preview" + "has internal notes"
-  //    per ticket without N+1.
+  // 2. Fetch all messages for these tickets so we can compute "last reply
+  //    preview" + "has internal notes" per ticket without N+1. CHUNK the
+  //    `.in("ticket_id", …)` id list (a chunk of ids stays below the id-list
+  //    limit) AND fully PAGE each chunk's messages (a busy chunk can itself
+  //    carry >1000 messages — the F-1 clamp would silently drop the older ones,
+  //    corrupting both the preview and the internal-notes flag).
   const ticketIds = tickets.map((t) => t.id);
-  const msgRes = await adminTable("support_messages")
-    .select("id, ticket_id, body, internal, created_at")
-    .in("ticket_id", ticketIds)
-    .order("created_at", { ascending: false });
-  const messages = (msgRes.data ?? []) as unknown as Array<{
+  const messages: Array<{
     id: string;
     ticket_id: string;
     body: string;
     internal: boolean;
     created_at: string;
-  }>;
+  }> = [];
+  for (let i = 0; i < ticketIds.length; i += MSG_TICKET_CHUNK) {
+    const chunk = ticketIds.slice(i, i + MSG_TICKET_CHUNK);
+    const batch = await pagedRows<{
+      id: string;
+      ticket_id: string;
+      body: string;
+      internal: boolean;
+      created_at: string;
+    }>(
+      "hq-support: ticket messages",
+      (from, to) =>
+        adminTable("support_messages")
+          .select("id, ticket_id, body, internal, created_at")
+          .in("ticket_id", chunk)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, to) as PromiseLike<PageResult<never>>,
+    );
+    messages.push(...batch);
+  }
 
   const lastByTicket = new Map<
     string,
@@ -206,25 +269,35 @@ export type HqSupportBoardRow = {
  * `listSupportTicketsForHq` (which additionally batch-fetches every message
  * body across all tickets to build the list-UI preview + internal-notes flag),
  * this reads the tickets table alone — the board never touches message bodies,
- * so it should not pull them cross-tenant. Loud-read/degrade: on a read error
- * `res.data` is null and we return `[]`, exactly like the other HQ readers.
+ * so it should not pull them cross-tenant. PAGED (fetchAllRows) — the board
+ * counts these rows in JS, so a 1000-row clamp would silently under-report the
+ * triage figures it labels "fact". LOUD: a read error throws `readFailure`
+ * (never a silently-partial board).
  */
 export async function listSupportTicketRowsForHq(): Promise<HqSupportBoardRow[]> {
-  const res = await adminTable("support_tickets")
-    .select(
-      [
-        "status",
-        "priority",
-        "category",
-        "last_reply_at",
-        "last_reply_kind",
-        "resolved_at",
-        "closed_at",
-        "created_at",
-      ].join(", "),
-    )
-    .order("created_at", { ascending: false });
-  return (res.data ?? []) as unknown as HqSupportBoardRow[];
+  return pagedRows<HqSupportBoardRow>(
+    "hq-support: board rows",
+    (from, to) =>
+      adminTable("support_tickets")
+        .select(
+          [
+            "status",
+            "priority",
+            "category",
+            "last_reply_at",
+            "last_reply_kind",
+            "resolved_at",
+            "closed_at",
+            "created_at",
+          ].join(", "),
+        )
+        // Stable total order: `created_at` desc + the unique `id` tiebreaker so
+        // no row shifts across a page boundary (id need not be selected to be an
+        // ORDER BY key — the board shape stays message-free).
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to) as PromiseLike<PageResult<HqSupportBoardRow>>,
+  );
 }
 
 // ---------------------------------------------------------------------
@@ -250,20 +323,29 @@ export type ProductSignalRow = {
  * `listSupportTicketRowsForHq` (priority/last-reply columns for the triage
  * board) and `listSupportTicketsForHq` (which additionally batch-fetches every
  * message body), this reads the barest ticket identity + category + status +
- * created_at. LOUD DEGRADE: on a read error we log and return `null` (not `[]`)
- * so the pure layer marks demand insufficient rather than fabricating a zero.
+ * created_at. PAGED (fetchAllRows) — demand aggregation (feature-request / bug
+ * volume + request aging) counts these rows in JS, so a 1000-row clamp would
+ * silently under-report CEO demand. LOUD DEGRADE: on a read error we log and
+ * return `null` (not `[]`, and not a partial set) so the pure layer marks demand
+ * insufficient rather than fabricating a zero — its documented contract, which
+ * `loadProductBoard` relies on (it maps `null` → demand insufficient).
  */
 export async function listFeatureSignalRowsForHq(): Promise<
   ProductSignalRow[] | null
 > {
-  const sigRes = await adminTable("support_tickets")
-    .select(["id", "category", "status", "created_at"].join(", "))
-    .order("created_at", { ascending: false });
-  if (sigRes.error) {
-    console.error("[hq-product] feature-signal read failed", sigRes.error);
+  const { data, error } = await fetchAllRows<ProductSignalRow>(
+    (from, to) =>
+      adminTable("support_tickets")
+        .select(["id", "category", "status", "created_at"].join(", "))
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to) as PromiseLike<PageResult<ProductSignalRow>>,
+  );
+  if (error) {
+    console.error("[hq-product] feature-signal read failed", error);
     return null;
   }
-  return (sigRes.data ?? []) as unknown as ProductSignalRow[];
+  return data;
 }
 
 // ---------------------------------------------------------------------
@@ -334,24 +416,12 @@ export async function loadSupportTicketDetailForHq(
     user?: { full_name?: string | null; email?: string | null } | null;
   } | null;
 
-  // 3. Full message thread (INCLUDING internal — HQ sees everything).
-  const mRes = await adminTable("support_messages")
-    .select(
-      [
-        "id",
-        "ticket_id",
-        "org_id",
-        "author_id",
-        "author_kind",
-        "internal",
-        "body",
-        "created_at",
-        "author:users ( full_name, email )",
-      ].join(", "),
-    )
-    .eq("ticket_id", ticketId)
-    .order("created_at", { ascending: true });
-  const messagesRaw = (mRes.data ?? []) as unknown as Array<{
+  // 3. Full message thread (INCLUDING internal — HQ sees everything). PAGED:
+  //    a single long-lived ticket's thread is not provably below the 1000-row
+  //    clamp, and the detail view + preview/internal-notes derivation need the
+  //    WHOLE thread — a truncated tail would drop the newest replies. LOUD: a
+  //    read error throws `readFailure` rather than rendering a partial thread.
+  const messagesRaw = await pagedRows<{
     id: string;
     ticket_id: string;
     org_id: string;
@@ -361,7 +431,28 @@ export async function loadSupportTicketDetailForHq(
     body: string;
     created_at: string;
     author: { full_name?: string | null; email?: string | null } | null;
-  }>;
+  }>(
+    "hq-support: ticket thread",
+    (from, to) =>
+      adminTable("support_messages")
+        .select(
+          [
+            "id",
+            "ticket_id",
+            "org_id",
+            "author_id",
+            "author_kind",
+            "internal",
+            "body",
+            "created_at",
+            "author:users ( full_name, email )",
+          ].join(", "),
+        )
+        .eq("ticket_id", ticketId)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as PromiseLike<PageResult<never>>,
+  );
   const messages: HqSupportMessage[] = messagesRaw.map((m) => ({
     id: m.id,
     ticket_id: m.ticket_id,

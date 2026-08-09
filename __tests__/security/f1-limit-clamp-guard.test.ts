@@ -110,6 +110,13 @@ const PRODUCER_TABLES = new Set<string>([
   // Sites/addresses — a quote/job reference picker; a capped read nulls an
   // out-of-cap property_id on edit. (F-1 picker-class wave.)
   "properties",
+  // Support OS — CROSS-TENANT service-role reads mapped + counted in JS into the
+  // /admin/support board, the /admin/support-ai triage board, and hq-product's CEO
+  // demand aggregation; mirrors the bare-select guard's HIGH_VALUE_TABLES. A
+  // `.limit(1000)`-on-the-boundary clamp here is the same silent-truncation trap.
+  // (F-1 support wave; see the detection-limitation note in the bare-select guard.)
+  "support_tickets",
+  "support_messages",
 ]);
 
 /** "file:line" → reason. Only GENUINELY-bounded top-1000 samples belong here.
@@ -424,9 +431,13 @@ function producerReadIndices(src: string): Array<{ table: string; index: number 
   while ((wm = arrowRe.exec(src))) if (wm[1]) wrapperNames.add(wm[1]);
   while ((wm = fnRe.exec(src))) if (wm[1]) wrapperNames.add(wm[1]);
   for (const name of wrapperNames) {
-    // `table<...>(client, "table")` — allow an optional generic before the call.
+    // `table<...>(client, "table")` — allow an optional generic before the call —
+    // OR the single-arg form `adminTable("table")` where the literal is the ONLY
+    // arg (the declaration-wrapper shape hq-support-snapshot / hq-health-deep-dive
+    // use; without the optional first arg this guard shared the bare-select guard's
+    // single-arg blind spot).
     const callRe = new RegExp(
-      escapeReg(name) + `(?:<[^()]*?>)?\\s*\\(\\s*[^,()]+,\\s*["'\`]([a-z_]+)["'\`]\\s*\\)`,
+      escapeReg(name) + `(?:<[^()]*?>)?\\s*\\(\\s*(?:[^,()]+,\\s*)?["'\`]([a-z_]+)["'\`]\\s*\\)`,
       "g",
     );
     let cm: RegExpExecArray | null;

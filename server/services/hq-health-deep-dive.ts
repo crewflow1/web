@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import type { HealthDeepDiveRow } from "@/lib/hq/health-deep-dive";
 
 /**
@@ -10,6 +11,14 @@ import type { HealthDeepDiveRow } from "@/lib/hq/health-deep-dive";
  * number of batched IN queries — no N+1.
  *
  * Service-role only.
+ *
+ * F-1: the support_tickets read is CROSS-TENANT (`.in("org_id", orgIds)` spans
+ * every customer) and its full row set is counted in JS into per-org active/urgent
+ * ticket figures, so it PAGES via fetchAllRows (a bare `.order()` silently clamped
+ * at max_rows=1000 would under-count the busiest customers). The sibling
+ * organizations / health_score_events / billing_invoices / notifications reads
+ * carry the SAME cross-tenant truncation risk and are tracked for the reported
+ * F-1 detection follow-up wave (they are not yet in the guard's HIGH_VALUE set).
  */
 
 type AnyQuery = {
@@ -21,6 +30,10 @@ type AnyQuery = {
     data: unknown[] | null;
     error: { message: string } | null;
   }> & AnyQuery;
+  range: (from: number, to: number) => PromiseLike<{
+    data: unknown[] | null;
+    error: unknown;
+  }>;
   limit: (n: number) => Promise<{
     data: unknown[] | null;
     error: { message: string } | null;
@@ -111,12 +124,22 @@ export async function listHealthDeepDive(): Promise<HealthDeepDiveRow[]> {
     }
   }
 
-  // 3. Support tickets.
-  const ticketsRes = await table("support_tickets")
-    .select("org_id, status, priority")
-    .in("org_id", orgIds)
-    .order("created_at", { ascending: false });
-  const tickets = (ticketsRes.data ?? []) as unknown as TicketRow[];
+  // 3. Support tickets — PAGED (cross-tenant `.in(org_id)`, counted per org in
+  //    JS below; a max_rows=1000 clamp would under-count the busiest customers).
+  //    Best-effort like the sibling reads: on a mid-page error we log and use the
+  //    partial set fetchAllRows hands back rather than throwing the whole snapshot.
+  //    Stable total order on the unique `id` so no row shifts across a page edge.
+  const { data: tickets, error: ticketsError } = await fetchAllRows<TicketRow>(
+    (from, to) =>
+      table("support_tickets")
+        .select("org_id, status, priority")
+        .in("org_id", orgIds)
+        .order("id", { ascending: true })
+        .range(from, to) as PromiseLike<PageResult<TicketRow>>,
+  );
+  if (ticketsError) {
+    console.error("[health-deep-dive] support_tickets read failed", ticketsError);
+  }
   const ticketStats = new Map<
     string,
     { active: number; urgent: number }

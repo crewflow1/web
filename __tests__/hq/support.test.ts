@@ -521,8 +521,14 @@ describe("HQ page wiring", () => {
     expect(HQ_DETAIL).toMatch(/\/admin\/customers\/\$\{ticket\.org_id\}/);
   });
 
-  it("HQ snapshot service runs one batched query for messages (no N+1)", () => {
-    expect(HQ_SNAPSHOT).toMatch(/\.in\("ticket_id", ticketIds\)/);
+  it("HQ snapshot service batches the messages read (no N+1)", () => {
+    // Still a batched `.in("ticket_id", …)` — NOT a per-ticket query. The F-1
+    // support wave chunks the id list (`chunk` = a 500-id slice of `ticketIds`)
+    // and pages each chunk via fetchAllRows, so the read is O(chunks × pages),
+    // never O(tickets). `ticketIds` is still derived from the paged ticket set
+    // and sliced into `chunk`.
+    expect(HQ_SNAPSHOT).toMatch(/\.in\("ticket_id", chunk\)/);
+    expect(HQ_SNAPSHOT).toMatch(/const ticketIds = tickets\.map/);
   });
 
   it("HQ snapshot exposes countOpenSupportTicketsForHq for the badge", () => {
