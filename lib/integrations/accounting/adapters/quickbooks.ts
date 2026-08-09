@@ -39,8 +39,11 @@ import { effectiveVatRate } from "../canonical";
  * ── REFRESH ──────────────────────────────────────────────────────────────────
  * A 401 on ANY call triggers ONE token refresh (the input's `refresh` callback)
  * and a retry with the new token, shared across the multi-call push via a small
- * mutable auth context. Creates carry a stable `requestid` so a duplicate push
- * is idempotent at Intuit.
+ * mutable auth context. Creates carry a stable `requestid` seeded by the immutable
+ * CrewFlow row id (`sourceId`) — so re-pushing the SAME row is idempotent at
+ * Intuit, while two distinct rows with a byte-identical body (e.g. two same-day
+ * same-amount part-payments) stay DISTINCT and both create. Mirrors Xero's
+ * per-entity Idempotency-Key.
  */
 
 const DEFAULT_QBO_API = "https://quickbooks.api.intuit.com";
@@ -55,10 +58,20 @@ function q(value: string): string {
   return value.replace(/'/g, "''");
 }
 
-/** Stable idempotency `requestid` (<=50 chars) for a create. */
-function requestId(kind: string, realmId: string, body: unknown): string {
+/**
+ * Stable idempotency `requestid` (<=50 chars) for a create. Seeded by the
+ * immutable CrewFlow row id (`sourceId`) when present, else the request body as a
+ * deterministic fallback. Seeding by the row id — NOT a hash of the body — is what
+ * makes this true idempotency: a genuine re-push of the SAME row reuses the SAME
+ * requestid (Intuit treats it as a replay, so no duplicate), while two DISTINCT
+ * rows that happen to serialise to a byte-identical body (e.g. two same-day,
+ * same-amount part-payments on one invoice) get DISTINCT requestids and both
+ * create. Body-hashing would collapse that second, legitimate payment into a
+ * replay of the first — a silent, permanent financial loss.
+ */
+function requestId(kind: string, realmId: string, seed: string): string {
   const h = createHash("sha256")
-    .update(`${kind}:${realmId}:${JSON.stringify(body)}`)
+    .update(`${kind}:${realmId}:${seed}`)
     .digest("hex");
   return `cf-${kind}-${h.slice(0, 40)}`;
 }
@@ -126,12 +139,14 @@ export class QuickBooksAdapter implements AccountingAdapter {
         itemId: item.id,
         taxCodeId,
       });
+      // Seed the idempotency requestid off the immutable row id, not the body:
+      // two distinct invoices with a byte-identical body still get distinct keys.
       const res = await this.authedJson(
         ctx,
         "POST",
         `/v3/company/${realmId}/invoice`,
         body,
-        requestId("inv", realmId, body),
+        requestId("inv", realmId, row.sourceId ?? JSON.stringify(body)),
       );
       if (!res.ok) return this.err(this.reason("invoice", res), pushed);
       pushed += 1;
@@ -155,12 +170,18 @@ export class QuickBooksAdapter implements AccountingAdapter {
       // an unapplied payment (still an honest receipt).
       const invoiceId = await this.resolveInvoiceId(ctx, realmId, row.invoice_number);
       const body = buildQboPaymentBody(row, { customerId: customer.id, invoiceId });
+      // Seed off the immutable payment row id, NOT the body. Two distinct
+      // invoice_payments rows on one invoice for the same customer, day and amount
+      // (real: two identical part-payments/deposits) serialise to a byte-identical
+      // body; body-seeding would give them the same requestid and Intuit would drop
+      // the second as a replay — the payment silently lost. The row id keeps them
+      // distinct, while a genuine re-push of the SAME row reuses its requestid.
       const res = await this.authedJson(
         ctx,
         "POST",
         `/v3/company/${realmId}/payment`,
         body,
-        requestId("pay", realmId, body),
+        requestId("pay", realmId, row.sourceId ?? JSON.stringify(body)),
       );
       if (!res.ok) return this.err(this.reason("payment", res), pushed);
       pushed += 1;
@@ -279,14 +300,17 @@ export class QuickBooksAdapter implements AccountingAdapter {
     const existing = firstEntityId(found.json, "Customer");
     if (existing) return { ok: true, id: existing };
 
-    // Create the customer when absent (QBO cannot resolve inline by name).
+    // Create the customer when absent (QBO cannot resolve inline by name). This is
+    // get-or-create keyed on a unique DisplayName (not part of the row-id defect
+    // class — there is no row sourceId in scope here), so seed the requestid off
+    // the body: identical to prior behaviour.
     const body = { DisplayName: displayName };
     const created = await this.authedJson(
       ctx,
       "POST",
       `/v3/company/${realmId}/customer`,
       body,
-      requestId("cust", realmId, body),
+      requestId("cust", realmId, JSON.stringify(body)),
     );
     if (!created.ok) return { ok: false, message: this.reason("customer create", created) };
     const id = entityId(created.json, "Customer");
