@@ -89,13 +89,29 @@ export async function loadJobBilling(orgId: string, jobId: string): Promise<JobB
     const supabase = await createClient();
     const db = supabase as unknown as LooseClient;
 
+    // ACTIVE-org read-pin (#456 read-side class): EVERY read here is pinned to
+    // `orgId` in-statement, not just the paged invoice_payments read below. RLS
+    // on all these tables is `org_id in current_org_ids()`, which admits every
+    // org the viewer belongs to — so RLS is the outer tenant boundary, not the
+    // active-org scope. Without these pins a dual-org member could pass a foreign
+    // jobId and this loader would return the OTHER org's contract/billed/
+    // outstanding/retention + invoices/quotes. The subject `jobs` read is pinned
+    // to `orgId` too and a missing job returns the EMPTY view — so a foreign
+    // jobId is indistinguishable from a non-existent one. (Callers ALSO gate via
+    // loadJobForOrg + notFound() before delegating here; this is defence in depth.)
     const [planRes, jobRes, invoicesRes, quotesRes, releasesRes] = await Promise.all([
-      db.from("job_billing_plans").select("id, structure, basis_amount, status").eq("job_id", jobId).eq("status", "active").maybeSingle(),
-      db.from("jobs").select("retention_percent, customer_id").eq("id", jobId).maybeSingle(),
-      db.from("invoices").select("id, number, status, total, amount, due_date").eq("job_id", jobId),
-      db.from("quotes").select("status, total, subtotal, variation_number").eq("job_id", jobId),
-      db.from("retention_releases").select("amount").eq("job_id", jobId),
+      db.from("job_billing_plans").select("id, structure, basis_amount, status").eq("org_id", orgId).eq("job_id", jobId).eq("status", "active").maybeSingle(),
+      db.from("jobs").select("retention_percent, customer_id").eq("id", jobId).eq("org_id", orgId).maybeSingle(),
+      db.from("invoices").select("id, number, status, total, amount, due_date").eq("org_id", orgId).eq("job_id", jobId),
+      db.from("quotes").select("status, total, subtotal, variation_number").eq("org_id", orgId).eq("job_id", jobId),
+      db.from("retention_releases").select("amount").eq("org_id", orgId).eq("job_id", jobId),
     ]);
+
+    // Subject job not in the active org (or absent): return the empty view so a
+    // foreign/missing jobId can never surface another org's billing figures.
+    if (!jobRes.data) {
+      return { plan: null, stages: [], summary: EMPTY_SUMMARY, forecast: EMPTY_FORECAST, readyStages: [], jobHasCustomer: false, suggestedBasisNet: 0 };
+    }
 
     const plan = planRes.data;
     const invoiceRows = (invoicesRes.data ?? []) as Row[];
@@ -144,7 +160,7 @@ export async function loadJobBilling(orgId: string, jobId: string): Promise<JobB
 
     const invoiceById = new Map(invoiceRows.map((i) => [String(i.id), i]));
     const stageRows = plan
-      ? (((await db.from("job_billing_stages").select("id, sequence, name, kind, basis, percent, amount, vat_rate, due_date, retention_applies, invoice_id").eq("plan_id", String(plan.id)).order("sequence", { ascending: true })).data ?? []) as Row[])
+      ? (((await db.from("job_billing_stages").select("id, sequence, name, kind, basis, percent, amount, vat_rate, due_date, retention_applies, invoice_id").eq("org_id", orgId).eq("plan_id", String(plan.id)).order("sequence", { ascending: true })).data ?? []) as Row[])
       : [];
 
     const stages: BillingStageView[] = stageRows.map((s) => {

@@ -1,5 +1,8 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { loadJobForOrg } from "@/lib/jobs/load";
 import { loadJobBilling, type BillingStageView } from "@/server/services/billing";
 import { formatGbp } from "@/lib/money";
 import { StatTile } from "@/components/ui/stat-tile";
@@ -33,6 +36,16 @@ export default async function JobBillingPage({ params }: { params: Promise<{ id:
   const { id: jobId } = await params;
   const { ctx } = await requireOrgContext();
   const isManager = ctx.membership.role === "owner" || ctx.membership.role === "admin";
+  // ACTIVE-org read-pin (#456 read-side class): resolve the subject job through
+  // the org-pinned chokepoint BEFORE delegating to the billing service. Without
+  // this, a dual-org member could open /jobs/<other-org-job-id>/billing and see
+  // the other org's contract/billed/outstanding/retention under the active
+  // org's shell — every RLS policy here admits every org the viewer belongs to,
+  // so RLS alone is not the active-org boundary. notFound() makes a job in a
+  // non-active org indistinguishable from one that does not exist.
+  const supabase = await createClient();
+  const job = await loadJobForOrg(supabase, jobId, ctx.org.id, "id");
+  if (!job) notFound();
   const b = await loadJobBilling(ctx.org.id, jobId);
   const s = b.summary;
 

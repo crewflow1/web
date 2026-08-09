@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { requireOrgContext } from "@/server/auth/session";
 import { loadMySupportTicket } from "@/server/services/customer-support-service";
 import {
   SUPPORT_STATUS_LABEL,
@@ -27,7 +28,10 @@ export default async function CustomerSupportTicketPage({
 }) {
   const { id } = await params;
   const sp = await searchParams;
-  const ticket = await loadMySupportTicket(id);
+  // ACTIVE-org read-pin: resolve the ticket within the viewer's ACTIVE org so a
+  // dual-org member cannot open another of their orgs' ticket thread here.
+  const { ctx } = await requireOrgContext();
+  const ticket = await loadMySupportTicket(ctx.org.id, id);
   if (!ticket) notFound();
 
   const banner = (() => {
