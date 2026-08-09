@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { buildHqSnapshot } from "@/server/services/hq-snapshot";
 import { estimateLtvGbp } from "@/lib/hq/customer-financials";
 import type { SetupFeeStatus } from "@/lib/hq/customer-financials";
@@ -32,6 +33,10 @@ type AnyQuery = {
     data: unknown[] | null;
     error: { message: string } | null;
   }> & AnyQuery;
+  range: (from: number, to: number) => PromiseLike<{
+    data: unknown[] | null;
+    error: unknown;
+  }>;
 };
 
 function untypedAdminTable(name: string) {
@@ -74,37 +79,52 @@ export async function buildAnalyticsSnapshot(): Promise<AnalyticsSnapshot> {
   // 1. Existing HQ overview snapshot — drives the 12-month series.
   const hq = await buildHqSnapshot();
 
-  // 2. Orgs — every row with cached values.
-  const orgsRes = await untypedAdminTable("organizations")
-    .select(
-      [
-        "id",
-        "name",
-        "status",
-        "setup_fee_status",
-        "setup_fee_paid_at",
-        "approved_at",
-        "cancelled_at",
-        "trial_ends_at",
-        "last_login_at",
-        "onboarding_percent",
-        "migration_percent",
-        "mrr_gbp",
-        "ltv_gbp",
-        "health_score",
-        "created_at",
-      ].join(", "),
-    )
-    .order("created_at", { ascending: false });
-  const orgsRaw = (orgsRes.data ?? []) as unknown as OrgRow[];
+  // 2. Orgs — every row with cached values. PAGED (F-1): the estate roster feeds
+  //    the whole analytics surface; a bare read is silently clamped at
+  //    max_rows=1000, so past 1000 orgs the analytics under-count. Stable total
+  //    order (created_at, id) so no org shifts across a page edge.
+  const orgsRes = await fetchAllRows<OrgRow>(
+    (from, to) =>
+      untypedAdminTable("organizations")
+        .select(
+          [
+            "id",
+            "name",
+            "status",
+            "setup_fee_status",
+            "setup_fee_paid_at",
+            "approved_at",
+            "cancelled_at",
+            "trial_ends_at",
+            "last_login_at",
+            "onboarding_percent",
+            "migration_percent",
+            "mrr_gbp",
+            "ltv_gbp",
+            "health_score",
+            "created_at",
+          ].join(", "),
+        )
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as PromiseLike<PageResult<OrgRow>>,
+  );
+  const orgsRaw = orgsRes.data;
 
-  // 3. Billing invoices.
-  const invRes = await untypedAdminTable("billing_invoices")
-    .select(
-      "org_id, status, kind, amount_gbp, paid_at, failed_at, due_date, created_at",
-    )
-    .order("created_at", { ascending: false });
-  const invoicesRaw = (invRes.data ?? []) as unknown as InvoiceRow[];
+  // 3. Billing invoices — PAGED (F-1): every invoice across the estate folds into
+  //    MRR / paid / failed money figures; a max_rows=1000 clamp silently
+  //    understates the totals. Stable total order (created_at, id).
+  const invRes = await fetchAllRows<InvoiceRow>(
+    (from, to) =>
+      untypedAdminTable("billing_invoices")
+        .select(
+          "id, org_id, status, kind, amount_gbp, paid_at, failed_at, due_date, created_at",
+        )
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as PromiseLike<PageResult<InvoiceRow>>,
+  );
+  const invoicesRaw = invRes.data;
 
   const generatedAt = new Date().toISOString();
 

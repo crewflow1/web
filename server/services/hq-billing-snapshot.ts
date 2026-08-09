@@ -13,6 +13,7 @@ import {
 } from "@/lib/hq/customer-financials";
 import type { OrgStatus } from "@/server/auth/session";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 
 /**
  * CrewFlow HQ — Billing OS aggregator (HQ-4).
@@ -46,6 +47,10 @@ type AnyQuery = {
   maybeSingle: () => Promise<{
     data: unknown | null;
     error: { message: string } | null;
+  }>;
+  range: (from: number, to: number) => PromiseLike<{
+    data: unknown[] | null;
+    error: unknown;
   }>;
 };
 
@@ -99,28 +104,6 @@ export type CustomerBillingRow = {
 export async function listCustomersForBilling(): Promise<CustomerBillingRow[]> {
   const admin = createAdminClient();
 
-  // ---------- Orgs ----------
-  const { data: orgsRaw, error: orgsError } = await admin
-    .from("organizations")
-    .select(
-      [
-        "id",
-        "name",
-        "status",
-        "setup_fee_status",
-        "mrr_gbp",
-        "ltv_gbp",
-        "next_renewal_at",
-        "stripe_customer_id",
-        "stripe_subscription_id",
-        "billing_email",
-        "created_at",
-        "approved_at",
-      ].join(", ") as never,
-    )
-    .order("created_at", { ascending: false });
-  if (orgsError) throw readFailure("hq billing: organizations", orgsError);
-
   type OrgRow = {
     id: string;
     name: string;
@@ -135,7 +118,37 @@ export async function listCustomersForBilling(): Promise<CustomerBillingRow[]> {
     created_at: string;
     approved_at: string | null;
   };
-  const orgs = ((orgsRaw ?? []) as unknown as OrgRow[]);
+  // ---------- Orgs ----------
+  // PAGED (F-1): the whole estate roster is the billing customer list; a bare read
+  // is silently clamped at max_rows=1000, so past 1000 orgs customers disappear
+  // from /admin/billing entirely. Stable total order (created_at, id).
+  const { data: orgsRaw, error: orgsError } = await fetchAllRows<OrgRow>(
+    (from, to) =>
+      admin
+        .from("organizations")
+        .select(
+          [
+            "id",
+            "name",
+            "status",
+            "setup_fee_status",
+            "mrr_gbp",
+            "ltv_gbp",
+            "next_renewal_at",
+            "stripe_customer_id",
+            "stripe_subscription_id",
+            "billing_email",
+            "created_at",
+            "approved_at",
+          ].join(", ") as never,
+        )
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<OrgRow>>,
+  );
+  if (orgsError) throw readFailure("hq billing: organizations", orgsError);
+
+  const orgs = orgsRaw;
   if (orgs.length === 0) return [];
 
   const ids = orgs.map((o) => o.id);
@@ -161,30 +174,38 @@ export async function listCustomersForBilling(): Promise<CustomerBillingRow[]> {
   );
 
   // ---------- Billing invoices ----------
+  // PAGED (F-1): every invoice across the estate is bucketed per-org and summed
+  // into each customer's billing summary; a max_rows=1000 clamp silently drops
+  // invoices and understates the money. Stable total order (created_at, id).
   type InvoiceWithOrg = BillingInvoiceRow & { org_id: string };
-  const { data: invoiceData, error: invoiceError } = await untypedAdminTable("billing_invoices")
-    .select(
-      [
-        "id",
-        "org_id",
-        "kind",
-        "status",
-        "amount_gbp",
-        "due_date",
-        "sent_at",
-        "paid_at",
-        "failed_at",
-        "failure_reason",
-        "period_start",
-        "period_end",
-        "notes",
-        "stripe_invoice_id",
-        "created_at",
-      ].join(", "),
-    )
-    .order("created_at", { ascending: false });
+  const { data: invoiceData, error: invoiceError } = await fetchAllRows<InvoiceWithOrg>(
+    (from, to) =>
+      untypedAdminTable("billing_invoices")
+        .select(
+          [
+            "id",
+            "org_id",
+            "kind",
+            "status",
+            "amount_gbp",
+            "due_date",
+            "sent_at",
+            "paid_at",
+            "failed_at",
+            "failure_reason",
+            "period_start",
+            "period_end",
+            "notes",
+            "stripe_invoice_id",
+            "created_at",
+          ].join(", "),
+        )
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as PromiseLike<PageResult<InvoiceWithOrg>>,
+  );
   if (invoiceError) throw readFailure("hq billing: invoices", invoiceError);
-  const invoices = ((invoiceData as unknown as InvoiceWithOrg[]) ?? []);
+  const invoices = invoiceData;
 
   const invByOrg = new Map<string, BillingInvoiceRow[]>();
   for (const inv of invoices) {

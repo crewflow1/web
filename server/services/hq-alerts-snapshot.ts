@@ -5,6 +5,7 @@ import {
   type SetupFeeStatus,
 } from "@/lib/hq/customer-financials";
 import { readFailure, reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import type {
   AlertOrg,
   AlertInvoice,
@@ -61,6 +62,10 @@ type AnyQuery = {
     data: unknown[] | null;
     error: SupabaseReadError | null;
   }> & AnyQuery;
+  range: (from: number, to: number) => PromiseLike<{
+    data: unknown[] | null;
+    error: unknown;
+  }>;
 };
 
 function untypedAdminTable(name: string) {
@@ -145,33 +150,41 @@ export type AlertsSnapshotResult = {
  * orgs missing a cached score, and return the snapshot + state map.
  */
 export async function buildAlertsSnapshot(): Promise<AlertsSnapshotResult> {
-  // 1. Orgs
-  const orgsRes = await untypedAdminTable("organizations")
-    .select(
-      [
-        "id",
-        "name",
-        "status",
-        "setup_fee_status",
-        "setup_fee_paid_at",
-        "trial_ends_at",
-        "next_renewal_at",
-        "approved_at",
-        "cancelled_at",
-        "suspended_at",
-        "created_at",
-        "updated_at",
-        "mrr_gbp",
-        "health_score",
-        "last_login_at",
-        "onboarding_percent",
-        "migration_percent",
-      ].join(", "),
-    )
-    .order("created_at", { ascending: false });
+  // 1. Orgs — PAGED (F-1): the whole estate roster feeds the rules engine and
+  //    every alert row; a bare read is silently clamped at max_rows=1000, so past
+  //    1000 orgs the busiest customers vanish from the board and the cron.
+  //    Stable total order (created_at, id).
+  const orgsRes = await fetchAllRows<OrgRow>(
+    (from, to) =>
+      untypedAdminTable("organizations")
+        .select(
+          [
+            "id",
+            "name",
+            "status",
+            "setup_fee_status",
+            "setup_fee_paid_at",
+            "trial_ends_at",
+            "next_renewal_at",
+            "approved_at",
+            "cancelled_at",
+            "suspended_at",
+            "created_at",
+            "updated_at",
+            "mrr_gbp",
+            "health_score",
+            "last_login_at",
+            "onboarding_percent",
+            "migration_percent",
+          ].join(", "),
+        )
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as PromiseLike<PageResult<OrgRow>>,
+  );
 
   if (orgsRes.error) throw readFailure("hq alerts: organizations", orgsRes.error);
-  const orgsRaw = (orgsRes.data ?? []) as unknown as OrgRow[];
+  const orgsRaw = orgsRes.data;
   if (orgsRaw.length === 0) {
     return {
       snapshot: { rows: [], now: new Date().toISOString() },
@@ -180,16 +193,23 @@ export async function buildAlertsSnapshot(): Promise<AlertsSnapshotResult> {
   }
   const orgIds = orgsRaw.map((o) => o.id);
 
-  // 2. Billing invoices — pull everything not finalised + recently
-  // paid (for the payment_received info rule).
-  const invRes = await untypedAdminTable("billing_invoices")
-    .select(
-      "id, org_id, kind, status, amount_gbp, due_date, sent_at, paid_at, failed_at, created_at",
-    )
-    .in("org_id", orgIds)
-    .order("created_at", { ascending: false });
+  // 2. Billing invoices — PAGED (F-1): every open/recent invoice across ALL orgs
+  //    (.in on the full estate id set) folds into the alert money rules; a
+  //    max_rows=1000 clamp silently drops invoices. Stable total order
+  //    (created_at, id).
+  const invRes = await fetchAllRows<InvoiceRow>(
+    (from, to) =>
+      untypedAdminTable("billing_invoices")
+        .select(
+          "id, org_id, kind, status, amount_gbp, due_date, sent_at, paid_at, failed_at, created_at",
+        )
+        .in("org_id", orgIds)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as PromiseLike<PageResult<InvoiceRow>>,
+  );
   if (invRes.error) throw readFailure("hq alerts: billing invoices", invRes.error);
-  const invoicesRaw = (invRes.data ?? []) as unknown as InvoiceRow[];
+  const invoicesRaw = invRes.data;
 
   // 3. Imports — most-recent per-org slice. We pull every row for
   // these orgs and let the rules engine pick the in-flight ones.

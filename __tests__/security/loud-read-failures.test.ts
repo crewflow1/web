@@ -524,7 +524,14 @@ const RATCHET: Array<{
     // binds + logs its error, so its `ticketsRes.data ?? []` leaves the ledger. Its
     // sibling org/health-event/billing/notification reads carry the same risk and
     // are tracked for the reported detection follow-up. 1 soft-data retired.
-    softData: 54,
+    // 54 → 47: the .from(as never) cast-form F-1 wave paged + made LOUD several
+    // reads that previously swallowed their error and degraded to `?? []`:
+    // customer-support-service.ts (my-tickets list + ticket messages now throw
+    // readFailure), and the hq-snapshot / hq-analytics / hq-alerts / hq-billing /
+    // hq-customer / hq-health-recompute / hq-health-deep-dive estate reads now bind
+    // the fetchAllRows error (thrown, or logged for the best-effort snapshots) and
+    // consume `res.data` directly instead of `res.data ?? []`. 7 soft-data retired.
+    softData: 47,
     // 4 → 5: server/services/hq-outreach.ts `countOutreach` is a head:true count read
     // for the CEO metrics tile, mirroring countResearch/countQualification — an honest
     // zero when nothing has run yet is the correct reassuring answer here.

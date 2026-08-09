@@ -23,6 +23,7 @@ import {
 } from "./actions";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 
 /**
  * HQ Internal Notes — /admin/notes (HQ-9).
@@ -103,18 +104,23 @@ export default async function HqNotesPage({
   // narrower than what's actually in the DB (HQ-3 added it via
   // migration), so cast through unknown.
   const admin = createAdminClient();
-  const { data: orgs, error: orgsError } = await admin
-    .from("organizations")
-    .select("id, name, status" as never)
-    .order("name", { ascending: true });
+  type OrgFormOption = { id: string; name: string; status: string | null };
+  // PAGED (F-1): the "new note" org picker lists every active org — a bare read is
+  // silently clamped at max_rows=1000, so past 1000 orgs the tail could not be
+  // selected. Stable total order (name, id).
+  const { data: orgs, error: orgsError } = await fetchAllRows<OrgFormOption>(
+    (from, to) =>
+      admin
+        .from("organizations")
+        .select("id, name, status" as never)
+        .order("name", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<OrgFormOption>>,
+  );
   if (orgsError) {
     throw readFailure("admin notes: organizations for form", orgsError);
   }
-  const orgsForForm = ((orgs ?? []) as unknown) as Array<{
-    id: string;
-    name: string;
-    status: string | null;
-  }>;
+  const orgsForForm = orgs;
 
   const banner = (() => {
     if (sp.saved)

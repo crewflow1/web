@@ -7,6 +7,7 @@ import {
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { notifyOnHealthDropped } from "@/lib/notifications/events";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 
 /**
  * CrewFlow HQ — Health-score cache rebuild engine (HQ-6).
@@ -80,6 +81,10 @@ type AnyQuery = {
     data: unknown | null;
     error: { message: string } | null;
   }>;
+  range: (from: number, to: number) => PromiseLike<{
+    data: unknown[] | null;
+    error: unknown;
+  }>;
 };
 
 type AnyMutation = {
@@ -144,12 +149,20 @@ export async function recomputeAllOrgs(
   actor?: { id: string; email: string } | null,
 ): Promise<RecomputeSummary> {
   const startedAt = Date.now();
-  const res = await untypedAdminTable("organizations")
-    .select(
-      "id, name, status, setup_fee_status, last_login_at, onboarding_percent, migration_percent, health_score",
-    )
-    .order("created_at", { ascending: true });
-  const rows = (res.data ?? []) as unknown as OrgHealthRow[];
+  // PAGED (F-1): recompute must touch EVERY org; a bare read is silently clamped
+  // at max_rows=1000, so past 1000 orgs the tail never gets its health score
+  // rebuilt. Stable total order (created_at, id).
+  const res = await fetchAllRows<OrgHealthRow>(
+    (from, to) =>
+      untypedAdminTable("organizations")
+        .select(
+          "id, name, status, setup_fee_status, last_login_at, onboarding_percent, migration_percent, health_score",
+        )
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as PromiseLike<PageResult<OrgHealthRow>>,
+  );
+  const rows = res.data;
 
   let changed = 0;
   let errors = 0;

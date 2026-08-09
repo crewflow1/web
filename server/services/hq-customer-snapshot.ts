@@ -11,6 +11,7 @@ import {
 } from "@/lib/hq/customer-financials";
 import type { OrgStatus } from "@/server/auth/session";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 
 /**
  * CrewFlow HQ — Customers OS per-customer snapshot.
@@ -398,28 +399,36 @@ export type CustomerListRow = {
 
 export async function listCustomersForHq(): Promise<CustomerListRow[]> {
   const admin = createAdminClient();
-  const { data: orgs, error: orgsError } = await admin
-    .from("organizations")
-    .select(
-      [
-        "id",
-        "name",
-        "status",
-        "setup_fee_status",
-        "mrr_gbp",
-        "ltv_gbp",
-        "migration_percent",
-        "health_score",
-        "last_login_at",
-        "created_at",
-        "trial_ends_at",
-      ].join(", ") as never,
-    )
-    .order("created_at", { ascending: false });
+  type Row = Omit<CustomerListRow, "owner_email" | "owner_name">;
+  // PAGED (F-1): the estate roster IS the HQ customer list; a bare read is
+  // silently clamped at max_rows=1000, so past 1000 orgs customers vanish from
+  // /admin/customers. Stable total order (created_at, id).
+  const { data: orgs, error: orgsError } = await fetchAllRows<Row>(
+    (from, to) =>
+      admin
+        .from("organizations")
+        .select(
+          [
+            "id",
+            "name",
+            "status",
+            "setup_fee_status",
+            "mrr_gbp",
+            "ltv_gbp",
+            "migration_percent",
+            "health_score",
+            "last_login_at",
+            "created_at",
+            "trial_ends_at",
+          ].join(", ") as never,
+        )
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<Row>>,
+  );
   if (orgsError) throw readFailure("hq customers: list", orgsError);
 
-  type Row = Omit<CustomerListRow, "owner_email" | "owner_name">;
-  const baseRows = ((orgs ?? []) as unknown as Row[]);
+  const baseRows = orgs;
   if (baseRows.length === 0) return [];
 
   const ids = baseRows.map((r) => r.id);

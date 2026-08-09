@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { monthBuckets, type HqSnapshot } from "@/lib/hq/metrics";
 import { MONTHLY_PRICE_GBP, SETUP_FEE_GBP } from "@/lib/hq/metrics";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 
 /**
  * Build the HQ snapshot — read-only, super-admin only.
@@ -62,11 +63,25 @@ export async function buildHqSnapshot(): Promise<HqSnapshot> {
   }
 
   // ---------- Organisations ----------
-  const { data: orgRows, error: orgError } = await admin
-    .from("organizations")
-    .select(
-      "id, status, created_at, cancelled_at, trial_ends_at" as never,
-    );
+  type OrgRow = {
+    id: string;
+    status: string;
+    created_at: string;
+    cancelled_at: string | null;
+    trial_ends_at: string | null;
+  };
+  // PAGED (F-1): the estate roster is counted per-status into the HQ overview
+  // tiles; a bare read is silently clamped at max_rows=1000, so past 1000 orgs
+  // the counts under-report. Stable total order (created_at, id).
+  const { data: orgRows, error: orgError } = await fetchAllRows<OrgRow>(
+    (from, to) =>
+      admin
+        .from("organizations")
+        .select("id, status, created_at, cancelled_at, trial_ends_at" as never)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<OrgRow>>,
+  );
   if (orgError) throw readFailure("hq snapshot: organizations", orgError);
   const orgs = {
     pending: 0,
@@ -76,14 +91,7 @@ export async function buildHqSnapshot(): Promise<HqSnapshot> {
     rejected: 0,
     cancelled: 0,
   };
-  type OrgRow = {
-    id: string;
-    status: string;
-    created_at: string;
-    cancelled_at: string | null;
-    trial_ends_at: string | null;
-  };
-  const orgsList = (orgRows ?? []) as unknown as OrgRow[];
+  const orgsList = orgRows;
   for (const o of orgsList) {
     switch (o.status) {
       case "pending":
