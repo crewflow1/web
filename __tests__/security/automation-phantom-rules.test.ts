@@ -297,3 +297,100 @@ describe("C29 honest-disable — demo.booked stays off until a real producer exi
     expect(produced.has("demo.booked")).toBe(false);
   });
 });
+
+// ===========================================================================
+// 3. Producer coverage across BOTH write paths (C55)
+// ===========================================================================
+
+/**
+ * Slice a source file into its top-level exported function bodies, keyed by
+ * function name. The plain verb sweep (§1) proves a verb is produced SOMEWHERE;
+ * this lets the both-path guard prove a producer fires INSIDE a specific action
+ * (e.g. createJob) and not merely somewhere in a file that ALSO holds updateJob.
+ */
+function exportedFunctionBodies(src: string): Map<string, string> {
+  const bodies = new Map<string, string>();
+  const re = /export\s+(?:async\s+)?function\s+([A-Za-z0-9_]+)\s*\(/g;
+  const starts: Array<{ name: string; idx: number }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src))) starts.push({ name: m[1]!, idx: m.index });
+  for (let i = 0; i < starts.length; i++) {
+    const from = starts[i]!.idx;
+    const to = i + 1 < starts.length ? starts[i + 1]!.idx : src.length;
+    bodies.set(starts[i]!.name, src.slice(from, to));
+  }
+  return bodies;
+}
+
+/**
+ * THE C55 CLASS: a status-transition automation verb whose producer exists on
+ * only SOME of the write paths that can reach its triggering state. job.completed
+ * was WIRED on updateJob but OMITTED on createJob — yet the create form offers a
+ * "Completed" status, so a job logged already-completed from /jobs/new reached the
+ * terminal state, emitted the event NEVER, and the "job completed → suggest
+ * invoice" owner prompt silently never fired. The §1 phantom guard was blind to it
+ * (updateJob satisfied the some-producer assertion).
+ *
+ * This table lists every enabled status-transition verb whose target state is
+ * REACHABLE at create (the create form/schema actually accepts it) AND on update.
+ * Each such verb MUST dispatch its producer on BOTH paths. A future create action
+ * that can set the target status without dispatching fails CI here.
+ *
+ * Verbs deliberately ABSENT because their target state is NOT create-reachable
+ * (adding a create-path dispatch would be a FABRICATED event):
+ *   - quote.accepted     → createQuote hardcodes status:"draft"; "accepted" is
+ *                          only reached by acceptQuoteAsOwner / the portal accept.
+ *   - import.completed    → createImport sets no status; "committed" is only
+ *                          reached by commitImport.
+ *   - onboarding.completed → an org is created pre-onboarding; 100% is only
+ *                          reached by markCompleted.
+ *   - invoice.overdue     → a derived threshold state (due_date elapsed), no
+ *                          create form status; producer is the scheduler.
+ *   - support.ticket.created → a CREATE verb (fires on creation itself), not a
+ *                          transition-into-status; symmetric by definition.
+ */
+const BOTH_PATH_STATUS_VERBS: Array<{
+  verb: string;
+  file: string;
+  createFn: string;
+  updateFn: string;
+}> = [
+  {
+    verb: "job.completed",
+    file: "app/(app)/jobs/actions.ts",
+    createFn: "createJob",
+    updateFn: "updateJob",
+  },
+];
+
+describe("status-transition producer coverage — BOTH the create AND the update write path (C55)", () => {
+  for (const { verb, file, createFn, updateFn } of BOTH_PATH_STATUS_VERBS) {
+    describe(`${verb} @ ${file}`, () => {
+      const bodies = exportedFunctionBodies(codeOf(read(file)));
+      const verbLiteral = new RegExp(`type:\\s*"${verb.replace(/\./g, "\\.")}"`);
+
+      it(`the create path (${createFn}) dispatches ${verb}`, () => {
+        const body = bodies.get(createFn);
+        expect(body, `${createFn} must exist in ${file}`).toBeTruthy();
+        expect(
+          verbLiteral.test(body!),
+          `${createFn} can set the entity to the "${verb}" target state at create ` +
+            `time (the create form/schema offers it) but never dispatches ${verb}. ` +
+            `An entity created already in that state then emits the event NEVER and ` +
+            `the rule silently never fires — the C55 producer-coverage defect. ` +
+            `Mirror ${updateFn}'s dispatch on the create path (guarded by the same ` +
+            `status check; correlation-id idempotency keeps it at-most-once).`,
+        ).toBe(true);
+      });
+
+      it(`the update path (${updateFn}) dispatches ${verb}`, () => {
+        const body = bodies.get(updateFn);
+        expect(body, `${updateFn} must exist in ${file}`).toBeTruthy();
+        expect(
+          verbLiteral.test(body!),
+          `${updateFn} must dispatch ${verb} on the transition into that state.`,
+        ).toBe(true);
+      });
+    });
+  }
+});

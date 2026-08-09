@@ -95,6 +95,27 @@ export async function createJob(
 
   revalidatePath("/jobs");
 
+  // Automation OS — the create form (app/(app)/jobs/_form.tsx) offers a Status
+  // select that includes "Completed", so a job can be logged already-completed
+  // from /jobs/new (retroactively recording a finished job). That is the SAME
+  // terminal state updateJob fires `job.completed` on, so it must fire here too —
+  // otherwise a job that reaches "completed" via the create path never emits the
+  // event and the "job completed → suggest invoice" owner prompt silently never
+  // runs. Mirrors updateJob exactly: org-pinned, keyed on the job id, best-effort.
+  // Idempotent via (rule_id, correlation_id = `job.completed:jobs:<id>`) in
+  // automation_runs, so a later re-save that also dispatches is at-most-once.
+  if (result.data.status === "completed") {
+    await dispatchAutomation({
+      type: "job.completed",
+      org_id: ctx.org.id,
+      source_table: "jobs",
+      source_id: data.id,
+      payload: { to: "completed" },
+    }).catch((e) => {
+      console.error("[jobs] automation dispatch failed", e);
+    });
+  }
+
   // Best-effort one-way push to a connected calendar. A no-op while the calendar
   // integration is dark (the flag is off, so no DB/network happens); once live it
   // creates/updates the external event and never blocks or fails the save.
