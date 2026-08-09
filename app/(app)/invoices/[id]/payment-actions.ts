@@ -30,7 +30,7 @@ export async function addInvoicePayment(
   _prevState: FormState<PaymentValues>,
   formData: FormData,
 ): Promise<FormState<PaymentValues>> {
-  const { user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   if (!uuid.safeParse(invoiceId).success) return formError("Invalid invoice id.");
 
   const result = validateFormData(formData, addPaymentSchema);
@@ -44,6 +44,11 @@ export async function addInvoicePayment(
     .from("invoices")
     .select("id, total, org_id")
     .eq("id", invoiceId)
+    // ACTIVE-org pin (#456 read-side class). RLS admits every org the viewer
+    // belongs to; without this a dual-org member could record a payment against
+    // the OTHER org's invoice (the row's org_id is stamped straight onto the
+    // inserted payment). Pinning makes a foreign invoice a clean "not found".
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (invErr) {
     console.error("[invoice-payment] invoice lookup failed", {

@@ -213,6 +213,73 @@ describe("detail subjects are pinned by id AND org", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 4b. The read-side stragglers the independent red-team wave found (#456 class).
+//     These three detail pages read their PRIMARY subject by id alone — a
+//     dual-org member could open the OTHER org's quote / diary entry / expense
+//     draft (financial + PII rows) inside the active org's shell, next to the
+//     lifecycle, delete and approve-to-Finances actions. The systemic backstop
+//     is __tests__/security/active-org-read-pin-guard.test.ts; these are the
+//     per-instance regression pins, in the same style as §4.
+// ---------------------------------------------------------------------------
+
+describe("read-side stragglers — quote / diary / expense subjects are pinned by id AND org", () => {
+  const SUBJECTS: Array<[string, string, string]> = [
+    [
+      "app/(app)/quotes/[id]/page.tsx",
+      "quotes",
+      "the totals, priced cost basis, customer PII and lifecycle/delete actions",
+    ],
+    [
+      "app/(app)/diary/[id]/page.tsx",
+      "site_diary_entries",
+      "the entry detail + delete control (and its job_id label resolve)",
+    ],
+    [
+      "app/(app)/expenses/[id]/page.tsx",
+      "expense_drafts",
+      "the supplier/amount/VAT/reference and the approve-to-Finances action",
+    ],
+  ];
+
+  for (const [path, table, protects] of SUBJECTS) {
+    it(`${path} pins its ${table} subject (protects ${protects})`, () => {
+      const s = src(path);
+      expect(s).toMatch(CAPTURES_CTX);
+      expect(s, `${path} no longer reads ${table}`).toMatch(
+        new RegExp(`\\.from\\(\\s*["']${table}["']`),
+      );
+      expect(s, `${path}: the subject load lost its active-org predicate`).toMatch(CTX_PIN);
+      expect(s, `${path} must still identify the subject by id`).toMatch(
+        /\.eq\(\s*["']id["'],\s*id\s*\)/,
+      );
+    });
+  }
+
+  it("diary + site-report + snag job-label resolves are routed through the org-pinned jobs chokepoint", () => {
+    // These FK-label resolves take a pinned parent's job_id; they now go through
+    // loadJobForOrg(…, ctx.org.id) instead of an unpinned .from("jobs").eq("id",…).
+    for (const path of [
+      "app/(app)/diary/[id]/page.tsx",
+      "app/(app)/site-reports/[id]/page.tsx",
+      "app/(app)/snags/[id]/page.tsx",
+    ]) {
+      expect(src(path), `${path}: job label resolve must use loadJobForOrg`).toMatch(
+        /loadJobForOrg[\s\S]{0,160}?ctx\.org\.id/,
+      );
+    }
+  });
+
+  it("addInvoicePayment resolves the invoice by id AND active org before stamping the payment", () => {
+    // The recorded payment is stamped with the invoice row's org_id; an unpinned
+    // read let a dual-org member post a payment against the OTHER org's invoice.
+    const F = fn(src("app/(app)/invoices/[id]/payment-actions.ts"), "addInvoicePayment");
+    expect(F).toMatch(
+      /\.from\("invoices"\)\s*\.select\("id, total, org_id"\)\s*\.eq\("id", invoiceId\)[\s\S]*?\.eq\("org_id", ctx\.org\.id\)/,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 5. Purchase-order actions — every gate and write carries the pin
 // ---------------------------------------------------------------------------
 

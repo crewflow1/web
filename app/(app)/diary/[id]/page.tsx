@@ -5,6 +5,7 @@ import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure
 import { requireOrgContext } from "@/server/auth/session";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { listStaffForOrg } from "../../jobs/_form-helpers";
+import { loadJobForOrg } from "@/lib/jobs/load";
 import { formatDiaryDate } from "@/lib/site-diary/schema";
 import { deleteDiaryEntry } from "../actions";
 
@@ -43,7 +44,9 @@ export default async function DiaryEntryPage({
     supabase.from("site_diary_entries" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{ data: DiaryRow | null; error: SupabaseReadError | null }>;
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{ data: DiaryRow | null; error: SupabaseReadError | null }>;
+          };
         };
       };
     }
@@ -52,6 +55,10 @@ export default async function DiaryEntryPage({
       "id, entry_date, job_id, weather, labour_count, work_summary, delays, notes, created_by, created_at, updated_at",
     )
     .eq("id", id)
+    // ACTIVE-org pin (#456 read-side class). RLS admits every org the viewer
+    // belongs to; without this, a dual-org member could open the OTHER org's
+    // diary entry inside this org's shell (and reach its delete action).
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (entryError) throw readFailure("site diary: entry", entryError);
@@ -69,11 +76,13 @@ export default async function DiaryEntryPage({
 
   let jobName: string | null = null;
   if (entry.job_id) {
-    const { data: job } = await supabase
-      .from("jobs")
-      .select("id, customer:customers ( name )")
-      .eq("id", entry.job_id)
-      .maybeSingle();
+    // ACTIVE-org pin (#456 read-side class): the diary entry is already pinned,
+    // but its job_id label resolve must not reach into another org the viewer
+    // belongs to. Route through the org-scoped jobs chokepoint.
+    const job = await loadJobForOrg<{
+      id: string;
+      customer: { name: string | null } | null;
+    }>(supabase, entry.job_id, ctx.org.id, "id, customer:customers ( name )");
     jobName = job?.customer?.name ?? "Job";
   }
 

@@ -155,8 +155,11 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
   // Untyped-on-main reads (cast; still RLS-scoped at runtime).
   const [retMeta, retReleases, pos] = await Promise.all([
     (supabase.from("jobs" as never) as unknown as {
-      select: (c: string) => { eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: { retention_percent: number | string | null } | null }> } };
-    }).select("retention_percent").eq("id", id).maybeSingle(),
+      select: (c: string) => { eq: (k: string, v: unknown) => { eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: { retention_percent: number | string | null } | null }> } } };
+      // ACTIVE-org pin (#456 read-side class): the subject `job` is already
+      // pinned via loadJobForOrg above; pin this secondary read too so it is
+      // self-scoping and satisfies the read-pin guard.
+    }).select("retention_percent").eq("id", id).eq("org_id", ctx.org.id).maybeSingle(),
     (supabase.from("retention_releases" as never) as unknown as {
       select: (c: string) => { eq: (k: string, v: unknown) => Promise<{ data: Array<{ id: string; amount: number | string | null; released_on: string | null }> | null }> };
     }).select("id, amount, released_on").eq("job_id", id),

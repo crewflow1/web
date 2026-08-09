@@ -133,6 +133,12 @@ export default async function EditQuotePage({
       `,
     )
     .eq("id", id)
+    // ACTIVE-org pin (#456 read-side class). RLS admits EVERY org the viewer
+    // belongs to, so a by-id read alone would render another org's quote — its
+    // totals, cost basis and customer PII — inside the active org's shell where
+    // the lifecycle/delete actions live. Pinning the SUBJECT also makes the
+    // line-item and signature reads below derived-safe.
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   // A failed read must throw, never masquerade as notFound.
   if (quoteError) throw readFailure("quote detail: quote", quoteError);

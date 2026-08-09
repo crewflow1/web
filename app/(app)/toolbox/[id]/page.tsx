@@ -137,7 +137,9 @@ export default async function ToolboxTalkPage({
     loadRevisionSeries(supabase, talk.root_toolbox_talk_id ?? talk.id),
     listStaffForOrg(ctx.org.id),
     talk.job_id
-      ? supabase.from("jobs").select("id, customer:customers ( name )").eq("id", talk.job_id).maybeSingle()
+      // ACTIVE-org pin (#456 read-side class): talk is already pinned; pin this
+      // job label resolve too so it stays inside the active org (self-scoping).
+      ? supabase.from("jobs").select("id, customer:customers ( name )").eq("id", talk.job_id).eq("org_id", ctx.org.id).maybeSingle()
       : Promise.resolve({ data: null as { customer?: { name?: string | null } | null } | null }),
     talk.risk_assessment_id ? loadDocLabel(supabase, "risk_assessments", talk.risk_assessment_id) : Promise.resolve(null),
     talk.permit_to_work_id ? loadDocLabel(supabase, "permits_to_work", talk.permit_to_work_id) : Promise.resolve(null),
