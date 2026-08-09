@@ -24,8 +24,22 @@ type Cap = {
   updateEqs: Array<[string, unknown]>;
   updateError: { message: string } | null;
   insertCalled: boolean;
+  // select() capture — used by loadEnquirySummary's read path.
+  selectCols: string | null;
+  selectEqs: Array<[string, unknown]>;
+  selectData: Record<string, unknown> | null;
+  selectError: { message: string } | null;
 };
-const cap: Cap = { updateRow: null, updateEqs: [], updateError: null, insertCalled: false };
+const cap: Cap = {
+  updateRow: null,
+  updateEqs: [],
+  updateError: null,
+  insertCalled: false,
+  selectCols: null,
+  selectEqs: [],
+  selectData: null,
+  selectError: null,
+};
 
 const fakeAdmin = {
   from(_table: string) {
@@ -51,6 +65,19 @@ const fakeAdmin = {
             };
           },
         };
+      },
+      select(cols: string) {
+        cap.selectCols = cols;
+        const eqs: Array<[string, unknown]> = [];
+        const chain = {
+          eq(k: string, v: unknown) {
+            eqs.push([k, v]);
+            cap.selectEqs = eqs;
+            return chain;
+          },
+          maybeSingle: async () => ({ data: cap.selectData, error: cap.selectError }),
+        };
+        return chain;
       },
     };
   },
@@ -132,6 +159,48 @@ describe("updateCallCompletion — the enrichment write door", () => {
     await expect(
       updateCallCompletion("org-1", "vapi-call-1", { transcript: "x" }),
     ).rejects.toThrow(/updateCallCompletion failed/);
+  });
+});
+
+// ── service: loadEnquirySummary — reuse the GOVERNED summary (no new AI call) ──
+
+describe("loadEnquirySummary — reuses the governed enquiry summary, org-pinned by CallSid", () => {
+  beforeEach(() => {
+    cap.selectCols = null;
+    cap.selectEqs = [];
+    cap.selectData = null;
+    cap.selectError = null;
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it("returns the enquiry's ai_summary, org-pinned + keyed on provider_message_id", async () => {
+    cap.selectData = { ai_summary: "Caller reports a leaking boiler." };
+    const { loadEnquirySummary } = await svc();
+    const out = await loadEnquirySummary("org-1", "CA-1");
+    expect(out).toBe("Caller reports a leaking boiler.");
+    expect(cap.selectCols).toBe("ai_summary");
+    expect(cap.selectEqs).toEqual([
+      ["org_id", "org-1"],
+      ["provider_message_id", "CA-1"],
+    ]);
+  });
+
+  it("returns null when no enquiry row matches (benign no-op, not an error)", async () => {
+    cap.selectData = null;
+    const { loadEnquirySummary } = await svc();
+    expect(await loadEnquirySummary("org-1", "CA-missing")).toBeNull();
+  });
+
+  it("returns null for a blank / whitespace summary (never folds an empty string)", async () => {
+    cap.selectData = { ai_summary: "   " };
+    const { loadEnquirySummary } = await svc();
+    expect(await loadEnquirySummary("org-1", "CA-1")).toBeNull();
+  });
+
+  it("fails LOUD when the read errors (the webhook wraps it best-effort)", async () => {
+    cap.selectError = { message: "enquiry read refused" };
+    const { loadEnquirySummary } = await svc();
+    await expect(loadEnquirySummary("org-1", "CA-1")).rejects.toThrow(/loadEnquirySummary failed/);
   });
 });
 
