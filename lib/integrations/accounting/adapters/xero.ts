@@ -71,7 +71,20 @@ export class XeroAdapter implements AccountingAdapter {
     // secret. Xero rejects an AUTHORISED sales invoice whose lines name no
     // account, so this is required — the twin of the bank code on payments.
     const salesCode = process.env.XERO_SALES_ACCOUNT_CODE?.trim() || "200";
-    const built = buildXeroInvoicesBody(input.rows, salesCode).Invoices;
+    // Building the body maps every line's rate to a Xero TaxType; an unknown rate
+    // throws (UnknownVatRateError). FAIL LOUD as an error result rather than
+    // crashing the push — the same posture as the missing-account refusals.
+    let built: readonly unknown[];
+    try {
+      built = buildXeroInvoicesBody(input.rows, salesCode).Invoices;
+    } catch (e) {
+      return {
+        ok: false,
+        provider: this.provider,
+        reason: "error",
+        message: e instanceof Error ? e.message : "Xero invoice body build failed.",
+      };
+    }
     return this.push("invoices", "Invoices", input, built);
   }
 

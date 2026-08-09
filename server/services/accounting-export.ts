@@ -13,6 +13,7 @@ import {
   type CanonicalAccountingRow,
   type CanonicalInvoiceInput,
   type CanonicalPaymentInput,
+  type InvoiceLineForBucketing,
 } from "@/lib/integrations/accounting/canonical";
 import type { AccountingProvider } from "@/lib/integrations/accounting/adapters/types";
 import { invoiceBusinessToday } from "@/lib/invoices/overdue";
@@ -296,6 +297,22 @@ export async function buildAccountingExport(params: {
   // could do neither. Payments already window exactly on `paid_at` at the query.
   const windowedInvoices = filterInvoicesByTaxPoint(invoices, { from, to });
 
+  // ── PER-LINE VAT (provider push only) ──────────────────────────────────────
+  // Thread each invoice's immutable line-item snapshot (invoice_line_items:
+  // vat_rate + ex-VAT line_total) so the canonical mapper can emit ONE push line
+  // PER DISTINCT rate — each carrying its own tax code. WITHOUT this the push
+  // derived a single BLENDED rate from the header totals and mis-posted every
+  // mixed / zero-rated invoice. The CSV path passes no provider and skips this,
+  // so its human-readable header-total row is unchanged. Org-pinned + fully paged
+  // (fetchAllRows) so no line is silently dropped (an F-1 truncation would break
+  // reconciliation, which is asserted in the mapper).
+  if (excludePushedFor && windowedInvoices.length > 0) {
+    const linesByInvoice = await readInvoiceLineItems(supabase, orgId);
+    for (const inv of windowedInvoices) {
+      if (inv.source_id) inv.line_items = linesByInvoice.get(inv.source_id) ?? [];
+    }
+  }
+
   const rows = toCanonicalRows(windowedInvoices, payments, { todayIso });
   return {
     rows,
@@ -304,6 +321,54 @@ export async function buildAccountingExport(params: {
     truncated,
     pushedInvoiceNumbers,
   };
+}
+
+/**
+ * Read one org's invoice line-item snapshots (invoice_line_items) and group them
+ * by invoice id. Org-pinned (`.eq("org_id", orgId)`), FULLY PAGED (fetchAllRows —
+ * no clamp-trapped `.limit`, so no line is silently dropped), stable order.
+ * LOUD: a failed read throws — a partial line set would break the per-invoice VAT
+ * reconciliation (or drop a rate bucket), which is exactly the silent mis-post the
+ * per-line push exists to prevent. Read org-wide + grouped in memory rather than
+ * `.in(ids)` so the read is a single stable paging loop.
+ */
+async function readInvoiceLineItems(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+): Promise<Map<string, InvoiceLineForBucketing[]>> {
+  type LineRow = {
+    invoice_id?: string | null;
+    vat_rate?: number | string | null;
+    line_total?: number | string | null;
+  };
+  const { data, error } = await fetchAllRows<LineRow>(
+    (lo, hi) =>
+      supabase
+        .from("invoice_line_items")
+        .select("invoice_id, vat_rate, line_total, sort_order, id")
+        .eq("org_id", orgId)
+        // Stable, total ordering (invoice, then line order, then a unique id
+        // tiebreak) so pages can't drop or repeat a line at a boundary.
+        .order("invoice_id", { ascending: true })
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true })
+        .range(lo, hi) as unknown as PromiseLike<PageResult<LineRow>>,
+  );
+  if (error) {
+    throw readFailure(
+      "accounting export: invoice line items",
+      error as SupabaseReadError,
+    );
+  }
+  const byInvoice = new Map<string, InvoiceLineForBucketing[]>();
+  for (const r of data) {
+    const invId = r.invoice_id;
+    if (!invId) continue;
+    const list = byInvoice.get(invId) ?? [];
+    list.push({ vat_rate: r.vat_rate ?? null, line_total: r.line_total ?? null });
+    byInvoice.set(invId, list);
+  }
+  return byInvoice;
 }
 
 export type AccountingExportLogInput = {

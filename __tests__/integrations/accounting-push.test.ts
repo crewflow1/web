@@ -13,8 +13,13 @@ import {
   buildXeroPaymentsBody,
   buildQboInvoiceBody,
   buildQboPaymentBody,
+  xeroSalesTaxType,
+  qboSalesTaxCodeName,
 } from "@/lib/integrations/accounting/provider-payloads";
-import type { CanonicalAccountingRow } from "@/lib/integrations/accounting/canonical";
+import {
+  UnknownVatRateError,
+  type CanonicalAccountingRow,
+} from "@/lib/integrations/accounting/canonical";
 
 /**
  * Accounting provider PUSH — hermetic HTTP-mock proofs.
@@ -1183,5 +1188,341 @@ describe("cross-provider: create idempotency key is seeded by the row id, not th
     const ids = posts.map((c) => new URL(String(c[0])).searchParams.get("requestid") ?? "");
     expect(ids).toHaveLength(2);
     expect(ids[0]).not.toBe(ids[1]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PER-LINE VAT — mixed / zero-rated invoices post each line under the CORRECT
+// tax code, and an unknown rate FAILS LOUD (never a silent exempt / out-of-scope
+// mis-post). The defect: the push derived ONE blended rate from the header totals
+// (round(vat/net*100)) and never read per-line vat_rate, so a mixed-rate invoice
+// (e.g. net 200 / vat 25 → blended 13) fell through to EXEMPTOUTPUT / 'Exempt (0%)'
+// and posted the whole invoice exempt, mis-stating the VAT return on BOTH providers.
+// These rows carry `taxLines` (what buildAccountingExport now threads from
+// invoice_line_items); the pre-fix header-only builders ignored them.
+// ---------------------------------------------------------------------------
+
+const MIXED_20_5: CanonicalAccountingRow = {
+  date: "2026-02-01",
+  type: "invoice",
+  customer: "Acme Ltd",
+  net: "200.00",
+  vat: "25.00",
+  gross: "225.00",
+  invoice_number: "INV-MIX",
+  status: "sent",
+  sourceId: "inv-mix",
+  taxLines: [
+    { rate: 20, net: "100.00", vat: "20.00" },
+    { rate: 5, net: "100.00", vat: "5.00" },
+  ],
+};
+
+// A mixed 20% + 0% invoice. Its BLENDED header rate is round(20/200*100)=10 —
+// NOT a real rate — so the pre-fix code exempted the whole thing. Per-line, one
+// line is 20% and the other zero-rated.
+const MIXED_20_0: CanonicalAccountingRow = {
+  date: "2026-02-01",
+  type: "invoice",
+  customer: "Acme Ltd",
+  net: "200.00",
+  vat: "20.00",
+  gross: "220.00",
+  invoice_number: "INV-MIX0",
+  status: "sent",
+  sourceId: "inv-mix0",
+  taxLines: [
+    { rate: 20, net: "100.00", vat: "20.00" },
+    { rate: 0, net: "100.00", vat: "0.00" },
+  ],
+};
+
+const ZERO_ONLY: CanonicalAccountingRow = {
+  date: "2026-02-01",
+  type: "invoice",
+  customer: "Acme Ltd",
+  net: "100.00",
+  vat: "0.00",
+  gross: "100.00",
+  invoice_number: "INV-ZERO",
+  status: "sent",
+  sourceId: "inv-zero",
+  taxLines: [{ rate: 0, net: "100.00", vat: "0.00" }],
+};
+
+// A crafted out-of-range rate (17.5%) — has no honest UK sales tax code.
+const BAD_RATE: CanonicalAccountingRow = {
+  date: "2026-02-01",
+  type: "invoice",
+  customer: "Acme Ltd",
+  net: "100.00",
+  vat: "17.50",
+  gross: "117.50",
+  invoice_number: "INV-BAD",
+  status: "sent",
+  sourceId: "inv-bad",
+  taxLines: [{ rate: 17.5, net: "100.00", vat: "17.50" }],
+};
+
+describe("pure tax-code mappers fail loud on an unknown rate", () => {
+  it("xeroSalesTaxType maps 0/5/20 and THROWS on anything else", () => {
+    expect(xeroSalesTaxType(20)).toBe("OUTPUT2");
+    expect(xeroSalesTaxType(5)).toBe("RROUTPUT");
+    expect(xeroSalesTaxType(0)).toBe("ZERORATEDOUTPUT");
+    // No silent EXEMPTOUTPUT fallthrough.
+    expect(() => xeroSalesTaxType(17.5)).toThrow(UnknownVatRateError);
+    expect(() => xeroSalesTaxType(3)).toThrow(UnknownVatRateError);
+  });
+
+  it("qboSalesTaxCodeName maps 0/5/20 (incl. the ZERO code) and THROWS on anything else", () => {
+    expect(qboSalesTaxCodeName(20)).toBe("20.0% S (VAT on Income)");
+    expect(qboSalesTaxCodeName(5)).toBe("5.0% R (VAT on Income)");
+    expect(qboSalesTaxCodeName(0)).toBe("0.0% Z (VAT on Income)");
+    // No silent 'Exempt (0%)' fallthrough.
+    expect(() => qboSalesTaxCodeName(17.5)).toThrow(UnknownVatRateError);
+    expect(() => qboSalesTaxCodeName(3)).toThrow(UnknownVatRateError);
+  });
+});
+
+describe("Xero: mixed / zero-rated invoices post each line under its own TaxType", () => {
+  const base = (rows: CanonicalAccountingRow[]): AccountingPushInput => ({
+    rows,
+    accessToken: "ACCESS-1",
+    tenantId: "TENANT-1",
+    realmId: null,
+    refresh: vi.fn(async () => null),
+  });
+
+  it("pure body: a MIXED 20% + 5% invoice emits TWO LineItems with the correct TaxTypes and reconciling totals", () => {
+    const body = buildXeroInvoicesBody([MIXED_20_5], "200");
+    const inv = body.Invoices[0] as Record<string, unknown>;
+    const lines = inv.LineItems as Array<Record<string, unknown>>;
+    expect(lines).toHaveLength(2);
+    // One line per rate, each naming its OWN Xero TaxType — never a blended rate.
+    const byType = Object.fromEntries(
+      lines.map((l) => [l.TaxType as string, l]),
+    );
+    expect(byType.OUTPUT2!.UnitAmount).toBe(100);
+    expect(byType.OUTPUT2!.TaxAmount).toBe(20);
+    expect(byType.RROUTPUT!.UnitAmount).toBe(100);
+    expect(byType.RROUTPUT!.TaxAmount).toBe(5);
+    // No exempt fallthrough (the pre-fix blended-rate 13 → EXEMPTOUTPUT).
+    expect(lines.every((l) => l.TaxType !== "EXEMPTOUTPUT")).toBe(true);
+    // Exclusive ⇒ Xero gross = Σ(UnitAmount + TaxAmount) == header gross.
+    const posted = lines.reduce(
+      (s, l) => s + (l.UnitAmount as number) + (l.TaxAmount as number),
+      0,
+    );
+    expect(posted).toBeCloseTo(Number(MIXED_20_5.gross), 2);
+  });
+
+  it("pure body: a ZERO-rated invoice posts ZERORATEDOUTPUT (not exempt / out-of-scope)", () => {
+    const body = buildXeroInvoicesBody([ZERO_ONLY], "200");
+    const line = (body.Invoices[0] as { LineItems: Array<Record<string, unknown>> })
+      .LineItems[0]!;
+    expect(line.TaxType).toBe("ZERORATEDOUTPUT");
+    expect(line.TaxAmount).toBe(0);
+  });
+
+  it("adapter posts the mixed invoice as ONE POST with two correctly-coded lines", async () => {
+    enableXero();
+    const fetchMock = vi.fn(async () => jsonResponse({ Invoices: [] }, 200));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await getAccountingAdapter("xero").pushInvoices(base([MIXED_20_5]));
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.pushed).toBe(1);
+    // ONE document (one POST) — bucketing does not split the invoice into two.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+    const posted = JSON.parse(init.body as string);
+    const lines = posted.Invoices[0].LineItems as Array<Record<string, unknown>>;
+    expect(lines.map((l) => l.TaxType).sort()).toEqual(["OUTPUT2", "RROUTPUT"]);
+  });
+
+  it("adapter FAILS LOUD (error, no throw) on an out-of-range rate — never posts exempt", async () => {
+    enableXero();
+    const fetchMock = vi.fn(async () => jsonResponse({ Invoices: [] }, 200));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await getAccountingAdapter("xero").pushInvoices(base([BAD_RATE]));
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.reason).toBe("error");
+      expect(res.message).toMatch(/17\.5|Unsupported VAT rate/i);
+    }
+    // The push aborted BEFORE any invoice reached Xero.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A QBO fetch mock that returns a DISTINCT TaxCode id PER RATE, keyed on the code
+ * NAME in the query URL (qboRouter's shared handler can't see the URL, so the
+ * per-rate distinction needs a bespoke router). Item + customer + invoice-create
+ * all succeed.
+ */
+function qboRouterPerRateCodes() {
+  return vi.fn(async (url: string, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    if (method === "GET" && url.includes("/query")) {
+      if (url.includes("TaxCode")) {
+        if (url.includes(encodeURIComponent("20.0% S")))
+          return jsonResponse({ QueryResponse: { TaxCode: [{ Id: "TC-20" }] } });
+        if (url.includes(encodeURIComponent("5.0% R")))
+          return jsonResponse({ QueryResponse: { TaxCode: [{ Id: "TC-5" }] } });
+        if (url.includes(encodeURIComponent("0.0% Z")))
+          return jsonResponse({ QueryResponse: { TaxCode: [{ Id: "TC-0" }] } });
+        return jsonResponse({ QueryResponse: {} }); // no matching code
+      }
+      if (url.includes("Item"))
+        return jsonResponse({ QueryResponse: { Item: [{ Id: "7" }] } });
+      if (url.includes("Customer"))
+        return jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } });
+      return jsonResponse({ QueryResponse: {} });
+    }
+    if (method === "POST" && url.includes("/invoice"))
+      return jsonResponse({ Invoice: { Id: "11" } });
+    return jsonResponse({}, 500);
+  });
+}
+
+describe("QuickBooks: mixed / zero-rated invoices name a per-line tax code (incl. the ZERO code)", () => {
+  const base = (rows: CanonicalAccountingRow[]): AccountingPushInput => ({
+    rows,
+    accessToken: "ACCESS-1",
+    tenantId: null,
+    realmId: "REALM-1",
+    refresh: vi.fn(async () => null),
+  });
+
+  it("pure body: a MIXED invoice emits one Line per bucket, each with its own TaxCodeRef + summed TotalTax", () => {
+    const codes = new Map<number, string>([
+      [20, "TC-20"],
+      [5, "TC-5"],
+    ]);
+    const body = buildQboInvoiceBody(MIXED_20_5, {
+      customerId: "3",
+      itemId: "7",
+      taxCodeByRate: codes,
+    });
+    const lines = body.Line as Array<Record<string, unknown>>;
+    expect(lines).toHaveLength(2);
+    const refs = lines.map(
+      (l) =>
+        (l.SalesItemLineDetail as { TaxCodeRef?: { value: string } }).TaxCodeRef?.value,
+    );
+    expect(refs.sort()).toEqual(["TC-20", "TC-5"]);
+    // TaxExcluded + summed TotalTax == header vat; no single blended header code.
+    expect(body.GlobalTaxCalculation).toBe("TaxExcluded");
+    const tax = body.TxnTaxDetail as { TotalTax: number; TxnTaxCodeRef?: unknown };
+    expect(tax.TotalTax).toBeCloseTo(25, 2);
+    expect(tax.TxnTaxCodeRef).toBeUndefined();
+  });
+
+  it("pure body: a ZERO-rated line NAMES the zero code (posts zero-rated, not out-of-scope)", () => {
+    const body = buildQboInvoiceBody(ZERO_ONLY, {
+      customerId: "3",
+      itemId: "7",
+      taxCodeByRate: new Map([[0, "TC-0"]]),
+    });
+    const line = (body.Line as Array<Record<string, unknown>>)[0]!;
+    // The crux of the fix: even a zero-VAT line carries a TaxCodeRef.
+    expect(
+      (line.SalesItemLineDetail as { TaxCodeRef?: { value: string } }).TaxCodeRef?.value,
+    ).toBe("TC-0");
+    // TotalTax is zero, so no header TxnTaxDetail — but the LINE is zero-rated.
+    expect(body.TxnTaxDetail).toBeUndefined();
+  });
+
+  it("adapter resolves a distinct code per rate and posts a two-line mixed invoice", async () => {
+    enableQbo();
+    const fetchMock = qboRouterPerRateCodes();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await getAccountingAdapter("quickbooks").pushInvoices(base([MIXED_20_5]));
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.pushed).toBe(1);
+
+    const invPost = fetchMock.mock.calls.find(
+      (c) => String(c[0]).includes("/invoice") && (c[1] as RequestInit).method === "POST",
+    )!;
+    const body = JSON.parse((invPost[1] as RequestInit).body as string);
+    const refs = (body.Line as Array<Record<string, unknown>>).map(
+      (l) => (l.SalesItemLineDetail as { TaxCodeRef: { value: string } }).TaxCodeRef.value,
+    );
+    expect(refs.sort()).toEqual(["TC-20", "TC-5"]);
+    expect(body.TxnTaxDetail.TotalTax).toBeCloseTo(25, 2);
+  });
+
+  it("adapter resolves the ZERO code for a zero-rated invoice (not out-of-scope)", async () => {
+    enableQbo();
+    const fetchMock = qboRouterPerRateCodes();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await getAccountingAdapter("quickbooks").pushInvoices(base([ZERO_ONLY]));
+    expect(res.ok).toBe(true);
+    // The adapter queried for the zero-rate VAT code…
+    const zeroCodeQuery = fetchMock.mock.calls.some((c) =>
+      String(c[0]).includes(encodeURIComponent("0.0% Z")),
+    );
+    expect(zeroCodeQuery).toBe(true);
+    // …and named it on the posted line.
+    const invPost = fetchMock.mock.calls.find(
+      (c) => String(c[0]).includes("/invoice") && (c[1] as RequestInit).method === "POST",
+    )!;
+    const body = JSON.parse((invPost[1] as RequestInit).body as string);
+    const line = (body.Line as Array<Record<string, unknown>>)[0]!;
+    expect(
+      (line.SalesItemLineDetail as { TaxCodeRef: { value: string } }).TaxCodeRef.value,
+    ).toBe("TC-0");
+  });
+
+  it("adapter FAILS LOUD (error, no throw) on an out-of-range rate — never posts exempt/out-of-scope", async () => {
+    enableQbo();
+    const fetchMock = qboRouterPerRateCodes();
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await getAccountingAdapter("quickbooks").pushInvoices(base([BAD_RATE]));
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.message).toMatch(/17\.5|Unsupported VAT rate/i);
+    // No invoice was POSTed (the tax-code resolution refused first).
+    const posted = fetchMock.mock.calls.some(
+      (c) => String(c[0]).includes("/invoice") && (c[1] as RequestInit).method === "POST",
+    );
+    expect(posted).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// REGRESSION GUARD — the push must derive its tax codes from the PER-LINE breakdown
+// (taxLines), never a blended header rate. Two invoices with the SAME header vat
+// but DIFFERENT rate composition must post DIFFERENT codes. A refactor that reads
+// only header net/vat_total would collapse them (or exempt the mixed one) and fail.
+// ---------------------------------------------------------------------------
+describe("guard: tax codes derive from per-line vat_rate, not a blended header rate", () => {
+  it("Xero: a mixed 20%+0% invoice posts BOTH a 20% and a 0% line, never a single blended/exempt line", () => {
+    const body = buildXeroInvoicesBody([MIXED_20_0], "200");
+    const lines = (body.Invoices[0] as { LineItems: Array<Record<string, unknown>> })
+      .LineItems;
+    // Its blended header rate would be round(20/200*100)=10 — the pre-fix path
+    // produced ONE line at an unmappable rate (→ EXEMPTOUTPUT). Per-line: TWO lines.
+    expect(lines).toHaveLength(2);
+    expect(lines.map((l) => l.TaxType).sort()).toEqual(["OUTPUT2", "ZERORATEDOUTPUT"]);
+    expect(lines.every((l) => l.TaxType !== "EXEMPTOUTPUT")).toBe(true);
+  });
+
+  it("QuickBooks: a mixed 20%+0% invoice names DISTINCT per-line codes (20% and 0%)", () => {
+    const body = buildQboInvoiceBody(MIXED_20_0, {
+      customerId: "3",
+      itemId: "7",
+      taxCodeByRate: new Map([
+        [20, "TC-20"],
+        [0, "TC-0"],
+      ]),
+    });
+    const refs = (body.Line as Array<Record<string, unknown>>).map(
+      (l) => (l.SalesItemLineDetail as { TaxCodeRef: { value: string } }).TaxCodeRef.value,
+    );
+    expect(refs.sort()).toEqual(["TC-0", "TC-20"]);
+    // TotalTax reflects only the 20% line's VAT (per-line, not a header rate).
+    expect((body.TxnTaxDetail as { TotalTax: number }).TotalTax).toBeCloseTo(20, 2);
   });
 });

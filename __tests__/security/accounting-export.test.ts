@@ -308,3 +308,45 @@ describe("accounting export P2 hardening", () => {
     expect(sql).not.toMatch(/trigger/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 5. PER-LINE VAT — the provider push derives tax codes from the invoice's
+//    per-line vat_rate, NEVER a blended header rate. The defect: the push read
+//    only the header net / vat_total and collapsed every invoice to one line at
+//    round(vat/net*100), so a mixed-rate invoice posted under a single wrong
+//    (often EXEMPT) code, mis-stating the VAT return. This source contract stops
+//    a refactor silently reverting to the header-only derivation.
+// ---------------------------------------------------------------------------
+
+describe("accounting push reads per-line VAT (invoice_line_items.vat_rate)", () => {
+  it("the export service reads invoice_line_items' vat_rate on the push path (org-pinned, paged)", () => {
+    const code = codeOf(read(SERVICE));
+    // The push path reads the per-line snapshot for bucketing…
+    expect(code).toMatch(/from\(\s*["']invoice_line_items["']\s*\)/);
+    // …and specifically its per-line vat_rate + line_total (not just the header).
+    expect(code).toMatch(/vat_rate/);
+    expect(code).toMatch(/line_total/);
+    // Fully paged, org-pinned — no clamp-trapped .limit for the line read either.
+    expect(code).toMatch(/fetchAllRows</);
+  });
+
+  it("the canonical mapper buckets by vat_rate and reconciles to the header", () => {
+    const code = codeOf(read(CANONICAL));
+    // The per-rate bucketing helper exists and reconciles (throws) on a mismatch.
+    expect(code).toMatch(/bucketInvoiceTaxLines/);
+    expect(code).toMatch(/taxLines/);
+    // FAIL LOUD: an unmappable rate is refused, not silently mapped to exempt.
+    expect(code).toMatch(/UnknownVatRateError/);
+  });
+
+  it("the provider tax-code mappers refuse an unknown rate (no EXEMPT fallthrough)", () => {
+    const code = codeOf(
+      read("lib/integrations/accounting/provider-payloads.ts"),
+    );
+    // The mappers validate the rate rather than returning EXEMPTOUTPUT / 'Exempt (0%)'.
+    expect(code).toMatch(/assertKnownVatRate/);
+    // The old silent fallthroughs must be gone from executable code.
+    expect(code).not.toMatch(/return\s+"EXEMPTOUTPUT"/);
+    expect(code).not.toMatch(/return\s+"Exempt \(0%\)"/);
+  });
+});

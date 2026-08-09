@@ -51,6 +51,50 @@ import {
 export type AccountingRowType = "invoice" | "payment";
 
 /**
+ * The whole-percent UK VAT rates CrewFlow emits (quotes/schema.ts QUOTE_VAT_RATES).
+ * The provider push MUST map every posted line to one of these; a rate outside this
+ * set has no honest Xero TaxType / QBO VAT code, so the push refuses rather than
+ * silently posting it under an EXEMPT / out-of-scope code and mis-stating the VAT
+ * return.
+ */
+export const KNOWN_VAT_RATES = [0, 5, 20] as const;
+export type KnownVatRate = (typeof KNOWN_VAT_RATES)[number];
+
+/**
+ * Raised when a derived / per-line VAT rate is not one of {@link KNOWN_VAT_RATES}.
+ * Thrown by the pure rate/tax-code functions so the push ABORTS with a clear
+ * message instead of falling through to EXEMPTOUTPUT / 'Exempt (0%)' and mis-posting.
+ * The adapters catch it and surface it as an `error` push result (the same posture
+ * as the missing-Service-item / missing-VAT-code refusals).
+ */
+export class UnknownVatRateError extends Error {
+  readonly rate: number;
+  constructor(rate: number, context?: string) {
+    super(
+      `Unsupported VAT rate ${rate}% ${context ? `(${context}) ` : ""}` +
+        `— CrewFlow only posts ${KNOWN_VAT_RATES.map((r) => `${r}%`).join(" / ")}. ` +
+        "Refusing to push rather than mis-post under an exempt / out-of-scope tax code.",
+    );
+    this.name = "UnknownVatRateError";
+    this.rate = rate;
+  }
+}
+
+/** True for a rate in {@link KNOWN_VAT_RATES} (exact whole-percent match). */
+export function isKnownVatRate(rate: number): rate is KnownVatRate {
+  return (KNOWN_VAT_RATES as readonly number[]).includes(rate);
+}
+
+/**
+ * Assert a rate is postable, else throw {@link UnknownVatRateError}. Returns the
+ * rate so it can be used inline. The single fail-loud gate the tax-code mappers use.
+ */
+export function assertKnownVatRate(rate: number, context?: string): KnownVatRate {
+  if (!isKnownVatRate(rate)) throw new UnknownVatRateError(rate, context);
+  return rate;
+}
+
+/**
  * The provider-agnostic accounting row. Every field is a plain string so the
  * serialisers (CSV now, Xero / QuickBooks later) never re-derive a value — the
  * money split and the status are decided ONCE, here.
@@ -81,6 +125,43 @@ export type CanonicalAccountingRow = {
    * ACCOUNTING_CSV_COLUMNS does not name it — so it cannot leak into an export.
    */
   sourceId?: string;
+  /**
+   * INVOICE ONLY, PROVIDER-PUSH PATH ONLY — the per-VAT-rate breakdown of this
+   * invoice, one entry per DISTINCT rate bucket (e.g. a 20%-line + a 5%-line
+   * invoice yields two entries). This is what lets the push post ONE provider
+   * document with MULTIPLE line items, each carrying its OWN rate's tax code
+   * (Xero TaxType / QBO TxnTaxCodeRef) — the fix for the blended-header defect
+   * where a mixed-rate invoice collapsed to a single wrong rate. The bucket nets
+   * / vats SUM to the header `net` / `vat` (asserted at build). Undefined on the
+   * CSV path and for payments; the CSV export keeps the single header-total row.
+   * ONE canonical row per invoice regardless of bucket count — so the push-once
+   * ledger, the payment-link gate, and the per-entity idempotency key (all keyed
+   * on `sourceId` / `invoice_number`) are unchanged by bucketing.
+   */
+  taxLines?: CanonicalTaxLine[];
+};
+
+/**
+ * One VAT-rate bucket of an invoice: its whole-percent rate plus the ex-VAT net
+ * and the VAT for the lines at that rate. Amounts are fixed 2dp strings (the
+ * canonical money representation); the provider builders coerce via `Number(...)`.
+ */
+export type CanonicalTaxLine = {
+  /** Whole-percent VAT rate for this bucket (validated to {@link KNOWN_VAT_RATES} at push). */
+  rate: number;
+  /** Ex-VAT net for the lines at this rate, fixed 2dp. */
+  net: string;
+  /** VAT for the lines at this rate, fixed 2dp. */
+  vat: string;
+};
+
+/**
+ * A raw invoice line the push reads for per-rate bucketing — the immutable
+ * snapshot columns from `invoice_line_items` (vat_rate + ex-VAT line_total).
+ */
+export type InvoiceLineForBucketing = {
+  vat_rate: number | string | null;
+  line_total: number | string | null;
 };
 
 /** What the mapper needs about one invoice. A pure projection of the DB row. */
@@ -95,6 +176,14 @@ export type CanonicalInvoiceInput = OverdueJudgeable & {
   sent_at: string | null;
   created_at: string | null;
   customer_name: string | null;
+  /**
+   * The invoice's `invoice_line_items` snapshot (vat_rate + ex-VAT line_total),
+   * threaded on the PROVIDER-PUSH path only so the mapper can emit per-rate
+   * `taxLines`. Absent / empty ⇒ no line data (CSV path, or a line-less invoice):
+   * the mapper falls back to a single header-derived bucket. Never read on the CSV
+   * path, so the CSV export is unchanged.
+   */
+  line_items?: readonly InvoiceLineForBucketing[] | null;
 };
 
 /** What the mapper needs about one payment (a money-in event). */
@@ -126,17 +215,91 @@ export function money2(value: number | string | null | undefined): string {
 }
 
 /**
- * The effective whole-percent VAT rate of an invoice line, derived from its net
- * and VAT. Pure. This is the SINGLE source of the rate the provider pushes read
- * to choose a tax code (Xero TaxType / QBO TxnTaxCodeRef): the canonical row is
- * header-level (one line per invoice), so there is no per-line `vat_rate` to
- * thread — the honest per-invoice rate is `round(vat / net * 100)`, exactly the
- * derivation the shipped CSV export uses for its header-total fallback row. A
- * zero / missing net yields 0 (never NaN or Infinity), matching a 0-VAT line.
+ * The whole-percent VAT rate derived from a net + VAT, WITHOUT validation. Pure.
+ * `round(vat / net * 100)`; a zero / missing net yields 0 (never NaN or Infinity).
+ * This is the raw arithmetic used where the caller validates the result itself
+ * (the mapper's header-fallback bucket defers validation to the provider push).
  */
-export function effectiveVatRate(net: number, vat: number): number {
+export function derivedVatRate(net: number, vat: number): number {
   if (!Number.isFinite(net) || !Number.isFinite(vat) || net <= 0) return 0;
   return Math.round((vat / net) * 100);
+}
+
+/**
+ * The effective whole-percent VAT rate of an invoice line, derived from its net
+ * and VAT, VALIDATED to {@link KNOWN_VAT_RATES}. Pure. This is the SINGLE source
+ * of the rate a header-only provider line reads to choose a tax code (Xero
+ * TaxType / QBO TxnTaxCodeRef).
+ *
+ * FAIL LOUD. When the derived rate is not 0 / 5 / 20 (e.g. a mixed-rate invoice
+ * whose blended `round(vat/net*100)` lands on 3, or a crafted 17.5% line) this
+ * THROWS {@link UnknownVatRateError} instead of returning a bogus rate that would
+ * fall through to EXEMPTOUTPUT / 'Exempt (0%)' and mis-state the VAT return. The
+ * push is aborted with a clear message rather than posting the wrong tax code.
+ * A zero / missing net yields 0 (a valid 0-VAT line), never a throw.
+ */
+export function effectiveVatRate(net: number, vat: number): number {
+  return assertKnownVatRate(derivedVatRate(net, vat), "derived from invoice header net/vat");
+}
+
+/**
+ * Split an invoice's `invoice_line_items` into per-VAT-rate buckets, PURE. One
+ * bucket per distinct rate, its net = Σ line_total and its vat = Σ round2(line_total
+ * × rate / 100) — the HMRC per-line VAT method quotes/totals.ts uses, so the
+ * buckets reconcile to the header EXACTLY.
+ *
+ * RECONCILIATION IS ASSERTED. Σ bucket nets must equal the header net and Σ bucket
+ * vats the header vat (compared in integer pence). A mismatch means the snapshot
+ * lines disagree with the invoice totals — corrupt data that must NOT be posted, so
+ * this THROWS rather than silently post a document whose gross differs from the
+ * invoice. Rates are NOT validated here (a bad rate is carried through so the
+ * provider tax-code mapper is the single fail-loud gate); reconciliation only.
+ *
+ * Buckets are returned sorted by rate ascending for deterministic output.
+ */
+export function bucketInvoiceTaxLines(
+  lineItems: readonly InvoiceLineForBucketing[],
+  header: { net: number; vat: number },
+): CanonicalTaxLine[] {
+  const byRate = new Map<number, { netPence: number; vatPence: number }>();
+  for (const li of lineItems) {
+    const rate = Number(li.vat_rate ?? 0);
+    const lineNetRaw = Number(li.line_total ?? 0);
+    const lineNet = Number.isFinite(lineNetRaw) ? lineNetRaw : 0;
+    const netPence = Math.round(lineNet * 100);
+    // round2(lineNet × rate / 100) in pence == round(lineNet × rate) — the exact
+    // per-line rounding quotes/totals.ts applies before summing to the header.
+    const vatPence = Number.isFinite(rate) ? Math.round(lineNet * rate) : 0;
+    const cur = byRate.get(rate) ?? { netPence: 0, vatPence: 0 };
+    cur.netPence += netPence;
+    cur.vatPence += vatPence;
+    byRate.set(rate, cur);
+  }
+
+  let sumNetPence = 0;
+  let sumVatPence = 0;
+  for (const b of byRate.values()) {
+    sumNetPence += b.netPence;
+    sumVatPence += b.vatPence;
+  }
+  const headerNetPence = Math.round((Number.isFinite(header.net) ? header.net : 0) * 100);
+  const headerVatPence = Math.round((Number.isFinite(header.vat) ? header.vat : 0) * 100);
+  if (sumNetPence !== headerNetPence || sumVatPence !== headerVatPence) {
+    throw new Error(
+      "accounting push: per-line VAT buckets do not reconcile to the invoice header " +
+        `(lines net ${sumNetPence}p vat ${sumVatPence}p vs header net ${headerNetPence}p ` +
+        `vat ${headerVatPence}p) — refusing to post an invoice whose line VAT disagrees ` +
+        "with its totals.",
+    );
+  }
+
+  return [...byRate.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([rate, b]) => ({
+      rate,
+      net: (b.netPence / 100).toFixed(2),
+      vat: (b.vatPence / 100).toFixed(2),
+    }));
 }
 
 /** A Postgres timestamp/date -> `YYYY-MM-DD`, or "" when absent. Pure. */
@@ -228,7 +391,21 @@ export function toCanonicalRows(
     // Attach the push-tracking id only when the caller supplied one (the push
     // path). Omitting the key entirely on the CSV path keeps that row's shape
     // untouched — CSV never sees a sourceId, present or absent.
-    if (inv.source_id) row.sourceId = inv.source_id;
+    if (inv.source_id) {
+      row.sourceId = inv.source_id;
+      // PROVIDER-PUSH PATH: emit the per-VAT-rate breakdown so the push posts one
+      // document with one line PER RATE, each carrying its own tax code — the fix
+      // for the blended-header rate that mis-posted mixed / zero-rated invoices.
+      //   • line items present ⇒ bucket by their vat_rate (reconciled to header);
+      //   • line-less invoice  ⇒ a single header-derived bucket. The rate is left
+      //     RAW here (not validated) so the provider tax-code mapper is the single
+      //     fail-loud gate — a bad header rate aborts the push, never mis-posts.
+      const lines = inv.line_items ?? [];
+      row.taxLines =
+        lines.length > 0
+          ? bucketInvoiceTaxLines(lines, { net, vat })
+          : [{ rate: derivedVatRate(net, vat), net: money2(net), vat: money2(vat) }];
+    }
     rows.push(row);
   }
 

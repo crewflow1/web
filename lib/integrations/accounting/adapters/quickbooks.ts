@@ -116,21 +116,50 @@ export class QuickBooksAdapter implements AccountingAdapter {
       const customer = await this.resolveCustomerId(ctx, realmId, row.customer);
       if (!customer.ok) return this.err(customer.message, pushed);
 
-      // A VAT-bearing line needs the org's tax code, else QBO ignores the
-      // TotalTax and the VAT is lost. Resolve (and cache) it by rate; a
-      // zero-VAT line needs none (TaxExcluded ⇒ gross == net).
-      const vat = Number(row.vat);
+      // Resolve (and cache) the org's QBO VAT code for EVERY rate the invoice
+      // posts. QBO ignores an explicit TotalTax for a UK company unless each line
+      // NAMES its code, so a zero-rated line must ALSO carry the '0.0% Z' code —
+      // otherwise it posts out-of-scope, not zero-rated. An unknown rate makes
+      // resolveTaxCodeId fail loud (never a silent exempt post).
+      let rowTaxCodeByRate: Map<number, string> | undefined;
       let taxCodeId: string | null = null;
-      if (Number.isFinite(vat) && vat > 0) {
-        const rate = effectiveVatRate(Number(row.net || row.gross), vat);
-        const cached = taxCodeByRate.get(rate);
-        if (cached) {
-          taxCodeId = cached;
-        } else {
-          const resolved = await this.resolveTaxCodeId(ctx, realmId, rate);
-          if (!resolved.ok) return this.err(resolved.message, pushed);
-          taxCodeByRate.set(rate, resolved.id);
-          taxCodeId = resolved.id;
+      if (row.taxLines && row.taxLines.length > 0) {
+        // PUSH PATH: one code per DISTINCT bucket rate (0 / 5 / 20).
+        rowTaxCodeByRate = new Map();
+        for (const bucket of row.taxLines) {
+          const rate = bucket.rate;
+          let id = taxCodeByRate.get(rate);
+          if (id === undefined) {
+            const resolved = await this.resolveTaxCodeId(ctx, realmId, rate);
+            if (!resolved.ok) return this.err(resolved.message, pushed);
+            taxCodeByRate.set(rate, resolved.id);
+            id = resolved.id;
+          }
+          rowTaxCodeByRate.set(rate, id);
+        }
+      } else {
+        // LEGACY single-line path (a directly-built row without taxLines): resolve
+        // the one code for a VAT-bearing line. An unknown derived rate fails loud.
+        const vat = Number(row.vat);
+        if (Number.isFinite(vat) && vat > 0) {
+          let rate: number;
+          try {
+            rate = effectiveVatRate(Number(row.net || row.gross), vat);
+          } catch (e) {
+            return this.err(
+              e instanceof Error ? e.message : "unsupported VAT rate",
+              pushed,
+            );
+          }
+          const cached = taxCodeByRate.get(rate);
+          if (cached) {
+            taxCodeId = cached;
+          } else {
+            const resolved = await this.resolveTaxCodeId(ctx, realmId, rate);
+            if (!resolved.ok) return this.err(resolved.message, pushed);
+            taxCodeByRate.set(rate, resolved.id);
+            taxCodeId = resolved.id;
+          }
         }
       }
 
@@ -138,6 +167,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
         customerId: customer.id,
         itemId: item.id,
         taxCodeId,
+        taxCodeByRate: rowTaxCodeByRate,
       });
       // Seed the idempotency requestid off the immutable row id, not the body:
       // two distinct invoices with a byte-identical body still get distinct keys.
@@ -284,7 +314,18 @@ export class QuickBooksAdapter implements AccountingAdapter {
     realmId: string,
     rate: number,
   ): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
-    const name = qboSalesTaxCodeName(rate);
+    // FAIL LOUD on an unmappable rate: qboSalesTaxCodeName throws rather than
+    // returning 'Exempt (0%)', so a wrong rate aborts the push here (mirroring the
+    // missing-VAT-code refusal below) instead of posting VAT out of scope.
+    let name: string;
+    try {
+      name = qboSalesTaxCodeName(rate);
+    } catch (e) {
+      return {
+        ok: false,
+        message: e instanceof Error ? e.message : `Unsupported VAT rate ${rate}%.`,
+      };
+    }
     const res = await this.authedJson(
       ctx,
       "GET",

@@ -494,10 +494,25 @@ export async function syncToProvider(
   // carrying its immutable CrewFlow id as `sourceId`. `pushedInvoiceNumbers` is
   // the numbers of invoices created on a PRIOR successful run (excluded from
   // `rows`) — the payment-link gate below needs them.
-  const { rows, pushedInvoiceNumbers } = await buildAccountingExport({
-    orgId,
-    excludePushedFor: provider,
-  });
+  //
+  // FAIL LOUD, NEVER MIS-POST. Building the export threads per-line VAT and asserts
+  // each invoice's rate buckets reconcile to its header; a corrupt snapshot (lines
+  // that disagree with the totals) throws. Catch it here and abort the push with a
+  // clear message rather than crashing or posting a wrong-gross document.
+  let rows: Awaited<ReturnType<typeof buildAccountingExport>>["rows"];
+  let pushedInvoiceNumbers: Awaited<
+    ReturnType<typeof buildAccountingExport>
+  >["pushedInvoiceNumbers"];
+  try {
+    ({ rows, pushedInvoiceNumbers } = await buildAccountingExport({
+      orgId,
+      excludePushedFor: provider,
+    }));
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Failed to build the accounting export.";
+    await stampSyncOutcome(orgId, provider, message);
+    return { ok: false, provider, status: "error", pushed: 0, message };
+  }
   const invoiceRows = rows.filter((r) => r.type === "invoice");
   const paymentRows = rows.filter((r) => r.type === "payment");
   const base = {
