@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { loadCustomerByPortalToken } from "../_helpers";
 import { PortalShell } from "./_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
 import { buildPortalActionItems, type PortalActionItem } from "@/lib/customers/portal-actions";
+import { computePortalPayments } from "@/lib/customers/portal-payments";
 
 /**
  * Customer portal overview.
@@ -78,20 +80,13 @@ export default async function PortalOverviewPage({
 
   // Scope invoices by their own customer anchor (Issue #349 Phase 1), not via
   // quote_id — authoritative and survives quote loss (see the invoices page).
-  const { data: invoicesData, error: invoicesError } = await admin
-    .from("invoices")
-    .select(
-      "id, number, status, amount, vat_total, total, due_date, sent_at, paid_at",
-    )
-    .eq("org_id", customer.org_id)
-    .eq("customer_id", customer.id)
-    .order("created_at", { ascending: false })
-    .limit(50);
-  if (invoicesError) {
-    // A failed read would show "£0 outstanding" — a lie about money.
-    throw readFailure("portal overview: invoices", invoicesError);
-  }
-  const invoices: Array<{
+  //
+  // F-1: page the FULL set (fetchAllRows, stable created_at + id order) — a
+  // customer's invoice history can exceed the 1000-row PostgREST cap, and a
+  // capped read here fed the headline "Outstanding" money tile below, silently
+  // under-reporting the balance owed. A bounded .limit() looked honest to the
+  // F-1 clamp/producer guards but truncated a MONEY aggregate.
+  type OverviewInvoice = {
     id: string;
     number: string;
     status: string;
@@ -101,19 +96,84 @@ export default async function PortalOverviewPage({
     due_date: string | null;
     sent_at: string | null;
     paid_at: string | null;
-  }> = invoicesData ?? [];
+  };
+  const { data: invoicesData, error: invoicesError } = await fetchAllRows<OverviewInvoice>(
+    (from, to) =>
+      admin
+        .from("invoices")
+        .select(
+          "id, number, status, amount, vat_total, total, due_date, sent_at, paid_at",
+        )
+        .eq("org_id", customer.org_id)
+        .eq("customer_id", customer.id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: OverviewInvoice[] | null;
+        error: unknown;
+      }>,
+  );
+  if (invoicesError) {
+    // A failed read would show "£0 outstanding" — a lie about money.
+    throw readFailure("portal overview: invoices", invoicesError);
+  }
+  const invoices: OverviewInvoice[] = invoicesData;
+
+  // Payments per invoice — the SAME authority the invoices tab uses. Paged
+  // (fetchAllRows) keyed by invoice_id: a customer's payments across all their
+  // invoices can exceed the cap, and a clamped read would show paid invoices as
+  // fully unpaid (over-stating Outstanding).
+  const paidByInvoice = new Map<string, number>();
+  if (invoices.length > 0) {
+    const ids = invoices.map((i) => i.id);
+    const { data: payments, error: paymentsError } = await fetchAllRows<{
+      invoice_id: string;
+      amount: number | string | null;
+    }>(
+      (from, to) =>
+        admin
+          .from("invoice_payments")
+          .select("invoice_id, amount")
+          .in("invoice_id", ids)
+          .order("id", { ascending: true })
+          .range(from, to) as unknown as PromiseLike<{
+          data: { invoice_id: string; amount: number | string | null }[] | null;
+          error: unknown;
+        }>,
+    );
+    if (paymentsError) {
+      // A failed payments read would over-state the balance owed.
+      throw readFailure("portal overview: payments", paymentsError);
+    }
+    for (const p of payments) {
+      const prev = paidByInvoice.get(p.invoice_id) ?? 0;
+      paidByInvoice.set(p.invoice_id, prev + Number(p.amount ?? 0));
+    }
+  }
 
   const openQuotes = allQuotes.filter(
     (q) => q.status === "draft" || q.status === "sent" || q.status === "viewed",
   );
   const acceptedQuotes = allQuotes.filter((q) => q.status === "accepted");
-  const outstandingInvoices = invoices.filter(
-    (inv) => inv.status === "sent" || inv.status === "overdue",
+  // ONE authority for the customer-facing balance — the SAME function the
+  // invoices tab uses (lib/customers/portal-payments). It nets payments off
+  // every non-draft invoice (including partially_paid / awaiting_payment), so
+  // the home tile and the invoices tab can never contradict each other. The old
+  // code summed GROSS total over {sent, overdue} only — it dropped
+  // partially_paid entirely and never subtracted a single payment.
+  const paySummary = computePortalPayments(
+    invoices.map((i) => ({
+      status: i.status,
+      total: i.total,
+      due_date: i.due_date,
+      paid: paidByInvoice.get(i.id) ?? 0,
+    })),
   );
-  const outstandingTotal = outstandingInvoices.reduce(
-    (s, inv) => s + Number(inv.total ?? 0),
-    0,
-  );
+  const outstandingTotal = paySummary.dueNow;
+  const outstandingInvoices = invoices.filter((inv) => {
+    if (inv.status === "draft") return false;
+    return Number(inv.total ?? 0) - (paidByInvoice.get(inv.id) ?? 0) > 0;
+  });
   const recentQuote = allQuotes[0];
   const recentInvoice = invoices[0];
 

@@ -201,14 +201,16 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
     "bounded: ONE customer's own quotes (token-scoped to a single customer), top-100 display",
   "app/customer-portal/[token]/documents/page.tsx:60":
     "bounded: ONE customer's own invoices (token-scoped), top-100 display",
-  "app/customer-portal/[token]/invoices/page.tsx:98":
-    "bounded: ONE customer's own invoices (token-scoped), top-200 display",
+  // NOTE: the portal invoices reads (home + invoices tab) are DELIBERATELY
+  // absent — they were the aggregate-fed-cap subclass this wave fixed. Both feed
+  // a MONEY aggregate (computePortalPayments), so a capped read silently
+  // under-reported the balance owed. They were PAGED via fetchAllRows, not
+  // allowlisted, and the new "aggregate-fed capped money read" net below refuses
+  // to let either be re-silenced by an allowlist entry.
   "app/customer-portal/[token]/jobs/page.tsx:152":
     "bounded: ONE customer's own jobs (token-scoped), top-100 display",
-  "app/customer-portal/[token]/page.tsx:68":
-    "bounded: ONE customer's recent quotes on the portal home (token-scoped), top-50",
-  "app/customer-portal/[token]/page.tsx:82":
-    "bounded: ONE customer's recent invoices on the portal home (token-scoped), top-50",
+  "app/customer-portal/[token]/page.tsx:70":
+    "bounded: ONE customer's recent quotes on the portal home (token-scoped), top-50 — quotes are COUNTED/displayed, never summed into a money aggregate",
   "app/customer-portal/[token]/quotes/page.tsx:66":
     "bounded: ONE customer's own quotes (token-scoped), top-200 display",
   "lib/customers/portal-bulk-download.ts:153":
@@ -481,6 +483,163 @@ function boundaryOffendersIn(rel: string, raw: string): string[] {
   return [...offenders];
 }
 
+// ── The AGGREGATE-FED capped-money-read net (the subclass this wave closes) ──
+//
+// The producer-.limit net above lets a capped producer read be silenced with a
+// BOUNDARY_ALLOWLIST entry claiming it is a "genuinely-bounded display sample".
+// That escape hatch is exactly what let the LIVE customer portal ship a truncated
+// money surface: the home `.limit(50)` and invoices-tab `.limit(200)` reads were
+// allowlisted as "top-N display", but they FED A MONEY AGGREGATE
+// (computePortalPayments / a .reduce over invoice totals) that computes the
+// customer-facing "Outstanding"/"Due now" balance. A cap <1000 looked honest to
+// the clamp guard, bare-select saw an honest `.limit(<1000)`, and the producer
+// net was satisfied by the allowlist — so it slipped past all three.
+//
+// RULE: a capped, UNPAGED read of a money/ledger (PRODUCER) table whose rows flow
+// into a money aggregate (a `.reduce` fold, or a known money-aggregate helper)
+// must PAGE via fetchAllRows. Unlike the producer net, this net does NOT honour
+// BOUNDARY_ALLOWLIST — an aggregate over a money table can never be justified as a
+// bounded display, because the aggregate's whole job is to see EVERY row.
+
+/** Known money-aggregate consumers: passing a set to one of these = a money fold.
+ * (computePortalPayments nets paid/dueNow/overdue over the customer's invoices.) */
+const AGGREGATE_HELPERS = new Set<string>(["computePortalPayments"]);
+
+/** file:line → reason. A capped money read that genuinely feeds an aggregate yet
+ * is human-verified safe (e.g. hard-bounded by an `.in(<tiny id set>)`). Prefer
+ * paging; keep this EMPTY unless there is a written, verified reason. */
+const AGGREGATE_FED_ALLOWLIST: Record<string, string> = {};
+
+/** The `data:` alias a read's rows bind to: the nearest `const { data: X } = await`
+ * (or bare `const { data } = ...`) whose `= await` precedes the read. */
+function readDataAlias(src: string, readIdx: number): string | null {
+  const re = /(?:const|let|var)\s*\{([^}]*)\}\s*=\s*await\b/g;
+  let m: RegExpExecArray | null;
+  let best: RegExpExecArray | null = null;
+  while ((m = re.exec(src))) {
+    if (m.index > readIdx) break;
+    best = m;
+  }
+  if (!best) return null;
+  const inner = best[1]!;
+  const dm = /(?:^|,)\s*data\s*:\s*([A-Za-z_$][\w$]*)/.exec(inner);
+  if (dm) return dm[1]!;
+  if (/(?:^|,)\s*data\s*(?:,|$)/.test(inner)) return "data";
+  return null;
+}
+
+/** Transitive closure of variables that alias a root read var: `const X = root`,
+ * `const X = root ?? []`, `const X: T = root.filter(...)`, `const X = root.map(...)`. */
+function aliasClosure(src: string, root: string): Set<string> {
+  const set = new Set<string>([root]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const a of [...set]) {
+      const re = new RegExp(
+        `(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*(?::[^=]+)?=\\s*${escapeReg(a)}\\b`,
+        "g",
+      );
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(src))) {
+        if (!set.has(m[1]!)) {
+          set.add(m[1]!);
+          grew = true;
+        }
+      }
+    }
+  }
+  return set;
+}
+
+/** Walk the method chain starting at each (receiver) occurrence of `alias`,
+ * honouring balanced parens, returning true if a `.reduce(` is reached — catches
+ * both `alias.reduce(` and `alias.filter(...).reduce(`. */
+function chainReducesFrom(src: string, alias: string): boolean {
+  const re = new RegExp(`\\b${escapeReg(alias)}\\b`, "g");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src))) {
+    if ((src[m.index - 1] ?? " ") === ".") continue; // a property, not the receiver
+    let i = m.index + alias.length;
+    for (;;) {
+      while (i < src.length && /\s/.test(src[i]!)) i++;
+      if (src[i] !== ".") break;
+      let j = i + 1;
+      while (j < src.length && /[A-Za-z0-9_$]/.test(src[j]!)) j++;
+      const name = src.slice(i + 1, j);
+      let k = j;
+      while (k < src.length && /\s/.test(src[k]!)) k++;
+      if (name === "reduce") return true;
+      if (src[k] !== "(") break; // property access, not a call — chain ends
+      let depth = 0;
+      for (; k < src.length; k++) {
+        if (src[k] === "(") depth++;
+        else if (src[k] === ")") {
+          depth--;
+          if (depth === 0) {
+            k++;
+            break;
+          }
+        }
+      }
+      i = k;
+    }
+  }
+  return false;
+}
+
+/** True when any alias flows into a money aggregate: a `.reduce(` fold, or a
+ * known money-aggregate helper with the alias as its leading argument token. */
+function feedsMoneyAggregate(src: string, aliases: Set<string>): boolean {
+  for (const a of aliases) {
+    if (chainReducesFrom(src, a)) return true;
+    for (const fn of AGGREGATE_HELPERS) {
+      if (new RegExp(`\\b${escapeReg(fn)}\\(\\s*${escapeReg(a)}\\b`).test(src)) return true;
+    }
+  }
+  return false;
+}
+
+/** Aggregate-fed capped-money-read offenders in one file: a PRODUCER-table read
+ * carrying a flat `.limit(N>=2)` (unpaged) whose rows flow into a money aggregate.
+ * Deliberately does NOT consult BOUNDARY_ALLOWLIST. */
+function aggregateFedCapOffendersIn(rel: string, raw: string): string[] {
+  if (!raw.includes(".limit(")) return [];
+  const src = stripComments(raw);
+  const env = buildEnv(src);
+  const reads = producerReadIndices(src).sort((a, b) => a.index - b.index);
+  const offenders = new Set<string>();
+
+  for (const { arg, index: limIdx } of extractCalls(src, "limit")) {
+    if (provableUpperBound(arg, env) === 1) continue; // single-row read, not a set
+    let pRead: { table: string; index: number } | undefined;
+    for (const r of reads) {
+      if (r.index < limIdx) pRead = r;
+      else break;
+    }
+    if (!pRead) continue;
+    const between = src.slice(pRead.index, limIdx);
+    if (between.includes(";")) continue; // .limit is a DIFFERENT statement
+    if (!PRODUCER_TABLES.has(pRead.table)) continue;
+    if (!/\.select\(/.test(between)) continue; // reads only
+    if (/\.range\(/.test(between) || /fetchAllRows/.test(between)) continue; // paged
+    const alias = readDataAlias(src, pRead.index);
+    if (!alias) continue;
+    const aliases = aliasClosure(src, alias);
+    if (!feedsMoneyAggregate(src, aliases)) continue;
+    const line = src.slice(0, pRead.index).split("\n").length;
+    const key = `${rel}:${line}`;
+    if (AGGREGATE_FED_ALLOWLIST[key]) continue;
+    offenders.add(
+      `${key} → .from("${pRead.table}") capped at .limit(${arg}) FEEDS A MONEY AGGREGATE ` +
+        `(.reduce / ${[...AGGREGATE_HELPERS].join("/")}) — an aggregate over a money/ledger table ` +
+        `must PAGE via fetchAllRows; a sub-1000 cap silently truncates the customer-facing total. ` +
+        `This subclass is NOT allowlistable as a bounded display.`,
+    );
+  }
+  return [...offenders];
+}
+
 describe("F-1 guard — every .limit / .range is provably <= 1000", () => {
   const files: string[] = [];
   for (const d of SCAN_DIRS) walk(resolve(ROOT, d), files);
@@ -644,6 +803,97 @@ describe("F-1 guard — every .limit / .range is provably <= 1000", () => {
       `  .limit(1000);`,
     ].join("\n");
     expect(boundaryOffendersIn("x.ts", wrapperPreFix).some((o) => o.includes("goods_received_notes"))).toBe(true);
+  });
+
+  // ── The aggregate-fed capped-money-read net (subclass this wave closes) ──
+  it("no capped money read feeds a money aggregate (must page — not allowlistable)", () => {
+    const offenders: string[] = [];
+    for (const file of files) {
+      const rel = file.slice(ROOT.length + 1);
+      offenders.push(...aggregateFedCapOffendersIn(rel, readFileSync(file, "utf8")));
+    }
+    expect(
+      offenders,
+      `F-1 aggregate-fed cap. A capped (.limit(N<=1000)), UNPAGED read of a money/ledger ` +
+        `table whose rows flow into a money aggregate (a .reduce fold or ${[...AGGREGATE_HELPERS].join("/")}) ` +
+        `silently truncates the customer-facing total once the set crosses the 1000-row cap. This is ` +
+        `the exact shape that shipped a wrong "Outstanding" on the customer portal — a sub-1000 cap ` +
+        `evades the clamp guard, the bare-select guard AND the producer net's allowlist. Page it via ` +
+        `fetchAllRows for a COMPLETE read; this subclass may NOT be allowlisted as a bounded display:\n` +
+        offenders.join("\n"),
+    ).toEqual([]);
+  });
+
+  it("aggregate-fed cap net has TEETH: flags the pre-fix portal reads, passes when paged", () => {
+    // Pre-fix portal HOME: capped invoices read feeding a .filter(...).reduce sum.
+    const overviewPreFix = [
+      `const { data: invoicesData, error: invoicesError } = await admin`,
+      `  .from("invoices")`,
+      `  .select("id, status, total, due_date")`,
+      `  .eq("org_id", customer.org_id)`,
+      `  .eq("customer_id", customer.id)`,
+      `  .order("created_at", { ascending: false })`,
+      `  .limit(50);`,
+      `const invoices = invoicesData ?? [];`,
+      `const outstandingInvoices = invoices.filter((inv) => inv.status === "sent");`,
+      `const outstandingTotal = outstandingInvoices.reduce((s, inv) => s + Number(inv.total), 0);`,
+    ].join("\n");
+    expect(
+      aggregateFedCapOffendersIn("app/customer-portal/[token]/page.tsx", overviewPreFix).length,
+    ).toBeGreaterThan(0);
+
+    // Pre-fix invoices TAB: capped invoices read feeding computePortalPayments.
+    const invoicesPreFix = [
+      `const { data: invoicesData, error: invoicesError } = await admin`,
+      `  .from("invoices")`,
+      `  .select("id, status, total, due_date")`,
+      `  .eq("org_id", customer.org_id)`,
+      `  .eq("customer_id", customer.id)`,
+      `  .order("created_at", { ascending: false })`,
+      `  .limit(200);`,
+      `const invoices = invoicesData ?? [];`,
+      `const paySummary = computePortalPayments(invoices.map((i) => ({ status: i.status, total: i.total, due_date: i.due_date, paid: 0 })));`,
+    ].join("\n");
+    expect(
+      aggregateFedCapOffendersIn("app/customer-portal/[token]/invoices/page.tsx", invoicesPreFix).length,
+    ).toBeGreaterThan(0);
+
+    // The paged fix (fetchAllRows + .range, no .limit on the invoices read) → clean.
+    const paged = [
+      `const { data: invoicesData, error: invoicesError } = await fetchAllRows((from, to) =>`,
+      `  admin`,
+      `    .from("invoices")`,
+      `    .select("id, status, total, due_date")`,
+      `    .eq("org_id", customer.org_id)`,
+      `    .eq("customer_id", customer.id)`,
+      `    .order("created_at", { ascending: false })`,
+      `    .order("id", { ascending: true })`,
+      `    .range(from, to),`,
+      `);`,
+      `const invoices = invoicesData;`,
+      `const paySummary = computePortalPayments(invoices.map((i) => ({ status: i.status, total: i.total, due_date: i.due_date, paid: 0 })));`,
+      // A sibling capped QUOTES read that is only COUNTED/displayed stays clean.
+      `const { data: quotesData } = await admin.from("quotes").select("id, status").eq("org_id", o).limit(50);`,
+      `const allQuotes = quotesData ?? [];`,
+      `const openQuotes = allQuotes.filter((q) => q.status === "sent").length;`,
+    ].join("\n");
+    expect(aggregateFedCapOffendersIn("app/customer-portal/[token]/page.tsx", paged)).toEqual([]);
+
+    // A bounded money read that does NOT feed an aggregate (a recent-N timeline
+    // display iterated with for..of) is NOT flagged — no false-positive.
+    const displayOnly = [
+      `const { data: paymentRows } = await admin`,
+      `  .from("invoice_payments")`,
+      `  .select("id, paid_at, amount")`,
+      `  .eq("org_id", orgId)`,
+      `  .order("paid_at", { ascending: false })`,
+      `  .limit(10);`,
+      `const payments = (paymentRows ?? []);`,
+      `for (const p of payments) { timeline.push(p.paid_at); }`,
+    ].join("\n");
+    expect(
+      aggregateFedCapOffendersIn("server/services/hq-customer-snapshot.ts", displayOnly),
+    ).toEqual([]);
   });
 
   // Self-test: the hardened resolver must actually catch the shapes the old
