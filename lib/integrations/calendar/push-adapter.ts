@@ -208,6 +208,21 @@ export type PushAdapterResult =
        * to self-heal on the next event.
        */
       terminal?: boolean;
+      /**
+       * STALE MAPPING — a PATCH of an existing external event returned 404/410, so
+       * the mapped provider event no longer exists (deleted provider-side when a
+       * disconnect/reconnect reused the connection id, or a user manually removed
+       * the CrewFlow event). This is NEITHER a transient blip (retrying the SAME
+       * dead id would loop forever) NOR an auth failure (the grant is fine). The
+       * caller DROPS the dead link and re-INSERTs so the entity actually lands.
+       */
+      stale?: boolean;
+      /**
+       * Present when a 401 during the failed attempt forced a refresh; the caller
+       * persists these and re-uses them for the re-INSERT so the retry does not
+       * repeat the refresh (and cannot trip a rotated-refresh-token dead end).
+       */
+      refreshed?: { accessToken: string; refreshToken: string | null; expiresAt: string | null };
     };
 
 /**
@@ -364,6 +379,25 @@ export async function pushEventToProvider(params: {
   }
 
   if (!res.ok) {
+    // STALE MAPPING FIRST. A PATCH (externalEventId non-null) that 404/410s means
+    // the mapped provider event is GONE — deleted provider-side by a
+    // disconnect/reconnect that reused the connection id, or by a user manually
+    // removing the CrewFlow event. Retrying the SAME dead id would 404 forever, so
+    // this is emphatically NOT a transient blip (which classifyEventApiFailure would
+    // otherwise report for 404/410, since it is neither 401 nor 403). Surface a
+    // DISTINCT `stale` outcome so the caller drops the link and re-INSERTs — mirroring
+    // deleteEventFromProvider's existing 404/410 tolerance, closing the push/delete
+    // asymmetry. A POST that 404/410s has no mapping to be stale, so this is
+    // PATCH-only.
+    if (method === "PATCH" && (res.status === 404 || res.status === 410)) {
+      return {
+        ok: false,
+        reason: "error",
+        message: `event push target is gone (${res.status}); mapping is stale`,
+        stale: true,
+        ...(refreshed ? { refreshed } : {}),
+      };
+    }
     // Classify the still-failing response: a 401 (or an authz 403) after the
     // refresh+retry is TERMINAL; a rate-limit 403 / 5xx / 429 is TRANSIENT so the
     // connection stays 'connected' and self-heals on the next event. Parses the

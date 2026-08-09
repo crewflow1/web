@@ -88,8 +88,17 @@ const h = vi.hoisted(() => {
   const serverResolver: Resolver = (st) => {
     if (st.table === "jobs" && st.op === "select") return { data: state.job, error: null };
     if (st.table === "rota_entries" && st.op === "select") return { data: state.rota, error: null };
-    if (st.table === "calendar_connections" && st.op === "select")
+    if (st.table === "calendar_connections" && st.op === "select") {
+      // A provider-pinned select (disconnect's id read / getCalendarConnection)
+      // resolves to a SINGLE row carrying the connection id; an org-only select
+      // (listCalendarConnections) resolves to the array of provider rows.
+      const prov = eqVal(st, "provider");
+      if (prov !== undefined) {
+        const row = state.connections.find((c) => c.provider === prov) ?? null;
+        return { data: row ? { id: "conn-1", ...row } : null, error: null };
+      }
       return { data: state.connections, error: null };
+    }
     return { data: null, error: null };
   };
   const adminResolver: Resolver = (st) => {
@@ -111,8 +120,17 @@ const h = vi.hoisted(() => {
       return { error: null };
     }
     if (st.table === "calendar_event_links" && st.op === "delete") {
-      const key = `${eqVal(st, "connection_id")}|${eqVal(st, "local_kind")}|${eqVal(st, "local_id")}`;
-      state.eventLinks.delete(key);
+      const conn = String(eqVal(st, "connection_id"));
+      const lk = eqVal(st, "local_kind");
+      if (lk === undefined) {
+        // Connection-wide reclaim (deleteEventLinksForConnection): drop EVERY link
+        // for this connection, regardless of local kind/id.
+        for (const key of [...state.eventLinks.keys()]) {
+          if (key.startsWith(`${conn}|`)) state.eventLinks.delete(key);
+        }
+        return { error: null };
+      }
+      state.eventLinks.delete(`${conn}|${lk}|${eqVal(st, "local_id")}`);
       return { error: null };
     }
     return { data: null, error: null };
@@ -145,6 +163,7 @@ import {
   bestEffortPushRota,
   bestEffortDeleteJobEvent,
   bestEffortDeleteRotaEvent,
+  disconnectCalendarProvider,
 } from "@/server/services/calendar-connections";
 
 const CREDS = {
@@ -549,6 +568,99 @@ describe("terminal vs transient refresh failure — status='error' persistence +
     expect(fetchMock).not.toHaveBeenCalled();
     expect(errorWrites().length).toBe(0);
     expect(connectedWrites().length).toBe(0);
+  });
+});
+
+describe("stale event link — PATCH 404/410 drops the mapping + re-INSERTs (disconnect/reconnect fix)", () => {
+  const errorWrites = () => h.state.connectionUpdates.filter((u) => u.status === "error");
+  const connectedWrites = () => h.state.connectionUpdates.filter((u) => u.status === "connected");
+
+  it("a PATCH 404 drops the stale link, re-INSERTs, and upserts the NEW mapping (job)", async () => {
+    await pushJobToCalendar("org-1", "job-1"); // seed the link → evt-1
+    expect(h.state.eventLinks.get("conn-1|job|job-1")).toEqual({ external_event_id: "evt-1" });
+    h.state.connectionUpdates = [];
+    fetchMock.mockReset();
+    fetchMock
+      .mockResolvedValueOnce(jsonRes(404, { error: "gone" })) // PATCH the dead evt-1
+      .mockResolvedValueOnce(jsonRes(200, { id: "evt-2", etag: "etag-2" })); // re-INSERT
+
+    const res = await pushJobToCalendar("org-1", "job-1");
+    expect(res).toMatchObject({ ok: true, status: "pushed", externalEventId: "evt-2" });
+    // The mapping now points at the NEW event — no duplicate, no dead id retained.
+    expect(h.state.eventLinks.size).toBe(1);
+    expect(h.state.eventLinks.get("conn-1|job|job-1")).toEqual({ external_event_id: "evt-2" });
+    // Call 0 PATCHed the dead id; call 1 POSTed a fresh event.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]![0]).toBe(
+      "https://www.googleapis.com/calendar/v3/calendars/primary/events/evt-1",
+    );
+    expect((fetchMock.mock.calls[0]![1] as RequestInit).method).toBe("PATCH");
+    expect(fetchMock.mock.calls[1]![0]).toBe(
+      "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+    );
+    expect((fetchMock.mock.calls[1]![1] as RequestInit).method).toBe("POST");
+    // A stale link is NOT a connection error — the connection stays healthy.
+    expect(errorWrites().length).toBe(0);
+    expect(connectedWrites().length).toBe(1);
+  });
+
+  it("a PATCH 410 drops the stale link and re-INSERTs for a rota shift too", async () => {
+    await pushRotaToCalendar("org-1", "rota-1"); // seed → evt-1
+    fetchMock.mockReset();
+    fetchMock
+      .mockResolvedValueOnce(jsonRes(410, { error: "gone" })) // PATCH the dead evt-1
+      .mockResolvedValueOnce(jsonRes(200, { id: "evt-2r" })); // re-INSERT
+    const res = await pushRotaToCalendar("org-1", "rota-1");
+    expect(res).toMatchObject({ ok: true, status: "pushed", externalEventId: "evt-2r" });
+    expect(h.state.eventLinks.get("conn-1|rota|rota-1")).toEqual({ external_event_id: "evt-2r" });
+    expect((fetchMock.mock.calls[1]![1] as RequestInit).method).toBe("POST");
+  });
+
+  it("a PATCH 5xx TRANSIENT does NOT drop the link (the SAME id self-heals next save)", async () => {
+    await pushJobToCalendar("org-1", "job-1"); // seed → evt-1
+    h.state.connectionUpdates = [];
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(jsonRes(503, { error: "unavailable" }));
+    const res = await pushJobToCalendar("org-1", "job-1");
+    expect(res).toMatchObject({ ok: false, status: "error" });
+    // The link is UNTOUCHED — no drop, no re-INSERT (exactly one provider call).
+    expect(h.state.eventLinks.get("conn-1|job|job-1")).toEqual({ external_event_id: "evt-1" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The connection stays 'connected' (never marked error) so it self-heals.
+    expect(errorWrites().length).toBe(0);
+  });
+
+  it("disconnectCalendarProvider deletes ALL event links for the connection", async () => {
+    // Seed two links (a job + a rota) on the same connection.
+    await pushJobToCalendar("org-1", "job-1");
+    await pushRotaToCalendar("org-1", "rota-1");
+    expect(h.state.eventLinks.size).toBe(2);
+
+    const res = await disconnectCalendarProvider("org-1", "google");
+    expect(res).toEqual({ ok: true });
+    // Every mapping for this connection is reclaimed — none survives to go stale.
+    expect(h.state.eventLinks.size).toBe(0);
+  });
+
+  it("after a disconnect the first save INSERTs — no dead id reused (reconnect to a different account)", async () => {
+    await pushJobToCalendar("org-1", "job-1"); // account A → link evt-1
+    await disconnectCalendarProvider("org-1", "google"); // reclaims the link
+    expect(h.state.eventLinks.size).toBe(0);
+
+    // Reconnect reuses the SAME connection row id (conn-1) and the row is connected
+    // again. Because the stale link was reclaimed, the first save is a fresh INSERT
+    // (POST) — never a PATCH of account A's dead event id.
+    h.state.connectionUpdates = [];
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValue(jsonRes(200, { id: "evt-new", etag: "etag-new" }));
+
+    const res = await pushJobToCalendar("org-1", "job-1");
+    expect(res).toMatchObject({ ok: true, status: "pushed", externalEventId: "evt-new" });
+    expect((fetchMock.mock.calls[0]![1] as RequestInit).method).toBe("POST");
+    expect(fetchMock.mock.calls[0]![0]).toBe(
+      "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+    );
+    expect(h.state.eventLinks.get("conn-1|job|job-1")).toEqual({ external_event_id: "evt-new" });
   });
 });
 
