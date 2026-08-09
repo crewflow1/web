@@ -111,12 +111,25 @@ export async function uploadBankCsv(_prev: FormState, formData: FormData): Promi
   // the truncated set and persisted as "unmatched", quietly degrading match
   // quality with no error. fetchAllRows pages the full set under the cap; the
   // `id` tiebreak gives the ordering the stable total order paging requires.
-  const { data: invoices, error: invoicesError } = await fetchAllRows((from, to) =>
+  // The `!invoices_customer_org_fkey` hint isn't in the generated types, so
+  // PostgREST inference can't type the embed — type the row explicitly and cast
+  // the query return (as the paged reads elsewhere do).
+  type MatchInvoiceRow = {
+    id: string;
+    number: string;
+    total: number | string | null;
+    sent_at: string | null;
+    status: string;
+    customer: { name: string | null } | null;
+    quote: { customer: { name: string | null } | null } | null;
+  };
+  const { data: invoices, error: invoicesError } = await fetchAllRows<MatchInvoiceRow>((from, to) =>
     supabase
       .from("invoices")
       .select(
         `
         id, number, total, sent_at, status,
+        customer:customers!invoices_customer_org_fkey ( name ),
         quote:quotes ( customer:customers ( name ) )
       `,
       )
@@ -124,7 +137,10 @@ export async function uploadBankCsv(_prev: FormState, formData: FormData): Promi
       // Canonical outstanding set — never a hardcoded subset.
       .in("status", OUTSTANDING_STATUSES)
       .order("id", { ascending: true })
-      .range(from, to),
+      .range(from, to) as unknown as PromiseLike<{
+      data: MatchInvoiceRow[] | null;
+      error: unknown;
+    }>,
   );
   // Fail loud BEFORE inserting lines — a failed read here would score against
   // an empty invoice list and persist every line as "unmatched".
@@ -142,7 +158,10 @@ export async function uploadBankCsv(_prev: FormState, formData: FormData): Promi
     number: inv.number,
     total: Number(inv.total ?? 0),
     sent_at: inv.sent_at,
-    customer_name: inv.quote?.customer?.name ?? null,
+    // Reconcile-screen customer name resolves via the invoice's OWN customer
+    // first; quote is only the legacy-orphan fallback. A stage-billing invoice
+    // has no quote, so a quote-only read blanked the customer on every such row.
+    customer_name: inv.customer?.name ?? inv.quote?.customer?.name ?? null,
   }));
 
   // 3. Insert bank lines + best-match suggestion in one batch.

@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
+import { invoiceCustomerEmail } from "@/lib/invoices/customer";
 import { InvoiceControls } from "./_controls";
 import { PaymentsPanel } from "./_payments-panel";
 import { PaymentProofsPanel } from "./_payment-proofs-panel";
@@ -62,6 +63,9 @@ export default async function InvoiceDetailPage({
     created_at: string;
     quote_id: string | null;
     job_id: string | null;
+    // Direct customer anchor (Issue #349 Phase 1) — preferred over the quote
+    // path, which is NULL for every stage-billing invoice.
+    customer: { email: string | null } | null;
     quote: { customer: { email: string | null } | null } | null;
   };
   const { data: invoiceRaw, error: invoiceError } = await supabase
@@ -70,6 +74,7 @@ export default async function InvoiceDetailPage({
       `
         id, number, status, amount, vat_total, total, due_date, sent_at,
         paid_at, notes, created_at, quote_id, job_id,
+        customer:customers!invoices_customer_org_fkey ( email ),
         quote:quotes ( customer:customers ( email ) )
       `,
     )
@@ -84,7 +89,11 @@ export default async function InvoiceDetailPage({
   const invoice = invoiceRaw as unknown as LoadedInvoice | null;
 
   if (!invoice) notFound();
-  const customerEmail = invoice.quote?.customer?.email ?? null;
+  // Send-recipient resolves via the invoice's OWN customer first; the quote is
+  // only the legacy-orphan fallback. A stage invoice has no quote, so a
+  // quote-only read reported "no recipient" and disabled the send control even
+  // though the invoice has a customer. See lib/invoices/customer.ts.
+  const customerEmail = invoiceCustomerEmail(invoice);
   const linkedJobId = invoice.job_id;
 
   // Fetch the org's jobs for the link-to-job picker (customer surfaced

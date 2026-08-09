@@ -4,7 +4,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { InvoicePdf, type InvoicePdfInput } from "@/lib/pdf/invoice-pdf";
 import { loadCustomerByPortalToken } from "@/app/customer-portal/_helpers";
-import { invoiceCustomerId } from "@/lib/invoices/customer";
+import {
+  invoiceCustomerId,
+  invoiceCustomerName,
+  type InvoiceCustomerContactShape,
+} from "@/lib/invoices/customer";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 
 export const runtime = "nodejs";
@@ -40,6 +44,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
       `
         id, number, status, amount, vat_total, total, due_date, paid_at,
         notes, quote_id, org_id, customer_id,
+        customer:customers!invoices_customer_org_fkey ( name ),
         quote:quotes ( customer_id, customer:customers ( name ) ),
         org:organizations ( name, phone, vat_number, logo_path, logo_url, address, bank_details )
       `,
@@ -103,7 +108,15 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     due_date: invoice.due_date,
     paid_at: invoice.paid_at,
     notes: invoice.notes,
-    customer_name: invoice.quote?.customer?.name ?? null,
+    // The RENDERED BILL TO name resolves via the invoice's OWN customer first
+    // (the ownership check above already uses invoiceCustomerId); quote is only
+    // the legacy-orphan fallback. Without this a quote-less stage invoice — the
+    // 100% case for stage billing — printed a "—" addressee to the customer.
+    // The `!invoices_customer_org_fkey` hint isn't in the generated types, so
+    // PostgREST inference can't type the embed — cast (as send-invoice.ts does).
+    customer_name: invoiceCustomerName(
+      invoice as unknown as InvoiceCustomerContactShape,
+    ),
     org_name: invoice.org?.name ?? "",
     org_phone: invoice.org?.phone ?? null,
     org_vat_number: invoice.org?.vat_number ?? null,

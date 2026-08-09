@@ -178,7 +178,7 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
     "bounded: recent-50 jobs for the assign-shift picker; assigning is a create action, not an edit re-render of a saved reference",
 
   // In-page link picker with preserve-option + explicit onChange write.
-  "app/(app)/invoices/[id]/page.tsx:93":
+  "app/(app)/invoices/[id]/page.tsx:102":
     "bounded: recent-50 link-to-job picker; a controlled per-control select whose write fires only on explicit onChange (no shared-form save), and the linked job is preserve-injected in page.tsx so it always displays",
 
   // Global-search result caps (intentional top-N over the whole tenant).
