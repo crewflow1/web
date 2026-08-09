@@ -504,6 +504,40 @@ describe("terminal vs transient refresh failure — status='error' persistence +
     expect(errorWrites().length).toBe(1);
   });
 
+  it("an events-API 403 rate-limit (rateLimitExceeded) KEEPS status='connected' — the C48 regression fix", async () => {
+    // A bulk import / multi-shift rota save can trip Google's per-user rate limit,
+    // which surfaces as a 403 on events.insert/patch. Before the fix this bare 403
+    // was terminal ⇒ the calendar was stranded forever on ONE throttle. It must now
+    // stay 'connected' so the next event self-heals.
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(
+      jsonRes(403, {
+        error: { code: 403, errors: [{ reason: "rateLimitExceeded", domain: "usageLimits" }] },
+      }),
+    );
+    const res = await pushJobToCalendar("org-1", "job-1");
+    expect(res).toMatchObject({ ok: false, status: "error" }); // push failed…
+    expect(errorWrites().length).toBe(0); // …but the CONNECTION is NOT marked error.
+    // A 403 never triggers a refresh — exactly one provider call.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a genuine authz 403 (insufficientPermissions) still persists status='error'", async () => {
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValueOnce(
+      jsonRes(403, {
+        error: {
+          code: 403,
+          status: "PERMISSION_DENIED",
+          errors: [{ reason: "insufficientPermissions" }],
+        },
+      }),
+    );
+    const res = await pushJobToCalendar("org-1", "job-1");
+    expect(res).toMatchObject({ ok: false, status: "error" });
+    expect(errorWrites().length).toBe(1);
+  });
+
   it("a status='error' connection is not 'connected', so a later push is a skipped_dark no-op until re-consent", async () => {
     // Once the row is 'error', the connected-provider lookup finds nothing, so the
     // push neither contacts the provider nor re-writes status — it stays 'error'

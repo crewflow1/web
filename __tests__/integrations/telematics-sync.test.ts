@@ -401,6 +401,190 @@ describe("runTelematicsSync — token model", () => {
   });
 });
 
+describe("runTelematicsSync — terminal vs transient auth failure (GAP 3)", () => {
+  // The C26/C28 audit shipped the sync with recordConnectionError writing ONLY
+  // last_error and markSynced never touching status — so a REVOKED token retried
+  // forever and the panel's "reconnect required" (status='error') UI was dead code.
+  // These prove the C47/C48 invariant now holds for telematics.
+  const statusWrites = (updates: Record<string, unknown>[], v: string) =>
+    updates.filter((u) => u.status === v);
+
+  it("TERMINAL: a rejected token with no refresh token persists status='error'", async () => {
+    connectableEnv();
+    const db = makeDb({
+      connections: [
+        {
+          id: CONN_A,
+          org_id: ORG_A,
+          provider: "samsara",
+          external_account_id: "samsara-org-9",
+          access_token: encryptToken("revoked-token"),
+          refresh_token: null,
+          token_expires_at: null, // static token — no proactive refresh
+          last_sync_at: null,
+        },
+      ],
+      vehicles: [{ asset_id: VEH_A, vin: "VIN123" }],
+    });
+    admin.client = db.client;
+    // The stats call returns 401 → the adapter reports `unauthorized` (terminal);
+    // no refresh token exists, so no retry can recover it.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })),
+    );
+
+    const summary = await runTelematicsSync();
+    expect(summary.outcomes[0]!.outcome).toBe("error");
+    // THE FIX: the row is flipped to status='error' (reconnect required).
+    const errs = statusWrites(db.updates, "error");
+    expect(errs.length).toBe(1);
+    expect(typeof errs[0]!.last_error).toBe("string");
+    // No spurious self-heal write.
+    expect(statusWrites(db.updates, "connected").length).toBe(0);
+  });
+
+  it("TERMINAL: a proactive refresh that returns invalid_grant (400) persists status='error'", async () => {
+    connectableEnv();
+    const db = makeDb({
+      connections: [
+        {
+          id: CONN_A,
+          org_id: ORG_A,
+          provider: "samsara",
+          external_account_id: "samsara-org-9",
+          access_token: encryptToken("stale-access"),
+          refresh_token: encryptToken("dead-refresh"),
+          token_expires_at: new Date(Date.now() - 60_000).toISOString(), // expired → proactive refresh
+          last_sync_at: null,
+        },
+      ],
+      vehicles: [{ asset_id: VEH_A, vin: "VIN123" }],
+    });
+    admin.client = db.client;
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      if (url.toString().includes("/oauth2/token")) {
+        // A dead grant — 400 invalid_grant is TERMINAL.
+        return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
+      }
+      return new Response(JSON.stringify({ data: [STAT] }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const summary = await runTelematicsSync();
+    expect(summary.outcomes[0]!.outcome).toBe("refresh_failed");
+    expect(statusWrites(db.updates, "error").length).toBe(1);
+    // The stats endpoint was never reached — the refresh gate failed first.
+    const calls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(calls.some((u) => u.includes("/fleet/vehicles/stats"))).toBe(false);
+  });
+
+  it("TRANSIENT: a 5xx fetch blip keeps status='connected' and does NOT trigger a refresh", async () => {
+    connectableEnv();
+    const db = makeDb({
+      connections: [
+        {
+          id: CONN_A,
+          org_id: ORG_A,
+          provider: "samsara",
+          external_account_id: "samsara-org-9",
+          access_token: encryptToken("good-token"),
+          refresh_token: encryptToken("refresh-tok"),
+          token_expires_at: null, // static → no proactive refresh
+          last_sync_at: null,
+        },
+      ],
+      vehicles: [{ asset_id: VEH_A, vin: "VIN123" }],
+    });
+    admin.client = db.client;
+    const fetchMock = vi.fn(async (_url: string | URL) =>
+      new Response(JSON.stringify({ error: "boom" }), { status: 503 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const summary = await runTelematicsSync();
+    expect(summary.outcomes[0]!.outcome).toBe("error");
+    // NOT stranded: no status='error' write; last_error is stamped so it is visible.
+    expect(statusWrites(db.updates, "error").length).toBe(0);
+    const errStamp = db.updates.find((u) => "last_error" in u && u.status === undefined);
+    expect(errStamp).toBeTruthy();
+    // A 5xx is not a dead grant, so NO refresh was attempted (the retry is reserved
+    // for a terminal `unauthorized`).
+    const calls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(calls.some((u) => u.includes("/oauth2/token"))).toBe(false);
+  });
+
+  it("SUCCESS self-heals: a healthy pass re-asserts status='connected' and clears last_error", async () => {
+    connectableEnv();
+    const db = makeDb({
+      connections: [
+        {
+          id: CONN_A,
+          org_id: ORG_A,
+          provider: "samsara",
+          external_account_id: "samsara-org-9",
+          access_token: encryptToken("good-token"),
+          refresh_token: null,
+          token_expires_at: null,
+          last_sync_at: null,
+        },
+      ],
+      vehicles: [{ asset_id: VEH_A, vin: "VIN123" }],
+    });
+    admin.client = db.client;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ data: [STAT] }), { status: 200 })),
+    );
+
+    await runTelematicsSync();
+    // The success stamp restores status='connected' AND clears last_error — a
+    // connection recovering from a prior transient failure heals itself.
+    const heal = db.updates.find((u) => "last_sync_at" in u);
+    expect(heal).toBeTruthy();
+    expect(heal!.status).toBe("connected");
+    expect(heal!.last_error).toBeNull();
+  });
+
+  it("TERMINAL after a successful refresh but a still-401 retry persists status='error'", async () => {
+    connectableEnv();
+    const db = makeDb({
+      connections: [
+        {
+          id: CONN_A,
+          org_id: ORG_A,
+          provider: "samsara",
+          external_account_id: "samsara-org-9",
+          access_token: encryptToken("expiring-access"),
+          refresh_token: encryptToken("refresh-tok"),
+          token_expires_at: null, // static-looking; the 401 drives the reactive refresh
+          last_sync_at: null,
+        },
+      ],
+      vehicles: [{ asset_id: VEH_A, vin: "VIN123" }],
+    });
+    admin.client = db.client;
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      if (url.toString().includes("/oauth2/token")) {
+        return new Response(
+          JSON.stringify({ access_token: "fresh-access", expires_in: 3600 }),
+          { status: 200 },
+        );
+      }
+      // Both the first fetch and the retry-after-refresh return 401 (unauthorized).
+      return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const summary = await runTelematicsSync();
+    expect(summary.outcomes[0]!.outcome).toBe("error");
+    expect(statusWrites(db.updates, "error").length).toBe(1);
+    // The reactive refresh WAS attempted exactly once (token endpoint hit).
+    const calls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(calls.filter((u) => u.includes("/oauth2/token")).length).toBe(1);
+  });
+});
+
 describe("runTelematicsSync — DARK refuse", () => {
   it("returns { ran:false } with NO admin client and NO network when unconfigured", async () => {
     // No connectable env stubbed.

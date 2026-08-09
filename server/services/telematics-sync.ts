@@ -252,7 +252,9 @@ async function syncOneConnection(
     const r = await refreshAccessToken({ provider, refreshToken });
     if (!r.ok) {
       const message = `token refresh failed: ${r.message}`;
-      await recordConnectionError(loose, conn.id, conn.org_id, message);
+      // TERMINAL (dead grant) ⇒ status='error'; a transient refresh blip keeps the
+      // connection 'connected' so a later tick retries it.
+      await recordConnectionError(loose, conn.id, conn.org_id, message, r.terminal === true);
       return { ...base, outcome: "refresh_failed", written: 0, refreshed: false, message };
     }
     accessToken = r.tokens.accessToken;
@@ -278,31 +280,45 @@ async function syncOneConnection(
     since: conn.last_sync_at,
   });
 
-  // Retry-once-after-refresh: an access token that expired mid-window fails the
-  // fetch (a 401). If we have a refresh token and have not already refreshed this
-  // pass, refresh and retry exactly once.
-  if (result.status === "error" && refreshToken && !refreshed) {
+  // Reactive refresh: an access token rejected mid-window returns a TERMINAL
+  // (`unauthorized`) fetch result. If we have a refresh token and have not already
+  // refreshed this pass, refresh and retry exactly once. A plain transient error
+  // (5xx / 429 / network — `terminal` unset) does NOT trigger a refresh: a blip is
+  // not a dead grant, and a wasted refresh would only burn the one retry.
+  if (!result.ok && result.terminal === true && refreshToken && !refreshed) {
     const r = await refreshAccessToken({ provider, refreshToken });
-    if (r.ok) {
-      refreshed = true;
-      await persistRefreshedTokens(loose, conn.id, conn.org_id, r.tokens.accessToken, r.tokens.refreshToken, r.tokens.expiresAt);
-      result = await syncTelematicsReadings({
-        orgId: conn.org_id,
-        provider,
-        connectionId: conn.id,
-        accessToken: r.tokens.accessToken,
-        externalAccountId: conn.external_account_id ?? "",
-        resolveVehicleId,
-        since: conn.last_sync_at,
-      });
+    if (!r.ok) {
+      // The refresh itself failed. TERMINAL (dead grant) ⇒ status='error'; a
+      // transient refresh blip keeps the connection 'connected' to retry later.
+      const message = `token refresh failed: ${r.message}`;
+      await recordConnectionError(loose, conn.id, conn.org_id, message, r.terminal === true);
+      return { ...base, outcome: "refresh_failed", written: 0, refreshed, message };
     }
+    refreshed = true;
+    // A provider MAY rotate the refresh token; keep the prior one when it does not.
+    refreshToken = r.tokens.refreshToken ?? refreshToken;
+    await persistRefreshedTokens(loose, conn.id, conn.org_id, r.tokens.accessToken, r.tokens.refreshToken, r.tokens.expiresAt);
+    result = await syncTelematicsReadings({
+      orgId: conn.org_id,
+      provider,
+      connectionId: conn.id,
+      accessToken: r.tokens.accessToken,
+      externalAccountId: conn.external_account_id ?? "",
+      resolveVehicleId,
+      since: conn.last_sync_at,
+    });
   }
 
   if (result.status === "skipped_dark") {
     return { ...base, outcome: "skipped_dark", written: 0, refreshed, message: result.message };
   }
   if (!result.ok) {
-    await recordConnectionError(loose, conn.id, conn.org_id, result.message);
+    // A still-`unauthorized` result after the refresh+retry (or one with no refresh
+    // token to refresh with) is TERMINAL ⇒ status='error' (reconnect required). A
+    // plain transient fetch error keeps status='connected' so a later tick
+    // self-heals — the terminal/transient split that stops one blip stranding a
+    // live feed forever.
+    await recordConnectionError(loose, conn.id, conn.org_id, result.message, result.terminal === true);
     return { ...base, outcome: "error", written: 0, refreshed, message: result.message };
   }
 
@@ -452,9 +468,15 @@ async function markSynced(
   connectionId: string,
   orgId: string,
 ): Promise<void> {
+  // SELF-HEAL: a successful pass RE-ASSERTS status='connected' and clears
+  // last_error, so a connection recovering from a prior TRANSIENT failure (which
+  // kept it 'connected' + stamped last_error) returns to a clean healthy state.
+  // A row that reached a TERMINAL 'error' is never selected by the cron, so it
+  // cannot be silently healed here — only re-consent (the callback upsert) clears
+  // a terminal error. This mirrors bank-sync / calendar self-heal exactly.
   await loose
     .from("telematics_connections")
-    .update({ last_sync_at: new Date().toISOString(), last_error: null })
+    .update({ status: "connected", last_sync_at: new Date().toISOString(), last_error: null })
     .eq("id", connectionId)
     .eq("org_id", orgId);
 }
@@ -464,11 +486,25 @@ async function recordConnectionError(
   connectionId: string,
   orgId: string,
   message: string,
+  terminal = false,
 ): Promise<void> {
   // Never persist a secret — `message` is a coarse failure signal only.
+  //
+  // TERMINAL (a revoked/expired grant — a token 400/401/403 / invalid_grant) ⇒
+  // flip status='error' so the cron STOPS selecting this connection
+  // (runTelematicsSync filters status='connected') and the panel's "reconnect
+  // required" state goes live; re-consent (the callback upsert) is the only thing
+  // that clears it. TRANSIENT (5xx / 429 / network / decrypt) keeps
+  // status='connected' + last_error so a later tick self-heals — never strand a
+  // live feed on one blip. This is the fix for the class the C47/C48 invariant
+  // defines: before this, a revoked telematics token was written as last_error
+  // ONLY, status was never set, so it retried forever and the reconnect UI was
+  // dead code.
+  const patch: Record<string, unknown> = { last_error: message };
+  if (terminal) patch.status = "error";
   await loose
     .from("telematics_connections")
-    .update({ last_error: message })
+    .update(patch)
     .eq("id", connectionId)
     .eq("org_id", orgId);
 }

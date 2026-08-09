@@ -198,6 +198,22 @@ export type ExchangeResult =
   | { ok: false; reason: "not_configured" | "error"; message: string };
 
 /**
+ * A token-REFRESH outcome. Same shape as ExchangeResult plus a `terminal` flag on
+ * failure so the sync engine can split a DEAD grant from a transient blip exactly
+ * as bank-sync / calendar do.
+ *
+ * TERMINAL means the grant itself is dead (invalid_grant / 400 / 401 / 403 from the
+ * token endpoint): no retry can recover it without a fresh OAuth consent, so the
+ * caller persists status='error' (reconnect required). Absent/false means the
+ * failure is TRANSIENT (network blip / 5xx / 429 / a 2xx with no token) and the
+ * caller keeps the connection 'connected' to retry on a later tick — never
+ * stranding a live feed on one failure.
+ */
+export type RefreshResult =
+  | { ok: true; tokens: ProviderTokens }
+  | { ok: false; reason: "not_configured" | "error"; message: string; terminal?: boolean };
+
+/**
  * Exchange an authorization code for tokens. REFUSES (no `fetch`) when the
  * provider is not connectable — the dark path is structural: the network call
  * below is unreachable without client credentials. The provider account id is
@@ -311,7 +327,7 @@ export async function exchangeCodeForTokens(params: {
 export async function refreshAccessToken(params: {
   provider: TelematicsProvider;
   refreshToken: string;
-}): Promise<ExchangeResult> {
+}): Promise<RefreshResult> {
   const { provider, refreshToken } = params;
 
   // DARK GUARD FIRST. No credentials → return WITHOUT touching the network.
@@ -354,8 +370,13 @@ export async function refreshAccessToken(params: {
   }
 
   if (!res.ok) {
-    // Do NOT echo the response body wholesale — it can carry sensitive detail.
-    return { ok: false, reason: "error", message: `token refresh returned ${res.status}` };
+    // invalid_grant surfaces as 400/401/403 on the token endpoint: the refresh
+    // token is revoked/expired and NO retry can recover it — re-consent required
+    // (TERMINAL). Any other status (5xx, 429, ...) is a transient provider blip and
+    // is left retriable so a live connection is not stranded on one failure. Do NOT
+    // echo the response body wholesale — it can carry sensitive detail.
+    const terminal = res.status === 400 || res.status === 401 || res.status === 403;
+    return { ok: false, reason: "error", message: `token refresh returned ${res.status}`, terminal };
   }
 
   const json = (await res.json()) as {
@@ -364,6 +385,8 @@ export async function refreshAccessToken(params: {
     expires_in?: number;
   };
   if (!json.access_token) {
+    // A 2xx with no token is a provider contract violation, not a dead grant —
+    // treat as TRANSIENT (retriable) rather than permanently stranding the org.
     return { ok: false, reason: "error", message: "token refresh returned no access token" };
   }
 
