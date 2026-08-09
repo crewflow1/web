@@ -333,7 +333,12 @@ async function renderInvoice(inv: InvoiceRow | null, ctx: RenderCtx): Promise<Ui
     due_date: inv.due_date,
     paid_at: inv.paid_at,
     notes: inv.notes,
-    customer_name: inv.quote?.customer?.name ?? ctx.customer.name ?? null,
+    // BILL TO is the portal-verified owning customer (the invoice was filtered
+    // to ctx.customer.id), so it is the authoritative name — resolve it FIRST,
+    // quote only as a legacy fallback. A stage invoice has no quote, so a
+    // quote-first read would have printed the fallback anyway; ordering it first
+    // makes a quote-less invoice print the right addressee by construction.
+    customer_name: ctx.customer.name ?? inv.quote?.customer?.name ?? null,
     org_name: ctx.orgData.name ?? ctx.org.name ?? "",
     org_phone: ctx.orgData.phone ?? null,
     org_vat_number: ctx.orgData.vat_number ?? null,

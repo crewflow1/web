@@ -1,6 +1,7 @@
 import "server-only";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { InvoicePdf, type InvoicePdfInput } from "@/lib/pdf/invoice-pdf";
+import { invoiceCustomerName } from "@/lib/invoices/customer";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 
 /**
@@ -17,6 +18,10 @@ type JoinedInvoice = {
   due_date: string | null;
   paid_at: string | null;
   notes: string | null;
+  // Direct customer anchor (Issue #349 Phase 1) — preferred over the quote path,
+  // which is NULL for every stage-billing invoice. A caller wiring this helper up
+  // must join `customer:customers!invoices_customer_org_fkey ( name )`.
+  customer?: { name: string | null } | null;
   quote: {
     customer: { name: string | null; email: string | null } | null;
   } | null;
@@ -52,7 +57,7 @@ export async function renderInvoicePdf(
     due_date: invoice.due_date,
     paid_at: invoice.paid_at,
     notes: invoice.notes,
-    customer_name: invoice.quote?.customer?.name ?? null,
+    customer_name: invoiceCustomerName(invoice),
     org_name: invoice.org?.name ?? "CrewFlow",
     org_phone: invoice.org?.phone ?? null,
     org_vat_number: invoice.org?.vat_number ?? null,

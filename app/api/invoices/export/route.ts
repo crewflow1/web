@@ -65,6 +65,9 @@ type InvoiceRow = {
   created_at: string;
   notes: string | null;
   quote_id: string | null;
+  // Direct customer anchor (Issue #349 Phase 1) — preferred over the quote path,
+  // which is NULL for every stage-billing invoice.
+  customer: { name: string | null } | null;
   quote: { customer: { name: string | null } | null } | null;
 };
 
@@ -106,6 +109,7 @@ export async function GET(request: NextRequest) {
         `
         id, number, status, amount, vat_total, total, due_date, paid_at,
         created_at, notes, quote_id,
+        customer:customers!invoices_customer_org_fkey ( name ),
         quote:quotes ( customer:customers ( name ) )
       `,
       )
@@ -159,7 +163,7 @@ export async function GET(request: NextRequest) {
           r.number,
           r.created_at.slice(0, 10),
           r.status,
-          r.quote?.customer?.name ?? "",
+          r.customer?.name ?? r.quote?.customer?.name ?? "",
           net.toFixed(2),
           vat.toFixed(2),
           (net + vat).toFixed(2),
@@ -261,7 +265,7 @@ export async function GET(request: NextRequest) {
   const lines = [header.join(",")];
 
   for (const inv of rows) {
-    const contact = inv.quote?.customer?.name ?? "";
+    const contact = inv.customer?.name ?? inv.quote?.customer?.name ?? "";
     const invDate = XERO_DATE(inv.created_at);
     const dueDate = inv.due_date ? XERO_DATE(`${inv.due_date}T00:00:00Z`) : "";
 
