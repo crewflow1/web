@@ -58,7 +58,10 @@ describe("money-out composes the existing authorities and adds no new money math
   it("imports each authority rather than restating it", () => {
     const required: Array<[RegExp, string]> = [
       [/import \{[\s\S]*?computeBillSettlements[\s\S]*?\} from "@\/lib\/suppliers\/payments"/, "supplier settlement"],
-      [/import \{ computeVatQuarter \} from "@\/lib\/tax\/compute"/, "VAT quarter"],
+      // computeVatQuarter is the VAT authority; endOfQuarterExclusiveIso is the
+      // quarter-boundary helper from that SAME module, imported so /cash bounds
+      // its window exactly as the tile/PDF/HMRC do. Both must come from here.
+      [/import \{[\s\S]*?computeVatQuarter[\s\S]*?\} from "@\/lib\/tax\/compute"/, "VAT quarter"],
       [/import \{ buildMonthlyReturnDataset[\s\S]*?\} from "@\/lib\/cis\/statements"/, "CIS monthly totals"],
       [/import \{ cisPaymentDueDate[\s\S]*?\} from "@\/lib\/cis\/tax-month"/, "CIS payment deadline"],
       [/import \{ computeCommittedCosts[\s\S]*?\} from "@\/lib\/purchase-orders\/committed"/, "committed costs"],

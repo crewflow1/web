@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { computeVatQuarter, computeCorpTaxYear } from "@/lib/tax/compute";
+import {
+  computeVatQuarter,
+  computeCorpTaxYear,
+  endOfQuarterExclusiveIso,
+} from "@/lib/tax/compute";
+import {
+  computeOrgCashOut,
+  type CashOutVatInvoiceRow,
+} from "@/lib/commercial/cash-out";
 
 /**
  * VAT input-floor consistency across the THREE authoritative surfaces
@@ -112,6 +120,74 @@ describe("VAT input floor is identical across tile / PDF / HMRC 9-box (Apr–Jun
     expect(buggy.net_payable - fixed.net_payable).toBe(40);
     // The fix recovers exactly the dropped 1–5 April input VAT.
     expect(fixed.input_vat - buggy.input_vat).toBe(40);
+  });
+
+  it("/cash uses the SAME bounded quarter window — a future-dated paid invoice cannot leak a later quarter's VAT", () => {
+    // ── THE /cash DIVERGENCE ────────────────────────────────────────────────
+    // /cash folds computeVatQuarter().net_payable into outflowDueNow. `paid_at`
+    // is user-controllable, so a PAID invoice can be post-dated into a LATER
+    // quarter (a post-dated cheque). The tile/PDF/HMRC surfaces all pass the
+    // EXCLUSIVE upper bound, so they exclude it; if cash-out omits the bound its
+    // inPeriod() degrades to `iso >= quarterStart` with NO ceiling and the later
+    // quarter's output VAT leaks into /cash's current "VAT due".
+    const quarterEndExclusive = endOfQuarterExclusiveIso(quarterStartIso); // 2025-07-01
+
+    const vatInvoices: CashOutVatInvoiceRow[] = [
+      // In-quarter paid invoice: 100 of output VAT. Counts under every window.
+      {
+        status: "paid",
+        vat_total: 100,
+        total: 600,
+        amount: 500,
+        paid_at: "2025-05-10",
+        created_at: "2025-05-10",
+      },
+      // Post-dated cheque: PAID but paid_at is in the NEXT quarter (15 Aug).
+      // The bounded window (< 1 Jul) MUST exclude its 500 of output VAT.
+      {
+        status: "paid",
+        vat_total: 500,
+        total: 3000,
+        amount: 2500,
+        paid_at: "2025-08-15",
+        created_at: "2025-08-15",
+      },
+    ];
+
+    // The /tax authority on the bounded window: only the in-quarter 100 counts.
+    const authority = computeVatQuarter(
+      vatInvoices,
+      [],
+      quarterStartIso,
+      quarterEndExclusive,
+    );
+    expect(authority.net_payable).toBe(100);
+
+    // The pre-fix open-ended window (what a 3-arg cash-out call degrades to)
+    // would leak the post-dated 500 in — this is the divergence being pinned out.
+    const openEnded = computeVatQuarter(vatInvoices, [], quarterStartIso);
+    expect(openEnded.net_payable).toBe(600);
+
+    // /cash via the REAL code path: everything else empty, VAT only.
+    const cash = computeOrgCashOut({
+      bills: [],
+      payments: [],
+      allocations: [],
+      purchaseOrders: [],
+      payrollRuns: [],
+      payrollLines: [],
+      cisSnapshots: [],
+      vatInvoices,
+      vatFinances: [],
+      quarterStartIso,
+      todayIso: "2025-05-15",
+    });
+
+    // /cash's VAT window is IDENTICAL to the /tax authority: the post-dated
+    // 500 is excluded. Fails (cash.vatDue === 600) if cash-out drops the bound.
+    expect(cash.vatDue).toBe(authority.net_payable);
+    expect(cash.vatDue).toBe(100);
+    expect(cash.vatDue).not.toBe(openEnded.net_payable); // the leaked 600
   });
 
   it("Corporation Tax is unchanged by the wider fetch — computeCorpTaxYear re-gates on yearStart", () => {
