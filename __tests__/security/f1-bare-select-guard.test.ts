@@ -129,6 +129,19 @@ const HIGH_VALUE_TABLES = new Set<string>([
   "billing_invoices",
   "notifications",
   "health_score_events",
+  // ── Job billing schedule / retention (F-1 portal-schedule residual wave). All
+  // cross-tenant (RLS admits every org the caller belongs to) and read org-wide
+  // over a fully-paged jobId set on the RLS-bypassing portal admin client. A
+  // clamped read is a CUSTOMER-FACING money/correctness defect:
+  //   retention_releases  — a clamped read UNDER-counts released retention, so
+  //                         held = max(0, accrued − released) OVER-states the
+  //                         retention held shown to the customer (portal-schedule).
+  //   job_billing_plans   — a clamped read drops planIds, so stages of later
+  //                         plans vanish from the customer's schedule.
+  //   job_billing_stages  — a clamped read silently drops schedule rows.
+  "job_billing_plans",
+  "job_billing_stages",
+  "retention_releases",
 ]);
 
 // "file:line" → reason. Keep tight; every entry is a documented smell.
@@ -217,6 +230,41 @@ const ALLOWLIST: Record<string, string> = {
   // so it cannot truncate; it trips only because the region carries `.select(`.
   "server/services/notifications-service.ts:140":
     "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read",
+
+  // ── Job-billing schedule / retention wave — genuinely-bounded SINGLE-SCOPE
+  //    reads surfaced once job_billing_plans/job_billing_stages/retention_releases
+  //    joined HIGH_VALUE_TABLES. Each is scoped to ONE job or ONE plan, never an
+  //    org-wide estate scan; cardinality is bounded by the single parent, far
+  //    below the 1000 cap. (The org-wide portal-schedule reads that motivated the
+  //    wave are PAGED via fetchAllRows in app/customer-portal/[token]/_schedule.ts,
+  //    not allowlisted — the delete-the-fix probe proves the guard bites them.)
+  "app/(app)/jobs/retention-actions.ts:178":
+    "bounded: ONE job's retention releases (.eq('job_id', jobId)) — folded into the retention position for a single job; a job's releases are a handful, never near 1000. (Surfaced via the .from(as never) cast form; sibling to the already-allowlisted :163 invoices read in the same fn.)",
+  "server/services/billing.ts:163":
+    "bounded: ONE plan's stages (.eq('org_id').eq('plan_id', plan.id)) — the stages of a single active billing plan; a plan has a handful of stages, never near 1000",
+
+  // ── VACUOUSNESS-HARDENING WAVE (statement-scoped regionAround) ──────────────
+  // regionAround was tightened from a fixed BEFORE=300/AFTER=1100 CHARACTER window
+  // to the ENCLOSING STATEMENT, because the old window bled a paged NEIGHBOUR's
+  // fetchAllRows/.range markers into a bare read's window and VACUOUSLY greened it
+  // (the exact bug the portal-schedule delete-the-fix probe exposed). Tightening
+  // surfaced these pre-existing reads that were ALSO only green via neighbour
+  // bleed. Each is verified GENUINELY bounded / paged / not-a-read — none is a
+  // truncation bug (none needed paging), so each carries an honest reason:
+  "app/(app)/delays/_data.ts:92":
+    "bounded: jobs label lookup .in('id', ids) where ids is a de-duped Set drawn from the delays register (a bounded parent set) — batched name/date labels, ≤ parent rows, never near 1000. Same class as diary/page.tsx:83.",
+  "app/(app)/quality/_data.ts:241":
+    "bounded: jobs label lookup .in('id', ids) where ids is a de-duped Set drawn from the quality register (a bounded parent set) — batched name/date labels, ≤ parent rows. Same class as diary/page.tsx:83.",
+  "app/(app)/jobs/[id]/billing/actions.ts:81":
+    "bounded: ONE plan's stages (.eq('org_id').eq('plan_id', planId)) — the stages of a single billing plan; a plan has a handful of stages, never near 1000",
+  "lib/schedule/calendar-data.ts:92":
+    "paged: the jobs read IS complete — .from('jobs') lives in a `scoped()` builder-closure and is paged via fetchAllRows((from,to) => scoped()…range(from,to)) at the two call sites (nonRecurring + recurring) in a SEPARATE statement, beyond the statement-scoped window. Same builder class as leads/page.tsx:51.",
+  "app/(app)/invoices/[id]/page.tsx:110":
+    "bounded: ONE invoice's payments (.eq('invoice_id', id)) — the payment ledger for a single invoice folded into paidTotal; a single invoice has a handful of payments, never near 1000",
+  "app/admin/billing/actions.ts:160":
+    "not a read: `untypedAdminTable('billing_invoices').insert(insert).select('id')` — INSERT…RETURNING, bounded by the inserted row, cannot truncate a read; flagged only because the statement carries `.select(`. Same class as notifications-service.ts:140.",
+  "server/services/bank-sync.ts:608":
+    "bounded: chunked dedupe read .in('provider_tx_id', batch) where batch = providerTxIds.slice(i, i+DEDUPE_IN_CHUNK) — each call returns ≤ DEDUPE_IN_CHUNK rows, well below the 1000 cap. Same class as cis-statements.ts:169.",
 };
 
 function walk(dir: string, out: string[]): void {
@@ -244,16 +292,37 @@ function stripComments(src: string): string {
 }
 
 /**
- * Look at the enclosing region around a `.from("TABLE")` read: a window BEFORE
- * (to catch a `fetchAllRows(...)` wrapper, incl. the common multi-statement
- * `let q = supabase.from(...)…; return q.range(lo,hi)` shape) and AFTER (to catch
- * the chain's terminator methods across one `let q = …;` statement boundary).
- * Trades a little precision for not false-positiving paged reads.
+ * The enclosing region around a `.from("TABLE")` read, used to look for the
+ * paged/single-row bound markers. STATEMENT-SCOPED (the anti-vacuous fix).
+ *
+ * Earlier this was a fixed BEFORE=300 / AFTER=1100 CHARACTER window, and that
+ * window BLED across `;` boundaries into an ADJACENT read: a bare
+ * `.from("retention_releases")` sitting one statement above a PAGED
+ * `job_billing_stages` read had the neighbour's `fetchAllRows`/`.range()` fall
+ * inside its window, so the bare read was VACUOUSLY greened — a guard that
+ * protected nothing (proved by the delete-the-fix probe on _schedule.ts: reverting
+ * the retention fix to a bare read left the suite GREEN).
+ *
+ * The fix: clamp the window to the ENCLOSING STATEMENT (delimited by `;`). A
+ * genuinely paged read keeps ALL its markers in ONE statement — the
+ * `const { … } = await fetchAllRows((from,to) => admin.from(…).select(…).range(
+ * from,to));` shape has `fetchAllRows`, the select chain AND the `.range`
+ * terminator between the same pair of `;` — so paged reads stay correctly
+ * bounded, while a bare read's own statement carries no bound marker and is
+ * flagged. The BEFORE/AFTER char caps remain as performance/precision limits but
+ * they may only SHRINK the slice — they can never extend it PAST a `;` into a
+ * neighbouring read. (The rare two-statement builder `let q = from(…); … q.range()`
+ * shape is handled by ALLOWLIST, e.g. leads/page.tsx.)
  */
 function regionAround(src: string, fromIdx: number): string {
-  const BEFORE = 300;
+  const BEFORE = 400;
   const AFTER = 1100; // wide enough to see the terminator past a long multi-line select list
-  return src.slice(Math.max(0, fromIdx - BEFORE), fromIdx + AFTER);
+  const semiBefore = src.lastIndexOf(";", fromIdx - 1);
+  const start = Math.max(semiBefore + 1, fromIdx - BEFORE, 0);
+  let semiAfter = src.indexOf(";", fromIdx);
+  if (semiAfter === -1) semiAfter = src.length;
+  const end = Math.min(semiAfter, fromIdx + AFTER);
+  return src.slice(start, end);
 }
 
 /** A `.from`-wrapping local helper defeats a literal `.from("TABLE")` scan.

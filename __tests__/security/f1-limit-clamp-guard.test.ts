@@ -125,6 +125,13 @@ const PRODUCER_TABLES = new Set<string>([
   "billing_invoices",
   "notifications",
   "health_score_events",
+  // Job billing schedule / retention (F-1 portal-schedule residual wave) —
+  // mirrors the bare-select guard's HIGH_VALUE_TABLES. Cross-tenant, org-wide
+  // reads feeding the customer-facing portal schedule + retention held total; a
+  // sub-1000 cap silently drops schedule rows / under-counts released retention.
+  "job_billing_plans",
+  "job_billing_stages",
+  "retention_releases",
 ]);
 
 /** "file:line" → reason. Only GENUINELY-bounded top-1000 samples belong here.
