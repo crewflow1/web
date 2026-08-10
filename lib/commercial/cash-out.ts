@@ -8,7 +8,7 @@ import {
 } from "@/lib/suppliers/payments";
 import { computeCommittedCosts, type CommittedCostPosition } from "@/lib/purchase-orders/committed";
 import { computePoBilling } from "@/lib/purchase-orders/billing";
-import { computeVatQuarter } from "@/lib/tax/compute";
+import { computeVatQuarter, endOfQuarterExclusiveIso } from "@/lib/tax/compute";
 import { buildMonthlyReturnDataset, type CisPaymentSnapshotRow } from "@/lib/cis/statements";
 import { cisPaymentDueDate, cisTaxMonthLabel } from "@/lib/cis/tax-month";
 
@@ -364,8 +364,16 @@ export function computeOrgCashOut(input: {
   const unpaidBills = sumMoney(open.map((s) => s.outstanding));
   const billsSettled = sumMoney(settlements.map((s) => s.settled));
 
-  // ── 2. VAT quarter — the tax authority, unchanged ─────────────────────────
-  const vat = computeVatQuarter(input.vatInvoices, input.vatFinances, input.quarterStartIso);
+  // ── 2. VAT quarter — the tax authority, on the SAME bounded window as /tax ──
+  // Pass the exclusive upper bound so a future-dated `paid_at` (e.g. a post-dated
+  // cheque) cannot leak a LATER quarter's output VAT into /cash's "VAT due" while
+  // /tax correctly excludes it. This keeps /cash identical to the tile/PDF/HMRC.
+  const vat = computeVatQuarter(
+    input.vatInvoices,
+    input.vatFinances,
+    input.quarterStartIso,
+    endOfQuarterExclusiveIso(input.quarterStartIso),
+  );
   const vatDue = round2(Math.max(0, vat.net_payable));
   const vatReclaim = round2(Math.max(0, -vat.net_payable));
 

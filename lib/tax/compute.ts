@@ -76,15 +76,19 @@ type FinanceRow = {
  * The single VAT authority — output VAT on PAID invoices, input VAT on logged
  * finance rows, over the quarter `[quarterStartIso, quarterEndIso)`.
  *
- * The lower bound is INCLUSIVE; the optional upper bound is EXCLUSIVE. Pass the
- * exclusive end (start of the next quarter — see `endOfQuarterExclusiveIso`) so a
- * future-dated `paid_at` / `created_at` cannot leak a LATER quarter's VAT into
- * this one. Omitting it preserves the historical open-ended behaviour
- * (everything on/after the start), which the cash-out consumer still relies on.
+ * The lower bound is INCLUSIVE; the optional upper bound is EXCLUSIVE. ALWAYS
+ * pass the exclusive end (start of the next quarter — see
+ * `endOfQuarterExclusiveIso`) so a future-dated `paid_at` / `created_at` (e.g. a
+ * post-dated cheque) cannot leak a LATER quarter's VAT into this one. The
+ * parameter is optional only for backwards compatibility; every live consumer
+ * passes it, and omitting it degrades to open-ended `iso >= quarterStart` with
+ * no upper bound — do not rely on that.
  *
  * Basis is disclosed and deliberate: output VAT is CASH (paid invoices), input
- * VAT is ACCRUAL (all logged costs). The dashboard tile, the quarterly PDF and
- * the HMRC 9-box composer all read THIS function — there is no second calculator.
+ * VAT is ACCRUAL (all logged costs). The dashboard tile, the quarterly PDF, the
+ * HMRC 9-box composer AND the /cash outflow surface (lib/commercial/cash-out)
+ * all read THIS function on the SAME bounded window — there is no second
+ * calculator and no divergent window.
  */
 export function computeVatQuarter(
   invoices: InvoiceRow[],
