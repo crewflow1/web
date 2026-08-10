@@ -74,7 +74,13 @@ describeIntegration("bank-feed first-sync dedupe chunking · real Postgres (414 
       reference: null,
       provider_tx_id: existingId(i),
     }));
-    await expect(gw.insertLines(rows)).resolves.toBeUndefined();
+    // All 1200 seed lines land across the chunked write (no 42P10, no failure). The
+    // write chunks the upsert bodies; the URL-length (414) regression under test is
+    // on the dedupe READ below, which stays chunked.
+    const seedWrite = await gw.insertLines(rows);
+    expect(seedWrite.transientError, "seed insert must not fail").toBeNull();
+    expect(seedWrite.constraintError).toBeNull();
+    expect(seedWrite.inserted).toBe(EXISTING_COUNT);
   });
 
   afterAll(async () => {

@@ -79,6 +79,7 @@ import type {
   PostcodeDistrict,
 } from "../types";
 import { WeatherProviderError } from "../types";
+import { boundedMetric } from "../reading-bounds";
 
 const PROVIDER_ID = "open-meteo";
 
@@ -315,18 +316,24 @@ export function createOpenMeteoProvider(options: OpenMeteoOptions): WeatherProvi
       // from it, and that equivalence holds ONLY because the step is one hour.
       const precipMm = metric(hourly["precipitation"], i);
 
+      // Every metric is run through boundedMetric so a value outside the
+      // weather_readings CHECK / numeric precision (a glitch negative wind, a
+      // >100 % humidity, a precip that overflows numeric(5,2)) is NULLED rather
+      // than emitted — one such value would abort the district's whole upsert and
+      // strand it re-failing every tick. The precip pair is bounded per FIELD
+      // because the rate (numeric(5,2)) and total (numeric(6,2)) ceilings differ.
       const reading: WeatherReading = {
         district: input.district,
         kind: input.kind,
         validAt,
-        airTempC: metric(hourly["temperature_2m"], i),
-        windSpeedMs: metric(hourly["wind_speed_10m"], i),
-        windGustMs: metric(hourly["wind_gusts_10m"], i),
-        precipRateMmH: precipMm,
-        precipTotalMm: precipMm,
-        precipProbPct: metric(hourly["precipitation_probability"], i),
-        humidityPct: metric(hourly["relative_humidity_2m"], i),
-        visibilityM: metric(hourly["visibility"], i),
+        airTempC: boundedMetric(metric(hourly["temperature_2m"], i), "air_temp_c"),
+        windSpeedMs: boundedMetric(metric(hourly["wind_speed_10m"], i), "wind_speed_ms"),
+        windGustMs: boundedMetric(metric(hourly["wind_gusts_10m"], i), "wind_gust_ms"),
+        precipRateMmH: boundedMetric(precipMm, "precip_rate_mm_h"),
+        precipTotalMm: boundedMetric(precipMm, "precip_total_mm"),
+        precipProbPct: boundedMetric(metric(hourly["precipitation_probability"], i), "precip_prob_pct"),
+        humidityPct: boundedMetric(metric(hourly["relative_humidity_2m"], i), "humidity_pct"),
+        visibilityM: boundedMetric(metric(hourly["visibility"], i), "visibility_m"),
       };
 
       // An hour where EVERY measurement is null (the archive's not-yet-

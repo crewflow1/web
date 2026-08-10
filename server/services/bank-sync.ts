@@ -13,6 +13,7 @@ import {
   decryptStoredTokens,
 } from "@/lib/integrations/banking/oauth";
 import { encryptToken } from "@/lib/integrations/token-crypto";
+import { safeBatchWrite } from "@/lib/supabase/safe-batch-write";
 import {
   mapStatementToLines,
   type BankStatementLineInsert,
@@ -102,6 +103,16 @@ export type BankSyncResult = {
   message: string;
 };
 
+/** The outcome of writing the mapped lines, splitting transient from constraint errors. */
+export type BankLinesWriteResult = {
+  /** Rows actually inserted (new; duplicates ignored), summed across chunks/rows. */
+  inserted: number;
+  /** A DB constraint violation was seen and contained via per-row fallback — TERMINAL. */
+  constraintError: string | null;
+  /** A non-constraint (network/infra) write error — caller keeps the feed live to self-heal. */
+  transientError: string | null;
+};
+
 /** A connection row INCLUDING the encrypted token columns — service-role only. */
 export type StoredBankConnection = {
   orgId: string;
@@ -152,8 +163,22 @@ export interface BankSyncGateway {
   existingProviderTxIds(orgId: string, providerTxIds: string[]): Promise<Set<string>>;
   /** Create a bank_statements parent row and return its id (org-pinned). */
   createStatement(orgId: string, filename: string, lineCount: number): Promise<string>;
-  /** Insert statement lines (org-pinned), skipping any that collide on the dedupe key. */
-  insertLines(rows: BankStatementLineInsert[]): Promise<void>;
+  /**
+   * Insert statement lines (org-pinned) via the SHARED chunked + per-row-fallback
+   * safe writer, skipping any that collide on the dedupe key. Returns how many
+   * actually landed and, per the batch-poisoning containment, whether a DB
+   * constraint (contained per-row → TERMINAL) or a transient error (→ keep live)
+   * occurred. NEVER throws for a row/infra error — those are reported, not raised.
+   */
+  insertLines(rows: BankStatementLineInsert[]): Promise<BankLinesWriteResult>;
+  /**
+   * Delete a bank_statements parent (org-pinned). Used to drop an ORPHAN parent
+   * when no line landed — a parent must never be left behind with a non-zero
+   * line_count and zero children.
+   */
+  deleteStatement(orgId: string, statementId: string): Promise<void>;
+  /** Reconcile a parent's line_count to the number of lines that actually inserted (org-pinned). */
+  updateStatementLineCount(orgId: string, statementId: string, lineCount: number): Promise<void>;
   /**
    * Record the outcome of a sync attempt on a connection: always writes last_error
    * (and status only when provided, per the C47 transient/terminal split). Advances
@@ -324,11 +349,54 @@ export async function syncBankConnection(
     }
 
     const filename = `${provider} feed ${new Date().toISOString().slice(0, 10)}`;
+    // The parent must exist before its lines (the FK bank_statement_id), but it must
+    // NEVER be left as an orphan with a non-zero line_count if nothing lands. Create
+    // it, write via the chunked + per-row-fallback safe writer, then reconcile:
+    // delete the parent if zero lines landed, or fix its line_count to what actually
+    // inserted. Line count is stamped up front and corrected below, never guessed.
     const statementId = await gateway.createStatement(orgId, filename, newLines.length);
     const rows = newLines.map((r) => ({ ...r, bank_statement_id: statementId }));
-    await gateway.insertLines(rows);
-    // SELF-HEAL on the mapped path too (see the no_new branch above). SUCCESS ⇒
-    // advance the sync cursor (last_sync_at).
+    const write = await gateway.insertLines(rows);
+
+    if (write.transientError !== null) {
+      // A non-constraint write failure (network / 5xx / DB blip) — not a bad row.
+      // Drop the orphan parent, keep the connection 'connected' (no status), and do
+      // NOT advance the cursor, so a later tick re-fetches the same window and
+      // self-heals. Never strand a live feed on a blip (C47).
+      await gateway.deleteStatement(orgId, statementId);
+      const message = `line insert failed: ${write.transientError}`;
+      await gateway.markSynced(orgId, provider, { lastError: message });
+      return { ok: false, orgId, provider, outcome: "error", inserted: write.inserted, message };
+    }
+
+    if (write.inserted === 0) {
+      // Every candidate row was rejected by a DB constraint the mapper does not yet
+      // mirror (schema drift). Drop the empty parent (no orphan) and go TERMINAL:
+      // the same poison would re-deliver every tick, so surface reconnect/repair
+      // (status='error') rather than silently looping the identical window forever.
+      await gateway.deleteStatement(orgId, statementId);
+      const message = `all ${rows.length} lines rejected by a DB constraint: ${write.constraintError}`;
+      await gateway.markSynced(orgId, provider, { lastError: message, status: "error" });
+      return { ok: false, orgId, provider, outcome: "error", inserted: 0, message };
+    }
+
+    // >= 1 line landed. Reconcile the parent's line_count so it never overstates its
+    // children (a partial per-row fallback drops the bad rows).
+    if (write.inserted !== newLines.length) {
+      await gateway.updateStatementLineCount(orgId, statementId, write.inserted);
+    }
+
+    if (write.constraintError !== null) {
+      // Some lines landed, some were rejected by a constraint the mapper doesn't yet
+      // mirror. Keep the good lines but go TERMINAL (no cursor advance) to surface
+      // the repair, mirroring the telematics posture — do NOT self-heal this pass.
+      const message = `some lines rejected by a DB constraint: ${write.constraintError}`;
+      await gateway.markSynced(orgId, provider, { lastError: message, status: "error" });
+      return { ok: false, orgId, provider, outcome: "error", inserted: write.inserted, message };
+    }
+
+    // Clean success. SELF-HEAL on the mapped path (see the no_new branch above):
+    // restore status='connected', clear last_error, and advance the sync cursor.
     await gateway.markSynced(orgId, provider, {
       lastError: null,
       status: "connected",
@@ -340,8 +408,8 @@ export async function syncBankConnection(
       orgId,
       provider,
       outcome: "mapped",
-      inserted: rows.length,
-      message: `Imported ${rows.length} new transactions.`,
+      inserted: write.inserted,
+      message: `Imported ${write.inserted} new transactions.`,
     };
   } catch (e) {
     const message = e instanceof Error ? e.message : "bank sync failed";
@@ -445,9 +513,14 @@ type LooseAdmin = {
     } & PromiseLike<{ error: { message: string } | null }>;
     upsert: (
       rows: unknown,
-      opts: { onConflict: string; ignoreDuplicates: boolean },
-    ) => PromiseLike<{ error: { message: string } | null }>;
+      opts: { onConflict: string; ignoreDuplicates: boolean; count?: string },
+    ) => PromiseLike<{ error: { message: string; code?: string } | null; count?: number | null }>;
     update: (row: Record<string, unknown>) => {
+      eq: (col: string, val: string) => {
+        eq: (col: string, val: string) => PromiseLike<{ error: { message: string } | null }>;
+      };
+    };
+    delete: () => {
       eq: (col: string, val: string) => {
         eq: (col: string, val: string) => PromiseLike<{ error: { message: string } | null }>;
       };
@@ -557,10 +630,44 @@ export function createAdminGateway(): BankSyncGateway {
     },
 
     async insertLines(rows) {
+      // BATCH-POISONING containment: route through the SHARED safe writer so ONE
+      // uninsertable line can never abort the org's whole batch. The idempotency
+      // contract (onConflict + ignoreDuplicates) lives in this closure, so chunking
+      // preserves it exactly; count:"exact" gives the true newly-inserted count for
+      // the parent's line_count reconciliation. NEVER throws for a row/infra error —
+      // it is returned to the engine (transient → keep live; constraint → TERMINAL).
+      const res = await safeBatchWrite(rows, (chunk) =>
+        admin
+          .from("bank_statement_lines")
+          .upsert(chunk, {
+            onConflict: "org_id,provider_tx_id",
+            ignoreDuplicates: true,
+            count: "exact",
+          }),
+      );
+      return {
+        inserted: res.written,
+        constraintError: res.constraintError,
+        transientError: res.transientError,
+      };
+    },
+
+    async deleteStatement(orgId, statementId) {
       const { error } = await admin
-        .from("bank_statement_lines")
-        .upsert(rows, { onConflict: "org_id,provider_tx_id", ignoreDuplicates: true });
-      if (error) throw new Error(`bank-sync: insertLines failed: ${error.message}`);
+        .from("bank_statements")
+        .delete()
+        .eq("id", statementId)
+        .eq("org_id", orgId);
+      if (error) throw new Error(`bank-sync: deleteStatement failed: ${error.message}`);
+    },
+
+    async updateStatementLineCount(orgId, statementId, lineCount) {
+      const { error } = await admin
+        .from("bank_statements")
+        .update({ line_count: lineCount })
+        .eq("id", statementId)
+        .eq("org_id", orgId);
+      if (error) throw new Error(`bank-sync: updateStatementLineCount failed: ${error.message}`);
     },
 
     async markSynced(orgId, provider, fields) {
