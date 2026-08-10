@@ -62,14 +62,23 @@ export async function loadPortalSchedule(orgId: string, customerId: string): Pro
   if (jobIds.length === 0) return EMPTY;
 
   // 2. Active plans for those jobs (one active plan per job).
-  const { data: planData, error: planError } = await admin
-    .from("job_billing_plans")
-    .select("id")
-    .eq("org_id", orgId)
-    .in("job_id", jobIds)
-    .eq("status", "active");
+  // F-1: page the full set — a long-running customer's jobs can carry more than
+  // the 1000-row PostgREST cap of active plans, and a clamped set here drops
+  // planIds, so the stages of later plans vanish from the schedule. Order by the
+  // UNIQUE id so fetchAllRows has a stable total order (a non-unique key can drop
+  // or duplicate rows at a 500-row page boundary — the very class fixed here).
+  const { data: planData, error: planError } = await fetchAllRows<Row>((from, to) =>
+    admin
+      .from("job_billing_plans")
+      .select("id")
+      .eq("org_id", orgId)
+      .in("job_id", jobIds)
+      .eq("status", "active")
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (planError) throw readFailure("portal schedule: billing plans", planError);
-  const planIds = (planData ?? []).map((p) => String(p.id));
+  const planIds = planData.map((p) => String(p.id));
 
   // 3. Invoices + payments + releases for those jobs (stage status + retention).
   // F-1: page the full set — a long-running customer's jobs can carry more
@@ -104,25 +113,44 @@ export async function loadPortalSchedule(orgId: string, customerId: string): Pro
       paidByInvoice.set(id, round2((paidByInvoice.get(id) ?? 0) + toPounds(mv(p.amount))));
     }
   }
-  const { data: relData, error: relError } = await admin
-    .from("retention_releases")
-    .select("job_id, amount")
-    .eq("org_id", orgId)
-    .in("job_id", jobIds);
+  // F-1: page the full set — a clamped read here UNDER-counts released retention,
+  // which OVER-states the retention held shown to the CUSTOMER (held = max(0,
+  // accrued − released) in lib/retentions/compute.ts). Order by the UNIQUE id
+  // (not the non-unique job_id) so fetchAllRows has a stable total order; the
+  // rollup groups by job_id in JS, so the order only has to be stable. Mirrors
+  // app/(app)/dashboard/page.tsx.
+  const { data: relData, error: relError } = await fetchAllRows<Row>((from, to) =>
+    admin
+      .from("retention_releases")
+      .select("job_id, amount")
+      .eq("org_id", orgId)
+      .in("job_id", jobIds)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (relError) throw readFailure("portal schedule: retention releases", relError);
 
   // 4. Stages of the active plans (job- AND plan-scoped — belt and braces).
+  // F-1: page the full set — a clamped read silently drops schedule rows for a
+  // long-running customer. Keep the display order by `sequence`, but ADD the
+  // UNIQUE id as a stable tiebreaker: sequence is not unique across jobs/plans,
+  // and fetchAllRows needs a stable total order or rows sharing a sequence value
+  // can be dropped/duplicated at a 500-row page boundary (the class fixed here).
   let stageRows: Row[] = [];
   if (planIds.length > 0) {
-    const { data: stageData, error: stageError } = await admin
-      .from("job_billing_stages")
-      .select("id, job_id, sequence, name, amount, vat_rate, due_date, invoice_id")
-      .eq("org_id", orgId)
-      .in("job_id", jobIds)
-      .in("plan_id", planIds)
-      .order("sequence", { ascending: true });
+    const { data: stageData, error: stageError } = await fetchAllRows<Row>((from, to) =>
+      admin
+        .from("job_billing_stages")
+        .select("id, job_id, sequence, name, amount, vat_rate, due_date, invoice_id")
+        .eq("org_id", orgId)
+        .in("job_id", jobIds)
+        .in("plan_id", planIds)
+        .order("sequence", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
     if (stageError) throw readFailure("portal schedule: billing stages", stageError);
-    stageRows = stageData ?? [];
+    stageRows = stageData;
   }
 
   const stages = stageRows.map((s) => {
