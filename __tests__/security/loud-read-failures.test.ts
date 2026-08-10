@@ -455,7 +455,14 @@ const RATCHET: Array<{
   {
     scope: "app outside (app) — admin/api/portal/q/onboarding",
     dirs: ["app/admin", "app/api", "app/customer-portal", "app/q", "app/onboarding"],
-    discard: 15,
+    // 15 → 13 (cert-PDF letterhead fix): both completion-certificate PDF routes
+    // — app/api/completion-certificates/[id]/pdf/route.tsx and
+    // app/customer-portal/[token]/certificates/[id]/pdf/route.tsx — read org
+    // branding with a discarding `const { data: org } = await …` (error dropped,
+    // org→{} → BLANK letterhead + no logo on a live contractual PDF). Both now
+    // bind `error` and fail loud (throw readFailure / 500), so the reads leave
+    // the ledger. 2 discards retired.
+    discard: 13,
     softData: 10,
     countOnly: 0,
   },

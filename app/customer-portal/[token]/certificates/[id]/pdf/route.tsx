@@ -3,6 +3,8 @@ import { renderToBuffer } from "@react-pdf/renderer";
 import { loadCustomerByPortalToken } from "@/app/customer-portal/_helpers";
 import { loadPortalCertificate } from "@/app/customer-portal/_certificates";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 import { CompletionCertificatePdf } from "@/lib/pdf/completion-certificate-pdf";
 import { safeReportFilename } from "@/lib/site-reports/portal";
 
@@ -33,22 +35,43 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
   if (!cert || !cert.snapshot) return NextResponse.json({ error: "Not available" }, { status: 404 });
 
   const admin = createAdminClient();
-  const { data: org } = await (
+  // `organizations` has NO flat address columns — the letterhead address is a
+  // single jsonb blob ({ line1?, city?, postcode? }), the same shape the
+  // invoice/quote PDFs and the bulk-download certificate render consume. The
+  // logo is either an uploaded object (logo_path → signed URL) or a legacy
+  // external URL (logo_url); resolveOrgLogoSrc handles both.
+  type OrgBrandingRow = {
+    name: string | null;
+    logo_url: string | null;
+    logo_path: string | null;
+    address: { line1?: string; city?: string; postcode?: string } | null;
+  };
+  const { data: org, error: orgError } = await (
     admin.from("organizations") as unknown as {
-      select: (c: string) => { eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: Record<string, string | null> | null }> } };
+      select: (c: string) => { eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: OrgBrandingRow | null; error: SupabaseReadError | null }> } };
     }
   )
-    .select("name, logo_url, address_line1, address_line2, city, county, postcode")
+    .select("name, logo_url, logo_path, address")
     .eq("id", loaded.org.id)
     .maybeSingle();
-  const orgRow = (org ?? {}) as Record<string, string | null>;
+  // A branding read FAILURE must not silently degrade to a blank letterhead on a
+  // contractual document — fail loud (mirrors portal-bulk-download's loud reads).
+  if (orgError) throw readFailure("portal certificate: org branding", orgError);
+  const orgRow = (org ?? {}) as OrgBrandingRow;
   const orgName = orgRow.name ?? loaded.org.name ?? "Contractor";
-  const orgBlockLines = [orgRow.address_line1, orgRow.address_line2, [orgRow.city, orgRow.postcode].filter(Boolean).join(" ")]
-    .filter((l): l is string => Boolean(l && l.trim()));
+  const addr = orgRow.address ?? null;
+  const orgBlockLines = [
+    addr?.line1,
+    [addr?.city, addr?.postcode].filter(Boolean).join(" "),
+  ].filter((l): l is string => Boolean(l && l.trim()));
+  const logoUrl = await resolveOrgLogoSrc(
+    { logo_path: orgRow.logo_path, logo_url: orgRow.logo_url },
+    admin,
+  );
 
   const buffer = await renderToBuffer(
     <CompletionCertificatePdf
-      c={{ orgName, orgBlockLines, logoUrl: orgRow.logo_url ?? null, snapshot: cert.snapshot, isDraft: false }}
+      c={{ orgName, orgBlockLines, logoUrl, snapshot: cert.snapshot, isDraft: false }}
     />,
   );
   return new NextResponse(new Uint8Array(buffer), {
