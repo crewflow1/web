@@ -514,6 +514,60 @@ describe("exposable-event allowlist — drift guard against the spine registry",
     }
   });
 
+  it("create-as-completed jobs emit job.completed — the activity trigger produces the status transition (behaviour, not a CASE existence)", () => {
+    // The mapper's `job.completed` CASE is only HALF the producer edge: it fires
+    // solely from an activity action p_action='job.status_changed' with
+    // metadata.to='completed'. A job LOGGED already-completed from /jobs/new is a
+    // plain INSERT, so whether the spine ever sees a completion depends entirely on
+    // whether the jobs activity trigger's INSERT branch records that transition.
+    // Assert exactly that BEHAVIOUR: the latest definition of _tg_jobs_activity, in
+    // its INSERT branch, records job.status_changed → to:'completed' when the new
+    // row is completed. This FAILS on the pre-fix trigger (INSERT emitted only
+    // job.created) and passes once the producer edge is complete. The live-DB proof
+    // (INSERT jobs status='completed' ⇒ a job.completed hq_events row) runs in
+    // __tests__/integration/ on CI; this static pin guards the SQL that makes it so.
+    const defFile = readdirSync(MIG_DIR)
+      .filter((f) => f.endsWith(".sql"))
+      .filter((f) =>
+        readFileSync(resolve(MIG_DIR, f), "utf8").includes(
+          "create or replace function public._tg_jobs_activity",
+        ),
+      )
+      .sort()
+      .at(-1);
+    expect(defFile, "no migration defines _tg_jobs_activity").toBeTruthy();
+
+    const body = sqlOnly(readFileSync(resolve(MIG_DIR, defFile!), "utf8"));
+    const fnStart = body.indexOf("create or replace function public._tg_jobs_activity");
+    expect(fnStart).toBeGreaterThan(-1);
+
+    // Isolate ONLY the INSERT branch so an UPDATE-path status_changed can never
+    // satisfy this assertion by accident.
+    const insStart = body.indexOf("if TG_OP = 'INSERT' then", fnStart);
+    const insEnd = body.indexOf("elsif TG_OP = 'UPDATE'", insStart);
+    expect(insStart).toBeGreaterThan(-1);
+    expect(insEnd).toBeGreaterThan(insStart);
+    const insertBranch = body.slice(insStart, insEnd);
+
+    // The completion transition is guarded on the new row being completed, and
+    // records job.status_changed with to:'completed' (whitespace-insensitive).
+    const flat = insertBranch.replace(/\s+/g, " ");
+    expect(
+      /new\.status = 'completed'/i.test(flat),
+      "INSERT branch must guard on NEW.status='completed'",
+    ).toBe(true);
+    expect(
+      /'job\.status_changed'/.test(flat),
+      "INSERT branch must record job.status_changed for a create-as-completed job",
+    ).toBe(true);
+    const transitionRe =
+      /_record_activity\([^;]*'job\.status_changed'[^;]*'to',\s*'completed'/;
+    expect(
+      transitionRe.test(flat),
+      "INSERT branch must record job.status_changed with to:'completed' so the spine emits job.completed",
+    ).toBe(true);
+  });
+
   it("the allowlist is minimal and non-empty (a data-boundary decision)", () => {
     expect(EXPOSABLE_WEBHOOK_EVENTS.length).toBeGreaterThan(0);
     expect(EXPOSABLE_WEBHOOK_EVENTS.length).toBeLessThanOrEqual(12);
