@@ -192,3 +192,63 @@ describe("normalizeTrueLayerTransactions — native shape → agnostic shape", (
     expect(row.reference).toBe("tl-1"); // no provider_reference → falls back to id
   });
 });
+
+// ---------------------------------------------------------------------------
+// bank_statement_lines CHECK/NOT-NULL compliance — the mapper DROPS an
+// uninsertable line (mig 20260524 / 20261109)
+//
+// The row shape under-mirrored two hard constraints: `posted_at date NOT NULL`
+// and `amount numeric(12,2)`. dateOnly() returned "" for a missing bookedAt and
+// wrote it to posted_at → 22007, and an amount past the precision ceiling → 22003
+// — and ONE such row aborts the WHOLE batch insert (0 lines written, the org's
+// feed stranded tick after tick). mapStatementToLines now DROPS such a line. These
+// are RED pre-fix (the mapper mirrored NEITHER, so the poison line survived).
+// ---------------------------------------------------------------------------
+
+describe("mapStatementToLines — DB-constraint compliance (drops an uninsertable line)", () => {
+  const GOOD = tx({ id: "good", bookedAt: "2026-07-15T09:30:00Z", amount: 100, direction: "credit" });
+
+  const CONSTRAINT_VIOLATIONS: ReadonlyArray<{ check: string; bad: AggregatorTransaction }> = [
+    { check: "posted_at date NOT NULL — empty booking date", bad: tx({ id: "empty-date", bookedAt: "" }) },
+    { check: "posted_at date NOT NULL — unparseable booking date", bad: tx({ id: "bad-date", bookedAt: "not-a-date" }) },
+    { check: "amount numeric(12,2) — magnitude past the precision ceiling", bad: tx({ id: "huge", amount: 1e13, direction: "credit" }) },
+  ];
+
+  it.each(CONSTRAINT_VIOLATIONS)(
+    "drops a line violating: $check (keeps the good line)",
+    ({ bad }) => {
+      const rows = mapStatementToLines({ accountId: "a", transactions: [GOOD, bad] }, TARGET);
+      expect(rows.map((r) => r.provider_tx_id)).toEqual(["good"]);
+    },
+  );
+
+  it("keeps a line at the exact numeric(12,2) ceiling and a valid plain date", () => {
+    const rows = mapStatementToLines(
+      {
+        accountId: "a",
+        transactions: [
+          tx({ id: "ceiling", amount: 9_999_999_999.99, direction: "credit", bookedAt: "2026-02-01" }),
+        ],
+      },
+      TARGET,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.amount).toBe(9_999_999_999.99);
+    expect(rows[0]!.posted_at).toBe("2026-02-01");
+  });
+
+  it("one poison line drops ONLY itself — the rest of the statement still maps", () => {
+    const rows = mapStatementToLines(
+      {
+        accountId: "a",
+        transactions: [
+          tx({ id: "a1", bookedAt: "2026-07-01", amount: 10, direction: "credit" }),
+          tx({ id: "poison", bookedAt: "", amount: 20, direction: "debit" }),
+          tx({ id: "a2", bookedAt: "2026-07-02", amount: 30, direction: "credit" }),
+        ],
+      },
+      TARGET,
+    );
+    expect(rows.map((r) => r.provider_tx_id)).toEqual(["a1", "a2"]);
+  });
+});

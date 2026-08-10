@@ -81,6 +81,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import { safeBatchWrite, BATCH_WRITE_CHUNK } from "@/lib/supabase/safe-batch-write";
 import {
   getWeatherProvider,
   getWeatherReadiness,
@@ -504,28 +505,62 @@ export async function runWeatherFetch(
         visibility_m: r.visibilityM ?? null,
       }));
 
-      const wrote = await table(admin, "weather_readings").upsert(rows, {
-        onConflict: "provider,postcode_district,kind,valid_at",
-      });
-      if (wrote.error) {
+      // BATCH-POISONING containment: chunk the upsert and fall back per-row on a
+      // CHECK/precision violation, so ONE out-of-range reading the mapper does not
+      // yet null cannot abort the district's whole write (0 rows → never fresh →
+      // re-fetched-and-re-failed every tick, denying weather to every org watching
+      // the district). The onConflict identity is unchanged, so a refreshed forecast
+      // still REPLACES its predecessor. The mapper (open-meteo boundedMetric) already
+      // guarantees in-range values; this is defense-in-depth for a future CHECK.
+      const wrote = await safeBatchWrite(
+        rows,
+        (chunk) =>
+          table(admin, "weather_readings").upsert(chunk, {
+            onConflict: "provider,postcode_district,kind,valid_at",
+          }),
+        { chunkSize: BATCH_WRITE_CHUNK },
+      );
+      if (wrote.transientError !== null) {
+        // A non-constraint (network/infra) write failure — not a bad row. Loud, and
+        // the next scheduled tick retries the district.
         ok = false;
         console.error("[weather-fetch] upsert failed", {
           district,
           kind,
-          error: wrote.error.message,
+          error: wrote.transientError,
         });
         record({
           district,
           kind,
           outcome: "write_failed",
-          readingsWritten: 0,
-          detail: wrote.error.message,
+          readingsWritten: wrote.written,
+          detail: wrote.transientError,
         });
         continue;
       }
 
-      written += rows.length;
-      record({ district, kind, outcome: "written", readingsWritten: rows.length, detail: null });
+      written += wrote.written;
+      if (wrote.constraintError !== null) {
+        // Some readings violated a CHECK the mapper does not yet mirror; the per-row
+        // fallback landed the good ones and dropped the bad. Surface it loudly
+        // (ok:false) — but the good rows that landed now make the district fresh, so
+        // it is NOT re-fetched-and-re-failed forever (the whole point of the fix).
+        ok = false;
+        console.error("[weather-fetch] some readings rejected by a CHECK", {
+          district,
+          kind,
+          error: wrote.constraintError,
+        });
+        record({
+          district,
+          kind,
+          outcome: "written",
+          readingsWritten: wrote.written,
+          detail: `partial write — some readings rejected: ${wrote.constraintError}`,
+        });
+        continue;
+      }
+      record({ district, kind, outcome: "written", readingsWritten: wrote.written, detail: null });
     }
   }
 

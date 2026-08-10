@@ -91,11 +91,40 @@ export type StatementMapTarget = {
   bankStatementId: string;
 };
 
+// ── bank_statement_lines DB-constraint bounds (20260524 / 20261109) ──────────
+// The row shape under-mirrors two hard constraints the batch insert enforces; a
+// line violating either would abort the WHOLE upsert statement (0 lines written,
+// the org's feed stranded, tick after tick — the batch-poisoning class). The
+// mapper therefore DROPS such a line in mapStatementToLines rather than emit a
+// row the DB rejects. Each bound is tied to its column:
+//   • posted_at  date NOT NULL       → a real YYYY-MM-DD (never "" / garbage)
+//   • amount     numeric(12, 2)      → |amount| <= 9,999,999,999.99 (10 int digits)
+/** numeric(12,2): 10 integer digits + 2 decimal ⇒ the largest insertable magnitude. */
+const AMOUNT_MAX = 9_999_999_999.99;
+/** A real calendar day: `YYYY-MM-DD`, the granularity posted_at stores. */
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 /** A Postgres/ISO timestamp or date → `YYYY-MM-DD`, or "" when absent. Pure. */
 function dateOnly(value: string | null | undefined): string {
   if (!value) return "";
   // Both `2026-01-31` and `2026-01-31T09:15:00Z` slice to the calendar day.
   return value.slice(0, 10);
+}
+
+/**
+ * True when a mapped line can actually be inserted — it mirrors the DB
+ * constraints the row shape under-declares. A line failing either is DROPPED by
+ * mapStatementToLines: `posted_at` is `date NOT NULL`, so an empty/garbage day
+ * would raise 22007/23502; `amount` is `numeric(12,2)`, so a magnitude past the
+ * precision ceiling would raise 22003 — and ONE such row aborts the whole batch
+ * insert. Pure. Exported so the per-adapter constraint guard can enumerate it.
+ */
+export function isInsertableLine(line: BankStatementLineInsert): boolean {
+  if (!DATE_ONLY_RE.test(line.posted_at)) return false;
+  if (Number.isNaN(Date.parse(`${line.posted_at}T00:00:00Z`))) return false;
+  if (!Number.isFinite(line.amount)) return false;
+  if (Math.abs(line.amount) > AMOUNT_MAX) return false;
+  return true;
 }
 
 /** Signed, rounded-to-2dp amount for bank_statement_lines. Never NaN. */
@@ -133,12 +162,21 @@ export function mapTransactionToLine(
  * Map a whole aggregator statement onto bank_statement_lines insert rows. Pure.
  * Order is preserved from the source (aggregators return newest-first or
  * oldest-first consistently); the reconciliation UI sorts for display.
+ *
+ * A line that cannot satisfy a DB constraint the row shape under-mirrors — an
+ * unparseable/empty `posted_at` (date NOT NULL) or an `amount` past the
+ * numeric(12,2) ceiling — is DROPPED here (isInsertableLine): one such row would
+ * abort the whole batch insert (0 lines, the org's feed stranded, tick after
+ * tick), so it is skipped rather than allowed to poison the batch. This is the
+ * mapper analogue of the telematics reading-map's out-of-range nulling.
  */
 export function mapStatementToLines(
   statement: AggregatorStatement,
   target: StatementMapTarget,
 ): BankStatementLineInsert[] {
-  return statement.transactions.map((tx) => mapTransactionToLine(tx, target));
+  return statement.transactions
+    .map((tx) => mapTransactionToLine(tx, target))
+    .filter(isInsertableLine);
 }
 
 // ── Per-provider normalisers (native shape → AggregatorTransaction) ───────────

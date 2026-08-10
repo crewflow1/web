@@ -12,6 +12,7 @@ import {
   resolveActiveTelematicsProvider,
 } from "@/lib/integrations/telematics/oauth";
 import { encryptToken } from "@/lib/integrations/token-crypto";
+import { safeBatchWrite } from "@/lib/supabase/safe-batch-write";
 import { syncTelematicsReadings } from "@/server/services/telematics-connections";
 import type { TelematicsReadingInsert } from "@/lib/integrations/telematics/reading-map";
 
@@ -65,13 +66,11 @@ const READINGS_CONFLICT = "org_id,connection_id,source_event_id";
  * The whole mapped set was written in ONE statement, so a single uninsertable row
  * aborted the entire org's write (0 rows). The mapper now guarantees no CHECK
  * violation, but a FUTURE CHECK it does not yet mirror must NOT be able to strand
- * an org: chunking bounds the blast radius and the per-row fallback below isolates
- * the one bad row. Mirrors the bank-sync chunked-write posture.
+ * an org: chunking bounds the blast radius and the per-row fallback isolates the
+ * one bad row. This writer routes through the SHARED safe-batch-write helper
+ * (lib/supabase/safe-batch-write) — the one place the whole class is contained.
  */
 const READINGS_WRITE_CHUNK = 500;
-
-/** Postgres check_violation. A row the DB's CHECK rejects — never a transient blip. */
-const CHECK_VIOLATION = "23514";
 
 export type TelematicsConnectionSyncOutcome = {
   connectionId: string;
@@ -429,49 +428,25 @@ async function writeReadingsChunked(
   loose: LooseDb,
   readings: readonly TelematicsReadingInsert[],
 ): Promise<ReadingsWriteResult> {
-  let written = 0;
-  const landedRows: TelematicsReadingInsert[] = [];
-  let constraintError: string | null = null;
-
-  for (let i = 0; i < readings.length; i += READINGS_WRITE_CHUNK) {
-    const chunk = readings.slice(i, i + READINGS_WRITE_CHUNK);
-    const { error, count } = await loose.from("telematics_readings").upsert(chunk, {
-      onConflict: READINGS_CONFLICT,
-      ignoreDuplicates: true,
-      count: "exact",
-    });
-    if (!error) {
-      written += count ?? 0;
-      landedRows.push(...chunk);
-      continue;
-    }
-    // A non-CHECK error is a transient/infra failure, not a bad row — bail so the
-    // caller keeps the connection connected and a later tick retries.
-    if (error.code !== CHECK_VIOLATION) {
-      return { written, landedRows, transientError: error.message, constraintError };
-    }
-    // 23514: at least one row in this chunk is uninsertable. Isolate it row-by-row
-    // so the rest of the org's batch still lands.
-    constraintError = error.message;
-    for (const row of chunk) {
-      const { error: rowErr, count: rowCount } = await loose
-        .from("telematics_readings")
-        .upsert([row], { onConflict: READINGS_CONFLICT, ignoreDuplicates: true, count: "exact" });
-      if (!rowErr) {
-        written += rowCount ?? 0;
-        landedRows.push(row);
-        continue;
-      }
-      // A transient failure on the single-row retry — bail as transient.
-      if (rowErr.code !== CHECK_VIOLATION) {
-        return { written, landedRows, transientError: rowErr.message, constraintError };
-      }
-      // else: this single row violates a CHECK — DROP it (do not land it, do not
-      // advance its odometer). constraintError is already set for the caller.
-    }
-  }
-
-  return { written, landedRows, transientError: null, constraintError };
+  // The idempotency contract (onConflict + ignoreDuplicates + count:"exact") lives
+  // in this closure, so the shared writer's chunking preserves C50 semantics
+  // exactly: per-chunk dedupe, and the summed count equals one big statement's.
+  const res = await safeBatchWrite(
+    readings,
+    (chunk) =>
+      loose.from("telematics_readings").upsert(chunk as unknown as Record<string, unknown>[], {
+        onConflict: READINGS_CONFLICT,
+        ignoreDuplicates: true,
+        count: "exact",
+      }),
+    { chunkSize: READINGS_WRITE_CHUNK },
+  );
+  return {
+    written: res.written,
+    landedRows: [...res.landedRows],
+    transientError: res.transientError,
+    constraintError: res.constraintError,
+  };
 }
 
 /**

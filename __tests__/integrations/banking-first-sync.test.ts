@@ -247,7 +247,13 @@ describe("first-sync backfill survives a first-sync transient failure (C48)", ()
       saveRefreshedTokens: async () => {},
       existingProviderTxIds: async () => new Set<string>(),
       createStatement: async () => "stmt-1",
-      insertLines: async () => {},
+      insertLines: async (rows) => ({
+        inserted: rows.length,
+        constraintError: null,
+        transientError: null,
+      }),
+      deleteStatement: async () => {},
+      updateStatementLineCount: async () => {},
       markSynced: async (_orgId, _provider, fields) => {
         const now = new Date().toISOString();
         conn.updatedAt = now;

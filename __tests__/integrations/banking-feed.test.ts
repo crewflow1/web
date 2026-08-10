@@ -311,6 +311,10 @@ type GatewayState = {
   /** org_id → set of provider_tx_ids already stored (org-scoped, as the DB is). */
   existing: Map<string, Set<string>>;
   statementsCreated: number;
+  /** Parent statement ids passed to deleteStatement (orphan cleanup). */
+  deletedStatements: string[];
+  /** line_count reconciliations applied after a partial per-row fallback. */
+  lineCountUpdates: Array<{ statementId: string; lineCount: number }>;
   savedTokens: number;
   synced: Array<{
     orgId: string;
@@ -337,6 +341,8 @@ function fakeGateway(overrides: Partial<BankSyncGateway> = {}): {
     inserted: [],
     existing: new Map(),
     statementsCreated: 0,
+    deletedStatements: [],
+    lineCountUpdates: [],
     savedTokens: 0,
     synced: [],
     connections: new Map(),
@@ -369,6 +375,13 @@ function fakeGateway(overrides: Partial<BankSyncGateway> = {}): {
           state.existing.set(orgId, set);
         }
       }
+      return { inserted: rows.length, constraintError: null, transientError: null };
+    },
+    deleteStatement: async (_orgId, statementId) => {
+      state.deletedStatements.push(statementId);
+    },
+    updateStatementLineCount: async (_orgId, statementId, lineCount) => {
+      state.lineCountUpdates.push({ statementId, lineCount });
     },
     markSynced: async (orgId, _provider, fields) => {
       state.synced.push({ orgId, ...fields });
