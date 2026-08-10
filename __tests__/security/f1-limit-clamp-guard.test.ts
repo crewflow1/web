@@ -1002,3 +1002,144 @@ describe("F-1 guard — every .limit / .range is provably <= 1000", () => {
     expect(failures, failures.join("\n")).toEqual([]);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// F-1 VARIABLE-.from() EXPORT-LOOP BLIND SPOT
+// ═══════════════════════════════════════════════════════════════════════════
+// Every F-1 guard above (the clamp sweep, the producer net, the bare-select
+// guard) inspects reads through a LITERAL `.from("table")` (plus a few wrapper
+// forms). All of them are STRUCTURALLY BLIND to a read that loops over a table
+// REGISTRY and reads `.from(<variable>)`:
+//   for (const table of ORG_EXPORT_TABLES)
+//     await supabase.from(table).select("*").eq("org_id", orgId).limit(999 + 1);
+// That is exactly how the LIVE GDPR/DSAR export (server/services/gdpr-export.ts,
+// buildOrgExport) truncated EVERY org-scoped table at 999 rows while all three
+// F-1 guards stayed green: the literal-table matcher never fired on the variable
+// `.from(table)`, the clamp guard saw `999+1 = 1000 <= 1000` and passed it, and
+// the bare-select guard needs a literal table name it never had.
+//
+// RULE: a registry-driven org-scoped read — `.from(<variable>).select().eq(
+// "org_id", …)` in a file that drives an export from the org-scoped-table
+// registry (ORG_EXPORT_TABLES) — MUST page the table in full via `fetchAllRows`
+// (`.range`). It may carry NO `.limit(` (a cap silently truncates a statutory
+// export) and may not read bare (a bare select is clamped to max_rows). This is
+// the completeness contract for the whole-org DSAR archive.
+
+/** Files that assemble a whole-archive / DSAR export from the org-scoped-table
+ * registry. The guard is scoped to these so it is a tight completeness net, not
+ * a repo-wide one — a generic `.from(x)` elsewhere is out of scope here. */
+const EXPORT_REGISTRY_FILES = ["server/services/gdpr-export.ts"];
+
+/**
+ * Every registry-driven org-scoped export read in `raw` that fails the
+ * complete-read contract. Detects the VARIABLE `.from(<identifier>)` shape the
+ * literal-table matchers miss, scoped to files that drive the export from
+ * ORG_EXPORT_TABLES. Shared by the repo-scan and the red→green teeth so both
+ * exercise identical detection.
+ */
+function gdprExportLoopOffenders(rel: string, raw: string): string[] {
+  // Scope: only files that read the org-scoped-table registry to build an export.
+  if (!raw.includes("ORG_EXPORT_TABLES")) return [];
+  const src = stripComments(raw);
+  const offenders: string[] = [];
+  // `.from(<identifier>)` — a VARIABLE table (the registry loop), NOT a string
+  // literal `.from("t")` (which the sibling F-1 guards already cover).
+  const re = /\.from\(\s*([A-Za-z_$][\w$]*)\s*\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src))) {
+    const fromIdx = m.index;
+    const semi = src.indexOf(";", fromIdx);
+    const stmt = src.slice(fromIdx, semi === -1 ? fromIdx + 500 : semi);
+    // Only an org-scoped SET read (the export shape): a `.select` pinned by
+    // `.eq("org_id", …)`. An insert/update/other `.from(var)` is not this class.
+    if (!/\.select\(/.test(stmt)) continue;
+    if (!/\.eq\(\s*["'`]org_id["'`]/.test(stmt)) continue;
+    // PAGED? fetchAllRows wraps the builder (appears just before `.from`) or the
+    // statement carries the `.range()` terminator — either is the complete-read
+    // fix. A `.limit(` anywhere in the statement is a CAP (truncation trap).
+    const before = src.slice(Math.max(0, fromIdx - 300), fromIdx);
+    const paged =
+      /\.range\(/.test(stmt) ||
+      /fetchAllRows/.test(before) ||
+      /fetchAllRows/.test(stmt);
+    const capped = /\.limit\(/.test(stmt);
+    if (paged && !capped) continue; // the correct, complete-read shape
+    const line = src.slice(0, fromIdx).split("\n").length;
+    offenders.push(
+      `${rel}:${line} → .from(<variable>).select().eq("org_id", …) ` +
+        (capped
+          ? "carries a capped .limit() — a registry-driven org-scoped EXPORT read " +
+            "silently truncates a statutory DSAR; page it in full via fetchAllRows"
+          : "is a bare unpaged read — clamped to max_rows; page it in full via fetchAllRows"),
+    );
+  }
+  return offenders;
+}
+
+describe("F-1 export-loop guard — registry-driven org-scoped reads must page in full", () => {
+  it("gdpr-export.ts buildOrgExport pages every table (no capped variable-.from read)", () => {
+    const offenders: string[] = [];
+    for (const rel of EXPORT_REGISTRY_FILES) {
+      offenders.push(...gdprExportLoopOffenders(rel, readFileSync(resolve(ROOT, rel), "utf8")));
+    }
+    expect(
+      offenders,
+      `F-1 export-loop truncation: a registry-driven org-scoped read loops over ` +
+        `ORG_EXPORT_TABLES with a VARIABLE .from(table) — invisible to the literal-` +
+        `table F-1 guards — but caps or bares the read, so it silently truncates the ` +
+        `statutory DSAR export. Page each table in full via fetchAllRows (.range) on a ` +
+        `stable, unique order:\n` + offenders.join("\n"),
+    ).toEqual([]);
+  });
+
+  it("has TEETH: flags the pre-fix capped read, passes the paged fix", () => {
+    // The EXACT pre-fix shape: the registry loop with `.limit(MAX_ROWS_PER_TABLE + 1)`.
+    const preFix = [
+      `for (const table of ORG_EXPORT_TABLES) {`,
+      `  const res = await supabase`,
+      `    .from(table)`,
+      `    .select("*")`,
+      `    .eq("org_id", orgId)`,
+      `    .limit(MAX_ROWS_PER_TABLE + 1);`,
+      `}`,
+    ].join("\n");
+    expect(gdprExportLoopOffenders("server/services/gdpr-export.ts", preFix).length).toBeGreaterThan(0);
+    expect(
+      gdprExportLoopOffenders("server/services/gdpr-export.ts", preFix)[0],
+    ).toMatch(/capped \.limit/);
+
+    // A bare unpaged variable read (no .limit, no paging) is ALSO flagged.
+    const bare = [
+      `for (const table of ORG_EXPORT_TABLES) {`,
+      `  const res = await supabase.from(table).select("*").eq("org_id", orgId);`,
+      `}`,
+    ].join("\n");
+    expect(gdprExportLoopOffenders("server/services/gdpr-export.ts", bare).length).toBeGreaterThan(0);
+
+    // The COMPLETE-read fix pages via fetchAllRows + .range → clean.
+    const pagedFix = [
+      `for (const table of ORG_EXPORT_TABLES) {`,
+      `  const { data, error } = await fetchAllRows<Record<string, unknown>>(`,
+      `    (from, to) =>`,
+      `      supabase`,
+      `        .from(table)`,
+      `        .select("*")`,
+      `        .eq("org_id", orgId)`,
+      `        .order(exportOrderKey(table), { ascending: true })`,
+      `        .range(from, to) as unknown as PromiseLike<PageResult<Record<string, unknown>>>,`,
+      `  );`,
+      `}`,
+    ].join("\n");
+    expect(gdprExportLoopOffenders("server/services/gdpr-export.ts", pagedFix)).toEqual([]);
+  });
+
+  it("is SCOPED: does not fire on a variable .from() outside the export registry", () => {
+    // The same variable-.from org-scoped shape in a file that does NOT read the
+    // ORG_EXPORT_TABLES registry is out of THIS net's scope (it is other guards'
+    // job) — no false positive here.
+    const unrelated = [
+      `const res = await supabase.from(someTable).select("*").eq("org_id", orgId).limit(5);`,
+    ].join("\n");
+    expect(gdprExportLoopOffenders("server/services/something-else.ts", unrelated)).toEqual([]);
+  });
+});

@@ -1,10 +1,12 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
-import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
+import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import {
   ORG_EXPORT_TABLES,
   EXCLUDED_FROM_EXPORT,
+  exportOrderKey,
   redactRow,
 } from "@/lib/gdpr/export-tables";
 
@@ -48,59 +50,54 @@ import {
  *      or `public_token` sitting on an otherwise-exported business table).
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * LOUD READS.
+ * LOUD READS + COMPLETE READS.
  * ─────────────────────────────────────────────────────────────────────────────
  * A failed read THROWS via `readFailure` rather than degrading to an empty
  * table — an export that silently omits rows because a query errored is the lie
- * loud reads exist to stop. Truncation at the per-table cap is the same class of
- * lie: a partial table is NEVER silent — it sets `truncated`, is reported
- * loudly, and is surfaced on the manifest.
+ * loud reads exist to stop.
+ *
+ * Completeness is the other half of the same duty. A statutory Art.15/Art.20
+ * export MUST contain EVERY org-scoped row, so each table is read in full via
+ * `fetchAllRows` (pages under the PostgREST `max_rows` cap on a stable, unique
+ * order — see `exportOrderKey`). The former `.limit(999+1)` per-table cap
+ * silently delivered a PARTIAL file to any tenant with >999 rows in a table
+ * (time_entries / notifications / invoices / …): an incomplete statutory export
+ * is still incomplete even when the shortfall is flagged. Full pagination
+ * removes the truncation entirely, so the manifest reports `complete: true`
+ * rather than a per-table `truncated` flag.
  */
 
 /**
- * Per-table row cap. Reads request one past it (`.limit(cap + 1)`) so truncation
- * is detectable via capRows. It MUST stay < PostgREST max_rows (1000): a higher
- * value is silently clamped to 1000, which made the old 50_000 cap a lie and the
- * `truncated` flag permanently dead (F-1). At 999 the probe reads exactly 1000,
- * so truncation is correctly detected and loudly flagged on the manifest.
- * Full streaming pagination (complete large-tenant export) is the documented
- * activation-hardening step below.
- */
-export const MAX_ROWS_PER_TABLE = 999;
-
-/**
- * Minimal read/insert surface. `ORG_EXPORT_TABLES` is a `string[]`, which the
- * fully-typed Supabase client's `.from()` overload rejects (it only knows the
- * generated table union), so we read through this structural view. It is still
- * an ordinary RLS-subject client — this widens no trust boundary.
+ * Minimal read surface for the paged export. `ORG_EXPORT_TABLES` is a `string[]`,
+ * which the fully-typed Supabase client's `.from()` overload rejects (it only
+ * knows the generated table union), so we read through this structural view. It
+ * is still an ordinary RLS-subject client — this widens no trust boundary. The
+ * builder mirrors the `fetchAllRows` contract: `.range(from, to)` on a stable
+ * `.order()`.
  */
 type ReadError = { message?: string | null; code?: string | null };
+type PageBuilder = {
+  select(columns: string): PageBuilder;
+  eq(column: string, value: unknown): PageBuilder;
+  order(column: string, opts: { ascending: boolean }): PageBuilder;
+  range(
+    from: number,
+    to: number,
+  ): PromiseLike<{ data: unknown[] | null; error: ReadError | null }>;
+};
 type SupabaseLike = {
-  from(table: string): {
-    select(columns: string): {
-      eq(
-        column: string,
-        value: unknown,
-      ): {
-        limit(
-          n: number,
-        ): PromiseLike<{ data: unknown[] | null; error: ReadError | null }>;
-      };
-    };
-  };
+  from(table: string): PageBuilder;
 };
 
 export type TableExport = {
   table: string;
   rowCount: number;
-  truncated: boolean;
   rows: Record<string, unknown>[];
 };
 
 export type ExportManifestTable = {
   table: string;
   rowCount: number;
-  truncated: boolean;
 };
 
 export type ExportManifest = {
@@ -111,8 +108,14 @@ export type ExportManifest = {
   generated_at: string;
   table_count: number;
   total_rows: number;
-  any_truncated: boolean;
-  max_rows_per_table: number;
+  /**
+   * Every exported table is read in full via `fetchAllRows` (no per-table cap),
+   * so a produced export is always complete. Kept as an explicit, positive
+   * signal inside the archive itself (replaces the old `any_truncated` /
+   * `max_rows_per_table` truncation machinery, which is gone now that nothing
+   * truncates).
+   */
+  complete: true;
   tables: ExportManifestTable[];
   /** The security deny-list, surfaced so the archive documents what it omits. */
   excluded_tables: { table: string; reason: string }[];
@@ -147,37 +150,26 @@ function isMissingRelation(error: ReadError): boolean {
 }
 
 /**
- * Cap a read result and report whether it was truncated. The read over-requests
- * by one row, so a length exceeding the cap means MORE rows existed than were
- * exported; the probe row is sliced off and `truncated` is the loud flag.
- */
-function capRows<T>(
-  data: readonly T[],
-  cap = MAX_ROWS_PER_TABLE,
-): { rows: T[]; truncated: boolean } {
-  const truncated = data.length > cap;
-  return { rows: truncated ? data.slice(0, cap) : data.slice(), truncated };
-}
-
-/**
  * Assemble the requesting org's data across every exportable org-scoped table.
  *
  * `generatedAt` is injected so the manifest is deterministic and testable — the
  * assembler never reads a clock.
  *
+ * COMPLETE READS. Every table is paged in full via `fetchAllRows` on a stable,
+ * unique order (`exportOrderKey`), so the export contains ALL org-scoped rows —
+ * the F-1 fix for the per-table `.limit(999)` cap that silently truncated any
+ * table beyond 999 rows.
+ *
  * ─────────────────────────────────────────────────────────────────────────────
  * ACTIVATION-HARDENING (documented, NOT built — required before large-tenant use)
  * ─────────────────────────────────────────────────────────────────────────────
- *   (a) MEMORY CEILING. This assembles the whole archive in memory: up to
- *       MAX_ROWS_PER_TABLE (50k) rows across every exportable table (~136), then
- *       the route zips it in-memory too. That is bounded but large. Before
- *       enabling for big tenants, STREAM/PAGINATE the reads and stream the zip to
- *       the response rather than buffering the full archive.
- *   (b) NON-DETERMINISTIC TRUNCATION. The `.limit(cap+1)` read has NO `.order()`,
- *       so WHICH rows are dropped when a table exceeds the cap is
- *       Postgres-defined, not deterministic. It is already flagged loudly
- *       (`truncated` + manifest), but a large-tenant activation should add a
- *       stable `.order()` (e.g. by primary key) so truncation is reproducible.
+ *   (a) MEMORY CEILING. The reads are now complete (paged), but the whole archive
+ *       is still assembled in memory and the route zips it in-memory too. That is
+ *       the remaining bound. Before enabling for very large tenants, STREAM the
+ *       zip to the response rather than buffering the full archive. (`fetchAllRows`
+ *       carries its own 500k-row-per-table sanity ceiling that logs loudly — far
+ *       past any launch-horizon single-org volume — so a table cannot page
+ *       unboundedly.)
  */
 export async function buildOrgExport(params: {
   orgId: string;
@@ -198,45 +190,48 @@ export async function buildOrgExport(params: {
   const skipped: string[] = [];
 
   for (const table of ORG_EXPORT_TABLES) {
-    const res = await supabase
-      .from(table)
-      // #456: pin to the caller's ACTIVE org. RLS is the outer boundary; this
-      // is the active-org narrowing for a multi-org member.
-      .select("*")
-      .eq("org_id", orgId)
-      // Over-request by one so a full page reveals truncation (capRows).
-      .limit(MAX_ROWS_PER_TABLE + 1);
+    // COMPLETE READ (F-1). Page the whole table under the PostgREST max_rows cap
+    // via fetchAllRows, on a stable + unique order so no page can drop or repeat
+    // a row. The old single `.limit(999+1)` shot silently truncated any table
+    // with >999 rows, delivering a PARTIAL statutory export.
+    const { data, error } = await fetchAllRows<Record<string, unknown>>(
+      (from, to) =>
+        supabase
+          .from(table)
+          // #456: pin to the caller's ACTIVE org. RLS is the outer boundary;
+          // this is the active-org narrowing for a multi-org member.
+          .select("*")
+          .eq("org_id", orgId)
+          // Stable, unique total ordering (its `id`, or the composite-key
+          // override) so pagination can't shift rows across page boundaries.
+          .order(exportOrderKey(table), { ascending: true })
+          .range(from, to) as unknown as PromiseLike<
+          PageResult<Record<string, unknown>>
+        >,
+    );
 
-    if (res.error) {
+    if (error) {
       // MIGRATE-FIRST TOLERANCE: a table that simply does not exist in THIS
       // environment (a snapshot table ahead of the deployed schema, or behind
       // it) is a benign shape difference, NOT a read failure — skip it and note
       // it on the manifest. Everything else (RLS, network, PGRST embed errors)
       // is a real failure and stays LOUD: never degrade it to an empty table.
-      if (isMissingRelation(res.error)) {
+      // fetchAllRows is best-effort (returns the partial set + the error) — we
+      // refuse a partial export and throw.
+      const readError = error as ReadError;
+      if (isMissingRelation(readError)) {
         skipped.push(table);
         continue;
       }
-      throw readFailure(`gdpr export: ${table}`, res.error);
-    }
-
-    const raw = (res.data ?? []) as Record<string, unknown>[];
-    const { rows: capped, truncated } = capRows(raw);
-    if (truncated) {
-      // A partial table is never silent — report it and flag it on the manifest.
-      reportReadFailure(`gdpr export: ${table} truncated at cap`, {
-        message: `table ${table} hit MAX_ROWS_PER_TABLE=${MAX_ROWS_PER_TABLE}`,
-        code: "GDPR_EXPORT_TRUNCATED",
-      });
+      throw readFailure(`gdpr export: ${table}`, readError);
     }
 
     // Column-level defence in depth: strip any secret-named column.
-    const rows = capped.map((r) => redactRow(r) as Record<string, unknown>);
-    tables.push({ table, rowCount: rows.length, truncated, rows });
+    const rows = data.map((r) => redactRow(r) as Record<string, unknown>);
+    tables.push({ table, rowCount: rows.length, rows });
   }
 
   const totalRows = tables.reduce((n, t) => n + t.rowCount, 0);
-  const anyTruncated = tables.some((t) => t.truncated);
 
   const manifest: ExportManifest = {
     export_kind: "gdpr-data-portability-export",
@@ -246,12 +241,10 @@ export async function buildOrgExport(params: {
     generated_at: generatedAt,
     table_count: tables.length,
     total_rows: totalRows,
-    any_truncated: anyTruncated,
-    max_rows_per_table: MAX_ROWS_PER_TABLE,
+    complete: true,
     tables: tables.map((t) => ({
       table: t.table,
       rowCount: t.rowCount,
-      truncated: t.truncated,
     })),
     excluded_tables: Object.entries(EXCLUDED_FROM_EXPORT)
       .map(([tableName, reason]) => ({ table: tableName, reason }))

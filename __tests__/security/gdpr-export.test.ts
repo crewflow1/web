@@ -4,6 +4,8 @@ import { resolve } from "node:path";
 import {
   ORG_EXPORT_TABLES,
   EXCLUDED_FROM_EXPORT,
+  EXPORT_ORDER_KEYS,
+  exportOrderKey,
 } from "@/lib/gdpr/export-tables";
 
 /**
@@ -64,6 +66,32 @@ describe("gdpr export registry excludes all credential/secret stores", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 1b. THE PAGING ORDER-KEY REGISTRY — every override is a real exported table
+// ---------------------------------------------------------------------------
+
+describe("gdpr export paging order-key registry is well-formed", () => {
+  it("every order-key override names a table that IS exported", () => {
+    // A stale override (renamed/excluded table) would silently never apply,
+    // leaving that table to page by the wrong / a non-existent column. Every
+    // key must be a member of the exported set.
+    const exported = new Set(ORG_EXPORT_TABLES);
+    for (const table of Object.keys(EXPORT_ORDER_KEYS)) {
+      expect(exported.has(table), `order-key override for non-exported table ${table}`).toBe(true);
+    }
+  });
+
+  it("defaults to `id`, and every override is a non-empty column name", () => {
+    // The default holds for the overwhelming majority of tables (they carry a
+    // unique `id`); overrides exist ONLY for the handful without one.
+    expect(exportOrderKey("a_table_with_no_override")).toBe("id");
+    for (const [table, col] of Object.entries(EXPORT_ORDER_KEYS)) {
+      expect(exportOrderKey(table)).toBe(col);
+      expect(typeof col === "string" && col.length > 0).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 2. THE SERVICE — org-pinned, loud, redacting, EXPORT-ONLY
 // ---------------------------------------------------------------------------
 
@@ -77,8 +105,27 @@ describe("gdpr export service is org-pinned, loud, redacting, export-only", () =
   });
 
   it("reads loudly — a failed read throws, never a silent empty table", () => {
+    // fetchAllRows is best-effort (hands back the partial set + the error); the
+    // service refuses a partial export and THROWS on any non-missing-relation
+    // read error. A missing table is the only tolerated (skipped) shape.
     expect(code).toMatch(/throw readFailure\(/);
-    expect(code).toMatch(/reportReadFailure\(/);
+  });
+
+  it("reads COMPLETELY — pages every table via fetchAllRows, no per-table cap (F-1)", () => {
+    // The DSAR export is statutory: it must contain EVERY org-scoped row. The
+    // old `.limit(999+1)` per-table cap silently truncated any table beyond 999
+    // rows. The fix pages each table in full under the PostgREST max_rows cap.
+    expect(code).toMatch(/from\s+["']@\/lib\/supabase\/paginate["']/);
+    expect(code).toMatch(/fetchAllRows</);
+    expect(code).toMatch(/\.range\(/);
+    // A stable, unique order is required so pagination can't drop/repeat rows.
+    expect(code).toMatch(/exportOrderKey\(/);
+    // No capped read survives on the export path — no `.limit(`, and the old
+    // MAX_ROWS_PER_TABLE cap is retired entirely.
+    expect(code).not.toMatch(/\.limit\(/);
+    expect(code).not.toMatch(/MAX_ROWS_PER_TABLE/);
+    // The manifest reports completeness rather than a per-table truncation flag.
+    expect(code).toMatch(/complete:\s*true/);
   });
 
   it("redacts sensitive columns from every row", () => {
