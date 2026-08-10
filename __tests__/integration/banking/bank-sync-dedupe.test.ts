@@ -125,9 +125,13 @@ describeIntegration("bank-feed dedupe · real Postgres (42P10 regression)", () =
     const statementId = await gw.createStatement(orgA, `${TOKEN} feed`, 2);
     const rows = mapStatementToLines(stmt, { orgId: orgA, bankStatementId: statementId });
 
-    // The exact primitive that raised 42P10 against the partial index. If the
-    // index were still partial this line throws; the assertion is that it does not.
-    await expect(gw.insertLines(rows)).resolves.toBeUndefined();
+    // The exact primitive that raised 42P10 against the partial index. A recurrence
+    // would surface as a (non-constraint) transientError — never null — so asserting
+    // it IS null keeps the 42P10 regression pinned. Both NEW rows land (inserted==2).
+    const write = await gw.insertLines(rows);
+    expect(write.transientError, "42P10/URL failure must not recur").toBeNull();
+    expect(write.constraintError).toBeNull();
+    expect(write.inserted).toBe(2);
 
     const { ids } = await linesOf(orgA);
     expect(ids.sort()).toEqual([`${TOKEN}-tx-1`, `${TOKEN}-tx-2`].sort());
@@ -149,7 +153,12 @@ describeIntegration("bank-feed dedupe · real Postgres (42P10 regression)", () =
     ]);
     const statementId = await gw.createStatement(orgA, `${TOKEN} feed re-run`, 2);
     const rows = mapStatementToLines(stmt, { orgId: orgA, bankStatementId: statementId });
-    await expect(gw.insertLines(rows)).resolves.toBeUndefined();
+    const write = await gw.insertLines(rows);
+    expect(write.transientError).toBeNull();
+    expect(write.constraintError).toBeNull();
+    // DB-level dedupe: tx-1 (overlapping) is ON CONFLICT DO NOTHING'd — ZERO net-new
+    // for the duplicate; only tx-3 (new) lands, so exactly ONE row inserts.
+    expect(write.inserted).toBe(1);
 
     const { ids } = await linesOf(orgA);
     // tx-1 not duplicated; tx-3 added.
@@ -171,7 +180,12 @@ describeIntegration("bank-feed dedupe · real Postgres (42P10 regression)", () =
       reference: null,
       provider_tx_id: null as string | null,
     }));
-    await expect(gw.insertLines(nullRows)).resolves.toBeUndefined();
+    const write = await gw.insertLines(nullRows);
+    expect(write.transientError).toBeNull();
+    expect(write.constraintError).toBeNull();
+    // NULL provider_tx_id is DISTINCT under the plain unique index: no ON CONFLICT
+    // collision, so all 3 CSV rows land (none dedup-suppressed).
+    expect(write.inserted).toBe(3);
 
     const { nullCount } = await linesOf(orgA);
     expect(nullCount).toBe(3);
@@ -191,7 +205,13 @@ describeIntegration("bank-feed dedupe · real Postgres (42P10 regression)", () =
     ]);
     const statementId = await gw.createStatement(orgB, `${TOKEN} feed B`, 1);
     const rows = mapStatementToLines(stmt, { orgId: orgB, bankStatementId: statementId });
-    await expect(gw.insertLines(rows)).resolves.toBeUndefined();
+    const write = await gw.insertLines(rows);
+    expect(write.transientError).toBeNull();
+    expect(write.constraintError).toBeNull();
+    // Org-pinned unique index (org_id, provider_tx_id): the same aggregator tx id
+    // that already exists for orgA inserts cleanly under orgB — no cross-tenant
+    // collision, so the row lands (inserted==1).
+    expect(write.inserted).toBe(1);
 
     const { ids } = await linesOf(orgB);
     expect(ids).toEqual([`${TOKEN}-tx-1`]);
