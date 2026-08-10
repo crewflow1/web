@@ -10,6 +10,7 @@ import {
   KNOWN_ORG_SCOPED_TABLES,
   EXCLUDED_FROM_EXPORT,
   ORG_EXPORT_TABLES,
+  exportOrderKey,
 } from "@/lib/gdpr/export-tables";
 
 /**
@@ -44,6 +45,7 @@ type Res<T> = { data: T | null; error: { message: string } | null };
 type Row = Record<string, unknown>;
 interface Sel extends PromiseLike<Res<Row[]>> {
   eq(column: string, value: unknown): Sel;
+  order(column: string, opts: { ascending: boolean }): Sel;
 }
 interface Ins extends PromiseLike<Res<Row[]>> {
   select(columns?: string): { single(): PromiseLike<Res<Row>> };
@@ -288,20 +290,39 @@ describeIntegration("gdpr export · org-pinned, redacted, isolated", () => {
     // they make the drift guard bidirectional (no longer green-but-vacuous).
     const svc = db(serviceClient());
     const missing: string[] = [];
+    // Also prove the PAGING ORDER KEY is real: the export pages every table via
+    // fetchAllRows ordered by exportOrderKey(table), and ordering by a column
+    // that does not exist is a hard 42703 error that aborts the WHOLE export. So
+    // read each table ordered by its configured key — a wrong/stale key (or a
+    // new id-less table defaulting to a missing `id`) surfaces here as a
+    // non-missing-relation error, failing CI before it can break a live DSAR.
+    const badOrderKey: string[] = [];
     for (const table of ORG_EXPORT_TABLES) {
-      const res = await svc.from(table).select("org_id").eq("org_id", orgA);
+      const res = await svc
+        .from(table)
+        .select("org_id")
+        .eq("org_id", orgA)
+        .order(exportOrderKey(table), { ascending: true });
+      if (!res.error) continue;
       if (
-        res.error &&
         /does not exist|could not find the table|schema cache/i.test(
           res.error.message,
         )
       ) {
         missing.push(table);
+      } else {
+        badOrderKey.push(`${table} (order by ${exportOrderKey(table)}): ${res.error.message}`);
       }
     }
     expect(missing, `snapshot tables absent from live schema: ${missing}`).toEqual(
       [],
     );
+    expect(
+      badOrderKey,
+      `export paging order-key column missing/invalid on live table(s) — the ` +
+        `full-page DSAR read would abort. Fix "order_keys" in lib/gdpr/org-tables.json:\n` +
+        badOrderKey.join("\n"),
+    ).toEqual([]);
 
     // Partition closure: every exported/excluded table is a member of KNOWN.
     const known = new Set<string>(KNOWN_ORG_SCOPED_TABLES);

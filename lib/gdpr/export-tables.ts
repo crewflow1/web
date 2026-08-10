@@ -96,6 +96,30 @@ export const ORG_EXPORT_TABLES: readonly string[] = Object.freeze(
 );
 
 /**
+ * Per-table STABLE ORDER-BY column for the fully-paged DSAR export. The export
+ * reads every table with `fetchAllRows`, which pages under the PostgREST row cap
+ * and therefore REQUIRES a stable, unique total ordering so no row is dropped or
+ * repeated at a page boundary. The overwhelming majority of exported tables carry
+ * a unique `id` column — the default. The handful that do NOT (composite / natural
+ * primary keys) are listed in `order_keys` in org-tables.json, each mapped to a
+ * column that is unique WITHIN an org-pinned read (the non-`org_id` part of the
+ * primary key; `org_id` is constant under the `.eq("org_id", orgId)` pin).
+ *
+ * The literal names live in the JSON (not this `.ts`) for the same reason as the
+ * table registry: the source-tree "who names table X" census walks only .ts/.tsx.
+ */
+export const EXPORT_ORDER_KEYS: Readonly<Record<string, string>> =
+  orgTables.order_keys;
+
+/**
+ * The stable ORDER-BY column for `table`'s paged export read — its `order_keys`
+ * override, or `id` (the default that holds for every table not listed).
+ */
+export function exportOrderKey(table: string): string {
+  return EXPORT_ORDER_KEYS[table] ?? "id";
+}
+
+/**
  * COLUMN-LEVEL defence in depth. Even though the credential tables are excluded
  * wholesale above, every exported ROW is additionally passed through
  * `redactRow`, which drops any column whose NAME matches a secret / credential /

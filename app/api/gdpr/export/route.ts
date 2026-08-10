@@ -41,11 +41,11 @@ import { buildOrgExport, recordGdprExport } from "@/server/services/gdpr-export"
  * JSZip renders on Node.
  *
  * ── ACTIVATION-HARDENING (documented, NOT built). ────────────────────────────
- * This buffers the FULL export in memory (buildOrgExport assembles up to 50k
- * rows × ~136 tables) and then builds the whole zip in memory before responding.
- * Bounded but heavy. Before enabling for large tenants, STREAM the zip to the
- * response and paginate the underlying reads (see server/services/gdpr-export.ts
- * header (a)/(b): memory ceiling + non-deterministic, unordered truncation).
+ * The underlying reads are now COMPLETE (buildOrgExport pages every table in full
+ * via fetchAllRows — no per-table row cap), so the archive is never truncated.
+ * The remaining bound is memory: this still buffers the full export and builds
+ * the whole zip in memory before responding. Before enabling for very large
+ * tenants, STREAM the zip to the response rather than buffering it.
  */
 export const runtime = "nodejs";
 
@@ -85,16 +85,16 @@ export async function GET() {
   });
 
   // Audit the export. Best-effort — never fail the download over the log write.
+  // Every table is paged in full (see buildOrgExport), so the export is always
+  // complete and `truncated` is always false.
   await recordGdprExport({
     orgId,
     createdBy: user.id,
     format: "zip",
     tableCount: exported.manifest.table_count,
     rowCount: exported.manifest.total_rows,
-    truncated: exported.manifest.any_truncated,
-    note: exported.manifest.any_truncated
-      ? `one or more tables truncated at MAX_ROWS_PER_TABLE=${exported.manifest.max_rows_per_table}`
-      : null,
+    truncated: false,
+    note: null,
   });
 
   const ab = new ArrayBuffer(buffer.length);
@@ -109,7 +109,8 @@ export async function GET() {
       "Cache-Control": "private, no-store",
       "X-Gdpr-Export-Tables": String(exported.manifest.table_count),
       "X-Gdpr-Export-Rows": String(exported.manifest.total_rows),
-      "X-Gdpr-Export-Truncated": exported.manifest.any_truncated ? "1" : "0",
+      // Fully paged: the export is always complete (was X-Gdpr-Export-Truncated).
+      "X-Gdpr-Export-Complete": exported.manifest.complete ? "1" : "0",
     },
   });
 }
