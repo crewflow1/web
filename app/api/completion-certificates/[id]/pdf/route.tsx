@@ -9,6 +9,7 @@ import {
   type CertificateSnapshot,
 } from "@/lib/completion-certificates/snapshot";
 import { CompletionCertificatePdf } from "@/lib/pdf/completion-certificate-pdf";
+import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 import { resolveJobAddress, formatAddressLines } from "@/lib/address";
 
 // react-pdf renders on Node, not edge.
@@ -50,15 +51,37 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
   }
   if (!cert) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // Org branding.
-  const { data: org } = await supabase
+  // Org branding. `organizations` has NO flat address columns — the letterhead
+  // address is a single jsonb blob ({ line1?, city?, postcode? }), the same shape
+  // the invoice/quote PDFs and the bulk-download certificate render consume. The
+  // logo is either an uploaded object (logo_path → signed URL) or a legacy
+  // external URL (logo_url); resolveOrgLogoSrc handles both.
+  const { data: org, error: orgError } = await supabase
     .from("organizations")
-    .select("name, logo_url, address_line1, address_line2, city, county, postcode")
+    .select("name, logo_url, logo_path, address")
     .eq("id", ctx.org.id)
     .maybeSingle();
-  const orgRow = (org ?? {}) as Record<string, string | null>;
-  const orgBlockLines = [orgRow.address_line1, orgRow.address_line2, [orgRow.city, orgRow.postcode].filter(Boolean).join(" ")]
-    .filter((l): l is string => Boolean(l && l.trim()));
+  // A branding read FAILURE must not silently degrade to a blank letterhead on a
+  // contractual document — fail loud (mirrors the cert read above).
+  if (orgError) {
+    return NextResponse.json({ error: "query_failed" }, { status: 500 });
+  }
+  type OrgAddress = { line1?: string; city?: string; postcode?: string } | null;
+  const orgRow = (org ?? {}) as {
+    name: string | null;
+    logo_url: string | null;
+    logo_path: string | null;
+    address: OrgAddress;
+  };
+  const addr = orgRow.address ?? null;
+  const orgBlockLines = [
+    addr?.line1,
+    [addr?.city, addr?.postcode].filter(Boolean).join(" "),
+  ].filter((l): l is string => Boolean(l && l.trim()));
+  const logoUrl = await resolveOrgLogoSrc({
+    logo_path: orgRow.logo_path,
+    logo_url: orgRow.logo_url,
+  });
 
   let snapshot: CertificateSnapshot | null = cert.snapshot;
   const isDraft = cert.status === "draft";
@@ -94,7 +117,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
 
   const buffer = await renderToBuffer(
     <CompletionCertificatePdf
-      c={{ orgName: ctx.org.name, orgBlockLines, logoUrl: orgRow.logo_url ?? null, snapshot, isDraft }}
+      c={{ orgName: ctx.org.name, orgBlockLines, logoUrl, snapshot, isDraft }}
     />,
   );
   return new NextResponse(new Uint8Array(buffer), {
