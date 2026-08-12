@@ -119,6 +119,48 @@ export function computeVatQuarter(
   };
 }
 
+/**
+ * MTD VAT boxes 6/7 — the total ex-VAT VALUE of the sales and purchases whose VAT
+ * feeds boxes 1 and 4. These are MANDATORY on every UK VAT scheme (not EU-only
+ * like boxes 8/9), and they ARE derivable from CrewFlow's own data: the net
+ * (ex-VAT) `amount` of the same rows over the same window.
+ *
+ * Computed over the SAME `[quarterStartIso, quarterEndIso)` window and the SAME
+ * predicates as computeVatQuarter: box 6 sums the net `amount` of the PAID
+ * invoices whose `vat_total` feeds box 1 (output VAT, CASH basis); box 7 sums the
+ * net `amount` of the finance rows whose `vat_total` feeds box 4 (input VAT,
+ * ACCRUAL basis). So the reported net totals reconcile with the VAT boxes — same
+ * set, same window, one authority. Values are the raw ex-VAT sums (rounded to 2dp
+ * to match this authority's output shape); the composer applies HMRC's whole-pound
+ * rounding for boxes 6-9, mirroring how boxes 1/4 sum raw then round.
+ */
+export function computeVatNetTotals(
+  invoices: InvoiceRow[],
+  finances: FinanceRow[],
+  quarterStartIso: string,
+  quarterEndIso?: string,
+): { totalValueSalesExVAT: number; totalValuePurchasesExVAT: number } {
+  const inPeriod = (iso: string): boolean =>
+    iso >= quarterStartIso &&
+    (quarterEndIso === undefined || iso < quarterEndIso);
+  let sales = 0;
+  for (const inv of invoices) {
+    if (inv.status === "paid" && inv.paid_at && inPeriod(inv.paid_at)) {
+      sales += Number(inv.amount ?? 0); // net of VAT
+    }
+  }
+  let purchases = 0;
+  for (const f of finances) {
+    if (inPeriod(f.created_at)) {
+      purchases += Number(f.amount ?? 0); // net of VAT
+    }
+  }
+  return {
+    totalValueSalesExVAT: Math.round(sales * 100) / 100,
+    totalValuePurchasesExVAT: Math.round(purchases * 100) / 100,
+  };
+}
+
 type PayrollLineRow = {
   paye_estimate: number | string | null;
   ni_estimate: number | string | null;

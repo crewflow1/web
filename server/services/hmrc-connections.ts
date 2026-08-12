@@ -3,7 +3,11 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
-import { computeVatQuarter, endOfQuarterExclusiveIso } from "@/lib/tax/compute";
+import {
+  computeVatNetTotals,
+  computeVatQuarter,
+  endOfQuarterExclusiveIso,
+} from "@/lib/tax/compute";
 import { composeVatReturn } from "@/lib/integrations/hmrc/vat-return";
 import { composeCis300Return } from "@/lib/integrations/hmrc/cis-return";
 import {
@@ -326,7 +330,7 @@ export async function prepareVatReturn(params: {
   const { data: invRows, error: invErr } = await fetchAllRows((from, to) =>
     db
       .from("invoices")
-      .select("id, status, vat_total, paid_at, created_at")
+      .select("id, status, vat_total, amount, paid_at, created_at")
       .eq("org_id", orgId)
       .eq("status", "paid")
       .gte("paid_at", quarterStartIso)
@@ -339,7 +343,7 @@ export async function prepareVatReturn(params: {
   const { data: finRows, error: finErr } = await fetchAllRows((from, to) =>
     db
       .from("finances")
-      .select("id, vat_total, created_at")
+      .select("id, vat_total, amount, created_at")
       .eq("org_id", orgId)
       .gte("created_at", quarterStartIso)
       .lt("created_at", quarterEndIso)
@@ -352,23 +356,39 @@ export async function prepareVatReturn(params: {
   const invoices = ((invRows ?? []) as unknown as Array<{
     status: string;
     vat_total: number | string | null;
+    amount: number | string | null;
     paid_at: string | null;
     created_at: string;
   }>).map((i) => ({
     status: i.status,
     vat_total: i.vat_total,
     total: null,
-    amount: null,
+    amount: i.amount,
     paid_at: i.paid_at,
     created_at: i.created_at,
   }));
   const finances = ((finRows ?? []) as unknown as Array<{
     vat_total: number | string | null;
+    amount: number | string | null;
     created_at: string;
-  }>).map((f) => ({ vat_total: f.vat_total, amount: null, created_at: f.created_at }));
+  }>).map((f) => ({ vat_total: f.vat_total, amount: f.amount, created_at: f.created_at }));
 
   const vat = computeVatQuarter(invoices, finances, quarterStartIso, quarterEndIso);
-  const composed = composeVatReturn({ periodKey, vat }, { allowInternalPrepare: true });
+  // Boxes 6/7 (mandatory net totals) are NOT VAT amounts, but they ARE derivable
+  // from the SAME rows and window that feed boxes 1/4: box 6 is the net (ex-VAT)
+  // value of the paid invoices summed for box 1; box 7 the net value of the
+  // finance rows summed for box 4. Same set, same window — so the frozen 9-box
+  // payload's net totals reconcile with its VAT boxes instead of freezing at £0.
+  const netTotals = computeVatNetTotals(
+    invoices,
+    finances,
+    quarterStartIso,
+    quarterEndIso,
+  );
+  const composed = composeVatReturn(
+    { periodKey, vat, netTotals },
+    { allowInternalPrepare: true },
+  );
   if (!composed.ok) return { ok: false, error: composed.message };
 
   return insertSubmission(db, {
