@@ -156,12 +156,19 @@ export default async function AdminOrganizationsPage({
           .order("id", { ascending: true })
           .range(from, to) as unknown as PromiseLike<PageResult<OrgRow>>,
     ),
-    admin
-      .from("demo_requests")
-      .select(
-        "id, name, email, phone, company, employees, turnover_range, current_systems, preferred_demo_time, source, status, approved_at, rejection_reason, created_at" as never,
-      )
-      .order("created_at", { ascending: false }),
+    // PAGED (F-1): the demos board is the COMPLETE estate-wide demo list — a bare
+    // read clamped at max_rows (1000) would drop the tail past 1000 requests.
+    fetchAllRows<DemoRow>(
+      (from, to) =>
+        admin
+          .from("demo_requests")
+          .select(
+            "id, name, email, phone, company, employees, turnover_range, current_systems, preferred_demo_time, source, status, approved_at, rejection_reason, created_at" as never,
+          )
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to) as unknown as PromiseLike<PageResult<DemoRow>>,
+    ),
   ]);
 
   if (orgsRes.error) {
@@ -180,11 +187,21 @@ export default async function AdminOrganizationsPage({
   type Ownership = { org_id: string; user: { full_name: string | null; email: string } | null };
   let ownerships: Ownership[] = [];
   if (orgIds.length > 0) {
-    const { data, error } = await admin
-      .from("memberships")
-      .select("org_id, user:users ( full_name, email )")
-      .in("org_id", orgIds)
-      .eq("role", "owner");
+    // PAGED (F-1): `orgs` is the FULL estate roster (itself fetchAllRows-paged
+    // above), so this cross-tenant owner read returns ~1 row per org over the
+    // WHOLE estate. A bare select clamped at max_rows (1000) would silently drop
+    // the owner name/email for every org past the first 1000 — the enrichment map
+    // would be incomplete with no error. Page the complete set on the unique `id`.
+    const { data, error } = await fetchAllRows<Ownership>(
+      (from, to) =>
+        admin
+          .from("memberships")
+          .select("org_id, user:users ( full_name, email )")
+          .in("org_id", orgIds)
+          .eq("role", "owner")
+          .order("id", { ascending: true })
+          .range(from, to) as unknown as PromiseLike<PageResult<Ownership>>,
+    );
     if (error) {
       throw readFailure("admin organizations: owner memberships", error);
     }

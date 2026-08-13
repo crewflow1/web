@@ -2,6 +2,7 @@ import "server-only";
 import { requireHqPage } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { buildAnalyticsSnapshot } from "@/server/services/hq-analytics-snapshot";
 import { computeRevenueAnalytics } from "@/lib/hq/analytics";
 import {
@@ -64,9 +65,16 @@ type DemoRow = { status: string; source: string | null; created_at: string };
 async function readLeads(): Promise<MarketingInput["leads"]> {
   try {
     const admin = createAdminClient();
-    const { data, error } = await admin
-      .from("demo_requests")
-      .select("status, source, created_at" as never);
+    // PAGED (F-1): estate-wide funnel read mapped into the acquisition figures —
+    // a bare select clamped at 1000 would silently under-report the top-of-funnel.
+    const { data, error } = await fetchAllRows<DemoRow>(
+      (from, to) =>
+        admin
+          .from("demo_requests")
+          .select("status, source, created_at" as never)
+          .order("id" as never, { ascending: true })
+          .range(from, to) as unknown as PromiseLike<PageResult<DemoRow>>,
+    );
     if (error) throw readFailure("hq marketing: demo requests", error);
     const rows = (data ?? []) as unknown as DemoRow[];
     return {

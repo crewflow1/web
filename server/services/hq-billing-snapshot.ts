@@ -158,11 +158,20 @@ export async function listCustomersForBilling(): Promise<CustomerBillingRow[]> {
     org_id: string;
     user: { full_name: string | null; email: string } | null;
   };
-  const { data: ownerships } = await admin
-    .from("memberships")
-    .select("org_id, user:users ( full_name, email )")
-    .in("org_id", ids)
-    .eq("role", "owner");
+  // PAGED (F-1): `ids` is the FULL estate roster (orgs was fetchAllRows-paged
+  // above), so this cross-tenant owner read returns ~1 row per org over the whole
+  // estate. A bare select clamped at max_rows (1000) would drop the owner email
+  // for every org past 1000 from the billing snapshot with no error. Page it.
+  const { data: ownerships } = await fetchAllRows<OwnerRow>(
+    (from, to) =>
+      admin
+        .from("memberships")
+        .select("org_id, user:users ( full_name, email )")
+        .in("org_id", ids)
+        .eq("role", "owner")
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<OwnerRow>>,
+  );
   const ownerByOrg = new Map(
     ((ownerships ?? []) as unknown as OwnerRow[]).map((r) => [
       r.org_id,

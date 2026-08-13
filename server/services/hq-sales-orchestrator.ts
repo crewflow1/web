@@ -2,6 +2,7 @@ import "server-only";
 import { requireHqPage } from "@/server/auth/hq";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import {
   computeSalesOrchestratorBoard,
   type SalesOrchestratorBoard,
@@ -96,6 +97,8 @@ interface HqQuery<T> extends PromiseLike<ListResult<T>> {
   eq(column: string, value: unknown): HqQuery<T>;
   gte(column: string, value: unknown): HqQuery<T>;
   limit(count: number): HqQuery<T>;
+  order(column: string, opts: { ascending: boolean }): HqQuery<T>;
+  range(from: number, to: number): PromiseLike<ListResult<T>>;
 }
 
 type CompanyRow = {
@@ -115,11 +118,17 @@ type CompanyRow = {
 async function readPipeline(): Promise<CompanyRow[] | null> {
   try {
     const admin: AdminClient = createAdminClient();
-    const { data, error } = await (
-      admin.from("hq_sales_companies" as never) as unknown as HqQuery<CompanyRow>
-    )
-      .select("id, status, created_at, updated_at")
-      .limit(1000);
+    // PAGED (F-1): the estate-wide sales pipeline is mapped into CompanyRow[] and
+    // reduced into orchestration counts — the old `.limit(1000)` sat exactly on
+    // the PostgREST max_rows boundary, indistinguishable from silent truncation,
+    // so a >1000-company pipeline was capped with no error. Page the complete set.
+    const { data, error } = await fetchAllRows<CompanyRow>(
+      (from, to) =>
+        (admin.from("hq_sales_companies" as never) as unknown as HqQuery<CompanyRow>)
+          .select("id, status, created_at, updated_at")
+          .order("id", { ascending: true })
+          .range(from, to) as unknown as PromiseLike<PageResult<CompanyRow>>,
+    );
     if (error) throw readFailure("hq sales-orchestrator: pipeline", error);
     return (data ?? []).map((r) => ({
       id: r.id,
