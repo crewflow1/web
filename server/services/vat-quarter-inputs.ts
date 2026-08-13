@@ -1,0 +1,223 @@
+import "server-only";
+
+import { fetchAllRows } from "@/lib/supabase/paginate";
+import { readFailure } from "@/lib/supabase/read-failure";
+import type { InvoicePaymentRow } from "@/lib/tax/compute";
+
+/**
+ * The PAGED read layer behind the single VAT authority (lib/tax/compute.ts).
+ *
+ * `computeVatQuarter` / `computeVatNetTotals` are PURE — they sum whatever rows
+ * they are handed. This module gathers the two inputs those functions need but
+ * cannot read themselves, so every statutory VAT surface (the /tax tile, the
+ * quarterly PDF and the frozen HMRC 9-box return) builds them the SAME way and
+ * can never drift:
+ *
+ *   1. The invoice_payments LEDGER over the quarter window. Output VAT (box 1)
+ *      and net sales (box 6) are CASH-basis: the trigger stamps invoices.paid_at
+ *      only on FULL settlement, so a status-gated sum drops every partial payment
+ *      (a deposit on a still-open invoice, an instalment). The ledger carries the
+ *      cash on the date it landed. Each payment is enriched with its parent
+ *      invoice's vat_total / amount / total so the pure function can apportion.
+ *
+ *   2. The domestic reverse-charge totals over the quarter window. CIS S55A
+ *      reverse-charge VAT is frozen on supplier_payment_allocations
+ *      .cis_reverse_charge_vat (the DB is the control — lib/cis/deduction.ts is
+ *      its twin). The contractor self-accounts it: the notional VAT enters BOX 1
+ *      and BOX 4 (net-neutral) and the net purchase value enters BOX 7. This
+ *      module SUMS the frozen figures; it never re-derives them.
+ *
+ * PAGING (F-1). invoice_payments, supplier_payments and supplier_payment_allocations
+ * are all HIGH-VALUE tables: a bare `.select()` truncates at the 1000-row cap and
+ * would silently under-state a filed VAT figure. The window reads page via
+ * `fetchAllRows`; the two id-keyed lookups are chunked strictly below the cap.
+ *
+ * ORG-PINNED + LOUD. Every read is `.eq("org_id", orgId)` (RLS admits every org a
+ * multi-org admin belongs to, so an unpinned read would blend two companies' VAT)
+ * and throws via `readFailure` on error — a failed read must never silently
+ * become £0 of output VAT on an HMRC-facing figure.
+ */
+
+/** Chunk size for id-keyed `.in(...)` lookups — strictly below the 1000-row cap. */
+const IN_CHUNK = 500;
+
+/** The reverse-charge totals for one quarter window. */
+export type ReverseChargeQuarterTotals = {
+  /** Σ frozen cis_reverse_charge_vat — the notional VAT (→ BOX 1 and BOX 4). */
+  vat: number;
+  /** Σ net (ex-VAT) value of reverse-charge purchases (→ BOX 7, never BOX 6). */
+  net: number;
+};
+
+/**
+ * A ledger row for the pure VAT authority, plus display-only fields the quarterly
+ * PDF audit trail needs. `computeVatQuarter` / `computeVatNetTotals` accept the
+ * `InvoicePaymentRow` subset structurally and ignore the extras.
+ */
+export type VatLedgerRow = InvoicePaymentRow & {
+  /** invoices.number — for the PDF "payments received" audit rows. */
+  invoiceRef: string | null;
+};
+
+export type VatQuarterInputs = {
+  /** Every payment received in the window, enriched with its parent invoice figures. */
+  invoicePayments: VatLedgerRow[];
+  /** Domestic reverse-charge totals for the window. */
+  reverseCharge: ReverseChargeQuarterTotals;
+};
+
+/** The minimal, read-only PostgREST surface this module needs (real client or cast). */
+type Builder = PromiseLike<{ data: unknown[] | null; error: { message: string } | null }> & {
+  select: (c: string) => Builder;
+  eq: (k: string, v: unknown) => Builder;
+  gte: (k: string, v: unknown) => Builder;
+  lt: (k: string, v: unknown) => Builder;
+  is: (k: string, v: unknown) => Builder;
+  in: (k: string, v: readonly unknown[]) => Builder;
+  order: (k: string, o: { ascending: boolean }) => Builder;
+  range: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: unknown }>;
+};
+export type VatInputsDb = { from: (t: string) => Builder };
+
+type RawPayment = { invoice_id: string | null; amount: number | string | null; paid_at: string | null };
+type RawInvoice = {
+  id: string;
+  number: string | null;
+  vat_total: number | string | null;
+  amount: number | string | null;
+  total: number | string | null;
+};
+type RawAllocation = {
+  amount: number | string | null;
+  cis_reverse_charge_vat: number | string | null;
+  cis_vat_treatment: string | null;
+};
+
+/**
+ * The invoice_payments ledger for the window, each row carrying its parent
+ * invoice's VAT figures. `quarterEndExclusiveIso` is the EXCLUSIVE upper bound
+ * (start of the next quarter) so a future-dated payment cannot leak in.
+ */
+async function gatherInvoicePaymentLedger(
+  db: VatInputsDb,
+  orgId: string,
+  quarterStartIso: string,
+  quarterEndExclusiveIso: string,
+): Promise<VatLedgerRow[]> {
+  // PAGED window read: order by the unique (paid_at, id) so no page-edge row is
+  // dropped (invoice_payments.paid_at alone is non-unique).
+  const { data: payRows, error: payErr } = await fetchAllRows<RawPayment>((from, to) =>
+    db
+      .from("invoice_payments")
+      .select("id, invoice_id, amount, paid_at")
+      .eq("org_id", orgId)
+      .gte("paid_at", quarterStartIso)
+      .lt("paid_at", quarterEndExclusiveIso)
+      .order("paid_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to) as unknown as PromiseLike<{ data: RawPayment[] | null; error: unknown }>,
+  );
+  if (payErr) throw readFailure("vat inputs: invoice payments", payErr);
+  const payments = payRows ?? [];
+  if (payments.length === 0) return [];
+
+  // Parent invoice figures for the payments in the window. CHUNKED (F-1): the
+  // distinct invoice-id set can exceed the 1000-row cap in a busy quarter, so a
+  // single `.in(...)` would truncate; each chunk is ≤ IN_CHUNK unique PKs.
+  const invoiceIds = [...new Set(payments.map((p) => p.invoice_id).filter((id): id is string => !!id))];
+  const invoiceById = new Map<string, RawInvoice>();
+  for (let i = 0; i < invoiceIds.length; i += IN_CHUNK) {
+    const chunk = invoiceIds.slice(i, i + IN_CHUNK);
+    const { data, error } = await db
+      .from("invoices")
+      .select("id, number, vat_total, amount, total")
+      .eq("org_id", orgId)
+      .in("id", chunk);
+    if (error) throw readFailure("vat inputs: payment parent invoices", error);
+    for (const inv of (data ?? []) as RawInvoice[]) invoiceById.set(inv.id, inv);
+  }
+
+  const out: VatLedgerRow[] = [];
+  for (const p of payments) {
+    const inv = p.invoice_id ? invoiceById.get(p.invoice_id) : undefined;
+    // A payment whose parent invoice we could not read contributes no apportioned
+    // VAT (invoice_total unresolved ⇒ the pure function's divide-by-zero guard
+    // skips it). Better a dropped row than an invented one on an HMRC figure.
+    out.push({
+      amount: p.amount,
+      paid_at: p.paid_at,
+      invoice_vat_total: inv?.vat_total ?? null,
+      invoice_amount: inv?.amount ?? null,
+      invoice_total: inv?.total ?? null,
+      invoiceRef: inv?.number ?? null,
+    });
+  }
+  return out;
+}
+
+/**
+ * The frozen domestic reverse-charge totals for the window, keyed off the parent
+ * PAYMENT's `paid_at` (the windowable, persisted date) and excluding voided
+ * payments — mirroring how server/services/cis-statements.ts filters the ledger.
+ */
+async function gatherReverseChargeQuarter(
+  db: VatInputsDb,
+  orgId: string,
+  quarterStartIso: string,
+  quarterEndExclusiveIso: string,
+): Promise<ReverseChargeQuarterTotals> {
+  // Live (non-voided) supplier payments whose paid_at is in the window. PAGED.
+  const { data: payRows, error: payErr } = await fetchAllRows<{ id: string }>((from, to) =>
+    db
+      .from("supplier_payments")
+      .select("id")
+      .eq("org_id", orgId)
+      .is("voided_at", null)
+      .gte("paid_at", quarterStartIso)
+      .lt("paid_at", quarterEndExclusiveIso)
+      .order("id", { ascending: true })
+      .range(from, to) as unknown as PromiseLike<{ data: { id: string }[] | null; error: unknown }>,
+  );
+  if (payErr) throw readFailure("vat inputs: supplier payments (reverse charge)", payErr);
+  const paymentIds = (payRows ?? []).map((p) => p.id);
+  if (paymentIds.length === 0) return { vat: 0, net: 0 };
+
+  // The allocations of those live payments. CHUNKED (F-1): the id set can exceed
+  // the cap; supplier_payments.id is unique so each chunk yields ≤ IN_CHUNK rows.
+  let vat = 0;
+  let net = 0;
+  for (let i = 0; i < paymentIds.length; i += IN_CHUNK) {
+    const chunk = paymentIds.slice(i, i + IN_CHUNK);
+    const { data, error } = await db
+      .from("supplier_payment_allocations")
+      .select("amount, cis_reverse_charge_vat, cis_vat_treatment")
+      .eq("org_id", orgId)
+      .in("payment_id", chunk);
+    if (error) throw readFailure("vat inputs: reverse-charge allocations", error);
+    for (const a of (data ?? []) as RawAllocation[]) {
+      vat += Number(a.cis_reverse_charge_vat ?? 0);
+      // Box 7 net: under the reverse charge the bill charges no VAT, so gross ==
+      // net and the allocation amount IS the net consideration for this share.
+      if (a.cis_vat_treatment === "reverse_charge") net += Number(a.amount ?? 0);
+    }
+  }
+  return { vat: Math.round(vat * 100) / 100, net: Math.round(net * 100) / 100 };
+}
+
+/**
+ * Gather BOTH VAT-authority inputs for one org over `[quarterStartIso,
+ * quarterEndExclusiveIso)`. Pass the result straight into computeVatQuarter /
+ * computeVatNetTotals so the tile, PDF and frozen return reconcile.
+ */
+export async function gatherVatQuarterInputs(
+  db: VatInputsDb,
+  orgId: string,
+  quarterStartIso: string,
+  quarterEndExclusiveIso: string,
+): Promise<VatQuarterInputs> {
+  const [invoicePayments, reverseCharge] = await Promise.all([
+    gatherInvoicePaymentLedger(db, orgId, quarterStartIso, quarterEndExclusiveIso),
+    gatherReverseChargeQuarter(db, orgId, quarterStartIso, quarterEndExclusiveIso),
+  ]);
+  return { invoicePayments, reverseCharge };
+}

@@ -197,7 +197,7 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
     "bounded: recent-200 jobs sample for the diary register display",
   "app/(app)/quality/_data.ts:260":
     "bounded: recent-200 jobs sample for the quality report display",
-  "app/(app)/dashboard/page.tsx:181":
+  "app/(app)/dashboard/page.tsx:185":
     "bounded: dashboard 'recent 5 leads' widget — an intentional top-5 display",
   "app/(app)/leads/[id]/page.tsx:132":
     "bounded: this lead's related quotes — top-5 display on the lead detail page",

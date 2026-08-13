@@ -14,6 +14,10 @@ import {
   startOfQuarterIso,
   endOfQuarterExclusiveIso,
 } from "@/lib/tax/compute";
+import {
+  gatherVatQuarterInputs,
+  type VatInputsDb,
+} from "@/server/services/vat-quarter-inputs";
 
 // PDF rendering is Node.js only.
 export const runtime = "nodejs";
@@ -41,42 +45,38 @@ export async function GET(request: NextRequest) {
       ? qStartParam
       : startOfQuarterIso();
   const qEnd = quarterEndIso(qStart);
-  // Use end-of-day to include rows posted on the final day.
-  const qEndExclusive = `${qEnd}T23:59:59.999Z`;
+  // The EXCLUSIVE upper bound = start of the next quarter, so a future-dated
+  // payment/cost cannot leak in. Used for BOTH the finances read and the ledger.
+  const qEndExclusiveIso = endOfQuarterExclusiveIso(qStart);
 
   const [
-    { data: invoicesRaw, error: invoicesError },
+    inputs,
     { data: financesRaw, error: financesError },
     { data: org },
   ] = await Promise.all([
-      // ACTIVE-org pins — this PDF is an HMRC VAT-return working paper. The org
-      // header below is already read by `ctx.org.id`, so an unpinned figure set
-      // would put BOTH companies' VAT under ONE company's letterhead.
-      //
-      // PAGED (F-1). The row lists ARE the audit trail behind the VAT total and
-      // `computeVatQuarter` sums over every one of them: a bare `.select()`
-      // truncates at the 1000-row cap, so a high-volume quarter would render an
-      // HMRC working paper whose totals silently under-state. `fetchAllRows`
-      // pages under the cap on a unique `paid_at`/`created_at`+`id` total order.
-      fetchAllRows((from, to) =>
-        supabase
-          .from("invoices")
-          .select("id, number, status, amount, vat_total, total, paid_at, created_at")
-          .eq("org_id", ctx.org.id)
-          .eq("status", "paid")
-          .gte("paid_at", qStart)
-          .lte("paid_at", qEndExclusive)
-          .order("paid_at", { ascending: true })
-          .order("id", { ascending: true })
-          .range(from, to),
+      // ACTIVE-org pins — this PDF is an HMRC VAT-return working paper. Output VAT
+      // is CASH: it comes from the invoice_payments LEDGER (every payment received
+      // in the window, partial payments included), plus domestic reverse-charge
+      // VAT self-accounted into boxes 1 & 4. The ledger + reverse-charge reads are
+      // PAGED under the 1000-row cap (see gatherVatQuarterInputs), on the SAME
+      // window the tile and the frozen 9-box return use — so this working paper
+      // can never drift from them.
+      gatherVatQuarterInputs(
+        supabase as unknown as VatInputsDb,
+        ctx.org.id,
+        qStart,
+        qEndExclusiveIso,
       ),
+      // PAGED (F-1). The finance rows ARE the input-VAT audit trail and
+      // `computeVatQuarter` sums over every one: a bare `.select()` truncates at
+      // the 1000-row cap and would under-state box 4.
       fetchAllRows((from, to) =>
         supabase
           .from("finances")
           .select("id, category, amount, vat_total, created_at")
           .eq("org_id", ctx.org.id)
           .gte("created_at", qStart)
-          .lte("created_at", qEndExclusive)
+          .lt("created_at", qEndExclusiveIso)
           .order("created_at", { ascending: true })
           .order("id", { ascending: true })
           .range(from, to),
@@ -89,16 +89,25 @@ export async function GET(request: NextRequest) {
     ]);
   // Loud fail: an errored read must never silently render a working paper with
   // missing (or zero) rows — that is a mis-stated HMRC figure.
-  if (invoicesError) throw readFailure("tax pdf: invoices", invoicesError);
   if (financesError) throw readFailure("tax pdf: finances", financesError);
 
-  const paidInvoices: QuarterRow[] = (invoicesRaw ?? []).map((r) => ({
-    date: (r.paid_at as string | null)?.slice(0, 10) ?? "—",
-    ref: r.number as string,
-    net: Number(r.amount ?? 0),
-    vat: Number(r.vat_total ?? 0),
-    total: Number(r.total ?? 0),
-  }));
+  // "Payments received" audit rows — one per invoice_payments row in the window,
+  // each showing the CASH received and its proportional net/VAT share (the same
+  // apportionment computeVatQuarter sums into box 1). A partial payment appears
+  // as itself, so the rows tie back to the Output VAT card.
+  const paidInvoices: QuarterRow[] = inputs.invoicePayments.map((p) => {
+    const cash = Number(p.amount ?? 0);
+    const total = Number(p.invoice_total ?? 0);
+    const ratioVat = total > 0 ? Number(p.invoice_vat_total ?? 0) / total : 0;
+    const ratioNet = total > 0 ? Number(p.invoice_amount ?? 0) / total : 0;
+    return {
+      date: (p.paid_at as string | null)?.slice(0, 10) ?? "—",
+      ref: p.invoiceRef ?? "—",
+      net: Math.round(cash * ratioNet * 100) / 100,
+      vat: Math.round(cash * ratioVat * 100) / 100,
+      total: cash,
+    };
+  });
   const financeRows: QuarterRow[] = (financesRaw ?? []).map((r) => {
     const net = Number(r.amount ?? 0);
     const vat = Number(r.vat_total ?? 0);
@@ -112,25 +121,18 @@ export async function GET(request: NextRequest) {
   });
   // SINGLE VAT AUTHORITY — the totals come from `computeVatQuarter`, exactly as
   // the dashboard tile and the HMRC 9-box composer do, so this working paper can
-  // never drift from them. The row lists above are the audit trail behind the
-  // same figures. The EXCLUSIVE upper bound belts-and-braces the DB's paid_at
-  // filter so a future-dated payment cannot inflate output VAT.
+  // never drift from them. Reverse-charge VAT enters boxes 1 & 4 (net-neutral).
+  const finances = (financesRaw ?? []).map((r) => ({
+    vat_total: r.vat_total,
+    amount: r.amount,
+    created_at: r.created_at as string,
+  }));
   const vat = computeVatQuarter(
-    (invoicesRaw ?? []).map((r) => ({
-      status: r.status as string,
-      vat_total: r.vat_total,
-      total: r.total,
-      amount: r.amount,
-      paid_at: r.paid_at as string | null,
-      created_at: r.created_at as string,
-    })),
-    (financesRaw ?? []).map((r) => ({
-      vat_total: r.vat_total,
-      amount: r.amount,
-      created_at: r.created_at as string,
-    })),
+    inputs.invoicePayments,
+    finances,
     qStart,
-    endOfQuarterExclusiveIso(qStart),
+    qEndExclusiveIso,
+    inputs.reverseCharge.vat,
   );
 
   const input: TaxQuarterPdfInput = {
@@ -141,6 +143,7 @@ export async function GET(request: NextRequest) {
     output_vat: vat.output_vat,
     input_vat: vat.input_vat,
     net_payable: vat.net_payable,
+    reverse_charge_vat: inputs.reverseCharge.vat,
     paid_invoices: paidInvoices,
     finance_rows: financeRows,
   };

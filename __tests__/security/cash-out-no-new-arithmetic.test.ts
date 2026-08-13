@@ -307,6 +307,9 @@ describe("every money-out read is pinned to the active org", () => {
       "payroll_lines",
       "cis_payment_snapshots",
       "invoices",
+      // The invoice_payments LEDGER — CASH-basis output VAT (box 1). Added when
+      // /cash moved off the coarse invoices.status flag onto the payment ledger.
+      "invoice_payments",
       "suppliers",
     ]) {
       expect(serviceCode, `${table} must be read via paged(...)`).toMatch(
@@ -350,6 +353,7 @@ describe("money-out reads are paged with a unique total order", () => {
       "payroll_runs",
       "payroll_lines",
       "invoices",
+      "invoice_payments",
       "suppliers",
     ]) {
       expect(serviceCode, `${table} must order by id`).toMatch(

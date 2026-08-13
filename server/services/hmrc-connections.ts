@@ -8,6 +8,10 @@ import {
   computeVatQuarter,
   endOfQuarterExclusiveIso,
 } from "@/lib/tax/compute";
+import {
+  gatherVatQuarterInputs,
+  type VatInputsDb,
+} from "@/server/services/vat-quarter-inputs";
 import { composeVatReturn } from "@/lib/integrations/hmrc/vat-return";
 import { composeCis300Return } from "@/lib/integrations/hmrc/cis-return";
 import {
@@ -317,29 +321,24 @@ export async function prepareVatReturn(params: {
   const existing = await findSubmission(db, orgId, "vat_return", periodKey);
   if (existing) return { ok: true, id: existing.id, created: false, status: existing.status };
 
-  // Output VAT is CASH (invoices marked paid in the quarter); input VAT is
-  // ACCRUAL (finance rows logged in the quarter). Same predicates the tax page
-  // and quarterly PDF use, so the prepared record matches what the org sees.
+  // Output VAT is CASH — every payment received in the quarter (the
+  // invoice_payments LEDGER), so a partial payment on a still-open invoice
+  // counts on the day the cash landed. Input VAT is ACCRUAL (finance rows logged
+  // in the quarter). Domestic reverse-charge VAT (S55A) is self-accounted into
+  // boxes 1 AND 4 (net-neutral) with its net value in box 7. Same predicates the
+  // tax page and quarterly PDF use, so the prepared record matches what the org
+  // sees. All three inputs come from the ONE paged read layer.
   //
-  // PAGED (F-1). computeVatQuarter SUMs by iterating every row, so a bare
-  // `.select()` truncated at the 1000-row PostgREST cap would understate the
-  // 9-box payload that insertSubmission FREEZES into hmrc_submissions.payload —
-  // a busy quarter would file too little VAT. `fetchAllRows` pages under the cap
-  // on a unique total order (paid_at+id for invoices, created_at+id for
-  // finances), matching the paged reads on the tax page and quarterly PDF.
-  const { data: invRows, error: invErr } = await fetchAllRows((from, to) =>
-    db
-      .from("invoices")
-      .select("id, status, vat_total, amount, paid_at, created_at")
-      .eq("org_id", orgId)
-      .eq("status", "paid")
-      .gte("paid_at", quarterStartIso)
-      .lt("paid_at", quarterEndIso)
-      .order("paid_at", { ascending: true })
-      .order("id", { ascending: true })
-      .range(from, to),
+  // PAGED (F-1). computeVatQuarter SUMs by iterating every row: the ledger and
+  // reverse-charge reads page under the 1000-row cap (see gatherVatQuarterInputs)
+  // and the finances read pages here on created_at+id — a bare `.select()` would
+  // truncate and freeze too little VAT into hmrc_submissions.payload.
+  const inputs = await gatherVatQuarterInputs(
+    db as unknown as VatInputsDb,
+    orgId,
+    quarterStartIso,
+    quarterEndIso,
   );
-  if (invErr) throw readFailure("hmrc vat prepare: invoices", invErr);
   const { data: finRows, error: finErr } = await fetchAllRows((from, to) =>
     db
       .from("finances")
@@ -353,37 +352,31 @@ export async function prepareVatReturn(params: {
   );
   if (finErr) throw readFailure("hmrc vat prepare: finances", finErr);
 
-  const invoices = ((invRows ?? []) as unknown as Array<{
-    status: string;
-    vat_total: number | string | null;
-    amount: number | string | null;
-    paid_at: string | null;
-    created_at: string;
-  }>).map((i) => ({
-    status: i.status,
-    vat_total: i.vat_total,
-    total: null,
-    amount: i.amount,
-    paid_at: i.paid_at,
-    created_at: i.created_at,
-  }));
   const finances = ((finRows ?? []) as unknown as Array<{
     vat_total: number | string | null;
     amount: number | string | null;
     created_at: string;
   }>).map((f) => ({ vat_total: f.vat_total, amount: f.amount, created_at: f.created_at }));
 
-  const vat = computeVatQuarter(invoices, finances, quarterStartIso, quarterEndIso);
-  // Boxes 6/7 (mandatory net totals) are NOT VAT amounts, but they ARE derivable
-  // from the SAME rows and window that feed boxes 1/4: box 6 is the net (ex-VAT)
-  // value of the paid invoices summed for box 1; box 7 the net value of the
-  // finance rows summed for box 4. Same set, same window — so the frozen 9-box
-  // payload's net totals reconcile with its VAT boxes instead of freezing at £0.
-  const netTotals = computeVatNetTotals(
-    invoices,
+  const vat = computeVatQuarter(
+    inputs.invoicePayments,
     finances,
     quarterStartIso,
     quarterEndIso,
+    inputs.reverseCharge.vat,
+  );
+  // Boxes 6/7 (mandatory net totals) are NOT VAT amounts, but they ARE derivable
+  // from the SAME rows and window that feed boxes 1/4: box 6 is the net (ex-VAT)
+  // value of the payments summed for box 1; box 7 the net value of the finance
+  // rows summed for box 4 PLUS the net of reverse-charge purchases. Same set,
+  // same window — so the frozen 9-box payload's net totals reconcile with its
+  // VAT boxes instead of freezing at £0.
+  const netTotals = computeVatNetTotals(
+    inputs.invoicePayments,
+    finances,
+    quarterStartIso,
+    quarterEndIso,
+    inputs.reverseCharge.net,
   );
   const composed = composeVatReturn(
     { periodKey, vat, netTotals },

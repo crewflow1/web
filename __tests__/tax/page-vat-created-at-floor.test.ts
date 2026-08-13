@@ -1,32 +1,31 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { computeVatQuarter, computeCorpTaxYear } from "@/lib/tax/compute";
+import {
+  computeVatQuarter,
+  computeCorpTaxYear,
+  type InvoicePaymentRow,
+} from "@/lib/tax/compute";
 
 /**
  * Tax dashboard — output VAT must not drop invoices created before the tax-year
- * start (C-35 launch blocker).
+ * start (C-35 launch blocker), and the created_at floor cannot recur.
  *
- * THE BUG. The tax page fetched invoices with a `.gte("created_at", yearStartIso)`
- * floor and fed that set into `computeVatQuarter`. Output VAT is CASH — it counts
- * every invoice PAID (`paid_at`) inside the quarter, regardless of when it was
- * created. So an invoice issued LATE in the previous tax year (created_at <
- * yearStart) but PAID early in the current VAT quarter was never fetched, and its
- * output VAT silently vanished from the on-screen tile — while the quarterly PDF
- * (`app/api/tax/quarterly-pdf/route.ts`) and the frozen HMRC 9-box return
- * (`server/services/hmrc-connections.ts`) both read paid invoices on `paid_at`
- * with NO created_at floor and DID include it. The tile therefore under-reported
- * and contradicted the authoritative figures.
+ * THE ORIGINAL BUG. The tax page fetched invoices with a `.gte("created_at",
+ * yearStartIso)` floor and fed that set into `computeVatQuarter`. Output VAT is
+ * CASH: an invoice issued LATE in the previous tax year (created_at < yearStart)
+ * but PAID this quarter was never fetched, so its output VAT vanished from the
+ * tile while the PDF and the frozen HMRC 9-box return included it.
  *
- * THE FIX. The tax page's invoices read drops the created_at floor and fetches all
- * org invoices (still paged, org-pinned, id tiebreak). Safe for Corporation Tax:
- * `computeCorpTaxYear` re-gates revenue/costs on created_at itself, so a pre-year
- * invoice never enters the CT profit even though it is now fetched.
+ * THE FIX (now structural). Output VAT is PAYMENT-LEDGER-DRIVEN: it reads the
+ * invoice_payments ledger windowed on `paid_at` (server/services/vat-quarter-inputs.ts),
+ * resolving each payment's parent invoice by id. The parent's created_at NEVER
+ * enters that read, so a pre-year invoice cannot be floored out of output VAT —
+ * the class of bug is impossible, not merely fixed. Corporation Tax still reads
+ * the invoices book (no created_at floor) and re-gates created_at internally.
  *
- * These assertions model the three read predicates over ONE shared dataset and
- * prove they now agree; the numeric contract of `computeVatQuarter` /
- * `computeCorpTaxYear` is exercised in __tests__/tax/compute.test.ts. Hermetic —
- * no Supabase client.
+ * Hermetic — no Supabase client. The numeric contract of `computeVatQuarter` /
+ * `computeCorpTaxYear` is exercised in __tests__/tax/compute.test.ts.
  */
 
 type Invoice = {
@@ -43,47 +42,47 @@ const yearStart = "2025-04-06";
 const quarterStart = "2025-07-01";
 const quarterEnd = "2025-10-01"; // exclusive upper bound
 
-// The whole org invoice book (what the FIXED tax page fetches — no created_at floor).
+// The whole org invoice book (what the tax page fetches for Corporation Tax).
 const allInvoices: Invoice[] = [
   // A — issued LATE in the PREVIOUS tax year, PAID this quarter. The dropped row.
   { status: "paid", vat_total: 300, total: 1800, amount: 1500, paid_at: "2025-07-15", created_at: "2025-03-20" },
   // B — created and paid this quarter. Counts everywhere.
   { status: "paid", vat_total: 200, total: 1200, amount: 1000, paid_at: "2025-08-01", created_at: "2025-07-05" },
-  // C — paid BEFORE the quarter. Excluded by paid_at in all three readers.
+  // C — paid BEFORE the quarter. Excluded by paid_at in all readers.
   { status: "paid", vat_total: 999, total: 5994, amount: 4995, paid_at: "2025-06-15", created_at: "2025-05-01" },
 ];
 
-// The authoritative readers select paid invoices by paid_at only, no created_at floor.
-const paidInQuarter = (inv: Invoice): boolean =>
-  inv.status === "paid" &&
-  inv.paid_at !== null &&
-  inv.paid_at >= quarterStart &&
-  inv.paid_at < quarterEnd;
+// The invoice_payments ledger the fixed tax page builds: one full payment per
+// paid invoice, windowed on paid_at. The parent invoice's created_at is NOT part
+// of a ledger row — that is exactly why the floor can never drop a payment.
+const ledger: InvoicePaymentRow[] = allInvoices
+  .filter((i) => i.paid_at !== null)
+  .map((i) => ({
+    amount: i.total,
+    paid_at: i.paid_at,
+    invoice_vat_total: i.vat_total,
+    invoice_amount: i.amount,
+    invoice_total: i.total,
+  }));
 
 describe("tax page output VAT: invoice created before tax-year start but paid this quarter", () => {
-  it("the FIXED tax-page read (no created_at floor) matches the quarterly-PDF / HMRC output VAT", () => {
-    // Fixed tax page: fetch ALL invoices, then computeVatQuarter re-windows on paid_at.
-    const tilePageVat = computeVatQuarter(allInvoices, [], quarterStart, quarterEnd);
-    // Quarterly PDF + HMRC composer: DB already filters to paid-in-quarter, same authority.
-    const pdfRows = allInvoices.filter(paidInQuarter);
-    const pdfVat = computeVatQuarter(pdfRows, [], quarterStart, quarterEnd);
-    const hmrcVat = computeVatQuarter(pdfRows, [], quarterStart, quarterEnd);
-
-    // A (300) + B (200); C excluded on paid_at.
-    expect(tilePageVat.output_vat).toBe(500);
-    expect(tilePageVat.output_vat).toBe(pdfVat.output_vat);
-    expect(tilePageVat.output_vat).toBe(hmrcVat.output_vat);
+  it("output VAT counts a payment whose PARENT invoice was created before the tax-year start", () => {
+    // A (paid 2025-07-15, created 2025-03-20, pre-year) £300 + B £200; C excluded on paid_at.
+    const vat = computeVatQuarter(ledger, [], quarterStart, quarterEnd);
+    expect(vat.output_vat).toBe(500);
   });
 
-  it("the pre-fix created_at floor DROPPED invoice A — reproducing the understatement", () => {
-    // Pre-fix predicate: WHERE created_at >= yearStart. A (created 2025-03-20) is lost.
-    const flooredRows = allInvoices.filter((i) => i.created_at >= yearStart);
-    const buggyVat = computeVatQuarter(flooredRows, [], quarterStart, quarterEnd);
-
-    expect(buggyVat.output_vat).toBe(200); // only B; A's £300 silently missing
-    // The fix recovers exactly A's £300 of output VAT.
-    const fixedVat = computeVatQuarter(allInvoices, [], quarterStart, quarterEnd);
-    expect(fixedVat.output_vat - buggyVat.output_vat).toBe(300);
+  it("the ledger is windowed on paid_at, so a pre-year created_at cannot drop a payment", () => {
+    // The class of bug is structurally impossible: a ledger row carries no
+    // created_at to floor on. Removing A's payment removes exactly its £300.
+    const withA = computeVatQuarter(ledger, [], quarterStart, quarterEnd);
+    const withoutA = computeVatQuarter(
+      ledger.filter((p) => p.paid_at !== "2025-07-15"),
+      [],
+      quarterStart,
+      quarterEnd,
+    );
+    expect(withA.output_vat - withoutA.output_vat).toBe(300);
   });
 
   it("Corporation Tax is unaffected — computeCorpTaxYear re-gates created_at, so A never enters CT profit", () => {

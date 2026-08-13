@@ -8,7 +8,7 @@ import {
   type CashOutPoRow,
 } from "@/lib/commercial/cash-out";
 import { computeBillSettlements } from "@/lib/suppliers/payments";
-import { computeVatQuarter } from "@/lib/tax/compute";
+import { computeVatQuarter, type InvoicePaymentRow } from "@/lib/tax/compute";
 import { buildMonthlyReturnDataset } from "@/lib/cis/statements";
 import { computeCommittedCosts } from "@/lib/purchase-orders/committed";
 import { cisPaymentDueDate } from "@/lib/cis/tax-month";
@@ -107,11 +107,25 @@ const base = {
   payrollRuns: [] as Array<{ id: string; status: string; cycle: string | null; period_start: string | null; period_end: string | null }>,
   payrollLines: [] as Array<{ payroll_run_id: string; net_pay: number | string | null }>,
   cisSnapshots: [] as CisPaymentSnapshotRow[],
-  vatInvoices: [] as Array<{ status: string; vat_total: number | string | null; total: number | string | null; amount: number | string | null; paid_at: string | null; created_at: string }>,
+  vatInvoicePayments: [] as InvoicePaymentRow[],
   vatFinances: [] as Array<{ vat_total: number | string | null; amount: number | string | null; created_at: string }>,
   quarterStartIso: QUARTER_START,
   todayIso: TODAY,
 };
+
+/** A FULL payment of an invoice — the ledger sum equals the old full-amount path. */
+function fp(
+  paidAt: string | null,
+  invoice: { vat_total: number; amount: number; total: number },
+): InvoicePaymentRow {
+  return {
+    amount: invoice.total,
+    paid_at: paidAt,
+    invoice_vat_total: invoice.vat_total,
+    invoice_amount: invoice.amount,
+    invoice_total: invoice.total,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // 1. Unpaid supplier bills — the settlement authority, unchanged
@@ -170,9 +184,11 @@ describe("computeOrgCashOut — unpaid supplier bills", () => {
 // ---------------------------------------------------------------------------
 
 describe("computeOrgCashOut — VAT quarter", () => {
-  const invoices = [
-    { status: "paid", vat_total: 3000, total: 18_000, amount: 15_000, paid_at: "2026-07-15", created_at: "2026-07-01T00:00:00Z" },
-    { status: "sent", vat_total: 900, total: 5400, amount: 4500, paid_at: null, created_at: "2026-07-02T00:00:00Z" },
+  // CASH-basis output VAT from the invoice_payments ledger: a full payment of a
+  // £18,000 invoice (net £15,000 + £3,000 VAT) received in-quarter. A `sent`
+  // invoice has no payment row, so it contributes nothing.
+  const invoicePayments = [
+    fp("2026-07-15", { vat_total: 3000, total: 18_000, amount: 15_000 }),
   ];
   const finances = [
     { vat_total: 400, amount: 2000, created_at: "2026-07-05T00:00:00Z" },
@@ -180,24 +196,23 @@ describe("computeOrgCashOut — VAT quarter", () => {
   ];
 
   it("is computeVatQuarter().net_payable — identical, not re-derived", () => {
-    const out = computeOrgCashOut({ ...base, vatInvoices: invoices, vatFinances: finances });
-    const authority = computeVatQuarter(invoices, finances, QUARTER_START);
+    const out = computeOrgCashOut({ ...base, vatInvoicePayments: invoicePayments, vatFinances: finances });
+    const authority = computeVatQuarter(invoicePayments, finances, QUARTER_START);
     expect(authority.net_payable).toBe(2600); // 3000 output − 400 input
     expect(out.vatDue).toBe(authority.net_payable);
     expect(out.vatReclaim).toBe(0);
   });
 
   it("passing the FULL row set gives the same answer as a pre-filtered one (the authority filters)", () => {
-    // The service hands over every invoice/finance row; the /tax page hands over
-    // rows already narrowed to the tax year. computeVatQuarter applies its own
-    // period predicate, so the two must agree — otherwise /cash and /tax would
-    // print different VAT for the same quarter.
+    // The service hands over every payment/finance row; computeVatQuarter applies
+    // its own period predicate, so a pre-filtered set must agree — otherwise
+    // /cash and /tax would print different VAT for the same quarter.
     const prefiltered = computeVatQuarter(
-      invoices.filter((i) => i.created_at >= QUARTER_START),
+      invoicePayments.filter((p) => (p.paid_at ?? "") >= QUARTER_START),
       finances.filter((f) => f.created_at >= QUARTER_START),
       QUARTER_START,
     );
-    const full = computeVatQuarter(invoices, finances, QUARTER_START);
+    const full = computeVatQuarter(invoicePayments, finances, QUARTER_START);
     expect(full).toEqual(prefiltered);
   });
 
@@ -206,7 +221,7 @@ describe("computeOrgCashOut — VAT quarter", () => {
     // silently inflate the net position with an estimated refund.
     const out = computeOrgCashOut({
       ...base,
-      vatInvoices: [],
+      vatInvoicePayments: [],
       vatFinances: [{ vat_total: 700, amount: 3500, created_at: "2026-07-05T00:00:00Z" }],
     });
     expect(out.vatDue).toBe(0);
@@ -215,7 +230,7 @@ describe("computeOrgCashOut — VAT quarter", () => {
   });
 
   it("labels VAT as an estimate", () => {
-    const out = computeOrgCashOut({ ...base, vatInvoices: invoices, vatFinances: finances });
+    const out = computeOrgCashOut({ ...base, vatInvoicePayments: invoicePayments, vatFinances: finances });
     const row = buildCashOutComponents(out).find((r) => r.key === "vat_quarter");
     expect(row?.isEstimate).toBe(true);
     expect(out.outflowEstimated).toBe(out.vatDue);
@@ -528,7 +543,7 @@ describe("buildCashOutComponents", () => {
         snapshot({ payment_id: "p1", tax_month_end: "2026-08-05", cis_deduction: 300 }),
         snapshot({ payment_id: "p2", tax_month_start: "2026-05-06", tax_month_end: "2026-06-05", cis_deduction: 90 }),
       ],
-      vatInvoices: [{ status: "paid", vat_total: 500, total: 3000, amount: 2500, paid_at: "2026-07-10", created_at: "2026-07-01T00:00:00Z" }],
+      vatInvoicePayments: [fp("2026-07-10", { vat_total: 500, total: 3000, amount: 2500 })],
       payrollRuns: [{ id: "r1", status: "draft", cycle: "weekly", period_start: null, period_end: null }],
       payrollLines: [{ payroll_run_id: "r1", net_pay: 400 }],
       purchaseOrders: [po({ id: "po1", status: "sent", total: 700 })],
@@ -558,7 +573,7 @@ describe("buildCashOutComponents", () => {
       ...base,
       bills: [bill({ id: "b1" })],
       cisSnapshots: [snapshot({ payment_id: "p1", tax_month_end: "2026-08-05", cis_deduction: 1 })],
-      vatInvoices: [{ status: "paid", vat_total: 1, total: 6, amount: 5, paid_at: "2026-07-10", created_at: "2026-07-01T00:00:00Z" }],
+      vatInvoicePayments: [fp("2026-07-10", { vat_total: 1, total: 6, amount: 5 })],
       payrollRuns: [{ id: "r1", status: "draft", cycle: null, period_start: null, period_end: null }],
       payrollLines: [{ payroll_run_id: "r1", net_pay: 1 }],
       purchaseOrders: [po({ id: "po1", status: "sent", total: 1 })],

@@ -21,7 +21,7 @@ import {
   type CashOutPoRow,
   type CashOutQueueItem,
   type CashOutVatFinanceRow,
-  type CashOutVatInvoiceRow,
+  type CashOutVatPaymentRow,
   type OrgCashOutSummary,
   type OrgCashPosition,
 } from "@/lib/commercial/cash-out";
@@ -110,6 +110,7 @@ const SNAPSHOT_COLS =
   "payment_id, supplier_id, cis_status, deduction_rate, verification_reference, legal_name, " +
   "utr_masked, cis_gross_payment, materials_total, cis_deduction, tax_month_start, tax_month_end";
 const INVOICE_VAT_COLS = "id, status, vat_total, total, amount, paid_at, created_at";
+const INVOICE_PAYMENT_COLS = "id, invoice_id, amount, paid_at";
 const SUPPLIER_COLS = "id, name";
 
 export interface OrgCashOutView {
@@ -190,7 +191,8 @@ export interface CashOutFacts {
   payrollRuns: CashOutPayrollRunRow[];
   payrollLines: CashOutPayrollLineRow[];
   cisSnapshots: CisPaymentSnapshotRow[];
-  invoices: CashOutVatInvoiceRow[];
+  /** CASH-basis output-VAT source: invoice_payments enriched with invoice figures. */
+  invoicePayments: CashOutVatPaymentRow[];
   supplierNames: Map<string, string>;
   failed: boolean;
 }
@@ -233,6 +235,11 @@ export async function gatherCashOutFacts(
       pageSize,
     ),
     paged(db, "invoices", INVOICE_VAT_COLS, orgId, "id", (b) => b, pageSize),
+    // The invoice_payments LEDGER — CASH-basis output VAT (box 1). The trigger
+    // stamps invoices.paid_at only on FULL settlement, so a status-gated read
+    // dropped every partial payment; the ledger carries the cash on the day it
+    // landed. computeVatQuarter applies its own quarter window.
+    paged(db, "invoice_payments", INVOICE_PAYMENT_COLS, orgId, "id", (b) => b, pageSize),
     paged(db, "suppliers", SUPPLIER_COLS, orgId, "id", (b) => b, pageSize),
   ]);
 
@@ -246,6 +253,7 @@ export async function gatherCashOutFacts(
     payrollLineRows = [],
     snapshotRows = [],
     invoiceRows = [],
+    invoicePaymentRows = [],
     supplierRows = [],
   ] = results.map((r) => r.rows);
 
@@ -326,14 +334,23 @@ export async function gatherCashOutFacts(
         },
       ];
     }),
-    invoices: invoiceRows.map((i) => ({
-      status: String(i.status ?? ""),
-      vat_total: i.vat_total as number | string | null,
-      total: i.total as number | string | null,
-      amount: i.amount as number | string | null,
-      paid_at: (i.paid_at as string | null) ?? null,
-      created_at: String(i.created_at ?? ""),
-    })),
+    // The invoice_payments ledger, each payment enriched with its parent
+    // invoice's VAT figures so computeVatQuarter can apportion the cash received.
+    // A payment whose invoice we could not read carries null figures ⇒ the pure
+    // function's divide-by-zero guard skips it (never an invented VAT figure).
+    invoicePayments: (() => {
+      const invoiceById = new Map(invoiceRows.map((i) => [String(i.id), i]));
+      return invoicePaymentRows.map((p) => {
+        const inv = invoiceById.get(String(p.invoice_id));
+        return {
+          amount: p.amount as number | string | null,
+          paid_at: (p.paid_at as string | null) ?? null,
+          invoice_vat_total: (inv?.vat_total as number | string | null) ?? null,
+          invoice_amount: (inv?.amount as number | string | null) ?? null,
+          invoice_total: (inv?.total as number | string | null) ?? null,
+        };
+      });
+    })(),
     supplierNames: new Map(supplierRows.map((s) => [String(s.id), String(s.name ?? "")])),
     failed,
   };
@@ -364,7 +381,7 @@ export async function buildOrgCashOut(
       payrollRuns: facts.payrollRuns,
       payrollLines: facts.payrollLines,
       cisSnapshots: facts.cisSnapshots,
-      vatInvoices: facts.invoices,
+      vatInvoicePayments: facts.invoicePayments,
       vatFinances: facts.allFinances,
       quarterStartIso: startOfQuarterIso(now),
       todayIso,

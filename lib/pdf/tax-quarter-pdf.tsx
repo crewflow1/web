@@ -105,6 +105,13 @@ export type TaxQuarterPdfInput = {
   output_vat: number;
   input_vat: number;
   net_payable: number;
+  /**
+   * Domestic reverse-charge VAT (S55A) inside output & input VAT for the quarter.
+   * Self-accounted: it is in BOTH the Output VAT and Input VAT cards, so the net
+   * is unchanged. Surfaced as a note so the cards reconcile with the row lists
+   * (the reverse-charge VAT is a self-assessment, not one of the payment rows).
+   */
+  reverse_charge_vat?: number;
   paid_invoices: QuarterRow[];
   finance_rows: QuarterRow[];
 };
@@ -142,8 +149,16 @@ export function TaxQuarterPdf({ data }: { data: TaxQuarterPdfInput }) {
           </View>
         </View>
 
+        {data.reverse_charge_vat && data.reverse_charge_vat > 0 ? (
+          <Text style={{ fontSize: 8, color: "#475569", marginBottom: 12 }}>
+            Includes {GBP.format(data.reverse_charge_vat)} of domestic
+            reverse-charge VAT (VAT Act 1994 s.55A) self-accounted in BOTH output
+            and input VAT — net effect nil.
+          </Text>
+        ) : null}
+
         <Text style={styles.sectionTitle}>
-          Paid invoices ({data.paid_invoices.length})
+          Payments received ({data.paid_invoices.length})
         </Text>
         <View style={styles.table}>
           <View style={styles.thRow}>
@@ -156,7 +171,7 @@ export function TaxQuarterPdf({ data }: { data: TaxQuarterPdfInput }) {
           {data.paid_invoices.length === 0 ? (
             <View style={styles.tr}>
               <Text style={[styles.td, { flex: 1 }]}>
-                No paid invoices in this quarter.
+                No payments received in this quarter.
               </Text>
             </View>
           ) : (

@@ -16,6 +16,10 @@ import {
   type HmrcSubmission,
 } from "@/server/services/hmrc-connections";
 import {
+  gatherVatQuarterInputs,
+  type VatInputsDb,
+} from "@/server/services/vat-quarter-inputs";
+import {
   prepareVatReturnAction,
   prepareCis300ReturnAction,
 } from "./actions";
@@ -171,14 +175,26 @@ export default async function TaxDashboardPage() {
       : null,
   }));
 
-  // Invoices are fetched with no created_at floor (all org invoices) and finances
-  // for the whole tax year, so the quarter's EXCLUSIVE upper bound is what keeps a
-  // next-quarter payment out of this tile.
+  // Output VAT (box 1) is CASH-basis from the invoice_payments LEDGER, so a
+  // partial payment counts on the day the cash landed rather than £0 until the
+  // invoice is fully settled. Domestic reverse-charge VAT is self-accounted into
+  // boxes 1 AND 4 (net-neutral). Both come from the ONE paged read layer the PDF
+  // and the frozen HMRC return also use, on the SAME bounded window — so the tile
+  // can never drift from them. The quarter's EXCLUSIVE upper bound keeps a
+  // next-quarter payment out.
+  const quarterEndExclusiveIso = endOfQuarterExclusiveIso(quarterStartIso);
+  const vatInputs = await gatherVatQuarterInputs(
+    supabase as unknown as VatInputsDb,
+    ctx.org.id,
+    quarterStartIso,
+    quarterEndExclusiveIso,
+  );
   const vat = computeVatQuarter(
-    invoices,
+    vatInputs.invoicePayments,
     finances,
     quarterStartIso,
-    endOfQuarterExclusiveIso(quarterStartIso),
+    quarterEndExclusiveIso,
+    vatInputs.reverseCharge.vat,
   );
   const paye = computePayeMonth(payrollLines);
   const corp = computeCorpTaxYear(invoices, finances, yearStartIso);

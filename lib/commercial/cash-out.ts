@@ -8,7 +8,11 @@ import {
 } from "@/lib/suppliers/payments";
 import { computeCommittedCosts, type CommittedCostPosition } from "@/lib/purchase-orders/committed";
 import { computePoBilling } from "@/lib/purchase-orders/billing";
-import { computeVatQuarter, endOfQuarterExclusiveIso } from "@/lib/tax/compute";
+import {
+  computeVatQuarter,
+  endOfQuarterExclusiveIso,
+  type InvoicePaymentRow,
+} from "@/lib/tax/compute";
 import { buildMonthlyReturnDataset, type CisPaymentSnapshotRow } from "@/lib/cis/statements";
 import { cisPaymentDueDate, cisTaxMonthLabel } from "@/lib/cis/tax-month";
 
@@ -181,15 +185,14 @@ export type CashOutPayrollLineRow = {
   net_pay: number | string | null;
 };
 
-/** The invoice shape `computeVatQuarter` reads (output VAT on PAID invoices). */
-export type CashOutVatInvoiceRow = {
-  status: string;
-  vat_total: number | string | null;
-  total: number | string | null;
-  amount: number | string | null;
-  paid_at: string | null;
-  created_at: string;
-};
+/**
+ * The invoice_payments LEDGER row `computeVatQuarter` reads for CASH-basis output
+ * VAT. Each payment carries its parent invoice's figures (resolved in the service
+ * layer) so a partial payment contributes the VAT on the cash actually received.
+ * Domestic reverse-charge VAT is net-neutral in `net_payable` — the only VAT
+ * figure /cash consumes — so /cash does not need to thread it.
+ */
+export type CashOutVatPaymentRow = InvoicePaymentRow;
 
 /** The finance shape `computeVatQuarter` reads (input VAT on logged costs). */
 export type CashOutVatFinanceRow = {
@@ -347,8 +350,8 @@ export function computeOrgCashOut(input: {
   payrollRuns: CashOutPayrollRunRow[];
   payrollLines: CashOutPayrollLineRow[];
   cisSnapshots: CisPaymentSnapshotRow[];
-  /** Every invoice — computeVatQuarter applies its own period filter. */
-  vatInvoices: CashOutVatInvoiceRow[];
+  /** Every invoice_payments row — computeVatQuarter applies its own period filter. */
+  vatInvoicePayments: CashOutVatPaymentRow[];
   /** Every finance row (not just bills) — input VAT is on all logged costs. */
   vatFinances: CashOutVatFinanceRow[];
   quarterStartIso: string;
@@ -368,8 +371,11 @@ export function computeOrgCashOut(input: {
   // Pass the exclusive upper bound so a future-dated `paid_at` (e.g. a post-dated
   // cheque) cannot leak a LATER quarter's output VAT into /cash's "VAT due" while
   // /tax correctly excludes it. This keeps /cash identical to the tile/PDF/HMRC.
+  // CASH-basis output VAT from the invoice_payments ledger (partial payments
+  // included). Reverse-charge VAT is omitted deliberately: it is net-neutral in
+  // net_payable, the only VAT figure this surface uses.
   const vat = computeVatQuarter(
-    input.vatInvoices,
+    input.vatInvoicePayments,
     input.vatFinances,
     input.quarterStartIso,
     endOfQuarterExclusiveIso(input.quarterStartIso),

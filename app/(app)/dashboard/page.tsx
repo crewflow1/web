@@ -11,6 +11,10 @@ import { InsightsSection } from "./_insights";
 import { SetupChecklist } from "./_setup-checklist";
 import { buildOnboardingSnapshot } from "@/server/services/onboarding-snapshot";
 import { buildRetentionSnapshot } from "@/server/services/retention-snapshot";
+import {
+  gatherVatQuarterInputs,
+  type VatInputsDb,
+} from "@/server/services/vat-quarter-inputs";
 import { ensureMilestoneNotifications } from "@/server/services/retention-milestones";
 import { RetentionPanel } from "./_retention";
 import { DailyBriefing } from "./_daily-briefing";
@@ -495,11 +499,23 @@ export default async function DashboardPage() {
   // window loaded above contains the current quarter; computeVatQuarter applies
   // its own in-period gate, so the earlier quarters in that window are excluded
   // from the input leg (they previously understated net VAT owed).
+  // Output VAT is CASH-basis from the invoice_payments LEDGER (partial payments
+  // included on the day the cash landed) and domestic reverse-charge VAT is
+  // self-accounted into boxes 1 AND 4 (net-neutral) — both from the ONE paged
+  // read layer the /tax tile, the PDF and the frozen HMRC return share.
+  const quarterEndExclusive = endOfQuarterExclusiveIso(quarterStart);
+  const vatInputs = await gatherVatQuarterInputs(
+    supabase as unknown as VatInputsDb,
+    ctx.org.id,
+    quarterStart,
+    quarterEndExclusive,
+  );
   const vat = computeVatQuarter(
-    invoices,
+    vatInputs.invoicePayments,
     finances,
     quarterStart,
-    endOfQuarterExclusiveIso(quarterStart),
+    quarterEndExclusive,
+    vatInputs.reverseCharge.vat,
   );
 
   // ---- time + labour (Wave 4) ----
