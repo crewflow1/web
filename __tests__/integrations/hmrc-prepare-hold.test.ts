@@ -25,7 +25,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 type Entry = { data?: unknown; error?: unknown };
 type Key =
+  | "invoicePayments"
   | "invoices"
+  | "supplierPayments"
+  | "spAllocations"
   | "finances"
   | "connSelect"
   | "connInsert"
@@ -35,7 +38,10 @@ type Key =
 
 function makeMock() {
   const queues: Record<Key, Entry[]> = {
+    invoicePayments: [],
     invoices: [],
+    supplierPayments: [],
+    spAllocations: [],
     finances: [],
     connSelect: [],
     connInsert: [],
@@ -54,11 +60,14 @@ function makeMock() {
   function makeChain(table: string) {
     const state = { calledOrder: false };
     const chain: Record<string, unknown> = {};
-    for (const m of ["select", "eq", "gte", "lt"]) chain[m] = () => chain;
+    // `.is`/`.in` are used by the VAT-authority reads (server/services/vat-quarter-inputs.ts):
+    // supplier_payments filters `.is("voided_at", null)`, and the parent-invoice /
+    // allocation lookups chunk via `.in(...)`.
+    for (const m of ["select", "eq", "gte", "lt", "is", "in"]) chain[m] = () => chain;
     chain.limit = () => chain;
-    // `.range()` is how the paged invoices/finances reads (fetchAllRows) request
-    // each page. The queue serves one enqueued page per await, so a test can
-    // simulate a multi-page (>1000-row) quarter by enqueuing successive pages.
+    // `.range()` is how the paged reads (fetchAllRows) request each page. The
+    // queue serves one enqueued page per await, so a test can simulate a
+    // multi-page (>1000-row) quarter by enqueuing successive pages.
     chain.range = () => chain;
     chain.order = () => {
       state.calledOrder = true;
@@ -66,7 +75,10 @@ function makeMock() {
     };
 
     const selectKey = (): Key => {
+      if (table === "invoice_payments") return "invoicePayments";
       if (table === "invoices") return "invoices";
+      if (table === "supplier_payments") return "supplierPayments";
+      if (table === "supplier_payment_allocations") return "spAllocations";
       if (table === "finances") return "finances";
       if (table === "hmrc_connections") return "connSelect";
       // hmrc_submissions: list read uses .order(); idempotency probe uses .limit()
@@ -176,13 +188,17 @@ beforeEach(() => {
 describe("prepareVatReturnAction — composes + inserts a prepared record", () => {
   it("freezes the 9-box payload from the org's computed VAT figures", async () => {
     mock.enqueue("subFind", { data: [], error: null }); // no existing record
-    mock.enqueue("invoices", {
-      // £100 output VAT on a paid invoice inside the quarter (cash basis)
-      data: [
-        { status: "paid", vat_total: 100, paid_at: "2026-08-15T00:00:00.000Z", created_at: "2026-08-15T00:00:00.000Z" },
-      ],
+    // £100 output VAT (CASH basis): a full £600 payment of a £600 invoice (net
+    // £500 + £100 VAT), received in-quarter → 600 × (100/600) = 100.
+    mock.enqueue("invoicePayments", {
+      data: [{ invoice_id: "inv-1", amount: 600, paid_at: "2026-08-15" }],
       error: null,
     });
+    mock.enqueue("invoices", {
+      data: [{ id: "inv-1", number: "INV-1", vat_total: 100, amount: 500, total: 600 }],
+      error: null,
+    });
+    mock.enqueue("supplierPayments", { data: [], error: null }); // no reverse-charge payments
     mock.enqueue("finances", {
       // £40 input VAT on a finance row inside the quarter (accrual basis)
       data: [{ vat_total: 40, created_at: "2026-08-15T00:00:00.000Z" }],
@@ -227,21 +243,24 @@ describe("prepareVatReturnAction — paginates a >1000-row quarter (F-1)", () =>
     // too little VAT. Each enqueued entry is one page; fetchAllRows keeps paging
     // while a page is full (500), so a full+full+short sequence proves it read
     // past the first page rather than stopping at it.
-    const invPage = (n: number) =>
-      Array.from({ length: n }, () => ({
-        status: "paid",
-        vat_total: 1,
-        paid_at: "2026-08-15T00:00:00.000Z",
-        created_at: "2026-08-15T00:00:00.000Z",
-      }));
+    // Each payment fully settles a £1 invoice carrying £1 of VAT (total 1, vat 1),
+    // so its apportioned output VAT is 1 × (1/1) = 1. All reference the SAME
+    // invoice id, so the chunked parent lookup returns one row.
+    const payPage = (n: number) =>
+      Array.from({ length: n }, () => ({ invoice_id: "inv-1", amount: 1, paid_at: "2026-08-15" }));
     const finPage = (n: number) =>
       Array.from({ length: n }, () => ({ vat_total: 1, created_at: "2026-08-15T00:00:00.000Z" }));
 
     mock.enqueue("subFind", { data: [], error: null }); // no existing record
-    // 1200 paid invoices → £1200 output VAT (pages 500 + 500 + 200).
-    mock.enqueue("invoices", { data: invPage(500), error: null });
-    mock.enqueue("invoices", { data: invPage(500), error: null });
-    mock.enqueue("invoices", { data: invPage(200), error: null });
+    // 1200 payments → £1200 output VAT (pages 500 + 500 + 200) — proves paging.
+    mock.enqueue("invoicePayments", { data: payPage(500), error: null });
+    mock.enqueue("invoicePayments", { data: payPage(500), error: null });
+    mock.enqueue("invoicePayments", { data: payPage(200), error: null });
+    mock.enqueue("invoices", {
+      data: [{ id: "inv-1", number: "INV-1", vat_total: 1, amount: 0, total: 1 }],
+      error: null,
+    });
+    mock.enqueue("supplierPayments", { data: [], error: null }); // no reverse-charge payments
     // 1100 finance rows → £1100 input VAT (pages 500 + 500 + 100).
     mock.enqueue("finances", { data: finPage(500), error: null });
     mock.enqueue("finances", { data: finPage(500), error: null });
@@ -288,7 +307,8 @@ describe("prepareVatReturnAction — admin gate + org scope", () => {
 
   it("pins the insert to ctx.org.id, never a client-supplied org", async () => {
     mock.enqueue("subFind", { data: [], error: null });
-    mock.enqueue("invoices", { data: [], error: null });
+    mock.enqueue("invoicePayments", { data: [], error: null });
+    mock.enqueue("supplierPayments", { data: [], error: null });
     mock.enqueue("finances", { data: [], error: null });
     mock.enqueue("connSelect", { data: { id: "conn-9" }, error: null });
     mock.enqueue("subInsert", { data: { id: "sub-9", status: "prepared" }, error: null });

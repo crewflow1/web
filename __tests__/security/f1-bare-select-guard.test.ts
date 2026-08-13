@@ -215,6 +215,15 @@ const ALLOWLIST: Record<string, string> = {
   // above). Prefer fetchAllRows/.limit only if this ever stops being chunked.
   "server/services/cis-statements.ts:169":
     "bounded: chunked .in('id', slice(≤500 unique PKs)) — ≤500 rows, analyser can't see the slice bound",
+  // The VAT-authority read layer (server/services/vat-quarter-inputs.ts). Both
+  // lines are CHUNKED id-keyed lookups whose parent set is itself fully PAGED via
+  // fetchAllRows in the same file, so each `.in(...)` returns ≤ IN_CHUNK=500 rows
+  // (< the 1000 cap) — the analyser cannot see the slice bound. Same class as
+  // cis-statements.ts:169.
+  "server/services/vat-quarter-inputs.ts:132":
+    "bounded: chunked .in('id', slice(≤IN_CHUNK=500 unique invoice PKs)) — parent invoice_payments read is fully paged; ≤500 rows per call",
+  "server/services/vat-quarter-inputs.ts:192":
+    "bounded: chunked .in('payment_id', slice(≤IN_CHUNK=500 unique payment PKs)) — parent supplier_payments read is fully paged; supplier_payments.id is unique so ≤500 rows per call",
   // Surfaced only once quote_line_items joined HIGH_VALUE_TABLES. This line is an
   // INSERT (`.from('quote_line_items').insert(rows)`), NOT a read — it cannot
   // truncate. It trips solely as a region artifact: the AFTER window bleeds into

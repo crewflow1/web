@@ -3,10 +3,11 @@ import {
   computeVatQuarter,
   computeCorpTaxYear,
   endOfQuarterExclusiveIso,
+  type InvoicePaymentRow,
 } from "@/lib/tax/compute";
 import {
   computeOrgCashOut,
-  type CashOutVatInvoiceRow,
+  type CashOutVatPaymentRow,
 } from "@/lib/commercial/cash-out";
 
 /**
@@ -132,31 +133,24 @@ describe("VAT input floor is identical across tile / PDF / HMRC 9-box (Apr–Jun
     // quarter's output VAT leaks into /cash's current "VAT due".
     const quarterEndExclusive = endOfQuarterExclusiveIso(quarterStartIso); // 2025-07-01
 
-    const vatInvoices: CashOutVatInvoiceRow[] = [
-      // In-quarter paid invoice: 100 of output VAT. Counts under every window.
-      {
-        status: "paid",
-        vat_total: 100,
-        total: 600,
-        amount: 500,
-        paid_at: "2025-05-10",
-        created_at: "2025-05-10",
-      },
+    const fp = (paidAt: string, vat: number, total: number, amount: number): InvoicePaymentRow => ({
+      amount: total, // full payment
+      paid_at: paidAt,
+      invoice_vat_total: vat,
+      invoice_amount: amount,
+      invoice_total: total,
+    });
+    const vatInvoicePayments: CashOutVatPaymentRow[] = [
+      // In-quarter payment: 100 of output VAT. Counts under every window.
+      fp("2025-05-10", 100, 600, 500),
       // Post-dated cheque: PAID but paid_at is in the NEXT quarter (15 Aug).
       // The bounded window (< 1 Jul) MUST exclude its 500 of output VAT.
-      {
-        status: "paid",
-        vat_total: 500,
-        total: 3000,
-        amount: 2500,
-        paid_at: "2025-08-15",
-        created_at: "2025-08-15",
-      },
+      fp("2025-08-15", 500, 3000, 2500),
     ];
 
     // The /tax authority on the bounded window: only the in-quarter 100 counts.
     const authority = computeVatQuarter(
-      vatInvoices,
+      vatInvoicePayments,
       [],
       quarterStartIso,
       quarterEndExclusive,
@@ -165,7 +159,7 @@ describe("VAT input floor is identical across tile / PDF / HMRC 9-box (Apr–Jun
 
     // The pre-fix open-ended window (what a 3-arg cash-out call degrades to)
     // would leak the post-dated 500 in — this is the divergence being pinned out.
-    const openEnded = computeVatQuarter(vatInvoices, [], quarterStartIso);
+    const openEnded = computeVatQuarter(vatInvoicePayments, [], quarterStartIso);
     expect(openEnded.net_payable).toBe(600);
 
     // /cash via the REAL code path: everything else empty, VAT only.
@@ -177,7 +171,7 @@ describe("VAT input floor is identical across tile / PDF / HMRC 9-box (Apr–Jun
       payrollRuns: [],
       payrollLines: [],
       cisSnapshots: [],
-      vatInvoices,
+      vatInvoicePayments,
       vatFinances: [],
       quarterStartIso,
       todayIso: "2025-05-15",

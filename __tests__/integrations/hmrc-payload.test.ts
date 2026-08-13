@@ -2,7 +2,25 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { composeVatReturn } from "@/lib/integrations/hmrc/vat-return";
 import { composeCis300Return } from "@/lib/integrations/hmrc/cis-return";
 import { buildFraudPreventionHeaders } from "@/lib/integrations/hmrc/fraud-headers";
-import { computeVatQuarter, computeVatNetTotals } from "@/lib/tax/compute";
+import {
+  computeVatQuarter,
+  computeVatNetTotals,
+  type InvoicePaymentRow,
+} from "@/lib/tax/compute";
+
+/** A FULL payment of an invoice — the ledger sum equals the old full-amount path. */
+function fp(
+  paidAt: string | null,
+  invoice: { vat_total: number; amount: number; total: number },
+): InvoicePaymentRow {
+  return {
+    amount: invoice.total,
+    paid_at: paidAt,
+    invoice_vat_total: invoice.vat_total,
+    invoice_amount: invoice.amount,
+    invoice_total: invoice.total,
+  };
+}
 import type { MonthlyReturnDataset } from "@/lib/cis/statements";
 
 /**
@@ -33,8 +51,8 @@ describe("composeVatReturn — 9-box mapping from computeVatQuarter", () => {
     // Two paid invoices → output VAT 1000; one finance row → input VAT 400.
     const vat = computeVatQuarter(
       [
-        { status: "paid", vat_total: 600, total: 3600, amount: 3000, paid_at: "2026-05-01", created_at: "2026-05-01" },
-        { status: "paid", vat_total: 400, total: 2400, amount: 2000, paid_at: "2026-05-10", created_at: "2026-05-10" },
+        fp("2026-05-01", { vat_total: 600, total: 3600, amount: 3000 }),
+        fp("2026-05-10", { vat_total: 400, total: 2400, amount: 2000 }),
       ],
       [{ vat_total: 400, amount: 2000, created_at: "2026-05-02" }],
       "2026-04-01",
@@ -67,14 +85,13 @@ describe("composeVatReturn — 9-box mapping from computeVatQuarter", () => {
     // paid invoices + finance rows, all inside [2026-04-01, 2026-07-01).
     const quarterStart = "2026-04-01";
     const quarterEnd = "2026-07-01";
-    const invoices = [
-      // 20% VAT: net 3000 → VAT 600 ; net 2000 → VAT 400
-      { status: "paid", vat_total: 600, total: 3600, amount: 3000, paid_at: "2026-05-01", created_at: "2026-04-20" },
-      { status: "paid", vat_total: 400, total: 2400, amount: 2000, paid_at: "2026-05-10", created_at: "2026-05-02" },
-      // out-of-window paid invoice — must NOT feed box 1 OR box 6
-      { status: "paid", vat_total: 999, total: 5994, amount: 4995, paid_at: "2026-08-01", created_at: "2026-07-30" },
-      // unpaid invoice — must NOT feed box 1 OR box 6
-      { status: "sent", vat_total: 123, total: 738, amount: 615, paid_at: null, created_at: "2026-05-05" },
+    const invoicePayments = [
+      // 20% VAT: net 3000 → VAT 600 ; net 2000 → VAT 400 (both fully paid in-window)
+      fp("2026-05-01", { vat_total: 600, total: 3600, amount: 3000 }),
+      fp("2026-05-10", { vat_total: 400, total: 2400, amount: 2000 }),
+      // out-of-window payment — must NOT feed box 1 OR box 6
+      fp("2026-08-01", { vat_total: 999, total: 5994, amount: 4995 }),
+      // an unpaid `sent` invoice has NO payment row, so it feeds nothing.
     ];
     const finances = [
       { vat_total: 400, amount: 2000, created_at: "2026-05-02" },
@@ -83,8 +100,8 @@ describe("composeVatReturn — 9-box mapping from computeVatQuarter", () => {
       { vat_total: 50, amount: 250, created_at: "2026-03-31" },
     ];
 
-    const vat = computeVatQuarter(invoices, finances, quarterStart, quarterEnd);
-    const netTotals = computeVatNetTotals(invoices, finances, quarterStart, quarterEnd);
+    const vat = computeVatQuarter(invoicePayments, finances, quarterStart, quarterEnd);
+    const netTotals = computeVatNetTotals(invoicePayments, finances, quarterStart, quarterEnd);
     const res = composeVatReturn({ periodKey: "2026-04-01", vat, netTotals }, { allowInternalPrepare: true });
 
     expect(res.ok).toBe(true);

@@ -271,7 +271,7 @@ describe("reconciliation — true ageing re-slices the payable, it never changes
     payrollRuns: [],
     payrollLines: [],
     cisSnapshots: [],
-    vatInvoices: [],
+    vatInvoicePayments: [],
     vatFinances: [],
     quarterStartIso: "2026-07-01",
     todayIso: AS_AT,

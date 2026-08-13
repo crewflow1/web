@@ -395,7 +395,11 @@ describe("list + export routes — pinned to the ACTIVE org", () => {
     ["app/api/invoices/route.ts", ["invoices"]],
     ["app/api/finances/export/route.ts", ["finances"]],
     ["app/api/invoices/export/route.ts", ["invoices", "invoice_line_items"]],
-    ["app/api/tax/quarterly-pdf/route.ts", ["invoices", "finances"]],
+    // NB: the quarterly-pdf route reads `finances` inline but delegates its output-VAT
+    // ledger read (invoice_payments + parent invoices) to gatherVatQuarterInputs — the
+    // shared VAT-authority reader — so those `.from(...)` + org pins live there, asserted
+    // separately below (same pattern as app/api/schedule/route.ts → fetchCalendarJobs).
+    ["app/api/tax/quarterly-pdf/route.ts", ["finances"]],
   ];
 
   for (const [path, tables] of ROUTES) {
@@ -439,6 +443,30 @@ describe("list + export routes — pinned to the ACTIVE org", () => {
       reader,
       "the shared calendar jobs read lost its active-org predicate",
     ).toMatch(ARG_PIN);
+  });
+
+  it("app/api/tax/quarterly-pdf/route.ts pins its output-VAT ledger via gatherVatQuarterInputs", () => {
+    // The PDF's output VAT is CASH — it comes from the invoice_payments ledger,
+    // read by the shared gatherVatQuarterInputs (server/services/vat-quarter-inputs.ts).
+    // The active-org pin must survive that delegation: the route must (a) capture ctx
+    // and (b) hand the ACTIVE org to the reader, and the reader must (c) pin org_id on
+    // every read it issues.
+    const route = src("app/api/tax/quarterly-pdf/route.ts");
+    expect(route).toMatch(CAPTURES_CTX);
+    expect(
+      route,
+      "quarterly-pdf must pass the ACTIVE org (ctx.org.id) into gatherVatQuarterInputs",
+    ).toMatch(/gatherVatQuarterInputs\(\s*[\s\S]*?ctx\.org\.id/);
+
+    const reader = src("server/services/vat-quarter-inputs.ts");
+    for (const t of ["invoice_payments", "invoices", "supplier_payments", "supplier_payment_allocations"]) {
+      expect(reader, `vat-quarter-inputs no longer reads ${t}`).toMatch(
+        new RegExp(`\\.from\\(\\s*["']${t}["']`),
+      );
+    }
+    // Every read in the reader is org-pinned by argument (ARG_PIN — it takes the
+    // active org as `orgId`).
+    expect(reader, "the VAT ledger reads lost their active-org predicate").toMatch(ARG_PIN);
   });
 
   it("the money exports are pinned — a bookkeeping CSV is ONE company's ledger", () => {

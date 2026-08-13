@@ -430,6 +430,14 @@ describe("supplier payments service — tenant client only, never service_role",
     // __tests__/security/supplier-performance-readonly.test.ts, and the org
     // pinning is proven against real Postgres in
     // __tests__/integration/rls/supplier-performance-active-org.test.ts.
+    // `vat-quarter-inputs.ts` (the VAT-authority read layer) is the fourth
+    // READ-ONLY consumer. It reads `supplier_payments` (id + paid_at window,
+    // voided filter) and `supplier_payment_allocations` (amount +
+    // cis_reverse_charge_vat + cis_vat_treatment) SOLELY to SUM the frozen
+    // domestic-reverse-charge VAT into the VAT return's boxes 1/4/7. It never
+    // writes the ledger (no insert/update/delete/upsert/rpc), never re-derives a
+    // deduction, and its reads are org-pinned + paged. Its writes-absence is
+    // restated in the sibling `it` below so the allowlist growth stays honest.
     expect(readers).toEqual([
       "app/(app)/suppliers/[id]/payments/actions.ts",
       "server/services/aged-ledgers.ts",
@@ -437,20 +445,23 @@ describe("supplier payments service — tenant client only, never service_role",
       "server/services/org-cash-out.ts",
       "server/services/supplier-payments.ts",
       "server/services/supplier-performance.ts",
+      "server/services/vat-quarter-inputs.ts",
     ]);
   });
 
-  it("the money-out reader added to that list cannot write the ledger", () => {
+  it("the money-out readers added to that list cannot write the ledger", () => {
     // The allowlist above grew, so the property it protects is restated HERE
     // rather than only in the new module's own tier: a reader that could write
     // would defeat the point of naming the readers at all.
-    const cashOut = codeOf(read("server/services/org-cash-out.ts"));
-    for (const verb of [/\.insert\(/, /\.update\(/, /\.upsert\(/, /\.delete\(/, /\.rpc\(/]) {
-      expect(cashOut, `org-cash-out must not call ${verb}`).not.toMatch(verb);
+    for (const path of ["server/services/org-cash-out.ts", "server/services/vat-quarter-inputs.ts"]) {
+      const reader = codeOf(read(path));
+      for (const verb of [/\.insert\(/, /\.update\(/, /\.upsert\(/, /\.delete\(/, /\.rpc\(/]) {
+        expect(reader, `${path} must not call ${verb}`).not.toMatch(verb);
+      }
+      expect(reader, `${path}: tenant client only — never service_role`).not.toMatch(
+        /SERVICE_ROLE|serviceClient|createServiceClient/,
+      );
     }
-    expect(cashOut, "tenant client only — never service_role").not.toMatch(
-      /SERVICE_ROLE|serviceClient|createServiceClient/,
-    );
   });
 });
 

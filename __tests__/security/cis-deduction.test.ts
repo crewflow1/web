@@ -163,12 +163,33 @@ describe("CIS M3 cannot move job cost or existing VAT reporting", () => {
     expect(sql).toMatch(/create table if not exists public\.cis_bill_details/i);
   });
 
-  it("leaves computeVatQuarter untouched — it still sums finances.vat_total only", () => {
+  it("computeVatQuarter reflects the reverse charge but never RE-DERIVES it (no second engine)", () => {
+    // DECISION REVERSED (the domestic-reverse-charge VAT gap). The VAT return MUST
+    // now reflect the reverse charge: the notional VAT enters BOX 1 and BOX 4
+    // (net-neutral) and its net value BOX 7 (S55A VATA94). Earlier this test
+    // asserted the OPPOSITE ("no reverse-charge concept in the VAT report") —
+    // that was the bug, not the invariant.
+    //
+    // What survives is the "one engine" protection: computeVatQuarter still
+    // derives its OWN input VAT from finances.vat_total, and it ADDS a caller-
+    // supplied reverse-charge TOTAL rather than recomputing it. The frozen figure
+    // is summed in the service layer (server/services/vat-quarter-inputs.ts) from
+    // supplier_payment_allocations.cis_reverse_charge_vat — the DB is the control,
+    // lib/cis/deduction.ts its twin. So there is still exactly one reverse-charge
+    // calculator, and this file's own "reverse charge collapsing back into vat = 0"
+    // guard on the SQL trigger still protects the source figure.
     const compute = codeOf(read("lib/tax/compute.ts"));
+    // Input VAT still sums finances.vat_total (the existing accrual leg).
     expect(compute).toMatch(/inputVat\s*\+=\s*Number\(f\.vat_total\s*\?\?\s*0\)/);
-    // No CIS/reverse-charge concept has leaked into the VAT report.
-    expect(compute).not.toMatch(/reverse_charge/i);
-    expect(compute).not.toMatch(/cis_/i);
+    // The reverse charge is THREADED as a pre-summed number into BOTH legs...
+    expect(compute).toMatch(/outputVat\s*\+=\s*rc/);
+    expect(compute).toMatch(/inputVat\s*\+=\s*rc/);
+    // ...but the pure function must NOT re-derive it: it never names the frozen DB
+    // column, and it applies no reverse-charge rate apportionment of its own.
+    expect(compute).not.toMatch(/cis_reverse_charge_vat/);
+    expect(compute, "no rate×base VAT engine in the pure authority").not.toMatch(
+      /\w*[Rr]ate\w*\s*\/\s*100/,
+    );
   });
 
   it("does not fork VAT reporting into a second quarterly calculator", () => {

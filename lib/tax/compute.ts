@@ -73,8 +73,36 @@ type FinanceRow = {
 };
 
 /**
- * The single VAT authority — output VAT on PAID invoices, input VAT on logged
- * finance rows, over the quarter `[quarterStartIso, quarterEndIso)`.
+ * One row of the invoice_payments LEDGER — a single payment against an invoice,
+ * carrying the parent invoice's VAT-relevant figures (resolved by the caller).
+ *
+ * This is the CASH-BASIS output-VAT source, and it REPLACES the coarse
+ * `invoice.status === "paid"` flag. The payment trigger stamps `invoices.paid_at`
+ * only when an invoice flips FULLY to 'paid': a `partially_paid` invoice keeps
+ * status≠'paid' and paid_at=NULL, so a status-gated sum contributed £0 for the
+ * quarter the cash was actually received — understating boxes 1 and 6. Reading
+ * the ledger instead captures every payment (deposits, instalments spanning
+ * quarters, never-fully-paid invoices) on the date the cash landed.
+ */
+export type InvoicePaymentRow = {
+  /** invoice_payments.amount — the cash received in this payment (VAT-inclusive). */
+  amount: number | string | null;
+  /** invoice_payments.paid_at — the date the cash was received (the cash-basis date). */
+  paid_at: string | null;
+  /** The parent invoice's vat_total — whole-invoice output VAT. */
+  invoice_vat_total: number | string | null;
+  /** The parent invoice's amount — net of VAT. */
+  invoice_amount: number | string | null;
+  /** The parent invoice's total — GROSS (net + VAT); the apportionment denominator. */
+  invoice_total: number | string | null;
+};
+
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+/**
+ * The single VAT authority — CASH-basis output VAT from the invoice_payments
+ * LEDGER, ACCRUAL-basis input VAT from logged finance rows, over the quarter
+ * `[quarterStartIso, quarterEndIso)`.
  *
  * The lower bound is INCLUSIVE; the optional upper bound is EXCLUSIVE. ALWAYS
  * pass the exclusive end (start of the next quarter — see
@@ -84,37 +112,61 @@ type FinanceRow = {
  * passes it, and omitting it degrades to open-ended `iso >= quarterStart` with
  * no upper bound — do not rely on that.
  *
- * Basis is disclosed and deliberate: output VAT is CASH (paid invoices), input
- * VAT is ACCRUAL (all logged costs). The dashboard tile, the quarterly PDF, the
- * HMRC 9-box composer AND the /cash outflow surface (lib/commercial/cash-out)
- * all read THIS function on the SAME bounded window — there is no second
- * calculator and no divergent window.
+ * OUTPUT VAT (box 1) is CASH and PAYMENT-LEDGER-DRIVEN. For each payment in the
+ * window it adds `amount × (invoice.vat_total / invoice.total)` — the payment's
+ * proportional share of the invoice's VAT — so a partial payment contributes the
+ * VAT on the cash actually received, not £0 and not the whole invoice. INPUT VAT
+ * (box 4) is ACCRUAL (all logged costs).
+ *
+ * DOMESTIC REVERSE CHARGE (S55A VATA94). When the org is the contractor/recipient
+ * of a CIS domestic reverse-charge supply it self-accounts the notional VAT: the
+ * SAME figure enters BOX 1 (output) AND BOX 4 (input), so box 5 net is neutral.
+ * That figure is the frozen ledger total (Σ supplier_payment_allocations
+ * .cis_reverse_charge_vat over the window) computed by the SERVICE layer and
+ * passed in as `reverseChargeVat` — this pure function never re-derives it, so
+ * there is one and only one reverse-charge engine (lib/cis/deduction.ts + the DB).
+ *
+ * The dashboard tile, the quarterly PDF, the HMRC 9-box composer AND the /cash
+ * outflow surface (lib/commercial/cash-out) all read THIS function on the SAME
+ * bounded window — there is no second calculator and no divergent window.
  */
 export function computeVatQuarter(
-  invoices: InvoiceRow[],
+  invoicePayments: InvoicePaymentRow[],
   finances: FinanceRow[],
   quarterStartIso: string,
   quarterEndIso?: string,
+  reverseChargeVat = 0,
 ): TaxSummary["vat_quarter"] {
   const inPeriod = (iso: string): boolean =>
     iso >= quarterStartIso &&
     (quarterEndIso === undefined || iso < quarterEndIso);
+  // Box 1 — output VAT on the CASH received in the window, apportioned per payment.
   let outputVat = 0;
-  for (const inv of invoices) {
-    if (inv.status === "paid" && inv.paid_at && inPeriod(inv.paid_at)) {
-      outputVat += Number(inv.vat_total ?? 0);
-    }
+  for (const p of invoicePayments) {
+    if (!p.paid_at || !inPeriod(p.paid_at)) continue;
+    const total = Number(p.invoice_total ?? 0);
+    // Guard divide-by-zero / NaN: a £0-total invoice has no VAT to apportion.
+    if (!Number.isFinite(total) || total <= 0) continue;
+    const amount = Number(p.amount ?? 0);
+    const vatTotal = Number(p.invoice_vat_total ?? 0);
+    outputVat += amount * (vatTotal / total);
   }
+  // Box 4 — input VAT on all logged costs in the window.
   let inputVat = 0;
   for (const f of finances) {
     if (inPeriod(f.created_at)) {
       inputVat += Number(f.vat_total ?? 0);
     }
   }
+  // Domestic reverse charge: the notional VAT is BOTH output and input, so the
+  // net (box 5) is unchanged — it only surfaces the liability in boxes 1 and 4.
+  const rc = Number.isFinite(reverseChargeVat) ? reverseChargeVat : 0;
+  outputVat += rc;
+  inputVat += rc;
   return {
-    output_vat: Math.round(outputVat * 100) / 100,
-    input_vat: Math.round(inputVat * 100) / 100,
-    net_payable: Math.round((outputVat - inputVat) * 100) / 100,
+    output_vat: round2(outputVat),
+    input_vat: round2(inputVat),
+    net_payable: round2(outputVat - inputVat),
     confidence: "computed",
   };
 }
@@ -122,32 +174,42 @@ export function computeVatQuarter(
 /**
  * MTD VAT boxes 6/7 — the total ex-VAT VALUE of the sales and purchases whose VAT
  * feeds boxes 1 and 4. These are MANDATORY on every UK VAT scheme (not EU-only
- * like boxes 8/9), and they ARE derivable from CrewFlow's own data: the net
- * (ex-VAT) `amount` of the same rows over the same window.
+ * like boxes 8/9), and they ARE derivable from CrewFlow's own data.
  *
  * Computed over the SAME `[quarterStartIso, quarterEndIso)` window and the SAME
- * predicates as computeVatQuarter: box 6 sums the net `amount` of the PAID
- * invoices whose `vat_total` feeds box 1 (output VAT, CASH basis); box 7 sums the
- * net `amount` of the finance rows whose `vat_total` feeds box 4 (input VAT,
- * ACCRUAL basis). So the reported net totals reconcile with the VAT boxes — same
- * set, same window, one authority. Values are the raw ex-VAT sums (rounded to 2dp
- * to match this authority's output shape); the composer applies HMRC's whole-pound
+ * predicates as computeVatQuarter:
+ *   • BOX 6 (sales) sums each payment's proportional NET share
+ *     `amount × (invoice.amount / invoice.total)` from the invoice_payments
+ *     ledger — the CASH-basis net that backs box 1. Reverse-charge purchases are
+ *     PURCHASES, not sales, so they never enter box 6.
+ *   • BOX 7 (purchases) sums the net `amount` of the finance rows whose
+ *     `vat_total` feeds box 4 (ACCRUAL basis), PLUS the net (ex-VAT) value of
+ *     domestic reverse-charge purchases (`reverseChargeNet`). HMRC includes
+ *     reverse-charge purchases in box 7 but EXCLUDES them from box 6.
+ *
+ * So the reported net totals reconcile with the VAT boxes — same set, same
+ * window, one authority. Values are the raw ex-VAT sums (rounded to 2dp to match
+ * this authority's output shape); the composer applies HMRC's whole-pound
  * rounding for boxes 6-9, mirroring how boxes 1/4 sum raw then round.
  */
 export function computeVatNetTotals(
-  invoices: InvoiceRow[],
+  invoicePayments: InvoicePaymentRow[],
   finances: FinanceRow[],
   quarterStartIso: string,
   quarterEndIso?: string,
+  reverseChargeNet = 0,
 ): { totalValueSalesExVAT: number; totalValuePurchasesExVAT: number } {
   const inPeriod = (iso: string): boolean =>
     iso >= quarterStartIso &&
     (quarterEndIso === undefined || iso < quarterEndIso);
   let sales = 0;
-  for (const inv of invoices) {
-    if (inv.status === "paid" && inv.paid_at && inPeriod(inv.paid_at)) {
-      sales += Number(inv.amount ?? 0); // net of VAT
-    }
+  for (const p of invoicePayments) {
+    if (!p.paid_at || !inPeriod(p.paid_at)) continue;
+    const total = Number(p.invoice_total ?? 0);
+    if (!Number.isFinite(total) || total <= 0) continue;
+    const amount = Number(p.amount ?? 0);
+    const net = Number(p.invoice_amount ?? 0);
+    sales += amount * (net / total); // this payment's net (ex-VAT) share
   }
   let purchases = 0;
   for (const f of finances) {
@@ -155,9 +217,12 @@ export function computeVatNetTotals(
       purchases += Number(f.amount ?? 0); // net of VAT
     }
   }
+  // Box 7 (NOT box 6) carries the net value of reverse-charge purchases.
+  const rcNet = Number.isFinite(reverseChargeNet) ? reverseChargeNet : 0;
+  purchases += rcNet;
   return {
-    totalValueSalesExVAT: Math.round(sales * 100) / 100,
-    totalValuePurchasesExVAT: Math.round(purchases * 100) / 100,
+    totalValueSalesExVAT: round2(sales),
+    totalValuePurchasesExVAT: round2(purchases),
   };
 }
 

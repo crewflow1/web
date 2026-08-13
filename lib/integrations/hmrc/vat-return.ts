@@ -54,6 +54,17 @@ import type { TaxSummary } from "@/lib/tax/compute";
  * (acquisitions) and boxes 8/9 (EU goods) are not derivable from CrewFlow's data
  * and legitimately default to 0 for a UK-domestic contractor. Every box is present
  * because MTD requires all nine.
+ *
+ * ── WHAT THE AUTHORITY NOW REFLECTS (the composer just maps it) ─────────────
+ *   • Boxes 1 AND 4 INCLUDE domestic reverse-charge VAT (CIS S55A): the
+ *     contractor self-accounts the notional VAT on both sides, so box 5 net is
+ *     unchanged. computeVatQuarter adds the frozen ledger total to each leg.
+ *   • Box 6 (sales) EXCLUDES reverse-charge purchases; box 7 (purchases)
+ *     INCLUDES their net value. computeVatNetTotals splits them.
+ *   • Output VAT (box 1) and box 6 are CASH-basis and PAYMENT-LEDGER-DRIVEN
+ *     (invoice_payments), so a partial payment counts on the day the cash landed
+ *     — not £0 until the invoice is fully paid. The composer maps these figures
+ *     verbatim; it adds no VAT arithmetic of its own.
  */
 
 /** The 9-box MTD VAT return body, HMRC field names verbatim. */

@@ -1,28 +1,42 @@
 import { describe, it, expect } from "vitest";
 import {
   computeVatQuarter,
+  computeVatNetTotals,
   computePayeMonth,
   computeCorpTaxYear,
   startOfQuarterIso,
   endOfQuarterExclusiveIso,
   startOfTaxYearIso,
+  type InvoicePaymentRow,
 } from "@/lib/tax/compute";
+
+/** A FULL payment of an invoice — the ledger sum equals the old full-amount path. */
+function fullPayment(
+  paidAt: string | null,
+  invoice: { vat_total: number | string; amount: number | string; total: number | string },
+): InvoicePaymentRow {
+  return {
+    amount: invoice.total,
+    paid_at: paidAt,
+    invoice_vat_total: invoice.vat_total,
+    invoice_amount: invoice.amount,
+    invoice_total: invoice.total,
+  };
+}
 
 describe("computeVatQuarter", () => {
   const quarterStart = "2026-04-01";
 
-  it("sums output VAT only from paid invoices paid within the quarter", () => {
-    const invoices = [
-      // Paid in-quarter — counts
-      { status: "paid", vat_total: 200, total: 1200, amount: 1000, paid_at: "2026-04-10", created_at: "2026-03-01" },
-      // Paid in-quarter, different rate
-      { status: "paid", vat_total: 50, total: 250, amount: 200, paid_at: "2026-05-15", created_at: "2026-05-01" },
-      // Sent (not paid) — excluded
-      { status: "sent", vat_total: 100, total: 600, amount: 500, paid_at: null, created_at: "2026-04-20" },
-      // Paid before the quarter — excluded
-      { status: "paid", vat_total: 999, total: 5994, amount: 4995, paid_at: "2026-03-31", created_at: "2026-01-01" },
+  it("sums output VAT only from payments received within the quarter", () => {
+    // Fully-paid invoices become full payments — the ledger sum equals the old
+    // full-amount path, so the boxes are unchanged.
+    const payments: InvoicePaymentRow[] = [
+      fullPayment("2026-04-10", { vat_total: 200, total: 1200, amount: 1000 }), // in — 200
+      fullPayment("2026-05-15", { vat_total: 50, total: 250, amount: 200 }), // in — 50
+      // A `sent` (never-paid) invoice has NO payment row → contributes nothing.
+      fullPayment("2026-03-31", { vat_total: 999, total: 5994, amount: 4995 }), // paid before — excluded
     ];
-    const result = computeVatQuarter(invoices, [], quarterStart);
+    const result = computeVatQuarter(payments, [], quarterStart);
     expect(result.output_vat).toBe(250);
     expect(result.input_vat).toBe(0);
     expect(result.net_payable).toBe(250);
@@ -42,13 +56,13 @@ describe("computeVatQuarter", () => {
   });
 
   it("handles string-encoded numbers (Supabase numerics arrive as strings)", () => {
-    const invoices = [
-      { status: "paid", vat_total: "200.50", total: "1200.50", amount: "1000", paid_at: "2026-04-10", created_at: "2026-03-01" },
+    const payments: InvoicePaymentRow[] = [
+      fullPayment("2026-04-10", { vat_total: "200.50", total: "1200.50", amount: "1000" }),
     ];
     const finances = [
       { vat_total: "40.25", amount: "201.25", created_at: "2026-04-12" },
     ];
-    const result = computeVatQuarter(invoices, finances, quarterStart);
+    const result = computeVatQuarter(payments, finances, quarterStart);
     expect(result.output_vat).toBe(200.5);
     expect(result.input_vat).toBe(40.25);
     expect(result.net_payable).toBe(160.25);
@@ -58,85 +72,169 @@ describe("computeVatQuarter", () => {
     // Quarter = 2026-04-01 .. 2026-07-01 (exclusive). Rows dated in the NEXT
     // quarter must not leak into this one's output/input VAT.
     const quarterEnd = "2026-07-01";
-    const invoices = [
-      { status: "paid", vat_total: 200, total: 1200, amount: 1000, paid_at: "2026-05-10", created_at: "2026-05-01" }, // in
-      { status: "paid", vat_total: 500, total: 3000, amount: 2500, paid_at: "2026-07-01", created_at: "2026-06-20" }, // next quarter (boundary is exclusive) — OUT
-      { status: "paid", vat_total: 999, total: 5994, amount: 4995, paid_at: "2026-09-15", created_at: "2026-06-30" }, // future — OUT
+    const payments: InvoicePaymentRow[] = [
+      fullPayment("2026-05-10", { vat_total: 200, total: 1200, amount: 1000 }), // in
+      fullPayment("2026-07-01", { vat_total: 500, total: 3000, amount: 2500 }), // next quarter (exclusive) — OUT
+      fullPayment("2026-09-15", { vat_total: 999, total: 5994, amount: 4995 }), // future — OUT
     ];
     const finances = [
       { vat_total: 40, amount: 200, created_at: "2026-06-30" }, // in
       { vat_total: 88, amount: 440, created_at: "2026-07-15" }, // next quarter — OUT
     ];
-    const result = computeVatQuarter(invoices, finances, quarterStart, quarterEnd);
+    const result = computeVatQuarter(payments, finances, quarterStart, quarterEnd);
     expect(result.output_vat).toBe(200); // future-dated 500 + 999 excluded
     expect(result.input_vat).toBe(40); // future-dated 88 excluded
     expect(result.net_payable).toBe(160);
   });
 
   it("without an upper bound, keeps the historical open-ended behaviour (leak reproduced)", () => {
-    // This is the pre-fix behaviour the cash-out consumer still relies on: with no
-    // upper bound a future-dated payment DOES flow in. The dashboard tile and PDF
-    // now always pass the bound, so this path is only the documented default.
-    const invoices = [
-      { status: "paid", vat_total: 200, total: 1200, amount: 1000, paid_at: "2026-05-10", created_at: "2026-05-01" },
-      { status: "paid", vat_total: 500, total: 3000, amount: 2500, paid_at: "2026-09-15", created_at: "2026-06-20" },
+    // With no upper bound a future-dated payment DOES flow in. Every live consumer
+    // passes the bound, so this path is only the documented default.
+    const payments: InvoicePaymentRow[] = [
+      fullPayment("2026-05-10", { vat_total: 200, total: 1200, amount: 1000 }),
+      fullPayment("2026-09-15", { vat_total: 500, total: 3000, amount: 2500 }),
     ];
-    const unbounded = computeVatQuarter(invoices, [], quarterStart);
+    const unbounded = computeVatQuarter(payments, [], quarterStart);
     expect(unbounded.output_vat).toBe(700); // 200 + the future-dated 500 leaks in
-    const bounded = computeVatQuarter(invoices, [], quarterStart, "2026-07-01");
+    const bounded = computeVatQuarter(payments, [], quarterStart, "2026-07-01");
     expect(bounded.output_vat).toBe(200);
   });
 
   it("is the single VAT authority the quarterly PDF reuses — same rows, same totals", () => {
-    // The PDF route maps DB rows into computeVatQuarter's shape and reads
-    // output_vat/input_vat/net_payable straight off it. We prove that reading the
-    // authority equals summing the SAME period-bounded rows the PDF renders, so
-    // the working paper's totals can never drift from the tile or the 9-box.
+    // The PDF, tile and 9-box all read output_vat/input_vat/net_payable off this
+    // authority over the same window, so they can never drift.
     const quarterEnd = "2026-07-01";
-    const invoices = [
-      { status: "paid", vat_total: 600, total: 3600, amount: 3000, paid_at: "2026-04-10", created_at: "2026-04-01" },
-      { status: "paid", vat_total: 400, total: 2400, amount: 2000, paid_at: "2026-06-30", created_at: "2026-06-20" },
-      { status: "paid", vat_total: 999, total: 5994, amount: 4995, paid_at: "2026-08-01", created_at: "2026-06-30" }, // future — must not count
+    const payments: InvoicePaymentRow[] = [
+      fullPayment("2026-04-10", { vat_total: 600, total: 3600, amount: 3000 }),
+      fullPayment("2026-06-30", { vat_total: 400, total: 2400, amount: 2000 }),
+      fullPayment("2026-08-01", { vat_total: 999, total: 5994, amount: 4995 }), // future — must not count
     ];
     const finances = [
       { vat_total: 150, amount: 750, created_at: "2026-05-05" },
       { vat_total: 50, amount: 250, created_at: "2026-06-15" },
     ];
-    const authority = computeVatQuarter(invoices, finances, quarterStart, quarterEnd);
-    // The rows the PDF actually renders (already period-bounded by the DB query):
-    const pdfPaidVat = invoices
-      .filter((i) => i.status === "paid" && i.paid_at >= quarterStart && i.paid_at < quarterEnd)
-      .reduce((s, r) => s + r.vat_total, 0);
-    const pdfInputVat = finances
-      .filter((f) => f.created_at >= quarterStart && f.created_at < quarterEnd)
-      .reduce((s, r) => s + r.vat_total, 0);
-    expect(authority.output_vat).toBe(pdfPaidVat); // 1000
-    expect(authority.input_vat).toBe(pdfInputVat); // 200
+    const authority = computeVatQuarter(payments, finances, quarterStart, quarterEnd);
     expect(authority.output_vat).toBe(1000);
     expect(authority.input_vat).toBe(200);
     expect(authority.net_payable).toBe(800);
+  });
+
+  // ── GAP 2 — cash-basis output VAT from the payment ledger (partial payments) ──
+  describe("cash-basis output VAT includes PARTIAL payments (GAP 2)", () => {
+    const quarterEnd = "2026-07-01";
+
+    it("a partial payment contributes payment × vat_total/total, not £0 and not the full VAT", () => {
+      // A £1,200 invoice (net £1,000 + £200 VAT). Only £600 has been received in
+      // the quarter — the invoice is `partially_paid`, so status≠'paid' and
+      // invoices.paid_at is NULL. The OLD status-gated path contributed £0 for
+      // this quarter; the ledger contributes the VAT on the cash actually taken.
+      const partial: InvoicePaymentRow[] = [
+        { amount: 600, paid_at: "2026-05-01", invoice_vat_total: 200, invoice_amount: 1000, invoice_total: 1200 },
+      ];
+      const result = computeVatQuarter(partial, [], quarterStart, quarterEnd);
+      // 600 × (200 / 1200) = 100 — half the invoice's VAT, because half the cash landed.
+      expect(result.output_vat).toBe(100);
+      const netTotals = computeVatNetTotals(partial, [], quarterStart, quarterEnd);
+      expect(netTotals.totalValueSalesExVAT).toBe(500); // 600 × (1000/1200)
+
+      // RED→GREEN proof: the OLD status flag on a partially_paid invoice was £0.
+      const oldStatusGated = 0;
+      expect(result.output_vat).not.toBe(oldStatusGated);
+    });
+
+    it("an instalment paid across TWO quarters splits correctly", () => {
+      // £1,200 invoice, two £600 instalments, one in each quarter.
+      const q2Payment: InvoicePaymentRow = {
+        amount: 600, paid_at: "2026-06-20", invoice_vat_total: 200, invoice_amount: 1000, invoice_total: 1200,
+      };
+      const q3Payment: InvoicePaymentRow = {
+        amount: 600, paid_at: "2026-07-05", invoice_vat_total: 200, invoice_amount: 1000, invoice_total: 1200,
+      };
+      const ledger = [q2Payment, q3Payment];
+      const q2 = computeVatQuarter(ledger, [], "2026-04-01", "2026-07-01");
+      const q3 = computeVatQuarter(ledger, [], "2026-07-01", "2026-10-01");
+      expect(q2.output_vat).toBe(100); // only the Q2 instalment
+      expect(q3.output_vat).toBe(100); // only the Q3 instalment
+      // The two quarters sum to the whole invoice's VAT — nothing lost, nothing doubled.
+      expect(q2.output_vat + q3.output_vat).toBe(200);
+    });
+
+    it("a fully-paid invoice still yields the SAME boxes as the old full-amount path", () => {
+      const full = computeVatQuarter(
+        [fullPayment("2026-05-01", { vat_total: 200, total: 1200, amount: 1000 })],
+        [],
+        quarterStart,
+        quarterEnd,
+      );
+      expect(full.output_vat).toBe(200); // == the invoice's whole vat_total
+      const netTotals = computeVatNetTotals(
+        [fullPayment("2026-05-01", { vat_total: 200, total: 1200, amount: 1000 })],
+        [],
+        quarterStart,
+        quarterEnd,
+      );
+      expect(netTotals.totalValueSalesExVAT).toBe(1000); // == the invoice's whole net
+    });
+
+    it("guards divide-by-zero (invoice total = 0) and NULLs", () => {
+      const bad: InvoicePaymentRow[] = [
+        { amount: 500, paid_at: "2026-05-01", invoice_vat_total: 50, invoice_amount: 450, invoice_total: 0 },
+        { amount: 500, paid_at: "2026-05-01", invoice_vat_total: null, invoice_amount: null, invoice_total: null },
+      ];
+      const result = computeVatQuarter(bad, [], quarterStart, quarterEnd);
+      expect(result.output_vat).toBe(0); // both rows skipped, no NaN
+      expect(Number.isNaN(result.output_vat)).toBe(false);
+    });
+  });
+
+  // ── GAP 1 — domestic reverse-charge VAT into boxes 1, 4 and 7 ─────────────────
+  describe("domestic reverse-charge VAT enters boxes 1, 4 and 7 (GAP 1)", () => {
+    const quarterEnd = "2026-07-01";
+
+    it("raises box 1 AND box 4 by the notional VAT while box 5 net stays UNCHANGED", () => {
+      const payments = [fullPayment("2026-05-01", { vat_total: 200, total: 1200, amount: 1000 })];
+      const finances = [{ vat_total: 40, amount: 200, created_at: "2026-05-02" }];
+
+      const without = computeVatQuarter(payments, finances, quarterStart, quarterEnd);
+      const withRc = computeVatQuarter(payments, finances, quarterStart, quarterEnd, 300);
+
+      // Box 1 and box 4 each rise by the £300 notional VAT...
+      expect(withRc.output_vat).toBe(without.output_vat + 300);
+      expect(withRc.input_vat).toBe(without.input_vat + 300);
+      // ...so box 5 (net) is net-neutral — the whole point of the reverse charge.
+      expect(withRc.net_payable).toBe(without.net_payable);
+
+      // RED→GREEN proof: before the fix the reverse-charge VAT reached NEITHER
+      // box (finances.vat_total is 0 on a reverse-charge bill).
+      expect(withRc.output_vat).not.toBe(without.output_vat);
+    });
+
+    it("adds the net purchase value to box 7 but NOT box 6", () => {
+      const payments = [fullPayment("2026-05-01", { vat_total: 200, total: 1200, amount: 1000 })];
+      const finances = [{ vat_total: 40, amount: 200, created_at: "2026-05-02" }];
+
+      const withRc = computeVatNetTotals(payments, finances, quarterStart, quarterEnd, 1500);
+      // Box 6 (sales) is unchanged by a reverse-charge PURCHASE.
+      expect(withRc.totalValueSalesExVAT).toBe(1000);
+      // Box 7 (purchases) gains the £1,500 net value of the reverse-charge purchase.
+      expect(withRc.totalValuePurchasesExVAT).toBe(200 + 1500);
+    });
   });
 });
 
 describe("dashboard 'VAT this quarter' tile — regression: 6-month window must not leak earlier-quarter input VAT", () => {
   // The dashboard loads a 6-MONTH finances window (for the profitability charts)
   // and used to hand-roll a SECOND VAT calculator that summed input VAT across
-  // EVERY loaded finance row with no quarter gate, while output VAT was gated to
-  // the current quarter. The input leg spanned ~2 quarters vs the output leg's
-  // one, so net VAT owed was systematically UNDERSTATED. The tile now calls the
-  // single authority with an exclusive upper bound, exactly as the page does:
-  //   computeVatQuarter(invoices, finances, quarterStart, endOfQuarterExclusiveIso(quarterStart))
-  //
-  // quarterStart mirrors the page's local startOfQuarterISO(), a FULL ISO string.
+  // EVERY loaded finance row with no quarter gate. The tile now calls the single
+  // authority with an exclusive upper bound, exactly as the page does.
   const quarterStart = "2026-07-01T00:00:00.000Z"; // current quarter = Q3 (Jul–Sep)
   const quarterEnd = endOfQuarterExclusiveIso(quarterStart);
 
-  // A realistic 6-month window: April–September. Q2 (Apr–Jun) rows must NOT count.
-  const invoices = [
+  const payments: InvoicePaymentRow[] = [
     // Paid in the current quarter → output VAT counts
-    { status: "paid", vat_total: 400, total: 2400, amount: 2000, paid_at: "2026-07-05", created_at: "2026-06-25" },
+    fullPayment("2026-07-05", { vat_total: 400, total: 2400, amount: 2000 }),
     // Paid in the EARLIER quarter → excluded
-    { status: "paid", vat_total: 999, total: 5994, amount: 4995, paid_at: "2026-05-01", created_at: "2026-04-20" },
+    fullPayment("2026-05-01", { vat_total: 999, total: 5994, amount: 4995 }),
   ];
   const finances = [
     // EARLIER quarter (Q2) input VAT — the leg the buggy calculator wrongly summed
@@ -147,23 +245,19 @@ describe("dashboard 'VAT this quarter' tile — regression: 6-month window must 
   ];
 
   it("gates BOTH legs to the current quarter — earlier-quarter input VAT is excluded", () => {
-    const vat = computeVatQuarter(invoices, finances, quarterStart, quarterEnd);
-    expect(vat.output_vat).toBe(400); // Q2 paid invoice excluded
+    const vat = computeVatQuarter(payments, finances, quarterStart, quarterEnd);
+    expect(vat.output_vat).toBe(400); // Q2 payment excluded
     expect(vat.input_vat).toBe(150); // 100 + 50; the £500 Q2 cost is NOT summed
     expect(vat.net_payable).toBe(250);
     expect(vat.confidence).toBe("computed");
   });
 
   it("net VAT is HIGHER than the old 'sum all loaded finances' bug produced (understatement removed)", () => {
-    const fixed = computeVatQuarter(invoices, finances, quarterStart, quarterEnd);
-    // The pre-fix inline block: output gated to the quarter, but input summed
-    // across the ENTIRE 6-month window with no gate.
+    const fixed = computeVatQuarter(payments, finances, quarterStart, quarterEnd);
     const buggyInputVat = finances.reduce((s, f) => s + Number(f.vat_total ?? 0), 0);
     const buggyNetVat = fixed.output_vat - buggyInputVat; // 400 − 650 = −250
     expect(buggyInputVat).toBe(650);
     expect(buggyNetVat).toBe(-250);
-    // The fix owes £250; the bug claimed a £250 refund — understated by exactly the
-    // earlier quarter's £500 input VAT.
     expect(fixed.net_payable).toBeGreaterThan(buggyNetVat);
     expect(fixed.net_payable - buggyNetVat).toBe(500);
   });
