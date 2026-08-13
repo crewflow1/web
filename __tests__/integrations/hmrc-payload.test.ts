@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { composeVatReturn } from "@/lib/integrations/hmrc/vat-return";
 import { composeCis300Return } from "@/lib/integrations/hmrc/cis-return";
 import { buildFraudPreventionHeaders } from "@/lib/integrations/hmrc/fraud-headers";
-import { computeVatQuarter } from "@/lib/tax/compute";
+import { computeVatQuarter, computeVatNetTotals } from "@/lib/tax/compute";
 import type { MonthlyReturnDataset } from "@/lib/cis/statements";
 
 /**
@@ -49,13 +49,67 @@ describe("composeVatReturn — 9-box mapping from computeVatQuarter", () => {
     expect(p.totalVatDue).toBe(1000); // box 3 = 1 + 2
     expect(p.vatReclaimedCurrPeriod).toBe(400); // box 4
     expect(p.netVatDue).toBe(600); // box 5 = |3 - 4|
-    // boxes 6-9 default to 0 (not derivable from computeVatQuarter, never guessed)
+    // COMPOSER DEFAULT ONLY: with no netTotals supplied, boxes 6-9 default to 0.
+    // The LIVE prepare path MUST supply boxes 6/7 (see the reconciliation test
+    // below) — a bare compose like this must not be used to freeze a real return.
     expect(p.totalValueSalesExVAT).toBe(0);
     expect(p.totalValuePurchasesExVAT).toBe(0);
     expect(p.totalValueGoodsSuppliedExVAT).toBe(0);
     expect(p.totalAcquisitionsExVAT).toBe(0);
     // never silently finalised
     expect(p.finalised).toBe(false);
+  });
+
+  it("LIVE prepare path: boxes 6/7 are the ex-VAT net totals reconciling with boxes 1/4 (not frozen at £0)", () => {
+    // Mirrors server/services/hmrc-connections.ts prepareVatReturn EXACTLY: the
+    // same in-window rows feed computeVatQuarter (boxes 1/4) AND computeVatNetTotals
+    // (boxes 6/7), then composeVatReturn freezes the 9-box payload. Representative
+    // paid invoices + finance rows, all inside [2026-04-01, 2026-07-01).
+    const quarterStart = "2026-04-01";
+    const quarterEnd = "2026-07-01";
+    const invoices = [
+      // 20% VAT: net 3000 → VAT 600 ; net 2000 → VAT 400
+      { status: "paid", vat_total: 600, total: 3600, amount: 3000, paid_at: "2026-05-01", created_at: "2026-04-20" },
+      { status: "paid", vat_total: 400, total: 2400, amount: 2000, paid_at: "2026-05-10", created_at: "2026-05-02" },
+      // out-of-window paid invoice — must NOT feed box 1 OR box 6
+      { status: "paid", vat_total: 999, total: 5994, amount: 4995, paid_at: "2026-08-01", created_at: "2026-07-30" },
+      // unpaid invoice — must NOT feed box 1 OR box 6
+      { status: "sent", vat_total: 123, total: 738, amount: 615, paid_at: null, created_at: "2026-05-05" },
+    ];
+    const finances = [
+      { vat_total: 400, amount: 2000, created_at: "2026-05-02" },
+      { vat_total: 100, amount: 500, created_at: "2026-06-15" },
+      // out-of-window cost — must NOT feed box 4 OR box 7
+      { vat_total: 50, amount: 250, created_at: "2026-03-31" },
+    ];
+
+    const vat = computeVatQuarter(invoices, finances, quarterStart, quarterEnd);
+    const netTotals = computeVatNetTotals(invoices, finances, quarterStart, quarterEnd);
+    const res = composeVatReturn({ periodKey: "2026-04-01", vat, netTotals }, { allowInternalPrepare: true });
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const p = res.payload;
+
+    // boxes 1/4 unchanged (the fix touches ONLY 6/7)
+    expect(p.vatDueSales).toBe(1000); // box 1: 600 + 400
+    expect(p.vatReclaimedCurrPeriod).toBe(500); // box 4: 400 + 100
+
+    // THE FIX: boxes 6/7 are derived, > 0, and reconcile with the rows feeding 1/4
+    expect(p.totalValueSalesExVAT).toBe(5000); // box 6: net 3000 + 2000 (paid, in-window)
+    expect(p.totalValuePurchasesExVAT).toBe(2500); // box 7: net 2000 + 500 (in-window)
+    expect(p.totalValueSalesExVAT).toBeGreaterThan(0);
+    expect(p.totalValuePurchasesExVAT).toBeGreaterThan(0);
+
+    // Reconciliation: box 6 ≈ box 1 / 0.20 and box 7 ≈ box 4 / 0.20 at the 20%
+    // standard rate — the net values are the exact base the VAT boxes were charged on.
+    expect(p.totalValueSalesExVAT).toBe(Math.round(p.vatDueSales / 0.2));
+    expect(p.totalValuePurchasesExVAT).toBe(Math.round(p.vatReclaimedCurrPeriod / 0.2));
+
+    // EU-only / acquisition boxes correctly stay 0 for a UK-domestic contractor
+    expect(p.totalValueGoodsSuppliedExVAT).toBe(0); // box 8
+    expect(p.totalAcquisitionsExVAT).toBe(0); // box 9
+    expect(p.vatDueAcquisitions).toBe(0); // box 2
   });
 
   it("net VAT due is always non-negative (repayment case)", () => {

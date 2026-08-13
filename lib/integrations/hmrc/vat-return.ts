@@ -46,9 +46,14 @@ import type { TaxSummary } from "@/lib/tax/compute";
  *   box 9 totalAcquisitionsExVAT — acquisitions from the EU ex-VAT.
  *
  * computeVatQuarter gives boxes 1 (output_vat), 4 (input_vat) and the signed net
- * (net_payable). Boxes 2, 6-9 are not VAT amounts and are not derivable from
- * computeVatQuarter, so they are taken from optional net-total inputs and default
- * to 0 — never guessed. Every box is present because MTD requires all nine.
+ * (net_payable). Boxes 2, 6-9 are not VAT amounts, so they are taken from optional
+ * net-total inputs (VatNetTotals) and default to 0 — never guessed. Boxes 6/7 are
+ * the ex-VAT VALUES of the sales/purchases that feed boxes 1/4: mandatory on every
+ * UK scheme and derivable from the same rows/window (see lib/tax/compute.ts
+ * computeVatNetTotals), so the prepare/hold caller supplies them. Only box 2
+ * (acquisitions) and boxes 8/9 (EU goods) are not derivable from CrewFlow's data
+ * and legitimately default to 0 for a UK-domestic contractor. Every box is present
+ * because MTD requires all nine.
  */
 
 /** The 9-box MTD VAT return body, HMRC field names verbatim. */
