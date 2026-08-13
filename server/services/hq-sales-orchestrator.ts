@@ -232,20 +232,34 @@ async function readCadence(
     const cutoff = new Date(
       Date.now() - CADENCE_DAYS * 86_400_000,
     ).toISOString();
-    const { data, error } = await (
-      admin.from("hq_sales_timeline_events" as never) as unknown as HqQuery<{
-        company_id: string;
-      }>
-    )
-      .select("company_id, occurred_at, direction")
-      .in("company_id", activeIds)
-      .eq("direction", "outbound")
-      .gte("occurred_at", cutoff)
-      .limit(1000);
-    if (error) throw readFailure("hq sales-orchestrator: cadence", error);
-    const events = data ?? [];
+    // CHUNKED + PAGED (F-1): activeIds is drawn from the FULLY PAGED pipeline, so
+    // it can exceed the 1000-row cap; and one company can carry many outbound
+    // events in the window, so the old `.in(activeIds).limit(1000)` sat on the
+    // PostgREST cap and silently truncated the touched set — INFLATING "overdue"
+    // (a wrong reliability signal). This cast-form read hid from the clamp guard
+    // until the C66 `;`-windowing de-vacuum. Chunk the id set and page each chunk
+    // in full on the unique `id` order.
     const touched = new Set<string>();
-    for (const ev of events) touched.add(ev.company_id);
+    const CADENCE_IN_CHUNK = 200;
+    for (let i = 0; i < activeIds.length; i += CADENCE_IN_CHUNK) {
+      const idsChunk = activeIds.slice(i, i + CADENCE_IN_CHUNK);
+      const { data, error } = await fetchAllRows<{ company_id: string }>(
+        (from, to) =>
+          (
+            admin.from("hq_sales_timeline_events" as never) as unknown as HqQuery<{
+              company_id: string;
+            }>
+          )
+            .select("company_id")
+            .in("company_id", idsChunk)
+            .eq("direction", "outbound")
+            .gte("occurred_at", cutoff)
+            .order("id", { ascending: true })
+            .range(from, to) as unknown as PromiseLike<PageResult<{ company_id: string }>>,
+      );
+      if (error) throw readFailure("hq sales-orchestrator: cadence", error);
+      for (const ev of data ?? []) touched.add(ev.company_id);
+    }
     const touchedWithinWindow = touched.size;
     return {
       activeOutreachDeals,

@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { createMemory } from "@/server/services/hq-memory";
 import { listMemoryTypes, listMemorySources } from "@/server/services/hq-memory";
 import {
@@ -175,7 +176,17 @@ const TIMELINE_COLUMNS =
 const FACET_COLUMNS =
   "status, industry, county, region, source, assigned_to_email, employee_count, estimated_deal_value_gbp";
 
-const FACET_WINDOW = 1000; // bounded sample for facets + pipeline value (PostgREST clamps to max_rows=1000)
+/** One estate-wide company row projected for the facet + pipeline-value folds. */
+type FacetRow = {
+  status: string;
+  industry: string | null;
+  county: string | null;
+  region: string | null;
+  source: string;
+  assigned_to_email: string | null;
+  employee_count: number | null;
+  estimated_deal_value_gbp: number | null;
+};
 const ACTIVITY_WINDOW = 1000; // bounded sample for activity series
 
 // Calling Centre (Phase 6). `transcript` (up to 200k chars) and `search_tsv`
@@ -975,19 +986,19 @@ export async function getSalesDashboard(): Promise<SalesDashboard> {
   ] = await Promise.all([
     getStatusCounts(admin),
     sourceLabelMap(),
-    table<{
-      status: string;
-      industry: string | null;
-      county: string | null;
-      region: string | null;
-      source: string;
-      assigned_to_email: string | null;
-      employee_count: number | null;
-      estimated_deal_value_gbp: number | null;
-    }>(admin, "hq_sales_companies")
-      .select(FACET_COLUMNS)
-      .order("created_at", { ascending: false })
-      .limit(FACET_WINDOW),
+    // PAGED (F-1): facetRows feeds pipelineValue()/wonValueGbp (money SUMS) and
+    // aggregateSalesFacets (COUNTS) over the whole estate, so the old
+    // `.limit(FACET_WINDOW=1000)` sat on the PostgREST cap and silently
+    // under-reported once the estate crossed 1000 companies (a wrapper read with
+    // an inline `<{…;…}>` generic — invisible to the clamp guard until the C66
+    // `;`-windowing de-vacuum). Page on a stable, unique order.
+    fetchAllRows<FacetRow>((from, to) =>
+      table<FacetRow>(admin, "hq_sales_companies")
+        .select(FACET_COLUMNS)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to),
+    ),
     table<{ occurred_at: string }>(admin, "hq_sales_timeline_events")
       .select("occurred_at")
       .order("occurred_at", { ascending: false })
@@ -1063,19 +1074,19 @@ export async function getSalesAnalytics(): Promise<SalesAnalytics> {
   const [counts, sourceLabels, facetRes] = await Promise.all([
     getStatusCounts(admin),
     sourceLabelMap(),
-    table<{
-      status: string;
-      industry: string | null;
-      county: string | null;
-      region: string | null;
-      source: string;
-      assigned_to_email: string | null;
-      employee_count: number | null;
-      estimated_deal_value_gbp: number | null;
-    }>(admin, "hq_sales_companies")
-      .select(FACET_COLUMNS)
-      .order("created_at", { ascending: false })
-      .limit(FACET_WINDOW),
+    // PAGED (F-1): facetRows feeds pipelineValue()/wonValueGbp (money SUMS) and
+    // aggregateSalesFacets (COUNTS) over the whole estate, so the old
+    // `.limit(FACET_WINDOW=1000)` sat on the PostgREST cap and silently
+    // under-reported once the estate crossed 1000 companies (a wrapper read with
+    // an inline `<{…;…}>` generic — invisible to the clamp guard until the C66
+    // `;`-windowing de-vacuum). Page on a stable, unique order.
+    fetchAllRows<FacetRow>((from, to) =>
+      table<FacetRow>(admin, "hq_sales_companies")
+        .select(FACET_COLUMNS)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to),
+    ),
   ]);
 
   const facetRows = (facetRes.data ?? []) as Parameters<

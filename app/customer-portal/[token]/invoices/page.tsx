@@ -179,40 +179,50 @@ export default async function PortalInvoicesPage({
     uploaded_at: string;
     notes: string | null;
   };
-  type ProofQuery = {
+  type ProofQuery = PromiseLike<{ data: ProofRow[] | null; error: { message: string } | null }> & {
+    select: (cols: string) => ProofQuery;
     eq: (k: string, v: unknown) => ProofQuery;
     in: (k: string, v: unknown[]) => ProofQuery;
-    order: (
-      k: string,
-      opts: { ascending: boolean },
-    ) => Promise<{
-      data: ProofRow[] | null;
-      error: { message: string } | null;
-    }>;
+    order: (k: string, opts: { ascending: boolean }) => ProofQuery;
+    range: (from: number, to: number) => ProofQuery;
   };
   const proofsByInvoice = new Map<string, ProofRow[]>();
   if (invoices.length > 0) {
     const ids = invoices.map((i) => i.id);
-    const { data: proofs, error: proofsError } = await (
-      admin.from("portal_uploads" as never) as unknown as {
-        select: (cols: string) => ProofQuery;
+    // CHUNKED + PAGED (F-1): the invoices list above is fully paged, so `ids` can
+    // exceed the 1000-row cap; and a customer can attach several proofs per
+    // invoice (target_id is NOT unique), so a single `.in(ids).order(...)` read
+    // would silently truncate at max_rows=1000 and drop proofs from the grouping.
+    // This cast-form read hid from the clamp guard until the C66 `;`-windowing
+    // de-vacuum. Chunk the id set and page each chunk on a stable, unique order.
+    const PROOF_IN_CHUNK = 300;
+    for (let i = 0; i < ids.length; i += PROOF_IN_CHUNK) {
+      const idsChunk = ids.slice(i, i + PROOF_IN_CHUNK);
+      const { data: proofs, error: proofsError } = await fetchAllRows<ProofRow>((from, to) =>
+        (
+          admin.from("portal_uploads" as never) as unknown as {
+            select: (cols: string) => ProofQuery;
+          }
+        )
+          .select("target_id, filename, uploaded_at, notes, id")
+          .eq("org_id", customer.org_id)
+          .eq("customer_id", customer.id)
+          .eq("target_table", "invoices")
+          .eq("kind", "payment_proof")
+          .in("target_id", idsChunk)
+          .order("uploaded_at", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, to),
+      );
+      if (proofsError) {
+        // A failed proofs read would tell the customer their proof never landed.
+        throw readFailure("portal invoices: payment proofs", proofsError);
       }
-    )
-      .select("target_id, filename, uploaded_at, notes")
-      .eq("org_id", customer.org_id)
-      .eq("customer_id", customer.id)
-      .eq("target_table", "invoices")
-      .eq("kind", "payment_proof")
-      .in("target_id", ids)
-      .order("uploaded_at", { ascending: false });
-    if (proofsError) {
-      // A failed proofs read would tell the customer their proof never landed.
-      throw readFailure("portal invoices: payment proofs", proofsError);
-    }
-    for (const pf of proofs ?? []) {
-      const list = proofsByInvoice.get(pf.target_id) ?? [];
-      list.push(pf);
-      proofsByInvoice.set(pf.target_id, list);
+      for (const pf of proofs ?? []) {
+        const list = proofsByInvoice.get(pf.target_id) ?? [];
+        list.push(pf);
+        proofsByInvoice.set(pf.target_id, list);
+      }
     }
   }
 
