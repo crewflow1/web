@@ -2,6 +2,11 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { computeVatQuarter, endOfQuarterExclusiveIso } from "@/lib/tax/compute";
+import {
+  gatherVatQuarterInputs,
+  type VatInputsDb,
+} from "@/server/services/vat-quarter-inputs";
 
 /**
  * Reports module — pure SQL aggregates for the /reports page.
@@ -188,69 +193,77 @@ export async function vatPerQuarter(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (quarters * 3 - 1), 1),
   );
 
-  // Output VAT: paid invoices' VAT collected. Input VAT: VAT paid out
-  // recorded against finance entries.
-  const [invRes, finRes] = await Promise.all([
-    fetchAllRows<{
-      paid_at: string | null;
-      vat_total: number | null;
-      status: string | null;
-    }>((from, to) =>
-      supabase
-        .from("invoices")
-        .select("id, paid_at, vat_total, status")
-        .eq("org_id", orgId)
-        .eq("status", "paid")
-        .gte("paid_at", since.toISOString())
-        .order("paid_at", { ascending: true })
-        .order("id", { ascending: true })
-        .range(from, to),
-    ),
-    fetchAllRows<{ created_at: string; vat_total: number | null }>((from, to) =>
-      supabase
-        .from("finances")
-        .select("id, created_at, vat_total")
-        .eq("org_id", orgId)
-        .gte("created_at", since.toISOString())
-        .order("created_at", { ascending: true })
-        .order("id", { ascending: true })
-        .range(from, to),
-    ),
-  ]);
+  // SINGLE VAT AUTHORITY. This trend used to sum `invoices.vat_total` over
+  // status='paid' invoices, which drifted from every other VAT surface: the
+  // payment trigger stamps `invoices.paid_at` ONLY on FULL settlement, so a
+  // status-gated sum dropped ALL partial/deposit/instalment output VAT (and
+  // omitted domestic reverse charge entirely) — understating the /reports
+  // net-VAT-liability trend against /dashboard, /tax, the quarterly PDF and the
+  // frozen HMRC 9-box return. It now routes EACH quarter window through the same
+  // authority those surfaces use — `gatherVatQuarterInputs` (cash-basis
+  // invoice_payments ledger + frozen reverse-charge totals, PAGED + loud) then
+  // the pure `computeVatQuarter` — so the fourth VAT surface reconciles exactly.
+  //
+  // Input VAT (box 4) is ACCRUAL on logged finance rows: computeVatQuarter sums
+  // `finances.vat_total` in-window itself, so finances are read ONCE over the
+  // whole span (PAGED + loud) and each window's compute re-gates them on
+  // created_at — no separate summing, no double-count, no drop.
+  const finRes = await fetchAllRows<{
+    created_at: string;
+    vat_total: number | null;
+    amount: number | null;
+  }>((from, to) =>
+    supabase
+      .from("finances")
+      .select("id, created_at, vat_total, amount")
+      .eq("org_id", orgId)
+      .gte("created_at", since.toISOString())
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (finRes.error) throw readFailure("reports: VAT finances", finRes.error);
+  const finances = finRes.data ?? [];
 
-  const buckets = new Map<string, VatPerQuarter>();
+  // The quarter windows, day-1-normalised (never overflow on a 31st).
+  const quarterStarts: string[] = [];
   for (let i = quarters - 1; i >= 0; i--) {
-    // Day-1-normalised UTC construction (see revenuePerMonth): never overflow.
     const q = startOfQuarter(
       new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i * 3, 1)),
     );
-    buckets.set(isoDate(q), {
-      quarter: isoDate(q),
-      output_vat: 0,
-      input_vat: 0,
-      net_vat: 0,
-    });
+    quarterStarts.push(isoDate(q));
   }
 
-  if (invRes.error) throw readFailure("reports: VAT invoices", invRes.error);
-  if (finRes.error) throw readFailure("reports: VAT finances", finRes.error);
-  for (const inv of invRes.data ?? []) {
-    if (!inv.paid_at) continue;
-    const key = isoDate(startOfQuarter(new Date(inv.paid_at)));
-    const slot = buckets.get(key);
-    if (!slot) continue;
-    slot.output_vat += Number(inv.vat_total ?? 0);
-  }
-  for (const f of finRes.data ?? []) {
-    const key = isoDate(startOfQuarter(new Date(f.created_at)));
-    const slot = buckets.get(key);
-    if (!slot) continue;
-    slot.input_vat += Number(f.vat_total ?? 0);
-  }
-  for (const slot of buckets.values()) {
-    slot.net_vat = Math.round((slot.output_vat - slot.input_vat) * 100) / 100;
-  }
-  return Array.from(buckets.values());
+  // Per-window: gather the cash-basis ledger + reverse-charge totals through the
+  // authority (SAME call shape as the /tax page and the quarterly-PDF route),
+  // then compute boxes 1/4/5 with the one pure function. The EXCLUSIVE upper
+  // bound keeps a next-quarter payment out.
+  const db = supabase as unknown as VatInputsDb;
+  const rows = await Promise.all(
+    quarterStarts.map(async (quarterStartIso) => {
+      const quarterEndExclusiveIso = endOfQuarterExclusiveIso(quarterStartIso);
+      const inputs = await gatherVatQuarterInputs(
+        db,
+        orgId,
+        quarterStartIso,
+        quarterEndExclusiveIso,
+      );
+      const vat = computeVatQuarter(
+        inputs.invoicePayments,
+        finances,
+        quarterStartIso,
+        quarterEndExclusiveIso,
+        inputs.reverseCharge.vat,
+      );
+      return {
+        quarter: quarterStartIso,
+        output_vat: vat.output_vat,
+        input_vat: vat.input_vat,
+        net_vat: vat.net_payable,
+      } satisfies VatPerQuarter;
+    }),
+  );
+  return rows;
 }
 
 /**

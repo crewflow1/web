@@ -42,15 +42,26 @@ const h = vi.hoisted(() => {
   function makeBuilder(table: string) {
     const eqs: Array<[string, unknown]> = [];
     const gtes: Array<[string, unknown]> = [];
+    const lts: Array<[string, unknown]> = [];
+    const iss: Array<[string, unknown]> = [];
+    const ins: Array<[string, readonly unknown[]]> = [];
     const orders: Array<[string, boolean]> = [];
 
-    const settle = (from: number, to: number) => {
+    // Filtered + totally-ordered rows for the current predicate set (no window).
+    const filteredOrdered = () => {
       let rows = (tables[table] ?? []).filter((row) => {
         for (const [col, val] of eqs) if (row[col] !== val) return false;
         for (const [col, val] of gtes) {
           if (row[col] == null) return false;
           if (String(row[col]) < String(val)) return false;
         }
+        for (const [col, val] of lts) {
+          if (row[col] == null) return false;
+          if (String(row[col]) >= String(val)) return false;
+        }
+        // `.is(col, null)` → IS NULL: treat undefined as null.
+        for (const [col, val] of iss) if ((row[col] ?? null) !== val) return false;
+        for (const [col, list] of ins) if (!list.includes(row[col])) return false;
         return true;
       });
       // Apply every ordering key in sequence (stable), last-specified last so
@@ -64,11 +75,21 @@ const h = vi.hoisted(() => {
           return (av < bv ? -1 : 1) * (asc ? 1 : -1);
         });
       }
+      return rows;
+    };
+
+    const settle = (from: number, to: number) => {
       // PostgREST semantics: inclusive [from, to], then the response is HARD
       // capped at RESPONSE_CAP no matter how wide the range asked for.
-      const windowed = rows.slice(from, to + 1).slice(0, cap.rows);
+      const windowed = filteredOrdered().slice(from, to + 1).slice(0, cap.rows);
       return Promise.resolve({ data: windowed, error: null });
     };
+
+    // When a query terminates on `.in(...)` (no `.range()`), it is awaited
+    // directly — the vat-quarter-inputs id-keyed lookups do this. The builder is
+    // therefore thenable and resolves the full (cap-limited) filtered set.
+    const resolveAll = () =>
+      Promise.resolve({ data: filteredOrdered().slice(0, cap.rows), error: null });
 
     const builder = {
       select: () => builder,
@@ -80,12 +101,30 @@ const h = vi.hoisted(() => {
         gtes.push([col, val]);
         return builder;
       },
+      lt(col: string, val: unknown) {
+        lts.push([col, val]);
+        return builder;
+      },
+      is(col: string, val: unknown) {
+        iss.push([col, val]);
+        return builder;
+      },
+      in(col: string, list: readonly unknown[]) {
+        ins.push([col, list]);
+        return builder;
+      },
       order(col: string, opts?: { ascending?: boolean }) {
         orders.push([col, opts?.ascending !== false]);
         return builder;
       },
       range(from: number, to: number) {
         return settle(from, to);
+      },
+      then<T>(
+        onF: (v: { data: unknown[]; error: null }) => T,
+        onR?: (e: unknown) => T,
+      ) {
+        return resolveAll().then(onF, onR);
       },
     };
     return builder;
@@ -111,6 +150,14 @@ vi.mock("server-only", () => ({}));
 
 const { jobsPerWeek, revenuePerMonth, vatPerQuarter, topCustomersByRevenue } =
   await import("@/lib/reports/aggregates");
+
+// The single VAT authority the reconciliation test pins /reports against.
+const { computeVatQuarter, startOfQuarterIso, endOfQuarterExclusiveIso } =
+  await import("@/lib/tax/compute");
+const { gatherVatQuarterInputs } = await import(
+  "@/server/services/vat-quarter-inputs"
+);
+type VatInputsDb = import("@/server/services/vat-quarter-inputs").VatInputsDb;
 
 const ORG = "org-under-test";
 const OTHER_ORG = "org-elsewhere";
@@ -155,31 +202,132 @@ describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
     expect(total).toBe(N * 10);
   });
 
-  it("vatPerQuarter sums output AND input VAT across full paged reads (two reads)", async () => {
+  it("vatPerQuarter sums CASH-BASIS output VAT (invoice_payments ledger) + input VAT across full paged reads", async () => {
+    // OUTPUT VAT is now cash-basis from the invoice_payments LEDGER via the
+    // single VAT authority, NOT `invoices.status='paid'`. Seed N payments, EACH
+    // £100 against its own £100-total invoice carrying £5 VAT, so each payment
+    // apportions 100×(5/100)=£5. Distinct parent invoices force BOTH the payment
+    // window read (>1000) AND the id-keyed invoice `.in(...)` chunking to page —
+    // if either truncated, output would fall short of N×5.
     const N = 1600;
+    h.tables.invoice_payments = Array.from({ length: N }, (_, i) => ({
+      id: `pay-${String(i).padStart(6, "0")}`,
+      org_id: ORG,
+      invoice_id: `inv-${String(i).padStart(6, "0")}`,
+      amount: 100,
+      paid_at: daysAgoIso((i % 180) + 1),
+    }));
     h.tables.invoices = Array.from({ length: N }, (_, i) => ({
       id: `inv-${String(i).padStart(6, "0")}`,
       org_id: ORG,
+      number: `INV-${i}`,
       status: "paid",
+      amount: 95,
       total: 100,
       vat_total: 5,
-      paid_at: daysAgoIso((i % 180) + 1),
     }));
+    // A payment in ANOTHER org must never leak into this org's output VAT.
+    h.tables.invoice_payments.push({
+      id: "pay-other",
+      org_id: OTHER_ORG,
+      invoice_id: "inv-other",
+      amount: 999999,
+      paid_at: daysAgoIso(3),
+    });
+    h.tables.invoices.push({
+      id: "inv-other",
+      org_id: OTHER_ORG,
+      number: "X",
+      status: "paid",
+      amount: 999999,
+      total: 999999,
+      vat_total: 999999,
+    });
     h.tables.finances = Array.from({ length: N }, (_, i) => ({
       id: `fin-${String(i).padStart(6, "0")}`,
       org_id: ORG,
       vat_total: 3,
+      amount: 20,
       created_at: daysAgoIso((i % 180) + 1),
     }));
 
     const rows = await vatPerQuarter(ORG, 4);
     const output = rows.reduce((s, r) => s + r.output_vat, 0);
     const input = rows.reduce((s, r) => s + r.input_vat, 0);
-    // If either read were truncated at 1000, these would fall short.
-    expect(output).toBe(N * 5);
-    expect(input).toBe(N * 3);
+    // If any read were truncated at 1000, these would fall short.
+    expect(output).toBeCloseTo(N * 5, 5);
+    expect(input).toBeCloseTo(N * 3, 5);
     const net = rows.reduce((s, r) => s + r.net_vat, 0);
     expect(net).toBeCloseTo(N * 5 - N * 3, 5);
+  });
+
+  it("vatPerQuarter counts a PARTIAL payment PROPORTIONALLY — the old status='paid' contract returned £0 (RED→GREEN)", async () => {
+    // The core divergence this fix closes. A `partially_paid` invoice keeps
+    // status≠'paid' and paid_at=NULL, so the OLD status-gated sum contributed £0
+    // of output VAT for the quarter the deposit cash actually landed. The ledger
+    // authority apportions payment×(vat_total/total).
+    //
+    // inv-1: total £120, vat_total £20 (20%). A £60 deposit lands this quarter
+    // → output VAT = 60×(20/120) = £10 — NOT £0 (old bug) and NOT £20 (full).
+    h.tables.invoices = [
+      {
+        id: "inv-1",
+        org_id: ORG,
+        number: "INV-1",
+        status: "partially_paid",
+        amount: 100,
+        total: 120,
+        vat_total: 20,
+      },
+    ];
+    h.tables.invoice_payments = [
+      {
+        id: "pay-1",
+        org_id: ORG,
+        invoice_id: "inv-1",
+        amount: 60,
+        paid_at: daysAgoIso(2),
+      },
+    ];
+
+    const rows = await vatPerQuarter(ORG, 4);
+    const output = rows.reduce((s, r) => s + r.output_vat, 0);
+    // Pre-fix this asserted 0 (status='paid' filter dropped the invoice); the
+    // ledger contract makes it the proportional £10.
+    expect(output).toBeCloseTo(10, 5);
+    expect(output).not.toBe(0); // the old bug
+    expect(output).not.toBe(20); // never the whole-invoice VAT for a part payment
+  });
+
+  it("vatPerQuarter surfaces DOMESTIC REVERSE-CHARGE VAT into the trend (was omitted entirely)", async () => {
+    // Reverse charge was invisible to the old status-based function. A frozen
+    // reverse-charge allocation of £15 self-accounts into BOTH box 1 and box 4,
+    // so it lifts output AND input VAT by £15 (net-neutral) — the trend must
+    // reflect it, matching /tax, the PDF and the frozen 9-box return.
+    h.tables.supplier_payments = [
+      {
+        id: "sp-1",
+        org_id: ORG,
+        voided_at: null,
+        paid_at: daysAgoIso(2),
+      },
+    ];
+    h.tables.supplier_payment_allocations = [
+      {
+        id: "spa-1",
+        org_id: ORG,
+        payment_id: "sp-1",
+        amount: 75,
+        cis_reverse_charge_vat: 15,
+        cis_vat_treatment: "reverse_charge",
+      },
+    ];
+
+    const rows = await vatPerQuarter(ORG, 4);
+    const output = rows.reduce((s, r) => s + r.output_vat, 0);
+    const input = rows.reduce((s, r) => s + r.input_vat, 0);
+    expect(output).toBeCloseTo(15, 5); // → box 1
+    expect(input).toBeCloseTo(15, 5); // → box 4 (net-neutral)
   });
 
   it("topCustomersByRevenue attributes revenue from every invoice past the cap", async () => {
@@ -502,5 +650,110 @@ describe("reports revenue is EX-VAT (amount), not gross (total)", () => {
     expect(tc).toMatch(/\bamount\b/);
     expect(tc).toMatch(/\.revenue\s*\+=\s*Number\(\s*inv\.amount\b/);
     expect(tc).not.toMatch(/\.revenue\s*\+=\s*Number\(\s*inv\.total\b/);
+  });
+});
+
+/**
+ * CROSS-SURFACE VAT RECONCILIATION — /reports can never diverge from the authority.
+ *
+ * ── THE DEFECT CLASS ─────────────────────────────────────────────────────────
+ * vatPerQuarter used to be a FOURTH, DIVERGENT VAT calculator: it summed
+ * `invoices.vat_total` over status='paid' invoices, so it dropped every partial
+ * payment (paid_at is stamped only on FULL settlement) and omitted domestic
+ * reverse charge — understating the /reports net-VAT trend against /dashboard,
+ * /tax, the quarterly PDF and the frozen HMRC 9-box return, all of which read the
+ * single authority (gatherVatQuarterInputs + computeVatQuarter).
+ *
+ * This test pins /reports vatPerQuarter's CURRENT-QUARTER slot to a fresh,
+ * independent call of that same authority over the SAME window and SAME fixture —
+ * so any future re-divergence (a second calculator creeping back in) fails CI.
+ */
+describe("vatPerQuarter reconciles EXACTLY with the single VAT authority", () => {
+  it("/reports current-quarter VAT == computeVatQuarter for a shared partially_paid + reverse-charge fixture", async () => {
+    // A fixture that exercises BOTH properties the old function got wrong:
+    //  • a partial payment (proportional, cash-basis output VAT), and
+    //  • a domestic reverse-charge allocation (boxes 1 AND 4).
+    h.tables.invoices = [
+      {
+        id: "inv-1",
+        org_id: ORG,
+        number: "INV-1",
+        status: "partially_paid",
+        amount: 100,
+        total: 120,
+        vat_total: 20,
+      },
+    ];
+    h.tables.invoice_payments = [
+      {
+        id: "pay-1",
+        org_id: ORG,
+        invoice_id: "inv-1",
+        amount: 60, // half → output VAT 60×(20/120)=10
+        paid_at: daysAgoIso(2),
+      },
+    ];
+    h.tables.finances = [
+      {
+        id: "fin-1",
+        org_id: ORG,
+        vat_total: 4,
+        amount: 20,
+        created_at: daysAgoIso(2),
+      },
+    ];
+    h.tables.supplier_payments = [
+      { id: "sp-1", org_id: ORG, voided_at: null, paid_at: daysAgoIso(2) },
+    ];
+    h.tables.supplier_payment_allocations = [
+      {
+        id: "spa-1",
+        org_id: ORG,
+        payment_id: "sp-1",
+        amount: 75,
+        cis_reverse_charge_vat: 6,
+        cis_vat_treatment: "reverse_charge",
+      },
+    ];
+
+    // Independently recompute the current quarter via the AUTHORITY, over the
+    // same bounded window /reports uses for that slot.
+    const qStart = startOfQuarterIso();
+    const qEnd = endOfQuarterExclusiveIso(qStart);
+    const inputs = await gatherVatQuarterInputs(
+      h.client as unknown as VatInputsDb,
+      ORG,
+      qStart,
+      qEnd,
+    );
+    const financeRows = (h.tables.finances ?? []).map((f) => ({
+      vat_total: f.vat_total as number | null,
+      amount: f.amount as number | null,
+      created_at: f.created_at as string,
+    }));
+    const expected = computeVatQuarter(
+      inputs.invoicePayments,
+      financeRows,
+      qStart,
+      qEnd,
+      inputs.reverseCharge.vat,
+    );
+
+    const rows = await vatPerQuarter(ORG, 4);
+    const slot = rows.find((r) => r.quarter === qStart);
+    expect(slot, `no /reports bucket for current quarter ${qStart}`).toBeDefined();
+
+    // Exact reconciliation across all three VAT boxes the trend exposes.
+    expect(slot!.output_vat).toBe(expected.output_vat);
+    expect(slot!.input_vat).toBe(expected.input_vat);
+    expect(slot!.net_vat).toBe(expected.net_payable);
+
+    // And the concrete figures, so the pin also documents the contract:
+    //   output = 10 (partial apportion) + 6 (reverse charge) = 16
+    //   input  = 4 (finance) + 6 (reverse charge)            = 10
+    //   net    = 16 − 10                                     = 6
+    expect(slot!.output_vat).toBeCloseTo(16, 5);
+    expect(slot!.input_vat).toBeCloseTo(10, 5);
+    expect(slot!.net_vat).toBeCloseTo(6, 5);
   });
 });
