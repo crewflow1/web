@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { listSuppliersForOrg, type SuppliersClient } from "@/server/services/suppliers";
 
 /**
@@ -18,25 +19,27 @@ export async function listPoFormOptions(
   supabase: Awaited<ReturnType<typeof createClient>>,
   orgId: string,
 ): Promise<{ suppliers: Array<{ id: string; name: string }>; jobs: Array<{ id: string; name: string }> }> {
+  // PAGED (F-1): the PO builder's job select must offer EVERY job in the org, or
+  // a job past the cap can't be attached to a purchase order. A `.limit(100)`
+  // cap silently dropped later jobs (invisible to the clamp guard until the C66
+  // `;`-windowing de-vacuum). Page on a stable, unique order.
+  type JobRow = { id: string; status: string; customer: { name: string } | null };
+  type JobQuery = PromiseLike<{ data: JobRow[] | null; error: { message: string } | null }> & {
+    select: (c: string) => JobQuery;
+    eq: (k: string, v: unknown) => JobQuery;
+    order: (k: string, o: { ascending: boolean }) => JobQuery;
+    range: (from: number, to: number) => JobQuery;
+  };
   const [suppliers, jobsRes] = await Promise.all([
     listSuppliersForOrg(supabase as unknown as SuppliersClient, orgId),
-    (
-      supabase.from("jobs" as never) as unknown as {
-        select: (c: string) => {
-          eq: (k: string, v: unknown) => {
-            order: (k: string, o: { ascending: boolean }) => {
-              limit: (n: number) => Promise<{
-                data: Array<{ id: string; status: string; customer: { name: string } | null }> | null;
-              }>;
-            };
-          };
-        };
-      }
-    )
-      .select("id, status, customer:customers ( name )")
-      .eq("org_id", orgId)
-      .order("created_at", { ascending: false })
-      .limit(100),
+    fetchAllRows<JobRow>((from, to) =>
+      (supabase.from("jobs" as never) as unknown as { select: (c: string) => JobQuery })
+        .select("id, status, customer:customers ( name )")
+        .eq("org_id", orgId)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to),
+    ),
   ]);
 
   const jobs = (jobsRes.data ?? []).map((j) => ({

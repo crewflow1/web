@@ -173,6 +173,35 @@ const HIGH_VALUE_TABLES = new Set<string>([
   //                        max_rows boundary (indistinguishable from truncation).
   "demo_requests",
   "hq_sales_companies",
+  // ── staff_secrets (C66 cast-form de-vacuum). Per-user NI numbers read by
+  //    fetchNiNumbersForOrg (lib/staff/secrets.ts) and folded into the statutory
+  //    RTI/bureau payroll CSV (app/api/payroll/[id]/csv/route.ts) + payslips. It
+  //    was FALSELY listed PER-ORG in COVERAGE_REVIEWED ("bounded by the org's
+  //    headcount") — but the read was a BARE `.eq('org_id')` select, clamped at
+  //    max_rows=1000, so an org with >1000 staff silently dropped NI numbers from
+  //    the CSV (a compliance defect that fails with no error). Now PAGED via
+  //    fetchAllRows (order by the unique user_id); policed here so a re-bared read
+  //    fails CI.
+  "staff_secrets",
+  // ── C66 cast-form de-vacuum — three tables whose completeness-sensitive reads
+  //    were surfaced by the depth-aware `;`-windowing and are now PAGED (moved
+  //    here from the coverage blind spot, not COVERAGE_REVIEWED):
+  //   review_requests    — the CROSS-ORG cron scan (runReviewRequestSends) reads
+  //                        every DUE scheduled request and sends each; a bare read
+  //                        clamped at 1000 left the overflow unsent. Now paged.
+  //   portal_uploads     — the portal invoices page reads payment proofs
+  //                        `.in('target_id', <fully-paged invoice ids>)` (id set can
+  //                        exceed the cap, several proofs per invoice); now chunked
+  //                        + paged. (The per-invoice `.limit(50)` panel read is an
+  //                        honest bounded sample.)
+  //   hq_sales_timeline_events — the orchestrator cadence read counts distinct
+  //                        touched companies over `.in(<fully-paged activeIds>)`;
+  //                        the old `.limit(1000)` inflated "overdue". Now chunked
+  //                        + paged. (Its per-company `.limit(200)` relationship-
+  //                        score read is an honest bounded sample.)
+  "review_requests",
+  "portal_uploads",
+  "hq_sales_timeline_events",
 ]);
 
 // "file:line" → reason. Keep tight; every entry is a documented smell.
@@ -210,8 +239,8 @@ const ALLOWLIST: Record<string, string> = {
   // analyser cannot see through a long builder chain.
   "app/(app)/diary/page.tsx:83":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the diary register (.limit(500)) — ≤500 unique PKs, analyser can't see .in's slice bound",
-  "app/(app)/site-reports/page.tsx:99":
-    "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the reports register (.limit(500)) — ≤500 unique PKs",
+  "app/(app)/site-reports/page.tsx:111":
+    "bounded: jobs name lookup CHUNKED .in('id', idsChunk) where each chunk is ≤JOB_IN_CHUNK=500 unique PKs — jobs.id is unique so a chunk yields ≤500 rows. (C66: the reports register above is now fully PAGED, so jobIds can exceed 500; the lookup is chunked to stay below the cap, and the line moved 99→111.)",
   "app/(app)/snags/page.tsx:134":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the snags register (.limit(500)) — ≤500 unique PKs",
   "app/(app)/toolbox/page.tsx:89":
@@ -333,6 +362,20 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE org's owner/admin recipients (.eq('org_id').in('role', ['owner','admin'])) — a handful of privileged users per org",
   "lib/profitability/labour-rates.ts:34":
     "bounded: ONE org's member ids (.eq('org_id')) — folded into an hourly-pay map (loadOrgHourlyPay); bounded by the org's headcount, and the sibling users read is a chunk-safe .in(memberIds)",
+
+  // ── C66 cast-form de-vacuum: hq_sales_companies NAME-ENRICHMENT lookups
+  //    surfaced once the depth-aware windowing saw these cast-form reads. Each is
+  //    loadCompanyNames(admin, ids).in('id', unique) where `ids` is drawn from the
+  //    caller's recent-runs read, itself capped at .limit(Math.min(max(limit,1),50))
+  //    (listRecent{Outreach,Qualification,Research}Runs) — so `unique` is ≤50 ids,
+  //    far below the 1000 cap. Not a cross-tenant estate scan; the estate reads in
+  //    these files are the paged pipeline / count reads, not these lookups.
+  "server/services/hq-outreach.ts:757":
+    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentOutreachRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap",
+  "server/services/hq-qualification.ts:830":
+    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentQualificationRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap",
+  "server/services/hq-research.ts:1517":
+    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentResearchRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap",
 };
 
 function walk(dir: string, out: string[]): void {
@@ -357,6 +400,40 @@ function stripComments(src: string): string {
   let out = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
   out = out.replace(/(^|[^:])\/\/[^\n]*/g, (m, p1) => p1 + " ".repeat(m.length - p1.length));
   return out;
+}
+
+/**
+ * DEPTH-AWARE statement-boundary finders — the DE-VACUUM of the cast-form
+ * windowing. The dominant Supabase read idiom carries an INLINE CAST TYPE-OBJECT
+ * annotation whose `;` are TypeScript member separators, NOT statement boundaries:
+ *   admin.from("t" as never) as unknown as { select:(c:string)=>Q; eq:...; }
+ *       .select(...).limit(20);
+ * The old `src.lastIndexOf(";", …)` / `src.indexOf(";", …)` windowing (regionAround
+ * + tablesWithSetReads) latched onto those in-type `;` and TRUNCATED the window
+ * before the real `.select()`, so the read looked bare-less / limit-less and the
+ * guard was blind to every cast-form read. A `;` only terminates a statement at
+ * brace/paren/bracket DEPTH 0; the type-object separators sit at depth >= 1 and
+ * are correctly skipped. (Mirrors stripComments neutralising comment `;`.)
+ */
+function prevTopLevelSemi(src: string, idx: number): number {
+  let depth = 0;
+  for (let i = idx - 1; i >= 0; i--) {
+    const c = src[i];
+    if (c === ")" || c === "]" || c === "}") depth++;
+    else if (c === "(" || c === "[" || c === "{") depth--;
+    else if (c === ";" && depth <= 0) return i;
+  }
+  return -1;
+}
+function nextTopLevelSemi(src: string, idx: number): number {
+  let depth = 0;
+  for (let i = idx; i < src.length; i++) {
+    const c = src[i];
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === ";" && depth <= 0) return i;
+  }
+  return src.length;
 }
 
 /**
@@ -385,10 +462,9 @@ function stripComments(src: string): string {
 function regionAround(src: string, fromIdx: number): string {
   const BEFORE = 400;
   const AFTER = 1100; // wide enough to see the terminator past a long multi-line select list
-  const semiBefore = src.lastIndexOf(";", fromIdx - 1);
+  const semiBefore = prevTopLevelSemi(src, fromIdx);
   const start = Math.max(semiBefore + 1, fromIdx - BEFORE, 0);
-  let semiAfter = src.indexOf(";", fromIdx);
-  if (semiAfter === -1) semiAfter = src.length;
+  const semiAfter = nextTopLevelSemi(src, fromIdx);
   const end = Math.min(semiAfter, fromIdx + AFTER);
   return src.slice(start, end);
 }
@@ -1008,8 +1084,13 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   job_document_versions: "PER-PARENT/ID-BATCH: .eq('document_id')/.in(doc ids) — one document's versions",
   job_documents: "PER-PARENT: .eq('job_id') — one job's document register",
   job_budgets: "PER-PARENT: .eq('job_id') budget history; the CVR rollup read is fetchAllRows-paged",
-  calls: "PER-PARENT/RECENT-N: .eq('lead_id').limit(20) — one lead's recent call log display",
-  lead_followup_state: "PER-PARENT: one lead's follow-up state (a single scoped row)",
+  calls:
+    "PER-PARENT/PER-ORG/RECENT-N: leads/[id] reads one lead's log (.eq('lead_id').limit(20)); the admin voice-panel reads a per-org recent-20 (.eq('org_id').order.limit(20)) — both author-capped displays below the 1000 cap, not summed. (C66: reason widened to cover the voice-panel per-org read the pre-de-vacuum scanner didn't fully window.)",
+  // lead_followup_state: REMOVED (no set-read any more). The only read is a
+  // single-row `.eq('lead_id').maybeSingle()` (leads/[id]/page.tsx); the other
+  // two .from() sites are writes. The stale entry existed ONLY because the
+  // pre-C66 `;`-windowing truncated the statement before `.maybeSingle()` and
+  // mis-classified it as a set-read — the de-vacuum corrected that.
   risk_assessment_hazards: "PER-PARENT: .eq('risk_assessment_id') hazards; the H&S snapshot read is fetchAllRows-paged",
 
   // ---- ID-BATCH (bounded/chunked .in lookups) ----
@@ -1032,7 +1113,10 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   automation_schedules: "PER-ORG/CLOSED: .eq('org_id') schedules — a closed schedule set",
   expense_budgets: "PER-ORG/CLOSED: .eq('org_id') budgets — a closed budget-category set",
   api_keys: "PER-ORG: .eq('org_id') API keys — a handful per org",
-  staff_secrets: "PER-ORG: .eq('org_id') staff NI numbers — bounded by the org's headcount",
+  // staff_secrets: REMOVED (false PER-ORG entry). "bounded by the org's
+  // headcount" was wrong — the read was a BARE `.eq('org_id')` select clamped at
+  // max_rows=1000, dropping NI numbers from the RTI/bureau payroll CSV for orgs
+  // >1000 staff. Now POLICED in HIGH_VALUE_TABLES and PAGED via fetchAllRows.
   internal_notes: "PER-ORG: .eq('org_id') notes list + a .limit(Math.min(limit,500)) HQ variant — one org's notes",
   leave_requests:
     "PER-ORG/PER-USER: .eq('org_id') register + .eq('user_id') overlap reads — bounded by headcount; the me-page consumer is fetchAllRows-paged",
@@ -1067,34 +1151,79 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   payments: "SINGLE: .select('id').eq(scoped...).limit(1) duplicate-payment existence probe",
   asset_assignments: "PER-ORG: .eq(scoped).limit(SITE_USAGE_SCAN_LIMIT) site-usage count sample — bounded",
   assets: "PER-ORG: .eq('org_id').limit(VAN_SCAN_LIMIT) assets picker — bounded by the org's fleet",
+
+  // ── C66 CAST-FORM DE-VACUUM WAVE. The depth-aware `;`-windowing made these
+  //    tables' cast-form set-reads visible. Each was traced end-to-end (read shape
+  //    + consumer) and is genuinely bounded — NOT a silent-1000-cap risk. The
+  //    three completeness-sensitive tables surfaced in the same wave
+  //    (review_requests / portal_uploads / hq_sales_timeline_events) are POLICED +
+  //    PAGED, not reviewed here.
+  asset_inspections:
+    "PER-ORG/PER-PARENT/SINGLE: the inspections dashboard reads are author-capped per-org windows (.eq('org_id').limit(100)/.limit(400), below the 1000 cap); the asset-detail read is per-parent (.eq('asset_id') — one asset's inspections); the rest are .maybeSingle() lookups. No cross-tenant/estate scan; the generator writes/claims, not reads.",
+  asset_inspection_templates:
+    "PER-ORG/PER-FAMILY/SINGLE: an org's inspection-template library — list/picker reads are per-org (.eq('org_id')) or per-family version history (.eq('family_id')); templates are org-authored config (families × versions is tens), never near the cap; resolves are .maybeSingle().",
+  asset_inspection_schedules:
+    "PER-PARENT/BATCH: per-asset standing schedules (.eq('asset_id')) display + a cross-org generator scan capped at .limit(BATCH=50); no estate set read (the writeback + CAS advance are updates).",
+  asset_inspection_overrides:
+    "PER-ORG/PER-PARENT: safety-override reads are an author-capped per-org .limit(200) window + per-asset (.eq('asset_id')) history; bounded well below the cap.",
+  asset_service_schedules:
+    "PER-PARENT/BATCH: per-asset service schedules (.eq('asset_id')) display + a cross-org generator scan capped at .limit(BATCH=50); the rest are writes/CAS advances.",
+  asset_maintenance_cases:
+    "PER-PARENT/SINGLE: per-asset maintenance cases (.eq('asset_id')) display + .maybeSingle() case lookups; bounded by one asset (the upsert claim returns only the won row).",
+  asset_qr_identities:
+    "PER-PARENT/SINGLE: per-asset QR lifecycle — a .limit(15) history display + .maybeSingle() active-token / scan-resolve lookups; bounded by one asset.",
+  automation_runs:
+    "PAGED: the cross-org health read (readAutomationHealth) pages via fetchAllRows over a 7-day window on a stable (created_at desc, id asc) order; every other .from site is a write / claim-update, not a set read.",
+  call_events:
+    "PER-ORG/PER-CALL/RECENT-N: an admin .eq('org_id').order.limit(30) event display + a per-call (.eq('call_id')) turn-memory read capped at .limit(Math.min(limit,1000)) (caller passes 20); bounded display / per-call, not a cross-tenant set.",
+  expense_drafts:
+    "PER-ORG/SINGLE: an author-capped .eq('org_id').limit(200) queue display + .maybeSingle() draft lookups/guards; the service writes/stamps, not reads.",
+  hq_sales_contacts:
+    "PER-PARENT: every read is .eq('company_id') — one company's contacts (a handful/dozens), never near the cap (dedupe-name set + qualification rubric signals).",
+  inbound_enquiries:
+    "PER-ORG/RECENT-N/SINGLE: an author-capped .eq('org_id').limit(200) inbox display (not summed) + .eq('provider_message_id').maybeSingle() dedupe lookups; the rest are inserts/updates.",
+  phone_numbers:
+    "PER-ORG/SINGLE: an org's provisioned numbers (.eq('org_id')) — a handful per org (status badge + admin list); the dial-router resolve is .eq('e164').maybeSingle().",
+  signatures:
+    "PER-PARENT: .eq('target_table','quotes').eq('target_id', id) — one quote's e-sign audit trail (a handful); the other .from sites are inserts.",
+  webhook_deliveries:
+    "PER-ORG/RECENT-N: an author-capped .eq('org_id').order.limit(25) recent-deliveries display, joined to endpoints by id; not summed.",
+  webhook_endpoints:
+    "PER-ORG/SINGLE: an org's webhook endpoints (.eq('org_id')) — config-scale (a handful), list + urlById join; the resume read is .eq('id').maybeSingle().",
 };
 
-/** The set of tables that have at least one SET read (a `.select(...)` that is not
- * a single-row read, not a write's RETURNING, and not a head/count read) via a
- * literal `.from("t")` or the `.from("t" as never|any)` cast form. */
+/** Tables with at least one SET read in ONE file's (raw) source — the per-source
+ * core of the coverage scan, shared by the repo walk AND the cast-form teeth test
+ * so both exercise the IDENTICAL windowing (the C66 de-vacuum). A SET read is a
+ * `.select(...)` that is not a single-row read, not a write's RETURNING, and not
+ * a head/count read, via a literal `.from("t")` or the `.from("t" as never|any)`
+ * cast form. The statement window is DEPTH-AWARE (prev/nextTopLevelSemi), so the
+ * inline `as unknown as { …; }` cast type-object no longer truncates the window
+ * before the real `.select()` — the exact vacuity this wave closes. */
+function setReadTablesInSource(rel: string, raw: string, into: Map<string, string[]>): void {
+  if (!raw.includes(".from(")) return;
+  const src = stripComments(raw);
+  const fromRe = /\.from\(\s*["'`]([a-z_]+)["'`]\s*(?:as\s+(?:never|any)\s*)?\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = fromRe.exec(src))) {
+    const table = m[1]!;
+    const semiBefore = prevTopLevelSemi(src, m.index);
+    const semiAfter = nextTopLevelSemi(src, m.index);
+    const stmt = src.slice(semiBefore + 1, semiAfter);
+    if (!/\.select\(/.test(stmt)) continue; // not a read
+    if (/\.(insert|update|delete|upsert)\(/.test(stmt)) continue; // write RETURNING
+    if (/\.single\(/.test(stmt) || /\.maybeSingle\(/.test(stmt)) continue; // single-row
+    if (/head:\s*true/.test(stmt)) continue; // count/head — no rows to truncate
+    const line = src.slice(0, m.index).split("\n").length;
+    if (!into.has(table)) into.set(table, []);
+    into.get(table)!.push(`${rel}:${line}`);
+  }
+}
+
 function tablesWithSetReads(files: string[]): Map<string, string[]> {
   const byTable = new Map<string, string[]>();
-  const fromRe = /\.from\(\s*["'`]([a-z_]+)["'`]\s*(?:as\s+(?:never|any)\s*)?\)/g;
   for (const file of files) {
-    const rel = file.slice(ROOT.length + 1);
-    const raw = readFileSync(file, "utf8");
-    if (!raw.includes(".from(")) continue;
-    const src = stripComments(raw);
-    let m: RegExpExecArray | null;
-    while ((m = fromRe.exec(src))) {
-      const table = m[1]!;
-      const semiBefore = src.lastIndexOf(";", m.index - 1);
-      let semiAfter = src.indexOf(";", m.index);
-      if (semiAfter === -1) semiAfter = src.length;
-      const stmt = src.slice(semiBefore + 1, semiAfter);
-      if (!/\.select\(/.test(stmt)) continue; // not a read
-      if (/\.(insert|update|delete|upsert)\(/.test(stmt)) continue; // write RETURNING
-      if (/\.single\(/.test(stmt) || /\.maybeSingle\(/.test(stmt)) continue; // single-row
-      if (/head:\s*true/.test(stmt)) continue; // count/head — no rows to truncate
-      const line = src.slice(0, m.index).split("\n").length;
-      if (!byTable.has(table)) byTable.set(table, []);
-      byTable.get(table)!.push(`${rel}:${line}`);
-    }
+    setReadTablesInSource(file.slice(ROOT.length + 1), readFileSync(file, "utf8"), byTable);
   }
   return byTable;
 }
@@ -1158,6 +1287,55 @@ describe("F-1 coverage-completeness meta-guard — every table with a set-read i
     ]);
     const flagged = coverageOffenders(synthetic);
     expect(flagged.some((o) => o.includes("a_brand_new_ledger_2099"))).toBe(true);
+  });
+
+  // NON-VACUOUS PROOF on the CAST FORM (the C66 de-vacuum): the meta-guard's set-
+  // read detector (tablesWithSetReads / setReadTablesInSource) must SEE a read
+  // written in the dominant `.from("t" as never) as unknown as { …; }` cast idiom.
+  // Before the depth-aware windowing, the inline type-object `;` truncated the
+  // statement so `hasSelect` was false and the read was invisible — an unlisted
+  // table hosting a cast-form set-read escaped the coverage net silently. Feed the
+  // REAL cast-form source through the ACTUAL scanner and assert (a) the read is
+  // detected and (b) an unlisted table carrying it is flagged.
+  it("has TEETH on the CAST FORM: a cast-form set-read on an UNLISTED table is detected + flagged", () => {
+    const castSource = [
+      `const { data } = await (`,
+      `  admin.from("a_brand_new_cast_ledger" as never) as unknown as {`,
+      `    select: (cols: string) => {`,
+      `      eq: (k: string, v: unknown) => LedgerQuery;`,
+      `      order: (k: string, o: { ascending: boolean }) => LedgerQuery;`,
+      `    };`,
+      `  }`,
+      `)`,
+      `  .select("id, org_id, amount")`,
+      `  .eq("org_id", orgId)`,
+      `  .order("created_at", { ascending: false });`,
+    ].join("\n");
+    const byTable = new Map<string, string[]>();
+    setReadTablesInSource("server/services/new-cast-thing.ts", castSource, byTable);
+    // (a) The cast-form read is SEEN as a set-read (was invisible pre-de-vacuum).
+    expect(byTable.has("a_brand_new_cast_ledger")).toBe(true);
+    // (b) An unlisted table carrying it is flagged by the coverage net.
+    expect(
+      coverageOffenders(byTable).some((o) => o.includes("a_brand_new_cast_ledger")),
+    ).toBe(true);
+
+    // Control: the SAME cast-form read, but a single-row `.maybeSingle()`, is
+    // correctly NOT a set-read (proves the detector reads past the type-object to
+    // the real terminal call — the exact fix that reclassified lead_followup_state).
+    const castSingle = [
+      `const { data } = await (`,
+      `  admin.from("a_brand_new_cast_ledger" as never) as unknown as {`,
+      `    select: (cols: string) => { eq: (k: string, v: unknown) => LedgerQuery };`,
+      `  }`,
+      `)`,
+      `  .select("id")`,
+      `  .eq("id", rowId)`,
+      `  .maybeSingle();`,
+    ].join("\n");
+    const single = new Map<string, string[]>();
+    setReadTablesInSource("server/services/new-cast-thing.ts", castSingle, single);
+    expect(single.has("a_brand_new_cast_ledger")).toBe(false);
   });
 
   it("does NOT flag a policed table or a reviewed table", () => {

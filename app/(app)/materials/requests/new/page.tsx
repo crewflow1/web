@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { createMaterialRequest } from "../actions";
 import { MaterialRequestForm } from "../_request-form";
 
@@ -44,33 +45,27 @@ export default async function NewMaterialRequestPage({
   // ACTIVE-ORG PIN as well as RLS: current_org_ids() returns every org the
   // viewer belongs to, so an RLS-only read would offer the OTHER company's
   // jobs in this company's picker.
-  const { data, error } = await (
-    supabase.from("jobs" as never) as unknown as {
-      select: (c: string) => {
-        eq: (
-          k: string,
-          v: unknown,
-        ) => {
-          in: (
-            k: string,
-            v: readonly unknown[],
-          ) => {
-            order: (
-              k: string,
-              o: { ascending: boolean },
-            ) => {
-              limit: (n: number) => Promise<{ data: JobRow[] | null; error: SupabaseReadError | null }>;
-            };
-          };
-        };
-      };
-    }
-  )
-    .select("id, site_address_line1, site_city, status, customer:customers ( name )")
-    .eq("org_id", ctx.org.id)
-    .in("status", ["new", "in-progress", "blocked"])
-    .order("created_at", { ascending: false })
-    .limit(200);
+  // PAGED (F-1): the job picker must offer EVERY active job in the org, or a job
+  // past the cap becomes unattachable to a new request. A `.limit(200)` cap
+  // silently dropped later jobs (and this cast-form read was invisible to the
+  // clamp guard until the C66 `;`-windowing de-vacuum). Page on a stable, unique
+  // order (created_at desc + id desc).
+  type JobQuery = PromiseLike<{ data: JobRow[] | null; error: SupabaseReadError | null }> & {
+    select: (c: string) => JobQuery;
+    eq: (k: string, v: unknown) => JobQuery;
+    in: (k: string, v: readonly unknown[]) => JobQuery;
+    order: (k: string, o: { ascending: boolean }) => JobQuery;
+    range: (from: number, to: number) => JobQuery;
+  };
+  const { data, error } = await fetchAllRows<JobRow>((from, to) =>
+    (supabase.from("jobs" as never) as unknown as { select: (c: string) => JobQuery })
+      .select("id, site_address_line1, site_city, status, customer:customers ( name )")
+      .eq("org_id", ctx.org.id)
+      .in("status", ["new", "in-progress", "blocked"])
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to),
+  );
   // LOUD: a failed read here would silently render an empty job picker, and
   // the request would land with no job attached — the "empty-state reads as
   // healthy" failure this codebase has shipped before.

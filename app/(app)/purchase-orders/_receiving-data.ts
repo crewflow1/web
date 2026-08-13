@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import type { ReceivedQty } from "@/lib/purchase-orders/receiving";
 
 /**
@@ -37,12 +38,13 @@ export type GrnRow = {
   lines: GrnLineRow[];
 };
 
-type Chain<T> = {
+type Chain<T> = PromiseLike<{ data: T[] | null; error: { message: string } | null }> & {
   select: (c: string) => Chain<T>;
   eq: (k: string, v: unknown) => Chain<T>;
   in: (k: string, v: readonly unknown[]) => Chain<T>;
   order: (k: string, o: { ascending: boolean }) => Chain<T>;
-  limit: (n: number) => Promise<{ data: T[] | null; error: { message: string } | null }>;
+  limit: (n: number) => Chain<T>;
+  range: (from: number, to: number) => Chain<T>;
 };
 
 function table<T>(supabase: Awaited<ReturnType<typeof createClient>>, name: string): Chain<T> {
@@ -96,17 +98,29 @@ export async function countPostedReceipts(
   const counts = new Map<string, number>();
   if (purchaseOrderIds.length === 0) return counts;
 
-  const { data } = await table<{ purchase_order_id: string }>(supabase, "goods_received_notes")
-    .select("purchase_order_id")
-    .eq("org_id", orgId) // ACTIVE-ORG PIN
-    .eq("status", "posted")
-    .in("purchase_order_id", purchaseOrderIds)
-    // Delivery counts for one list page's POs — bounded. Honest cap: PostgREST
-    // clamps every read to max_rows (1000) regardless.
-    .limit(1000);
-
-  for (const row of data ?? []) {
-    counts.set(row.purchase_order_id, (counts.get(row.purchase_order_id) ?? 0) + 1);
+  // CHUNKED + PAGED (F-1): the PO register now pages the FULL org order set, so
+  // purchaseOrderIds can exceed the 1000-row cap and a single `.in(...).limit(1000)`
+  // would silently drop delivery counts. Chunk the id list, and PAGE each chunk —
+  // purchase_order_id is NOT unique in goods_received_notes (a PO can carry several
+  // posted GRNs), so a chunk of N POs can yield more than N rows; fetchAllRows
+  // guarantees every posted note is counted. Order by the unique id for a stable
+  // page window.
+  const PO_IN_CHUNK = 200;
+  for (let i = 0; i < purchaseOrderIds.length; i += PO_IN_CHUNK) {
+    const idsChunk = purchaseOrderIds.slice(i, i + PO_IN_CHUNK);
+    const { data, error } = await fetchAllRows<{ purchase_order_id: string }>((from, to) =>
+      table<{ purchase_order_id: string }>(supabase, "goods_received_notes")
+        .select("purchase_order_id, id")
+        .eq("org_id", orgId) // ACTIVE-ORG PIN
+        .eq("status", "posted")
+        .in("purchase_order_id", idsChunk)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+    if (error) throw new Error((error as { message?: string }).message ?? "goods_received_notes: receipt-count read failed");
+    for (const row of data ?? []) {
+      counts.set(row.purchase_order_id, (counts.get(row.purchase_order_id) ?? 0) + 1);
+    }
   }
   return counts;
 }

@@ -399,8 +399,20 @@ describe("Phase 3 — payment proof read-back", () => {
     expect(INV_PAGE).toMatch(/\.eq\("kind", "payment_proof"\)/);
   });
 
-  it("only reads proofs for the invoices actually on the page (.in target_id)", () => {
-    expect(INV_PAGE).toMatch(/\.in\("target_id", ids\)/);
+  it("only reads proofs for the invoices actually on the page — CHUNKED + PAGED (.in target_id)", () => {
+    // The id set is exactly the page's own invoices (not a broad/org-wide read).
+    expect(INV_PAGE).toMatch(/const ids = invoices\.map\(\(i\) => i\.id\)/);
+    // Scoped to a SLICE of those ids (the F-1 chunk), never the raw full set or
+    // any other variable — a regression to `.in("target_id", ids)` or an unscoped
+    // read fails here.
+    expect(INV_PAGE).toMatch(/const idsChunk = ids\.slice\(i, i \+ PROOF_IN_CHUNK\)/);
+    expect(INV_PAGE).toMatch(/\.in\("target_id", idsChunk\)/);
+    // And each chunk is PAGED in full via fetchAllRows (target_id is NOT unique —
+    // several proofs per invoice — so a single `.in().order()` read would truncate
+    // at the 1000-row cap). A regression to an unpaged read fails this.
+    expect(INV_PAGE).toMatch(
+      /fetchAllRows<ProofRow>\(\(from, to\) =>[\s\S]*?\.in\("target_id", idsChunk\)[\s\S]*?\.range\(from, to\)/,
+    );
   });
 
   it("renders a per-invoice 'proof received' record with filename + date", () => {

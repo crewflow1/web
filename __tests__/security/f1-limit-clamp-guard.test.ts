@@ -148,18 +148,24 @@ const PRODUCER_TABLES = new Set<string>([
   // are now PAGED, not capped.
   "demo_requests",
   "hq_sales_companies",
+  // staff_secrets (C66 cast-form de-vacuum) — per-user NI numbers feeding the
+  // statutory RTI/bureau payroll CSV + payslips. Was FALSELY marked PER-ORG in
+  // COVERAGE_REVIEWED ("bounded by headcount"); an org with >1000 staff silently
+  // dropped NI numbers from the CSV. The fetchNiNumbersForOrg read is now PAGED
+  // (fetchAllRows, order user_id asc), so a re-bared read must fail here.
+  "staff_secrets",
 ]);
 
 /** "file:line" → reason. Only GENUINELY-bounded top-1000 samples belong here.
  * The overdue producer scan is DELIBERATELY absent: it is the real offender and
  * was fixed by paging (fetchAllRows), not allowlisted. */
 const BOUNDARY_ALLOWLIST: Record<string, string> = {
-  // countPostedReceipts: `.in("purchase_order_id", purchaseOrderIds)` where
-  // purchaseOrderIds is ONE purchase-orders list page's POs (itself paginated,
-  // tens of rows), each carrying a handful of posted GRNs — the materialised set
-  // is bounded well below the cap by the page, not a standing backlog.
-  "app/(app)/purchase-orders/_receiving-data.ts:99":
-    "bounded: delivery counts for ONE list page's POs (.in(purchaseOrderIds), page is tens of POs × few GRNs) — well below the 1000 cap",
+  // countPostedReceipts: REMOVED (C66). The PO register above it is now fully
+  // PAGED, so purchaseOrderIds can exceed the cap and the old bounded reason
+  // ("ONE list page's POs") is no longer true. The read is now CHUNKED + PAGED
+  // (fetchAllRows over each 200-id chunk), so it carries a .range() not a .limit
+  // and needs no entry. (The sibling listPurchaseOrderReceipts per-PO .limit(200)
+  // read stays bounded — see its entry below, now at :60.)
   // material-fulfilment: REMOVED (false narrower-than-use entry). The reason
   // claimed "for ONE material request … request-sized, well below 1000", but the
   // two real callers pass MULTI-request / org-wide line sets in ONE call
@@ -265,8 +271,10 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // Both are now PAGED via fetchAllRows (.range) — the selection is unchanged,
   // the surfaced total is now exact.
 
-  // All GRNs on ONE purchase order — bounded by the single-PO scope.
-  "app/(app)/purchase-orders/_receiving-data.ts:58":
+  // All GRNs on ONE purchase order — bounded by the single-PO scope. (Line moved
+  // 58→60 when a fetchAllRows import + a .range on the Chain type were added for
+  // the countPostedReceipts paging in the same file.)
+  "app/(app)/purchase-orders/_receiving-data.ts:60":
     "bounded: every goods-received note for ONE purchase order (.eq('purchase_order_id')) — a PO has a handful of deliveries, top-200",
 
   // Per-request id-set lookup.
@@ -300,8 +308,8 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
     "bounded: recent-50 published reports for the portal PHOTO GALLERY (.eq('customer_id').eq('org_id')...order('portal_published_at' desc).limit(50)), further capped at MAX_PORTAL_PHOTOS extracted photos — a display gallery, NOT the documents-library count/ZIP (those use listPortalReports, now PAGED)",
   "server/services/receptionist-operators.ts:42":
     "bounded: ONE org's operators picker (.eq('org_id').limit(500)) — reassignment target list; bounded by the org's headcount (tens), never near the cap",
-  "server/services/hq-sales.ts:995":
-    "bounded: recent-8 sales companies (.order('created_at' desc).limit(8)) — a top-N DISPLAY facet on the HQ sales dashboard, NOT summed/counted (the estate aggregates hq-executive/hq-sales-orchestrator are PAGED). Surfaced once hq_sales_companies joined PRODUCER_TABLES in the C65 coverage wave.",
+  "server/services/hq-sales.ts:1006":
+    "bounded: recent-8 sales companies (.order('created_at' desc).limit(8)) — a top-N DISPLAY facet on the HQ sales dashboard, NOT summed/counted (the estate FACET reads that ARE summed — pipelineValue/aggregateSalesFacets — were PAGED in the C66 de-vacuum). (Line moved 995→1006 when the two FacetRow facet reads above it were paged.)",
 };
 
 /** Strip block + line comments so historical `.limit(...)` mentions in prose
@@ -311,6 +319,34 @@ function stripComments(src: string): string {
   let out = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
   out = out.replace(/(^|[^:])\/\/[^\n]*/g, (m, p1) => p1 + " ".repeat(m.length - p1.length));
   return out;
+}
+
+/**
+ * True iff `s` contains a statement-terminating `;` at brace/paren/bracket DEPTH
+ * 0 (outside every ()/[]/{}). This is the DE-VACUUM of the cast-form windowing.
+ *
+ * The dominant Supabase read idiom carries an INLINE CAST TYPE-OBJECT annotation:
+ *   admin.from("t" as never) as unknown as { select:(c:string)=>Q; eq:...; }
+ *       .select(...).eq(...).limit(20);
+ * The `;` characters between `.from` and `.limit` are TypeScript member
+ * separators INSIDE the `{ … }` type object — NOT statement boundaries. The
+ * previous `between.includes(";")` check treated them as a statement boundary and
+ * skipped the read BEFORE the PRODUCER_TABLES / .select() checks ran, so EVERY
+ * cast-form producer read (e.g. support_tickets in the customer portal) slipped
+ * past the clamp/aggregate nets with a green suite. A `;` only terminates a
+ * statement at depth <= 0; the type-object separators sit at depth >= 1 and are
+ * correctly ignored here. (stripComments already neutralises comment `;`; this
+ * mirrors it for type-annotation `;`.)
+ */
+function containsTopLevelSemicolon(s: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    else if (c === ";" && depth <= 0) return true;
+  }
+  return false;
 }
 
 function walk(dir: string, out: string[]): void {
@@ -551,7 +587,7 @@ function boundaryOffendersIn(rel: string, raw: string): string[] {
     }
     if (!pRead) continue;
     const between = src.slice(pRead.index, limIdx);
-    if (between.includes(";")) continue; // the limit is a DIFFERENT statement
+    if (containsTopLevelSemicolon(between)) continue; // the limit is a DIFFERENT statement
     if (!PRODUCER_TABLES.has(pRead.table)) continue;
     if (!/\.select\(/.test(between)) continue; // reads only
     if (/\.range\(/.test(between)) continue; // windowed, not a flat cap
@@ -702,7 +738,7 @@ function aggregateFedCapOffendersIn(rel: string, raw: string): string[] {
     }
     if (!pRead) continue;
     const between = src.slice(pRead.index, limIdx);
-    if (between.includes(";")) continue; // .limit is a DIFFERENT statement
+    if (containsTopLevelSemicolon(between)) continue; // .limit is a DIFFERENT statement
     if (!PRODUCER_TABLES.has(pRead.table)) continue;
     if (!/\.select\(/.test(between)) continue; // reads only
     if (/\.range\(/.test(between) || /fetchAllRows/.test(between)) continue; // paged
@@ -886,6 +922,57 @@ describe("F-1 guard — every .limit / .range is provably <= 1000", () => {
       `  .limit(1000);`,
     ].join("\n");
     expect(boundaryOffendersIn("x.ts", wrapperPreFix).some((o) => o.includes("goods_received_notes"))).toBe(true);
+  });
+
+  // TEETH (C66 cast-form de-vacuum): the DOMINANT read idiom carries an inline
+  // `as unknown as { … }` cast TYPE-OBJECT whose `;` member separators sit between
+  // `.from` and `.limit`. The pre-C66 `between.includes(";")` windowing treated
+  // those `;` as a statement boundary and SKIPPED the read before the
+  // PRODUCER_TABLES / .select() check — so the LIVE support_tickets .limit(20)
+  // portal read (and every other cast-form producer read) slipped past this net
+  // with a green suite. Feed the REAL cast-form source through the ACTUAL scanner
+  // and assert it BITES. A delete-the-fix of the messages page (revert to
+  // .limit(20)) makes the repo-wide test above FAIL naming the real file:line.
+  it("producer-.limit net has TEETH on the CAST FORM (the C66 de-vacuum)", () => {
+    const castForm = [
+      `const { data } = await (`,
+      `  admin.from("support_tickets" as never) as unknown as {`,
+      `    select: (cols: string) => {`,
+      `      eq: (k: string, v: unknown) => TicketQuery;`,
+      `      order: (k: string, o: { ascending: boolean }) => TicketQuery;`,
+      `    };`,
+      `  }`,
+      `)`,
+      `  .select("id, subject, last_reply_kind")`,
+      `  .eq("org_id", orgId)`,
+      `  .eq("customer_id", customerId)`,
+      `  .order("created_at", { ascending: false })`,
+      `  .limit(20);`,
+    ].join("\n");
+    expect(
+      boundaryOffendersIn("app/customer-portal/[token]/messages/page.tsx", castForm).some((o) =>
+        o.includes("support_tickets"),
+      ),
+      "the cast-form support_tickets .limit(20) producer read MUST be flagged (it was NOT before the de-vacuum)",
+    ).toBe(true);
+
+    // The paged fix (cast form + fetchAllRows/.range, no .limit) → clean.
+    const castPaged = [
+      `const { data } = await fetchAllRows((from, to) =>`,
+      `  (`,
+      `    admin.from("support_tickets" as never) as unknown as {`,
+      `      select: (cols: string) => TicketQuery;`,
+      `    }`,
+      `  )`,
+      `    .select("id, subject, last_reply_kind")`,
+      `    .eq("org_id", orgId)`,
+      `    .eq("customer_id", customerId)`,
+      `    .order("created_at", { ascending: false })`,
+      `    .order("id", { ascending: false })`,
+      `    .range(from, to),`,
+      `);`,
+    ].join("\n");
+    expect(boundaryOffendersIn("app/customer-portal/[token]/messages/page.tsx", castPaged)).toEqual([]);
   });
 
   // ── The aggregate-fed capped-money-read net (subclass this wave closes) ──
