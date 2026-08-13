@@ -53,27 +53,59 @@ export type AccountingPushInput = {
 };
 
 /**
+ * ONE invoice the push SKIPPED (never a whole-batch abort) — its number plus why.
+ * The only skip cause today is an unmappable VAT rate (a rate outside {0,5,20},
+ * which has no honest Xero TaxType / QBO VAT code): that ONE invoice is dropped
+ * from the push and surfaced loudly here so the operator learns exactly which
+ * invoice to fix, while every postable invoice in the same batch still syncs.
+ * This is the C61 per-row-isolation posture on the accounting-push surface — a
+ * single poison row can never zero the whole org's push.
+ */
+export type SkippedInvoice = { invoiceNumber: string; reason: string };
+
+/**
  * The outcome of a push attempt.
  *   - ok               — rows accepted by the provider (unreachable today).
  *   - unavailable      — credentials absent; nothing was sent (the dark path).
- *   - error            — credentials present but the push failed.
+ *   - error            — credentials present but the push failed (a TRANSPORT
+ *                        failure — never a single bad-VAT-rate invoice, which is
+ *                        a per-invoice SKIP, not a batch abort).
  *
  * `pushed` on the ERROR variant is the count the provider ACCEPTED before the
- * failure — 0 when nothing was accepted (or unavailable), N for a per-row push
- * (Xero / QBO) that created N rows then failed on the (N+1)th. It lets the
- * caller record EXACTLY the accepted prefix in the push-once ledger, so a
- * partial failure re-pushes only the tail and never re-sends an accepted row.
- * The rows are pushed in input order, so the accepted prefix is `rows[0..pushed)`.
+ * failure. `pushedSourceIds` / `pushedInvoiceNumbers` are the EXPLICIT identities
+ * of the accepted invoices/payments — the caller records exactly these in the
+ * push-once ledger and feeds the accepted invoice numbers to the payment-link
+ * gate. They are the authoritative accepted set: an input-order prefix count is
+ * NOT enough once a mid-batch invoice can be SKIPPED (an unmappable rate leaves a
+ * hole, so the accepted set is no longer a contiguous prefix). `skipped` names the
+ * invoices dropped for an unmappable VAT rate — surfaced loudly, never recorded,
+ * never an error.
  */
 export type AccountingPushResult =
-  | { ok: true; provider: AccountingProvider; pushed: number }
+  | {
+      ok: true;
+      provider: AccountingProvider;
+      pushed: number;
+      /** Immutable source ids the provider accepted (for the push-once ledger). */
+      pushedSourceIds?: readonly string[];
+      /** invoice_numbers the provider accepted (for the payment-link gate). */
+      pushedInvoiceNumbers?: readonly string[];
+      /** Invoices skipped for an unmappable VAT rate. Surfaced loudly; never recorded. */
+      skipped?: readonly SkippedInvoice[];
+    }
   | {
       ok: false;
       provider: AccountingProvider;
       reason: "unavailable" | "error";
       message: string;
-      /** Rows the provider accepted before the failure (the input-order prefix). Default 0. */
+      /** Rows the provider accepted before the failure. Default 0. */
       pushed?: number;
+      /** Immutable source ids accepted before the failure (for the push-once ledger). */
+      pushedSourceIds?: readonly string[];
+      /** invoice_numbers accepted before the failure (for the payment-link gate). */
+      pushedInvoiceNumbers?: readonly string[];
+      /** Invoices skipped for an unmappable VAT rate before the failure. */
+      skipped?: readonly SkippedInvoice[];
     };
 
 export interface AccountingAdapter {

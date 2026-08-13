@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseCsvFile } from "@/lib/imports/parsers";
 import { detectEntityType, mapRow } from "@/lib/imports/detect";
+import { buildInvoiceImportPlan } from "@/lib/imports/invoice-row";
 import {
   buildFinanceImportPlan,
   parseVatRate,
@@ -294,5 +295,73 @@ describe("source contract — the commit path never writes a generated column", 
     // fails to compile instead of failing in production.
     expect(read("lib/imports/vat.ts")).toMatch(/vat_total` is deliberately absent/);
     expect(read("lib/imports/invoice-row.ts")).toMatch(/total` is deliberately absent/);
+  });
+});
+
+/**
+ * INVOICE-IMPORT VAT-RATE GUARD (closes the source of the accounting-push
+ * batch-poisoning class). An imported invoice carries only header totals, so its
+ * derived rate is a single blended figure. A blend that isn't a UK rate (0/5/20)
+ * has no honest Xero TaxType / QBO VAT code and would poison the provider push, so
+ * buildInvoiceImportPlan REJECTS it at import — the invoice-side mirror of the
+ * cost path's resolveCostVatRate. The push-side per-invoice SKIP is the other half
+ * (accounting-push.test.ts); this stops the bad row ever reaching the ledger.
+ */
+describe("buildInvoiceImportPlan — VAT-rate guard", () => {
+  it("accepts the three UK rates (20% / 5% / 0%)", () => {
+    for (const [total, vat] of [
+      [120, 20], // 20%
+      [105, 5], // 5%
+      [100, 0], // 0% (no VAT)
+    ] as const) {
+      const plan = buildInvoiceImportPlan(
+        { number: "INV-OK", total, vat_total: vat },
+        "org-1",
+        "sent",
+      );
+      expect(plan.status).toBe("ok");
+    }
+  });
+
+  it("REJECTS a legacy 17.5% invoice with a clear, named reason", () => {
+    // net 100 + VAT 17.50 → 17.5%, not a UK rate. Before the guard this reached
+    // the ledger and later exempted the whole invoice on the provider push.
+    const plan = buildInvoiceImportPlan(
+      { number: "INV-175", total: 117.5, vat_total: 17.5, amount: 100 },
+      "org-1",
+      "sent",
+    );
+    expect(plan.status).toBe("reject");
+    expect(plan.status === "reject" && plan.reason).toMatch(/17\.5%|UK VAT rate/);
+  });
+
+  it("REJECTS a header-only mixed-rate construction invoice (a blended non-standard rate)", () => {
+    // A real 20%+5% construction invoice imported header-only: net 200, VAT 25 →
+    // blended 12.5%, which no provider code maps. It must be split per rate first.
+    const plan = buildInvoiceImportPlan(
+      { number: "INV-MIX", total: 225, vat_total: 25, amount: 200 },
+      "org-1",
+      "sent",
+    );
+    expect(plan.status).toBe("reject");
+    expect(plan.status === "reject" && plan.reason).toMatch(/UK VAT rate/);
+  });
+
+  it("REJECTS VAT with no positive net to measure it against", () => {
+    const plan = buildInvoiceImportPlan(
+      { number: "INV-NONET", total: 20, vat_total: 20, amount: 0 },
+      "org-1",
+      "sent",
+    );
+    expect(plan.status).toBe("reject");
+  });
+
+  it("still SKIPS a row with no number or no positive total (unchanged)", () => {
+    expect(buildInvoiceImportPlan({ total: 120, vat_total: 20 }, "org-1", "sent").status).toBe(
+      "skip",
+    );
+    expect(
+      buildInvoiceImportPlan({ number: "INV-0", total: 0 }, "org-1", "sent").status,
+    ).toBe("skip");
   });
 });

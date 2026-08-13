@@ -171,20 +171,40 @@ const adapterCfg = {
   payAcceptsAll: false,
 };
 
+/**
+ * The real adapters now return the EXPLICIT accepted identities
+ * (`pushedSourceIds` / `pushedInvoiceNumbers`) rather than only a `pushed` count,
+ * because a per-invoice SKIP (an unmappable VAT rate) makes the accepted set
+ * non-contiguous. In the no-skip cases these tests drive, the accepted set is the
+ * input-order prefix `rows[0..pushed)`, so the fake derives the identities exactly
+ * as the real adapters would — keeping the fake faithful to the contract
+ * syncToProvider now records against.
+ */
+function withAcceptedIds(result: unknown, rows: Row[]): unknown {
+  if (!result || typeof result !== "object") return result;
+  const r = result as { pushed?: number };
+  const accepted = rows.slice(0, r.pushed ?? 0);
+  return {
+    ...r,
+    pushedSourceIds: accepted.map((row) => row.sourceId).filter(Boolean),
+    pushedInvoiceNumbers: accepted.map((row) => row.invoice_number).filter(Boolean),
+  };
+}
+
 vi.mock("@/lib/integrations/accounting/adapters", () => ({
   getAccountingAdapter: () => ({
     provider: "xero",
     isAvailable: () => adapterCfg.available,
     pushInvoices: async (input: { rows: Row[] }) => {
       adapterCfg.invRows = input.rows;
-      return adapterCfg.invResult;
+      return withAcceptedIds(adapterCfg.invResult, input.rows);
     },
     pushPayments: async (input: { rows: Row[] }) => {
       adapterCfg.payRows = input.rows;
-      if (adapterCfg.payAcceptsAll) {
-        return { ok: true, provider: "xero", pushed: input.rows.length };
-      }
-      return adapterCfg.payResult;
+      const result = adapterCfg.payAcceptsAll
+        ? { ok: true, provider: "xero", pushed: input.rows.length }
+        : adapterCfg.payResult;
+      return withAcceptedIds(result, input.rows);
     },
   }),
 }));
