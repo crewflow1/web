@@ -147,7 +147,6 @@ export async function POST(request: Request): Promise<NextResponse> {
         providerCallId: call.providerCallId,
         transcript,
         reply: spokenTurn,
-        priorTurns,
       });
     } catch (e) {
       Sentry.captureException(e, {

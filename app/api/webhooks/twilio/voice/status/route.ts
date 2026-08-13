@@ -8,8 +8,8 @@ import { TERMINAL_CALL_EVENTS } from "@/lib/telephony/types";
 import {
   appendCallEvent,
   composeCallTranscript,
+  loadAllSpokenTurns,
   loadEnquirySummary,
-  loadRecentSpokenTurns,
   recordInboundCall,
   updateCallCompletion,
 } from "@/server/services/telephony";
@@ -111,8 +111,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     // transcript on this callback, so — unlike Vapi — the transcript would stay
     // blank on the tenant lead timeline even though the spoken-turn loop already
     // persisted every turn to call_events. We reconstruct it here: load this call's
-    // persisted spoken turns (org-pinned) and fold them into calls.transcript via
-    // the SAME composeCallTranscript helper the enquiry raw_text uses, keeping the
+    // COMPLETE persisted spoken turns (org-pinned, PAGED via loadAllSpokenTurns —
+    // NOT the bounded recent-window used for prompt memory, which would drop the
+    // END of any call past 20 turns) and fold them into calls.transcript via the
+    // SAME composeCallTranscript helper the enquiry raw_text uses, keeping the
     // structured turns as transcript_json. ai_summary REUSES the GOVERNED summary
     // the receptionist extraction already wrote to the origination enquiry
     // (correlated by CallSid) — NO new / ungoverned model call is made here. The
@@ -124,7 +126,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     // artifacts a prior report captured.
     if ((TERMINAL_CALL_EVENTS as readonly string[]).includes(call.status)) {
       try {
-        const turns = await loadRecentSpokenTurns(orgId, callId);
+        const turns = await loadAllSpokenTurns(orgId, callId);
         const transcript = composeCallTranscript(turns);
         // The origination extraction ran at call START over an EMPTY transcript, so
         // the lead + enquiry carry the "no transcript captured" sentinel summary +

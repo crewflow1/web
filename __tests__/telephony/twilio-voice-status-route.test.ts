@@ -39,6 +39,11 @@ vi.mock("@/server/services/telephony", async (importActual) => {
     recordInboundCall: vi.fn(),
     appendCallEvent: vi.fn(),
     updateCallCompletion: vi.fn(),
+    // The terminal branch composes the transcript from the COMPLETE turn set
+    // (loadAllSpokenTurns, paged) — NOT the bounded recent-window
+    // (loadRecentSpokenTurns) used only for per-turn prompt memory. Both are mocked
+    // so the >20-turn regression test can prove the route sources the FULL set.
+    loadAllSpokenTurns: vi.fn(),
     loadRecentSpokenTurns: vi.fn(),
     loadEnquirySummary: vi.fn(),
   };
@@ -67,6 +72,9 @@ async function updateMock() {
   return vi.mocked((await import("@/server/services/telephony")).updateCallCompletion);
 }
 async function turnsMock() {
+  return vi.mocked((await import("@/server/services/telephony")).loadAllSpokenTurns);
+}
+async function recentTurnsMock() {
   return vi.mocked((await import("@/server/services/telephony")).loadRecentSpokenTurns);
 }
 async function summaryMock() {
@@ -129,6 +137,7 @@ describe("POST /api/webhooks/twilio/voice/status — completion enrichment", () 
     // Default: no persisted turns and no governed summary yet ⇒ the fold leaves
     // transcript / ai_summary UNWRITTEN (undefined), never blanking captured data.
     (await turnsMock()).mockResolvedValue([]);
+    (await recentTurnsMock()).mockResolvedValue([]);
     (await summaryMock()).mockResolvedValue(null);
     (await reextractMock()).mockResolvedValue({ refreshed: false });
   });
@@ -140,6 +149,7 @@ describe("POST /api/webhooks/twilio/voice/status — completion enrichment", () 
     (await appendMock()).mockReset();
     (await updateMock()).mockReset();
     (await turnsMock()).mockReset();
+    (await recentTurnsMock()).mockReset();
     (await summaryMock()).mockReset();
     (await reextractMock()).mockReset();
   });
@@ -220,6 +230,66 @@ describe("POST /api/webhooks/twilio/voice/status — completion enrichment", () 
       { transcript: "Hi, my boiler is leaking", reply: "I can help with that. Where are you?" },
       { transcript: "In Leeds, LS1", reply: "Thanks — the team will call you back." },
     ]);
+  });
+
+  it("sources the transcript from the COMPLETE turn set — a call with >20 turns keeps its END (no truncation)", async () => {
+    // THE DEFECT (pre-fix): the terminal branch called loadRecentSpokenTurns
+    // (default 20 = the EARLIEST 20 turns), so a call with >20 caller turns lost
+    // turns 21..n — the END of the call, where the callback number / address are
+    // spoken. The composed transcript that feeds BOTH the governed lead
+    // re-extraction AND calls.transcript was silently truncated.
+    //
+    // THE FIX: the branch calls loadAllSpokenTurns (paged, complete). We prove the
+    // route sources the FULL set by making the two loaders DIVERGE: the bounded
+    // recent-window returns only the first 20 turns (NO callback number), while the
+    // complete loader returns all 25 (turn 25 = the callback number). The composed
+    // transcript that reaches refreshVoiceExtractionFromTranscript + updateCall-
+    // Completion MUST contain the turn-25 callback number.
+    //
+    // RED before the fix: the route used loadRecentSpokenTurns, so the callback
+    // number (only in loadAllSpokenTurns) never reached the transcript and these
+    // assertions fail.
+    (await routerMock()).mockResolvedValue("org-1");
+    const firstTwenty = Array.from({ length: 20 }, (_v, i) => ({
+      transcript: `chit-chat turn ${i + 1}`,
+      reply: null,
+    }));
+    const callbackTurn = { transcript: "Call me back on 07700 900456", reply: "Noted, we will." };
+    const allTwentyFive = [
+      ...firstTwenty,
+      { transcript: "and my address is 12 Mill Lane", reply: null },
+      { transcript: "flat 3", reply: null },
+      { transcript: "it is urgent", reply: null },
+      { transcript: "a burst pipe", reply: null },
+      callbackTurn, // turn 25 — the END of the call
+    ];
+    // The bounded prompt-memory window would return only the first 20 (no callback).
+    (await recentTurnsMock()).mockResolvedValue(firstTwenty);
+    // The complete loader returns every turn, including the late callback number.
+    (await turnsMock()).mockResolvedValue(allTwentyFive);
+    (await summaryMock()).mockResolvedValue(null);
+
+    const { POST } = await loadRoute();
+    const res = await POST(signedRequest(COMPLETED) as never);
+    expect(res.status).toBe(200);
+
+    // The COMPLETE loader was used (org-pinned, on the resolved call row).
+    expect(await turnsMock()).toHaveBeenCalledWith("org-1", "call-1");
+
+    // The governed re-extraction saw a transcript containing the END of the call —
+    // the callback number spoken on turn 25 (dropped by the bounded window).
+    const reextractArg = (await reextractMock()).mock.calls[0]![0] as { transcript: string };
+    expect(reextractArg.transcript).toContain("07700 900456");
+    expect(reextractArg.transcript).toContain("12 Mill Lane");
+
+    // …and the SAME complete transcript + all 25 structured turns were persisted to
+    // the calls row (never a first-20 truncation).
+    const fields = (await updateMock()).mock.calls[0]![2] as {
+      transcript?: string;
+      transcriptJson?: unknown[];
+    };
+    expect(fields.transcript).toContain("07700 900456");
+    expect(fields.transcriptJson).toHaveLength(25);
   });
 
   it("leaves transcript / ai_summary UNWRITTEN when there are no turns and no governed summary", async () => {
