@@ -144,13 +144,13 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // is bounded well below the cap by the page, not a standing backlog.
   "app/(app)/purchase-orders/_receiving-data.ts:99":
     "bounded: delivery counts for ONE list page's POs (.in(purchaseOrderIds), page is tens of POs × few GRNs) — well below the 1000 cap",
-  // material-fulfilment: both reads are `.in(<one material request's line/id set>)`
-  // scoped to a single request's issue movements + their corrections — bounded by
-  // the request size (a handful to dozens of lines), never a standing backlog.
-  "server/services/material-fulfilment.ts:125":
-    "bounded: stock issue movements for ONE material request (.in(lineIds)) — request-sized, well below 1000",
-  "server/services/material-fulfilment.ts:150":
-    "bounded: correction movements for ONE request's issued set (.in(rows.map(id))) — request-sized, well below 1000",
+  // material-fulfilment: REMOVED (false narrower-than-use entry). The reason
+  // claimed "for ONE material request … request-sized, well below 1000", but the
+  // two real callers pass MULTI-request / org-wide line sets in ONE call
+  // (intelligence.gatherMaterialDemand → ALL open demand requests org-wide;
+  // material-requests.deriveFulfilment → a whole list page's lines, up to 500
+  // requests). Both reads are now PAGED in full via fetchAllRows + chunked .in(),
+  // so they carry a .range() (not a .limit) and no longer need an entry.
   // sites/van-stock: per-ORG fleet_vehicles scans (.eq(org_id)) for site-usage
   // counts / a van picker. An SME org's fleet is tens of vehicles, not thousands.
   "server/services/sites.ts:187":
@@ -203,44 +203,51 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   "app/(app)/invoices/[id]/page.tsx:102":
     "bounded: recent-50 link-to-job picker; a controlled per-control select whose write fires only on explicit onChange (no shared-form save), and the linked job is preserve-injected in page.tsx so it always displays",
 
-  // Global-search result caps (intentional top-N over the whole tenant).
+  // Global-search result caps — the command-palette (/api/search). Each is an
+  // org-pinned (.eq('org_id', ctx.org.id)) top-N DISPLAY hit list, capped by the
+  // same-file const named; results are mapped into `hits` for display (and the
+  // customer/job/quote ids are chained into dependent `.in()` reads, themselves
+  // bounded by that cap). NONE is fed into a count/sum/completeness surface — a
+  // dropped hit past the cap is by-design "refine your query", not a wrong number.
   "app/api/search/route.ts:153":
-    "bounded: global search top-50 customer results (intentional result cap)",
+    "bounded: search customers — .limit(CHAIN_LIMIT=50) DISPLAY hits, org-pinned; ids chained into ≤50 .in() lookups, NOT counted/summed",
   "app/api/search/route.ts:208":
-    "bounded: global search top-50 job results (intentional result cap)",
+    "bounded: search jobs — .limit(CHAIN_LIMIT=50) DISPLAY hits, org-pinned; ids chained into ≤50 .in() lookups, NOT counted/summed",
   "app/api/search/route.ts:217":
-    "bounded: global search top-50 quote results (intentional result cap)",
+    "bounded: search quotes — .limit(CHAIN_LIMIT=50) DISPLAY hits, org-pinned; ids chained into ≤50 .in() lookups, NOT counted/summed",
   "app/api/search/route.ts:223":
-    "bounded: global search top-8 lead results (per-type cap)",
+    "bounded: search leads — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
   "app/api/search/route.ts:292":
-    "bounded: global search top-8 invoice results (per-type cap)",
+    "bounded: search invoices — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
   "app/(app)/jobs/page.tsx:92":
     "bounded: search-match helper — collects up to 200 matching customer ids to fold into the .range()-paged jobs query; a name-search sub-sample, not a materialised set",
 
-  // Customer-portal reads — each is scoped to ONE customer (token-authorised), so
-  // bounded by customer scope, and a top-N display of that customer's own docs.
-  "app/customer-portal/[token]/documents/page.tsx:48":
-    "bounded: ONE customer's own quotes (token-scoped to a single customer), top-100 display",
-  "app/customer-portal/[token]/documents/page.tsx:60":
-    "bounded: ONE customer's own invoices (token-scoped), top-100 display",
-  // NOTE: the portal invoices reads (home + invoices tab) are DELIBERATELY
-  // absent — they were the aggregate-fed-cap subclass this wave fixed. Both feed
-  // a MONEY aggregate (computePortalPayments), so a capped read silently
-  // under-reported the balance owed. They were PAGED via fetchAllRows, not
-  // allowlisted, and the new "aggregate-fed capped money read" net below refuses
-  // to let either be re-silenced by an allowlist entry.
-  "app/customer-portal/[token]/jobs/page.tsx:152":
-    "bounded: ONE customer's own jobs (token-scoped), top-100 display",
-  "app/customer-portal/[token]/page.tsx:70":
-    "bounded: ONE customer's recent quotes on the portal home (token-scoped), top-50 — quotes are COUNTED/displayed, never summed into a money aggregate",
-  "app/customer-portal/[token]/quotes/page.tsx:66":
-    "bounded: ONE customer's own quotes (token-scoped), top-200 display",
-  "lib/customers/portal-bulk-download.ts:153":
-    "bounded: ONE customer's invoices for a portal ZIP bulk-download (.eq org_id+customer_id), top-200",
-  "lib/customers/portal-bulk-download.ts:168":
-    "bounded: ONE customer's quotes for a portal ZIP bulk-download (.eq org_id+customer_id), top-200",
-  "app/q/[token]/page.tsx:199":
-    "bounded: sibling variation quotes for ONE job (.eq org_id+customer_id+job_id) — a single job's variations, a handful; scoped, not a standing set",
+  // Customer-portal reads.
+  //
+  // REMOVED (false narrower-than-use entries surfaced by the C64 audit): the
+  // documents-library quotes (:48) + invoices (:60) reads and the jobs-tab (:152)
+  // read were justified as "top-N display" but each is the customer's COMPLETE
+  // set: the documents `{documents.length} total` count AND the "Download all
+  // (zip)" bundle derive from :48/:60 (a cap dropped docs from the count and the
+  // customer's own ZIP), and the jobs read was ASC-ordered so :152's cap dropped
+  // the NEWEST jobs. All three are now PAGED via fetchAllRows (.range), so none
+  // needs an entry.  The q/[token] sibling-variation read (was :199) fed a MONEY
+  // SUM into a legally-signed contract total — "practically small" ≠ "provably
+  // complete" — and is likewise PAGED, not allowlisted.
+  //
+  // The portal HOME + quotes-tab quotes reads were ALSO false ("counted, never
+  // summed"/"top-200 display") — allQuotes feeds COUNT KPIs + the live action
+  // centre, and the quotes tab is a set the customer must see in full — both now
+  // PAGED. The portal invoices reads (home + invoices tab) are DELIBERATELY
+  // absent for the same reason: they feed a MONEY aggregate (computePortalPayments)
+  // and are PAGED, with the aggregate-fed-cap net below refusing any re-silencing.
+  //
+  // The portal ZIP bulk-download reads (was :153 invoices / :168 quotes) were
+  // ALSO removed: the ZIP caps at MAX_BULK_DOCS newest docs, but `plan.total`
+  // (a .length count of these reads) is surfaced to the customer as the
+  // X-Bulk-Total truncation-note header, so a .limit(200) under-reported it.
+  // Both are now PAGED via fetchAllRows (.range) — the selection is unchanged,
+  // the surfaced total is now exact.
 
   // All GRNs on ONE purchase order — bounded by the single-PO scope.
   "app/(app)/purchase-orders/_receiving-data.ts:58":
@@ -260,10 +267,11 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
     "bounded: ONE customer's own portal future-work requests (.eq('org_id').eq('customer_id').eq('source','portal').limit(50)) — token-scoped to a single customer, a recent-50 display",
   "server/services/hq-health-deep-dive.ts:298":
     "bounded: ONE org's health-score timeline (.eq('org_id').limit(Math.min(limit,1000))) — listHealthHistoryForOrg, a per-org recent-N display (caller passes 50), not a cross-tenant set",
-  "server/services/notifications-service.ts:293":
-    "bounded: recent notifications for ONE org (.eq('org_id').order(created_at desc).limit(Math.min(limit,1000))) — getLatestNotificationsForCustomer, a top-N display (caller passes 200)",
-  "server/services/notifications-service.ts:329":
-    "bounded: recent HQ-audience notifications for the HQ bell (.in('audience',['hq','both']).order(created_at desc).limit(Math.min(limit,1000))) — getLatestNotificationsForHq, a top-N display (caller passes 200), counted/displayed not summed",
+  // notifications-service getLatest{ForCustomer,ForHq}: REMOVED (false
+  // narrower-than-use — the C64 audit found BOTH the customer unread badge and
+  // the HQ urgent/high/24h tiles + org-filter dropdown derive .length/distinct
+  // from these capped reads, so a cap under-counted every one). Both are now
+  // PAGED via fetchAllRows (.range), so neither carries a .limit or needs entry.
 };
 
 /** Strip block + line comments so historical `.limit(...)` mentions in prose

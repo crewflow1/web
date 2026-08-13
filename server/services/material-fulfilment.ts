@@ -1,5 +1,6 @@
 import "server-only";
 import type { IssuedQty } from "@/lib/material-requests/fulfilment";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 
 /**
  * THE STOCK SEAM — the one place material requests touch the operational-stock
@@ -86,18 +87,65 @@ type Chain<T> = {
   select: (c: string) => Chain<T>;
   eq: (k: string, v: unknown) => Chain<T>;
   in: (k: string, v: readonly unknown[]) => Chain<T>;
+  order: (k: string, opts?: { ascending?: boolean }) => Chain<T>;
   limit: (n: number) => PromiseLike<Res<T>>;
+  range: (from: number, to: number) => PromiseLike<Res<T>>;
 };
 export type StockSeamClient = {
   from: (t: string) => Chain<Record<string, unknown>>;
   rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: PgError }>;
 };
 
-/** Bound the read — a single request's lines cannot plausibly draw more. */
-// Per-request issue/correction movements — bounded in practice (a single
-// material request never approaches this). Honest cap: PostgREST clamps every
-// read to max_rows (1000), so a higher number would silently return only 1000.
-const MOVEMENT_LIMIT = 1000;
+/**
+ * The two real callers pass MULTI-request / org-wide line sets in ONE call:
+ *   · intelligence.gatherMaterialDemand builds `lines` from ALL open
+ *     demand-status requests org-wide (paged) and passes every line id here.
+ *   · material-requests.deriveFulfilment is fed a whole list page's lines (up
+ *     to MATERIAL_REQUEST_LIST_LIMIT = 500 requests).
+ * So the issue/correction sets can EASILY exceed the 1000-row PostgREST cap.
+ * A flat `.limit(1000)` therefore returns a NONDETERMINISTIC ≤1000-row subset
+ * (no ORDER BY made it worse), under-counting `issued` and over-stating
+ * outstanding demand. Both reads are now PAGED in full via fetchAllRows over a
+ * stable UNIQUE order (id asc), which is why there is no `.limit` const left.
+ *
+ * CHUNKING: `.in()` rides in the GET query string, so an org-scale id set can
+ * overflow the PostgREST request-line limit (→ 414/400) in one query. We slice
+ * the id lists into IN_CHUNK batches and union the paged results — the same
+ * shape server/services/bank-sync.ts uses for its dedupe `.in()`.
+ */
+const IN_CHUNK = 200;
+
+/**
+ * Page a `stock_movements` read filtered by an `.in(<column>, ids)` id set, in
+ * full and in chunks: each chunk is paged to completion via fetchAllRows, and
+ * the results are unioned. Returns the collected rows plus the FIRST error hit
+ * (so the caller can preserve its stock-module-absent feature-detection and its
+ * refuse-on-real-failure posture, exactly as the single-query form did).
+ */
+async function readMovementsChunked<T>(
+  db: StockSeamClient,
+  orgId: string,
+  column: string,
+  ids: readonly string[],
+  select: string,
+  narrow: (c: Chain<Record<string, unknown>>) => Chain<Record<string, unknown>>,
+): Promise<{ rows: T[]; error: PgError }> {
+  const rows: T[] = [];
+  for (let i = 0; i < ids.length; i += IN_CHUNK) {
+    const batch = ids.slice(i, i + IN_CHUNK);
+    const { data, error } = await fetchAllRows<T>(
+      (from, to) =>
+        narrow(db.from("stock_movements").select(select))
+          .eq("org_id", orgId) // ACTIVE-ORG PIN
+          .in(column, batch)
+          .order("id", { ascending: true }) // stable UNIQUE total order
+          .range(from, to) as unknown as PromiseLike<PageResult<T>>,
+    );
+    rows.push(...(data as T[]));
+    if (error) return { rows, error: error as PgError };
+  }
+  return { rows, error: null };
+}
 
 export type IssuedResult = {
   issued: IssuedQty[];
@@ -121,13 +169,21 @@ export async function readIssuedForLines(
 ): Promise<IssuedResult> {
   if (lineIds.length === 0) return { issued: [], stockModulePending: false };
 
-  const { data, error } = await db
-    .from("stock_movements")
-    .select("id, material_request_line_id, qty")
-    .eq("org_id", orgId) // ACTIVE-ORG PIN
-    .eq("movement_type", "issue")
-    .in("material_request_line_id", lineIds)
-    .limit(MOVEMENT_LIMIT);
+  // The issue movements for the WHOLE passed line set — paged in full and
+  // chunked over the id list (org-scale sets exceed both the 1000-row cap and
+  // the PostgREST URL length). No `.limit`, so no nondeterministic truncation.
+  const { rows, error } = await readMovementsChunked<{
+    id: string;
+    material_request_line_id: string | null;
+    qty: number | string | null;
+  }>(
+    db,
+    orgId,
+    "material_request_line_id",
+    lineIds,
+    "id, material_request_line_id, qty",
+    (c) => c.eq("movement_type", "issue"),
+  );
 
   if (error) {
     if (isStockModuleAbsent(error)) return { issued: [], stockModulePending: true };
@@ -137,24 +193,22 @@ export async function readIssuedForLines(
     return { issued: [], stockModulePending: true };
   }
 
-  const rows = (data ?? []) as Array<{
-    id: string;
-    material_request_line_id: string | null;
-    qty: number | string | null;
-  }>;
   if (rows.length === 0) return { issued: [], stockModulePending: false };
 
-  // THE CORRECTION RULE (see the header). One extra query for the whole set.
+  // THE CORRECTION RULE (see the header). Paged + chunked over the issued id
+  // set for the whole request set, same completeness contract as the issues
+  // read — a missed correction would OVER-state fulfilment.
   const corrected = new Set<string>();
-  const { data: corrections, error: corrErr } = await db
-    .from("stock_movements")
-    .select("corrects_movement_id")
-    .eq("org_id", orgId) // ACTIVE-ORG PIN
-    .in(
-      "corrects_movement_id",
-      rows.map((r) => r.id),
-    )
-    .limit(MOVEMENT_LIMIT);
+  const { rows: corrections, error: corrErr } = await readMovementsChunked<{
+    corrects_movement_id: string | null;
+  }>(
+    db,
+    orgId,
+    "corrects_movement_id",
+    rows.map((r) => r.id),
+    "corrects_movement_id",
+    (c) => c,
+  );
   if (corrErr) {
     // We could see the issues but not their reversals — reporting the
     // uncorrected sum here would OVER-state fulfilment, which is the one
@@ -164,7 +218,7 @@ export async function readIssuedForLines(
     }
     return { issued: [], stockModulePending: true };
   }
-  for (const c of (corrections ?? []) as Array<{ corrects_movement_id: string | null }>) {
+  for (const c of corrections) {
     if (c.corrects_movement_id) corrected.add(c.corrects_movement_id);
   }
 

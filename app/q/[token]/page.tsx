@@ -195,25 +195,39 @@ export default async function PublicQuotePage({
   // query, not merely out of the JSX.
   let variationView: PortalVariationView | null = null;
   if (isVariation && quote.job_id && quote.customer?.id) {
-    const { data: siblings, error: siblingsError } = await admin
-      .from("quotes")
-      .select("id, status, total, variation_number, eot_agreed_completion_date")
-      .eq("org_id", quote.org_id)
-      .eq("customer_id", quote.customer.id)
-      .eq("job_id", quote.job_id)
-      .neq("id", quote.id)
-      .limit(500);
+    // F-1: page the FULL set (fetchAllRows, stable id order). These sibling
+    // rows are SUMMED into the contract total shown on a legally-signed
+    // surface, so a `.limit(500)` was a money aggregate capped below the
+    // PostgREST clamp — "practically small" (one job's variations) is not
+    // "provably complete". Paged in full; no chunk needed (single `.eq(job_id)`).
+    type SiblingRow = {
+      id: string;
+      status: string;
+      total: number | string | null;
+      variation_number: number | null;
+      eot_agreed_completion_date: string | null;
+    };
+    const { data: siblings, error: siblingsError } = await fetchAllRows<SiblingRow>(
+      (from, to) =>
+        admin
+          .from("quotes")
+          .select("id, status, total, variation_number, eot_agreed_completion_date")
+          .eq("org_id", quote.org_id)
+          .eq("customer_id", quote.customer!.id)
+          .eq("job_id", quote.job_id!)
+          .neq("id", quote.id)
+          .order("id", { ascending: true })
+          .range(from, to) as unknown as PromiseLike<{
+          data: SiblingRow[] | null;
+          error: unknown;
+        }>,
+    );
     // Loud: a failed read here would silently show a contract total that leaves
     // out already-approved variations — an understated figure on a document the
     // customer signs.
     if (siblingsError) throw readFailure("public quote: variation context", siblingsError);
 
-    const siblingRows = (siblings ?? []) as Array<{
-      status: string;
-      total: number | string | null;
-      variation_number: number | null;
-      eot_agreed_completion_date: string | null;
-    }>;
+    const siblingRows = siblings;
     const siblingQuotes: CashQuote[] = siblingRows.map((s) => ({
       status: s.status,
       total: s.total,

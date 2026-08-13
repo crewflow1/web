@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
@@ -148,22 +149,6 @@ export default async function PortalJobsPage({
   // assigned user's `email` is internal staff PII. Leaving either out of the
   // query means no future render can leak them by accident, and nothing
   // sensitive crosses the wire to a page served on an unauthenticated token.
-  const { data: jobsRaw, error: jobsError } = await admin
-    .from("jobs")
-    .select(
-      `
-        id, status, scheduled_date, created_at,
-        assigned:users!jobs_assigned_to_fkey ( full_name )
-      `,
-    )
-    .eq("org_id", customer.org_id)
-    .eq("customer_id", customer.id)
-    .order("scheduled_date", { ascending: true, nullsFirst: false })
-    .limit(100);
-  if (jobsError) {
-    throw readFailure("portal jobs: jobs", jobsError);
-  }
-
   type Row = {
     id: string;
     status: string;
@@ -171,7 +156,35 @@ export default async function PortalJobsPage({
     created_at: string;
     assigned: { full_name: string | null } | null;
   };
-  const jobs = (jobsRaw ?? []) as unknown as Row[];
+  // F-1: page the FULL set (fetchAllRows). The ASC scheduled_date display order
+  // means a `.limit(100)` dropped the customer's NEWEST jobs, not the oldest —
+  // this is the customer's complete job history, not a top-N sample. Display
+  // order is preserved; `id` is added as a stable UNIQUE tiebreaker so rows
+  // cannot shift across page boundaries.
+  const { data: jobsRaw, error: jobsError } = await fetchAllRows<Row>(
+    (from, to) =>
+      admin
+        .from("jobs")
+        .select(
+          `
+        id, status, scheduled_date, created_at,
+        assigned:users!jobs_assigned_to_fkey ( full_name )
+      `,
+        )
+        .eq("org_id", customer.org_id)
+        .eq("customer_id", customer.id)
+        .order("scheduled_date", { ascending: true, nullsFirst: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: Row[] | null;
+        error: unknown;
+      }>,
+  );
+  if (jobsError) {
+    throw readFailure("portal jobs: jobs", jobsError);
+  }
+
+  const jobs = jobsRaw;
 
   /**
    * Progress per job, narrowed to the CUSTOMER-SAFE shape before it can reach

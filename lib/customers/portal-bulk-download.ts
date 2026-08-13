@@ -149,40 +149,61 @@ export async function collectPortalDocumentPdfs(args: {
   );
 
   // --- Scoped reads: EVERY doc set is filtered to this customer + org. ---------
-  const { data: invoiceData, error: invoiceError } = await admin
-    .from("invoices")
-    .select(
-      `
+  //
+  // F-1: page BOTH in full (fetchAllRows, created_at desc + id tiebreaker). The
+  // ZIP itself is deliberately capped at MAX_BULK_DOCS newest docs, but
+  // `plan.total` (quotes+invoices+reports+certs .length) is surfaced to the
+  // customer as the `X-Bulk-Total` truncation-note header — so a `.limit(200)`
+  // here UNDER-reported that count once a customer crossed 200 invoices/quotes.
+  // Paged reads make the total exact; the newest-N selection is unchanged.
+  const { data: invoiceData, error: invoiceError } = await fetchAllRows<InvoiceRow>(
+    (from, to) =>
+      admin
+        .from("invoices")
+        .select(
+          `
         id, number, status, amount, vat_total, total, due_date, paid_at, notes,
         sent_at, created_at, quote_id, org_id, customer_id,
         quote:quotes ( customer_id, customer:customers ( name ) )
       `,
-    )
-    .eq("org_id", customer.org_id)
-    .eq("customer_id", customer.id)
-    .order("created_at", { ascending: false })
-    .limit(200);
+        )
+        .eq("org_id", customer.org_id)
+        .eq("customer_id", customer.id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: InvoiceRow[] | null;
+        error: unknown;
+      }>,
+  );
   if (invoiceError) throw readFailure("portal bulk: invoices", invoiceError);
 
-  const { data: quoteData, error: quoteError } = await admin
-    .from("quotes")
-    .select(
-      `
+  const { data: quoteData, error: quoteError } = await fetchAllRows<QuoteRow>(
+    (from, to) =>
+      admin
+        .from("quotes")
+        .select(
+          `
         id, number, status, subtotal, vat_total, total, valid_until,
         eot_requested_completion_date, eot_agreed_completion_date, notes, terms,
         sent_at, accepted_at, org_id, customer_id, public_token
       `,
-    )
-    .eq("org_id", customer.org_id)
-    .eq("customer_id", customer.id)
-    .not("public_token", "is", null)
-    // Match the documents-library page's visibility exactly: a draft quote
-    // must not appear in the bulk zip when it is hidden from the on-screen
-    // list (adversarial P2 — surface consistency; it is still the customer's
-    // own quote, individually reachable via /q/<token>/pdf).
-    .in("status", ["approved", "sent", "viewed", "accepted", "declined", "expired"])
-    .order("created_at", { ascending: false })
-    .limit(200);
+        )
+        .eq("org_id", customer.org_id)
+        .eq("customer_id", customer.id)
+        .not("public_token", "is", null)
+        // Match the documents-library page's visibility exactly: a draft quote
+        // must not appear in the bulk zip when it is hidden from the on-screen
+        // list (adversarial P2 — surface consistency; it is still the customer's
+        // own quote, individually reachable via /q/<token>/pdf).
+        .in("status", ["approved", "sent", "viewed", "accepted", "declined", "expired"])
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: QuoteRow[] | null;
+        error: unknown;
+      }>,
+  );
   if (quoteError) throw readFailure("portal bulk: quotes", quoteError);
 
   const reports = await listPortalReports(customer.id, customer.org_id);

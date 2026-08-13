@@ -53,7 +53,7 @@ export default async function CustomerNotificationsPage({
   const state =
     (sp.state as "unread" | "all" | "dismissed" | undefined) ?? "all";
 
-  const all = await getLatestNotificationsForCustomer(ctx.org.id, 200);
+  const all = await getLatestNotificationsForCustomer(ctx.org.id);
   const filtered = filterNotifications(all, { category, priority, state });
   const sorted = prioritySort(filtered);
   const groups = groupByDate(sorted);
