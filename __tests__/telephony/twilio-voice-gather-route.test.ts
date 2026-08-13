@@ -173,14 +173,15 @@ describe("POST /api/webhooks/twilio/voice/gather", () => {
       }),
     );
     // (a)+(b) the turn (SpeechResult + generated reply) is persisted to call_events
-    //         AND folded into the enquiry raw_text — carrying the prior turns.
+    //         AND folded into the enquiry raw_text. persistSpokenTurn re-reads the
+    //         COMPLETE turn set itself (loadAllSpokenTurns) for the raw_text fold, so
+    //         the route no longer hands it the bounded recent-window.
     expect(await persistMock()).toHaveBeenCalledWith({
       orgId: "org-1",
       callId: "call-1",
       providerCallId: "CA-gather-1",
       transcript: "my boiler is leaking",
       reply: "Sorry to hear that. Is it dripping or fully leaking?",
-      priorTurns: [{ transcript: "hello there", reply: "Hi, how can I help?" }],
     });
   });
 

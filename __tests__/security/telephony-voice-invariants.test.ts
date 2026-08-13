@@ -295,8 +295,13 @@ describe("completion enrichment: BOTH terminal provider paths write it (no diver
     // callback, so unless it reconstructs one from the persisted spoken turns, a
     // Twilio-answered call shows duration but a BLANK transcript on the lead
     // timeline — even though the whole conversation was captured. It MUST load the
-    // spoken turns…
-    expect(code).toMatch(/loadRecentSpokenTurns\(/);
+    // COMPLETE spoken-turn set (loadAllSpokenTurns, PAGED) — NOT the bounded
+    // recent-window (loadRecentSpokenTurns) used only for per-turn prompt memory,
+    // which would silently drop turns 21..n (the END of a long call: callback
+    // number / address). A future edit that reverts the terminal transcript to the
+    // bounded loader — re-introducing the truncation — MUST fail CI.
+    expect(code).toMatch(/loadAllSpokenTurns\(/);
+    expect(code).not.toMatch(/loadRecentSpokenTurns\(/);
     // …compose them through the SAME shared helper the enquiry raw_text uses…
     expect(code).toMatch(/composeCallTranscript\(/);
     // …and pass the composed transcript into the single enrichment writer (so a

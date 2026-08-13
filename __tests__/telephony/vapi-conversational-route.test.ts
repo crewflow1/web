@@ -243,13 +243,14 @@ describe("POST /api/webhooks/vapi — conversational branches", () => {
       }),
     );
     // The caller utterance + generated reply are persisted, correlated by call id.
+    // persistSpokenTurn re-reads the COMPLETE turn set (loadAllSpokenTurns) for the
+    // raw_text fold, so the route no longer passes it the bounded recent-window.
     expect(await persistMock()).toHaveBeenCalledWith({
       orgId: "org-1",
       callId: "call-1",
       providerCallId: "vapi-call-1",
       transcript: "my boiler is leaking",
       reply: "Sorry to hear that — is it dripping or fully leaking?",
-      priorTurns: [{ transcript: "hi", reply: "Hello, how can I help?" }],
     });
   });
 

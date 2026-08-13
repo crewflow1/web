@@ -7,6 +7,7 @@ import {
 } from "@/lib/telephony/state-machine";
 import type { CallEventType, NormalizedInboundCall } from "@/lib/telephony/types";
 import { voiceInboundFeatureEnabled } from "@/lib/telephony/config";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 
 /**
  * Voice Telephony (Wave 8) — the server-side persistence path.
@@ -253,13 +254,50 @@ type SpokenTurnReadFilter = {
   };
 };
 
+// The minimal PAGED-read shape for the COMPLETE-transcript loader below. Chains
+// `.eq × n → .order × n → .range(from,to)`, the fetchAllRows contract, cast past
+// the generated types like the bounded reader above.
+type SpokenTurnPagedFilter = {
+  eq: (k: string, v: unknown) => SpokenTurnPagedFilter;
+  order: (col: string, opts: { ascending: boolean }) => SpokenTurnPagedFilter;
+  range: (
+    from: number,
+    to: number,
+  ) => Promise<{ data: Array<{ payload: unknown }> | null; error: unknown }>;
+};
+
 /**
- * Load the prior spoken turns for a call, oldest-first — the memory the governed
- * turn seam folds in so a turn can reason over the conversation, not just the
- * latest utterance. Org-pinned (defence in depth over the admin client). Filters
- * to the spoken-turn payload marker, so lifecycle `in_progress` status events are
- * never mistaken for turns. Fails loud on a read error (the caller decides whether
- * to degrade); a missing/empty call simply yields no turns.
+ * Parse the raw `call_events` payload rows into ordered {@link SpokenTurn}s,
+ * dropping any lifecycle `in_progress` status event that lacks the spoken-turn
+ * marker. Pure — shared by the bounded ({@link loadRecentSpokenTurns}) and the
+ * complete ({@link loadAllSpokenTurns}) readers so both interpret the payload
+ * identically.
+ */
+function parseSpokenTurnRows(rows: Array<{ payload: unknown }>): SpokenTurn[] {
+  const turns: SpokenTurn[] = [];
+  for (const row of rows) {
+    const p = row.payload as { kind?: unknown; speech_result?: unknown; reply?: unknown } | null;
+    if (!p || p.kind !== SPOKEN_TURN_KIND) continue;
+    turns.push({
+      transcript: typeof p.speech_result === "string" ? p.speech_result : "",
+      reply: typeof p.reply === "string" ? p.reply : null,
+    });
+  }
+  return turns;
+}
+
+/**
+ * Load the RECENT prior spoken turns for a call, oldest-first, BOUNDED to the
+ * latest `limit` (default 20) — the per-turn PROMPT MEMORY the governed turn seam
+ * folds in so a turn can reason over the recent conversation, not just the latest
+ * utterance. This bounded window is correct for the conversational loop (the
+ * gather / vapi callbacks); it is DELIBERATELY NOT the full-transcript source —
+ * for the complete call (persisted transcript + governed lead re-extraction) use
+ * {@link loadAllSpokenTurns}, which pages every turn. Org-pinned (defence in depth
+ * over the admin client). Filters to the spoken-turn payload marker, so lifecycle
+ * `in_progress` status events are never mistaken for turns. Fails loud on a read
+ * error (the caller decides whether to degrade); a missing/empty call yields no
+ * turns.
  */
 export async function loadRecentSpokenTurns(
   orgId: string,
@@ -282,16 +320,50 @@ export async function loadRecentSpokenTurns(
     });
     throw new Error(`loadRecentSpokenTurns failed: ${error.message}`);
   }
-  const turns: SpokenTurn[] = [];
-  for (const row of data ?? []) {
-    const p = row.payload as { kind?: unknown; speech_result?: unknown; reply?: unknown } | null;
-    if (!p || p.kind !== SPOKEN_TURN_KIND) continue;
-    turns.push({
-      transcript: typeof p.speech_result === "string" ? p.speech_result : "",
-      reply: typeof p.reply === "string" ? p.reply : null,
+  return parseSpokenTurnRows(data ?? []);
+}
+
+/**
+ * Load the COMPLETE set of spoken turns for a call, oldest-first — the
+ * AUTHORITATIVE full-transcript source. Unlike {@link loadRecentSpokenTurns} (a
+ * bounded recent-window for prompt memory), this PAGES every spoken turn via
+ * `fetchAllRows`, so a call with >20 caller turns keeps its END — the callback
+ * number, address and job specifics spoken late — instead of silently dropping
+ * turns 21..n. This is what the Twilio terminal-status route composes into
+ * `calls.transcript` and feeds to the GOVERNED lead re-extraction, and what the
+ * per-turn raw_text fold uses, so neither ever truncates a long call.
+ *
+ * Org-pinned (defence in depth over the RLS-bypassing admin client). Ordered
+ * `(occurred_at asc, id asc)` — a STABLE, UNIQUE total order (the `id` tiebreaker
+ * is required by the fetchAllRows contract so no page can drop or repeat a turn
+ * that shares an `occurred_at` at a page boundary). Filters to the spoken-turn
+ * payload marker. Fails LOUD on a read error (throws) so a partial / empty read
+ * can NEVER silently produce an empty transcript that then wipes a good governed
+ * lead summary — the callers wrap this best-effort and skip the overwrite.
+ */
+export async function loadAllSpokenTurns(orgId: string, callId: string): Promise<SpokenTurn[]> {
+  const admin = createAdminClient();
+  const { data, error } = await fetchAllRows<{ payload: unknown }>(
+    (from, to) =>
+      (admin.from("call_events" as never) as unknown as {
+        select: (cols: string) => SpokenTurnPagedFilter;
+      })
+        .select("payload")
+        .eq("org_id", orgId)
+        .eq("call_id", callId)
+        .eq("event_type", SPOKEN_TURN_EVENT_TYPE)
+        .order("occurred_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<{ payload: unknown }>>,
+  );
+  if (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    Sentry.captureException(new Error(`loadAllSpokenTurns failed: ${message}`), {
+      tags: { service: "telephony" },
     });
+    throw new Error(`loadAllSpokenTurns failed: ${message}`);
   }
-  return turns;
+  return parseSpokenTurnRows(data);
 }
 
 /**
@@ -329,11 +401,20 @@ async function updateEnquiryTranscript(
 
 /**
  * Persist ONE spoken turn: append it to the append-only `call_events` audit
- * (caller SpeechResult + generated reply) AND fold it into the enquiry's `raw_text`
- * (prior turns + this one). This is the single write door the webhook loops call
- * after generating a turn. Org-pinned throughout. THROWS on a write failure — the
- * caller wraps it best-effort so a persistence error degrades the call gracefully
- * (log + continue) rather than dropping it.
+ * (caller SpeechResult + generated reply) AND fold the WHOLE call into the
+ * enquiry's `raw_text`. This is the single write door the webhook loops call after
+ * generating a turn. Org-pinned throughout. THROWS on a write failure — the caller
+ * wraps it best-effort so a persistence error degrades the call gracefully (log +
+ * continue) rather than dropping it.
+ *
+ * ORDER MATTERS: the turn is appended to the audit FIRST (so the append-only
+ * record is always captured even if the fold below fails), and the raw_text is
+ * then composed from the COMPLETE persisted turn set via {@link loadAllSpokenTurns}
+ * — NOT from a bounded recent-window handed in by the caller. The conversational
+ * loops load only a recent-N window for prompt memory; folding raw_text from that
+ * window dropped the END of any call past 20 turns (the callback number / address
+ * spoken late). Re-reading the full set here keeps raw_text complete. If that read
+ * fails it THROWS before the fold, so a partial read never overwrites `raw_text`.
  */
 export async function persistSpokenTurn(args: {
   orgId: string;
@@ -341,7 +422,6 @@ export async function persistSpokenTurn(args: {
   providerCallId: string;
   transcript: string;
   reply: string | null;
-  priorTurns: SpokenTurn[];
 }): Promise<void> {
   await appendCallEvent(args.orgId, args.callId, {
     type: SPOKEN_TURN_EVENT_TYPE,
@@ -355,13 +435,13 @@ export async function persistSpokenTurn(args: {
     },
     occurredAt: new Date().toISOString(),
   });
+  // Fold the COMPLETE conversation (this turn is now persisted, so the full set
+  // already includes it) into raw_text — never a bounded window.
+  const allTurns = await loadAllSpokenTurns(args.orgId, args.callId);
   await updateEnquiryTranscript(
     args.orgId,
     args.providerCallId,
-    composeCallTranscript([
-      ...args.priorTurns,
-      { transcript: args.transcript, reply: args.reply },
-    ]),
+    composeCallTranscript(allTurns),
   );
 }
 

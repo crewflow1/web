@@ -173,7 +173,6 @@ export async function POST(request: Request): Promise<NextResponse> {
         providerCallId: parsed.callId,
         transcript,
         reply: turn,
-        priorTurns,
       });
     } catch (e) {
       Sentry.captureException(e, { tags: { route: "webhooks/vapi/chat-completions", stage: "persist" } });

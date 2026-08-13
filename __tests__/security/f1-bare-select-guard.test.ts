@@ -1177,7 +1177,7 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   automation_runs:
     "PAGED: the cross-org health read (readAutomationHealth) pages via fetchAllRows over a 7-day window on a stable (created_at desc, id asc) order; every other .from site is a write / claim-update, not a set read.",
   call_events:
-    "PER-ORG/PER-CALL/RECENT-N: an admin .eq('org_id').order.limit(30) event display + a per-call (.eq('call_id')) turn-memory read capped at .limit(Math.min(limit,1000)) (caller passes 20); bounded display / per-call, not a cross-tenant set.",
+    "PER-ORG/PER-CALL/RECENT-N/PAGED: an admin .eq('org_id').order.limit(30) event display; a per-call bounded turn-memory read (loadRecentSpokenTurns) capped at .limit(Math.min(limit,1000)) (caller passes 20, for prompt memory); AND the per-call COMPLETE-transcript read (loadAllSpokenTurns) which pages EVERY turn via fetchAllRows on a stable (occurred_at asc, id asc) order — so the full-call transcript / governed lead re-extraction never truncate. Bounded display / per-call / fully paged, never a cross-tenant or silently-1000-capped set.",
   expense_drafts:
     "PER-ORG/SINGLE: an author-capped .eq('org_id').limit(200) queue display + .maybeSingle() draft lookups/guards; the service writes/stamps, not reads.",
   hq_sales_contacts:
