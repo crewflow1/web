@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
+import { verifyJobInOrg } from "@/lib/crm/reference-integrity";
 import {
   createFinanceSchema,
   RECEIPT_MAX_BYTES,
@@ -125,6 +126,20 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const supabase = await createClient();
+
+  // Cross-org reference integrity (defence in depth over the composite FK added
+  // in migration 20261119000000): a supplied job_id must belong to the caller's
+  // ACTIVE org. The Zod schema only proves it is a uuid — it cannot know org
+  // membership — so a caller in org A could otherwise attach org B's job_id and
+  // contaminate that job's computed cost/margin/VAT. Mirrors the quotes usage.
+  if (parsed.data.job_id) {
+    const ref = await verifyJobInOrg(supabase, parsed.data.job_id, ctx.org.id);
+    if (!ref.ok) {
+      return NextResponse.json({ error: ref.message }, { status: 400 });
+    }
+  }
+
   if (receiptFile) {
     if (receiptFile.size > RECEIPT_MAX_BYTES) {
       return NextResponse.json(
@@ -140,7 +155,6 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const supabase = await createClient();
   const { data: inserted, error: insertErr } = await supabase
     .from("finances")
     .insert({

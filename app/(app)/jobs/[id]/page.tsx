@@ -142,6 +142,12 @@ export default async function EditJobPage({
           "id, number, status, amount, vat_total, total, due_date, job_id, quote_id, quote:quotes ( variation_number )",
         )
         .eq("job_id", job.id)
+        // ACTIVE-org pin (cross-org money-injection class). RLS spans EVERY org
+        // the viewer belongs to, so a job-scoped read without this predicate can
+        // aggregate another of the viewer's orgs' rows into this job's cost/
+        // revenue. The composite FK (20261119000000) makes a cross-org job_id
+        // impossible, but pin the read too so it is self-scoping.
+        .eq("org_id", ctx.org.id)
         .order("id", { ascending: true })
         .range(from, to),
     ),
@@ -150,6 +156,8 @@ export default async function EditJobPage({
         .from("finances")
         .select("id, amount, vat_total, category, created_at, job_id, purchase_order_id")
         .eq("job_id", job.id)
+        // ACTIVE-org pin — see the invoices read above.
+        .eq("org_id", ctx.org.id)
         .order("id", { ascending: true })
         .range(from, to),
     ),
