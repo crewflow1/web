@@ -91,6 +91,12 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
         .from("invoices")
         .select("id, number, status, amount, total, due_date, created_at, sent_at, job_id")
         .eq("job_id", id)
+        // ACTIVE-org pin (cross-org money-injection class). RLS spans EVERY org
+        // the viewer belongs to; without this a job-scoped read can fold another
+        // of the viewer's orgs' rows into this job's revenue/margin. The composite
+        // FK (20261119000000) makes a cross-org job_id impossible; pin the read
+        // too so it is self-scoping.
+        .eq("org_id", ctx.org.id)
         .order("id", { ascending: true })
         .range(from, to),
     ),
@@ -102,6 +108,8 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
         .from("finances")
         .select("id, amount, category, created_at, job_id, purchase_order_id")
         .eq("job_id", id)
+        // ACTIVE-org pin — see the invoices read above.
+        .eq("org_id", ctx.org.id)
         .order("id", { ascending: true })
         .range(from, to),
     ),
@@ -160,14 +168,19 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
       // pinned via loadJobForOrg above; pin this secondary read too so it is
       // self-scoping and satisfies the read-pin guard.
     }).select("retention_percent").eq("id", id).eq("org_id", ctx.org.id).maybeSingle(),
+    // ACTIVE-org pin on both job-scoped SET reads (cross-org money class): RLS
+    // spans every org the viewer belongs to, so a `job_id`-only read can fold
+    // another org's retention releases / POs into this job's committed + forecast
+    // figures. retention_releases.org_id is NOT NULL (20261005000000) and
+    // purchase_orders.org_id is NOT NULL (20261006000000), so the pin is exact.
     (supabase.from("retention_releases" as never) as unknown as {
-      select: (c: string) => { eq: (k: string, v: unknown) => Promise<{ data: Array<{ id: string; amount: number | string | null; released_on: string | null }> | null }> };
-    }).select("id, amount, released_on").eq("job_id", id),
+      select: (c: string) => { eq: (k: string, v: unknown) => { eq: (k: string, v: unknown) => Promise<{ data: Array<{ id: string; amount: number | string | null; released_on: string | null }> | null }> } };
+    }).select("id, amount, released_on").eq("job_id", id).eq("org_id", ctx.org.id),
     // `subtotal` (ex-VAT) rides along beside `total` (gross): the committed
     // tile AND the forecast both report net. See committed.ts.
     (supabase.from("purchase_orders" as never) as unknown as {
-      select: (c: string) => { eq: (k: string, v: unknown) => Promise<{ data: Array<{ id: string; number: string | null; subtotal: number | string | null; total: number | string | null; status: string; created_at: string | null; supplier: { name: string } | null }> | null }> };
-    }).select("id, number, subtotal, total, status, created_at, supplier:suppliers ( name )").eq("job_id", id),
+      select: (c: string) => { eq: (k: string, v: unknown) => { eq: (k: string, v: unknown) => Promise<{ data: Array<{ id: string; number: string | null; subtotal: number | string | null; total: number | string | null; status: string; created_at: string | null; supplier: { name: string } | null }> | null }> } };
+    }).select("id, number, subtotal, total, status, created_at, supplier:suppliers ( name )").eq("job_id", id).eq("org_id", ctx.org.id),
   ]);
   const retentionReleases = retReleases.data ?? [];
   const purchaseOrders = pos.data ?? [];

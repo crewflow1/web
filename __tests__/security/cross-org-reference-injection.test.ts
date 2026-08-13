@@ -213,6 +213,150 @@ describe("cross-org reference injection · QUOTES app-layer re-check", () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FINANCES + INVOICES — the C36/C37 class on the two MONEY tables. finances.job_id
+// and invoices.job_id were BARE single-column FKs to jobs; a caller in org A could
+// attach org B's job_id and contaminate that job's computed cost / margin /
+// revenue / VAT for a dual-org user. Closed at the DB by migration 20261119000000
+// (composite (job_id, org_id) FKs) + app-layer verifyJobInOrg on both write paths
+// + active-org pins on the job-scoped SET reads that render the money.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("cross-org reference injection · FINANCES + INVOICES migration guards", () => {
+  const MIGRATION =
+    "supabase/migrations/20261119000000_finances_invoices_job_org_composite_fk.sql";
+  let sql = "";
+  it("the migration file exists", () => {
+    sql = read(MIGRATION);
+    expect(sql.length).toBeGreaterThan(0);
+  });
+
+  it("defensively nulls out any cross-org job_id BEFORE swapping the FK (both tables)", () => {
+    sql = sql || read(MIGRATION);
+    // finances: null job_id where no same-org job exists.
+    expect(sql).toMatch(
+      /update public\.finances[\s\S]*?set job_id = null[\s\S]*?not exists[\s\S]*?from public\.jobs j[\s\S]*?j\.org_id = public\.finances\.org_id/,
+    );
+    // invoices: same.
+    expect(sql).toMatch(
+      /update public\.invoices[\s\S]*?set job_id = null[\s\S]*?not exists[\s\S]*?from public\.jobs j[\s\S]*?j\.org_id = public\.invoices\.org_id/,
+    );
+  });
+
+  it("finances.job_id becomes a composite FK to jobs(id, org_id) with column-list SET NULL", () => {
+    sql = sql || read(MIGRATION);
+    expect(sql).toMatch(/drop constraint finances_job_id_fkey/);
+    expect(sql).toMatch(
+      /add constraint finances_job_org_fkey[\s\S]*?foreign key \(job_id, org_id\)[\s\S]*?references public\.jobs \(id, org_id\)[\s\S]*?on delete set null \(job_id\)/,
+    );
+  });
+
+  it("invoices.job_id becomes a composite FK to jobs(id, org_id) with column-list SET NULL", () => {
+    sql = sql || read(MIGRATION);
+    expect(sql).toMatch(/drop constraint invoices_job_id_fkey/);
+    expect(sql).toMatch(
+      /add constraint invoices_job_org_fkey[\s\S]*?foreign key \(job_id, org_id\)[\s\S]*?references public\.jobs \(id, org_id\)[\s\S]*?on delete set null \(job_id\)/,
+    );
+  });
+});
+
+describe("cross-org reference injection · FINANCES + INVOICES app-layer write re-check", () => {
+  // Both money write paths must re-check a supplied job_id against the ACTIVE org
+  // BEFORE the write, so a forged job_id is a clean 400 rather than a raw 23503
+  // (and never even reaches the row). verifyJobInOrg org-pins its jobs lookup —
+  // asserted by the QUOTES block above (it shares the same helper).
+  const MONEY_WRITE_PATHS = [
+    "app/api/finances/route.ts",
+    "app/api/invoices/[id]/route.ts",
+  ];
+  for (const file of MONEY_WRITE_PATHS) {
+    it(`${file} verifies job_id is in the active org before writing`, () => {
+      const src = read(file);
+      expect(
+        /from "@\/lib\/crm\/reference-integrity"/.test(src),
+        `${file} must import the reference-integrity helper`,
+      ).toBe(true);
+      expect(
+        /verifyJobInOrg\s*\(/.test(src),
+        `${file} must call verifyJobInOrg`,
+      ).toBe(true);
+      // Reacts to a rejection (never ignores it) and returns a 400.
+      expect(
+        /if \(!ref\.ok\)/.test(src),
+        `${file} must branch on the check result`,
+      ).toBe(true);
+      expect(src).toMatch(/status: 400/);
+    });
+  }
+});
+
+describe("cross-org reference injection · FINANCES + INVOICES read pins", () => {
+  // The read that LANDS the leak: a job-scoped SET read (`.eq("job_id", …)`) on a
+  // money table via the tenant client, with NO `.eq("org_id", …)`, folds every
+  // org the dual-org viewer belongs to into ONE job's cost/revenue (RLS spans all
+  // membership orgs). Each such read must carry the active-org pin IN-statement.
+  const READ_SITES: Array<{ file: string; tables: string[] }> = [
+    {
+      file: "app/(app)/jobs/[id]/page.tsx",
+      tables: ["invoices", "finances"],
+    },
+    {
+      file: "app/(app)/jobs/[id]/commercial/page.tsx",
+      // retention_releases + purchase_orders are the same class (job_id-only SET
+      // reads that feed the committed/forecast money tiles).
+      tables: ["invoices", "finances", "retention_releases", "purchase_orders"],
+    },
+  ];
+
+  /**
+   * For every `.from("<table>")` occurrence, slice the statement up to the NEXT
+   * `.from(` (a read statement never contains a second `.from` before its own
+   * end). Any slice that reads by `job_id` must also pin `org_id` in that slice.
+   * Returns the tables whose job-scoped read is NOT org-pinned.
+   */
+  function unpinnedJobScopedReads(src: string, tables: string[]): string[] {
+    const bad: string[] = [];
+    for (const table of tables) {
+      const re = new RegExp(`\\.from\\(\\s*["']${table}["']`, "g");
+      let m: RegExpExecArray | null;
+      let sawJobScoped = false;
+      while ((m = re.exec(src))) {
+        const rest = src.slice(m.index + 1);
+        const next = rest.search(/\.from\s*\(/);
+        const slice = next === -1 ? rest : rest.slice(0, next);
+        if (!/\.eq\(\s*["']job_id["']/.test(slice)) continue; // not a job-scoped read
+        sawJobScoped = true;
+        if (!/\.eq\(\s*["']org_id["']/.test(slice)) {
+          bad.push(table);
+          break;
+        }
+      }
+      // A table we expect to read job-scoped but never saw would make the assert
+      // vacuous — flag it so a refactor that drops the read is noticed.
+      if (!sawJobScoped) bad.push(`${table} (no job-scoped read found)`);
+    }
+    return bad;
+  }
+
+  for (const { file, tables } of READ_SITES) {
+    it(`${file} pins org_id on every job-scoped money read`, () => {
+      const src = read(file);
+      expect(unpinnedJobScopedReads(src, tables)).toEqual([]);
+    });
+
+    it(`RED-calibration: stripping the org pins from ${file} re-flags the reads`, () => {
+      const src = read(file).replace(/\.eq\(\s*["']org_id["'][^)]*\)/g, "");
+      // With the pins removed, every job-scoped read reverts to org-unscoped.
+      const bad = unpinnedJobScopedReads(src, tables);
+      for (const table of tables) {
+        expect(
+          bad.includes(table),
+          `${file}: with org pins stripped, the ${table} read must re-flag`,
+        ).toBe(true);
+      }
+    });
+  }
+});
+
 describe("cross-org reference injection · the schema is not the guard", () => {
   // A regression that tried to "fix" this by tightening the Zod schema alone
   // would be false comfort — Zod cannot know org membership. This documents that

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { updateInvoiceSchema } from "@/lib/invoices/schema";
+import { verifyJobInOrg } from "@/lib/crm/reference-integrity";
 import type { Database } from "@/lib/supabase/types";
 
 /**
@@ -54,6 +55,21 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   }
 
   const supabase = await createClient();
+
+  // Cross-org reference integrity (defence in depth over the composite FK added
+  // in migration 20261119000000): re-pointing an invoice at a NEW job_id must
+  // land a job in the caller's ACTIVE org. The UPDATE below is org-pinned on the
+  // invoice ROW, but that never validates the job the row is being pointed AT —
+  // so a caller in org A could otherwise attach org B's job_id and contaminate
+  // that job's revenue/VAT rollup. Only a non-null job_id needs the check; an
+  // explicit null (unlink) is always allowed. Mirrors the quotes usage.
+  if (patch.job_id != null) {
+    const ref = await verifyJobInOrg(supabase, patch.job_id, ctx.org.id);
+    if (!ref.ok) {
+      return NextResponse.json({ error: ref.message }, { status: 400 });
+    }
+  }
+
   const { error, count } = await supabase
     .from("invoices")
     .update(patch, { count: "exact" })
