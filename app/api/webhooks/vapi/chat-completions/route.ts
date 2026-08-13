@@ -11,7 +11,12 @@ import {
 } from "@/lib/telephony/providers/vapi";
 import { maybeGenerateVoiceTurn, type VoiceTurnHistoryEntry } from "@/lib/telephony/ai-turn";
 import { loadReceptionistProfile } from "@/lib/telephony/receptionist-profile";
-import { loadRecentSpokenTurns, persistSpokenTurn, recordInboundCall } from "@/server/services/telephony";
+import {
+  countSpokenTurns,
+  loadRecentSpokenTurns,
+  persistSpokenTurn,
+  recordInboundCall,
+} from "@/server/services/telephony";
 import type { NormalizedInboundCall } from "@/lib/telephony/types";
 
 /**
@@ -122,6 +127,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   // the dark + HMAC gates above.
   let callId: string | null = null;
   let priorTurns: VoiceTurnHistoryEntry[] = parsed.priorTurns;
+  // Ordinal fallback when there is no call row to count against (can't dedupe by a
+  // resolved call): the in-body history length. Overridden by the COMPLETE per-call
+  // count below whenever the call row resolves.
+  let turnOrdinal = parsed.priorTurns.length;
   if (parsed.callId) {
     try {
       const normalized: NormalizedInboundCall = {
@@ -137,8 +146,15 @@ export async function POST(request: Request): Promise<NextResponse> {
       const rec = await recordInboundCall(orgId, normalized);
       callId = rec.callId;
       const loaded = await loadRecentSpokenTurns(orgId, callId);
-      // Prefer the durable history when present; fall back to the body's messages.
-      if (loaded.length > 0) priorTurns = loaded;
+      // PREFER Vapi's COMPLETE in-body history. The DB read is a BOUNDED recent-N
+      // window (latest N); overriding the full in-body history with it would DISCARD
+      // the older-but-recent turns Vapi already supplied — the receptionist would
+      // forget context on a long call. Only fall back to the DB read when Vapi
+      // supplied no history of its own.
+      if (priorTurns.length === 0 && loaded.length > 0) priorTurns = loaded;
+      // Dedupe ordinal from the COMPLETE per-call spoken-turn count, so it strictly
+      // increases across the whole call and never freezes on a bounded window cap.
+      turnOrdinal = await countSpokenTurns(orgId, callId);
     } catch (e) {
       Sentry.captureException(e, { tags: { route: "webhooks/vapi/chat-completions", stage: "load" } });
       console.error("[vapi-chat-completions] call resolve / history load failed", e);
@@ -157,7 +173,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     orgId,
     transcript,
     callId,
-    ordinal: priorTurns.length,
+    ordinal: turnOrdinal,
     business: profile,
     history: priorTurns,
   });

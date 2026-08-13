@@ -56,6 +56,8 @@ const SERVICE = "server/services/telephony.ts";
 const R_VOICE = "app/api/webhooks/twilio/voice/route.ts";
 const R_STATUS = "app/api/webhooks/twilio/voice/status/route.ts";
 const R_VAPI = "app/api/webhooks/vapi/route.ts";
+const R_GATHER = "app/api/webhooks/twilio/voice/gather/route.ts";
+const R_VAPI_CHAT = "app/api/webhooks/vapi/chat-completions/route.ts";
 
 // ---------------------------------------------------------------------------
 // 1. THE MIGRATION
@@ -361,6 +363,68 @@ describe("call ↔ lead linkage: the enrichment columns are provably reachable",
       );
     });
   }
+});
+
+describe("C69: recent-window is the LATEST N, and the dedupe ordinal never freezes", () => {
+  // The defect class this pins (two coupled bugs on a long call):
+  //   1. loadRecentSpokenTurns ordered ASC then `.limit`, returning the OLDEST N —
+  //      so the folded prompt memory on any call past N turns was frozen on turns
+  //      1..N and never carried the recent exchange. It MUST read the LATEST N
+  //      (DESC + id tiebreaker) then REVERSE to oldest-first.
+  //   2. every conversational route set `ordinal: priorTurns.length` — bounded by
+  //      the recent window, so the ordinal FROZE at the cap. A repeated short
+  //      utterance past the cap then collided on the governor dedupe key
+  //      (`${callId} ${ordinal} ${transcript}`), returned null, and the gather route
+  //      hung up the LIVE caller. The ordinal MUST derive from the COMPLETE per-call
+  //      count (countSpokenTurns), which strictly increases for the whole call.
+  // Source pins over comment-stripped code so prose can neither satisfy nor trip them.
+
+  it("loadRecentSpokenTurns reads the LATEST N: DESC on (occurred_at, id) then REVERSE", () => {
+    const code = codeOf(read(SERVICE));
+    const fn = code.slice(
+      code.indexOf("export async function loadRecentSpokenTurns"),
+      code.indexOf("export async function loadAllSpokenTurns"),
+    );
+    expect(fn).toMatch(/\.order\("occurred_at",\s*\{\s*ascending:\s*false\s*\}\)/);
+    expect(fn).toMatch(/\.order\("id",\s*\{\s*ascending:\s*false\s*\}\)/);
+    // It must NOT read oldest-first (the shipped bug).
+    expect(fn).not.toMatch(/\.order\("occurred_at",\s*\{\s*ascending:\s*true\s*\}\)/);
+    // …and REVERSE the DESC read back to oldest-first for the chronological fold.
+    expect(fn).toMatch(/\.reverse\(\)/);
+  });
+
+  it("countSpokenTurns is a marker-filtered, org-pinned head/count over the COMPLETE set", () => {
+    const code = codeOf(read(SERVICE));
+    expect(code).toMatch(/export async function countSpokenTurns\(/);
+    const fn = code.slice(code.indexOf("export async function countSpokenTurns"));
+    expect(fn).toMatch(/count:\s*"exact",\s*head:\s*true/);
+    expect(fn).toMatch(/\.eq\("org_id",\s*orgId\)/);
+    // Filtered to the spoken-turn payload marker — a lifecycle in_progress status
+    // event is never counted as a turn.
+    expect(fn).toMatch(/\.eq\("payload->>kind",\s*SPOKEN_TURN_KIND\)/);
+    // Fails loud like its sibling readers.
+    expect(fn).toMatch(/countSpokenTurns failed/);
+  });
+
+  for (const f of [R_GATHER, R_VAPI, R_VAPI_CHAT]) {
+    it(`${f}: derives the dedupe ordinal from the COMPLETE count, never the bounded window`, () => {
+      const code = codeOf(read(f));
+      expect(code).toMatch(/countSpokenTurns\(/);
+      // The governed turn's ordinal is the counted value, NOT priorTurns.length —
+      // the exact frozen-ordinal regression this guards.
+      expect(code).toMatch(/ordinal:\s*turnOrdinal/);
+      expect(code).not.toMatch(/ordinal:\s*priorTurns\.length/);
+    });
+  }
+
+  it("vapi/chat-completions PREFERS Vapi's complete in-body history (no truncated override)", () => {
+    const code = codeOf(read(R_VAPI_CHAT));
+    // The DB read only fills history when Vapi supplied NONE — it never overrides a
+    // present in-body history with the bounded (latest-N) DB read.
+    expect(code).toMatch(/if \(priorTurns\.length === 0 && loaded\.length > 0\) priorTurns = loaded/);
+    // The unconditional override the bug shipped must be gone.
+    expect(code).not.toMatch(/if \(loaded\.length > 0\) priorTurns = loaded/);
+  });
 });
 
 describe("router + service pin org_id explicitly", () => {

@@ -244,15 +244,21 @@ export function composeCallTranscript(turns: SpokenTurn[]): string {
 // the generated types (call_events is RLS:member-read and written service-role-only).
 type SpokenTurnReadFilter = {
   eq: (k: string, v: unknown) => SpokenTurnReadFilter;
-  order: (
-    col: string,
-    opts: { ascending: boolean },
-  ) => {
-    limit: (
-      n: number,
-    ) => Promise<{ data: Array<{ payload: unknown }> | null; error: { message: string } | null }>;
-  };
+  // Chainable so the LATEST-N read can stack a stable total order (occurred_at, id)
+  // before the terminal `.limit` — the id tiebreaker makes the DESC cut deterministic
+  // when turns share an occurred_at.
+  order: (col: string, opts: { ascending: boolean }) => SpokenTurnReadFilter;
+  limit: (
+    n: number,
+  ) => Promise<{ data: Array<{ payload: unknown }> | null; error: { message: string } | null }>;
 };
+
+// The minimal COUNT-read shape: a head/count query chains `.eq × n` and is then
+// awaited directly (PostgREST returns the exact count, no row bodies). Cast past
+// the generated types like the readers above.
+type SpokenTurnCountFilter = {
+  eq: (k: string, v: unknown) => SpokenTurnCountFilter;
+} & PromiseLike<{ count: number | null; error: { message: string } | null }>;
 
 // The minimal PAGED-read shape for the COMPLETE-transcript loader below. Chains
 // `.eq × n → .order × n → .range(from,to)`, the fetchAllRows contract, cast past
@@ -298,6 +304,14 @@ function parseSpokenTurnRows(rows: Array<{ payload: unknown }>): SpokenTurn[] {
  * `in_progress` status events are never mistaken for turns. Fails loud on a read
  * error (the caller decides whether to degrade); a missing/empty call yields no
  * turns.
+ *
+ * LATEST N, not the OLDEST N: the read orders `(occurred_at, id)` DESCENDING and
+ * caps with `.limit`, so it takes the most RECENT `limit` rows, then REVERSES to
+ * oldest-first before returning. The prior implementation ordered ASCENDING then
+ * `.limit`, which returned the OLDEST `limit` rows — so on any call past `limit`
+ * turns the folded prompt memory was frozen on turns 1..limit and NEVER carried
+ * the recent exchange (the receptionist re-read the opening and forgot recent
+ * context). Reversing keeps the fold chronological while carrying the RECENT turns.
  */
 export async function loadRecentSpokenTurns(
   orgId: string,
@@ -312,7 +326,10 @@ export async function loadRecentSpokenTurns(
     .eq("org_id", orgId)
     .eq("call_id", callId)
     .eq("event_type", SPOKEN_TURN_EVENT_TYPE)
-    .order("occurred_at", { ascending: true })
+    // DESC on a STABLE, UNIQUE total order (the id tiebreaker makes the cut
+    // deterministic when turns share an occurred_at) so `.limit` takes the LATEST N.
+    .order("occurred_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(Math.min(limit, 1000)); // F-1: provable cap; PostgREST clamps to 1000
   if (error) {
     Sentry.captureException(new Error(`loadRecentSpokenTurns failed: ${error.message}`), {
@@ -320,7 +337,11 @@ export async function loadRecentSpokenTurns(
     });
     throw new Error(`loadRecentSpokenTurns failed: ${error.message}`);
   }
-  return parseSpokenTurnRows(data ?? []);
+  // The rows came back newest-first (DESC); reverse to oldest-first so the folded
+  // prompt memory reads chronologically while carrying the most RECENT `limit` turns.
+  const turns = parseSpokenTurnRows(data ?? []);
+  turns.reverse();
+  return turns;
 }
 
 /**
@@ -364,6 +385,45 @@ export async function loadAllSpokenTurns(orgId: string, callId: string): Promise
     throw new Error(`loadAllSpokenTurns failed: ${message}`);
   }
   return parseSpokenTurnRows(data);
+}
+
+/**
+ * COUNT the COMPLETE set of spoken turns persisted for a call — a lightweight
+ * head/count query that transfers no row bodies. This is the AUTHORITATIVE per-turn
+ * ORDINAL source for the governor's dedupe key.
+ *
+ * Why it is DECOUPLED from {@link loadRecentSpokenTurns}: that reader is BOUNDED to
+ * a recent window (default 20), so `priorTurns.length` FREEZES at the cap once a
+ * call passes 20 turns. Deriving the dedupe ordinal from that frozen value made the
+ * governor dedupe key `${callId} ${ordinal} ${transcript}` collide for a repeated
+ * short utterance ("yes"/"no") past turn 20 — the governor refused the second as a
+ * duplicate, `maybeGenerateVoiceTurn` returned null, and the gather route played the
+ * terminal Goodbye + Hangup, DROPPING the live caller mid-call. Counting the
+ * COMPLETE set makes the ordinal strictly increase for the whole call, so the key
+ * can never collide on a frozen ordinal.
+ *
+ * Org-pinned (defence in depth over the admin client) and filtered to the
+ * spoken-turn payload marker, so a lifecycle `in_progress` status event is never
+ * counted as a turn. Fails loud on a read error (the caller wraps it best-effort, so
+ * a count failure degrades the ordinal to 0 rather than dropping the call).
+ */
+export async function countSpokenTurns(orgId: string, callId: string): Promise<number> {
+  const admin = createAdminClient();
+  const { count, error } = await (admin.from("call_events" as never) as unknown as {
+    select: (cols: string, opts: { count: "exact"; head: true }) => SpokenTurnCountFilter;
+  })
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId)
+    .eq("call_id", callId)
+    .eq("event_type", SPOKEN_TURN_EVENT_TYPE)
+    .eq("payload->>kind", SPOKEN_TURN_KIND);
+  if (error) {
+    Sentry.captureException(new Error(`countSpokenTurns failed: ${error.message}`), {
+      tags: { service: "telephony" },
+    });
+    throw new Error(`countSpokenTurns failed: ${error.message}`);
+  }
+  return count ?? 0;
 }
 
 /**

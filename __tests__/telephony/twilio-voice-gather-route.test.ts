@@ -37,6 +37,7 @@ vi.mock("@/lib/telephony/receptionist-profile", async (importActual) => ({
 vi.mock("@/server/services/telephony", () => ({
   recordInboundCall: vi.fn(),
   loadRecentSpokenTurns: vi.fn(),
+  countSpokenTurns: vi.fn(),
   persistSpokenTurn: vi.fn(),
 }));
 
@@ -56,6 +57,9 @@ async function recordMock() {
 }
 async function loadTurnsMock() {
   return vi.mocked((await import("@/server/services/telephony")).loadRecentSpokenTurns);
+}
+async function countMock() {
+  return vi.mocked((await import("@/server/services/telephony")).countSpokenTurns);
 }
 async function persistMock() {
   return vi.mocked((await import("@/server/services/telephony")).persistSpokenTurn);
@@ -111,6 +115,7 @@ describe("POST /api/webhooks/twilio/voice/gather", () => {
     // Persistence defaults: the call resolves to a row, with no prior turns.
     (await recordMock()).mockResolvedValue({ callId: "call-1", created: true });
     (await loadTurnsMock()).mockResolvedValue([]);
+    (await countMock()).mockResolvedValue(0);
     (await persistMock()).mockResolvedValue(undefined);
     (await profileMock()).mockResolvedValue(null);
   });
@@ -121,6 +126,7 @@ describe("POST /api/webhooks/twilio/voice/gather", () => {
     (await turnMock()).mockReset();
     (await recordMock()).mockReset();
     (await loadTurnsMock()).mockReset();
+    (await countMock()).mockReset();
     (await persistMock()).mockReset();
     (await profileMock()).mockReset();
   });

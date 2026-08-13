@@ -24,6 +24,7 @@ vi.mock("@/lib/telephony/receptionist-profile", async (importActual) => ({
 vi.mock("@/server/services/telephony", () => ({
   recordInboundCall: vi.fn(),
   loadRecentSpokenTurns: vi.fn(),
+  countSpokenTurns: vi.fn(),
   persistSpokenTurn: vi.fn(),
 }));
 
@@ -41,6 +42,9 @@ async function recordMock() {
 }
 async function loadTurnsMock() {
   return vi.mocked((await import("@/server/services/telephony")).loadRecentSpokenTurns);
+}
+async function countMock() {
+  return vi.mocked((await import("@/server/services/telephony")).countSpokenTurns);
 }
 async function persistMock() {
   return vi.mocked((await import("@/server/services/telephony")).persistSpokenTurn);
@@ -88,6 +92,7 @@ describe("POST /api/webhooks/vapi/chat-completions", () => {
     vi.stubEnv("VAPI_WEBHOOK_SECRET", SECRET);
     (await recordMock()).mockResolvedValue({ callId: "call-1", created: true });
     (await loadTurnsMock()).mockResolvedValue([]);
+    (await countMock()).mockResolvedValue(0);
     (await persistMock()).mockResolvedValue(undefined);
     (await profileMock()).mockResolvedValue(null);
   });
@@ -97,6 +102,7 @@ describe("POST /api/webhooks/vapi/chat-completions", () => {
     (await turnMock()).mockReset();
     (await recordMock()).mockReset();
     (await loadTurnsMock()).mockReset();
+    (await countMock()).mockReset();
     (await persistMock()).mockReset();
     (await profileMock()).mockReset();
   });
@@ -104,6 +110,11 @@ describe("POST /api/webhooks/vapi/chat-completions", () => {
   it("routes the utterance through the governed seam with the per-call dedupe identity", async () => {
     (await routerMock()).mockResolvedValue("org-1");
     (await loadTurnsMock()).mockResolvedValue([{ transcript: "hi", reply: "Hello, how can I help?" }]);
+    // The COMPLETE per-call spoken-turn count is the dedupe ordinal — DECOUPLED from
+    // the bounded history length (here the in-body history has 1 turn but the call
+    // has 12 persisted turns). Deriving the ordinal from the count is what stops it
+    // freezing at the recent-window cap on a long call.
+    (await countMock()).mockResolvedValue(12);
     (await turnMock()).mockResolvedValue("Sorry to hear that — is it dripping or fully leaking?");
 
     const { POST } = await loadRoute();
@@ -111,14 +122,73 @@ describe("POST /api/webhooks/vapi/chat-completions", () => {
     expect(res.status).toBe(200);
 
     // The latest user utterance is the transcript; callId + ordinal thread the
-    // per-call dedupe identity; prior turns are loaded as memory (durable wins).
+    // per-call dedupe identity. The ordinal is the COMPLETE count (12), NOT the
+    // in-body history length (1). History prefers Vapi's complete in-body messages.
     expect(await turnMock()).toHaveBeenCalledWith(
       expect.objectContaining({
         orgId: "org-1",
         transcript: "my boiler is leaking",
         callId: "call-1",
-        ordinal: 1,
+        ordinal: 12,
         history: [{ transcript: "hi", reply: "Hello, how can I help?" }],
+      }),
+    );
+  });
+
+  it("PREFERS Vapi's complete in-body history — never overrides it with the truncated DB read", async () => {
+    // The defect: the route OVERRODE Vapi's complete in-body priorTurns with the
+    // bounded (latest-N) DB read whenever it returned any rows — discarding the
+    // richer in-body history. Here Vapi supplies TWO in-body turns; the DB read
+    // returns a single (truncated) turn. The governed seam must receive the COMPLETE
+    // in-body history, not the truncated DB read.
+    (await routerMock()).mockResolvedValue("org-1");
+    (await loadTurnsMock()).mockResolvedValue([
+      { transcript: "only-recent-db-turn", reply: "truncated" },
+    ]);
+    (await turnMock()).mockResolvedValue("ok");
+
+    const body = chatBody({
+      stream: false,
+      messages: [
+        { role: "system", content: "You are CrewFlow Receptionist." },
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "Hello, how can I help?" },
+        { role: "user", content: "my boiler is leaking" },
+        { role: "assistant", content: "Is it dripping?" },
+        { role: "user", content: "yes" },
+      ],
+    });
+    const { POST } = await loadRoute();
+    await POST(signed(body) as never);
+
+    expect(await turnMock()).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcript: "yes",
+        history: [
+          { transcript: "hi", reply: "Hello, how can I help?" },
+          { transcript: "my boiler is leaking", reply: "Is it dripping?" },
+        ],
+      }),
+    );
+  });
+
+  it("falls back to the DB read only when Vapi supplies NO in-body history", async () => {
+    (await routerMock()).mockResolvedValue("org-1");
+    (await loadTurnsMock()).mockResolvedValue([{ transcript: "earlier", reply: "noted" }]);
+    (await turnMock()).mockResolvedValue("ok");
+
+    // A body whose ONLY message is the latest user utterance ⇒ empty in-body history.
+    const body = chatBody({
+      stream: false,
+      messages: [{ role: "user", content: "my boiler is leaking" }],
+    });
+    const { POST } = await loadRoute();
+    await POST(signed(body) as never);
+
+    expect(await turnMock()).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transcript: "my boiler is leaking",
+        history: [{ transcript: "earlier", reply: "noted" }],
       }),
     );
   });
