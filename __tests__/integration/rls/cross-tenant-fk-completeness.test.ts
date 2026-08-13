@@ -102,7 +102,9 @@ const INTERNAL_RLS: readonly string[] = [
   "conversations_lead_id_fkey",
   "expense_drafts_finance_id_fkey",
   "expense_drafts_supplier_id_fkey",
-  "finances_job_id_fkey",
+  // finances_job_id_fkey — REMOVED: made composite (finances_job_org_fkey,
+  // (job_id, org_id) -> jobs(id, org_id)) in migration 20261119 (C66-A), so it
+  // is no longer a bare cross-tenant FK.
   "finances_purchase_order_id_fkey",
   "finances_supplier_id_fkey",
   "fleet_vehicles_finance_provider_id_fkey",
@@ -118,7 +120,9 @@ const INTERNAL_RLS: readonly string[] = [
   "invoice_payments_bank_line_fkey",
   "invoice_payments_invoice_id_fkey",
   "invoice_reminders_invoice_id_fkey",
-  "invoices_job_id_fkey",
+  // invoices_job_id_fkey — REMOVED: made composite (invoices_job_org_fkey,
+  // (job_id, org_id) -> jobs(id, org_id)) in migration 20261119 (C66-A), so it
+  // is no longer a bare cross-tenant FK.
   "invoices_quote_id_fkey",
   "job_billing_plans_job_id_fkey",
   "job_billing_stages_job_id_fkey",
