@@ -1264,6 +1264,33 @@ const BAD_RATE: CanonicalAccountingRow = {
   taxLines: [{ rate: 17.5, net: "100.00", vat: "17.50" }],
 };
 
+// Two ordinary standard-rate invoices that BRACKET the bad one in a mixed batch,
+// so per-invoice isolation is proven both before AND after the poison row.
+const GOOD_20: CanonicalAccountingRow = {
+  date: "2026-02-01",
+  type: "invoice",
+  customer: "Acme Ltd",
+  net: "100.00",
+  vat: "20.00",
+  gross: "120.00",
+  invoice_number: "INV-G20",
+  status: "sent",
+  sourceId: "inv-g20",
+  taxLines: [{ rate: 20, net: "100.00", vat: "20.00" }],
+};
+const GOOD_5: CanonicalAccountingRow = {
+  date: "2026-02-01",
+  type: "invoice",
+  customer: "Acme Ltd",
+  net: "100.00",
+  vat: "5.00",
+  gross: "105.00",
+  invoice_number: "INV-G5",
+  status: "sent",
+  sourceId: "inv-g5",
+  taxLines: [{ rate: 5, net: "100.00", vat: "5.00" }],
+};
+
 describe("pure tax-code mappers fail loud on an unknown rate", () => {
   it("xeroSalesTaxType maps 0/5/20 and THROWS on anything else", () => {
     expect(xeroSalesTaxType(20)).toBe("OUTPUT2");
@@ -1339,18 +1366,38 @@ describe("Xero: mixed / zero-rated invoices post each line under its own TaxType
     expect(lines.map((l) => l.TaxType).sort()).toEqual(["OUTPUT2", "RROUTPUT"]);
   });
 
-  it("adapter FAILS LOUD (error, no throw) on an out-of-range rate — never posts exempt", async () => {
+  it("PER-INVOICE ISOLATION: an out-of-range rate SKIPS just that invoice — the two good ones still push", async () => {
+    // Was the whole-batch-abort contract (one bad rate → pushed 0, error). The
+    // C61 batch-poisoning fix: a single unmappable-rate invoice must NEVER zero
+    // the org's push. The good invoices before AND after the poison still post;
+    // the bad one is skipped and surfaced loudly.
     enableXero();
     const fetchMock = vi.fn(async () => jsonResponse({ Invoices: [] }, 200));
     vi.stubGlobal("fetch", fetchMock);
-    const res = await getAccountingAdapter("xero").pushInvoices(base([BAD_RATE]));
-    expect(res.ok).toBe(false);
-    if (!res.ok) {
-      expect(res.reason).toBe("error");
-      expect(res.message).toMatch(/17\.5|Unsupported VAT rate/i);
+    const res = await getAccountingAdapter("xero").pushInvoices(
+      base([GOOD_20, BAD_RATE, GOOD_5]),
+    );
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      // Exactly the TWO standard-rate invoices posted — never zero.
+      expect(res.pushed).toBe(2);
+      // The bad one is named in the skip list (the operator learns which to fix).
+      expect(res.skipped).toBeDefined();
+      expect(res.skipped!.map((s) => s.invoiceNumber)).toEqual(["INV-BAD"]);
+      expect(res.skipped![0]!.reason).toMatch(/17\.5|Unsupported VAT rate/i);
+      // The accepted identities are the two good invoices, in order — not a
+      // prefix that would wrongly include the skipped one.
+      expect(res.pushedSourceIds).toEqual(["inv-g20", "inv-g5"]);
+      expect(res.pushedInvoiceNumbers).toEqual(["INV-G20", "INV-G5"]);
     }
-    // The push aborted BEFORE any invoice reached Xero.
-    expect(fetchMock).not.toHaveBeenCalled();
+    // TWO POSTs — one per good invoice; the bad one never reached Xero.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const posted = fetchMock.mock.calls.map((c) => {
+      const init = (c as unknown as [string, RequestInit])[1];
+      return JSON.parse(init.body as string).Invoices[0].InvoiceNumber;
+    });
+    expect(posted.sort()).toEqual(["INV-G20", "INV-G5"]);
+    expect(posted).not.toContain("INV-BAD");
   });
 });
 
@@ -1476,18 +1523,36 @@ describe("QuickBooks: mixed / zero-rated invoices name a per-line tax code (incl
     ).toBe("TC-0");
   });
 
-  it("adapter FAILS LOUD (error, no throw) on an out-of-range rate — never posts exempt/out-of-scope", async () => {
+  it("PER-INVOICE ISOLATION: an out-of-range rate SKIPS just that invoice — the two good ones still push", async () => {
+    // Was the whole-tail-strand contract (one bad rate → pushed 0, error, and
+    // every later invoice stranded). The C61 fix: the bad invoice is skipped and
+    // surfaced loudly, and BOTH bracketing standard-rate invoices still post.
     enableQbo();
     const fetchMock = qboRouterPerRateCodes();
     vi.stubGlobal("fetch", fetchMock);
-    const res = await getAccountingAdapter("quickbooks").pushInvoices(base([BAD_RATE]));
-    expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.message).toMatch(/17\.5|Unsupported VAT rate/i);
-    // No invoice was POSTed (the tax-code resolution refused first).
-    const posted = fetchMock.mock.calls.some(
+    const res = await getAccountingAdapter("quickbooks").pushInvoices(
+      base([GOOD_20, BAD_RATE, GOOD_5]),
+    );
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.pushed).toBe(2);
+      expect(res.skipped).toBeDefined();
+      expect(res.skipped!.map((s) => s.invoiceNumber)).toEqual(["INV-BAD"]);
+      expect(res.skipped![0]!.reason).toMatch(/17\.5|Unsupported VAT rate/i);
+      expect(res.pushedSourceIds).toEqual(["inv-g20", "inv-g5"]);
+      expect(res.pushedInvoiceNumbers).toEqual(["INV-G20", "INV-G5"]);
+    }
+    // Exactly TWO invoice POSTs; the bad one never posted, and — crucially — it
+    // triggered no tax-code lookup (the rate guard skips before any network).
+    const invoicePosts = fetchMock.mock.calls.filter(
       (c) => String(c[0]).includes("/invoice") && (c[1] as RequestInit).method === "POST",
     );
-    expect(posted).toBe(false);
+    expect(invoicePosts).toHaveLength(2);
+    const postedDocs = invoicePosts.map(
+      (c) => JSON.parse((c[1] as RequestInit).body as string).DocNumber,
+    );
+    expect(postedDocs.sort()).toEqual(["INV-G20", "INV-G5"]);
+    expect(postedDocs).not.toContain("INV-BAD");
   });
 });
 

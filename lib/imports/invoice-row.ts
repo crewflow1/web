@@ -19,6 +19,7 @@
  */
 
 import { importedCreatedAt } from "@/lib/imports/dates";
+import { resolveCostVatRate } from "@/lib/imports/vat";
 
 /**
  * The columns an imported invoice writes to `public.invoices`.
@@ -74,6 +75,19 @@ export function buildInvoiceImportPlan<S extends string>(
   // once VAT is taken off it.
   const amount = Number(mapped.amount ?? Math.max(0, total - vat));
   if (!Number.isFinite(vat) || !Number.isFinite(amount)) return { status: "skip" };
+
+  // VAT-RATE GUARD (defense in depth for the accounting push). An imported
+  // invoice carries only header totals, so its derived rate is a single blended
+  // figure; if that rate is not a UK rate (0/5/20) it has no honest Xero TaxType /
+  // QBO VAT code and would poison the provider push (the C61 batch-poisoning
+  // class on the accounting surface). Reject it HERE, at import, with a clear row
+  // error — mirroring the cost path's resolveCostVatRate — so bad data never
+  // reaches the ledger. A routinely-mixed-rate construction invoice (0/5/20)
+  // collapses header-only to a non-standard blend and is correctly refused: it
+  // must be split per rate before import. (The push-side per-invoice skip is the
+  // other half — this closes the source.)
+  const vatRate = resolveCostVatRate({ amount, vat_total: vat });
+  if (!vatRate.ok) return { status: "reject", reason: vatRate.reason };
 
   // Back-date the invoice to the date the file gave. A date the file gave but
   // we can't read is a rejection, not a silent fallback to now().

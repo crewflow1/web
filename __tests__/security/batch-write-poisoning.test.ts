@@ -1,10 +1,16 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   CONSTRAINT_VIOLATION_CODES,
   BATCH_WRITE_CHUNK,
 } from "@/lib/supabase/safe-batch-write";
+import {
+  getAccountingAdapter,
+  type AccountingProvider,
+  type AccountingPushInput,
+} from "@/lib/integrations/accounting/adapters";
+import type { CanonicalAccountingRow } from "@/lib/integrations/accounting/canonical";
 
 /**
  * BATCH-WRITE POISONING — the systemic shape guard (closes the class, not instances).
@@ -109,4 +115,113 @@ describe("each mapper mirrors the DB constraints its writer's table declares", (
     expect(code).toMatch(/ODOMETER_MAX/);
     expect(code).toMatch(/LAT_MIN|LAT_MAX/);
   });
+});
+
+/**
+ * THE ACCOUNTING-PUSH SURFACE (C61 batch-poisoning class, non-DB writer variant).
+ *
+ * The Xero / QuickBooks push adapters are per-ROW HTTP writers, not DB batch
+ * upserts, so they don't route through safeBatchWrite — but they are the SAME
+ * defect class: one poison invoice (a VAT rate outside {0,5,20}, which no honest
+ * provider tax code maps) used to zero the WHOLE org's push. Xero built every
+ * invoice body up front inside one try that returned {pushed:0} on any throw;
+ * QuickBooks stranded the tail from the bad invoice onward. Because the export
+ * re-delivers the same window every sync, the same poison re-aborted forever while
+ * the connection read "connected".
+ *
+ * This behavioural invariant pins the per-INVOICE isolation contract for BOTH
+ * adapters: a mixed batch [good, bad-rate, good] still pushes the two good
+ * invoices, SKIPS the bad one, and names it — so a future whole-batch-abort /
+ * tail-strand regression fails CI here, alongside the DB-writer guards above.
+ */
+describe("accounting-push adapters isolate a per-invoice failure (no whole-batch abort)", () => {
+  const ORIGINAL_ENV = { ...process.env };
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    process.env = { ...ORIGINAL_ENV };
+  });
+  function enable() {
+    process.env.FEATURE_ACCOUNTING_CONNECT = "1"; // the flag accepts only "1"/"true"
+    process.env.XERO_CLIENT_ID = "xero-id";
+    process.env.XERO_CLIENT_SECRET = "xero-secret";
+    process.env.QBO_CLIENT_ID = "qbo-id";
+    process.env.QBO_CLIENT_SECRET = "qbo-secret";
+  }
+
+  const inv = (n: string, rate: number, vat: string, gross: string): CanonicalAccountingRow => ({
+    date: "2026-02-01",
+    type: "invoice",
+    customer: "Acme Ltd",
+    net: "100.00",
+    vat,
+    gross,
+    invoice_number: n,
+    status: "sent",
+    sourceId: `src-${n}`,
+    taxLines: [{ rate, net: "100.00", vat }],
+  });
+  const GOOD_A = inv("INV-A", 20, "20.00", "120.00");
+  const BAD = inv("INV-BAD", 17.5, "17.50", "117.50");
+  const GOOD_B = inv("INV-B", 5, "5.00", "105.00");
+
+  const input = (over: Partial<AccountingPushInput>): AccountingPushInput => ({
+    rows: [GOOD_A, BAD, GOOD_B],
+    accessToken: "ACCESS",
+    tenantId: "TENANT",
+    realmId: "REALM",
+    refresh: vi.fn(async () => null),
+    ...over,
+  });
+
+  // A QBO fetch mock: item + customer + per-rate tax code + invoice create all OK.
+  function qboFetch() {
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    return vi.fn(async (url: string, i?: RequestInit) => {
+      const method = i?.method ?? "GET";
+      if (method === "GET" && url.includes("/query")) {
+        if (url.includes("TaxCode")) return json({ QueryResponse: { TaxCode: [{ Id: "TC" }] } });
+        if (url.includes("Item")) return json({ QueryResponse: { Item: [{ Id: "7" }] } });
+        if (url.includes("Customer")) return json({ QueryResponse: { Customer: [{ Id: "3" }] } });
+        return json({ QueryResponse: {} });
+      }
+      if (method === "POST" && url.includes("/invoice")) return json({ Invoice: { Id: "11" } });
+      return json({});
+    });
+  }
+
+  const cases: Array<{ provider: AccountingProvider; makeFetch: () => ReturnType<typeof vi.fn> }> = [
+    {
+      provider: "xero",
+      makeFetch: () =>
+        vi.fn(async () =>
+          new Response(JSON.stringify({ Invoices: [] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+    },
+    { provider: "quickbooks", makeFetch: qboFetch },
+  ];
+
+  it.each(cases)(
+    "$provider: [good, bad-rate, good] pushes the 2 good, SKIPS the bad, and names it",
+    async ({ provider, makeFetch }) => {
+      enable();
+      vi.stubGlobal("fetch", makeFetch());
+      const res = await getAccountingAdapter(provider).pushInvoices(input({}));
+      // Never a whole-batch abort: the postable invoices land.
+      expect(res.ok).toBe(true);
+      if (res.ok) {
+        expect(res.pushed).toBe(2);
+        expect(res.pushedSourceIds).toEqual(["src-INV-A", "src-INV-B"]);
+        // The poison invoice is isolated and surfaced loudly, never recorded.
+        expect(res.skipped?.map((s) => s.invoiceNumber)).toEqual(["INV-BAD"]);
+        expect(res.pushedSourceIds).not.toContain("src-INV-BAD");
+      }
+    },
+  );
 });

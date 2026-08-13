@@ -524,19 +524,32 @@ export async function syncToProvider(
   const invRes = await adapter.pushInvoices({ ...base, rows: invoiceRows });
 
   // The count of invoices the provider ACCEPTED — full count on ok, the reported
-  // prefix on a partial failure, 0 otherwise. Rows push in input order, so the
-  // accepted invoices are exactly the leading `invAccepted` of `invoiceRows`.
+  // prefix on a partial failure, 0 otherwise.
   const invAccepted = invRes.ok ? invRes.pushed : invRes.pushed ?? 0;
+
+  // The EXPLICIT accepted identities. A single bad-VAT-rate invoice is now a
+  // per-invoice SKIP (not a batch abort), so the accepted set is NOT necessarily
+  // a contiguous input-order prefix — an unmappable-rate invoice in the middle of
+  // the batch leaves a HOLE. We therefore record exactly the source ids / invoice
+  // numbers the adapter reports it accepted, never a `slice(0, n)` prefix that
+  // would mis-record a skipped invoice's id and drop a later good one.
+  const invAcceptedSourceIds = invRes.pushedSourceIds ?? [];
+  const invAcceptedNumbers = invRes.pushedInvoiceNumbers ?? [];
+  const invSkipped = invRes.skipped ?? [];
 
   // ── PAYMENT-LINK GATE (launch blocker c53) ─────────────────────────────────
   // A payment may only be pushed once its invoice EXISTS at the provider: either
-  // created in THIS run (the accepted invoice prefix) OR on a prior successful run
+  // created in THIS run (the accepted invoice set) OR on a prior successful run
   // (already in the push-once ledger — `pushedInvoiceNumbers`). WITHOUT this gate,
   // pushing a payment whose invoice was NOT created strands it FOREVER: QBO accepts
   // a payment carrying no LinkedTxn as a 2xx UNAPPLIED receipt, we record it in the
   // ledger, and every future export excludes it — so the later-created invoice
   // never receives its payment. The gate keys on `invoice_number`, exactly what
   // each adapter resolves the invoice by (QBO DocNumber / Xero InvoiceNumber).
+  //
+  // Seeded from the adapter's EXPLICIT accepted invoice numbers (not a prefix), so
+  // a payment whose invoice was SKIPPED for a bad VAT rate is correctly withheld —
+  // its invoice never landed — and re-links only once that invoice is fixed.
   //
   // SHARED, so it protects Xero too, without regressing Xero's self-heal: Xero
   // already returns non-2xx for a missing invoice, so a stranded payment was never
@@ -545,34 +558,24 @@ export async function syncToProvider(
   // export and links once its invoice has landed — same end state, no wasted
   // failing POST that would also abort the rest of the payment batch.
   const createdInvoiceNumbers = new Set<string>(pushedInvoiceNumbers);
-  for (const r of invoiceRows.slice(0, invAccepted)) {
-    if (r.invoice_number) createdInvoiceNumbers.add(r.invoice_number);
-  }
+  for (const n of invAcceptedNumbers) createdInvoiceNumbers.add(n);
   const pushablePayments = paymentRows.filter((r) =>
     createdInvoiceNumbers.has(r.invoice_number),
   );
 
   const payRes = await adapter.pushPayments({ ...base, rows: pushablePayments });
 
-  // The count of payments the provider accepted — over the GATED set, in input
-  // order, so the accepted payments are the leading `payAccepted` of
-  // `pushablePayments` (never the un-pushed, gated-out tail).
+  // The count of payments the provider accepted, and the EXPLICIT accepted ids.
   const payAccepted = payRes.ok ? payRes.pushed : payRes.pushed ?? 0;
+  const payAcceptedSourceIds = payRes.pushedSourceIds ?? [];
 
-  // Record EXACTLY what landed — the accepted prefix — so it is excluded next
-  // sync and a re-run never re-sends it. Payments are recorded from the GATED
-  // set, so a gated-out payment is never recorded and re-links next sync once its
-  // invoice exists. A row without a sourceId (never on this path) is skipped
-  // defensively rather than mis-recorded.
+  // Record EXACTLY what landed — by explicit source id, so it is excluded next
+  // sync and a re-run never re-sends it. A skipped invoice is NEVER recorded (it
+  // did not land), so once the operator fixes its VAT rate it pushes on a later
+  // sync — the skip is transient-by-data, not a permanent strand.
   const accepted: PushedEntity[] = [
-    ...invoiceRows
-      .slice(0, invAccepted)
-      .filter((r) => r.sourceId)
-      .map((r) => ({ entityType: "invoice" as const, entityId: r.sourceId! })),
-    ...pushablePayments
-      .slice(0, payAccepted)
-      .filter((r) => r.sourceId)
-      .map((r) => ({ entityType: "payment" as const, entityId: r.sourceId! })),
+    ...invAcceptedSourceIds.map((id) => ({ entityType: "invoice" as const, entityId: id })),
+    ...payAcceptedSourceIds.map((id) => ({ entityType: "payment" as const, entityId: id })),
   ];
   if (accepted.length > 0) {
     const rec = await recordPushedEntities({
@@ -594,28 +597,43 @@ export async function syncToProvider(
 
   const pushed = invAccepted + payAccepted;
 
+  // LOUD SKIP NOTE. Name the invoices dropped for an unmappable VAT rate so the
+  // operator knows exactly which to fix. A skip is NOT a sync error — postable
+  // invoices still synced — so it rides on the SUCCESS path as a note, never an
+  // error-stamp that would retry-forever.
+  const skipNote =
+    invSkipped.length > 0
+      ? `${invSkipped.length} invoice(s) skipped (unmappable VAT rate): ` +
+        invSkipped.map((s) => s.invoiceNumber).join(", ")
+      : null;
+
   if (invRes.ok && payRes.ok) {
-    await stampSyncOutcome(orgId, provider, null);
+    // Surface the skip note on the connection (last_error) so it is visible, but
+    // keep the status a success — the sync did its job for every postable row.
+    await stampSyncOutcome(orgId, provider, skipNote);
     await recordAccountingExport({
       orgId,
       createdBy: actorId,
       format: provider,
       status: "pushed",
       rowCount: pushed,
+      note: skipNote,
     });
+    const summary =
+      pushed === 0
+        ? `${provider} is already up to date; nothing new to push.`
+        : `Pushed ${pushed} new rows to ${provider}.`;
     return {
       ok: true,
       provider,
       status: "pushed",
       pushed,
-      message:
-        pushed === 0
-          ? `${provider} is already up to date; nothing new to push.`
-          : `Pushed ${pushed} new rows to ${provider}.`,
+      message: skipNote ? `${summary} ${skipNote}` : summary,
     };
   }
 
-  const message = !invRes.ok ? invRes.message : !payRes.ok ? payRes.message : "Push failed.";
+  const transportMessage = !invRes.ok ? invRes.message : !payRes.ok ? payRes.message : "Push failed.";
+  const message = skipNote ? `${transportMessage} (${skipNote})` : transportMessage;
   await stampSyncOutcome(orgId, provider, message);
   // `pushed` reflects the rows that DID land before the failure (already recorded
   // above), so a retry pushes only the tail.

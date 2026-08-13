@@ -6,6 +6,7 @@ import type {
   AccountingAdapter,
   AccountingPushInput,
   AccountingPushResult,
+  SkippedInvoice,
 } from "./types";
 import { unavailable } from "./types";
 import {
@@ -13,7 +14,44 @@ import {
   buildQboPaymentBody,
   qboSalesTaxCodeName,
 } from "../provider-payloads";
-import { effectiveVatRate } from "../canonical";
+import {
+  assertKnownVatRate,
+  effectiveVatRate,
+  UnknownVatRateError,
+  type CanonicalAccountingRow,
+} from "../canonical";
+
+/**
+ * The reason ONE invoice must be SKIPPED (never a batch abort) for an unmappable
+ * VAT rate, or null when every rate the invoice needs is postable (0/5/20). This
+ * is checked BEFORE any network work so a poison invoice costs no lookups. It is
+ * the QBO twin of Xero's per-invoice build-throw skip: an unmappable rate has no
+ * honest QBO VAT code, so that one invoice is dropped and surfaced loudly rather
+ * than stranding the whole tail of the batch (the C61 posture on this surface).
+ * A genuinely MISSING-but-valid code (or a transport error) is NOT a skip — it
+ * stays a loud hard error, resolved by resolveTaxCodeId below.
+ */
+function unmappableVatRate(row: CanonicalAccountingRow): string | null {
+  try {
+    if (row.taxLines && row.taxLines.length > 0) {
+      for (const bucket of row.taxLines) {
+        assertKnownVatRate(bucket.rate, "QuickBooks sales VAT code");
+      }
+    } else {
+      const vat = Number(row.vat);
+      if (Number.isFinite(vat) && vat > 0) {
+        // Throws UnknownVatRateError when the header-derived rate isn't 0/5/20.
+        effectiveVatRate(Number(row.net || row.gross), vat);
+      }
+    }
+    return null;
+  } catch (e) {
+    if (e instanceof UnknownVatRateError) return e.message;
+    // A reconciliation / arithmetic failure for this one invoice is also a skip
+    // (it must not abort the postable rest of the batch).
+    return e instanceof Error ? e.message : "unmappable VAT rate";
+  }
+}
 
 /**
  * QuickBooks Online accounting adapter.
@@ -112,9 +150,24 @@ export class QuickBooksAdapter implements AccountingAdapter {
     const taxCodeByRate = new Map<number, string>();
 
     let pushed = 0;
+    const pushedSourceIds: string[] = [];
+    const pushedInvoiceNumbers: string[] = [];
+    const skipped: SkippedInvoice[] = [];
+    const acc = () => ({ pushedSourceIds, pushedInvoiceNumbers, skipped });
     for (const row of input.rows) {
+      // PER-INVOICE ISOLATION. An unmappable VAT rate (not 0/5/20) has no honest
+      // QBO code, so SKIP this ONE invoice — surfaced loudly, no network — rather
+      // than stranding the postable tail of the batch. Checked FIRST so a poison
+      // row costs zero lookups; a valid rate whose code is merely absent still
+      // fails loud below (resolveTaxCodeId).
+      const skipReason = unmappableVatRate(row);
+      if (skipReason !== null) {
+        skipped.push({ invoiceNumber: row.invoice_number || "(no number)", reason: skipReason });
+        continue;
+      }
+
       const customer = await this.resolveCustomerId(ctx, realmId, row.customer);
-      if (!customer.ok) return this.err(customer.message, pushed);
+      if (!customer.ok) return this.err(customer.message, pushed, acc());
 
       // Resolve (and cache) the org's QBO VAT code for EVERY rate the invoice
       // posts. QBO ignores an explicit TotalTax for a UK company unless each line
@@ -131,7 +184,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
           let id = taxCodeByRate.get(rate);
           if (id === undefined) {
             const resolved = await this.resolveTaxCodeId(ctx, realmId, rate);
-            if (!resolved.ok) return this.err(resolved.message, pushed);
+            if (!resolved.ok) return this.err(resolved.message, pushed, acc());
             taxCodeByRate.set(rate, resolved.id);
             id = resolved.id;
           }
@@ -142,6 +195,8 @@ export class QuickBooksAdapter implements AccountingAdapter {
         // the one code for a VAT-bearing line. An unknown derived rate fails loud.
         const vat = Number(row.vat);
         if (Number.isFinite(vat) && vat > 0) {
+          // The rate is already known-postable (unmappableVatRate gated it above),
+          // so effectiveVatRate cannot throw here; the guard is defensive only.
           let rate: number;
           try {
             rate = effectiveVatRate(Number(row.net || row.gross), vat);
@@ -149,6 +204,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
             return this.err(
               e instanceof Error ? e.message : "unsupported VAT rate",
               pushed,
+              acc(),
             );
           }
           const cached = taxCodeByRate.get(rate);
@@ -156,7 +212,7 @@ export class QuickBooksAdapter implements AccountingAdapter {
             taxCodeId = cached;
           } else {
             const resolved = await this.resolveTaxCodeId(ctx, realmId, rate);
-            if (!resolved.ok) return this.err(resolved.message, pushed);
+            if (!resolved.ok) return this.err(resolved.message, pushed, acc());
             taxCodeByRate.set(rate, resolved.id);
             taxCodeId = resolved.id;
           }
@@ -178,10 +234,19 @@ export class QuickBooksAdapter implements AccountingAdapter {
         body,
         requestId("inv", realmId, row.sourceId ?? JSON.stringify(body)),
       );
-      if (!res.ok) return this.err(this.reason("invoice", res), pushed);
+      if (!res.ok) return this.err(this.reason("invoice", res), pushed, acc());
       pushed += 1;
+      if (row.sourceId) pushedSourceIds.push(row.sourceId);
+      if (row.invoice_number) pushedInvoiceNumbers.push(row.invoice_number);
     }
-    return { ok: true, provider: this.provider, pushed };
+    return {
+      ok: true,
+      provider: this.provider,
+      pushed,
+      pushedSourceIds,
+      pushedInvoiceNumbers,
+      skipped,
+    };
   }
 
   async pushPayments(input: AccountingPushInput): Promise<AccountingPushResult> {
@@ -193,9 +258,13 @@ export class QuickBooksAdapter implements AccountingAdapter {
     const ctx: AuthCtx = { token: input.accessToken, refreshed: false, refresh: input.refresh };
 
     let pushed = 0;
+    // Payments carry no VAT rate, so they never skip; still track the accepted
+    // identities so the caller records EXACTLY the payments that landed.
+    const pushedSourceIds: string[] = [];
+    const acc = () => ({ pushedSourceIds });
     for (const row of input.rows) {
       const customer = await this.resolveCustomerId(ctx, realmId, row.customer);
-      if (!customer.ok) return this.err(customer.message, pushed);
+      if (!customer.ok) return this.err(customer.message, pushed, acc());
       // Resolve the QBO invoice this payment links to (by DocNumber). Every
       // payment that reaches this adapter has already passed the syncToProvider
       // PAYMENT-LINK GATE (c53), which only lets a payment through once its invoice
@@ -212,13 +281,14 @@ export class QuickBooksAdapter implements AccountingAdapter {
       //     real anomaly; either way, recording an unapplied payment would strand
       //     it, so fail and retry rather than post unlinked.
       const invoice = await this.resolveInvoiceId(ctx, realmId, row.invoice_number);
-      if (!invoice.ok) return this.err(invoice.message, pushed);
+      if (!invoice.ok) return this.err(invoice.message, pushed, acc());
       if (!invoice.id) {
         return this.err(
           `QuickBooks could not find invoice "${row.invoice_number}" for a payment whose ` +
             "invoice is guaranteed to exist (payment-link gate); not posting an unapplied " +
             "receipt. It will retry on the next sync.",
           pushed,
+          acc(),
         );
       }
       const body = buildQboPaymentBody(row, { customerId: customer.id, invoiceId: invoice.id });
@@ -235,10 +305,11 @@ export class QuickBooksAdapter implements AccountingAdapter {
         body,
         requestId("pay", realmId, row.sourceId ?? JSON.stringify(body)),
       );
-      if (!res.ok) return this.err(this.reason("payment", res), pushed);
+      if (!res.ok) return this.err(this.reason("payment", res), pushed, acc());
       pushed += 1;
+      if (row.sourceId) pushedSourceIds.push(row.sourceId);
     }
-    return { ok: true, provider: this.provider, pushed };
+    return { ok: true, provider: this.provider, pushed, pushedSourceIds };
   }
 
   // ── guards + result helpers ────────────────────────────────────────────────
@@ -265,11 +336,21 @@ export class QuickBooksAdapter implements AccountingAdapter {
 
   /**
    * An error result carrying the count the provider ACCEPTED before failing
-   * (default 0). Per-row pushes pass the running `pushed` so the caller records
-   * exactly the accepted prefix and re-pushes only the tail.
+   * (default 0) plus the EXPLICIT accepted identities (`pushedSourceIds` /
+   * `pushedInvoiceNumbers`) and any `skipped` invoices seen before the failure.
+   * The caller records exactly the accepted set (not a prefix count — a mid-batch
+   * skip leaves a hole) and re-pushes only the tail.
    */
-  private err(message: string, pushed = 0): AccountingPushResult {
-    return { ok: false, provider: this.provider, reason: "error", message, pushed };
+  private err(
+    message: string,
+    pushed = 0,
+    extra: {
+      pushedSourceIds?: readonly string[];
+      pushedInvoiceNumbers?: readonly string[];
+      skipped?: readonly SkippedInvoice[];
+    } = {},
+  ): AccountingPushResult {
+    return { ok: false, provider: this.provider, reason: "error", message, pushed, ...extra };
   }
 
   private reason(kind: string, res: JsonResult): string {
