@@ -368,7 +368,8 @@ export async function prepareVatReturn(params: {
   // Boxes 6/7 (mandatory net totals) are NOT VAT amounts, but they ARE derivable
   // from the SAME rows and window that feed boxes 1/4: box 6 is the net (ex-VAT)
   // value of the payments summed for box 1; box 7 the net value of the finance
-  // rows summed for box 4 PLUS the net of reverse-charge purchases. Same set,
+  // rows summed for box 4 — which already includes reverse-charge purchase bills
+  // (they are finance rows), so box 7 counts their net exactly once. Same set,
   // same window — so the frozen 9-box payload's net totals reconcile with its
   // VAT boxes instead of freezing at £0.
   const netTotals = computeVatNetTotals(
@@ -376,7 +377,6 @@ export async function prepareVatReturn(params: {
     finances,
     quarterStartIso,
     quarterEndIso,
-    inputs.reverseCharge.net,
   );
   const composed = composeVatReturn(
     { periodKey, vat, netTotals },

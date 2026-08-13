@@ -188,36 +188,61 @@ describe("computeVatQuarter", () => {
   });
 
   // ── GAP 1 — domestic reverse-charge VAT into boxes 1, 4 and 7 ─────────────────
+  // A domestic reverse-charge (S55A) subcontractor BILL is a real `finances` row:
+  // net in `amount`, `vat_total` 0 (the supplier charges no VAT). Its notional VAT
+  // is frozen on the allocation and passed to computeVatQuarter as reverseChargeVat.
+  // Every fixture below uses that REAL production shape — the RC bill IS in
+  // `finances` — because the earlier test omitted it and thereby masked the box-7
+  // double-count fixed in C69.
   describe("domestic reverse-charge VAT enters boxes 1, 4 and 7 (GAP 1)", () => {
     const quarterEnd = "2026-07-01";
 
-    it("raises box 1 AND box 4 by the notional VAT while box 5 net stays UNCHANGED", () => {
+    it("raises box 1 AND box 4 by the notional VAT ONCE while box 5 net stays UNCHANGED", () => {
       const payments = [fullPayment("2026-05-01", { vat_total: 200, total: 1200, amount: 1000 })];
-      const finances = [{ vat_total: 40, amount: 200, created_at: "2026-05-02" }];
+      // Real shape: a standard purchase PLUS the reverse-charge bill (vat_total 0).
+      const finances = [
+        { vat_total: 40, amount: 200, created_at: "2026-05-02" }, // standard purchase
+        { vat_total: 0, amount: 1500, created_at: "2026-05-03" }, // the reverse-charge bill
+      ];
 
       const without = computeVatQuarter(payments, finances, quarterStart, quarterEnd);
       const withRc = computeVatQuarter(payments, finances, quarterStart, quarterEnd, 300);
 
-      // Box 1 and box 4 each rise by the £300 notional VAT...
+      // Box 4 with reverseChargeVat=0 is just the standard purchase's £40 — the RC
+      // bill's own vat_total is 0, so its presence in `finances` does NOT inflate box 4.
+      expect(without.input_vat).toBe(40);
+      // Box 1 and box 4 each rise by the £300 notional VAT — exactly once...
       expect(withRc.output_vat).toBe(without.output_vat + 300);
       expect(withRc.input_vat).toBe(without.input_vat + 300);
       // ...so box 5 (net) is net-neutral — the whole point of the reverse charge.
       expect(withRc.net_payable).toBe(without.net_payable);
-
-      // RED→GREEN proof: before the fix the reverse-charge VAT reached NEITHER
-      // box (finances.vat_total is 0 on a reverse-charge bill).
-      expect(withRc.output_vat).not.toBe(without.output_vat);
     });
 
-    it("adds the net purchase value to box 7 but NOT box 6", () => {
+    it("counts the reverse-charge purchase net in box 7 EXACTLY ONCE — 1500, not the C67 double-count 3000", () => {
       const payments = [fullPayment("2026-05-01", { vat_total: 200, total: 1200, amount: 1000 })];
-      const finances = [{ vat_total: 40, amount: 200, created_at: "2026-05-02" }];
+      // The reverse-charge bill alone, as production stores it in `finances`.
+      const rcBillOnly = [{ vat_total: 0, amount: 1500, created_at: "2026-05-03" }];
 
-      const withRc = computeVatNetTotals(payments, finances, quarterStart, quarterEnd, 1500);
-      // Box 6 (sales) is unchanged by a reverse-charge PURCHASE.
-      expect(withRc.totalValueSalesExVAT).toBe(1000);
-      // Box 7 (purchases) gains the £1,500 net value of the reverse-charge purchase.
-      expect(withRc.totalValuePurchasesExVAT).toBe(200 + 1500);
+      const net = computeVatNetTotals(payments, rcBillOnly, quarterStart, quarterEnd);
+
+      // Box 6 (sales) is untouched by a reverse-charge PURCHASE.
+      expect(net.totalValueSalesExVAT).toBe(1000);
+      // Box 7: the RC net enters via the finances loop ONCE = 1500. Before the C69
+      // fix the SAME net was ALSO added via a separate reverseChargeNet argument,
+      // so box 7 froze at 1500 + 1500 = 3000 on the HMRC payload.
+      expect(net.totalValuePurchasesExVAT).toBe(1500);
+      expect(net.totalValuePurchasesExVAT).not.toBe(3000); // the removed double-count
+    });
+
+    it("a standard purchase still lands in box 7 once, alongside the reverse-charge bill", () => {
+      const payments = [fullPayment("2026-05-01", { vat_total: 200, total: 1200, amount: 1000 })];
+      const finances = [
+        { vat_total: 40, amount: 200, created_at: "2026-05-02" }, // standard purchase net 200
+        { vat_total: 0, amount: 1500, created_at: "2026-05-03" }, // reverse-charge bill net 1500
+      ];
+      const net = computeVatNetTotals(payments, finances, quarterStart, quarterEnd);
+      // 200 + 1500, each counted once.
+      expect(net.totalValuePurchasesExVAT).toBe(1700);
     });
   });
 });
