@@ -283,6 +283,55 @@ describe("syncBankConnection — orphan cleanup + line_count + TERMINAL/transien
     expect(last.advanceSyncCursor).toBeFalsy(); // and the cursor stays put
   });
 
+  it("BENIGN all-duplicate (concurrent race): drops the empty parent, self-heals, advances cursor — NOT terminal", async () => {
+    enableTrueLayer();
+    vi.stubGlobal("fetch", twoTxRouter());
+    // A concurrent at-least-once cron overlap: both runs cleared the pre-insert
+    // dedupe read, the sibling run committed first, so THIS run's ON CONFLICT DO
+    // NOTHING finds every candidate already present → inserted:0 with NO constraint
+    // and NO transient error. This is a benign idempotent re-run, not schema drift.
+    const { gateway, calls } = stubGateway({ inserted: 0, constraintError: null, transientError: null });
+
+    const res = await syncBankConnection(connection(), gateway);
+
+    // SUCCESS, not error: the unique index did its job; nothing to repair.
+    expect(res.ok).toBe(true);
+    expect(res.outcome).toBe("no_new");
+    expect(res.inserted).toBe(0);
+    // The empty parent is dropped (no orphan), but nothing landed to reconcile.
+    expect(calls.deleted).toEqual(["stmt-1"]);
+    expect(calls.lineCountUpdates).toEqual([]);
+    const last = calls.synced.at(-1)!;
+    // Self-heal: stays 'connected', last_error cleared, and the cursor ADVANCES so
+    // the feed is never stranded on a benign race (pre-fix this flipped to 'error',
+    // which listConnected('connected') would then never re-select → dark forever).
+    expect(last.status).toBe("connected");
+    expect(last.lastError).toBeNull();
+    expect(last.advanceSyncCursor).toBe(true);
+  });
+
+  it("GENUINE constraint (inserted:0, constraintError set): still deletes orphan and goes TERMINAL", async () => {
+    // Guards the schema-drift path against the benign-race fix above: a REAL
+    // constraint (every row rejected by a CHECK the mapper doesn't mirror) must
+    // still surface repair, never self-heal into an infinite re-poison loop.
+    enableTrueLayer();
+    vi.stubGlobal("fetch", twoTxRouter());
+    const { gateway, calls } = stubGateway({ inserted: 0, constraintError: "check_violation", transientError: null });
+
+    const res = await syncBankConnection(connection(), gateway);
+
+    expect(res.ok).toBe(false);
+    expect(res.outcome).toBe("error");
+    expect(res.inserted).toBe(0);
+    expect(calls.deleted).toEqual(["stmt-1"]);
+    const last = calls.synced.at(-1)!;
+    expect(last.status).toBe("error");
+    expect(last.lastError).toContain("check_violation");
+    // The honest message must NOT interpolate a literal ": null".
+    expect(last.lastError).not.toContain(": null");
+    expect(last.advanceSyncCursor).toBeFalsy();
+  });
+
   it("CLEAN success: no delete, no line_count reconcile, cursor advances, self-heal", async () => {
     enableTrueLayer();
     vi.stubGlobal("fetch", twoTxRouter());

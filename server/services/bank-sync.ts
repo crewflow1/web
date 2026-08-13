@@ -370,14 +370,46 @@ export async function syncBankConnection(
     }
 
     if (write.inserted === 0) {
-      // Every candidate row was rejected by a DB constraint the mapper does not yet
-      // mirror (schema drift). Drop the empty parent (no orphan) and go TERMINAL:
-      // the same poison would re-deliver every tick, so surface reconnect/repair
-      // (status='error') rather than silently looping the identical window forever.
+      // Nothing landed and there was NO transient error (that path returned above),
+      // so the parent is empty and must be dropped either way. Two very different
+      // causes remain, split ONLY on whether a real constraint fired:
+      //
+      //   • constraintError !== null → SCHEMA DRIFT (terminal). Every candidate row
+      //     was rejected by a DB constraint the mapper does not yet mirror. The same
+      //     poison would re-deliver every tick, so surface reconnect/repair
+      //     (status='error') rather than silently looping the identical window forever.
+      //
+      //   • constraintError === null → BENIGN ALL-DUPLICATE (self-heal). Under a
+      //     concurrent at-least-once cron overlap, two runs both clear the pre-insert
+      //     dedupe read, the first commits, and THIS run's `ON CONFLICT DO NOTHING`
+      //     finds every candidate already present → inserted:0 with no constraint and
+      //     no transient error. The unique index did exactly its job; there is nothing
+      //     to repair. Treat it as the SUCCESS it is — keep the connection 'connected',
+      //     clear last_error, and ADVANCE the cursor. Flipping to 'error' here (the old
+      //     behaviour) permanently stranded a live feed on an idempotent re-run:
+      //     listConnected only re-selects status='connected', so a benign race would
+      //     take the feed dark forever, violating the transient-keep-alive doctrine.
       await gateway.deleteStatement(orgId, statementId);
-      const message = `all ${rows.length} lines rejected by a DB constraint: ${write.constraintError}`;
-      await gateway.markSynced(orgId, provider, { lastError: message, status: "error" });
-      return { ok: false, orgId, provider, outcome: "error", inserted: 0, message };
+      if (write.constraintError !== null) {
+        const message = `all ${rows.length} lines rejected by a DB constraint: ${write.constraintError}`;
+        await gateway.markSynced(orgId, provider, { lastError: message, status: "error" });
+        return { ok: false, orgId, provider, outcome: "error", inserted: 0, message };
+      }
+      // Benign all-duplicate: self-heal + advance the cursor, exactly like the
+      // no_new branch above (a concurrent writer already imported this window).
+      await gateway.markSynced(orgId, provider, {
+        lastError: null,
+        status: "connected",
+        advanceSyncCursor: true,
+      });
+      return {
+        ok: true,
+        orgId,
+        provider,
+        outcome: "no_new",
+        inserted: 0,
+        message: "No new transactions (all deduplicated by a concurrent run).",
+      };
     }
 
     // >= 1 line landed. Reconcile the parent's line_count so it never overstates its
