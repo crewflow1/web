@@ -7,7 +7,12 @@ import { resolveOrgForDialedNumber } from "@/lib/telephony/router";
 import { buildAckDropTwiml, buildGatherTwiml, buildInboundTwiml } from "@/lib/telephony/providers/twilio";
 import { maybeGenerateVoiceTurn, type VoiceTurnHistoryEntry } from "@/lib/telephony/ai-turn";
 import { loadReceptionistProfile } from "@/lib/telephony/receptionist-profile";
-import { loadRecentSpokenTurns, persistSpokenTurn, recordInboundCall } from "@/server/services/telephony";
+import {
+  countSpokenTurns,
+  loadRecentSpokenTurns,
+  persistSpokenTurn,
+  recordInboundCall,
+} from "@/server/services/telephony";
 
 /**
  * Twilio inbound VOICE gather-callback — the conversational spoken-turn loop.
@@ -113,10 +118,15 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   let callId: string | null = null;
   let priorTurns: VoiceTurnHistoryEntry[] = [];
+  let turnOrdinal = 0;
   try {
     const rec = await recordInboundCall(orgId, call);
     callId = rec.callId;
     priorTurns = await loadRecentSpokenTurns(orgId, callId);
+    // Dedupe ordinal from the COMPLETE per-call spoken-turn count — NOT
+    // priorTurns.length, which is bounded to the recent window and FREEZES at its
+    // cap on a long call, colliding the governor dedupe key and dropping the caller.
+    turnOrdinal = await countSpokenTurns(orgId, callId);
   } catch (e) {
     Sentry.captureException(e, {
       tags: { route: "webhooks/twilio/voice/gather", stage: "load" },
@@ -129,8 +139,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     transcript,
     // Per-call dedupe identity: the resolved call row + this turn's ordinal, so the
     // governor's duplicate refusal is scoped to THIS call+turn (not the raw phrase).
+    // The ordinal is the COMPLETE per-call count, so it strictly increases across
+    // the whole call and a repeated short utterance past turn 20 never collides.
     callId,
-    ordinal: priorTurns.length,
+    ordinal: turnOrdinal,
     business: profile,
     history: priorTurns,
   });

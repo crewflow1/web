@@ -21,6 +21,7 @@ import {
 } from "@/lib/telephony/receptionist-profile";
 import {
   appendCallEvent,
+  countSpokenTurns,
   loadRecentSpokenTurns,
   persistSpokenTurn,
   recordInboundCall,
@@ -152,6 +153,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     // AFTER the dark + HMAC gates above.
     let callId: string | null = null;
     let priorTurns: VoiceTurnHistoryEntry[] = [];
+    let turnOrdinal = 0;
     if (ctx?.callId) {
       try {
         const normalized: NormalizedInboundCall = {
@@ -167,6 +169,10 @@ export async function POST(request: Request): Promise<NextResponse> {
         const rec = await recordInboundCall(orgId, normalized);
         callId = rec.callId;
         priorTurns = await loadRecentSpokenTurns(orgId, callId);
+        // Dedupe ordinal from the COMPLETE per-call spoken-turn count — NOT
+        // priorTurns.length, which is bounded to the recent window and FREEZES at
+        // its cap on a long call, colliding the governor dedupe key.
+        turnOrdinal = await countSpokenTurns(orgId, callId);
       } catch (e) {
         Sentry.captureException(e, { tags: { route: "webhooks/vapi", stage: "load" } });
         console.error("[vapi] call resolve / history load failed", e);
@@ -186,9 +192,10 @@ export async function POST(request: Request): Promise<NextResponse> {
         transcript: query,
         // Per-call dedupe identity: the resolved call row + this turn's ordinal, so
         // two callers (or one caller repeating a short phrase) never collide on the
-        // governor's transcript-hash duplicate refusal.
+        // governor's transcript-hash duplicate refusal. The ordinal is the COMPLETE
+        // per-call count, so it strictly increases and never freezes past turn 20.
         callId,
-        ordinal: priorTurns.length,
+        ordinal: turnOrdinal,
         context: t.name,
         business: profile,
         history: priorTurns,

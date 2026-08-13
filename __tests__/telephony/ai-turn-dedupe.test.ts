@@ -86,6 +86,34 @@ describe("maybeGenerateVoiceTurn — per-call dedupe key", () => {
     expect(t1).toBe("reply:call-A 1 yes");
   });
 
+  it("FROZEN vs INCREMENTING ordinal past turn 20: the fix keeps a repeated short utterance alive", async () => {
+    // The dropped-caller mechanism this whole fix targets. When the ordinal was
+    // derived from the BOUNDED recent window (`priorTurns.length`, capped at 20), it
+    // FROZE at 20 for every turn past 20. Two identical short utterances ("yes") at
+    // turn 21 and turn 23 then produced the SAME dedupe key → the governor refused
+    // the second as a duplicate → null → the gather route played Goodbye + Hangup,
+    // dropping the LIVE caller mid-call.
+    const maybeGenerateVoiceTurn = await seam();
+
+    // FROZEN ordinal (the bug): both turns carry ordinal 20 ⇒ identical key ⇒ the
+    // second is refused (null) ⇒ the caller would be hung up.
+    const frozen21 = await maybeGenerateVoiceTurn({ orgId: "org-1", transcript: "yes", callId: "call-A", ordinal: 20 });
+    const frozen23 = await maybeGenerateVoiceTurn({ orgId: "org-1", transcript: "yes", callId: "call-A", ordinal: 20 });
+    expect(frozen21).toBe("reply:call-A 20 yes");
+    expect(frozen23).toBeNull(); // collision on the frozen ordinal — the dropped call
+
+    seen.clear();
+
+    // INCREMENTING ordinal (the fix): the ordinal is the COMPLETE per-call count, so
+    // turn 21 → 20 and turn 23 → 22 (two more turns persisted between them). Distinct
+    // keys ⇒ neither is refused ⇒ no spurious Goodbye/Hangup.
+    const fixed21 = await maybeGenerateVoiceTurn({ orgId: "org-1", transcript: "yes", callId: "call-A", ordinal: 20 });
+    const fixed23 = await maybeGenerateVoiceTurn({ orgId: "org-1", transcript: "yes", callId: "call-A", ordinal: 22 });
+    expect(fixed21).toBe("reply:call-A 20 yes");
+    expect(fixed23).toBe("reply:call-A 22 yes");
+    expect(fixed21).not.toBe(fixed23);
+  });
+
   it("a genuine REDELIVERY (same callId + ordinal + transcript) still dedupes to null", async () => {
     const maybeGenerateVoiceTurn = await seam();
     const first = await maybeGenerateVoiceTurn({ orgId: "org-1", transcript: "hello", callId: "call-A", ordinal: 0 });

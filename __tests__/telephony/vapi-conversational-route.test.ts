@@ -33,6 +33,7 @@ vi.mock("@/server/services/telephony", () => ({
   recordInboundCall: vi.fn(),
   appendCallEvent: vi.fn(),
   loadRecentSpokenTurns: vi.fn(),
+  countSpokenTurns: vi.fn(),
   persistSpokenTurn: vi.fn(),
 }));
 vi.mock("@/server/services/receptionist", () => ({
@@ -53,6 +54,9 @@ async function recordMock() {
 }
 async function loadTurnsMock() {
   return vi.mocked((await import("@/server/services/telephony")).loadRecentSpokenTurns);
+}
+async function countMock() {
+  return vi.mocked((await import("@/server/services/telephony")).countSpokenTurns);
 }
 async function persistMock() {
   return vi.mocked((await import("@/server/services/telephony")).persistSpokenTurn);
@@ -85,6 +89,7 @@ describe("POST /api/webhooks/vapi — conversational branches", () => {
     vi.stubEnv("VAPI_WEBHOOK_SECRET", SECRET);
     (await recordMock()).mockResolvedValue({ callId: "call-1", created: true });
     (await loadTurnsMock()).mockResolvedValue([]);
+    (await countMock()).mockResolvedValue(0);
     (await persistMock()).mockResolvedValue(undefined);
     // Default: no per-org setup ⇒ generic fallback (the safe default).
     (await profileMock()).mockResolvedValue(null);
@@ -95,6 +100,7 @@ describe("POST /api/webhooks/vapi — conversational branches", () => {
     (await turnMock()).mockReset();
     (await recordMock()).mockReset();
     (await loadTurnsMock()).mockReset();
+    (await countMock()).mockReset();
     (await persistMock()).mockReset();
     (await profileMock()).mockReset();
   });
