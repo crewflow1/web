@@ -10,6 +10,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 const UK_NI_REGEX = /^[A-CEGHJ-PR-TW-Z]{2}[0-9]{6}[A-D]$/;
 
@@ -37,10 +38,21 @@ export async function fetchNiNumbersForOrg(
   orgId: string,
 ): Promise<Map<string, string>> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("staff_secrets")
-    .select("user_id, ni_number")
-    .eq("org_id", orgId);
+  // PAGED (F-1): a bare `.eq('org_id')` read is silently clamped at the
+  // PostgREST max_rows=1000 cap, so an org with more than 1000 staff would drop
+  // NI numbers from the statutory RTI/bureau payroll CSV (app/api/payroll/[id]/
+  // csv/route.ts) and from payslips — a compliance defect that fails with NO
+  // error. fetchAllRows pages under the cap; order by the UNIQUE user_id so the
+  // page window has a stable total order (a non-unique key can drop/duplicate
+  // rows at a 500-row page boundary).
+  const { data, error } = await fetchAllRows<SecretsRow>((from, to) =>
+    supabase
+      .from("staff_secrets")
+      .select("user_id, ni_number")
+      .eq("org_id", orgId)
+      .order("user_id", { ascending: true })
+      .range(from, to),
+  );
   // Loud fail: an empty map legitimately means "RLS says not yours" — a query
   // failure must not silently strip NI numbers from payroll tables/CSVs.
   if (error) throw readFailure("staff secrets: NI numbers", error);

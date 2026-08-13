@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { poStatusLabel } from "@/lib/purchase-orders/schema";
 import { countPostedReceipts } from "./_receiving-data";
@@ -41,30 +42,28 @@ export default async function PurchaseOrdersPage({
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const { data, error } = await (
-    supabase.from("purchase_orders" as never) as unknown as {
-      select: (c: string) => {
-        eq: (
-          k: string,
-          v: unknown,
-        ) => {
-          order: (
-            k: string,
-            o: { ascending: boolean },
-          ) => {
-            limit: (n: number) => Promise<{ data: PoRow[] | null; error: SupabaseReadError | null }>;
-          };
-        };
-      };
-    }
-  )
-    .select("id, number, status, total, expected_date, supplier:suppliers ( name )")
-    // ACTIVE-org pin — the PO register must show one company's orders. The
-    // builder behind /purchase-orders/new was pinned in #463; the register
-    // itself was not.
-    .eq("org_id", ctx.org.id)
-    .order("created_at", { ascending: false })
-    .limit(500); // bound the list like /assets (1000) and /site-reports (500)
+  // PAGED (F-1): the register must show EVERY committed order (and its ids feed
+  // the delivery-badge count below), so a `.limit(500)` cap silently dropped
+  // orders past 500 from the register and from receipt counting. This cast-form
+  // read was invisible to the clamp guard until the C66 `;`-windowing de-vacuum.
+  // Page on a stable, unique order (created_at desc + id desc).
+  type PoQuery = PromiseLike<{ data: PoRow[] | null; error: SupabaseReadError | null }> & {
+    select: (c: string) => PoQuery;
+    eq: (k: string, v: unknown) => PoQuery;
+    order: (k: string, o: { ascending: boolean }) => PoQuery;
+    range: (from: number, to: number) => PoQuery;
+  };
+  const { data, error } = await fetchAllRows<PoRow>((from, to) =>
+    (supabase.from("purchase_orders" as never) as unknown as { select: (c: string) => PoQuery })
+      .select("id, number, status, total, expected_date, supplier:suppliers ( name )")
+      // ACTIVE-org pin — the PO register must show one company's orders. The
+      // builder behind /purchase-orders/new was pinned in #463; the register
+      // itself was not.
+      .eq("org_id", ctx.org.id)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to),
+  );
   if (error) throw readFailure("purchase orders: register", error);
 
   const rows = data ?? [];

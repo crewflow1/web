@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
@@ -45,34 +46,41 @@ export default async function PortalMessagesPage({
   // 20260706000000_support_tickets_customer_scope.sql and stamped on write by
   // sendPortalMessage(). Tickets predating that column (customer_id IS NULL)
   // intentionally do not appear in the portal.
-  type TicketQuery = {
+  type TicketQuery = PromiseLike<{
+    data: unknown[] | null;
+    error: { message: string } | null;
+  }> & {
+    select: (cols: string) => TicketQuery;
     eq: (k: string, v: unknown) => TicketQuery;
-    order: (
-      k: string,
-      opts: { ascending: boolean },
-    ) => {
-      limit: (n: number) => Promise<{
-        data: unknown[] | null;
-        error: { message: string } | null;
-      }>;
-    };
+    order: (k: string, opts: { ascending: boolean }) => TicketQuery;
+    range: (from: number, to: number) => TicketQuery;
   };
-  const { data: ticketsRaw, error: ticketsError } = await (
-    admin.from("support_tickets" as never) as unknown as {
-      select: (cols: string) => TicketQuery;
-    }
-  )
-    .select(
-      `
+  // PAGED (F-1): the unread badge below (countUnreadOrgRepliesForCustomer)
+  // REDUCES over the complete conversation set, so a `.limit(20)` cap silently
+  // under-counted the badge for a customer with more than 20 threads — and this
+  // cast-form read slipped past the clamp guard until the C66 `;`-windowing
+  // de-vacuum. Page the FULL set on a stable, unique order (created_at desc +
+  // id desc), count unread over ALL of it, THEN slice for the display list.
+  const { data: ticketsRaw, error: ticketsError } = await fetchAllRows<unknown>(
+    (from, to) =>
+      (
+        admin.from("support_tickets" as never) as unknown as {
+          select: (cols: string) => TicketQuery;
+        }
+      )
+        .select(
+          `
         id, ticket_number, subject, status, priority, category,
         last_reply_at, last_reply_kind, created_at,
         last_message:support_messages!support_messages_ticket_id_fkey ( body, created_at, author_kind, internal )
       `,
-    )
-    .eq("org_id", customer.org_id)
-    .eq("customer_id", customer.id)
-    .order("created_at", { ascending: false })
-    .limit(20);
+        )
+        .eq("org_id", customer.org_id)
+        .eq("customer_id", customer.id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to),
+  );
   if (ticketsError) {
     throw readFailure("portal messages: tickets", ticketsError);
   }
@@ -95,11 +103,13 @@ export default async function PortalMessagesPage({
   };
   // Already scoped to this customer at the query level (org_id + customer_id);
   // internal HQ notes are excluded from the preview below (see lastVisible).
-  const tickets = (ticketsRaw ?? []) as unknown as TicketRow[];
+  const allTickets = (ticketsRaw ?? []) as unknown as TicketRow[];
   // Derived unread badge — threads where the org replied last and the customer
-  // hasn't answered. No read-marker column (see lib/support/unread). Already
-  // scoped to this customer by the query above.
-  const unreadReplies = countUnreadOrgRepliesForCustomer(tickets);
+  // hasn't answered. No read-marker column (see lib/support/unread). Computed
+  // over the COMPLETE (paged) set so the count is exact; the display list below
+  // is then sliced to the most recent threads.
+  const unreadReplies = countUnreadOrgRepliesForCustomer(allTickets);
+  const tickets = allTickets.slice(0, 20);
 
   const banner = (() => {
     if (sp.saved === "sent")

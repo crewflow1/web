@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
@@ -142,21 +143,34 @@ export async function runReviewRequestSends(): Promise<{ scanned: number; sent: 
     platform: string;
     send_at: string;
   };
-  const { data, error } = await (
-    admin.from("review_requests" as never) as unknown as {
-      select: (cols: string) => {
-        eq: (k: string, v: unknown) => {
-          lte: (k: string, v: string) => Promise<{
-            data: Row[] | null;
-            error: { message: string } | null;
-          }>;
-        };
-      };
-    }
-  )
-    .select("id, org_id, customer_id, platform, send_at")
-    .eq("status", "scheduled")
-    .lte("send_at", new Date().toISOString());
+  // PAGED (F-1): this is a CROSS-ORG cron scan of every DUE scheduled request,
+  // and EVERY row is sent this tick (rows.length → stats.scanned, then a per-row
+  // send loop). A bare read is clamped at PostgREST max_rows=1000, so once more
+  // than 1000 review requests fall due in one tick the overflow would never be
+  // sent (a silent delivery gap this cast-form read hid from the clamp guard
+  // until the C66 `;`-windowing de-vacuum). Compute `now` ONCE so the paged
+  // window is stable, and order by (send_at asc, id asc) for a total order.
+  type ReviewCronQuery = PromiseLike<{ data: Row[] | null; error: { message: string } | null }> & {
+    select: (cols: string) => ReviewCronQuery;
+    eq: (k: string, v: unknown) => ReviewCronQuery;
+    lte: (k: string, v: string) => ReviewCronQuery;
+    order: (k: string, o: { ascending: boolean }) => ReviewCronQuery;
+    range: (from: number, to: number) => ReviewCronQuery;
+  };
+  const nowIso = new Date().toISOString();
+  const { data, error } = await fetchAllRows<Row>((from, to) =>
+    (
+      admin.from("review_requests" as never) as unknown as {
+        select: (cols: string) => ReviewCronQuery;
+      }
+    )
+      .select("id, org_id, customer_id, platform, send_at")
+      .eq("status", "scheduled")
+      .lte("send_at", nowIso)
+      .order("send_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
 
   if (error) {
     console.error("[review-requests] cron query failed", error);

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { formatDiaryDate } from "@/lib/site-diary/schema";
@@ -52,8 +53,11 @@ const SAVED_MAP: Record<string, string> = {
   deleted: "Report deleted.",
 };
 
-type ReportQuery = Promise<{ data: ReportRow[] | null; error: SupabaseReadError | null }> & {
+type ReportQuery = PromiseLike<{ data: ReportRow[] | null; error: SupabaseReadError | null }> & {
+  select: (cols: string) => ReportQuery;
   eq: (k: string, v: unknown) => ReportQuery;
+  order: (col: string, opts: { ascending: boolean }) => ReportQuery;
+  range: (from: number, to: number) => ReportQuery;
 };
 
 type SP = Promise<{ status?: string; job?: string; saved?: string; error?: string }>;
@@ -68,25 +72,28 @@ export default async function SiteReportsPage({ searchParams }: { searchParams: 
       ? sp.status
       : null;
 
-  let query = (
-    supabase.from("site_reports" as never) as unknown as {
-      select: (cols: string) => {
-        order: (
-          col: string,
-          opts: { ascending: boolean },
-        ) => { limit: (n: number) => ReportQuery };
-      };
-    }
-  )
-    .select(
-      "id, report_number, title, status, revision, job_id, period_start, period_end, issued_at, created_at",
+  // PAGED (F-1): the reports register must show EVERY report in the org — a
+  // client-facing document list that silently dropped the org's own reports past
+  // a cap is a completeness defect. The `.limit(500)` cap was invisible to the
+  // clamp guard until the C66 `;`-windowing de-vacuum. Page on a stable, unique
+  // order (created_at desc + id desc), applying the optional status filter per
+  // page.
+  const { data, error } = await fetchAllRows<ReportRow>((from, to) => {
+    let q = (
+      supabase.from("site_reports" as never) as unknown as {
+        select: (cols: string) => ReportQuery;
+      }
     )
-    .order("created_at", { ascending: false })
-    .limit(500)
-    // ACTIVE-org pin — client-facing reports must not interleave companies.
-    .eq("org_id", ctx.org.id);
-  if (statusFilter) query = query.eq("status", statusFilter);
-  const { data, error } = await query;
+      .select(
+        "id, report_number, title, status, revision, job_id, period_start, period_end, issued_at, created_at",
+      )
+      // ACTIVE-org pin — client-facing reports must not interleave companies.
+      .eq("org_id", ctx.org.id)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false });
+    if (statusFilter) q = q.eq("status", statusFilter);
+    return q.range(from, to);
+  });
   if (error) throw readFailure("site reports: register", error);
   const rows = data ?? [];
 
@@ -94,12 +101,17 @@ export default async function SiteReportsPage({ searchParams }: { searchParams: 
     ...new Set(rows.map((r) => r.job_id).filter((x): x is string => !!x)),
   ];
   const jobsMap = new Map<string, string>();
-  if (jobIds.length) {
+  // CHUNKED (F-1): the register is now fully paged, so jobIds can exceed the
+  // 1000-row cap; chunk the name lookup so each `.in("id", …)` stays below the
+  // cap (jobs.id is unique, so a chunk of N ids yields ≤ N rows).
+  const JOB_IN_CHUNK = 500;
+  for (let i = 0; i < jobIds.length; i += JOB_IN_CHUNK) {
+    const idsChunk = jobIds.slice(i, i + JOB_IN_CHUNK);
     const { data: jobs } = await supabase
       .from("jobs")
       .select("id, customer:customers ( name )")
       .eq("org_id", ctx.org.id)
-      .in("id", jobIds);
+      .in("id", idsChunk);
     for (const j of jobs ?? []) jobsMap.set(j.id, j.customer?.name ?? "Job");
   }
 
