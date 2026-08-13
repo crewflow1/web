@@ -181,6 +181,14 @@ export type TelematicsSyncResult = {
   provider: TelematicsProvider;
   status: "mapped" | "skipped_dark" | "error";
   readingCount: number;
+  /**
+   * RAW vehicles the provider returned this pull, BEFORE resolution + the
+   * has-signal filter. 0 on a dark/failed pull. The sync engine compares it with
+   * `readingCount` to detect "connected but nothing resolved to a fleet vehicle"
+   * and surface a non-terminal diagnostic (activation is wired but the fleet data
+   * needs a VIN/registration), instead of a silent, indistinguishable `empty`.
+   */
+  fetchedVehicleCount: number;
   message: string;
   /** The mapped rows a live ingest would insert. Empty dark. */
   readings: TelematicsReadingInsert[];
@@ -225,6 +233,7 @@ export async function syncTelematicsReadings(params: {
       provider,
       status: "skipped_dark",
       readingCount: 0,
+      fetchedVehicleCount: 0,
       message: `${provider} telematics feed is not connected; nothing was fetched.`,
       readings: [],
     };
@@ -243,6 +252,7 @@ export async function syncTelematicsReadings(params: {
       provider,
       status: fetched.reason === "unavailable" ? "skipped_dark" : "error",
       readingCount: 0,
+      fetchedVehicleCount: 0,
       message: fetched.message,
       readings: [],
       // A rejected token (`unauthorized`) is TERMINAL after the engine's
@@ -257,6 +267,7 @@ export async function syncTelematicsReadings(params: {
     provider,
     status: "mapped",
     readingCount: readings.length,
+    fetchedVehicleCount: fetched.fetchedVehicleCount,
     message: `mapped ${readings.length} telematics readings`,
     readings,
   };

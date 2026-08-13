@@ -75,7 +75,13 @@ const READINGS_WRITE_CHUNK = 500;
 export type TelematicsConnectionSyncOutcome = {
   connectionId: string;
   orgId: string;
-  outcome: "written" | "empty" | "skipped_dark" | "refresh_failed" | "error";
+  outcome:
+    | "written"
+    | "empty"
+    | "empty_unresolved"
+    | "skipped_dark"
+    | "refresh_failed"
+    | "error";
   written: number;
   refreshed: boolean;
   message: string;
@@ -103,16 +109,29 @@ type ConnectionRow = {
 };
 
 type VehicleRow = { asset_id: string; vin: string | null; odometer_miles: number | null };
+/** A parent `assets` projection: registration is the human key for a vehicle. */
+type AssetRegRow = { id: string; registration: string | null };
 
 /**
- * The org's fleet register, indexed two ways for one service-role read: VIN →
- * asset_id (vehicle resolution) and asset_id → current odometer (the forward-only
- * odometer guard). Built once per connection sync.
+ * The org's fleet register, indexed for one service-role read: (VIN → asset_id)
+ * AND (registration → asset_id) for vehicle resolution, plus asset_id → current
+ * odometer (the forward-only odometer guard). Built once per connection sync.
  */
 type FleetIndex = {
   resolveVehicleId: (providerVehicleId: string) => string | null;
   currentOdometerByAsset: Map<string, number | null>;
 };
+
+/**
+ * Normalise a registration/plate for index + lookup: strip ALL whitespace and
+ * upper-case, so "AB12 CDE" (Samsara plate) and "AB12CDE" (assets.registration)
+ * collapse to the same key. Returns null for blank/absent. Pure.
+ */
+function normalizeReg(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const normalised = value.replace(/\s+/g, "").toUpperCase();
+  return normalised.length > 0 ? normalised : null;
+}
 
 type DbResult<T> = { data: T | null; error: { message: string } | null };
 type WriteResult = { error: { message: string } | null };
@@ -140,7 +159,9 @@ type UpdateChain = PromiseLike<WriteResult> & {
  */
 type LooseDb = {
   from(t: string): {
-    select(c: string): SelectChain<ConnectionRow[]> & SelectChain<VehicleRow[]>;
+    select(
+      c: string,
+    ): SelectChain<ConnectionRow[]> & SelectChain<VehicleRow[]> & SelectChain<AssetRegRow[]>;
     upsert(
       rows: Record<string, unknown>[],
       opts: { onConflict: string; ignoreDuplicates: boolean; count?: string },
@@ -276,10 +297,11 @@ async function syncOneConnection(
     await persistRefreshedTokens(loose, conn.id, conn.org_id, r.tokens.accessToken, r.tokens.refreshToken, r.tokens.expiresAt);
   }
 
-  // Build the fleet index from THIS org's register, keyed on VIN — the one
-  // identifier Samsara and fleet_vehicles share — plus each vehicle's current
-  // odometer for the forward-only guard. Org-pinned: only this org's vehicles can
-  // ever be mapped, so a foreign vehicle simply resolves to null.
+  // Build the fleet index from THIS org's register, keyed on BOTH VIN and
+  // registration (assets.registration — the human key a UK-trades fleet actually
+  // populates when the VIN is blank), plus each vehicle's current odometer for the
+  // forward-only guard. Org-pinned: only this org's vehicles can ever be mapped, so
+  // a foreign vehicle simply resolves to null.
   const { resolveVehicleId, currentOdometerByAsset } = await buildFleetIndex(loose, conn.org_id);
 
   let result = await syncTelematicsReadings({
@@ -385,13 +407,28 @@ async function syncOneConnection(
     }
   }
 
-  await markSynced(loose, conn.id, conn.org_id);
+  // ── ZERO-RESOLVED DIAGNOSTIC (no more silent-dead activation) ────────────────
+  // A CONNECTED feed that fetched N raw vehicles yet mapped ZERO readings almost
+  // always means the fleet register carries no VIN/registration the provider's
+  // vehicles match (the exact silent failure this fix targets): the pull succeeds,
+  // markSynced stamps a fresh last_sync_at + status='connected', and the view stays
+  // empty forever with NO signal. Surface a NON-TERMINAL warn (last_error note,
+  // status stays 'connected') so an operator sees activation is wired but the fleet
+  // data needs a VIN/reg. NOT terminal — it is a mapping gap that self-heals the
+  // moment the fleet data is corrected, so the cron must keep selecting it.
+  const unresolved = result.fetchedVehicleCount > 0 && result.readingCount === 0;
+  const note = unresolved
+    ? "telematics connected but no fetched vehicles matched a fleet VIN/registration"
+    : null;
+  await markSynced(loose, conn.id, conn.org_id, note);
   return {
     ...base,
-    outcome: written > 0 ? "written" : "empty",
+    outcome: written > 0 ? "written" : unresolved ? "empty_unresolved" : "empty",
     written,
     refreshed,
-    message: `${result.readingCount} mapped, ${written} newly written`,
+    message: unresolved
+      ? `${result.fetchedVehicleCount} vehicles fetched, none matched a fleet VIN/registration`
+      : `${result.readingCount} mapped, ${written} newly written`,
   };
 }
 
@@ -450,9 +487,19 @@ async function writeReadingsChunked(
 }
 
 /**
- * Build a VIN → fleet_vehicles.asset_id resolver AND an asset_id → current
- * odometer index for one org, from a single org-pinned read. The odometer index
- * backs the forward-only guard on the odometer forward-update below.
+ * Build a vehicle resolver — (VIN → asset_id) AND (registration → asset_id) — plus
+ * an asset_id → current odometer index for one org, from org-pinned reads. The
+ * odometer index backs the forward-only guard on the odometer forward-update below.
+ *
+ * WHY REGISTRATION TOO. `fleet_vehicles.vin` is OPTIONAL and typically BLANK for a
+ * UK-trades tenant, whereas `assets.registration` (the parent asset's human key) is
+ * populated. A VIN-only resolver therefore resolved EVERY sample to null for such a
+ * fleet, silently ingesting zero readings while the feed reported healthy. The
+ * registration index closes that. Registration lives on the parent `assets` row
+ * (fleet_vehicles is a 1:1 extension keyed on asset_id), so byReg is built from an
+ * `assets` read SCOPED to this org's fleet asset_ids — a reading can only ever bind
+ * a real fleet vehicle (the telematics_readings vehicle FK targets fleet_vehicles),
+ * so a registration that belongs to a non-vehicle asset is deliberately excluded.
  */
 async function buildFleetIndex(loose: LooseDb, orgId: string): Promise<FleetIndex> {
   // F-1: this backs BOTH VIN→asset resolution and the odometer guard for the
@@ -470,9 +517,12 @@ async function buildFleetIndex(loose: LooseDb, orgId: string): Promise<FleetInde
         .range(from, to) as PromiseLike<PageResult<VehicleRow>>,
   );
   const byVin = new Map<string, string>();
+  const byReg = new Map<string, string>();
   const currentOdometerByAsset = new Map<string, number | null>();
+  const fleetAssetIds = new Set<string>();
   if (!error) {
     for (const v of data ?? []) {
+      fleetAssetIds.add(v.asset_id);
       if (v.vin && v.vin.trim().length > 0) {
         byVin.set(v.vin.trim().toUpperCase(), v.asset_id);
       }
@@ -482,12 +532,43 @@ async function buildFleetIndex(loose: LooseDb, orgId: string): Promise<FleetInde
       );
     }
   }
+
+  // Registration index: read the org's `assets` (registration is the parent's
+  // column) and key by normalised registration, but ONLY for asset_ids that are
+  // fleet vehicles — so a reading can never resolve to a non-vehicle asset (which
+  // would fail the telematics_readings vehicle_id FK). Org-pinned + paged (F-1).
+  if (fleetAssetIds.size > 0) {
+    const { data: assetRows, error: assetError } = await fetchAllRows<AssetRegRow>(
+      (from, to) =>
+        (loose
+          .from("assets")
+          .select("id, registration") as SelectChain<AssetRegRow[]>)
+          .eq("org_id", orgId)
+          .order("id", { ascending: true })
+          .range(from, to) as PromiseLike<PageResult<AssetRegRow>>,
+    );
+    if (!assetError) {
+      for (const a of assetRows ?? []) {
+        if (!fleetAssetIds.has(a.id)) continue;
+        const reg = normalizeReg(a.registration);
+        if (reg) byReg.set(reg, a.id);
+      }
+    }
+  }
+
   return {
-    // The normaliser passes the VIN (when Samsara reports one) or the opaque
-    // vehicle id; match it case-insensitively against the org's VIN index. A key
-    // that is not a known VIN in THIS org resolves to null (skipped, not guessed).
-    resolveVehicleId: (providerVehicleId: string) =>
-      byVin.get(providerVehicleId.trim().toUpperCase()) ?? null,
+    // The normaliser passes each resolution key (VIN, licence plate, name, opaque
+    // id) in turn. Match VIN first (case-insensitive), then normalised
+    // registration. A key that matches neither index in THIS org resolves to null
+    // (skipped, not guessed) — and only this org's vehicles are ever in the maps.
+    resolveVehicleId: (providerVehicleId: string) => {
+      const trimmed = providerVehicleId.trim();
+      if (trimmed.length === 0) return null;
+      const vinHit = byVin.get(trimmed.toUpperCase());
+      if (vinHit) return vinHit;
+      const reg = normalizeReg(trimmed);
+      return (reg && byReg.get(reg)) || null;
+    },
     currentOdometerByAsset,
   };
 }
@@ -565,16 +646,22 @@ async function markSynced(
   loose: LooseDb,
   connectionId: string,
   orgId: string,
+  note: string | null = null,
 ): Promise<void> {
   // SELF-HEAL: a successful pass RE-ASSERTS status='connected' and clears
-  // last_error, so a connection recovering from a prior TRANSIENT failure (which
-  // kept it 'connected' + stamped last_error) returns to a clean healthy state.
-  // A row that reached a TERMINAL 'error' is never selected by the cron, so it
-  // cannot be silently healed here — only re-consent (the callback upsert) clears
-  // a terminal error. This mirrors bank-sync / calendar self-heal exactly.
+  // last_error (note=null), so a connection recovering from a prior TRANSIENT
+  // failure (which kept it 'connected' + stamped last_error) returns to a clean
+  // healthy state. A row that reached a TERMINAL 'error' is never selected by the
+  // cron, so it cannot be silently healed here — only re-consent (the callback
+  // upsert) clears a terminal error. This mirrors bank-sync / calendar self-heal.
+  //
+  // NON-TERMINAL NOTE: `note` carries the zero-resolved diagnostic — status stays
+  // 'connected' (the cron keeps selecting it so it self-heals once fleet VIN/reg
+  // data is corrected) while last_error makes the mapping gap visible instead of a
+  // silently-empty feed. A healthy pass passes null and clears it.
   await loose
     .from("telematics_connections")
-    .update({ status: "connected", last_sync_at: new Date().toISOString(), last_error: null })
+    .update({ status: "connected", last_sync_at: new Date().toISOString(), last_error: note })
     .eq("id", connectionId)
     .eq("org_id", orgId);
 }

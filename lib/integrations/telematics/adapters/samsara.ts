@@ -79,6 +79,13 @@ export class SamsaraAdapter implements TelematicsAdapter {
     // (org, connection, source_event_id), so an unchanged snapshot re-writes
     // nothing). If the feed later graduates to the history endpoint, `input.since`
     // maps onto its `startTime` param — flagged here for that activation change.
+    // FIELDS FOR VEHICLE RESOLUTION. Samsara's /fleet/vehicles/stats returns each
+    // vehicle's `id`, `name` and `externalIds` (which carry the namespaced
+    // `samsara.vin`) NATIVELY alongside the requested stat types — no extra request
+    // is needed for those. The licence plate is threaded through when the payload
+    // carries it (`licensePlate`), so a registration-keyed fleet (blank VIN,
+    // populated plate/name) resolves. The pure normaliser reads all of these off
+    // SamsaraVehicleStat; the raw `json.data` pass-through below preserves them.
     const MAX_PAGES = 40;
     const stats: SamsaraVehicleStat[] = [];
     let after: string | null = null;
@@ -159,7 +166,11 @@ export class SamsaraAdapter implements TelematicsAdapter {
 
     const samples = normalizeSamsaraSamples(stats, input.resolveVehicleId);
 
-    return { ok: true, provider: this.provider, samples };
+    // `fetchedVehicleCount` is the RAW count of vehicles the provider returned —
+    // reported separately from `samples` (which have been resolved + signal-
+    // filtered) so the sync engine can distinguish "provider returned nothing"
+    // from "provider returned N but none matched a fleet VIN/registration".
+    return { ok: true, provider: this.provider, samples, fetchedVehicleCount: stats.length };
   }
 
   /**

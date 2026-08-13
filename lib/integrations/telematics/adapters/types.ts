@@ -34,7 +34,19 @@ export type TelematicsProvider = "samsara" | "verizon_connect";
  *                    429 / network): TRANSIENT, so the connection stays 'connected'.
  */
 export type TelematicsFetchResult =
-  | { ok: true; provider: TelematicsProvider; samples: TelematicsSample[] }
+  | {
+      ok: true;
+      provider: TelematicsProvider;
+      samples: TelematicsSample[];
+      /**
+       * The count of RAW vehicles the provider returned this pull, BEFORE vehicle
+       * resolution (VIN/registration) and the has-signal filter drop unmatched or
+       * signal-less rows. The sync engine compares it against the resolved sample
+       * count to detect "connected but nothing matched a fleet VIN/registration" —
+       * the silent-activation-dead symptom — and surface a non-terminal warn.
+       */
+      fetchedVehicleCount: number;
+    }
   | {
       ok: false;
       provider: TelematicsProvider;

@@ -193,11 +193,25 @@ export type SamsaraVehicleStat = {
   /** Samsara vehicle id — opaque to CrewFlow; used only for the idempotency key. */
   id: string;
   /**
-   * The vehicle's external identifiers as Samsara reports them (e.g.
-   * `{ "vin": "1HGBH41JXMN109186", "maintenanceId": "250020" }`). The VIN is the
-   * ONE identifier both Samsara and the CrewFlow fleet register (fleet_vehicles.vin)
-   * carry, so it — not Samsara's opaque internal id — is the natural vehicle
-   * resolution key. Optional: absent on older payloads, where we fall back to `id`.
+   * The vehicle's Samsara display name — returned natively on the vehicle-stats
+   * endpoint. Many trades fleets label the vehicle by its REGISTRATION plate, so
+   * it is a last-resort resolution key after VIN and licensePlate. Optional.
+   */
+  name?: string | null;
+  /**
+   * The vehicle's licence/number plate as Samsara reports it. This is the primary
+   * REGISTRATION key a UK-trades fleet resolves on: `assets.registration` is the
+   * human key and `fleet_vehicles.vin` is usually blank, so without threading the
+   * plate through, a registration-keyed fleet resolves ZERO samples. Optional.
+   */
+  licensePlate?: string | null;
+  /**
+   * The vehicle's external identifiers as Samsara reports them. Samsara emits the
+   * VIN under a NAMESPACED key (`samsara.vin`), not a bare `vin` — e.g.
+   * `{ "samsara.vin": "1HGBH41JXMN109186", "maintenanceId": "250020" }`. The VIN is
+   * the strongest identifier both Samsara and the CrewFlow fleet register
+   * (fleet_vehicles.vin) carry, so it is the FIRST resolution key. Optional: absent
+   * on older payloads / registration-keyed fleets, where the plate/name resolve.
    */
   externalIds?: Record<string, string> | null;
   gps?: {
@@ -218,15 +232,19 @@ export type SamsaraVehicleStat = {
 
 /**
  * Extract a VIN from a Samsara externalIds map, normalised (trimmed, upper-cased)
- * so it matches a fleet_vehicles.vin lookup exactly. Samsara names this key `vin`
- * on the vehicles endpoint. Returns null when absent/blank. Pure.
+ * so it matches a fleet_vehicles.vin lookup exactly. Samsara emits the VIN under a
+ * NAMESPACED key — `samsara.vin` — NOT a bare `vin`, so a match on the literal
+ * `vin` alone resolved zero VINs for a real Samsara payload. Accept EITHER a key
+ * equal to `vin` OR one ending in `.vin` (e.g. `samsara.vin`, a provider-prefixed
+ * custom id). Returns null when absent/blank. Pure.
  */
 export function vinFromExternalIds(
   externalIds: Record<string, string> | null | undefined,
 ): string | null {
   if (!externalIds) return null;
   for (const [key, value] of Object.entries(externalIds)) {
-    if (key.toLowerCase() === "vin" && typeof value === "string" && value.trim().length > 0) {
+    const k = key.toLowerCase();
+    if ((k === "vin" || k.endsWith(".vin")) && typeof value === "string" && value.trim().length > 0) {
       return value.trim().toUpperCase();
     }
   }
@@ -245,11 +263,26 @@ export function normalizeSamsaraSamples(
 ): TelematicsSample[] {
   const out: TelematicsSample[] = [];
   for (const r of rows) {
-    // Resolve on the VIN both systems share when Samsara reports one; fall back to
-    // the opaque Samsara vehicle id (older payloads / tests). The idempotency key
-    // stays keyed to the stable Samsara id regardless.
-    const resolutionKey = vinFromExternalIds(r.externalIds) ?? r.id;
-    const vehicleId = resolveVehicleId(resolutionKey);
+    // Resolution KEY SET, tried in priority order against BOTH fleet indexes (VIN
+    // then registration — see buildFleetIndex). VIN (namespaced or bare) is the
+    // strongest key; the licence plate is the primary key for a registration-keyed
+    // fleet (blank VIN, populated assets.registration — the typical UK trades
+    // tenant); the Samsara display name is a last resort (fleets often name a
+    // vehicle by its plate); the opaque Samsara id is the final fallback for older
+    // payloads / tests. The FIRST key that resolves wins. The idempotency key stays
+    // keyed to the stable Samsara id regardless of which key resolved the vehicle.
+    const candidateKeys = [
+      vinFromExternalIds(r.externalIds),
+      r.licensePlate,
+      r.name,
+      r.id,
+    ];
+    let vehicleId: string | null = null;
+    for (const key of candidateKeys) {
+      if (typeof key !== "string" || key.trim().length === 0) continue;
+      vehicleId = resolveVehicleId(key);
+      if (vehicleId) break;
+    }
     if (!vehicleId) continue; // unmapped vehicle — skip rather than guess.
     const gps = r.gps ?? null;
     const odo = r.obdOdometerMeters ?? null;

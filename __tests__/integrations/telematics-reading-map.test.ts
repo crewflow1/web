@@ -3,6 +3,7 @@ import {
   mapSampleToReading,
   mapSamplesToReadings,
   normalizeSamsaraSamples,
+  vinFromExternalIds,
   type TelematicsSample,
   type SamsaraVehicleStat,
 } from "@/lib/integrations/telematics/reading-map";
@@ -357,5 +358,51 @@ describe("normalizeSamsaraSamples — native shape → agnostic shape", () => {
     expect(rows[0]!.odometer_miles).toBe(1000);
     expect(rows[0]!.latitude).toBe(51.5074);
     expect(rows[0]!.org_id).toBe(TARGET.orgId);
+  });
+
+  // ── C69: NAMESPACED VIN external id (samsara.vin) resolves ──────────────────
+  // Samsara emits the VIN under a NAMESPACED external id (`samsara.vin`), not a
+  // key literally named `vin`. The pre-fix `vinFromExternalIds` matched only the
+  // literal `vin`, so a VIN-diligent operator resolved ZERO vehicles.
+  it("resolves a vehicle via a NAMESPACED vin external id (samsara.vin)", () => {
+    const resolveByVin = (key: string) =>
+      key === "1HGBH41JXMN109186" ? "44444444-4444-4444-4444-444444444444" : null;
+    const out = normalizeSamsaraSamples(
+      [stat({ id: "s9", externalIds: { "samsara.vin": "1hgbh41jxmn109186" } })],
+      resolveByVin,
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]!.vehicleId).toBe("44444444-4444-4444-4444-444444444444");
+  });
+
+  it("resolves a vehicle via its licensePlate when no VIN is present (registration key set)", () => {
+    // A registration-keyed fleet: Samsara reports the plate but no VIN. The
+    // key set now includes licensePlate, so the vehicle resolves.
+    const resolveByPlate = (key: string) =>
+      key === "AB12 CDE" ? "55555555-5555-5555-5555-555555555555" : null;
+    const out = normalizeSamsaraSamples(
+      [stat({ id: "s10", externalIds: null, licensePlate: "AB12 CDE" })],
+      resolveByPlate,
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]!.vehicleId).toBe("55555555-5555-5555-5555-555555555555");
+  });
+});
+
+describe("vinFromExternalIds — plain and namespaced keys", () => {
+  it("matches a plain `vin` key (trimmed + upper-cased)", () => {
+    expect(vinFromExternalIds({ vin: " 1hgbh41jxmn109186 " })).toBe("1HGBH41JXMN109186");
+  });
+
+  it("matches a NAMESPACED `samsara.vin` key", () => {
+    expect(vinFromExternalIds({ "samsara.vin": "1hgbh41jxmn109186" })).toBe(
+      "1HGBH41JXMN109186",
+    );
+  });
+
+  it("ignores unrelated external ids", () => {
+    expect(vinFromExternalIds({ maintenanceId: "250020" })).toBeNull();
+    expect(vinFromExternalIds(null)).toBeNull();
+    expect(vinFromExternalIds(undefined)).toBeNull();
   });
 });
