@@ -166,10 +166,10 @@ const ALLOWLIST: Record<string, string> = {
   // exactly-at-clamp .limit is not an honest bound). Each is a GENUINELY-bounded
   // sample, not a standing-backlog producer like the overdue scan (which was
   // PAGED, not allowlisted). Mirrors f1-limit-clamp-guard's BOUNDARY_ALLOWLIST.
-  "server/services/material-fulfilment.ts:125":
-    "bounded: stock issue movements for ONE material request (.in(lineIds)) — request-sized, well below 1000",
-  "server/services/material-fulfilment.ts:150":
-    "bounded: correction movements for ONE request's issued set (.in(rows.map(id))) — request-sized, well below 1000",
+  // material-fulfilment: REMOVED (false narrower-than-use entries). "ONE
+  // material request … request-sized" was untrue — the two real callers pass
+  // multi-request / org-wide line sets, so both reads are now PAGED in full via
+  // fetchAllRows + chunked .in() and carry a .range() that bounds them here.
   "server/services/sites.ts:187":
     "bounded: per-org fleet_vehicles count sample (.eq(org_id)) — an org's fleet is tens of vehicles. (Moved 159→187 when listSitesForOrg was split into a bounded + paged (fetchAllRows) picker read for the F-1 picker-completion wave.)",
   "server/services/van-stock.ts:105":

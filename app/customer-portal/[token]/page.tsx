@@ -66,17 +66,44 @@ export default async function PortalOverviewPage({
   // (wrong "outstanding" total / missing recent invoice on a busy org).
   // Scope the invoices read to THIS customer's quote ids in the query
   // instead — the same per-customer scoping the invoices list page uses.
-  const { data: quotesData, error: quotesError } = await admin
-    .from("quotes")
-    .select("id, number, status, total, valid_until, sent_at, accepted_at, public_token")
-    .eq("org_id", customer.org_id)
-    .eq("customer_id", customer.id)
-    .order("created_at", { ascending: false })
-    .limit(50);
+  //
+  // F-1: page the FULL set (fetchAllRows, stable created_at + id order),
+  // mirroring the sibling invoices read below. `allQuotes` is NOT display-only:
+  // it feeds buildPortalActionItems (the live "Needs your attention" action
+  // centre) AND the openQuotes/acceptedQuotes count KPIs. A `.limit(50)` here
+  // silently dropped any open quote outside the 50-most-recent window from the
+  // action centre (customer never nudged) and under-counted both quote KPIs
+  // once a busy customer crossed the cap. A bounded read looked honest to the
+  // F-1 clamp/producer guards but truncated a COUNT aggregate + an actionable
+  // surface — the same narrower-than-use allowlist trap the invoices read hit.
+  type OverviewQuote = {
+    id: string;
+    number: string | null;
+    status: string;
+    total: number | string | null;
+    valid_until: string | null;
+    sent_at: string | null;
+    accepted_at: string | null;
+    public_token: string | null;
+  };
+  const { data: quotesData, error: quotesError } = await fetchAllRows<OverviewQuote>(
+    (from, to) =>
+      admin
+        .from("quotes")
+        .select("id, number, status, total, valid_until, sent_at, accepted_at, public_token")
+        .eq("org_id", customer.org_id)
+        .eq("customer_id", customer.id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: OverviewQuote[] | null;
+        error: unknown;
+      }>,
+  );
   if (quotesError) {
     throw readFailure("portal overview: quotes", quotesError);
   }
-  const allQuotes = quotesData ?? [];
+  const allQuotes = quotesData;
 
   // Scope invoices by their own customer anchor (Issue #349 Phase 1), not via
   // quote_id — authoritative and survives quote loss (see the invoices page).

@@ -286,20 +286,29 @@ const ALL_COLS =
 
 export async function getLatestNotificationsForCustomer(
   orgId: string,
-  limit = 50,
 ): Promise<NotificationRow[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("notifications" as never)
-    .select(ALL_COLS as never)
-    .eq("org_id" as never, orgId as never)
-    .order("created_at" as never, { ascending: false })
-    .limit(Math.min(limit, 1000)); // F-1: provable cap; PostgREST clamps to 1000
+  // F-1: page the FULL set (fetchAllRows, created_at desc + id tiebreaker). The
+  // notifications centre derives its unread badge from `.length` of this set, so
+  // the previous `.limit(Math.min(limit,1000))` UNDER-counted the badge and hid
+  // older notifications the moment the active org crossed the cap. There is no
+  // "load more" here, so a capped read is not a paginated feed — it is a
+  // truncated one; the complete read makes every derived count exact.
+  const { data, error } = await fetchAllRows<NotificationRow>(
+    (from, to) =>
+      supabase
+        .from("notifications" as never)
+        .select(ALL_COLS as never)
+        .eq("org_id" as never, orgId as never)
+        .order("created_at" as never, { ascending: false })
+        .order("id" as never, { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<NotificationRow>>,
+  );
   if (error) {
     console.error("[notifications] getLatestForCustomer failed", error);
     return [];
   }
-  return ((data ?? []) as unknown as NotificationRow[]).map(coerce);
+  return (data as unknown as NotificationRow[]).map(coerce);
 }
 
 export async function getUnreadCountForCustomer(orgId: string): Promise<number> {
@@ -321,23 +330,30 @@ export async function getUnreadCountForCustomer(orgId: string): Promise<number> 
 // READ — HQ side (service role, cross-tenant)
 // ---------------------------------------------------------------------
 
-export async function getLatestNotificationsForHq(
-  limit = 200,
-): Promise<NotificationRow[]> {
+export async function getLatestNotificationsForHq(): Promise<NotificationRow[]> {
   const c = createAdminClient();
-  const { data, error } = await c
-    .from("notifications" as never)
-    .select(
-      `${ALL_COLS}, org:organizations ( name )` as never,
-    )
-    .in("audience" as never, ["hq", "both"])
-    .order("created_at" as never, { ascending: false })
-    .limit(Math.min(limit, 1000)); // F-1: provable cap; PostgREST clamps to 1000
+  // F-1: page the FULL set (fetchAllRows, created_at desc + id tiebreaker). The
+  // HQ notifications page derives EVERY headline number from `.length` on this
+  // set — the urgent/high unread tiles, the 24h count AND the org-filter
+  // dropdown (distinct orgs) — plus the cross-tenant list itself. A capped 500
+  // silently under-counted all of them and dropped orgs from the dropdown once
+  // the estate's hq/both backlog crossed the cap. Complete read = exact tiles.
+  type HqRow = NotificationRow & { org?: { name?: string | null } | null };
+  const { data, error } = await fetchAllRows<HqRow>(
+    (from, to) =>
+      c
+        .from("notifications" as never)
+        .select(`${ALL_COLS}, org:organizations ( name )` as never)
+        .in("audience" as never, ["hq", "both"])
+        .order("created_at" as never, { ascending: false })
+        .order("id" as never, { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<HqRow>>,
+  );
   if (error) {
     console.error("[notifications] getLatestForHq failed", error);
     return [];
   }
-  return ((data ?? []) as unknown as Array<NotificationRow & { org?: { name?: string | null } | null }>).map((row) => {
+  return (data as unknown as Array<NotificationRow & { org?: { name?: string | null } | null }>).map((row) => {
     const out = coerce(row) as NotificationRow & {
       org_name?: string | null;
     };

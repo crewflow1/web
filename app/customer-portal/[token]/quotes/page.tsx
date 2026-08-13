@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { PortalShell } from "../_shell";
 import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
@@ -62,28 +63,60 @@ export default async function PortalQuotesPage({
   const admin = createAdminClient();
   // Wave 2 — customer portal only ever shows quotes that have cleared
   // the approval gate. Draft / pending_approval / rejected stay private.
-  let q = admin
-    .from("quotes")
-    .select(
-      // No cost_* column, ever: 20261073 put the priced cost basis (the margin)
-      // on these same rows, and this is a customer-facing read.
-      "id, number, status, total, subtotal, vat_total, valid_until, sent_at, accepted_at, declined_at, public_token, created_at, variation_number, eot_requested_completion_date, eot_agreed_completion_date",
-    )
-    .eq("org_id", customer.org_id)
-    .eq("customer_id", customer.id)
-    .in("status", ["approved", "sent", "viewed", "accepted", "declined", "expired"])
-    .order("created_at", { ascending: false })
-    .limit(200);
+  const statusFilter =
+    sp.status && (QUOTE_STATUSES as readonly string[]).includes(sp.status)
+      ? sp.status
+      : null;
 
-  if (sp.status && (QUOTE_STATUSES as readonly string[]).includes(sp.status)) {
-    q = q.eq("status", sp.status);
-  }
-
-  const { data: quotes, error: quotesError } = await q;
+  // F-1: page the FULL set (fetchAllRows, stable created_at + id order) — a
+  // long-standing customer's quote history can exceed the 1000-row PostgREST
+  // cap, and the previous `.limit(200)` silently dropped the oldest quotes from
+  // this list. The prior allowlist entry justified it as a "top-200 display",
+  // but a customer's own complete quote history is exactly a set they must see
+  // in full, so the read is paged rather than capped.
+  type PortalQuoteRow = {
+    id: string;
+    number: string | null;
+    status: string;
+    total: number | string | null;
+    subtotal: number | string | null;
+    vat_total: number | string | null;
+    valid_until: string | null;
+    sent_at: string | null;
+    accepted_at: string | null;
+    declined_at: string | null;
+    public_token: string | null;
+    created_at: string;
+    variation_number: number | null;
+    eot_requested_completion_date: string | null;
+    eot_agreed_completion_date: string | null;
+  };
+  const { data: quotes, error: quotesError } = await fetchAllRows<PortalQuoteRow>(
+    (from, to) => {
+      let q = admin
+        .from("quotes")
+        .select(
+          // No cost_* column, ever: 20261073 put the priced cost basis (the
+          // margin) on these same rows, and this is a customer-facing read.
+          "id, number, status, total, subtotal, vat_total, valid_until, sent_at, accepted_at, declined_at, public_token, created_at, variation_number, eot_requested_completion_date, eot_agreed_completion_date",
+        )
+        .eq("org_id", customer.org_id)
+        .eq("customer_id", customer.id)
+        .in("status", ["approved", "sent", "viewed", "accepted", "declined", "expired"]);
+      if (statusFilter) q = q.eq("status", statusFilter);
+      return q
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: PortalQuoteRow[] | null;
+        error: unknown;
+      }>;
+    },
+  );
   if (quotesError) {
     throw readFailure("portal quotes: quotes", quotesError);
   }
-  const rows = quotes ?? [];
+  const rows = quotes;
 
   // Render-friendly visible statuses — same list as the internal app.
   const filterOptions = ["", ...QUOTE_STATUSES];

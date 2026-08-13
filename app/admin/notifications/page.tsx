@@ -54,7 +54,7 @@ export default async function HqNotificationsPage({
     (sp.state as "unread" | "all" | "dismissed" | undefined) ?? "unread";
   const orgId = sp.org_id ?? null;
 
-  const all = (await getLatestNotificationsForHq(500)) as Row[];
+  const all = (await getLatestNotificationsForHq()) as Row[];
   const filtered = filterNotifications<Row>(all, {
     q,
     category,

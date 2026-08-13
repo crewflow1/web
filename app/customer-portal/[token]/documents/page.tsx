@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { listPortalReports } from "@/app/customer-portal/_reports";
 import { listPortalCertificates } from "@/app/customer-portal/_certificates";
@@ -44,25 +45,44 @@ export default async function PortalDocumentsPage({
   const { customer, org } = loaded;
   const admin = createAdminClient();
 
-  const { data: quotesData, error: quotesError } = await admin
-    .from("quotes")
-    .select("id, number, status, total, sent_at, accepted_at, public_token")
-    .eq("org_id", customer.org_id)
-    .eq("customer_id", customer.id)
-    .in("status", ["approved", "sent", "viewed", "accepted", "declined", "expired"])
-    .order("created_at", { ascending: false })
-    .limit(100);
+  // F-1: page BOTH reads in full (fetchAllRows, stable created_at + id order).
+  // This library is the customer's COMPLETE document set — the `{documents.length}
+  // total` count and the "Download all (zip)" bundle are both derived from these
+  // rows, so a `.limit(100)` silently under-counted the total AND omitted the
+  // customer's older documents from their own ZIP once they crossed the cap.
+  const { data: quotesData, error: quotesError } = await fetchAllRows<LibQuote>(
+    (from, to) =>
+      admin
+        .from("quotes")
+        .select("id, number, status, total, sent_at, accepted_at, public_token")
+        .eq("org_id", customer.org_id)
+        .eq("customer_id", customer.id)
+        .in("status", ["approved", "sent", "viewed", "accepted", "declined", "expired"])
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: LibQuote[] | null;
+        error: unknown;
+      }>,
+  );
   if (quotesError) {
     throw readFailure("portal documents: quotes", quotesError);
   }
 
-  const { data: invoicesData, error: invoicesError } = await admin
-    .from("invoices")
-    .select("id, number, status, total, sent_at, created_at")
-    .eq("org_id", customer.org_id)
-    .eq("customer_id", customer.id)
-    .order("created_at", { ascending: false })
-    .limit(100);
+  const { data: invoicesData, error: invoicesError } = await fetchAllRows<LibInvoice>(
+    (from, to) =>
+      admin
+        .from("invoices")
+        .select("id, number, status, total, sent_at, created_at")
+        .eq("org_id", customer.org_id)
+        .eq("customer_id", customer.id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: LibInvoice[] | null;
+        error: unknown;
+      }>,
+  );
   if (invoicesError) {
     throw readFailure("portal documents: invoices", invoicesError);
   }
@@ -72,8 +92,8 @@ export default async function PortalDocumentsPage({
 
   const documents = buildDocumentLibrary({
     token,
-    quotes: (quotesData ?? []) as LibQuote[],
-    invoices: (invoicesData ?? []) as LibInvoice[],
+    quotes: quotesData,
+    invoices: invoicesData,
     reports,
     certificates: certRows.map((c) => ({
       id: c.id,
