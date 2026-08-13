@@ -183,9 +183,11 @@ export function computeVatQuarter(
  *     ledger — the CASH-basis net that backs box 1. Reverse-charge purchases are
  *     PURCHASES, not sales, so they never enter box 6.
  *   • BOX 7 (purchases) sums the net `amount` of the finance rows whose
- *     `vat_total` feeds box 4 (ACCRUAL basis), PLUS the net (ex-VAT) value of
- *     domestic reverse-charge purchases (`reverseChargeNet`). HMRC includes
- *     reverse-charge purchases in box 7 but EXCLUDES them from box 6.
+ *     `vat_total` feeds box 4 (ACCRUAL basis). A domestic reverse-charge purchase
+ *     bill IS one of those finance rows (its net is `amount`, its `vat_total` is 0
+ *     because the supplier charges no VAT), so the finances loop ALREADY carries
+ *     its net value into box 7 — exactly once. HMRC includes reverse-charge
+ *     purchases in box 7 but EXCLUDES them from box 6 (a purchase is never a sale).
  *
  * So the reported net totals reconcile with the VAT boxes — same set, same
  * window, one authority. Values are the raw ex-VAT sums (rounded to 2dp to match
@@ -197,7 +199,6 @@ export function computeVatNetTotals(
   finances: FinanceRow[],
   quarterStartIso: string,
   quarterEndIso?: string,
-  reverseChargeNet = 0,
 ): { totalValueSalesExVAT: number; totalValuePurchasesExVAT: number } {
   const inPeriod = (iso: string): boolean =>
     iso >= quarterStartIso &&
@@ -214,12 +215,11 @@ export function computeVatNetTotals(
   let purchases = 0;
   for (const f of finances) {
     if (inPeriod(f.created_at)) {
-      purchases += Number(f.amount ?? 0); // net of VAT
+      // Net of VAT. Reverse-charge purchase bills are finance rows too, so their
+      // net enters box 7 HERE — once — with every other purchase. No separate add.
+      purchases += Number(f.amount ?? 0);
     }
   }
-  // Box 7 (NOT box 6) carries the net value of reverse-charge purchases.
-  const rcNet = Number.isFinite(reverseChargeNet) ? reverseChargeNet : 0;
-  purchases += rcNet;
   return {
     totalValueSalesExVAT: round2(sales),
     totalValuePurchasesExVAT: round2(purchases),

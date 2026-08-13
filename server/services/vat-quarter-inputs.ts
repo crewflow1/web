@@ -24,8 +24,11 @@ import type { InvoicePaymentRow } from "@/lib/tax/compute";
  *      reverse-charge VAT is frozen on supplier_payment_allocations
  *      .cis_reverse_charge_vat (the DB is the control — lib/cis/deduction.ts is
  *      its twin). The contractor self-accounts it: the notional VAT enters BOX 1
- *      and BOX 4 (net-neutral) and the net purchase value enters BOX 7. This
- *      module SUMS the frozen figures; it never re-derives them.
+ *      and BOX 4 (net-neutral). This module SUMS that frozen VAT; it never
+ *      re-derives it. The net PURCHASE value already reaches BOX 7 via the
+ *      finance row the reverse-charge bill itself is (see lib/tax/compute.ts
+ *      computeVatNetTotals) — so this module does NOT re-sum it here, which would
+ *      double-count box 7.
  *
  * PAGING (F-1). invoice_payments, supplier_payments and supplier_payment_allocations
  * are all HIGH-VALUE tables: a bare `.select()` truncates at the 1000-row cap and
@@ -45,8 +48,6 @@ const IN_CHUNK = 500;
 export type ReverseChargeQuarterTotals = {
   /** Σ frozen cis_reverse_charge_vat — the notional VAT (→ BOX 1 and BOX 4). */
   vat: number;
-  /** Σ net (ex-VAT) value of reverse-charge purchases (→ BOX 7, never BOX 6). */
-  net: number;
 };
 
 /**
@@ -88,9 +89,7 @@ type RawInvoice = {
   total: number | string | null;
 };
 type RawAllocation = {
-  amount: number | string | null;
   cis_reverse_charge_vat: number | string | null;
-  cis_vat_treatment: string | null;
 };
 
 /**
@@ -180,28 +179,28 @@ async function gatherReverseChargeQuarter(
   );
   if (payErr) throw readFailure("vat inputs: supplier payments (reverse charge)", payErr);
   const paymentIds = (payRows ?? []).map((p) => p.id);
-  if (paymentIds.length === 0) return { vat: 0, net: 0 };
+  if (paymentIds.length === 0) return { vat: 0 };
 
   // The allocations of those live payments. CHUNKED (F-1): the id set can exceed
   // the cap; supplier_payments.id is unique so each chunk yields ≤ IN_CHUNK rows.
+  // We sum ONLY the frozen notional VAT (→ boxes 1/4). The box-7 net purchase
+  // value is NOT summed here: the reverse-charge bill is itself a finance row, so
+  // computeVatNetTotals already counts its net in box 7 once — re-summing it here
+  // would double-count box 7 (the C67 regression this fix removes).
   let vat = 0;
-  let net = 0;
   for (let i = 0; i < paymentIds.length; i += IN_CHUNK) {
     const chunk = paymentIds.slice(i, i + IN_CHUNK);
     const { data, error } = await db
       .from("supplier_payment_allocations")
-      .select("amount, cis_reverse_charge_vat, cis_vat_treatment")
+      .select("cis_reverse_charge_vat")
       .eq("org_id", orgId)
       .in("payment_id", chunk);
     if (error) throw readFailure("vat inputs: reverse-charge allocations", error);
     for (const a of (data ?? []) as RawAllocation[]) {
       vat += Number(a.cis_reverse_charge_vat ?? 0);
-      // Box 7 net: under the reverse charge the bill charges no VAT, so gross ==
-      // net and the allocation amount IS the net consideration for this share.
-      if (a.cis_vat_treatment === "reverse_charge") net += Number(a.amount ?? 0);
     }
   }
-  return { vat: Math.round(vat * 100) / 100, net: Math.round(net * 100) / 100 };
+  return { vat: Math.round(vat * 100) / 100 };
 }
 
 /**

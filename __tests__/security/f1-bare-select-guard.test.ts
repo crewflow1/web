@@ -220,9 +220,9 @@ const ALLOWLIST: Record<string, string> = {
   // fetchAllRows in the same file, so each `.in(...)` returns ≤ IN_CHUNK=500 rows
   // (< the 1000 cap) — the analyser cannot see the slice bound. Same class as
   // cis-statements.ts:169.
-  "server/services/vat-quarter-inputs.ts:132":
+  "server/services/vat-quarter-inputs.ts:131":
     "bounded: chunked .in('id', slice(≤IN_CHUNK=500 unique invoice PKs)) — parent invoice_payments read is fully paged; ≤500 rows per call",
-  "server/services/vat-quarter-inputs.ts:192":
+  "server/services/vat-quarter-inputs.ts:194":
     "bounded: chunked .in('payment_id', slice(≤IN_CHUNK=500 unique payment PKs)) — parent supplier_payments read is fully paged; supplier_payments.id is unique so ≤500 rows per call",
   // Surfaced only once quote_line_items joined HIGH_VALUE_TABLES. This line is an
   // INSERT (`.from('quote_line_items').insert(rows)`), NOT a read — it cannot
