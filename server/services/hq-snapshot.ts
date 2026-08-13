@@ -23,9 +23,17 @@ export async function buildHqSnapshot(): Promise<HqSnapshot> {
   const oldestBucketStart = new Date(`${buckets[0]}-01T00:00:00Z`);
 
   // ---------- Demo lifecycle counts ----------
-  const { data: demoRows, error: demoError } = await admin
-    .from("demo_requests")
-    .select("status" as never);
+  // PAGED (F-1): estate-wide read summed by status into the demo lifecycle
+  // counts below — a bare select clamped at max_rows (1000) would UNDER-count the
+  // funnel once the estate crosses 1000 demo requests. Page the complete set.
+  const { data: demoRows, error: demoError } = await fetchAllRows<{ status: string }>(
+    (from, to) =>
+      admin
+        .from("demo_requests")
+        .select("status" as never)
+        .order("id" as never, { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<{ status: string }>>,
+  );
   if (demoError) throw readFailure("hq snapshot: demo requests", demoError);
   const demos = {
     pending_demo: 0,

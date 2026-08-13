@@ -134,10 +134,31 @@ export async function createPayrollRun(
   }
 
   // Pull every member + their hourly_pay.
-  const { data: members, error: membersError } = await supabase
-    .from("memberships")
-    .select("user_id, user:users ( id, full_name, hourly_pay )")
-    .eq("org_id", ctx.org.id);
+  // PAGED (F-1): this set drives the WHOLE run — the `for (const m of members)`
+  // loop below emits one payroll_line per member. A bare `.select()` clamped at
+  // max_rows (1000) would silently drop every member past the (order-less) 1000
+  // prefix, so a >1000-member org would give those workers NO payroll line at all
+  // (total omission of pay) while the run still reported success. The two
+  // time_entries reads either side of this were already paged; this one was
+  // overlooked. Page the complete set on the unique `user_id` order (user_id is
+  // unique per membership row within an org; `id` added as a defensive tiebreak).
+  type MemberRow = {
+    user_id: string;
+    user: { id: string; full_name: string | null; hourly_pay: number | null } | null;
+  };
+  const { data: members, error: membersError } = await fetchAllRows<MemberRow>(
+    (from, to) =>
+      supabase
+        .from("memberships")
+        .select("user_id, user:users ( id, full_name, hourly_pay )")
+        .eq("org_id", ctx.org.id)
+        .order("user_id", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: MemberRow[] | null;
+        error: unknown;
+      }>,
+  );
   // A failed read here would write a £0 run and report success — payroll
   // mismatches are RED, so fail loud instead.
   if (membersError) throw readFailure("payroll create: members", membersError);

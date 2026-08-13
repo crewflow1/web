@@ -142,6 +142,37 @@ const HIGH_VALUE_TABLES = new Set<string>([
   "job_billing_plans",
   "job_billing_stages",
   "retention_releases",
+  // ── Portal completeness + payroll total-omission (C65 wave). All feed a
+  //    completeness surface, so a clamped/bare read silently drops rows:
+  //   site_reports          — the customer-portal report list (listPortalReports)
+  //                           AND one of the four contributors to the documents-
+  //                           library `{documents.length} total` count and the
+  //                           "Download all (zip)" X-Bulk-Total header; a bare
+  //                           select clamped at 1000 dropped the oldest reports.
+  //   completion_certificates — the customer-portal certificate list
+  //                           (listPortalCertificates), same documents-library
+  //                           count + ZIP total contributor; the read was BARE
+  //                           (no limit/range) → clamped at 1000.
+  //   memberships           — drives the WHOLE payroll run (createPayrollRun): one
+  //                           payroll_line per member, so a clamped read gives
+  //                           overflow workers NO pay while the run reports success.
+  "site_reports",
+  "completion_certificates",
+  "memberships",
+  // ── C65 COVERAGE-BLIND-SPOT WAVE — two cross-tenant estate tables the new
+  //    coverage meta-guard (below) surfaced as GENUINELY completeness-sensitive
+  //    (not rubber-stampable into COVERAGE_REVIEWED). Both were live silent
+  //    truncations of the exact C63/C64/C65 class, now PAGED:
+  //   demo_requests      — the estate-wide demo funnel: read bare and SUMMED by
+  //                        status into the HQ snapshot / marketing / customer-
+  //                        success figures and listed on the /admin/demos +
+  //                        /admin/organizations boards. A clamp under-counted the
+  //                        funnel and dropped the oldest demos past 1000.
+  //   hq_sales_companies — the estate sales pipeline mapped/reduced into the sales
+  //                        orchestrator counts; the old `.limit(1000)` sat on the
+  //                        max_rows boundary (indistinguishable from truncation).
+  "demo_requests",
+  "hq_sales_companies",
 ]);
 
 // "file:line" → reason. Keep tight; every entry is a documented smell.
@@ -216,8 +247,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE ticket (.eq('org_id').eq('id').maybeSingle()) — a single-row read; the long select list + active-org comment push the .eq('id')/.maybeSingle bound markers past the region window",
   // Per-org billing invoices for the /admin/billing expand-row: an org's billing
   // invoices are monthly-cadence (≈12/yr), so ≤1000 would take ~83 years.
-  "server/services/hq-billing-snapshot.ts:258":
-    "bounded: ONE org's billing invoices (.eq('org_id')) for the /admin/billing inline expand-row — monthly cadence, structurally far below 1000",
+  "server/services/hq-billing-snapshot.ts:267":
+    "bounded: ONE org's billing invoices (.eq('org_id')) for the /admin/billing inline expand-row — monthly cadence, structurally far below 1000. (Moved 258→267 when the owner-enrichment read above it was paged for the C65 memberships wave.)",
   // Recent-N estate health events: the read is ordered `recomputed_at desc` and
   // the caller (admin/analytics) slices the newest `limit` (15) in JS. Because it
   // is ordered DESC, the PostgREST 1000-clamp can only ever drop rows OLDER than
@@ -265,6 +296,43 @@ const ALLOWLIST: Record<string, string> = {
     "not a read: `untypedAdminTable('billing_invoices').insert(insert).select('id')` — INSERT…RETURNING, bounded by the inserted row, cannot truncate a read; flagged only because the statement carries `.select(`. Same class as notifications-service.ts:140.",
   "server/services/bank-sync.ts:608":
     "bounded: chunked dedupe read .in('provider_tx_id', batch) where batch = providerTxIds.slice(i, i+DEDUPE_IN_CHUNK) — each call returns ≤ DEDUPE_IN_CHUNK rows, well below the 1000 cap. Same class as cis-statements.ts:169.",
+
+  // ── C65 MEMBERSHIPS / COMPLETION_CERTIFICATES WAVE — surfaced once memberships
+  //    + completion_certificates joined HIGH_VALUE_TABLES. The one genuine
+  //    cross-tenant truncation this wave found — the FOUR HQ owner-enrichment
+  //    reads (.in(<full-estate roster>).eq('role','owner')) whose orgId set is a
+  //    fetchAllRows-paged estate roster — were PAGED (admin/organizations,
+  //    hq-alerts/hq-billing/hq-customer snapshots), not allowlisted; the
+  //    delete-the-fix probe proves the guard bites the unpaged shape. The reads
+  //    below are all SINGLE-SCOPE: either .eq('org_id', ONE org) (bounded by that
+  //    org's headcount — tens, low-hundreds; a single org never approaches 1000
+  //    members) or .eq('user_id', ONE user) / .in(<bounded parent set>). None is
+  //    a cross-tenant estate scan; each is bounded by a single parent well below
+  //    the cap. Same class as the already-allowlisted per-org fleet_vehicles reads.
+  "app/(app)/health-safety/_data.ts:113":
+    "bounded: ONE org's members (.eq('org_id')) — the assessor picker (listAssessors); an org's headcount is tens/low-hundreds, never near 1000",
+  "app/(app)/health-safety/_signoff-data.ts:117":
+    "bounded: name lookup .in('user_id', ids) where ids is a de-duped Set of sign-off user_ids from a bounded parent set — ≤ parent rows, never near 1000",
+  "app/(app)/settings/page.tsx:72":
+    "bounded: ONE org's members (.eq('org_id')) — the settings team panel; bounded by the org's headcount, never near 1000",
+  "app/(app)/staff/leave/page.tsx:96":
+    "bounded: ONE org's members (.eq('org_id')) — the leave-page name lookup; bounded by the org's headcount",
+  "app/(app)/staff/page.tsx:56":
+    "bounded: ONE org's members (.eq('org_id')) — the staff register; bounded by the org's headcount",
+  "app/(app)/staff/rota/page.tsx:112":
+    "bounded: ONE org's members (.eq('org_id')) — the rota staff list + assign-form labels; bounded by the org's headcount",
+  "app/customer-portal/_warranties.ts:133":
+    "bounded: completion_certificates for the customer's OWN warranty job set (.eq('org_id').eq('status','issued').in('job_id', <de-duped set from the customer's visible warranties>)) — one issued cert per job, bounded by the customer's warranties, not a cross-tenant scan",
+  "server/auth/session.ts:104":
+    "bounded: ONE user's memberships (.eq('user_id')) — org resolution / active-org fallback; a user belongs to a handful of orgs, never near 1000",
+  "server/auth/session.ts:182":
+    "bounded: ONE user's memberships (.eq('user_id')) — the header org switcher (listOrgsForUser); a user belongs to a handful of orgs",
+  "lib/email/send-leave.ts:60":
+    "bounded: ONE org's owner/admin recipients (.eq('org_id').in('role', ['owner','admin'])) — a handful of privileged users per org, far below 1000",
+  "lib/email/send-material-request.ts:110":
+    "bounded: ONE org's owner/admin recipients (.eq('org_id').in('role', ['owner','admin'])) — a handful of privileged users per org",
+  "lib/profitability/labour-rates.ts:34":
+    "bounded: ONE org's member ids (.eq('org_id')) — folded into an hourly-pay map (loadOrgHourlyPay); bounded by the org's headcount, and the sibling users read is a chunk-safe .in(memberIds)",
 };
 
 function walk(dir: string, out: string[]): void {
@@ -863,5 +931,240 @@ describe("F-1 bare-select guard — high-value table reads must page or be singl
       `return typeof data === "string" ? data : null;`,
     ].join("\n");
     expect(rpcOffendersIn("server/services/material-fulfilment.ts", scalar)).toEqual([]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// F-1 COVERAGE-COMPLETENESS META-GUARD (the structural blind-spot elimination)
+// ═══════════════════════════════════════════════════════════════════════════
+// ROOT CAUSE this closes: the two F-1 guards above only POLICE reads on a table
+// that appears in HIGH_VALUE_TABLES / PRODUCER_TABLES (~38 tables). The repo
+// reads ~100 distinct tables via `.from("<table>")`, so a completeness-sensitive
+// SET read on ANY of the ~70 UNLISTED tables was structurally INVISIBLE — the
+// guards' `offendersIn` early-returns unless the table is listed. This is exactly
+// how the C63 schedule tables, the C64 portal/material tables, and the C65
+// reports/certs/memberships gaps all escaped: the table simply wasn't on a list.
+//
+// We MEASURED the alternative first. Temporarily flipping the bare-select guard to
+// scan ALL tables surfaced 91 distinct unbounded reads across ~50 unlisted tables
+// — far past the point where each can be individually paged/allowlisted with rigor
+// in one pass. So instead of broadening the per-READ guards to every table (which
+// would need 91 verified per-read decisions), we install this per-TABLE coverage
+// contract: EVERY table that has a set-read anywhere in app/server/lib MUST be
+// either (a) POLICED by the F-1 guards (HIGH_VALUE_TABLES) — where its reads are
+// mechanically forced to page/bound — or (b) listed in COVERAGE_REVIEWED with a
+// written, human-verified reason WHY that table's set-reads are structurally never
+// a silent-truncation risk. A NEW table with a set-read that is neither policed nor
+// reviewed FAILS CI (proved by the teeth test) — so no unlisted table can ever
+// again silently host an F-1 truncation. When a reviewed table later grows a
+// completeness-sensitive read, the honest fix is to MOVE it into the policed lists
+// (as demo_requests / hq_sales_companies were in this very wave), not to leave a
+// stale "bounded" reason — a wrong reason here is the vacuous-allowlist anti-pattern.
+//
+// DETECTION SCOPE: literal `.from("t")` and the `.from("t" as never|any)` CAST
+// idiom (the dominant post-generated-types form). A table read ONLY through a
+// `.from`-wrapper declaration is covered for the policed tables by the wrapper
+// matcher above; the coverage contract is stated in terms of the literal/cast form
+// that every audited read actually uses.
+
+/**
+ * table → written reason WHY every set-read on it is structurally not an F-1
+ * silent-truncation risk. Each was verified by reading ALL of the table's set
+ * reads (see the classification in the C65 coverage wave). Categories used:
+ *   PAGED      — every set-read pages via fetchAllRows (.range) → complete.
+ *   PER-PARENT — every set-read is scoped to ONE parent row (.eq('<fk>')), so
+ *                cardinality is bounded by that single parent, never near 1000.
+ *   ID-BATCH   — every set-read is .in(<a bounded/chunked id set>) — a name/detail
+ *                lookup bounded by the (bounded) parent set that produced the ids.
+ *   PER-ORG    — a single org's config / register (.eq('org_id')); bounded by the
+ *                org's own volume (headcount / closed config), far below the cap.
+ *   RECENT-N   — a bounded top-N display (.limit(<1000)) NOT fed to a count/sum.
+ *   CLOSED     — a fixed, closed registry/lookup set (tens of rows by construction).
+ *   SINGLE     — only ever an existence / single-row probe (.limit(1)).
+ */
+const COVERAGE_REVIEWED: Record<string, string> = {
+  // ---- PAGED (always fetchAllRows) ----
+  accounting_pushed_entities: "PAGED: fetchAllRows (accounting-export ledger reconcile read)",
+  activity_log: "PAGED: fetchAllRows on every read (activity feed, dashboard tile, AI aggregates)",
+  asset_fuel_logs: "PAGED: fetchAllRows (fleet fuel rollup)",
+  bank_statements: "PAGED: fetchAllRows (payments page statements list)",
+  briefing_dismissals: "PAGED: fetchAllRows (daily briefing)",
+  cis_subcontractors: "PAGED: fetchAllRows (CIS subcontractor roster)",
+  compliance_documents: "PAGED: fetchAllRows (daily briefing compliance)",
+  delay_events: "PAGED: fetchAllRows (EOT pack + intelligence delay analysis)",
+  job_milestones: "PAGED: fetchAllRows (intelligence programme + job-progress)",
+  job_programme_baselines: "PAGED: fetchAllRows (intelligence + job-progress baselines)",
+  job_progress_observations: "PAGED: fetchAllRows (job-progress observations)",
+  site_diary_entries: "PAGED: fetchAllRows (EOT pack diary; .in(ids) paged)",
+  notification_email_queue:
+    "PAGED/SINGLE: the CIS dedupe read is fetchAllRows-paged; the queue-drain read is a bounded worker .limit(DRAIN_BATCH<1000)",
+
+  // ---- PER-PARENT (bounded by ONE parent row) ----
+  blueprint_markup: "PER-PARENT: .eq('blueprint_version_id') — one drawing version's markup shapes",
+  blueprint_pins: "PER-PARENT: .eq('blueprint_version_id')/.eq('job_id') — one drawing's/job's pins",
+  blueprint_versions: "PER-PARENT: .eq('blueprint_id') — one blueprint's version history",
+  blueprints: "PER-PARENT: .eq('job_id') — one job's drawings register",
+  permit_conditions: "PER-PARENT: .eq('permit_id') — one permit's condition checklist",
+  job_document_versions: "PER-PARENT/ID-BATCH: .eq('document_id')/.in(doc ids) — one document's versions",
+  job_documents: "PER-PARENT: .eq('job_id') — one job's document register",
+  job_budgets: "PER-PARENT: .eq('job_id') budget history; the CVR rollup read is fetchAllRows-paged",
+  calls: "PER-PARENT/RECENT-N: .eq('lead_id').limit(20) — one lead's recent call log display",
+  lead_followup_state: "PER-PARENT: one lead's follow-up state (a single scoped row)",
+  risk_assessment_hazards: "PER-PARENT: .eq('risk_assessment_id') hazards; the H&S snapshot read is fetchAllRows-paged",
+
+  // ---- ID-BATCH (bounded/chunked .in lookups) ----
+  users: "ID-BATCH/PAGED: every read is .in(memberIds) — fetchAllRows-paged or a chunk-bounded name/pay lookup",
+  import_files: "PER-PARENT/ID-BATCH: .eq('import_id')/.in(import ids) — one import's files",
+  import_rows: "PER-PARENT: .eq('import_id') (+ status filter) — one import's staged rows",
+  import_audit: "PER-PARENT: .eq('import_id') — one import's audit trail",
+  tenant_attachments: "PER-PARENT/ID-BATCH: .eq('target_id') per entity or .in(<verified id set>) — one entity's attachments",
+  job_warranties: "PER-PARENT/ID-BATCH: .eq('job_id') or .eq('org_id').in(<customer's job set>) — bounded by the parent job(s)",
+  safety_acknowledgements: "PER-PARENT/ID-BATCH: .eq('subject_id')/.in(rev ids)/.in(job ids) — bounded by the subject set",
+  invoice_reminders: "ID-BATCH: .in(candidateIds) — dedupe lookup bounded by the candidate invoice set",
+  material_request_lines: "PAGED/ID-BATCH: fetchAllRows or .in(requestIds); the single read is .eq('id').limit(1)",
+
+  // ---- PER-ORG (a single org's config / register) ----
+  accounting_connections: "PER-ORG: .eq('org_id') accounting connection config — one/few provider rows",
+  bank_connections: "PER-ORG/PAGED: .eq('org_id') config; the estate lister is fetchAllRows-paged",
+  calendar_connections: "PER-ORG: .eq('org_id') calendar connection config",
+  hmrc_submissions: "PER-ORG/SINGLE: .eq('org_id') submission list + a .limit(1) period-key existence probe",
+  automation_rules: "PER-ORG/CLOSED: .eq('org_id') rule overrides — a closed automation-rule registry",
+  automation_schedules: "PER-ORG/CLOSED: .eq('org_id') schedules — a closed schedule set",
+  expense_budgets: "PER-ORG/CLOSED: .eq('org_id') budgets — a closed budget-category set",
+  api_keys: "PER-ORG: .eq('org_id') API keys — a handful per org",
+  staff_secrets: "PER-ORG: .eq('org_id') staff NI numbers — bounded by the org's headcount",
+  internal_notes: "PER-ORG: .eq('org_id') notes list + a .limit(Math.min(limit,500)) HQ variant — one org's notes",
+  leave_requests:
+    "PER-ORG/PER-USER: .eq('org_id') register + .eq('user_id') overlap reads — bounded by headcount; the me-page consumer is fetchAllRows-paged",
+  imports: "PER-ORG: .eq('org_id') recent-ordered import list — one org's imports",
+  payroll_runs: "PER-ORG: .eq('org_id') payroll run list — one org's runs",
+  permits_to_work: "PER-ORG/PER-JOB: .eq('org_id') list or .eq('job_id') recent-N — one org's/job's permits",
+  risk_assessments: "PER-ORG/PER-JOB/PAGED: .eq('org_id') list, .eq('job_id') display, or fetchAllRows snapshot",
+  sites: "PER-ORG/PAGED: fetchAllRows-paged picker + a .limit(Math.min(opts.limit,SITE_LIST_LIMIT)) bounded sample",
+  stock_items: "PER-ORG/SINGLE: .eq('org_id') with a Math.min-bounded .limit, or a .limit(1) in-org existence probe",
+  material_requests: "PAGED/SINGLE: fetchAllRows demand read, a bounded list .limit, or .eq('id').limit(1)",
+  suppliers: "PER-ORG/PAGED/ID-BATCH: fetchAllRows-paged list, a Math.min-bounded .limit sample, or .in(supplierIds) lookup",
+  snags: "PER-PARENT/PAGED: .eq('job_id')/.in(snagIds) or fetchAllRows-paged (intelligence patterns)",
+  rota_entries: "PER-PARENT/PER-ORG/PAGED: .eq('job_id')/.eq('user_id')+date-window, or fetchAllRows-paged",
+
+  // ---- RECENT-N / bounded display (HQ or per-scope; not summed) ----
+  ai_employee_memory: "RECENT-N: .eq('ai_employee_id').order.limit(N) per-employee memory display (HQ, dark)",
+  ai_employee_tasks: "RECENT-N: .eq('ai_employee_id').order.limit(N) per-employee task display (HQ, dark)",
+  ai_employees: "CLOSED: the fixed AI-employee roster (~11 rows) — a closed set (HQ, dark)",
+  ai_receptionist_setups: "RECENT-N: .limit(500) admin board of receptionist setups — a bounded display, not summed",
+  ai_reply_audits: "RECENT-N: .order.limit(REPLY_WINDOW) — HQ QA verdict window display",
+  ai_reply_lifecycle: "PER-PARENT/RECENT-N: .eq('audit_id') per audit or a .limit(500) deliveries board display",
+  hq_ai_tasks: "RECENT-N: .order.limit(TASK_WINDOW) reliability window / per-employee — HQ display, not a complete-set count",
+  hq_ai_schedules: "CLOSED/RECENT-N: the cadence-schedule registry — .order or .limit(Math.min(limit,1000)) due-run picker",
+  receptionist_conversation_outcomes: "RECENT-N: .order.limit(OUTCOME_WINDOW) — HQ QA window display",
+  impersonation_sessions: "RECENT-N: .order.limit(Math.min(limit,1000)) audit list (caller passes 100) — admin display",
+  toolbox_talks: "PER-PARENT/RECENT-N: .eq('job_id') / .limit recent / per-root revision series — bounded display",
+
+  // ---- CLOSED registry / SINGLE existence ----
+  hq_capabilities: "CLOSED: .in('token', <the closed capability registry>) — a fixed lookup set",
+  hq_capability_grants: "CLOSED: .or(<clauses from the closed capability registry>) — bounded by the registry",
+  billing_events: "SINGLE: .limit(1) existence probe (stripe verify) — not a set read",
+  payments: "SINGLE: .select('id').eq(scoped...).limit(1) duplicate-payment existence probe",
+  asset_assignments: "PER-ORG: .eq(scoped).limit(SITE_USAGE_SCAN_LIMIT) site-usage count sample — bounded",
+  assets: "PER-ORG: .eq('org_id').limit(VAN_SCAN_LIMIT) assets picker — bounded by the org's fleet",
+};
+
+/** The set of tables that have at least one SET read (a `.select(...)` that is not
+ * a single-row read, not a write's RETURNING, and not a head/count read) via a
+ * literal `.from("t")` or the `.from("t" as never|any)` cast form. */
+function tablesWithSetReads(files: string[]): Map<string, string[]> {
+  const byTable = new Map<string, string[]>();
+  const fromRe = /\.from\(\s*["'`]([a-z_]+)["'`]\s*(?:as\s+(?:never|any)\s*)?\)/g;
+  for (const file of files) {
+    const rel = file.slice(ROOT.length + 1);
+    const raw = readFileSync(file, "utf8");
+    if (!raw.includes(".from(")) continue;
+    const src = stripComments(raw);
+    let m: RegExpExecArray | null;
+    while ((m = fromRe.exec(src))) {
+      const table = m[1]!;
+      const semiBefore = src.lastIndexOf(";", m.index - 1);
+      let semiAfter = src.indexOf(";", m.index);
+      if (semiAfter === -1) semiAfter = src.length;
+      const stmt = src.slice(semiBefore + 1, semiAfter);
+      if (!/\.select\(/.test(stmt)) continue; // not a read
+      if (/\.(insert|update|delete|upsert)\(/.test(stmt)) continue; // write RETURNING
+      if (/\.single\(/.test(stmt) || /\.maybeSingle\(/.test(stmt)) continue; // single-row
+      if (/head:\s*true/.test(stmt)) continue; // count/head — no rows to truncate
+      const line = src.slice(0, m.index).split("\n").length;
+      if (!byTable.has(table)) byTable.set(table, []);
+      byTable.get(table)!.push(`${rel}:${line}`);
+    }
+  }
+  return byTable;
+}
+
+/** Tables with a set-read that are neither POLICED nor COVERAGE_REVIEWED. */
+function coverageOffenders(byTable: Map<string, string[]>): string[] {
+  const offenders: string[] = [];
+  for (const [table, sites] of byTable) {
+    if (HIGH_VALUE_TABLES.has(table)) continue; // policed by the F-1 guards
+    if (COVERAGE_REVIEWED[table]) continue; // reviewed with a written reason
+    offenders.push(`${table} (set-read at ${sites[0]}${sites.length > 1 ? ` +${sites.length - 1} more` : ""})`);
+  }
+  return offenders.sort();
+}
+
+describe("F-1 coverage-completeness meta-guard — every table with a set-read is policed OR reviewed", () => {
+  const files: string[] = [];
+  for (const d of SCAN_DIRS) walk(resolve(ROOT, d), files);
+
+  it("scans a non-trivial number of source files", () => {
+    expect(files.length).toBeGreaterThan(200);
+  });
+
+  it("no table has a set-read that is neither F-1-policed nor COVERAGE_REVIEWED", () => {
+    const offenders = coverageOffenders(tablesWithSetReads(files));
+    expect(
+      offenders,
+      `F-1 COVERAGE GAP: the table(s) below have a .from("<table>").select(...) SET read in ` +
+        `app/server/lib but are NEITHER in the F-1 policed lists (HIGH_VALUE_TABLES / ` +
+        `PRODUCER_TABLES) NOR in COVERAGE_REVIEWED. This is the structural blind spot that let ` +
+        `C63/C64/C65 truncations hide. Decide, per table: if any of its set-reads is ` +
+        `completeness-sensitive (a cross-tenant/estate scan, an aggregate, a count/sum, or a ` +
+        `picker that must see the full set), add it to the F-1 policed lists and PAGE the read; ` +
+        `otherwise add a COVERAGE_REVIEWED entry with a written, verified reason why every one of ` +
+        `its set-reads is structurally bounded (per-parent, per-org config, id-batch, recent-N ` +
+        `display, closed lookup, or always paged). Do NOT rubber-stamp:\n` + offenders.join("\n"),
+    ).toEqual([]);
+  });
+
+  it("COVERAGE_REVIEWED has no stale entries (every reviewed table still has a set-read and is not policed)", () => {
+    const byTable = tablesWithSetReads(files);
+    const stale: string[] = [];
+    for (const table of Object.keys(COVERAGE_REVIEWED)) {
+      if (HIGH_VALUE_TABLES.has(table)) {
+        stale.push(`${table} — now POLICED; remove its COVERAGE_REVIEWED entry (a table must be in exactly one)`);
+      } else if (!byTable.has(table)) {
+        stale.push(`${table} — no set-read found any more; remove its stale COVERAGE_REVIEWED entry`);
+      }
+    }
+    expect(stale, `COVERAGE_REVIEWED drift:\n${stale.join("\n")}`).toEqual([]);
+  });
+
+  // NON-VACUOUS PROOF: a NEW unpaged completeness-sensitive read on a previously
+  // unlisted table MUST fail this meta-guard. We synthesise that exact situation —
+  // a fresh table name that is neither policed nor reviewed — and assert the
+  // coverage check flags it. Delete the guard's gate and this goes green, so the
+  // teeth are real, not decorative.
+  it("has TEETH: a set-read on a brand-new UNLISTED table is flagged", () => {
+    const synthetic = new Map<string, string[]>([
+      ["a_brand_new_ledger_2099", ["server/services/new-thing.ts:42"]],
+    ]);
+    const flagged = coverageOffenders(synthetic);
+    expect(flagged.some((o) => o.includes("a_brand_new_ledger_2099"))).toBe(true);
+  });
+
+  it("does NOT flag a policed table or a reviewed table", () => {
+    const ok = new Map<string, string[]>([
+      ["invoices", ["x.ts:1"]], // policed
+      ["blueprints", ["y.ts:1"]], // reviewed (PER-PARENT)
+    ]);
+    expect(coverageOffenders(ok)).toEqual([]);
   });
 });

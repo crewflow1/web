@@ -250,10 +250,18 @@ export async function buildAlertsSnapshot(): Promise<AlertsSnapshotResult> {
 
   // 5. Demo requests — pull rows linked to known orgs OR recently
   // booked. We keep the column set small.
-  const demoRes = await untypedAdminTable("demo_requests")
-    .select("id, org_id, email, company, status, created_at, updated_at")
-    .in("org_id", orgIds)
-    .order("updated_at", { ascending: false });
+  // PAGED (F-1): `orgIds` is the estate roster, so this cross-tenant demo read
+  // returns up to one row per estate org and a bare select clamped at max_rows
+  // (1000) would silently drop demos past the cap from the alerts board. Page it.
+  const demoRes = await fetchAllRows<DemoRow>(
+    (from, to) =>
+      untypedAdminTable("demo_requests")
+        .select("id, org_id, email, company, status, created_at, updated_at")
+        .in("org_id", orgIds)
+        .order("updated_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<DemoRow>>,
+  );
   if (demoRes.error) throw readFailure("hq alerts: demo requests", demoRes.error);
   const demosRaw = (demoRes.data ?? []) as unknown as DemoRow[];
 
@@ -327,17 +335,33 @@ export type OwnerContact = {
   phone: string | null;
 };
 
+type OwnerContactPageRow = {
+  org_id: string;
+  user_id: string | null;
+  user?: { full_name?: string | null; email?: string | null; phone?: string | null } | null;
+};
+
 export async function getOwnerContactsForOrgs(
   orgIds: ReadonlyArray<string>,
 ): Promise<Map<string, OwnerContact>> {
   const out = new Map<string, OwnerContact>();
   if (orgIds.length === 0) return out;
   const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("memberships")
-    .select("org_id, user_id, user:users ( full_name, email, phone )")
-    .in("org_id", orgIds as string[])
-    .eq("role", "owner");
+  // PAGED (F-1): `orgIds` is the distinct set of orgs across every estate alert
+  // row, so this cross-tenant owner read returns ~1 row per org and can exceed
+  // max_rows (1000) once the estate crosses 1000 alerting orgs. A bare select
+  // would then silently drop the owner contact for the overflow orgs from the
+  // action row. Page the complete set on the unique `user_id` order.
+  const { data, error } = await fetchAllRows<OwnerContactPageRow>(
+    (from, to) =>
+      admin
+        .from("memberships")
+        .select("org_id, user_id, user:users ( full_name, email, phone )")
+        .in("org_id", orgIds as string[])
+        .eq("role", "owner")
+        .order("user_id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<OwnerContactPageRow>>,
+  );
   // Enrichment only (the Call/Email/WhatsApp buttons). The alert rows are
   // already built at this point, so a failure here degrades the action row
   // rather than blanking the board — but it must still reach Sentry.
@@ -346,12 +370,7 @@ export async function getOwnerContactsForOrgs(
     return out;
   }
   if (!data) return out;
-  type Row = {
-    org_id: string;
-    user_id: string | null;
-    user?: { full_name?: string | null; email?: string | null; phone?: string | null } | null;
-  };
-  for (const r of data as unknown as Row[]) {
+  for (const r of data as unknown as OwnerContactPageRow[]) {
     out.set(r.org_id, {
       org_id: r.org_id,
       user_id: r.user_id,

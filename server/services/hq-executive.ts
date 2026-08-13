@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { computeMetrics } from "@/lib/hq/metrics";
 import { buildHqSnapshot } from "@/server/services/hq-snapshot";
 import { getAiTaskCounts } from "@/server/services/hq-sales";
@@ -53,6 +54,8 @@ interface Q<T> extends PromiseLike<{
   in(column: string, values: ReadonlyArray<unknown>): Q<T>;
   not(column: string, operator: string, value: unknown): Q<T>;
   limit(count: number): Q<T>;
+  order(column: string, opts: { ascending: boolean }): Q<T>;
+  range(from: number, to: number): PromiseLike<{ data: T[] | null; count: number | null; error: DbError }>;
 }
 
 function q<T>(admin: AdminClient, name: string): Q<T> {
@@ -95,13 +98,21 @@ type CompanyAggregate = {
 async function loadCompanyAggregate(
   admin: AdminClient,
 ): Promise<CompanyAggregate> {
-  const { data, error } = await q<CompanyAggRow>(admin, "hq_sales_companies")
-    .select(
-      "status, estimated_deal_value_gbp, ai_qualification_score, last_researched_at",
-    )
-    .limit(1000);
+  // PAGED (F-1): the estate-wide pipeline is tallied by status and SUMMED into
+  // wonValueGbp below — the old `.limit(1000)` sat on the PostgREST max_rows
+  // boundary, so a >1000-company pipeline was silently truncated and the executive
+  // aggregate under-reported. Page the complete set.
+  const { data, error } = await fetchAllRows<CompanyAggRow>(
+    (from, to) =>
+      q<CompanyAggRow>(admin, "hq_sales_companies")
+        .select(
+          "status, estimated_deal_value_gbp, ai_qualification_score, last_researched_at",
+        )
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<CompanyAggRow>>,
+  );
   if (error) {
-    console.error("[hq-executive] company aggregate failed", error.message);
+    console.error("[hq-executive] company aggregate failed", (error as { message?: string })?.message);
   }
   const rows = (data ?? []) as CompanyAggRow[];
   const counts = tallyStatuses(rows);

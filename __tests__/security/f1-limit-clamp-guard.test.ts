@@ -132,6 +132,22 @@ const PRODUCER_TABLES = new Set<string>([
   "job_billing_plans",
   "job_billing_stages",
   "retention_releases",
+  // Portal completeness + payroll total-omission (C65 wave) — mirrors the
+  // bare-select guard's HIGH_VALUE_TABLES. site_reports / completion_certificates
+  // feed the customer-portal document list + the `{documents.length} total` count
+  // + the "Download all (zip)" X-Bulk-Total header (a sub-1000 cap under-reports
+  // the total and drops the customer's own docs); memberships drives the whole
+  // payroll run (one payroll_line per member — a cap gives overflow workers NO pay).
+  "site_reports",
+  "completion_certificates",
+  "memberships",
+  // C65 coverage-blind-spot wave — mirrors the bare-select guard's HIGH_VALUE_TABLES.
+  // demo_requests (estate funnel summed into HQ figures + admin boards) and
+  // hq_sales_companies (estate pipeline; old .limit(1000) sat on the boundary)
+  // were genuine cross-tenant truncations surfaced by the coverage meta-guard and
+  // are now PAGED, not capped.
+  "demo_requests",
+  "hq_sales_companies",
 ]);
 
 /** "file:line" → reason. Only GENUINELY-bounded top-1000 samples belong here.
@@ -272,6 +288,20 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // the HQ urgent/high/24h tiles + org-filter dropdown derive .length/distinct
   // from these capped reads, so a cap under-counted every one). Both are now
   // PAGED via fetchAllRows (.range), so neither carries a .limit or needs entry.
+
+  // ── C65 MEMBERSHIPS / SITE_REPORTS wave — capped reads surfaced once
+  //    memberships + site_reports joined PRODUCER_TABLES. Each is a genuinely
+  //    bounded DISPLAY sample, not a completeness/count/ZIP contributor (those —
+  //    listPortalReports/listPortalCertificates and createPayrollRun's members
+  //    read — were PAGED, not capped).
+  "app/api/search/route.ts:161":
+    "bounded: search members — .limit(40) command-palette DISPLAY hits, org-pinned (.eq('org_id')); a top-N result list, NOT fed to any count/sum. Same class as the other /api/search reads.",
+  "app/customer-portal/_photos.ts:107":
+    "bounded: recent-50 published reports for the portal PHOTO GALLERY (.eq('customer_id').eq('org_id')...order('portal_published_at' desc).limit(50)), further capped at MAX_PORTAL_PHOTOS extracted photos — a display gallery, NOT the documents-library count/ZIP (those use listPortalReports, now PAGED)",
+  "server/services/receptionist-operators.ts:42":
+    "bounded: ONE org's operators picker (.eq('org_id').limit(500)) — reassignment target list; bounded by the org's headcount (tens), never near the cap",
+  "server/services/hq-sales.ts:995":
+    "bounded: recent-8 sales companies (.order('created_at' desc).limit(8)) — a top-N DISPLAY facet on the HQ sales dashboard, NOT summed/counted (the estate aggregates hq-executive/hq-sales-orchestrator are PAGED). Surfaced once hq_sales_companies joined PRODUCER_TABLES in the C65 coverage wave.",
 };
 
 /** Strip block + line comments so historical `.limit(...)` mentions in prose

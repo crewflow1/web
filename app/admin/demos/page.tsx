@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { listAdminActivity } from "@/server/services/hq-audit";
 import { DemosBoard } from "./_board";
 import { DemosFilters } from "./_filters";
@@ -38,12 +39,21 @@ export default async function DemosPage({ searchParams }: { searchParams: SP }) 
   const sp = await searchParams;
   const admin = createAdminClient();
 
-  const { data: rawDemos, error: demosError } = await admin
-    .from("demo_requests")
-    .select(
-      "id, name, company, email, phone, status, employees, turnover_range, current_systems, preferred_demo_time, notes, source, created_at" as never,
-    )
-    .order("created_at", { ascending: false });
+  // PAGED (F-1): the admin demos board is the COMPLETE estate-wide demo list — a
+  // bare select clamped at max_rows (1000) would silently drop the oldest demos
+  // from the board once the estate crosses 1000 requests. Page on a stable unique
+  // order (created_at desc, id asc).
+  const { data: rawDemos, error: demosError } = await fetchAllRows<DemoRow>(
+    (from, to) =>
+      admin
+        .from("demo_requests")
+        .select(
+          "id, name, company, email, phone, status, employees, turnover_range, current_systems, preferred_demo_time, notes, source, created_at" as never,
+        )
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<DemoRow>>,
+  );
   if (demosError) {
     throw readFailure("admin demos board: demo_requests", demosError);
   }
