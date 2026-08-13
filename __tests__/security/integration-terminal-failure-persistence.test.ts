@@ -73,9 +73,14 @@ describe("telematics-sync persists a TERMINAL auth failure as status='error' (GA
     expect(sync).toMatch(STATUS_ERROR);
     expect(sync).toMatch(/terminal/);
   });
-  it("markSynced self-heals (restores status='connected', clears last_error)", () => {
+  it("markSynced self-heals (restores status='connected', clears last_error on a healthy pass)", () => {
     expect(sync).toMatch(/status:\s*"connected"/);
-    expect(sync).toMatch(/last_error:\s*null/);
+    // markSynced writes last_error from its `note` param, which DEFAULTS to null —
+    // so a healthy pass (note omitted/null) clears last_error, while a NON-TERMINAL
+    // zero-resolved diagnostic stamps a note WITHOUT going terminal (status stays
+    // 'connected'). Both invariants are pinned here.
+    expect(sync).toMatch(/note:\s*string\s*\|\s*null\s*=\s*null/);
+    expect(sync).toMatch(/last_error:\s*note/);
   });
   it("the oauth refresh flags a dead grant (400/401/403) as terminal", () => {
     expect(oauth).toMatch(/terminal/);

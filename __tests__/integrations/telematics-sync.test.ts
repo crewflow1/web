@@ -63,12 +63,17 @@ type Conn = {
 
 type Vehicle = { asset_id: string; vin: string | null; odometer_miles?: number | null };
 
+/** An `assets` row projection: registration lives on the parent asset. */
+type Asset = { id: string; registration: string | null };
+
 type Upsert = { rows: Record<string, unknown>[]; opts: Record<string, unknown> };
 
 /** A minimal chainable mock of the service-role builder this service uses. */
 function makeDb(opts: {
   connections: Conn[];
   vehicles: Vehicle[];
+  /** Parent `assets` rows (registration source), keyed by fleet asset_id. */
+  assets?: Asset[];
   readingCounts?: number[];
   /**
    * Optional bespoke handler for a telematics_readings upsert (per statement). Used
@@ -119,6 +124,11 @@ function makeDb(opts: {
         return {
           select: () => selectChain(opts.vehicles),
           update: (row: Record<string, unknown>) => updateChain(row),
+        };
+      }
+      if (table === "assets") {
+        return {
+          select: () => selectChain(opts.assets ?? []),
         };
       }
       if (table === "telematics_readings") {
@@ -257,6 +267,144 @@ describe("runTelematicsSync — fetch → readings write", () => {
     expect(summary.outcomes[0]!.outcome).toBe("empty");
     // The write was still ATTEMPTED with the idempotent contract.
     expect(db.upserts[0]!.opts.ignoreDuplicates).toBe(true);
+  });
+});
+
+describe("runTelematicsSync — registration fallback + zero-resolved diagnostic (C69)", () => {
+  const statusWrites = (updates: Record<string, unknown>[], v: string) =>
+    updates.filter((u) => u.status === v);
+
+  it("(a) a REGISTRATION-only vehicle (vin null) resolves via the plate and readings LAND", async () => {
+    connectableEnv();
+    const db = makeDb({
+      connections: [
+        {
+          id: CONN_A,
+          org_id: ORG_A,
+          provider: "samsara",
+          external_account_id: "samsara-org-9",
+          access_token: encryptToken("live-access-token"),
+          refresh_token: null,
+          token_expires_at: null,
+          last_sync_at: null,
+        },
+      ],
+      // The fleet vehicle carries NO vin — the typical UK-trades tenant.
+      vehicles: [{ asset_id: VEH_A, vin: null }],
+      // Registration lives on the parent asset, stored space-stripped/upper.
+      assets: [{ id: VEH_A, registration: "AB12CDE" }],
+    });
+    admin.client = db.client;
+
+    // Samsara reports the plate (with a space) and no VIN.
+    const REG_STAT = {
+      id: "sam-reg-1",
+      externalIds: null,
+      licensePlate: "AB12 CDE",
+      gps: { latitude: 51.5074, longitude: -0.1278, time: "2026-07-15T09:30:00Z" },
+      obdOdometerMeters: { time: "2026-07-15T09:30:00Z", value: 1609344 },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ data: [REG_STAT] }), { status: 200 })),
+    );
+
+    const summary = await runTelematicsSync();
+
+    // Pre-fix: VIN-only resolution → 0 resolved → 0 written. Post-fix: the plate
+    // resolves via the byReg index and the reading lands.
+    expect(summary.written).toBe(1);
+    expect(db.upserts).toHaveLength(1);
+    const row = db.upserts[0]!.rows[0]!;
+    expect(row.vehicle_id).toBe(VEH_A);
+    expect(row.org_id).toBe(ORG_A);
+    expect(row.source_event_id).toBe("sam-reg-1:2026-07-15T09:30:00Z");
+    expect(summary.outcomes[0]!.outcome).toBe("written");
+    // Clean self-heal: connected + last_error cleared.
+    const synced = db.updates.find((u) => "last_sync_at" in u);
+    expect(synced!.status).toBe("connected");
+    expect(synced!.last_error).toBeNull();
+  });
+
+  it("(c) connected + N fetched + 0 resolved writes a NON-TERMINAL warn (not silent 'empty', not terminal)", async () => {
+    connectableEnv();
+    const db = makeDb({
+      connections: [
+        {
+          id: CONN_A,
+          org_id: ORG_A,
+          provider: "samsara",
+          external_account_id: "samsara-org-9",
+          access_token: encryptToken("live-access-token"),
+          refresh_token: null,
+          token_expires_at: null,
+          last_sync_at: null,
+        },
+      ],
+      // The org has a vehicle, but it shares NO identifier with the fetched sample.
+      vehicles: [{ asset_id: VEH_A, vin: "VIN-DIFFERENT" }],
+      assets: [{ id: VEH_A, registration: "ZZ99ZZZ" }],
+    });
+    admin.client = db.client;
+
+    // Samsara returns a vehicle whose VIN/plate match nothing in the fleet.
+    const UNMATCHED = {
+      id: "sam-unknown",
+      externalIds: { "samsara.vin": "NOTINFLEET1234567" },
+      licensePlate: "XX00 XXX",
+      gps: { latitude: 51.5, longitude: -0.1, time: "2026-07-15T09:30:00Z" },
+      obdOdometerMeters: { time: "2026-07-15T09:30:00Z", value: 1609344 },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ data: [UNMATCHED] }), { status: 200 })),
+    );
+
+    const summary = await runTelematicsSync();
+
+    // Nothing written, but this is DISTINCT from an honest empty fleet.
+    expect(summary.written).toBe(0);
+    expect(summary.outcomes[0]!.outcome).toBe("empty_unresolved");
+    // NON-TERMINAL: status stays connected, and last_error carries the diagnostic
+    // so an operator sees activation is wired but the fleet data needs a VIN/reg.
+    const stamp = db.updates.find((u) => "last_sync_at" in u);
+    expect(stamp!.status).toBe("connected");
+    expect(String(stamp!.last_error)).toContain(
+      "no fetched vehicles matched a fleet VIN/registration",
+    );
+    // NOT terminal — the connection is never flipped to 'error'.
+    expect(statusWrites(db.updates, "error")).toHaveLength(0);
+  });
+
+  it("an honestly EMPTY fleet feed (0 fetched) stays a plain 'empty' with last_error cleared", async () => {
+    connectableEnv();
+    const db = makeDb({
+      connections: [
+        {
+          id: CONN_A,
+          org_id: ORG_A,
+          provider: "samsara",
+          external_account_id: "samsara-org-9",
+          access_token: encryptToken("live-access-token"),
+          refresh_token: null,
+          token_expires_at: null,
+          last_sync_at: null,
+        },
+      ],
+      vehicles: [{ asset_id: VEH_A, vin: "VIN123" }],
+    });
+    admin.client = db.client;
+    // Provider returns zero vehicles — a genuinely empty snapshot, not a mismatch.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 })),
+    );
+
+    const summary = await runTelematicsSync();
+    expect(summary.outcomes[0]!.outcome).toBe("empty");
+    const stamp = db.updates.find((u) => "last_sync_at" in u);
+    expect(stamp!.status).toBe("connected");
+    expect(stamp!.last_error).toBeNull();
   });
 });
 

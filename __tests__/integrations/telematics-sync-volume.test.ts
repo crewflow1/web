@@ -38,7 +38,11 @@ const KEY_B64 = Buffer.alloc(32, 7).toString("base64");
 type Upsert = { rows: Row[]; opts: Record<string, unknown> };
 
 /** A cap-emulating service-role builder: every read is clamped to 1000 rows. */
-function makeDb(tables: { telematics_connections: Row[]; fleet_vehicles: Row[] }) {
+function makeDb(tables: {
+  telematics_connections: Row[];
+  fleet_vehicles: Row[];
+  assets?: Row[];
+}) {
   const upserts: Upsert[] = [];
   const updates: Row[] = [];
 
@@ -90,6 +94,9 @@ function makeDb(tables: { telematics_connections: Row[]; fleet_vehicles: Row[] }
       }
       if (table === "fleet_vehicles") {
         return { select: () => selectBuilder(tables.fleet_vehicles), update: (r: Row) => updateChain(r) };
+      }
+      if (table === "assets") {
+        return { select: () => selectBuilder(tables.assets ?? []) };
       }
       if (table === "telematics_readings") {
         return {
