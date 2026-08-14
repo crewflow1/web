@@ -238,6 +238,53 @@ function receiverIsAdmin(src: string, dotIdx: number, admins: Set<string>): bool
   return admins.has(ident);
 }
 
+/**
+ * Local `.from(...)` helper-wrapper resolution (the const-t=(name)=>from(name)
+ * blind spot). Some route handlers avoid the dynamic-table cast noise with a
+ * tiny local wrapper:
+ *
+ *     const t = (name: string) => (supabase as unknown as {…}).from(name);
+ *     const { data } = await t("toolbox_talks").select(…).eq("id", id).maybeSingle();
+ *
+ * Here the read never spells `.from("<literal>")` — the table name is the wrapper
+ * ARGUMENT and `t("toolbox_talks")` is not a `.from(...)` call — so `fromRe` below
+ * never sees it and the by-id read slips the guard entirely (the exact hole that
+ * let toolbox-talks/[id]/pdf leak another of the viewer's orgs' evidence PDFs).
+ *
+ * This resolver finds each local declaration of the form
+ * `const <fn> = (<arg>[: T]) => <expr>.from(<arg>)` (tight: the arrow body MUST
+ * contain `.from(<arg>)`, so an unrelated single-arg local function is never
+ * treated as a table wrapper), and records the wrapper name plus whether its
+ * underlying `.from` receiver is the service-role client (out of scope, like any
+ * other admin read). Call sites `<fn>("<literal>")` are then treated as
+ * `.from("<literal>")` for table-matching — mirroring the cast-wrapper handling
+ * already in readChain, so the WHOLE scanned surface is covered, not one file.
+ */
+type FromWrapper = { isAdmin: boolean };
+function findFromWrappers(src: string, admins: Set<string>): Map<string, FromWrapper> {
+  const wrappers = new Map<string, FromWrapper>();
+  const declRe =
+    /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(\s*([A-Za-z_$][\w$]*)\s*(?::[^)]*?)?\)\s*=>/g;
+  let m: RegExpExecArray | null;
+  while ((m = declRe.exec(src))) {
+    const fn = m[1];
+    const arg = m[2];
+    if (!fn || !arg) continue;
+    const bodyStart = declRe.lastIndex;
+    // The arrow body must actually call `.from(<arg>)` — otherwise this is just
+    // some other one-parameter local function, not a table wrapper.
+    const fromArgRe = new RegExp("\\.\\s*from\\s*\\(\\s*" + arg + "\\s*\\)", "g");
+    fromArgRe.lastIndex = bodyStart;
+    const fm = fromArgRe.exec(src);
+    if (!fm) continue;
+    // Keep it to the same statement (a body is a short expression); a far-away
+    // `.from(<arg>)` belongs to a different construct.
+    if (fm.index - bodyStart > 400) continue;
+    wrappers.set(fn, { isAdmin: receiverIsAdmin(src, fm.index, admins) });
+  }
+  return wrappers;
+}
+
 const HAS_ID = /\.\s*eq\s*\(\s*["']id["']/;
 const HAS_ORG = /\.\s*eq\s*\(\s*["']org_id["']/;
 const IS_WRITE = /\.\s*(?:update|delete|insert|upsert)\s*\(/;
@@ -295,6 +342,39 @@ export function findReadOffendersInSource(
       key: `${rel}::${table}::${idArgOf(chain)}`,
       chain: chain.replace(/\s+/g, " ").slice(0, 200),
     });
+  }
+
+  // Local `.from(...)` helper-wrapper call sites: `t("<literal>").select(…)…`
+  // where `const t = (name) => (…).from(name)`. These carry no `.from("<literal>")`
+  // of their own, so the loop above never sees them; resolve the wrapper and
+  // treat each `t("<literal>")` as a `.from("<literal>")` read for table-matching.
+  const wrappers = findFromWrappers(src, admins);
+  for (const [fn, info] of wrappers) {
+    if (info.isAdmin) continue; // wrapper wraps the service-role client → out of scope
+    const callRe = new RegExp(
+      "(?<![A-Za-z0-9_$.])" + fn + "\\s*\\(\\s*[\"']([a-z_][a-z0-9_]*)[\"']\\s*\\)",
+      "g",
+    );
+    let cm: RegExpExecArray | null;
+    while ((cm = callRe.exec(src))) {
+      const table = cm[1] ?? "";
+      if (!table || !orgTables.has(table)) continue;
+      // Chain = the wrapper call plus the `.select()…` fluent tail hanging off it.
+      let n = cm.index + cm[0].length;
+      while (n < src.length && /\s/.test(src.charAt(n))) n++;
+      const chain =
+        src.charAt(n) === "." ? src.slice(cm.index, consumeChain(src, n)) : cm[0];
+      if (!TERMINAL.test(chain)) continue; // single-row reads only
+      if (IS_WRITE.test(chain)) continue; // write (owned by the write-pin guard)
+      if (!HAS_ID.test(chain)) continue; // by-id subject reads only
+      if (HAS_ORG.test(chain)) continue; // already pinned in-statement → safe
+      out.push({
+        rel,
+        table,
+        key: `${rel}::${table}::${idArgOf(chain)}`,
+        chain: chain.replace(/\s+/g, " ").slice(0, 200),
+      });
+    }
   }
   return out;
 }
@@ -526,6 +606,42 @@ describe("active-org read-pin guard · detector calibration (synthetic)", () => 
     expect(found[0]?.table).toBe("expense_drafts");
   });
 
+  it("FLAGS a by-id tenant read via the const-t=(name)=>from(name) wrapper (no org pin)", () => {
+    // The toolbox-talks/[id]/pdf blind spot: the table name is the wrapper ARG,
+    // and t("quotes") is not a `.from(...)` call, so the plain fromRe never sees it.
+    const bad =
+      'const supabase = await createClient();\n' +
+      'const t = (name: string) => (supabase as unknown as { from: (t: string) => any }).from(name);\n' +
+      'const { data } = await t("quotes").select("id, total").eq("id", id).maybeSingle();';
+    const found = findReadOffendersInSource("fixture.ts", bad, org);
+    expect(found).toHaveLength(1);
+    expect(found[0]?.table).toBe("quotes");
+  });
+
+  it("PASSES the wrapper read once the active-org pin is chained in-statement", () => {
+    const good =
+      'const t = (name: string) => (supabase as unknown as { from: (t: string) => any }).from(name);\n' +
+      'await t("quotes").select("id").eq("id", id).eq("org_id", ctx.org.id).maybeSingle();';
+    expect(findReadOffendersInSource("fixture.ts", good, org)).toHaveLength(0);
+  });
+
+  it("does NOT treat an unrelated single-arg local function as a table wrapper", () => {
+    // The arrow body carries no `.from(<arg>)`, so it must never be resolved as a
+    // wrapper (guarding against false positives on ordinary helpers).
+    const benign =
+      'const load = (key: string) => cache.get(key);\n' +
+      'const x = load("quotes");';
+    expect(findReadOffendersInSource("fixture.ts", benign, org)).toHaveLength(0);
+  });
+
+  it("treats a wrapper over the SERVICE-ROLE client as out of scope", () => {
+    const admin =
+      'const a = createAdminClient();\n' +
+      'const t = (name: string) => a.from(name);\n' +
+      'await t("quotes").select("id").eq("id", id).maybeSingle();';
+    expect(findReadOffendersInSource("fixture.ts", admin, org)).toHaveLength(0);
+  });
+
   it("PASSES a read on the SERVICE-ROLE client (out of scope)", () => {
     const admin =
       'const admin = createAdminClient();\n' +
@@ -614,6 +730,22 @@ describe("active-org read-pin guard · every dynamic detail route is swept", () 
         `${rel}: with the org pin stripped the detector must flag the ${table} by-id read`,
       ).toBe(true);
     }
+  });
+
+  it("RED-calibration: stripping the pin from the toolbox-talks PDF route re-flags its const-t=(name)=>from(name) wrapper read", () => {
+    // The helper-wrapper blind spot the C71 wave found: the by-id read runs through
+    // a local `const t = (name) => (…).from(name)` wrapper, so the plain `.from(
+    // "<literal>")` scan never saw it. This proves the wrapper resolver genuinely
+    // reaches this handler and is not vacuous: remove the in-statement
+    // `.eq("org_id", …)` and the toolbox_talks by-id read becomes an offender again.
+    const rel = "app/api/health-safety/toolbox-talks/[id]/pdf/route.ts";
+    const raw = readFileSync(join(ROOT, rel), "utf8");
+    const stripped = raw.replace(/\.eq\(\s*["']org_id["'][^)]*\)/g, "");
+    const found = findReadOffendersInSource(rel, stripped, orgTables);
+    expect(
+      found.some((o) => o.table === "toolbox_talks"),
+      `${rel}: with the org pin stripped the detector must flag the toolbox_talks by-id wrapper read`,
+    ).toBe(true);
   });
 
   it("every by-id tenant single-row read on an org-scoped table is pinned or allowlisted", () => {

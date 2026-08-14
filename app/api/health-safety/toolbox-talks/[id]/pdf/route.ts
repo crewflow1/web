@@ -16,7 +16,12 @@ import type { ToolboxTalkSnapshot } from "@/lib/toolbox-talks/snapshot";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: NextRequest, { params }: Ctx) {
-  await requireOrgContext(); // auth gate; content is scoped by RLS + the subject's own org
+  // Auth gate AND scope: RLS admits EVERY org the viewer belongs to, so the
+  // subject must be pinned to the ACTIVE org here. Without the in-statement
+  // .eq("org_id", ctx.org.id) below, a multi-org member active in org A could
+  // GET org B's talk PDF (its RLS row is visible to them). Mirrors the sibling
+  // permits/[id]/pdf route, which pins via getPermit(ctx.org.id, id).
+  const { ctx } = await requireOrgContext();
   const { id } = await params;
   const supabase = await createClient();
   const t = (name: string) => (supabase as unknown as { from: (t: string) => any }).from(name); // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -24,6 +29,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   const { data: talk, error: talkError } = await t("toolbox_talks")
     .select("id, org_id, status, snapshot")
     .eq("id", id)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (talkError) {
     return NextResponse.json({ error: "query_failed" }, { status: 500 });
