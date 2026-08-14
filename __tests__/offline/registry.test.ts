@@ -36,6 +36,13 @@ const expansion2Migration = readFileSync(
   join(root, "supabase/migrations/20261101000000_offline_write_expansion_2.sql"),
   "utf8",
 );
+const conflictMigration = readFileSync(
+  join(
+    root,
+    "supabase/migrations/20261129000000_offline_write_conflict_resolution.sql",
+  ),
+  "utf8",
+);
 
 /**
  * kind → (table with the DB idempotency gate, the migration that opened it,
@@ -57,10 +64,36 @@ const GATES: Record<
       notes: "n",
     },
   },
+  "site_diary.update": {
+    table: "site_diary_entries",
+    migration: foundationMigration,
+    validPayload: {
+      id: "11111111-1111-4111-8111-111111111111",
+      entry_date: "2026-07-30",
+      weather: "wet",
+      labour_count: "3",
+      work_summary: "w",
+      delays: "d",
+      notes: "n",
+    },
+  },
   "snag.create": {
     table: "snags",
     migration: expansionMigration,
     validPayload: {
+      title: "Cracked tile in the ensuite",
+      description: "Replace and re-seal",
+      location: "Plot 4 ensuite",
+      trade: "Tiling",
+      priority: "high",
+      due_date: "2026-08-07",
+    },
+  },
+  "snag.update": {
+    table: "snags",
+    migration: expansionMigration,
+    validPayload: {
+      id: "11111111-1111-4111-8111-111111111111",
       title: "Cracked tile in the ensuite",
       description: "Replace and re-seal",
       location: "Plot 4 ensuite",
@@ -115,7 +148,9 @@ describe("offline write registry — exactly the entities the product enabled", 
     // pinned attestation time — see the registry header).
     expect([...OFFLINE_WRITE_KINDS]).toEqual([
       "site_diary.create",
+      "site_diary.update",
       "snag.create",
+      "snag.update",
       "material_request.create",
       "delay_event.create",
       "site_report.create",
@@ -133,10 +168,28 @@ describe("offline write registry — exactly the entities the product enabled", 
     }
   });
 
-  it("no UPDATE or DELETE is enabled — the queue is append-only", () => {
+  it("only CREATE and (conflict-resolved) UPDATE are enabled — never DELETE", () => {
     for (const k of OFFLINE_WRITE_KINDS) {
-      expect(k).toMatch(/\.create$/);
-      expect(k).not.toMatch(/\.(update|delete|edit|patch)$/);
+      // Every kind is a create or an update; a delete can never be reconciled by a
+      // merge, so it is never offline-writable.
+      expect(k).toMatch(/\.(create|update)$/);
+      expect(k).not.toMatch(/\.(delete|remove|destroy)$/);
+    }
+  });
+
+  it("every UPDATE kind declares its owned merge fields (and no create does)", () => {
+    for (const kind of OFFLINE_WRITE_KINDS) {
+      const e = offlineWriteEntity(kind);
+      if (kind.endsWith(".update")) {
+        expect(e.mode, kind).toBe("update");
+        expect(e.mergeFields && e.mergeFields.length, kind).toBeGreaterThan(0);
+        // the merge set never includes the row identity or a lifecycle status
+        expect(e.mergeFields, kind).not.toContain("id");
+        expect(e.mergeFields, kind).not.toContain("status");
+      } else {
+        expect(e.mode, kind).toBe("create");
+        expect(e.mergeFields, kind).toBeUndefined();
+      }
     }
   });
 
@@ -146,8 +199,12 @@ describe("offline write registry — exactly the entities the product enabled", 
     expect(isOfflineWriteKind("material_request.create")).toBe(true);
     expect(isOfflineWriteKind("delay_event.create")).toBe(true);
     expect(isOfflineWriteKind("site_report.create")).toBe(true);
-    expect(isOfflineWriteKind("site_diary.update")).toBe(false);
-    expect(isOfflineWriteKind("snag.update")).toBe(false);
+    // UPDATE is now enabled for the two entities that carry a conflict policy.
+    expect(isOfflineWriteKind("site_diary.update")).toBe(true);
+    expect(isOfflineWriteKind("snag.update")).toBe(true);
+    // …but DELETE never is, nor a lifecycle transition.
+    expect(isOfflineWriteKind("site_diary.delete")).toBe(false);
+    expect(isOfflineWriteKind("snag.delete")).toBe(false);
     expect(isOfflineWriteKind("material_request.submit")).toBe(false);
     // the delay-event lifecycle transitions are NOT offline-writable
     expect(isOfflineWriteKind("delay_event.record")).toBe(false);
@@ -202,6 +259,29 @@ describe("offline write registry — no drift between the three gates", () => {
     }
   });
 
+  it("every UPDATE-enabled table gains the last_offline_write_key idempotency marker", () => {
+    // An offline UPDATE creates no new row, so the create's unique index cannot
+    // dedupe it — the conflict migration adds a per-row marker (20261129000000).
+    const updateTables = new Set(
+      OFFLINE_WRITE_KINDS.filter((k) => k.endsWith(".update")).map(
+        (k) => GATES[k].table,
+      ),
+    );
+    for (const table of updateTables) {
+      expect(conflictMigration, `${table}: last_offline_write_key column`).toMatch(
+        new RegExp(
+          `alter table public\\.${table}[\\s\\S]{0,700}last_offline_write_key uuid`,
+        ),
+      );
+    }
+    // and it adds no privileged write path (the whole security argument). Strip
+    // `--` comments first, or the prose ("NO SECURITY DEFINER") would match itself.
+    const sql = conflictMigration.replace(/--.*$/gm, "");
+    expect(sql).not.toMatch(/security definer/i);
+    expect(sql).not.toMatch(/create (or replace )?function/i);
+    expect(sql).not.toMatch(/create policy|drop policy|\bgrant\b/i);
+  });
+
   it("every registry entry is complete (schema, labels, recovery fields)", () => {
     for (const kind of OFFLINE_WRITE_KINDS) {
       const e = offlineWriteEntity(kind);
@@ -227,6 +307,31 @@ describe("offline write registry — the shared schemas are genuinely shared", (
   it("snag.create validates with the SAME schema the online action uses", async () => {
     const { createSnagSchema } = await import("@/lib/snags/schema");
     expect(OFFLINE_WRITE_REGISTRY["snag.create"].schema).toBe(createSnagSchema);
+  });
+
+  it("the UPDATE kinds validate with the SAME update schemas the online edits use", async () => {
+    const { updateDiaryEntrySchema } = await import("@/lib/site-diary/schema");
+    const { updateSnagSchema } = await import("@/lib/snags/schema");
+    expect(OFFLINE_WRITE_REGISTRY["site_diary.update"].schema).toBe(
+      updateDiaryEntrySchema,
+    );
+    expect(OFFLINE_WRITE_REGISTRY["snag.update"].schema).toBe(updateSnagSchema);
+    // an update schema REQUIRES the target id — a create schema must not accept one
+    expect(updateSnagSchema.safeParse({ title: "t" }).success).toBe(false);
+    expect(
+      updateSnagSchema.safeParse({
+        id: "11111111-1111-4111-8111-111111111111",
+        title: "t",
+      }).success,
+    ).toBe(true);
+    // a status can never ride an update (Zod strips it — lifecycle stays online)
+    const withStatus = updateSnagSchema.safeParse({
+      id: "11111111-1111-4111-8111-111111111111",
+      title: "t",
+      status: "verified",
+    });
+    expect(withStatus.success).toBe(true);
+    expect((withStatus as { data: object }).data).not.toHaveProperty("status");
   });
 
   it("material_request.create validates with the SAME schema the online action uses", async () => {

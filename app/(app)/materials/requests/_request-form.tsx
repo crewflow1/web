@@ -64,6 +64,8 @@ const ENQUEUE_ERROR: Record<EnqueueError, string> = {
   unsupported:
     "This browser can't save requests offline. Reconnect and send again — your list is still here.",
   unknown_kind: "This form can't be saved offline. Reconnect and send again.",
+  missing_base:
+    "This edit can't be saved offline right now — reconnect and save again. Your text is still here.",
   invalid_payload:
     "Check the materials and quantities above, then save again — nothing has been lost.",
   too_large:

@@ -1,6 +1,9 @@
 import { z } from "zod";
-import { createDiaryEntrySchema } from "@/lib/site-diary/schema";
-import { createSnagSchema } from "@/lib/snags/schema";
+import {
+  createDiaryEntrySchema,
+  updateDiaryEntrySchema,
+} from "@/lib/site-diary/schema";
+import { createSnagSchema, updateSnagSchema } from "@/lib/snags/schema";
 import { materialRequestFormSchema } from "@/lib/material-requests/schema";
 import { createDelayEventSchema } from "@/lib/eot/schema";
 import { createSiteReportSchema } from "@/lib/site-reports/schema";
@@ -88,14 +91,49 @@ import { createSiteReportSchema } from "@/lib/site-reports/schema";
  *                            honest offline artefact; a human completes and issues
  *                            it online.
  *
+ * ── ENABLED — UPDATEs, made safe by CONFLICT RESOLUTION ───────────────────────
+ * The earlier milestones deferred every offline UPDATE with one recurring reason:
+ * "replaying an update silently reverts an admin's concurrent change, and there is
+ * no conflict UI to ask with." There now IS one (lib/offline/merge.ts + the outbox
+ * conflict state), so the two updates that reason blocked are enabled — and ONLY
+ * those two, because a merge policy is only honest where the fields are owned,
+ * free-text/scalar, and carry no server-pinned provenance or lifecycle:
+ *
+ *   site_diary.update        Amend a diary entry authored earlier. Each field is
+ *                            reconciled by a deterministic 3-way merge against the
+ *                            current server row (base = what the form was opened
+ *                            with, mine = the edit, theirs = the server now): a
+ *                            field only the foreman changed wins (last-writer-wins
+ *                            on owned fields); a field only the admin changed is
+ *                            kept; a field BOTH changed differently is surfaced as
+ *                            a conflict for the author to resolve, never silently
+ *                            overwritten. Idempotent via last_offline_write_key
+ *                            (migration 20261129000000) so a re-delivered update is
+ *                            recognised, not re-applied over its own version bump.
+ *
+ *   snag.update              The same, for a snag's owned free-text/scalar detail
+ *                            (title, description, location, trade, priority,
+ *                            job/assignee, due date). The STATUS lifecycle is NOT
+ *                            part of it — the update schema carries no status field,
+ *                            so 'fixed'/'verified' can never ride a queued edit
+ *                            (that lifecycle stays online, with its server-pinned
+ *                            resolved_at, for the toolbox-ack reason below).
+ *
+ * Both run through the SAME shared write core the online edit uses, on the tenant
+ * client, under the same RLS UPDATE policy — a queued update is not a special write.
+ * DELETE stays unenabled offline for every entity: a replayed delete cannot be
+ * merged (there is nothing to reconcile against a row someone may have deliberately
+ * kept), and a destructive replay is the one outcome the queue must never risk.
+ *
  * ── DELIBERATELY NOT ENABLED (and why) ────────────────────────────────────────
  * Everything else in the product stays READ-ONLY offline. The reasons are not
  * uniform, and that is the point — each needs its own product decision:
  *
- *   site_diary/snag update/delete  A row may have been edited or deleted by an
- *                               admin while the device was offline. Replaying an
- *                               update silently reverts their change; there is no
- *                               conflict UI in this milestone to ask with.
+ *   any .delete                 A destructive replay cannot be reconciled by a merge
+ *                               and is never risked offline (see above).
+ *   snag status lifecycle       'fixed'/'verified' etc. stamp resolved_at server-
+ *                               side and carry lifecycle meaning; kept online with
+ *                               the material_request.submit / attestation reasoning.
  *   material_request.submit     Lifecycle transition with server-pinned
  *                               provenance + notification fan-out (see above).
  *   timesheets / time entries   PAYROLL. A replayed or duplicated time entry becomes
@@ -148,14 +186,28 @@ import { createSiteReportSchema } from "@/lib/site-reports/schema";
 /** Every kind the queue understands. Adding one here is step 2 of 3 (see header). */
 export const OFFLINE_WRITE_KINDS = [
   "site_diary.create",
+  "site_diary.update",
   "snag.create",
+  "snag.update",
   "material_request.create",
   "delay_event.create",
   "site_report.create",
 ] as const;
 export type OfflineWriteKind = (typeof OFFLINE_WRITE_KINDS)[number];
 
+/** create = append a new row; update = reconcile owned fields of an existing row. */
+export type OfflineWriteMode = "create" | "update";
+
 export type OfflineWriteEntity = {
+  /** Append a new row, or reconcile an existing one via the 3-way merge? */
+  readonly mode: OfflineWriteMode;
+  /**
+   * UPDATE kinds only: the owned columns an offline edit may touch, and the exact
+   * set the 3-way merge (lib/offline/merge.ts) reconciles field by field. Passing
+   * this explicitly is a security boundary — the merge never iterates arbitrary
+   * payload keys, so an edit can only ever change a column named here.
+   */
+  readonly mergeFields?: readonly string[];
   /** Human label for the outbox UI ("2 diary entries waiting to sync"). */
   readonly label: string;
   readonly labelPlural: string;
@@ -186,6 +238,7 @@ export const OFFLINE_WRITE_REGISTRY: Readonly<
   Record<OfflineWriteKind, OfflineWriteEntity>
 > = {
   "site_diary.create": {
+    mode: "create",
     label: "diary entry",
     labelPlural: "diary entries",
     viewHref: "/diary",
@@ -199,7 +252,34 @@ export const OFFLINE_WRITE_REGISTRY: Readonly<
       "notes",
     ],
   },
+  "site_diary.update": {
+    mode: "update",
+    label: "diary edit",
+    labelPlural: "diary edits",
+    viewHref: "/diary",
+    schema: updateDiaryEntrySchema,
+    // The owned columns a diary edit may touch — and the exact fields the merge
+    // reconciles. `id` is the target, not a mergeable field, so it is not listed.
+    mergeFields: [
+      "entry_date",
+      "job_id",
+      "weather",
+      "labour_count",
+      "work_summary",
+      "delays",
+      "notes",
+    ],
+    recoverFields: [
+      "entry_date",
+      "weather",
+      "labour_count",
+      "work_summary",
+      "delays",
+      "notes",
+    ],
+  },
   "snag.create": {
+    mode: "create",
     label: "snag",
     labelPlural: "snags",
     viewHref: "/snags",
@@ -213,7 +293,33 @@ export const OFFLINE_WRITE_REGISTRY: Readonly<
       "due_date",
     ],
   },
+  "snag.update": {
+    mode: "update",
+    label: "snag edit",
+    labelPlural: "snag edits",
+    viewHref: "/snags",
+    schema: updateSnagSchema,
+    mergeFields: [
+      "title",
+      "description",
+      "location",
+      "trade",
+      "priority",
+      "job_id",
+      "assigned_to",
+      "due_date",
+    ],
+    recoverFields: [
+      "title",
+      "description",
+      "location",
+      "trade",
+      "priority",
+      "due_date",
+    ],
+  },
   "material_request.create": {
+    mode: "create",
     label: "materials request",
     labelPlural: "materials requests",
     viewHref: "/materials/requests",
@@ -232,6 +338,7 @@ export const OFFLINE_WRITE_REGISTRY: Readonly<
     },
   },
   "delay_event.create": {
+    mode: "create",
     label: "delay event",
     labelPlural: "delay events",
     viewHref: "/delays",
@@ -247,6 +354,7 @@ export const OFFLINE_WRITE_REGISTRY: Readonly<
     ],
   },
   "site_report.create": {
+    mode: "create",
     label: "site report",
     labelPlural: "site reports",
     viewHref: "/site-reports",
@@ -270,6 +378,23 @@ export function isOfflineWriteKind(kind: unknown): kind is OfflineWriteKind {
 /** Registry lookup that cannot return undefined for a validated kind. */
 export function offlineWriteEntity(kind: OfflineWriteKind): OfflineWriteEntity {
   return OFFLINE_WRITE_REGISTRY[kind];
+}
+
+/** True for a kind that reconciles an existing row (needs a version anchor + merge). */
+export function isOfflineUpdateKind(kind: OfflineWriteKind): boolean {
+  return offlineWriteEntity(kind).mode === "update";
+}
+
+/**
+ * The owned columns an UPDATE kind may touch — the exact merge field set. Throws
+ * for a create kind (a create has no merge), so a caller cannot silently merge one.
+ */
+export function offlineMergeFields(kind: OfflineWriteKind): readonly string[] {
+  const e = offlineWriteEntity(kind);
+  if (e.mode !== "update" || !e.mergeFields) {
+    throw new Error(`offlineMergeFields called for non-update kind ${kind}`);
+  }
+  return e.mergeFields;
 }
 
 /** "2 diary entries" / "1 diary entry" — the outbox never says "2 diary entry". */
