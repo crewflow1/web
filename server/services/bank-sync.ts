@@ -87,6 +87,33 @@ const DEDUPE_IN_CHUNK = 100;
  */
 const RETRY_BACKOFF_MS = 30 * 60_000;
 
+/**
+ * Wall-clock budget (ms) for a SINGLE sync pass — the C39 fair-ordering/pass-budget
+ * class applied to the banking cron.
+ *
+ * The cron that drives `runBankSync` has maxDuration=60 (app/api/cron/bank-sync).
+ * A pass iterates connected orgs SEQUENTIALLY, and every org costs multiple external
+ * HTTP round-trips (TrueLayer proactive/reactive token refresh + /accounts + per-
+ * account /transactions), so a realistic pass clears only tens of orgs before the
+ * 60s function limit. Left unbounded, Vercel KILLS the loop mid-pass; combined with
+ * the old org_id-stable ordering, the SAME low-org_id head was re-serviced every
+ * 6-hourly tick while the identical tail was NEVER reached — those feeds silently
+ * never synced (status stayed 'connected', last_error null, last_sync_at frozen).
+ *
+ * This budget is the guard: the loop starts no org that could push the pass past the
+ * budget, stopping CLEANLY with headroom under maxDuration instead of being killed
+ * mid-org. Un-processed orgs are simply left for the next pass — never marked errored
+ * — and the last_sync_at fair ordering (see listConnected) guarantees they LEAD next
+ * time, so the tail can never be permanently starved.
+ */
+export const PASS_BUDGET_MS = 45_000;
+/**
+ * Headroom (ms) reserved for one org's work when deciding whether to start it. Keeps
+ * the pass from beginning an org it cannot finish before PASS_BUDGET_MS — the same
+ * "never start what you can't finish" discipline the webhook-dispatch pass uses.
+ */
+export const PER_ORG_BUDGET_MS = 5_000;
+
 export type BankSyncOutcome =
   | "mapped"
   | "no_new"
@@ -510,14 +537,31 @@ export function isDueForSync(conn: StoredBankConnection, now: number = Date.now(
  */
 export async function runBankSync(
   gateway: BankSyncGateway = createAdminGateway(),
+  opts: { now?: () => number; passBudgetMs?: number; perOrgBudgetMs?: number } = {},
 ): Promise<{ ran: boolean; provider: BankingProvider | null; results: BankSyncResult[] }> {
   const provider = resolveActiveBankingProvider();
   if (!provider || !bankingProviderReady(provider)) {
     return { ran: false, provider, results: [] };
   }
+  // `now`/budgets are injectable ONLY so the pass-budget can be exercised
+  // deterministically in tests; production always uses the real clock + constants.
+  const now = opts.now ?? Date.now;
+  const passBudgetMs = opts.passBudgetMs ?? PASS_BUDGET_MS;
+  const perOrgBudgetMs = opts.perOrgBudgetMs ?? PER_ORG_BUDGET_MS;
+  const startedAt = now();
+
+  // Fair ordering (listConnected sorts by last_sync_at, nulls-first) means the stalest
+  // + never-synced orgs LEAD this pass. Each successful sync advances last_sync_at,
+  // pushing that org to the back of the queue — so the orgs this budget cannot reach
+  // are exactly the ones that will lead the NEXT pass. No permanent tail starvation.
   const connections = await gateway.listConnected(provider);
   const results: BankSyncResult[] = [];
   for (const conn of connections) {
+    // PASS BUDGET: stop cleanly with headroom instead of being killed mid-org by the
+    // cron's maxDuration. Un-processed orgs are left untouched (NOT errored) for the
+    // next pass; the fair ordering guarantees they lead it. Checked at the top of the
+    // loop so an org is only STARTED when it can finish within the budget.
+    if (now() - startedAt + perOrgBudgetMs > passBudgetMs) break;
     // Skip a connection still inside its transient-error backoff window; it stays
     // 'connected' and becomes due again on a later tick (see isDueForSync).
     if (!isDueForSync(conn)) continue;
@@ -567,7 +611,16 @@ export function createAdminGateway(): BankSyncGateway {
     async listConnected(provider) {
       // F-1: the sync cron must process EVERY connected org. A single unpaginated
       // read is clamped to PostgREST max_rows (1000), silently skipping orgs
-      // beyond that; page the full set on a stable (org_id) order.
+      // beyond that; page the full set on a stable order.
+      //
+      // FAIR ORDERING (C70, the C39 class on the banking cron): order by last_sync_at
+      // ASC with NULLS FIRST, NOT by org_id. A pass has a wall-clock budget (see
+      // runBankSync) and clears only tens of orgs, so a tick-stable org_id order re-
+      // serviced the same low-org_id head every 6-hourly tick while the tail was never
+      // reached and silently never synced. last_sync_at is a success-only cursor that a
+      // successful sync pushes to `now`, so never-synced orgs (NULL) lead, then the
+      // stalest — sinking each just-synced org to the back of the queue. Ties (equal
+      // last_sync_at, e.g. many NULLs) resolve on org_id for a deterministic page.
       const { data, error } = await fetchAllRows<Record<string, unknown>>(
         (from, to) =>
           (
@@ -580,18 +633,24 @@ export function createAdminGateway(): BankSyncGateway {
               .eq("status", "connected") as unknown as {
               order: (
                 k: string,
-                o: { ascending: boolean },
+                o: { ascending: boolean; nullsFirst?: boolean },
               ) => {
-                range: (
-                  from: number,
-                  to: number,
-                ) => PromiseLike<{
-                  data: Record<string, unknown>[] | null;
-                  error: unknown;
-                }>;
+                order: (
+                  k: string,
+                  o: { ascending: boolean },
+                ) => {
+                  range: (
+                    from: number,
+                    to: number,
+                  ) => PromiseLike<{
+                    data: Record<string, unknown>[] | null;
+                    error: unknown;
+                  }>;
+                };
               };
             }
           )
+            .order("last_sync_at", { ascending: true, nullsFirst: true })
             .order("org_id", { ascending: true })
             .range(from, to),
       );
