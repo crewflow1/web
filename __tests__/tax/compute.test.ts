@@ -9,6 +9,10 @@ import {
   startOfTaxYearIso,
   type InvoicePaymentRow,
 } from "@/lib/tax/compute";
+import {
+  gatherVatQuarterInputs,
+  type VatInputsDb,
+} from "@/server/services/vat-quarter-inputs";
 
 /** A FULL payment of an invoice — the ledger sum equals the old full-amount path. */
 function fullPayment(
@@ -537,5 +541,220 @@ describe("startOfTaxYearIso", () => {
   it("uses the current April when date is on/after 6 April", () => {
     expect(startOfTaxYearIso(new Date("2026-04-06T00:00:00Z"))).toBe("2026-04-06");
     expect(startOfTaxYearIso(new Date("2026-05-20T00:00:00Z"))).toBe("2026-04-06");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// C73-A — the READ-LAYER guard (the de-vacuum). VAT-box reconciliation class,
+// sibling to C67/C68/C69.
+// ═══════════════════════════════════════════════════════════════════════════
+// WHY THE PURE-FN TESTS ABOVE ARE VACUOUS FOR THIS CLASS. Every test above hands
+// PRE-WINDOWED rows + a scalar `reverseChargeVat` to the pure function for ONE
+// quarter, so it can NEVER exercise the bug: the defect lives in the READ LAYER
+// (server/services/vat-quarter-inputs.ts), which windows the reverse-charge
+// notional VAT on ONE date column and box 7's net on ANOTHER. To exercise it we
+// must drive the real `gatherVatQuarterInputs` against a seeded DB over TWO
+// quarter windows and prove all of boxes 1, 4 AND 7 land in the SAME quarter.
+//
+// THE DEFECT (pre-fix). `gatherReverseChargeQuarter` windowed the RC notional VAT
+// on `supplier_payments.paid_at`, while the RC bill's NET (box 7) is windowed on
+// `finances.created_at` (the RC bill IS a finances row). A bill LOGGED in Q1 but
+// PAID in Q2 — a normal CIS payables flow — therefore SPLIT: Q1 got the box-7 net
+// with £0 in boxes 1/4; Q2 got the boxes-1/4 VAT with no box-7 net. The frozen
+// HMRC 9-box return no longer reconciled. The fix windows the RC VAT on the SAME
+// `finances.created_at` as box 7, so a single RC transaction stays in ONE quarter.
+describe("C73-A read-layer: reverse-charge boxes 1/4/7 reconcile in ONE quarter", () => {
+  // A minimal in-memory PostgREST double that honours the exact predicates the
+  // read layer uses (eq/gte/lt/is/in/order/range/thenable), filtering + paging a
+  // seeded table set — the same shape as __tests__/reports/aggregates.test.ts.
+  function makeDb(tables: Record<string, Array<Record<string, unknown>>>): VatInputsDb {
+    function makeBuilder(table: string) {
+      const eqs: Array<[string, unknown]> = [];
+      const gtes: Array<[string, unknown]> = [];
+      const lts: Array<[string, unknown]> = [];
+      const iss: Array<[string, unknown]> = [];
+      const ins: Array<[string, readonly unknown[]]> = [];
+      const orders: Array<[string, boolean]> = [];
+
+      const filteredOrdered = () => {
+        let rows = (tables[table] ?? []).filter((row) => {
+          for (const [c, v] of eqs) if (row[c] !== v) return false;
+          for (const [c, v] of gtes) {
+            if (row[c] == null) return false;
+            if (String(row[c]) < String(v)) return false;
+          }
+          for (const [c, v] of lts) {
+            if (row[c] == null) return false;
+            if (String(row[c]) >= String(v)) return false;
+          }
+          for (const [c, v] of iss) if ((row[c] ?? null) !== v) return false;
+          for (const [c, list] of ins) if (!list.includes(row[c])) return false;
+          return true;
+        });
+        for (let i = orders.length - 1; i >= 0; i--) {
+          const [c, asc] = orders[i]!;
+          rows = [...rows].sort((a, b) => {
+            const av = a[c] as string | number;
+            const bv = b[c] as string | number;
+            if (av === bv) return 0;
+            return (av < bv ? -1 : 1) * (asc ? 1 : -1);
+          });
+        }
+        return rows;
+      };
+
+      const builder: Record<string, unknown> = {
+        select: () => builder,
+        eq: (c: string, v: unknown) => (eqs.push([c, v]), builder),
+        gte: (c: string, v: unknown) => (gtes.push([c, v]), builder),
+        lt: (c: string, v: unknown) => (lts.push([c, v]), builder),
+        is: (c: string, v: unknown) => (iss.push([c, v]), builder),
+        in: (c: string, list: readonly unknown[]) => (ins.push([c, list]), builder),
+        order: (c: string, o?: { ascending?: boolean }) =>
+          (orders.push([c, o?.ascending !== false]), builder),
+        range: (from: number, to: number) =>
+          Promise.resolve({ data: filteredOrdered().slice(from, to + 1), error: null }),
+        then: (onF: (v: { data: unknown[]; error: null }) => unknown) =>
+          onF({ data: filteredOrdered(), error: null }),
+      };
+      return builder;
+    }
+    return { from: (t: string) => makeBuilder(t) } as unknown as VatInputsDb;
+  }
+
+  const ORG = "org-1";
+  const Q1_START = "2026-04-01";
+  const Q1_END = "2026-07-01"; // exclusive
+  const Q2_START = "2026-07-01";
+  const Q2_END = "2026-10-01"; // exclusive
+
+  // A CIS domestic reverse-charge BILL logged in Q1 (finances.created_at) and
+  // PAID in Q2 (supplier_payments.paid_at) — the exact cross-quarter payables flow.
+  // Net £1,500, notional VAT £300, no VAT charged by the supplier (vat_total 0).
+  function seed() {
+    return {
+      finances: [
+        {
+          id: "fin-rc",
+          org_id: ORG,
+          vat_total: 0,
+          amount: 1500,
+          created_at: "2026-05-10T09:00:00.000Z", // Q1
+        },
+      ],
+      supplier_payments: [
+        { id: "sp-1", org_id: ORG, voided_at: null, paid_at: "2026-08-20" }, // Q2
+      ],
+      supplier_payment_allocations: [
+        {
+          id: "spa-1",
+          org_id: ORG,
+          payment_id: "sp-1",
+          finance_id: "fin-rc",
+          amount: 1500,
+          cis_reverse_charge_vat: 300,
+          cis_vat_treatment: "reverse_charge",
+        },
+      ],
+    };
+  }
+
+  it("puts boxes 1, 4 AND 7 in the BILL's quarter (Q1); Q2 shows none of them", async () => {
+    const tables = seed();
+    const db = makeDb(tables);
+    const financeRows = tables.finances.map((f) => ({
+      vat_total: f.vat_total as number,
+      amount: f.amount as number,
+      created_at: f.created_at as string,
+    }));
+
+    // ── Q1 (the bill's quarter) — all three boxes present ────────────────────
+    const q1Inputs = await gatherVatQuarterInputs(db, ORG, Q1_START, Q1_END);
+    expect(q1Inputs.reverseCharge.vat).toBe(300); // RC VAT windowed on the bill's created_at
+    const q1Vat = computeVatQuarter(
+      q1Inputs.invoicePayments,
+      financeRows,
+      Q1_START,
+      Q1_END,
+      q1Inputs.reverseCharge.vat,
+    );
+    const q1Net = computeVatNetTotals(q1Inputs.invoicePayments, financeRows, Q1_START, Q1_END);
+    expect(q1Vat.output_vat).toBe(300); // box 1
+    expect(q1Vat.input_vat).toBe(300); // box 4 (net-neutral)
+    expect(q1Vat.net_payable).toBe(0); // box 5 stays neutral
+    expect(q1Net.totalValuePurchasesExVAT).toBe(1500); // box 7 net
+
+    // ── Q2 (the payment's quarter) — none of the three boxes ─────────────────
+    const q2Inputs = await gatherVatQuarterInputs(makeDb(seed()), ORG, Q2_START, Q2_END);
+    expect(q2Inputs.reverseCharge.vat).toBe(0); // NOT keyed off paid_at any more
+    const q2Vat = computeVatQuarter(
+      q2Inputs.invoicePayments,
+      financeRows,
+      Q2_START,
+      Q2_END,
+      q2Inputs.reverseCharge.vat,
+    );
+    const q2Net = computeVatNetTotals(q2Inputs.invoicePayments, financeRows, Q2_START, Q2_END);
+    expect(q2Vat.output_vat).toBe(0); // box 1
+    expect(q2Vat.input_vat).toBe(0); // box 4
+    expect(q2Net.totalValuePurchasesExVAT).toBe(0); // box 7 — the bill isn't in Q2
+
+    // ── The invariant: boxes 1/4/7 all move TOGETHER into the SAME quarter ───
+    // Pre-fix (paid_at windowing) this failed: Q1 had box 7 = 1500 but boxes 1/4
+    // = 0, while Q2 had boxes 1/4 = 300 but box 7 = 0 — the split HMRC rejects.
+    const q1HasNet = q1Net.totalValuePurchasesExVAT > 0;
+    const q1HasVat = q1Vat.output_vat > 0;
+    const q2HasNet = q2Net.totalValuePurchasesExVAT > 0;
+    const q2HasVat = q2Vat.output_vat > 0;
+    expect(q1HasNet).toBe(q1HasVat); // both true in Q1
+    expect(q2HasNet).toBe(q2HasVat); // both false in Q2
+  });
+
+  it("delete-the-fix reproduction: the OLD paid_at windowing SPLITS the boxes", () => {
+    // Documents (and locks in) the reproduction the fix removes. Windowing the RC
+    // VAT on the PAYMENT's paid_at (the old basis) puts the notional VAT in Q2,
+    // while the bill's net (box 7) is always in Q1 on created_at — so no single
+    // quarter carries both. This is a pure counterfactual over the SAME fixture.
+    const tables = seed();
+    const alloc = tables.supplier_payment_allocations[0]!;
+    const pay = tables.supplier_payments.find((p) => p.id === alloc.payment_id)!;
+    const bill = tables.finances.find((f) => f.id === alloc.finance_id)!;
+
+    const inWindow = (iso: string, start: string, endExcl: string) =>
+      iso >= start && iso < endExcl;
+
+    // OLD basis: RC VAT keyed off the payment's paid_at (Q2).
+    const oldRcInQ1 = inWindow(pay.paid_at as string, Q1_START, Q1_END)
+      ? Number(alloc.cis_reverse_charge_vat)
+      : 0;
+    const oldRcInQ2 = inWindow(pay.paid_at as string, Q2_START, Q2_END)
+      ? Number(alloc.cis_reverse_charge_vat)
+      : 0;
+    // Box 7 net keyed off the bill's created_at (Q1) — same in old and new.
+    const netInQ1 = inWindow(bill.created_at as string, Q1_START, Q1_END)
+      ? Number(bill.amount)
+      : 0;
+    const netInQ2 = inWindow(bill.created_at as string, Q2_START, Q2_END)
+      ? Number(bill.amount)
+      : 0;
+
+    // The SPLIT: Q1 has net but no RC VAT; Q2 has RC VAT but no net.
+    expect(oldRcInQ1).toBe(0);
+    expect(netInQ1).toBe(1500);
+    expect(oldRcInQ2).toBe(300);
+    expect(netInQ2).toBe(0);
+    // Neither quarter reconciles under the old basis — the defect, made concrete.
+    expect(oldRcInQ1 > 0).not.toBe(netInQ1 > 0);
+    expect(oldRcInQ2 > 0).not.toBe(netInQ2 > 0);
+  });
+
+  it("KEEPS the voided-payment exclusion (a voided payment contributes no RC VAT)", async () => {
+    const tables = seed();
+    // Void the only payment: its allocation survives (the record of what it
+    // claimed) but must NOT count toward any filed VAT figure.
+    (tables.supplier_payments[0]! as Record<string, unknown>).voided_at =
+      "2026-08-25T00:00:00.000Z";
+    const inputs = await gatherVatQuarterInputs(makeDb(tables), ORG, Q1_START, Q1_END);
+    expect(inputs.reverseCharge.vat).toBe(0);
   });
 });
