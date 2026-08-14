@@ -130,9 +130,22 @@ describe("each mapper mirrors the DB constraints its writer's table declares", (
  * the connection read "connected".
  *
  * This behavioural invariant pins the per-INVOICE isolation contract for BOTH
- * adapters: a mixed batch [good, bad-rate, good] still pushes the two good
- * invoices, SKIPS the bad one, and names it — so a future whole-batch-abort /
- * tail-strand regression fails CI here, alongside the DB-writer guards above.
+ * adapters across BOTH kinds of per-row failure and BOTH loops (invoices AND
+ * payments):
+ *   • MAP-TIME skip — an unmappable VAT rate; [good, bad-rate, good] pushes the
+ *     two good, SKIPS the bad, names it.
+ *   • PROVIDER REJECTION (C73-C) — a PERMANENT 4xx (≠429, e.g. 400 rejected field
+ *     / 422 duplicate DocNumber) on ONE row; [good, provider-rejected(4xx), good]
+ *     STILL pushes the good TAIL, SKIPS the rejected row, names it, and leaves it
+ *     unrecorded. This closes the exact defect the map-time case did NOT cover:
+ *     the loop used to `return` mid-batch on any non-2xx, so an EARLIER
+ *     permanently-rejected invoice re-aborted every later invoice on every sync.
+ *   • TRANSIENT failure (the counter-case) — a 5xx / 429 aborts the WHOLE run so
+ *     it retries; the tail is NOT attempted and nothing is skip-recorded. This
+ *     pins the permanent/transient distinction in BOTH directions.
+ *
+ * A future whole-batch-abort / tail-strand regression fails CI here, alongside the
+ * DB-writer guards above.
  */
 describe("accounting-push adapters isolate a per-invoice failure (no whole-batch abort)", () => {
   const ORIGINAL_ENV = { ...process.env };
@@ -221,6 +234,186 @@ describe("accounting-push adapters isolate a per-invoice failure (no whole-batch
         // The poison invoice is isolated and surfaced loudly, never recorded.
         expect(res.skipped?.map((s) => s.invoiceNumber)).toEqual(["INV-BAD"]);
         expect(res.pushedSourceIds).not.toContain("src-INV-BAD");
+      }
+    },
+  );
+
+  // ── C73-C: PROVIDER REJECTION (permanent 4xx) vs TRANSIENT (5xx/429) ─────────
+  // The map-time case above never exercises a PROVIDER rejection. These cases put
+  // a provider-rejected / transient-failing row BEFORE a good row, for BOTH
+  // adapters and BOTH loops, so the tail-strand regression is actually caught.
+
+  const payRow = (n: string): CanonicalAccountingRow => ({
+    date: "2026-02-05",
+    type: "payment",
+    customer: "Acme Ltd",
+    net: "",
+    vat: "",
+    gross: "120.00",
+    invoice_number: n,
+    status: "received",
+    sourceId: `pay-${n}`,
+  });
+
+  const resp = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+  /** Xero: one POST per row; return the i-th status from the sequence. */
+  const xeroSeq = (statuses: number[]) => {
+    let i = 0;
+    return vi.fn(async () => {
+      const code = statuses[i++] ?? 200;
+      return resp(code, code >= 200 && code < 300 ? { Invoices: [] } : { error: "rejected" });
+    });
+  };
+
+  /** QBO invoices: resolvers all OK; the i-th invoice POST takes the i-th status. */
+  const qboInvSeq = (statuses: number[]) => {
+    let i = 0;
+    return vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && url.includes("/query")) {
+        if (url.includes("TaxCode")) return resp(200, { QueryResponse: { TaxCode: [{ Id: "TC" }] } });
+        if (url.includes("Item")) return resp(200, { QueryResponse: { Item: [{ Id: "7" }] } });
+        if (url.includes("Customer")) return resp(200, { QueryResponse: { Customer: [{ Id: "3" }] } });
+        return resp(200, { QueryResponse: {} });
+      }
+      if (method === "POST" && url.includes("/invoice")) {
+        const code = statuses[i++] ?? 200;
+        return resp(code, code >= 200 && code < 300 ? { Invoice: { Id: "11" } } : { Fault: {} });
+      }
+      return resp(200, {});
+    });
+  };
+
+  /** QBO payments: customer + invoice lookups OK; the i-th payment POST takes the i-th status. */
+  const qboPaySeq = (statuses: number[]) => {
+    let i = 0;
+    return vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "GET" && url.includes("/query")) {
+        if (url.includes("Customer")) return resp(200, { QueryResponse: { Customer: [{ Id: "3" }] } });
+        if (url.includes("Invoice")) return resp(200, { QueryResponse: { Invoice: [{ Id: "11" }] } });
+        return resp(200, { QueryResponse: {} });
+      }
+      if (method === "POST" && url.includes("/payment")) {
+        const code = statuses[i++] ?? 200;
+        return resp(code, code >= 200 && code < 300 ? { Payment: { Id: "22" } } : { Fault: {} });
+      }
+      return resp(200, {});
+    });
+  };
+
+  // Three map-VALID rows so all three reach the network POST; the MIDDLE one is the
+  // row the provider rejects / transiently fails.
+  const INV_ROWS = [
+    inv("INV-1", 20, "20.00", "120.00"),
+    inv("INV-REJ", 20, "20.00", "120.00"),
+    inv("INV-2", 5, "5.00", "105.00"),
+  ];
+  const PAY_ROWS = [payRow("P-1"), payRow("P-REJ"), payRow("P-2")];
+
+  type LoopCase = {
+    label: string;
+    rows: CanonicalAccountingRow[];
+    makeFetch: (statuses: number[]) => ReturnType<typeof vi.fn>;
+    push: (inp: AccountingPushInput) => ReturnType<ReturnType<typeof getAccountingAdapter>["pushInvoices"]>;
+    acceptedIds: string[]; // the two good rows' sourceIds
+    tailId: string; // the LAST row's sourceId (must NOT push on a transient abort)
+    rejectedId: string; // the MIDDLE row's sourceId (must never be recorded)
+    skippedRef: string; // the middle row's identifier surfaced in `skipped`
+    rejectCode: number; // a PERMANENT 4xx to reject the middle row with
+    transientCode: number; // a TRANSIENT code to fail the middle row with
+  };
+
+  const loops: LoopCase[] = [
+    {
+      label: "xero invoices",
+      rows: INV_ROWS,
+      makeFetch: xeroSeq,
+      push: (inp) => getAccountingAdapter("xero").pushInvoices(inp),
+      acceptedIds: ["src-INV-1", "src-INV-2"],
+      tailId: "src-INV-2",
+      rejectedId: "src-INV-REJ",
+      skippedRef: "INV-REJ",
+      rejectCode: 422,
+      transientCode: 500,
+    },
+    {
+      label: "xero payments",
+      rows: PAY_ROWS,
+      makeFetch: xeroSeq,
+      push: (inp) => getAccountingAdapter("xero").pushPayments(inp),
+      acceptedIds: ["pay-P-1", "pay-P-2"],
+      tailId: "pay-P-2",
+      rejectedId: "pay-P-REJ",
+      skippedRef: "P-REJ",
+      rejectCode: 400,
+      transientCode: 429,
+    },
+    {
+      label: "quickbooks invoices",
+      rows: INV_ROWS,
+      makeFetch: qboInvSeq,
+      push: (inp) => getAccountingAdapter("quickbooks").pushInvoices(inp),
+      acceptedIds: ["src-INV-1", "src-INV-2"],
+      tailId: "src-INV-2",
+      rejectedId: "src-INV-REJ",
+      skippedRef: "INV-REJ",
+      rejectCode: 400,
+      transientCode: 500,
+    },
+    {
+      label: "quickbooks payments",
+      rows: PAY_ROWS,
+      makeFetch: qboPaySeq,
+      push: (inp) => getAccountingAdapter("quickbooks").pushPayments(inp),
+      acceptedIds: ["pay-P-1", "pay-P-2"],
+      tailId: "pay-P-2",
+      rejectedId: "pay-P-REJ",
+      skippedRef: "P-REJ",
+      rejectCode: 422,
+      transientCode: 429,
+    },
+  ];
+
+  it.each(loops)(
+    "$label: a PERMANENT provider rejection (4xx≠429) BEFORE a good row is SKIPPED, the tail still pushes",
+    async ({ rows, makeFetch, push, acceptedIds, rejectedId, skippedRef, rejectCode }) => {
+      enable();
+      // [good(200), rejected(4xx), good(200)]
+      vi.stubGlobal("fetch", makeFetch([200, rejectCode, 200]));
+      const res = await push(input({ rows }));
+
+      // NOT a whole-batch abort: the good tail row after the rejected one lands.
+      expect(res.ok).toBe(true);
+      if (res.ok) {
+        expect(res.pushed).toBe(2);
+        expect(res.pushedSourceIds).toEqual(acceptedIds);
+        // The rejected row is isolated, surfaced loudly, and never recorded.
+        expect(res.skipped?.map((s) => s.invoiceNumber)).toEqual([skippedRef]);
+        expect(res.skipped?.[0]?.reason).toMatch(new RegExp(String(rejectCode)));
+        expect(res.pushedSourceIds).not.toContain(rejectedId);
+      }
+    },
+  );
+
+  it.each(loops)(
+    "$label: a TRANSIENT failure (5xx/429) BEFORE a good row ABORTS the batch (tail NOT attempted)",
+    async ({ rows, makeFetch, push, tailId, transientCode }) => {
+      enable();
+      // [good(200), transient(5xx/429), …] — the tail must never be attempted.
+      vi.stubGlobal("fetch", makeFetch([200, transientCode, 200]));
+      const res = await push(input({ rows }));
+
+      // A transient failure aborts the whole run so it retries next sync.
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        // Only the first (accepted) row counts; the tail was never attempted.
+        expect(res.pushed).toBe(1);
+        expect(res.pushedSourceIds ?? []).not.toContain(tailId);
+        // A transient failure is NOT a per-row skip.
+        expect(res.skipped ?? []).toHaveLength(0);
       }
     },
   );

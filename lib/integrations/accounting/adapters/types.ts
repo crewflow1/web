@@ -64,6 +64,53 @@ export type AccountingPushInput = {
 export type SkippedInvoice = { invoiceNumber: string; reason: string };
 
 /**
+ * Is this provider HTTP status a PERMANENT per-row rejection — the provider looked
+ * at THIS row's data and will NEVER accept it on retry (e.g. 400 rejected field,
+ * 422 validation / duplicate DocNumber, archived contact)? Such a row is ISOLATED
+ * (skipped + surfaced loudly), NEVER a whole-batch abort, and stays UNRECORDED in
+ * the push-once ledger so a corrected row retries on a later sync.
+ *
+ * THE DEFECT THIS CLOSES (C73-C, a C61/C67-B sibling). The per-row isolation
+ * invariant used to cover only MAP-TIME skips (an unmappable VAT rate). A provider
+ * REJECTION (HTTP non-2xx) aborted the whole run mid-loop, so a single
+ * permanently-rejected invoice created EARLIER than the rest re-aborted before
+ * every later invoice on EVERY sync — silently stranding the entire tail forever
+ * while the connection read "connected". A 400/422 is a verdict on ONE row; it
+ * must isolate that row, not the batch.
+ *
+ * THE COMPLEMENT — TRANSIENT / whole-connection failures worth aborting-and-
+ * retrying the ENTIRE run — is everything else, and is deliberately NOT a per-row
+ * skip:
+ *   • 5xx  — provider server error; retry the whole run.
+ *   • 429  — rate limit; back off and retry the whole run.
+ *   • network error (status 0) — transport blip; retry.
+ *   • 401  — token/auth. Handled by the shared refresh-retry; a 401 that SURVIVES
+ *            refresh is a whole-run auth failure, NOT a per-row verdict. Skipping
+ *            it would silently strand EVERY row as "skipped" while the connection
+ *            still read connected — the exact failure mode we are closing.
+ *   • 403  — scope/permission on the connection (reconnect with the right scope),
+ *            not a rejection of one row's data.
+ *   • 404  — wrong endpoint / missing target (a whole-run misconfiguration); also
+ *            the code Xero returns for a payment whose invoice is absent, which
+ *            must SELF-HEAL by retrying next sync, never be marked skipped-forever.
+ *
+ * Keeping 401/403/404 as aborts also preserves the PRE-EXISTING behaviour for
+ * those codes: the only behaviour this predicate CHANGES is for the codes that are
+ * unambiguously a permanent verdict on one row's data (400, 402, 405–428, 430–499,
+ * and notably 422).
+ */
+export function isPermanentRowRejection(status: number): boolean {
+  return (
+    status >= 400 &&
+    status < 500 &&
+    status !== 401 &&
+    status !== 403 &&
+    status !== 404 &&
+    status !== 429
+  );
+}
+
+/**
  * The outcome of a push attempt.
  *   - ok               — rows accepted by the provider (unreachable today).
  *   - unavailable      — credentials absent; nothing was sent (the dark path).
