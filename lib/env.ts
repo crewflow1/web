@@ -105,6 +105,16 @@ const envSchema = z.object({
   RESEND_FROM_EMAIL: z.string().default("CrewFlow <hello@crewflow.uk>"),
   RESEND_REPLY_TO: z.string().default("hello@crewflow.uk"),
 
+  // -- Inbound email (P2 Comms — DARK, two-switch gated) ------------------
+  // The shared secret that keys the HMAC-SHA256 signature on the inbound-email
+  // webhook (app/api/webhooks/email). It is the provider-agnostic auth boundary:
+  // the mail provider (or a thin per-provider adapter) POSTs the normalised
+  // delivery with `x-crewflow-email-signature: sha256=<hmac-of-raw-body>`, and
+  // verifyInboundEmailSignature reads this secret at call time and fails CLOSED
+  // when it is absent — so with no secret the webhook rejects everything (dark),
+  // exactly like WHATSAPP_APP_SECRET on the Meta webhook. Absent in prod/CI/dev.
+  INBOUND_EMAIL_WEBHOOK_SECRET: z.string().optional(),
+
   // -- Communication Layer provider (Directive 010 Phase 4) ---------------
   // Names the active outbound email provider for the Communication Layer.
   // Default "auto": use Resend when RESEND_API_KEY is set, else off. As with
@@ -244,6 +254,16 @@ const envSchema = z.object({
   // feature exists. When the feature is actually built, add the flag then.
   NEXT_PUBLIC_FEATURE_MISSED_CALL_TEXTBACK: z.enum(["true", "false"]).default("false"),
   NEXT_PUBLIC_FEATURE_WHATSAPP: z.enum(["true", "false"]).default("false"),
+  // P2 Comms — inbound EMAIL ingestion. DEFAULTS OFF. While off the inbound-email
+  // webhook (app/api/webhooks/email) 404s before any work, no email_webhook_events
+  // row is ever written, and no channel='email' enquiry is ingested. The SECOND
+  // switch is the shared signing secret (INBOUND_EMAIL_WEBHOOK_SECRET): the flag
+  // alone opens no door — isInboundEmailLive() requires BOTH the flag AND the
+  // secret, and the route refuses (404) before reading the body when either is
+  // absent. Both unset in prod, CI and dev. Inbound email opens NO outbound path:
+  // canRunReceptionistChannel(email) is false and transportChannelForInbound(email)
+  // is null, so a mailed enquiry is ingested (lead + notification) but never replied.
+  NEXT_PUBLIC_FEATURE_INBOUND_EMAIL: z.enum(["true", "false"]).default("false"),
   // Wave 8 — inbound VOICE telephony. DEFAULTS OFF. While off the voice webhooks
   // (twilio/voice, twilio/voice/status, vapi) 503 before any work, the org↔number
   // routing/calls/call_events tables carry no rows the substrate populates, and the
