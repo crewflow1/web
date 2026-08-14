@@ -202,6 +202,35 @@ const envSchema = z.object({
   STRIPE_SETUP_PRICE_ID: z.string().optional(),
   STRIPE_SUBSCRIPTION_PRICE_ID: z.string().optional(),
 
+  // -- Portal invoice payments — tenant→customer Stripe Connect (20261120, DARK) --
+  // COMPLETELY SEPARATE from the SaaS-billing Stripe block above. These power the
+  // customer portal "Pay now" flow (a tenant's CUSTOMER paying that tenant's
+  // invoice), NEVER CrewFlow's own subscription billing. The two never share a
+  // key, client, route, or webhook secret — so activating (or breaking) one
+  // cannot touch the other.
+  //
+  // STRIPE_CONNECT_SECRET_KEY     — The PLATFORM Connect secret key. Customer
+  //                                 PaymentIntents/Checkout Sessions are created
+  //                                 ON each tenant's connected account
+  //                                 (Stripe-Account header), so funds settle to
+  //                                 the tenant, never the platform. Absent ⇒
+  //                                 getInvoiceStripe() returns null ⇒ the pay-now
+  //                                 action + the stripe-invoice webhook
+  //                                 REFUSE-before-fetch. Distinct from
+  //                                 STRIPE_SECRET_KEY so SaaS billing being live
+  //                                 in prod does NOT make this feature live.
+  // STRIPE_INVOICE_WEBHOOK_SECRET — Signing secret (whsec_...) for the DEDICATED
+  //                                 /api/webhooks/stripe-invoice endpoint. A
+  //                                 separate endpoint + secret from
+  //                                 STRIPE_WEBHOOK_SECRET; absent ⇒ that webhook
+  //                                 503s before verifying anything.
+  // Activation is the two-switch gate: BOTH these AND
+  // NEXT_PUBLIC_FEATURE_PORTAL_PAYMENTS below, plus a per-tenant connected
+  // account (org_payment_connections.status='connected'). Unset in every
+  // environment today.
+  STRIPE_CONNECT_SECRET_KEY: z.string().optional(),
+  STRIPE_INVOICE_WEBHOOK_SECRET: z.string().optional(),
+
   // -- Inngest ------------------------------------------------------------
   INNGEST_EVENT_KEY: z.string().optional(),
   INNGEST_SIGNING_KEY: z.string().optional(),
@@ -284,6 +313,17 @@ const envSchema = z.object({
   // alone opens no door — isTelematicsProviderConnectable() requires BOTH. Above
   // both sits a CEO provider-choice decision. Never flip to "true" before all exist.
   NEXT_PUBLIC_FEATURE_TELEMATICS_CONNECT: z.enum(["true", "false"]).default("false"),
+
+  // Portal invoice payments — tenant→customer "Pay now" (20261120). DEFAULTS OFF.
+  // Switch 1 of two: while off the portal renders NO pay button and the pay-now
+  // action + the stripe-invoice webhook REFUSE-before-fetch (no Stripe call). The
+  // SECOND switch is the platform Connect key (STRIPE_CONNECT_SECRET_KEY) PLUS a
+  // per-tenant connected account (org_payment_connections.status='connected'):
+  // the flag alone opens no door — isPortalPaymentsConfigured() requires the flag
+  // AND the key, and a given tenant additionally needs a connected account before
+  // any customer can pay. Never flip to "true" before all three exist. Untouched
+  // by (and untouching of) the SaaS-billing Stripe integration.
+  NEXT_PUBLIC_FEATURE_PORTAL_PAYMENTS: z.enum(["true", "false"]).default("false"),
 
   // -- Open Banking / bank-feed aggregator (20261100 — DARK, FCA-gated) ---
   // The single OAuth client the bank-feed substrate binds to, plus the aggregator

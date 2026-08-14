@@ -12,6 +12,8 @@ import {
 import { computePortalPayments } from "@/lib/customers/portal-payments";
 import { loadPortalSchedule } from "../_schedule";
 import type { PortalScheduleStatus } from "@/lib/customers/portal-schedule";
+import { isPortalPaymentsConfigured } from "@/lib/payments/portal-stripe";
+import { startInvoicePayment } from "../../_pay-action";
 
 const UPLOAD_ERRORS: Record<string, string> = {
   no_file: "Choose a file to upload first.",
@@ -23,6 +25,13 @@ const UPLOAD_ERRORS: Record<string, string> = {
   record_failed: "Saved the file but couldn't record it — please email us.",
   invalid_token: "Your portal link looks expired. Ask us for a fresh one.",
   missing_fields: "Choose a file before submitting.",
+  payments_unavailable:
+    "Online payment isn't available on this invoice right now. You can still pay by bank transfer using the details on the PDF.",
+  nothing_due: "This invoice has nothing left to pay.",
+  payment_start_failed:
+    "Couldn't start the payment just now. Please try again, or pay by bank transfer.",
+  payment_cancelled: "Payment cancelled — nothing was charged.",
+  too_many_requests: "Too many attempts. Please wait a moment and try again.",
 };
 
 /**
@@ -71,6 +80,11 @@ export default async function PortalInvoicesPage({
       return {
         tone: "ok" as const,
         msg: "Proof uploaded — it's now listed on the invoice below. We'll review and update the invoice once it's matched.",
+      };
+    if (sp.saved === "paid")
+      return {
+        tone: "ok" as const,
+        msg: "Payment received — thank you. It can take a moment to show against the invoice below while we confirm it.",
       };
     if (sp.error)
       return {
@@ -224,6 +238,27 @@ export default async function PortalInvoicesPage({
         proofsByInvoice.set(pf.target_id, list);
       }
     }
+  }
+
+  // Portal "Pay now" gate (20261120, DARK). Two switches must BOTH hold before
+  // the pay button renders: the feature must be configured (flag + platform
+  // Connect key) AND this org must have a connected Stripe account. While either
+  // is unmet the button does not render at all — the bank-transfer path is the
+  // only route, exactly as today. No Stripe call happens here; this is a pure
+  // config read plus one org-scoped connection lookup.
+  let payEnabled = false;
+  if (isPortalPaymentsConfigured()) {
+    const { data: conn, error: connError } = await admin
+      .from("org_payment_connections" as never)
+      .select("status, stripe_account_id")
+      .eq("org_id", customer.org_id)
+      .eq("provider", "stripe")
+      .maybeSingle();
+    if (connError) {
+      throw readFailure("portal invoices: payment connection", connError);
+    }
+    const c = conn as unknown as { status: string; stripe_account_id: string | null } | null;
+    payEnabled = !!c && c.status === "connected" && !!c.stripe_account_id;
   }
 
   // H2-CASH M2 — customer-safe payments summary (their own invoices only).
@@ -407,6 +442,22 @@ export default async function PortalInvoicesPage({
                   >
                     <span aria-hidden>↓</span> Download invoice PDF
                   </a>
+                  {/* Pay now — DARK-gated: renders only when payments are
+                      configured AND this org is connected AND the invoice has an
+                      outstanding balance. Otherwise the bank-transfer path
+                      (above / on the PDF) is the only route, unchanged. */}
+                  {payEnabled && !isFullyPaid && inv.status !== "draft" ? (
+                    <form action={startInvoicePayment}>
+                      <input type="hidden" name="token" value={token} />
+                      <input type="hidden" name="invoice_id" value={inv.id} />
+                      <button
+                        type="submit"
+                        className="inline-flex items-center gap-1.5 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800"
+                      >
+                        Pay now · {GBP.format(outstanding)}
+                      </button>
+                    </form>
+                  ) : null}
                 </div>
 
                 {/* Proofs this customer has already submitted — the read-back

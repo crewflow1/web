@@ -1165,6 +1165,8 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   hq_capabilities: "CLOSED: .in('token', <the closed capability registry>) — a fixed lookup set",
   hq_capability_grants: "CLOSED: .or(<clauses from the closed capability registry>) — bounded by the registry",
   billing_events: "SINGLE: .limit(1) existence probe (stripe verify) — not a set read",
+  invoice_payment_intents:
+    "SINGLE: the webhook handler's cast-form read is a .maybeSingle() lookup by a UNIQUE Stripe id (stripe_payment_intent_id / stripe_checkout_session_id — both UNIQUE constraints in 20261120), so it returns at most one row; the pay-now findReusableIntent + the page reads are per-org config (.eq('org_id')) or unused. No estate scan, no aggregate.",
   payments: "SINGLE: .select('id').eq(scoped...).limit(1) duplicate-payment existence probe",
   asset_assignments: "PER-ORG: .eq(scoped).limit(SITE_USAGE_SCAN_LIMIT) site-usage count sample — bounded",
   assets: "PER-ORG: .eq('org_id').limit(VAN_SCAN_LIMIT) assets picker — bounded by the org's fleet",
