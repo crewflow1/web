@@ -10,13 +10,16 @@
 
 import type { TelematicsAdapter, TelematicsProvider } from "./types";
 import { SamsaraAdapter } from "./samsara";
-import { PendingTelematicsAdapter } from "./pending";
+import { VerizonConnectAdapter } from "./verizon-connect";
 
+// Both aggregators are REAL adapters now, each dark-gated identically: they refuse
+// before any fetch until the substrate is connectable (flag + credentials + a bound
+// provider), so no live provider call is reachable today. The PendingTelematicsAdapter
+// skeleton (./pending) remains as the dark-safe template for any FUTURE aggregator
+// added to the provider set before its fetch body is written.
 const ADAPTERS: Record<TelematicsProvider, TelematicsAdapter> = {
   samsara: new SamsaraAdapter(),
-  // Concrete fetch body for this is wired at activation; dark-safe skeleton today
-  // (refuse-before-fetch, no live provider call reachable).
-  verizon_connect: new PendingTelematicsAdapter("verizon_connect"),
+  verizon_connect: new VerizonConnectAdapter(),
 };
 
 /** Resolve the adapter for an aggregator. */

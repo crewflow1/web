@@ -316,6 +316,12 @@ const envSchema = z.object({
   TELEMATICS_PROVIDER: z.string().optional(),
   TELEMATICS_CLIENT_ID: z.string().optional(),
   TELEMATICS_CLIENT_SECRET: z.string().optional(),
+  // Non-secret tunable (NOT a credential). VERIZON_CONNECT_API_BASE_URL overrides
+  // the Verizon Connect Reveal REST API host — Reveal is regionalised (US / EU / AU),
+  // default the US host — mirroring the QBO_API_BASE_URL sandbox override. The
+  // adapter vets every outbound URL built from this base through the shared SSRF
+  // policy before any fetch, so a mis-set host can never reach an internal address.
+  VERIZON_CONNECT_API_BASE_URL: z.string().optional(),
 
   // -- Calendar connect (Google Calendar + Microsoft Graph) — 20261097 DARK --
   // The OAuth client credentials the calendar-connect substrate binds to, plus its
