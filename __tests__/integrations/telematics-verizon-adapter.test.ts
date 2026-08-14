@@ -111,8 +111,8 @@ describe("normalizeVerizonConnectSamples", () => {
       { VehicleNumber: "V002", Vin: "UNKNOWNVIN", RegistrationNumber: "AB12 CDE", UpdateUTC: "2026-08-01T11:00:00Z", Odometer: 100 },
     ];
     const [s] = normalizeVerizonConnectSamples(rows, resolveByPlate);
-    expect(s.vehicleId).toBe(ASSET_REG);
-    expect(s.eventId).toBe("V002:2026-08-01T11:00:00Z"); // idempotency still anchored on VehicleNumber
+    expect(s?.vehicleId).toBe(ASSET_REG);
+    expect(s?.eventId).toBe("V002:2026-08-01T11:00:00Z"); // idempotency still anchored on VehicleNumber
   });
 
   it("resolution PRIORITY is VIN > registration > name > vehicle-number", () => {
@@ -127,28 +127,28 @@ describe("normalizeVerizonConnectSamples", () => {
       normalizeVerizonConnectSamples(
         [{ VehicleNumber: "NUM9", Vin: "vin9", RegistrationNumber: "reg9", Name: "name9", UpdateUTC: "t", Odometer: 1 }],
         resolveAll,
-      )[0].vehicleId,
+      )[0]?.vehicleId,
     ).toBe("vin-asset");
     // registration wins when VIN absent.
     expect(
       normalizeVerizonConnectSamples(
         [{ VehicleNumber: "NUM9", RegistrationNumber: "reg9", Name: "name9", UpdateUTC: "t", Odometer: 1 }],
         resolveAll,
-      )[0].vehicleId,
+      )[0]?.vehicleId,
     ).toBe("reg-asset");
     // name wins when VIN + reg absent.
     expect(
       normalizeVerizonConnectSamples(
         [{ VehicleNumber: "NUM9", Name: "name9", UpdateUTC: "t", Odometer: 1 }],
         resolveAll,
-      )[0].vehicleId,
+      )[0]?.vehicleId,
     ).toBe("name-asset");
     // vehicle-number is the final fallback.
     expect(
       normalizeVerizonConnectSamples(
         [{ VehicleNumber: "num9", UpdateUTC: "t", Odometer: 1 }],
         resolveAll,
-      )[0].vehicleId,
+      )[0]?.vehicleId,
     ).toBe("num-asset");
   });
 
@@ -180,7 +180,7 @@ describe("normalizeVerizonConnectSamples", () => {
       [{ VehicleNumber: "V001", Vin: "1HGBH41JXMN109186", UpdateUTC: "t", Odometer: Number.NaN, Latitude: 1, Longitude: 2 }],
       resolve,
     );
-    expect(s.odometerMiles).toBeNull();
+    expect(s?.odometerMiles).toBeNull();
   });
 
   it("is DETERMINISTIC — same input, byte-identical output", () => {
@@ -243,7 +243,7 @@ describe("VerizonConnectAdapter.fetchReadings", () => {
       // Two raw vehicles fetched; only the mapped VIN resolves to a sample.
       expect(res.fetchedVehicleCount).toBe(2);
       expect(res.samples).toHaveLength(1);
-      expect(res.samples[0].vehicleId).toBe(ASSET);
+      expect(res.samples[0]?.vehicleId).toBe(ASSET);
     }
     // Bearer auth + the Reveal host.
     const [url, init] = fetchMock.mock.calls[0]!;
@@ -340,8 +340,8 @@ describe("VerizonConnectAdapter.fetchReadings", () => {
     const b = await new VerizonConnectAdapter().fetchReadings(INPUT);
     expect(a.ok && b.ok).toBe(true);
     if (a.ok && b.ok) {
-      expect(a.samples[0].eventId).toBe("V001:2026-08-01T10:15:00Z");
-      expect(a.samples[0].eventId).toBe(b.samples[0].eventId);
+      expect(a.samples[0]?.eventId).toBe("V001:2026-08-01T10:15:00Z");
+      expect(a.samples[0]?.eventId).toBe(b.samples[0]?.eventId);
     }
   });
 });

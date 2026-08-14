@@ -132,12 +132,16 @@ function splitOnce(s: string, sep: string): [string, string] {
  * with SOMETHING — but if scrubbing itself throws we fail CLOSED and drop the
  * event rather than risk shipping un-scrubbed context.
  */
-export function scrubEvent<T extends MinimalEvent>(event: T): T | null {
+export function scrubEvent<T extends object>(event: T): T | null {
   try {
+    // Operate on a MinimalEvent VIEW of the event so the hook is assignable to
+    // Sentry's `beforeSend` (whose ErrorEvent has no string index signature)
+    // while we still mutate the one underlying object and return it unchanged.
+    const e = event as MinimalEvent;
     const seen = new WeakSet<object>();
 
-    if (event.request) {
-      const req = event.request;
+    if (e.request) {
+      const req = e.request;
       if (req.headers) redactObject(req.headers, seen);
       if (req.cookies && typeof req.cookies === "object") redactObject(req.cookies, seen);
       // A raw cookie string is entirely secret — never partially report it.
@@ -147,14 +151,14 @@ export function scrubEvent<T extends MinimalEvent>(event: T): T | null {
       if (typeof req.url === "string") req.url = redactUrl(req.url);
     }
 
-    if (event.extra) redactObject(event.extra, seen);
-    if (event.contexts) redactObject(event.contexts, seen);
-    if (event.tags) redactObject(event.tags, seen);
+    if (e.extra) redactObject(e.extra, seen);
+    if (e.contexts) redactObject(e.contexts, seen);
+    if (e.tags) redactObject(e.tags, seen);
 
     // Drop user PII we never need to triage an error: keep only a stable id.
-    if (event.user && typeof event.user === "object") {
-      const id = event.user.id;
-      event.user = id === undefined ? {} : { id };
+    if (e.user && typeof e.user === "object") {
+      const id = e.user.id;
+      e.user = id === undefined ? {} : { id };
     }
 
     return event;
