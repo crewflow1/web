@@ -33,7 +33,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   // several orgs must never see one org's permit under another's letterhead.
   const orgRow = await t("organizations").select("name").eq("id", permit.org_id).maybeSingle();
   const ramsRef = permit.risk_assessment_id
-    ? (await t("risk_assessments").select("reference").eq("id", permit.risk_assessment_id).maybeSingle()).data?.reference ?? null
+    ? (await t("risk_assessments").select("reference").eq("id", permit.risk_assessment_id).eq("org_id", ctx.org.id).maybeSingle()).data?.reference ?? null
     : null;
   const signoffs = await listAcknowledgements("permit_to_work", permit.id);
 
