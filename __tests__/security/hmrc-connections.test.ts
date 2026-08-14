@@ -48,6 +48,8 @@ const CIS = "lib/integrations/hmrc/cis-return.ts";
 const CONNECT = "app/api/integrations/hmrc/[flow]/connect/route.ts";
 const CALLBACK = "app/api/integrations/hmrc/[flow]/callback/route.ts";
 const SERVICE = "server/services/hmrc-connections.ts";
+const SUBMIT = "lib/integrations/hmrc/vat-submit.ts";
+const SUBMIT_SERVICE = "server/services/hmrc-submit.ts";
 
 /** Strip SQL line comments so NEGATIVE assertions test EXECUTABLE statements. */
 const sqlOnly = (s: string) =>
@@ -354,21 +356,103 @@ describe("payload composers refuse while dark, no submission fetch anywhere", ()
 });
 
 // ---------------------------------------------------------------------------
-// 5. LEGAL BOUNDARY — no source ever POSTs a return to HMRC
+// 5. SUBMIT PIPELINE — recognition-gated, structurally dark, single call site
+//
+// The P2 submit pipeline (lib/integrations/hmrc/vat-submit.ts +
+// server/services/hmrc-submit.ts) DOES now POST a prepared return to HMRC — but
+// only on the connectable live path. These proofs pin that the submission fetch
+// is unreachable dark, that no OTHER file gained a network call, and that the
+// tenant-facing service still never reads a token column.
 // ---------------------------------------------------------------------------
 
-describe("legal boundary: the substrate never submits to HMRC", () => {
-  it("only oauth.ts contains a fetch, and it is the token exchange (not a submission)", () => {
-    // The composers, fraud headers, routes and service must contain NO fetch.
+describe("submit pipeline is recognition-gated and structurally dark", () => {
+  it("the composers, fraud headers, routes and tenant service contain NO fetch", () => {
     for (const f of [FRAUD, VAT, CIS, CONNECT, CALLBACK, SERVICE]) {
       const code = codeOf(read(f));
       expect(code, `${f} must contain no fetch`).not.toMatch(/\bfetch\(/);
     }
-    // oauth.ts's single fetch targets the OAuth /token endpoint, never a
-    // submission endpoint.
+  });
+
+  it("oauth.ts has EXACTLY ONE fetch (token endpoint), shared by exchange + refresh", () => {
     const oauth = codeOf(read(OAUTH));
+    const first = oauth.indexOf("fetch(");
+    expect(first).toBeGreaterThan(-1);
+    expect(oauth.indexOf("fetch(", first + 1)).toBe(-1);
     expect(oauth).toMatch(/tokenUrl:/);
-    expect(oauth).not.toMatch(/organisations\/vat|\/returns\b|submit/i);
+    // oauth.ts itself never names a submission endpoint — that lives in vat-submit.ts.
+    expect(oauth).not.toMatch(/organisations\/vat|\/returns\b/i);
+  });
+
+  it("the VAT submit fetch is UNREACHABLE dark — the connectable guard precedes it", () => {
+    const code = codeOf(read(SUBMIT));
+    const guardIdx = code.indexOf("isHmrcConnectable()");
+    const fetchIdx = code.indexOf("fetch(");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(fetchIdx).toBeGreaterThan(-1);
+    // The refuse-before-submit guard sits strictly before the only network call.
+    expect(guardIdx).toBeLessThan(fetchIdx);
+    // Exactly one submission call site.
+    expect(code.indexOf("fetch(", fetchIdx + 1)).toBe(-1);
+    // It targets the MTD VAT returns endpoint under the versioned Accept header.
+    expect(code).toMatch(/organisations\/vat/);
+    expect(code).toMatch(/\/returns/);
+    expect(code).toMatch(/application\/vnd\.hmrc\.1\.0\+json/);
+  });
+
+  it("the submit ORCHESTRATOR refuses before any claim/submit while dark", () => {
+    const code = codeOf(read(SUBMIT_SERVICE));
+    const guardIdx = code.indexOf("isHmrcConnectable()");
+    const submitIdx = code.indexOf("submitVatReturnToHmrc(");
+    const claimIdx = code.indexOf('"submitting"');
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(submitIdx).toBeGreaterThan(guardIdx);
+    // The dark guard precedes both the atomic claim and the adapter call.
+    expect(guardIdx).toBeLessThan(claimIdx);
+    expect(guardIdx).toBeLessThan(submitIdx);
+  });
+
+  it("the submit orchestrator NEVER logs a token or secret", () => {
+    const code = codeOf(read(SUBMIT_SERVICE));
+    const logCalls = code.match(/console\.\w+\([^;]*\)/g) ?? [];
+    for (const c of logCalls) {
+      expect(c).not.toMatch(/access_?token/i);
+      expect(c).not.toMatch(/refresh_?token/i);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. THE SUBMIT MIGRATION (20261130) — widened states + append-only preserved
+// ---------------------------------------------------------------------------
+
+describe("hmrc submit migration keeps tenant append-only immutability", () => {
+  const submitMig = sqlOnly(read("supabase/migrations/20261130000000_hmrc_vat_submit.sql"));
+
+  it("widens the status enum to the submit lifecycle", () => {
+    expect(submitMig).toMatch(
+      /check \(status in \('prepared', 'held', 'submitting', 'submitted', 'accepted', 'rejected'\)\)/i,
+    );
+  });
+
+  it("adds the receipt + provenance columns", () => {
+    for (const col of [
+      "hmrc_processing_date",
+      "hmrc_form_bundle_number",
+      "hmrc_charge_ref_number",
+      "submit_error",
+      "submitted_at",
+    ]) {
+      expect(submitMig).toMatch(new RegExp(`add column if not exists\\s+${col}`, "i"));
+    }
+  });
+
+  it("adds NO tenant UPDATE/DELETE policy (transitions are service-role only)", () => {
+    expect(submitMig).not.toMatch(/create policy[^;]*hmrc_submissions[^;]*for update/i);
+    expect(submitMig).not.toMatch(/create policy[^;]*hmrc_submissions[^;]*for delete/i);
+  });
+
+  it("cannot fake 'accepted' — a receipt requires the accepted status", () => {
+    expect(submitMig).toMatch(/hmrc_form_bundle_number is null or status = 'accepted'/i);
   });
 });
 

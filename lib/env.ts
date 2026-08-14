@@ -38,6 +38,18 @@ const envSchema = z.object({
   WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
   WHATSAPP_GRAPH_VERSION: z.string().optional(),
 
+  // -- Voice-note transcription (DARK) -----------------------------------
+  // A GOVERNOR-DARK seam mirroring the AI model-binding pattern: transcription
+  // only reaches a provider when BOTH a build-time binding exists (see
+  // lib/ai/transcription.ts TRANSCRIPTION_MODEL, deliberately null) AND this
+  // credential is present. Both absent ⇒ transcribeVoiceNote() returns a
+  // `deferred` result with transcript=null and NEVER fabricates a transcript.
+  // A free-string provider selector so arming a vendor needs no schema edit;
+  // deliberately NOT ANTHROPIC_API_KEY/OPENAI_API_KEY (those are the governed
+  // inference doors — transcription is a separate audio→text modality).
+  TRANSCRIPTION_PROVIDER: z.string().optional(),
+  TRANSCRIPTION_API_KEY: z.string().optional(),
+
   // -- Twilio + Vapi (required when telephony code runs) ------------------
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
@@ -104,6 +116,16 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   RESEND_FROM_EMAIL: z.string().default("CrewFlow <hello@crewflow.uk>"),
   RESEND_REPLY_TO: z.string().default("hello@crewflow.uk"),
+
+  // -- Inbound email (P2 Comms — DARK, two-switch gated) ------------------
+  // The shared secret that keys the HMAC-SHA256 signature on the inbound-email
+  // webhook (app/api/webhooks/email). It is the provider-agnostic auth boundary:
+  // the mail provider (or a thin per-provider adapter) POSTs the normalised
+  // delivery with `x-crewflow-email-signature: sha256=<hmac-of-raw-body>`, and
+  // verifyInboundEmailSignature reads this secret at call time and fails CLOSED
+  // when it is absent — so with no secret the webhook rejects everything (dark),
+  // exactly like WHATSAPP_APP_SECRET on the Meta webhook. Absent in prod/CI/dev.
+  INBOUND_EMAIL_WEBHOOK_SECRET: z.string().optional(),
 
   // -- Communication Layer provider (Directive 010 Phase 4) ---------------
   // Names the active outbound email provider for the Communication Layer.
@@ -202,11 +224,44 @@ const envSchema = z.object({
   STRIPE_SETUP_PRICE_ID: z.string().optional(),
   STRIPE_SUBSCRIPTION_PRICE_ID: z.string().optional(),
 
+  // -- Portal invoice payments — tenant→customer Stripe Connect (20261120, DARK) --
+  // COMPLETELY SEPARATE from the SaaS-billing Stripe block above. These power the
+  // customer portal "Pay now" flow (a tenant's CUSTOMER paying that tenant's
+  // invoice), NEVER CrewFlow's own subscription billing. The two never share a
+  // key, client, route, or webhook secret — so activating (or breaking) one
+  // cannot touch the other.
+  //
+  // STRIPE_CONNECT_SECRET_KEY     — The PLATFORM Connect secret key. Customer
+  //                                 PaymentIntents/Checkout Sessions are created
+  //                                 ON each tenant's connected account
+  //                                 (Stripe-Account header), so funds settle to
+  //                                 the tenant, never the platform. Absent ⇒
+  //                                 getInvoiceStripe() returns null ⇒ the pay-now
+  //                                 action + the stripe-invoice webhook
+  //                                 REFUSE-before-fetch. Distinct from
+  //                                 STRIPE_SECRET_KEY so SaaS billing being live
+  //                                 in prod does NOT make this feature live.
+  // STRIPE_INVOICE_WEBHOOK_SECRET — Signing secret (whsec_...) for the DEDICATED
+  //                                 /api/webhooks/stripe-invoice endpoint. A
+  //                                 separate endpoint + secret from
+  //                                 STRIPE_WEBHOOK_SECRET; absent ⇒ that webhook
+  //                                 503s before verifying anything.
+  // Activation is the two-switch gate: BOTH these AND
+  // NEXT_PUBLIC_FEATURE_PORTAL_PAYMENTS below, plus a per-tenant connected
+  // account (org_payment_connections.status='connected'). Unset in every
+  // environment today.
+  STRIPE_CONNECT_SECRET_KEY: z.string().optional(),
+  STRIPE_INVOICE_WEBHOOK_SECRET: z.string().optional(),
+
   // -- Inngest ------------------------------------------------------------
   INNGEST_EVENT_KEY: z.string().optional(),
   INNGEST_SIGNING_KEY: z.string().optional(),
 
   // -- Observability ------------------------------------------------------
+  // Server/edge DSN (falls back to the public one in the SDK configs). Dark
+  // by default — unset ⇒ error monitoring initialises nothing and sends no
+  // network request (see lib/monitoring/readiness.ts).
+  SENTRY_DSN: z.string().optional(),
   NEXT_PUBLIC_SENTRY_DSN: z.string().optional(),
   SENTRY_ORG: z.string().default("crewflow"),
   SENTRY_PROJECT: z.string().default("web"),
@@ -244,6 +299,16 @@ const envSchema = z.object({
   // feature exists. When the feature is actually built, add the flag then.
   NEXT_PUBLIC_FEATURE_MISSED_CALL_TEXTBACK: z.enum(["true", "false"]).default("false"),
   NEXT_PUBLIC_FEATURE_WHATSAPP: z.enum(["true", "false"]).default("false"),
+  // P2 Comms — inbound EMAIL ingestion. DEFAULTS OFF. While off the inbound-email
+  // webhook (app/api/webhooks/email) 404s before any work, no email_webhook_events
+  // row is ever written, and no channel='email' enquiry is ingested. The SECOND
+  // switch is the shared signing secret (INBOUND_EMAIL_WEBHOOK_SECRET): the flag
+  // alone opens no door — isInboundEmailLive() requires BOTH the flag AND the
+  // secret, and the route refuses (404) before reading the body when either is
+  // absent. Both unset in prod, CI and dev. Inbound email opens NO outbound path:
+  // canRunReceptionistChannel(email) is false and transportChannelForInbound(email)
+  // is null, so a mailed enquiry is ingested (lead + notification) but never replied.
+  NEXT_PUBLIC_FEATURE_INBOUND_EMAIL: z.enum(["true", "false"]).default("false"),
   // Wave 8 — inbound VOICE telephony. DEFAULTS OFF. While off the voice webhooks
   // (twilio/voice, twilio/voice/status, vapi) 503 before any work, the org↔number
   // routing/calls/call_events tables carry no rows the substrate populates, and the
@@ -285,6 +350,27 @@ const envSchema = z.object({
   // both sits a CEO provider-choice decision. Never flip to "true" before all exist.
   NEXT_PUBLIC_FEATURE_TELEMATICS_CONNECT: z.enum(["true", "false"]).default("false"),
 
+  // Portal invoice payments — tenant→customer "Pay now" (20261120). DEFAULTS OFF.
+  // Switch 1 of two: while off the portal renders NO pay button and the pay-now
+  // action + the stripe-invoice webhook REFUSE-before-fetch (no Stripe call). The
+  // SECOND switch is the platform Connect key (STRIPE_CONNECT_SECRET_KEY) PLUS a
+  // per-tenant connected account (org_payment_connections.status='connected'):
+  // the flag alone opens no door — isPortalPaymentsConfigured() requires the flag
+  // AND the key, and a given tenant additionally needs a connected account before
+  // any customer can pay. Never flip to "true" before all three exist. Untouched
+  // by (and untouching of) the SaaS-billing Stripe integration.
+  NEXT_PUBLIC_FEATURE_PORTAL_PAYMENTS: z.enum(["true", "false"]).default("false"),
+
+  // Builders' merchant connect surface (20261124). DEFAULTS OFF. Switch 1 of two:
+  // while off, isMerchantConnectable() returns false regardless of credentials and
+  // the settings panel renders "not configured". The SECOND switch is per-merchant
+  // credentials + endpoint (MERCHANT_<P>_API_KEY + MERCHANT_<P>_ENDPOINT); the flag
+  // alone opens no door — isMerchantConnectable() requires BOTH. Above both sits a
+  // COMMERCIAL gate: a live link needs a trade-account integration contract with the
+  // merchant (the endpoint is provisioned per contract, not a public host). Never
+  // flip to "true" before all three exist for at least one merchant.
+  NEXT_PUBLIC_FEATURE_MERCHANTS: z.enum(["true", "false"]).default("false"),
+
   // -- Open Banking / bank-feed aggregator (20261100 — DARK, FCA-gated) ---
   // The single OAuth client the bank-feed substrate binds to, plus the aggregator
   // it is bound to. UNSET in every environment today. Activation is a
@@ -300,6 +386,15 @@ const envSchema = z.object({
   BANKING_PROVIDER: z.string().optional(),
   BANKING_CLIENT_ID: z.string().optional(),
   BANKING_CLIENT_SECRET: z.string().optional(),
+  // Non-secret aggregator API host overrides (mirrors QBO_API_BASE_URL). Plaid
+  // ships three environments (sandbox / development / production) on distinct
+  // hosts; GoCardless Bank Account Data (Nordigen) has one production host but a
+  // separate host is useful for a self-hosted proxy. Both DEFAULT to the provider
+  // production host when unset and are SSRF-guarded in the adapters to the
+  // provider's own domain (an override can never be re-pointed at an internal
+  // address or an IP literal). Neither is a credential; both optional.
+  PLAID_API_BASE_URL: z.string().optional(),
+  NORDIGEN_API_BASE_URL: z.string().optional(),
 
   // -- Telematics / GPS fleet feed (20261103 — DARK, provider-choice gated) ----
   // The single OAuth client the telematics substrate binds to, plus the aggregator
@@ -316,6 +411,38 @@ const envSchema = z.object({
   TELEMATICS_PROVIDER: z.string().optional(),
   TELEMATICS_CLIENT_ID: z.string().optional(),
   TELEMATICS_CLIENT_SECRET: z.string().optional(),
+  // Non-secret tunable (NOT a credential). VERIZON_CONNECT_API_BASE_URL overrides
+  // the Verizon Connect Reveal REST API host — Reveal is regionalised (US / EU / AU),
+  // default the US host — mirroring the QBO_API_BASE_URL sandbox override. The
+  // adapter vets every outbound URL built from this base through the shared SSRF
+  // policy before any fetch, so a mis-set host can never reach an internal address.
+  VERIZON_CONNECT_API_BASE_URL: z.string().optional(),
+
+  // -- Builders' merchants (20261124 — DARK, commercial-contract gated) --------
+  // Per-merchant credentials + endpoint (NOT one bound aggregator — an org may
+  // link several merchants at once, so each is gated independently, the accounting
+  // per-provider posture). UNSET in every environment today. Activation per
+  // merchant is credentials + endpoint + the NEXT_PUBLIC_FEATURE_MERCHANTS flag,
+  // AND a trade-account INTEGRATION CONTRACT (the endpoint is provisioned by the
+  // merchant per contract — none of the four publishes a public API host). The
+  // substrate (lib/integrations/merchants/*) REFUSES-before-fetch while any of
+  // these is absent, and every operator-supplied endpoint/price-file URL is
+  // SSRF-validated (lib/webhooks/ssrf.ts) before any request, so no live merchant
+  // call is reachable. Per-org account secrets at rest reuse
+  // INTEGRATION_TOKEN_ENCRYPTION_KEY (read by token-crypto.ts). ENDPOINT is the
+  // cXML/OCI order gateway URL; PRICE_FILE_URL is the optional price-file location.
+  MERCHANT_JP_CORRY_API_KEY: z.string().optional(),
+  MERCHANT_JP_CORRY_ENDPOINT: z.string().optional(),
+  MERCHANT_JP_CORRY_PRICE_FILE_URL: z.string().optional(),
+  MERCHANT_JEWSON_API_KEY: z.string().optional(),
+  MERCHANT_JEWSON_ENDPOINT: z.string().optional(),
+  MERCHANT_JEWSON_PRICE_FILE_URL: z.string().optional(),
+  MERCHANT_TRAVIS_PERKINS_API_KEY: z.string().optional(),
+  MERCHANT_TRAVIS_PERKINS_ENDPOINT: z.string().optional(),
+  MERCHANT_TRAVIS_PERKINS_PRICE_FILE_URL: z.string().optional(),
+  MERCHANT_HALDANE_FISHER_API_KEY: z.string().optional(),
+  MERCHANT_HALDANE_FISHER_ENDPOINT: z.string().optional(),
+  MERCHANT_HALDANE_FISHER_PRICE_FILE_URL: z.string().optional(),
 
   // -- Calendar connect (Google Calendar + Microsoft Graph) — 20261097 DARK --
   // The OAuth client credentials the calendar-connect substrate binds to, plus its

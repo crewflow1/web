@@ -6,10 +6,15 @@ import type { OrgContext } from "@/server/auth/session";
 import {
   isOfflineWriteKind,
   offlineWriteEntity,
+  offlineMergeFields,
   type OfflineWriteKind,
 } from "@/lib/offline/registry";
-import { createDiaryEntrySchema } from "@/lib/site-diary/schema";
-import { createSnagSchema } from "@/lib/snags/schema";
+import { threeWayMerge } from "@/lib/offline/merge";
+import {
+  createDiaryEntrySchema,
+  updateDiaryEntrySchema,
+} from "@/lib/site-diary/schema";
+import { createSnagSchema, updateSnagSchema } from "@/lib/snags/schema";
 import { materialRequestFormSchema } from "@/lib/material-requests/schema";
 import { createDelayEventSchema } from "@/lib/eot/schema";
 import { createSiteReportSchema } from "@/lib/site-reports/schema";
@@ -58,7 +63,7 @@ import { createSiteReportDraftRecord } from "@/server/services/site-report-write
  */
 
 export type OfflineWriteOutcome =
-  /** Written. `id` is the new row. */
+  /** Written. `id` is the new (create) or reconciled (update) row. */
   | { status: "accepted"; id: string }
   /** This exact clientKey was already written. Idempotent no-op; ONE row exists. */
   | { status: "duplicate"; id: string }
@@ -67,6 +72,25 @@ export type OfflineWriteOutcome =
   /** Try again later. The item stays pending. */
   | { status: "retry"; reason: string };
 
+/**
+ * An offline UPDATE whose fields DIVERGED from a concurrent server edit. Nothing was
+ * written. The client holds the item as a conflict, shows the author what clashed,
+ * and lets them resolve it (keep mine / discard). `serverVersion` is the row version
+ * they must acknowledge for a "keep mine" to apply.
+ *
+ * It is kept OUT of OfflineWriteOutcome on purpose: a CREATE can never conflict, so
+ * every create caller narrows to accepted/duplicate/rejected/retry without having to
+ * handle a case that cannot occur. Only the update path widens to this.
+ */
+export type OfflineConflictOutcome = {
+  status: "conflict";
+  serverVersion: string;
+  fields: { field: string; mine: unknown; theirs: unknown }[];
+};
+
+/** What an UPDATE replay (and the generic dispatch, which may route one) returns. */
+export type OfflineUpdateOutcome = OfflineWriteOutcome | OfflineConflictOutcome;
+
 export type OfflineRejectReason =
   | "unknown_kind" // not in the registry
   | "invalid_payload" // failed the entity's own Zod schema
@@ -74,7 +98,8 @@ export type OfflineRejectReason =
   | "job_missing" // the parent job is gone, or belongs to another org
   | "assignee_missing" // the named assignee is not a member of the active org
   | "stock_item_missing" // a line's catalogue item is not in the active org
-  | "not_permitted" // RLS refused the insert
+  | "target_missing" // an UPDATE's target row is gone, or belongs to another org
+  | "not_permitted" // RLS refused the insert/update
   | "malformed_item"; // the queued envelope itself is not a queued write
 
 /** Postgres/PostgREST codes that mean "this will NEVER succeed, stop retrying". */
@@ -143,6 +168,52 @@ type MembershipLookupChain = {
         v: unknown,
       ) => {
         maybeSingle: () => Promise<{ data: { user_id: string } | null; error: PgError }>;
+      };
+    };
+  };
+};
+/** Read one row by (id, org_id) returning an arbitrary column projection. */
+type RowReadChain = {
+  select: (cols: string) => {
+    eq: (
+      k: string,
+      v: unknown,
+    ) => {
+      eq: (
+        k: string,
+        v: unknown,
+      ) => {
+        maybeSingle: () => Promise<{
+          data: Record<string, unknown> | null;
+          error: PgError;
+        }>;
+      };
+    };
+  };
+};
+/**
+ * COMPARE-AND-SWAP update: `update(...).eq(id).eq(org_id).eq(updated_at, version)`.
+ * The third eq on updated_at is the optimistic-concurrency guard — a row changed
+ * since we read it fails to match and returns count 0, so we never overwrite a
+ * version we did not merge against.
+ */
+type CasUpdateChain = {
+  update: (
+    patch: unknown,
+    opts?: { count?: string },
+  ) => {
+    eq: (
+      k: string,
+      v: unknown,
+    ) => {
+      eq: (
+        k: string,
+        v: unknown,
+      ) => {
+        eq: (
+          k: string,
+          v: unknown,
+        ) => Promise<{ error: PgError; count: number | null }>;
       };
     };
   };
@@ -414,6 +485,272 @@ export async function createSnagRecord(args: {
   return { status: "accepted", id };
 }
 
+/**
+ * OFFLINE UPDATE — the shared conflict-resolving core, one per replayed edit.
+ *
+ * This is the generic engine both update wrappers below delegate to. It differs
+ * from the create cores in one honest way: a create is genuinely identical online
+ * and offline (one INSERT), but an UPDATE only needs conflict reconciliation when
+ * there is a STALE BASE, which only the offline replay carries. So this core is the
+ * OFFLINE update path; the online edit action writes against live data the user
+ * just loaded. What they SHARE — and what keeps them from drifting — is the entity's
+ * Zod schema (the anti-smuggle guarantee) and the column set (the registry's
+ * mergeFields). No RPC, no SECURITY DEFINER, no service role: an ordinary
+ * tenant-client read + a tenant-client compare-and-swap, both under the same RLS
+ * UPDATE policy the online edit obeys.
+ *
+ * The protocol (see migration 20261129000000 for the DB reasoning):
+ *   1. read the row (merge columns + updated_at + last_offline_write_key), pinned
+ *      to (id, active org) — a by-id read alone would admit another org's row;
+ *   2. IDEMPOTENCY: if this exact clientKey already stamped the row, it is a
+ *      re-delivery — report `duplicate`, never re-apply over our own version bump;
+ *   3. 3-way merge (lib/offline/merge.ts) of base (what the author edited from),
+ *      mine (the queued edit) and theirs (the row now). A divergent field is a
+ *      `conflict` (nothing written) unless the author has resolved "keep mine";
+ *   4. entity guards on the MERGED result (the job/assignee that will actually be
+ *      written), so a merge that pulled the server's job still gets guarded;
+ *   5. COMPARE-AND-SWAP: update ... where updated_at = <the version we read>. A row
+ *      that moved under us returns count 0 → `retry` (re-read next flush), never a
+ *      silent overwrite.
+ */
+async function applyOfflineUpdate(args: {
+  ctx: OrgContext;
+  user: { id: string; email?: string | null };
+  kind: OfflineWriteKind;
+  table: string;
+  auditAction: string;
+  /** Parsed update payload, including the target `id`. */
+  input: Record<string, unknown> & { id: string };
+  /** The row version (updated_at) the edit form was rendered with. */
+  baseVersion: string;
+  /** The field values the author started editing from (untrusted merge base). */
+  baseValues: Record<string, unknown>;
+  resolution?: "keep_mine";
+  clientKey: string;
+  offlineAuthoredAt?: string | null;
+  /** Guards the MERGED result (e.g. job/assignee still valid in this org). */
+  guard?: (
+    tenant: unknown,
+    orgId: string,
+    merged: Record<string, unknown>,
+  ) => Promise<OfflineWriteOutcome | null>;
+}): Promise<OfflineUpdateOutcome> {
+  const orgId = args.ctx.org.id;
+  const tenant = await createClient();
+  const fields = offlineMergeFields(args.kind);
+  const id = args.input.id;
+
+  // 1. read the current row, pinned to the ACTIVE org (a by-id read admits every
+  //    org a multi-org member belongs to — the diary/_data.ts seam).
+  const readCols = [...fields, "updated_at", "last_offline_write_key"].join(", ");
+  const { data: row, error: readErr } = await (
+    tenant.from(args.table as never) as unknown as RowReadChain
+  )
+    .select(readCols)
+    .eq("id", id)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (readErr) {
+    return { status: "retry", reason: readErr.code ?? "target_lookup_failed" };
+  }
+  if (!row) return { status: "rejected", reason: "target_missing" };
+
+  // 2. IDEMPOTENCY. A re-delivered update (lost response, reinstalled SW) is caught
+  //    by the marker it stamped last time, BEFORE its own version bump could read
+  //    as a concurrent change.
+  if (
+    typeof row.last_offline_write_key === "string" &&
+    row.last_offline_write_key === args.clientKey
+  ) {
+    return { status: "duplicate", id };
+  }
+
+  const currentVersion = String(row.updated_at);
+  const theirs: Record<string, unknown> = {};
+  for (const f of fields) theirs[f] = row[f];
+  const preferMine = args.resolution === "keep_mine";
+
+  // A "keep mine" resolution only applies while the version the author acknowledged
+  // is still current. If the server moved again since they looked, re-surface the
+  // conflict rather than clobber the newer edit.
+  if (preferMine && currentVersion !== args.baseVersion) {
+    const remerge = threeWayMerge(fields, args.baseValues, args.input, theirs);
+    return {
+      status: "conflict",
+      serverVersion: currentVersion,
+      fields: remerge.conflicts.map((c) => ({
+        field: c.field,
+        mine: c.mine,
+        theirs: c.theirs,
+      })),
+    };
+  }
+
+  // 3. the merge.
+  const merge = threeWayMerge(fields, args.baseValues, args.input, theirs, {
+    preferMineOnConflict: preferMine,
+  });
+  if (!merge.clean && !preferMine) {
+    return {
+      status: "conflict",
+      serverVersion: currentVersion,
+      fields: merge.conflicts.map((c) => ({
+        field: c.field,
+        mine: c.mine,
+        theirs: c.theirs,
+      })),
+    };
+  }
+
+  // 4. guard the values that will actually be written.
+  if (args.guard) {
+    const g = await args.guard(tenant, orgId, merge.merged);
+    if (g) return g;
+  }
+
+  // 5. compare-and-swap on the version we read.
+  const patch: Record<string, unknown> = {};
+  for (const f of fields) patch[f] = merge.merged[f] ?? null;
+  patch.last_offline_write_key = args.clientKey;
+
+  const { error, count } = await (
+    tenant.from(args.table as never) as unknown as CasUpdateChain
+  )
+    .update(patch, { count: "exact" })
+    .eq("id", id)
+    .eq("org_id", orgId)
+    .eq("updated_at", currentVersion);
+
+  if (error) {
+    const permanent = error.code ? PERMANENT_CODES[error.code] : undefined;
+    if (permanent) return { status: "rejected", reason: permanent };
+    console.error(`[offline-write] ${args.table} update failed`, error);
+    return { status: "retry", reason: error.code ?? "update_failed" };
+  }
+  if (!count) {
+    // The row moved between our read and our swap. If that was our OWN prior apply
+    // (a lost response), the next attempt's idempotency check reports it a
+    // duplicate; if it was a real concurrent edit, the next attempt re-reads and
+    // re-merges. Either way transient — never a silent overwrite, never a loss.
+    return { status: "retry", reason: "version_moved" };
+  }
+
+  await recordAdminActivity({
+    actorId: args.user.id,
+    actorEmail: args.user.email ?? null,
+    action: args.auditAction,
+    targetTable: args.table,
+    targetId: id,
+    metadata: {
+      offline: Boolean(args.offlineAuthoredAt),
+      resolution: args.resolution ?? null,
+      merged_fields: Object.keys(merge.merged),
+    },
+  });
+
+  return { status: "accepted", id };
+}
+
+/** Guard a diary/snag job_id against the active org (the create cores' guard,
+ *  applied to the MERGED value an edit will write). Returns an outcome to return, or
+ *  null when the value is absent or valid. */
+async function guardJob(
+  tenant: unknown,
+  orgId: string,
+  jobId: unknown,
+): Promise<OfflineWriteOutcome | null> {
+  if (!jobId) return null;
+  const { data: job, error } = await (
+    (tenant as { from: (t: never) => unknown }).from("jobs" as never) as unknown as JobLookupChain
+  )
+    .select("id")
+    .eq("id", jobId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (error) return { status: "retry", reason: error.code ?? "job_lookup_failed" };
+  if (!job) return { status: "rejected", reason: "job_missing" };
+  return null;
+}
+
+/**
+ * Reconcile one offline diary EDIT. Shares the diary create's cross-org job guard,
+ * applied to the merged job_id, and the same Zod schema the online edit action uses.
+ */
+export async function updateDiaryEntryRecord(args: {
+  ctx: OrgContext;
+  user: { id: string; email?: string | null };
+  input: { id: string } & DiaryWriteInput;
+  baseVersion: string;
+  baseValues: Record<string, unknown>;
+  resolution?: "keep_mine";
+  clientKey: string;
+  offlineAuthoredAt?: string | null;
+}): Promise<OfflineUpdateOutcome> {
+  return applyOfflineUpdate({
+    ctx: args.ctx,
+    user: args.user,
+    kind: "site_diary.update",
+    table: "site_diary_entries",
+    auditAction: "site_diary.updated",
+    input: args.input,
+    baseVersion: args.baseVersion,
+    baseValues: args.baseValues,
+    resolution: args.resolution,
+    clientKey: args.clientKey,
+    offlineAuthoredAt: args.offlineAuthoredAt,
+    guard: (tenant, orgId, merged) => guardJob(tenant, orgId, merged.job_id),
+  });
+}
+
+/**
+ * Reconcile one offline snag EDIT. Shares the snag create's job + assignee guards,
+ * applied to the merged values, and the same Zod schema the online edit uses. The
+ * snag STATUS lifecycle is never touched — the update schema carries no status.
+ */
+export async function updateSnagRecord(args: {
+  ctx: OrgContext;
+  user: { id: string; email?: string | null };
+  input: { id: string } & SnagWriteInput;
+  baseVersion: string;
+  baseValues: Record<string, unknown>;
+  resolution?: "keep_mine";
+  clientKey: string;
+  offlineAuthoredAt?: string | null;
+}): Promise<OfflineUpdateOutcome> {
+  return applyOfflineUpdate({
+    ctx: args.ctx,
+    user: args.user,
+    kind: "snag.update",
+    table: "snags",
+    auditAction: "snag.updated",
+    input: args.input,
+    baseVersion: args.baseVersion,
+    baseValues: args.baseValues,
+    resolution: args.resolution,
+    clientKey: args.clientKey,
+    offlineAuthoredAt: args.offlineAuthoredAt,
+    guard: async (tenant, orgId, merged) => {
+      const jobOutcome = await guardJob(tenant, orgId, merged.job_id);
+      if (jobOutcome) return jobOutcome;
+      if (!merged.assigned_to) return null;
+      const { data: member, error } = await (
+        (tenant as { from: (t: never) => unknown }).from(
+          "memberships" as never,
+        ) as unknown as MembershipLookupChain
+      )
+        .select("user_id")
+        .eq("user_id", merged.assigned_to)
+        .eq("org_id", orgId)
+        .maybeSingle();
+      if (error) {
+        return { status: "retry", reason: error.code ?? "assignee_lookup_failed" };
+      }
+      if (!member) return { status: "rejected", reason: "assignee_missing" };
+      return null;
+    },
+  });
+}
+
 /** The envelope a client hands to the sync action. Untrusted; validated below. */
 export type QueuedWriteEnvelope = {
   clientKey: string;
@@ -421,6 +758,10 @@ export type QueuedWriteEnvelope = {
   orgId: string;
   payload: unknown;
   authoredAt: string;
+  /** UPDATE kinds only: the concurrency anchor, merge base, and any resolution. */
+  baseVersion?: string;
+  baseValues?: Record<string, unknown>;
+  resolution?: "keep_mine";
 };
 
 /**
@@ -445,7 +786,7 @@ export async function dispatchOfflineWrite(args: {
   ctx: OrgContext;
   user: { id: string; email?: string | null };
   item: QueuedWriteEnvelope;
-}): Promise<OfflineWriteOutcome> {
+}): Promise<OfflineUpdateOutcome> {
   const { item } = args;
 
   // 1. envelope. clientKey must be UUID-SHAPED, not merely non-empty: the
@@ -480,9 +821,33 @@ export async function dispatchOfflineWrite(args: {
   const parsed = offlineWriteEntity(item.kind).schema.safeParse(item.payload);
   if (!parsed.success) return { status: "rejected", reason: "invalid_payload" };
 
+  // 4b. UPDATE kinds carry a concurrency anchor + merge base + optional resolution.
+  //     A hand-crafted update with none of these cannot be merged — refuse it as a
+  //     malformed envelope rather than let it fall through to a create-shaped write.
+  const kind: OfflineWriteKind = item.kind;
+  const isUpdate = offlineWriteEntity(kind).mode === "update";
+  let baseVersion = "";
+  let baseValues: Record<string, unknown> = {};
+  let resolution: "keep_mine" | undefined;
+  if (isUpdate) {
+    if (
+      typeof item.baseVersion !== "string" ||
+      item.baseVersion.length === 0 ||
+      !item.baseValues ||
+      typeof item.baseValues !== "object"
+    ) {
+      return { status: "rejected", reason: "malformed_item" };
+    }
+    if (item.resolution !== undefined && item.resolution !== "keep_mine") {
+      return { status: "rejected", reason: "malformed_item" };
+    }
+    baseVersion = item.baseVersion;
+    baseValues = item.baseValues;
+    resolution = item.resolution;
+  }
+
   // 5. dispatch. Exhaustive over OfflineWriteKind — a new registry kind without a
   //    handler is a TYPE error here, and a no-drift unit test says so out loud.
-  const kind: OfflineWriteKind = item.kind;
   switch (kind) {
     case "site_diary.create": {
       const input = createDiaryEntrySchema.parse(parsed.data);
@@ -495,12 +860,40 @@ export async function dispatchOfflineWrite(args: {
           typeof item.authoredAt === "string" ? item.authoredAt : null,
       });
     }
+    case "site_diary.update": {
+      const input = updateDiaryEntrySchema.parse(parsed.data);
+      return updateDiaryEntryRecord({
+        ctx: args.ctx,
+        user: args.user,
+        input,
+        baseVersion,
+        baseValues,
+        resolution,
+        clientKey: item.clientKey,
+        offlineAuthoredAt:
+          typeof item.authoredAt === "string" ? item.authoredAt : null,
+      });
+    }
     case "snag.create": {
       const input = createSnagSchema.parse(parsed.data);
       return createSnagRecord({
         ctx: args.ctx,
         user: args.user,
         input,
+        clientKey: item.clientKey,
+        offlineAuthoredAt:
+          typeof item.authoredAt === "string" ? item.authoredAt : null,
+      });
+    }
+    case "snag.update": {
+      const input = updateSnagSchema.parse(parsed.data);
+      return updateSnagRecord({
+        ctx: args.ctx,
+        user: args.user,
+        input,
+        baseVersion,
+        baseValues,
+        resolution,
         clientKey: item.clientKey,
         offlineAuthoredAt:
           typeof item.authoredAt === "string" ? item.authoredAt : null,

@@ -104,6 +104,22 @@ export const createSnagSchema = z.object({
 });
 export type CreateSnagInput = z.infer<typeof createSnagSchema>;
 
+/**
+ * Full-field snag EDIT — the same fields as the create, plus the target id. Used
+ * by the online edit action AND (with a version anchor added at the queue envelope
+ * layer, never in this schema) by the offline write queue's `snag.update`.
+ *
+ * It deliberately extends createSnagSchema, so it carries NO status field: a snag's
+ * lifecycle (open → in_progress → … with server-pinned resolved_at) is edited by
+ * its own dedicated transitions, never by this free-text edit, and — crucially for
+ * the offline path — a status can never be smuggled into a queued update because
+ * Zod strips unknown keys. An edit touches owned free-text/scalar columns only.
+ */
+export const updateSnagSchema = createSnagSchema.extend({
+  id: z.string().uuid(),
+});
+export type UpdateSnagInput = z.infer<typeof updateSnagSchema>;
+
 export const updateSnagStatusSchema = z.object({
   id: z.string().uuid(),
   status: z.enum(SNAG_STATUSES),

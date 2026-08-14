@@ -72,6 +72,10 @@ export const ATTACHMENT_TARGET_TABLES = [
   // works-quality M2: the photo of the nonconformity, the rework, the re-test
   // certificate — evidence on an NCR (20261081).
   "non_conformance_reports",
+  // blueprint pins: a photo attached DIRECTLY to a marker on a drawing (P2
+  // pins wave, 20261122000001) — the photo of the thing the pin flags, no
+  // longer only reachable through a linked snag.
+  "blueprint_pins",
 ] as const;
 export type AttachmentTargetTable = (typeof ATTACHMENT_TARGET_TABLES)[number];
 
@@ -161,6 +165,98 @@ export async function uploadTenantAttachment(input: {
       size_bytes: input.bytes.byteLength,
     },
   });
+
+  return { ok: true, attachment_id: id };
+}
+
+/**
+ * Service-role sibling of {@link uploadTenantAttachment}, for a SYSTEM context
+ * with no user session (e.g. the WhatsApp webhook attaching an inbound photo to
+ * a job). Same evidence discipline VERBATIM — MIME whitelist, size cap, SHA-256
+ * content_hash of the exact bytes, org-first path, service-role byte write — but
+ * the org is passed EXPLICITLY rather than read from `requireOrgContext()`, and
+ * `uploaded_by` is null (no human uploaded it).
+ *
+ * The org scoping is the caller's responsibility and MUST be enforced before
+ * calling: because this uses the service role it BYPASSES RLS, so the caller has
+ * to have already verified `targetId` belongs to `orgId` (the assistant-actions
+ * pipeline does — it re-reads the job under `.eq("org_id", orgId)` first). This
+ * function only stamps the row with the org it is told.
+ */
+export async function uploadTenantAttachmentAsService(input: {
+  orgId: string;
+  targetTable: AttachmentTargetTable;
+  targetId: string;
+  filename: string;
+  mimeType: string;
+  bytes: Uint8Array;
+  /** Optional idempotency guard: skip if a row already exists for this hash+target. */
+  dedupeContentHash?: boolean;
+}): Promise<UploadResult> {
+  if (!ALLOWED_ATTACHMENT_MIME.has(input.mimeType)) {
+    return { ok: false, error: "bad_file_type" };
+  }
+  if (input.bytes.byteLength > MAX_ATTACHMENT_BYTES) {
+    return { ok: false, error: "file_too_large" };
+  }
+
+  const admin = createAdminClient();
+  const contentHash = createHash("sha256").update(input.bytes).digest("hex");
+
+  // Idempotency: an at-least-once webhook must not attach the same photo twice.
+  if (input.dedupeContentHash) {
+    const existing = await (
+      admin.from("tenant_attachments" as never) as unknown as {
+        select: (c: string) => {
+          eq: (k: string, v: unknown) => {
+            eq: (k: string, v: unknown) => {
+              eq: (k: string, v: unknown) => {
+                maybeSingle: () => Promise<{ data: { id: string } | null; error: unknown }>;
+              };
+            };
+          };
+        };
+      }
+    )
+      .select("id")
+      .eq("org_id", input.orgId)
+      .eq("target_id", input.targetId)
+      .eq("content_hash", contentHash)
+      .maybeSingle();
+    if (existing.data?.id) {
+      return { ok: true, attachment_id: String(existing.data.id) };
+    }
+  }
+
+  const ext = mimeToExt(input.mimeType);
+  const id = crypto.randomUUID();
+  const storagePath = `${input.orgId}/${input.targetTable}/${input.targetId}/${id}.${ext}`;
+
+  const { error: uErr } = await admin.storage
+    .from("tenant-attachments")
+    .upload(storagePath, input.bytes, { contentType: input.mimeType, upsert: false });
+  if (uErr) {
+    console.error("[tenant-attachments] service upload failed", uErr);
+    return { ok: false, error: "upload_failed" };
+  }
+
+  const { error: insErr } = await admin.from("tenant_attachments" as never).insert({
+    id,
+    org_id: input.orgId,
+    target_table: input.targetTable,
+    target_id: input.targetId,
+    filename: input.filename,
+    storage_path: storagePath,
+    mime_type: input.mimeType,
+    size_bytes: input.bytes.byteLength,
+    content_hash: contentHash,
+    uploaded_by: null,
+  } as never);
+  if (insErr) {
+    console.error("[tenant-attachments] service db insert failed", insErr);
+    await admin.storage.from("tenant-attachments").remove([storagePath]).catch(() => undefined);
+    return { ok: false, error: "record_failed" };
+  }
 
   return { ok: true, attachment_id: id };
 }

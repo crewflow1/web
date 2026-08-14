@@ -10,10 +10,12 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
+import { monitoringEnabled } from "@/lib/monitoring/readiness";
+import { scrubEvent } from "@/lib/monitoring/scrub";
 
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 const env = process.env.NEXT_PUBLIC_VERCEL_ENV ?? process.env.NODE_ENV ?? "development";
-const enabled = !!dsn && env !== "development" && env !== "test";
+const enabled = monitoringEnabled({ dsn, env });
 
 if (enabled) {
   Sentry.init({
@@ -25,5 +27,8 @@ if (enabled) {
     // Replays are deliberately off until we cost-model the quota.
     replaysSessionSampleRate: 0,
     replaysOnErrorSampleRate: 0,
+    // Redact secrets/PII before any event leaves the browser (see
+    // lib/monitoring/scrub.ts).
+    beforeSend: scrubEvent,
   });
 }

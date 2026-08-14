@@ -23,12 +23,28 @@ import {
  */
 
 // ── kinds ────────────────────────────────────────────────────────────────────
-export const PIN_KINDS = ["snag", "note"] as const;
+export const PIN_KINDS = ["snag", "note", "task"] as const;
 export type PinKind = (typeof PIN_KINDS)[number];
 export const PIN_KIND_LABELS: Record<PinKind, string> = {
   snag: "Snag",
   note: "Note",
+  task: "Task",
 };
+
+// ── task-pin lifecycle (a task pin is a first-class task anchored to a point) ──
+// Mirrors the snag lifecycle's shape but is intentionally simpler: a task moves
+// open -> in_progress -> done, with no separate "verify" step (the pin IS the
+// record). 'done' is the only terminal status.
+export const TASK_PIN_STATUSES = ["open", "in_progress", "done"] as const;
+export type TaskPinStatus = (typeof TASK_PIN_STATUSES)[number];
+export const TASK_PIN_STATUS_LABELS: Record<TaskPinStatus, string> = {
+  open: "Open",
+  in_progress: "In progress",
+  done: "Done",
+};
+export function isTaskPinDone(status: TaskPinStatus): boolean {
+  return status === "done";
+}
 
 // ── coordinate helpers ───────────────────────────────────────────────────────
 export type Norm = { u: number; v: number };
@@ -78,20 +94,35 @@ export type BlueprintPin = {
   /** Joined from the linked snag (the AUTHORITY for a snag pin's status). null for note pins. */
   snag_status?: SnagStatus | null;
   snag_title?: string | null;
+  // Task-pin fields (null for snag/note pins). A task pin OWNS its status —
+  // unlike a snag pin, whose status is derived from the linked snag row.
+  task_status?: TaskPinStatus | null;
+  assigned_to?: string | null;
+  due_date?: string | null;
+  /** Joined display name of the assignee (from users). null when unassigned. */
+  assignee_name?: string | null;
 };
 
 // ── display derivation ───────────────────────────────────────────────────────
 export type PinTone = "open" | "progress" | "resolved" | "muted" | "note";
 
 /**
- * A pin's display status is DERIVED, never stored: a snag pin mirrors its
- * snag's status (single source of truth), a note pin is just "Note".
+ * A pin's display status is DERIVED, never stored ON A SNAG PIN: a snag pin
+ * mirrors its snag's status (single source of truth), a note pin is just
+ * "Note". A TASK pin owns its own `task_status`, so it reads that directly.
  */
-export function pinDisplayStatus(pin: Pick<BlueprintPin, "kind" | "snag_status">): {
+export function pinDisplayStatus(
+  pin: Pick<BlueprintPin, "kind" | "snag_status" | "task_status">,
+): {
   label: string;
   tone: PinTone;
 } {
   if (pin.kind === "note") return { label: "Note", tone: "note" };
+  if (pin.kind === "task") {
+    const t = pin.task_status ?? "open";
+    const tone: PinTone = t === "open" ? "open" : t === "in_progress" ? "progress" : "resolved";
+    return { label: TASK_PIN_STATUS_LABELS[t], tone };
+  }
   const s = pin.snag_status ?? null;
   if (!s) return { label: "Snag", tone: "muted" };
   const tone: PinTone =
@@ -108,6 +139,7 @@ export function pinShortLabel(pin: BlueprintPin): string {
   const t = (pin.title ?? "").trim();
   if (t) return t;
   if (pin.kind === "snag") return (pin.snag_title ?? "").trim() || "Snag";
+  if (pin.kind === "task") return (pin.note ?? "").trim().slice(0, 60) || "Task";
   return (pin.note ?? "").trim().slice(0, 60) || "Note";
 }
 
@@ -119,11 +151,17 @@ export function filterPins(pins: readonly BlueprintPin[], filter: PinFilter): Bl
   return pins.filter((p) => {
     if (filter.kind !== "all" && p.kind !== filter.kind) return false;
     if (filter.status === "all") return true;
-    // "open" = anything not yet resolved; "resolved" = verified snags. Note pins
-    // have no lifecycle → they only match "all".
-    if (p.kind !== "snag") return false;
-    const resolved = p.snag_status === "verified" || p.snag_status === "wont_fix";
-    return filter.status === "resolved" ? resolved : !resolved;
+    // "open" = anything not yet resolved; "resolved" = done work. Note pins have
+    // no lifecycle → they only match "all". Snag and TASK pins both participate.
+    if (p.kind === "snag") {
+      const resolved = p.snag_status === "verified" || p.snag_status === "wont_fix";
+      return filter.status === "resolved" ? resolved : !resolved;
+    }
+    if (p.kind === "task") {
+      const resolved = p.task_status === "done";
+      return filter.status === "resolved" ? resolved : !resolved;
+    }
+    return false;
   });
 }
 
@@ -168,6 +206,42 @@ export const linkSnagPinSchema = z.object({
   title: titleOpt,
 });
 export type LinkSnagPinInput = z.infer<typeof linkSnagPinSchema>;
+
+/** Place a pin that is a first-class task (assignee, status, due date). */
+export const createTaskPinSchema = z.object({
+  blueprint_version_id: uuid,
+  page_number: page,
+  u: coord,
+  v: coord,
+  title: z.string().trim().min(1, "The task needs a title.").max(120),
+  note: z.string().trim().max(2000).optional().or(z.literal("").transform(() => undefined)),
+  assigned_to: uuid.optional().or(z.literal("").transform(() => undefined)),
+  due_date: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Use the date picker — format must be YYYY-MM-DD")
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
+});
+export type CreateTaskPinInput = z.infer<typeof createTaskPinSchema>;
+
+/** Update a task pin's lifecycle fields (status / assignee / due date). */
+export const updateTaskPinSchema = z.object({
+  id: uuid,
+  status: z.enum(TASK_PIN_STATUSES).optional(),
+  // A distinguishable "unassign" (null) vs "leave unchanged" (undefined): the
+  // literal "" from an empty <select> maps to null (clear the assignee).
+  assigned_to: uuid.nullable().optional().or(z.literal("").transform(() => null)),
+  // "" clears the due date; a date string sets it; undefined leaves it.
+  due_date: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Use the date picker — format must be YYYY-MM-DD")
+    .nullable()
+    .optional()
+    .or(z.literal("").transform(() => null)),
+});
+export type UpdateTaskPinInput = z.infer<typeof updateTaskPinSchema>;
 
 /** Move an existing pin (member-allowed reposition). */
 export const movePinSchema = z.object({ id: uuid, u: coord, v: coord });

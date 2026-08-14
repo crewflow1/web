@@ -4,7 +4,7 @@
  * `InboundChannel` matches the `inbound_enquiries.channel` CHECK.
  * The processor (server-side) ingests a normalised `InboundEnquiry`
  * payload regardless of which adapter (Twilio / WhatsApp Business
- * API / Meta Messenger / manual) produced it.
+ * API / Meta Messenger / inbound email / manual) produced it.
  *
  * AI is read-only. Per Phase 5 safety contract: AI summarises +
  * classifies + creates a lead; it NEVER books, schedules, prices,
@@ -18,6 +18,7 @@ export const INBOUND_CHANNELS = [
   "whatsapp_call",
   "instagram_dm",
   "facebook_dm",
+  "email",
   "manual",
 ] as const;
 export type InboundChannel = (typeof INBOUND_CHANNELS)[number];

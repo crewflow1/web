@@ -46,6 +46,8 @@ const ENQUEUE_ERROR: Record<EnqueueError, string> = {
   unsupported:
     "This browser can't save reports offline. Reconnect and create again — your text is still here.",
   unknown_kind: "This form can't be saved offline. Reconnect and create again.",
+  missing_base:
+    "This edit can't be saved offline right now — reconnect and save again. Your text is still here.",
   invalid_payload:
     "Check the job and dates above (the end date can't be before the start), then save again — nothing has been lost.",
   too_large:

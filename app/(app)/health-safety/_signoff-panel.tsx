@@ -1,4 +1,5 @@
 import { acknowledgeSafetyDocument } from "./signoff-actions";
+import { SignaturePad } from "@/app/_components/signature-pad";
 import type { PriorSignoff } from "./_signoff-data";
 import {
   ackStatement,
@@ -7,7 +8,7 @@ import {
   type SignoffSummary,
 } from "@/lib/health-safety/acknowledgements";
 
-type Ack = { id: string; user_id: string; acknowledged_at: string; signed_name: string; signer_name: string };
+type Ack = { id: string; user_id: string; acknowledged_at: string; signed_name: string; signer_name: string; signatureImageUrl?: string | null };
 type Outstanding = { id: string; name: string };
 
 /**
@@ -121,9 +122,19 @@ export function SignoffPanel({
       ) : (
         <ul className="mt-3 divide-y divide-slate-100">
           {acks.map((a) => (
-            <li key={a.id} className="flex flex-wrap items-baseline justify-between gap-x-3 py-2 text-sm">
-              <span className="font-medium text-slate-800">{a.signer_name}</span>
-              <span className="text-slate-500">signed &ldquo;{a.signed_name}&rdquo; · {a.acknowledged_at.slice(0, 10)}</span>
+            <li key={a.id} className="py-2 text-sm">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                <span className="font-medium text-slate-800">{a.signer_name}</span>
+                <span className="text-slate-500">signed &ldquo;{a.signed_name}&rdquo; · {a.acknowledged_at.slice(0, 10)}</span>
+              </div>
+              {a.signatureImageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={a.signatureImageUrl}
+                  alt={`Drawn signature by ${a.signer_name}`}
+                  className="mt-1.5 max-h-16 rounded-md border border-slate-200 bg-white p-1"
+                />
+              ) : null}
             </li>
           ))}
         </ul>
@@ -147,6 +158,13 @@ export function SignoffPanel({
               className="min-h-[44px] w-full max-w-sm rounded-md border border-slate-300 px-3 text-sm"
             />
           </label>
+          <div className="max-w-sm">
+            <SignaturePad
+              name="signatureDataUrl"
+              label="Draw your signature (optional)"
+              hint="Optional — captured alongside your typed name, IP and device as sign-off evidence."
+            />
+          </div>
           <button
             type="submit"
             className="min-h-[44px] w-full rounded-md bg-slate-900 px-4 text-sm font-semibold text-white hover:bg-slate-800 sm:w-auto"

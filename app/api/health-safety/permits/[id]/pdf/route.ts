@@ -35,7 +35,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   const ramsRef = permit.risk_assessment_id
     ? (await t("risk_assessments").select("reference").eq("id", permit.risk_assessment_id).eq("org_id", ctx.org.id).maybeSingle()).data?.reference ?? null
     : null;
-  const signoffs = await listAcknowledgements("permit_to_work", permit.id);
+  const signoffs = await listAcknowledgements("permit_to_work", permit.id, ctx.org.id);
 
   const input: PermitPdfInput = {
     org_name: orgRow.data?.name ?? "CrewFlow",

@@ -201,49 +201,79 @@ export async function exchangeCodeForTokens(params: {
     client_secret: client.clientSecret,
   });
 
-  let res: Response;
-  try {
-    res = await fetch(HMRC_OAUTH.tokenUrl, {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        accept: "application/json",
-      },
-      body: body.toString(),
-    });
-  } catch (e) {
+  const outcome = await postTokenRequest(body);
+  if (!outcome.ok) {
+    return { ok: false, reason: "error", message: outcome.message };
+  }
+  return { ok: true, tokens: outcome.tokens };
+}
+
+export type RefreshResult =
+  | { ok: true; tokens: HmrcTokens }
+  | {
+      ok: false;
+      reason: "not_configured" | "error";
+      /**
+       * TERMINAL — the stored refresh token is dead (HMRC answered the token
+       * endpoint with invalid_grant, surfaced as 400/401/403). No retry recovers
+       * it; the org must re-consent. Absent/false ⇒ a TRANSIENT blip (5xx / 429 /
+       * network / a 2xx contract violation) that leaves the connection live to
+       * self-heal on the next attempt. Mirrors the calendar refresh contract.
+       */
+      terminal?: boolean;
+      message: string;
+    };
+
+/**
+ * Refresh an HMRC access token with a stored refresh token
+ * (`grant_type=refresh_token`). This is the LIVE token-refresh path the submit
+ * pipeline calls on a 401 (or a near-expiry access token) so a connected org
+ * renews silently without a fresh OAuth consent.
+ *
+ * REFUSES (no `fetch`) when HMRC is not connectable — structurally dark without
+ * client credentials + the feature flag. HMRC MAY rotate the refresh token; when
+ * it omits one on the response the caller keeps the existing refresh token (the
+ * `refreshToken` field is then null). The secret goes in the body, never a log.
+ */
+export async function refreshAccessTokens(params: {
+  refreshToken: string;
+}): Promise<RefreshResult> {
+  const { refreshToken } = params;
+
+  // DARK GUARD FIRST. No credentials/flag → return WITHOUT touching the network.
+  const client = isHmrcConnectable() ? resolveClient() : null;
+  if (!client) {
     return {
       ok: false,
-      reason: "error",
-      message: `token exchange request failed: ${e instanceof Error ? e.message : "network error"}`,
+      reason: "not_configured",
+      message: "HMRC is not configured; no token refresh is possible.",
     };
   }
 
-  if (!res.ok) {
-    // Do NOT echo the response body wholesale — it can carry sensitive detail.
-    return { ok: false, reason: "error", message: `token exchange returned ${res.status}` };
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: client.clientId,
+    client_secret: client.clientSecret,
+  });
+
+  const outcome = await postTokenRequest(body);
+  if (!outcome.ok) {
+    // invalid_grant surfaces as 400/401/403 on the token endpoint: the refresh
+    // token is revoked/expired and NO retry recovers it (re-consent required =
+    // TERMINAL). Any other status (5xx / 429 / network) is transient.
+    const terminal =
+      outcome.status === 400 || outcome.status === 401 || outcome.status === 403;
+    return { ok: false, reason: "error", message: outcome.message, terminal };
   }
-
-  const json = (await res.json()) as {
-    access_token?: string;
-    refresh_token?: string;
-    expires_in?: number;
-  };
-  if (!json.access_token) {
-    return { ok: false, reason: "error", message: "token exchange returned no access token" };
-  }
-
-  const expiresAt =
-    typeof json.expires_in === "number"
-      ? new Date(Date.now() + json.expires_in * 1000).toISOString()
-      : null;
-
   return {
     ok: true,
     tokens: {
-      accessToken: json.access_token,
-      refreshToken: json.refresh_token ?? null,
-      expiresAt,
+      accessToken: outcome.tokens.accessToken,
+      // HMRC may omit a rotated refresh token — keep the existing one so the
+      // connection is not stranded without a refresh credential.
+      refreshToken: outcome.tokens.refreshToken ?? refreshToken,
+      expiresAt: outcome.tokens.expiresAt,
     },
   };
 }
@@ -262,5 +292,66 @@ export function decryptStoredTokens(stored: {
   return {
     accessToken: decryptToken(stored.accessToken),
     refreshToken: stored.refreshToken !== null ? decryptToken(stored.refreshToken) : null,
+  };
+}
+
+/** Outcome of a raw POST to HMRC's OAuth token endpoint. Carries the status so the caller can classify terminal vs transient. */
+type TokenPostOutcome =
+  | { ok: true; tokens: HmrcTokens }
+  | { ok: false; status: number | null; message: string };
+
+/**
+ * The SINGLE HMRC token-endpoint `fetch` in this module — shared by the
+ * authorization-code exchange and the refresh path so there is exactly one
+ * network call site (and it lives strictly AFTER every connectable guard, so it
+ * is structurally unreachable while dark). The client secret rides in the form
+ * body; neither it nor the returned tokens are ever logged. Response bodies are
+ * NOT echoed wholesale — only a coarse status is surfaced.
+ */
+async function postTokenRequest(body: URLSearchParams): Promise<TokenPostOutcome> {
+  let res: Response;
+  try {
+    res = await fetch(HMRC_OAUTH.tokenUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        accept: "application/json",
+      },
+      body: body.toString(),
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      status: null,
+      message: `token request failed: ${e instanceof Error ? e.message : "network error"}`,
+    };
+  }
+
+  if (!res.ok) {
+    // Do NOT echo the response body wholesale — it can carry sensitive detail.
+    return { ok: false, status: res.status, message: `token request returned ${res.status}` };
+  }
+
+  const json = (await res.json()) as {
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+  };
+  if (!json.access_token) {
+    return { ok: false, status: res.status, message: "token request returned no access token" };
+  }
+
+  const expiresAt =
+    typeof json.expires_in === "number"
+      ? new Date(Date.now() + json.expires_in * 1000).toISOString()
+      : null;
+
+  return {
+    ok: true,
+    tokens: {
+      accessToken: json.access_token,
+      refreshToken: json.refresh_token ?? null,
+      expiresAt,
+    },
   };
 }

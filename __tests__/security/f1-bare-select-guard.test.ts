@@ -357,7 +357,7 @@ const ALLOWLIST: Record<string, string> = {
   //    the cap. Same class as the already-allowlisted per-org fleet_vehicles reads.
   "app/(app)/health-safety/_data.ts:113":
     "bounded: ONE org's members (.eq('org_id')) — the assessor picker (listAssessors); an org's headcount is tens/low-hundreds, never near 1000",
-  "app/(app)/health-safety/_signoff-data.ts:117":
+  "app/(app)/health-safety/_signoff-data.ts:137":
     "bounded: name lookup .in('user_id', ids) where ids is a de-duped Set of sign-off user_ids from a bounded parent set — ≤ parent rows, never near 1000",
   "app/(app)/settings/page.tsx:72":
     "bounded: ONE org's members (.eq('org_id')) — the settings team panel; bounded by the org's headcount, never near 1000",
@@ -1095,6 +1095,7 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   // ---- PER-PARENT (bounded by ONE parent row) ----
   blueprint_markup: "PER-PARENT: .eq('blueprint_version_id') — one drawing version's markup shapes",
   blueprint_pins: "PER-PARENT: .eq('blueprint_version_id')/.eq('job_id') — one drawing's/job's pins",
+  blueprint_pin_comments: "PER-PARENT/PAGED: .eq('pin_id') — one pin's discussion thread, always fetchAllRows-paged (blueprint-pin-comments.ts)",
   blueprint_versions: "PER-PARENT: .eq('blueprint_id') — one blueprint's version history",
   blueprints: "PER-PARENT: .eq('job_id') — one job's drawings register",
   permit_conditions: "PER-PARENT: .eq('permit_id') — one permit's condition checklist",
@@ -1125,6 +1126,7 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   accounting_connections: "PER-ORG: .eq('org_id') accounting connection config — one/few provider rows",
   bank_connections: "PER-ORG/PAGED: .eq('org_id') config; the estate lister is fetchAllRows-paged",
   calendar_connections: "PER-ORG: .eq('org_id') calendar connection config",
+  merchant_connections: "PER-ORG/PAGED: .eq('org_id') builders'-merchant connection config (one row per (org,provider), ≤4 rows); the lister is fetchAllRows-paged",
   hmrc_submissions: "PER-ORG/SINGLE: .eq('org_id') submission list + a .limit(1) period-key existence probe",
   automation_rules: "PER-ORG/CLOSED: .eq('org_id') rule overrides — a closed automation-rule registry",
   automation_schedules: "PER-ORG/CLOSED: .eq('org_id') schedules — a closed schedule set",
@@ -1144,6 +1146,7 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   sites: "PER-ORG/PAGED: fetchAllRows-paged picker + a .limit(Math.min(opts.limit,SITE_LIST_LIMIT)) bounded sample",
   stock_items: "PER-ORG/SINGLE: .eq('org_id') with a Math.min-bounded .limit, or a .limit(1) in-org existence probe",
   material_requests: "PAGED/SINGLE: fetchAllRows demand read, a bounded list .limit, or .eq('id').limit(1)",
+  mfa_recovery_codes: "PER-USER/BOUNDED: .eq('user_id').is('used_at',null) — the caller's OWN unused MFA backup codes, minted in fixed batches of RECOVERY_CODE_COUNT (10) and replaced-not-appended, so the set is a tiny closed per-user list; never cross-tenant, never summed. Read via the service-role client scoped to the authenticated user id (the table is RLS service-role-only).",
   suppliers: "PER-ORG/PAGED/ID-BATCH: fetchAllRows-paged list, a Math.min-bounded .limit sample, or .in(supplierIds) lookup",
   snags: "PER-PARENT/PAGED: .eq('job_id')/.in(snagIds) or fetchAllRows-paged (intelligence patterns)",
   rota_entries: "PER-PARENT/PER-ORG/PAGED: .eq('job_id')/.eq('user_id')+date-window, or fetchAllRows-paged",
@@ -1165,6 +1168,8 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   hq_capabilities: "CLOSED: .in('token', <the closed capability registry>) — a fixed lookup set",
   hq_capability_grants: "CLOSED: .or(<clauses from the closed capability registry>) — bounded by the registry",
   billing_events: "SINGLE: .limit(1) existence probe (stripe verify) — not a set read",
+  invoice_payment_intents:
+    "SINGLE: the webhook handler's cast-form read is a .maybeSingle() lookup by a UNIQUE Stripe id (stripe_payment_intent_id / stripe_checkout_session_id — both UNIQUE constraints in 20261120), so it returns at most one row; the pay-now findReusableIntent + the page reads are per-org config (.eq('org_id')) or unused. No estate scan, no aggregate.",
   payments: "SINGLE: .select('id').eq(scoped...).limit(1) duplicate-payment existence probe",
   asset_assignments: "PER-ORG: .eq(scoped).limit(SITE_USAGE_SCAN_LIMIT) site-usage count sample — bounded",
   assets: "PER-ORG: .eq('org_id').limit(VAN_SCAN_LIMIT) assets picker — bounded by the org's fleet",

@@ -3,6 +3,7 @@ import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure
 import type { AcknowledgementRow } from "@/lib/health-safety/acknowledgements-schema";
 import type { AckSubjectType, RevisableSubject } from "@/lib/health-safety/acknowledgements";
 import { RAMS_REVISABLE } from "@/lib/health-safety/acknowledgements";
+import { signatureImageUrl } from "@/server/services/signature-capture";
 
 /**
  * Operative sign-off read layer (shared by the RAMS + permit detail pages).
@@ -10,23 +11,42 @@ import { RAMS_REVISABLE } from "@/lib/health-safety/acknowledgements";
  * safety_acknowledgements post-dates the generated types → precise-shape cast.
  */
 
-type AckWithName = AcknowledgementRow & { signer_name: string };
+type AckImageFields = {
+  signature_image_bucket: string | null;
+  signature_image_path: string | null;
+};
+type AckWithName = AcknowledgementRow &
+  AckImageFields & { signer_name: string; signatureImageUrl: string | null };
 
 export async function listAcknowledgements(
   subjectType: AckSubjectType,
   subjectId: string,
+  orgId: string,
 ): Promise<AckWithName[]> {
   const supabase = await createClient();
+  // Active-org pin: RLS (current_org_ids) admits every org the viewer belongs
+  // to, so a dual-org member could otherwise read another org's acks by id.
+  // Pinning ctx.org.id here is also what makes the drawn-signature signed-URL
+  // mint below active-org-safe (the path is under this org).
   const { data, error } = await (supabase as unknown as {
-    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: Array<AcknowledgementRow & { users: { full_name: string | null; email: string | null } | null }> | null; error: SupabaseReadError | null }> } } } };
+    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { eq: (k: string, v: string) => { order: (k: string, o: { ascending: boolean }) => Promise<{ data: Array<AcknowledgementRow & AckImageFields & { users: { full_name: string | null; email: string | null } | null }> | null; error: SupabaseReadError | null }> } } } } };
   })
     .from("safety_acknowledgements")
-    .select("id, org_id, subject_type, subject_id, subject_version, user_id, acknowledged_at, statement, statement_version, signed_name, users(full_name, email)")
+    .select("id, org_id, subject_type, subject_id, subject_version, user_id, acknowledged_at, statement, statement_version, signed_name, signature_image_bucket, signature_image_path, users(full_name, email)")
+    .eq("org_id", orgId)
     .eq("subject_type", subjectType)
     .eq("subject_id", subjectId)
     .order("acknowledged_at", { ascending: false });
   if (error) throw readFailure("health-safety: acknowledgements", error);
-  return (data ?? []).map((a) => ({ ...a, signer_name: a.users?.full_name || a.users?.email || a.signed_name }));
+  // Mint active-org-scoped signed URLs for any drawn-signature images
+  // (best-effort; signatureImageUrl refuses a path not under this org).
+  return Promise.all(
+    (data ?? []).map(async (a) => ({
+      ...a,
+      signer_name: a.users?.full_name || a.users?.email || a.signed_name,
+      signatureImageUrl: await signatureImageUrl(a.signature_image_bucket, a.signature_image_path, orgId),
+    })),
+  );
 }
 
 /**

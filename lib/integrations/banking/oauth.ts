@@ -108,6 +108,21 @@ function resolveClient(): { clientId: string; clientSecret: string } | null {
 }
 
 /**
+ * Public credential resolver for adapters whose DATA API authenticates with the
+ * client id + secret in every request (Plaid: `client_id`/`secret` in the JSON
+ * body — NOT a Bearer token like TrueLayer/Nordigen). Returns null when either is
+ * absent, which is ALWAYS today — so an adapter that calls this stays dark unless
+ * the connectable guard has already passed. A single source for the credentials
+ * so no adapter re-reads env directly. Never logs the secret.
+ */
+export function resolveBankingClientCredentials(): {
+  clientId: string;
+  clientSecret: string;
+} | null {
+  return resolveClient();
+}
+
+/**
  * Aggregator OAuth endpoints. Only ever contacted AFTER the connectable guard.
  * These are the documented aggregator endpoints; they are wired at activation and
  * are unreachable while dark.

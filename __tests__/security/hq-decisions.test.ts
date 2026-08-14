@@ -244,9 +244,13 @@ describe("decision centre — ai_debate + reasons render inert (never interprete
       expect(codeOf(read(page))).not.toMatch(/dangerouslySetInnerHTML/);
     });
   }
-  it("the detail page carries the AI-debate empty state and renders entries inside <pre>", () => {
+  it("the detail page carries the AI-debate empty state + the deterministic generate affordance, and renders entries inside <pre>", () => {
     const raw = read(DETAIL_PAGE);
-    expect(raw).toMatch(/AI debate populates once a model tier is bound/);
+    // The deterministic producer's empty state (the generative tier is still dark).
+    expect(raw).toMatch(/generate a deterministic pro\/con from this decision's signals/);
+    expect(raw).toMatch(/Generative prose is dark until a model tier is bound/);
+    // The producer is reachable — a form drives produceDecisionDebateAction.
+    expect(raw).toMatch(/produceDecisionDebateAction/);
     expect(raw).toMatch(/<pre[^>]*>\s*\{JSON\.stringify\(entry/);
   });
 });

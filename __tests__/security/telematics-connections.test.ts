@@ -46,6 +46,7 @@ const CONNECT = "app/api/integrations/telematics/[provider]/connect/route.ts";
 const CALLBACK = "app/api/integrations/telematics/[provider]/callback/route.ts";
 const SERVICE = "server/services/telematics-connections.ts";
 const SAMSARA = "lib/integrations/telematics/adapters/samsara.ts";
+const VERIZON = "lib/integrations/telematics/adapters/verizon-connect.ts";
 const PENDING = "lib/integrations/telematics/adapters/pending.ts";
 const READING_MAP = "lib/integrations/telematics/reading-map.ts";
 
@@ -361,6 +362,32 @@ describe("telematics adapters refuse before any fetch", () => {
     expect(code).not.toMatch(/^import .*samsara/im);
   });
 
+  it("the Verizon Connect adapter's fetch lives AFTER the isAvailable guard", () => {
+    const code = codeOf(read(VERIZON));
+    const guardIdx = code.indexOf("if (!this.isAvailable())");
+    const fetchIdx = code.indexOf("fetch(");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(fetchIdx).toBeGreaterThan(-1);
+    // The first refuse-guard precedes the first (and every) network call.
+    expect(guardIdx).toBeLessThan(fetchIdx);
+    // No SDK import / client construction at module scope.
+    expect(code).not.toMatch(/^import .*fleetmatics/im);
+    // Every outbound URL is vetted through the shared SSRF policy before fetch.
+    expect(code).toMatch(/validateWebhookUrl\(/);
+  });
+
+  it("the Verizon Connect account resolver's fetch also lives AFTER its guard", () => {
+    const code = codeOf(read(VERIZON));
+    const start = code.indexOf("async resolveAccountHandle");
+    expect(start).toBeGreaterThan(-1);
+    const body = code.slice(start);
+    const guardIdx = body.indexOf("if (!this.isAvailable())");
+    const fetchIdx = body.indexOf("fetch(");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(fetchIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(fetchIdx);
+  });
+
   it("the pending adapter contains NO fetch at all (dark-safe skeleton)", () => {
     const code = codeOf(read(PENDING));
     expect(code).not.toMatch(/fetch\(/);
@@ -397,7 +424,7 @@ describe("telematics service — org-pinned, loud, token-free, refuse-before-fet
 
 describe("no secret is ever logged", () => {
   it("no source logs a client secret or a token", () => {
-    for (const f of [OAUTH, CONNECT, CALLBACK, SERVICE, SAMSARA, READING_MAP]) {
+    for (const f of [OAUTH, CONNECT, CALLBACK, SERVICE, SAMSARA, VERIZON, READING_MAP]) {
       const code = codeOf(read(f));
       const logCalls = code.match(/console\.\w+\([^;]*\)/g) ?? [];
       for (const call of logCalls) {

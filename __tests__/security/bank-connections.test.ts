@@ -40,6 +40,8 @@ const CONNECT = "app/api/integrations/banking/[provider]/connect/route.ts";
 const CALLBACK = "app/api/integrations/banking/[provider]/callback/route.ts";
 const SERVICE = "server/services/bank-connections.ts";
 const ADAPTER_TL = "lib/integrations/banking/adapters/truelayer.ts";
+const ADAPTER_PLAID = "lib/integrations/banking/adapters/plaid.ts";
+const ADAPTER_NORDIGEN = "lib/integrations/banking/adapters/nordigen.ts";
 const ADAPTER_PENDING = "lib/integrations/banking/adapters/pending.ts";
 const STATEMENT_MAP = "lib/integrations/banking/statement-map.ts";
 
@@ -301,6 +303,39 @@ describe("banking adapters REFUSE before fetch (no live bank call dark)", () => 
     expect(code).not.toMatch(/^import .*truelayer-client/im);
   });
 
+  it("the Plaid adapter's ONLY fetch lives AFTER the isAvailable guard", () => {
+    const code = codeOf(read(ADAPTER_PLAID));
+    const guardIdx = code.indexOf("if (!this.isAvailable())");
+    const fetchIdx = code.indexOf("fetch(");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(fetchIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(fetchIdx);
+    // No SDK/client construction — the only network is `fetch`, and no plaid pkg.
+    expect(code).not.toMatch(/from\s+["'][^"']*plaid[^"']*["']/i);
+  });
+
+  it("the Nordigen adapter's ONLY fetch lives AFTER the isAvailable guard", () => {
+    const code = codeOf(read(ADAPTER_NORDIGEN));
+    const guardIdx = code.indexOf("if (!this.isAvailable())");
+    const fetchIdx = code.indexOf("fetch(");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(fetchIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(fetchIdx);
+    expect(code).not.toMatch(/from\s+["'][^"']*(nordigen|gocardless)[^"']*["']/i);
+  });
+
+  it("both new adapters SSRF-guard the API-base override to the provider domain", () => {
+    // An operator host override can never be re-pointed at an internal address —
+    // the override must be https AND resolve to the provider's own domain, else
+    // the adapter falls back to the production host.
+    const plaid = codeOf(read(ADAPTER_PLAID));
+    expect(plaid).toMatch(/protocol !== "https:"/);
+    expect(plaid).toMatch(/PLAID_ALLOWED_DOMAIN|plaid\.com/);
+    const nordigen = codeOf(read(ADAPTER_NORDIGEN));
+    expect(nordigen).toMatch(/protocol !== "https:"/);
+    expect(nordigen).toMatch(/NORDIGEN_ALLOWED_DOMAIN|gocardless\.com/);
+  });
+
   it("the pending adapter has NO fetch at all (no live bank call reachable)", () => {
     const code = codeOf(read(ADAPTER_PENDING));
     expect(code).not.toMatch(/fetch\(/);
@@ -341,7 +376,7 @@ describe("bank connections service — org-pinned, loud, token-free reads, refus
 
 describe("no secret is ever logged", () => {
   it("no source logs a client secret or a token", () => {
-    for (const f of [OAUTH, CONNECT, CALLBACK, SERVICE, ADAPTER_TL, ADAPTER_PENDING]) {
+    for (const f of [OAUTH, CONNECT, CALLBACK, SERVICE, ADAPTER_TL, ADAPTER_PLAID, ADAPTER_NORDIGEN, ADAPTER_PENDING]) {
       const code = codeOf(read(f));
       const logCalls = code.match(/console\.\w+\([^;]*\)/g) ?? [];
       for (const call of logCalls) {

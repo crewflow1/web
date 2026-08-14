@@ -45,7 +45,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   // never the caller's currently-active org — a multi-org member must not see one
   // org's talk under another's letterhead.
   const orgRow = await t("organizations").select("name").eq("id", talk.org_id).maybeSingle();
-  const signoffs = await listAcknowledgements("toolbox_talk", talk.id);
+  const signoffs = await listAcknowledgements("toolbox_talk", talk.id, ctx.org.id);
 
   const input: ToolboxTalkPdfInput = {
     org_name: orgRow.data?.name ?? "CrewFlow",

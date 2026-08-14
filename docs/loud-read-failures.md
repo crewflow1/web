@@ -329,3 +329,20 @@ across the codebase is neutral, and both moved shapes are strictly more correct
   home-site `<select>` preserve-injects the saved id, so a partial/empty list can
   never silent-NULL a saved site. Per the UP rule, baseline raised in the same
   commit with this reason.
+
+## Baseline raise — 2026-08-14: P2 blueprint pins wave (task pins + threaded comments)
+
+Two best-effort DISPLAY-NAME joins were added, each a `const { data } = await …`
+that deliberately drops `error` exactly like the pre-existing snag-title join
+beside it in `listPinsForVersion`. Neither can produce a false healthy state:
+the PRIMARY read in each service binds + throws `readFailure`, so only the
+decorative name enrichment degrades.
+
+- **server + lib + components discard 36 → 38** (UP — best-effort, ledgered):
+  - `server/services/blueprint-pins.ts` `listPinsForVersion` resolves task-pin
+    ASSIGNEE names with `.in(assigneeIds)` on `users`; a failed lookup shows the
+    assignee as "Member"/null — it never blanks or hides a pin.
+  - `server/services/blueprint-pin-comments.ts` `listPinComments` resolves
+    comment AUTHOR names with `.in(authorIds)` on `users`; a failed lookup shows
+    the author as "Member" — it never drops a comment.
+  Per the UP rule, baseline raised in the same commit with this reason.

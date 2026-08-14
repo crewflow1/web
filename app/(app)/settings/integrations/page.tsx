@@ -14,10 +14,13 @@ import { listBankConnections } from "@/server/services/bank-connections";
 import { isBankingProviderConnectable } from "@/lib/integrations/banking/oauth";
 import { listTelematicsConnections } from "@/server/services/telematics-connections";
 import { isTelematicsProviderConnectable } from "@/lib/integrations/telematics/oauth";
+import { listMerchantConnections } from "@/server/services/merchant-connections";
+import { isMerchantConnectable } from "@/lib/integrations/merchants/connect";
 import { CalendarConnectionsPanel } from "./CalendarConnectionsPanel";
 import { HmrcConnectionPanel } from "./HmrcConnectionPanel";
 import { BankConnectionsPanel } from "./BankConnectionsPanel";
 import { TelematicsConnectionsPanel } from "./TelematicsConnectionsPanel";
+import { MerchantConnectionsPanel } from "./MerchantConnectionsPanel";
 
 /**
  * /settings/integrations — third-party integration connections (calendar today).
@@ -54,6 +57,7 @@ export default async function IntegrationsSettingsPage() {
   const hmrc = await getHmrcConnection(ctx.org.id);
   const bankConnections = await listBankConnections(ctx.org.id);
   const telematicsConnections = await listTelematicsConnections(ctx.org.id);
+  const merchantConnections = await listMerchantConnections(ctx.org.id);
 
   // The HMRC connect flow resolves the VRN from organizations.vat_number (HMRC
   // never returns one). Read it org-pinned so the panel can surface the
@@ -98,6 +102,15 @@ export default async function IntegrationsSettingsPage() {
         connectable={{
           samsara: isTelematicsProviderConnectable("samsara"),
           verizon_connect: isTelematicsProviderConnectable("verizon_connect"),
+        }}
+      />
+      <MerchantConnectionsPanel
+        connections={merchantConnections}
+        connectable={{
+          jp_corry: isMerchantConnectable("jp_corry"),
+          jewson: isMerchantConnectable("jewson"),
+          travis_perkins: isMerchantConnectable("travis_perkins"),
+          haldane_fisher: isMerchantConnectable("haldane_fisher"),
         }}
       />
     </div>

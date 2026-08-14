@@ -9,14 +9,17 @@
 
 import type { BankingAdapter, BankingProvider } from "./types";
 import { TrueLayerAdapter } from "./truelayer";
-import { PendingAggregatorAdapter } from "./pending";
+import { PlaidAdapter } from "./plaid";
+import { NordigenAdapter } from "./nordigen";
 
 const ADAPTERS: Record<BankingProvider, BankingAdapter> = {
+  // All three are REAL adapters (concrete fetch bodies), each dark-safe by
+  // construction: refuse-before-fetch, no SDK/client at module scope, the only
+  // network call lives strictly after the connectable guard. Dark today (no
+  // credentials + flag off ⇒ no live bank call reachable for any of them).
   truelayer: new TrueLayerAdapter(),
-  // Concrete fetch bodies for these are wired at activation; dark-safe skeletons
-  // today (refuse-before-fetch, no live bank call reachable).
-  plaid: new PendingAggregatorAdapter("plaid"),
-  nordigen: new PendingAggregatorAdapter("nordigen"),
+  plaid: new PlaidAdapter(),
+  nordigen: new NordigenAdapter(),
 };
 
 /** Resolve the adapter for an aggregator. */

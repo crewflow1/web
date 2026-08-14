@@ -32,7 +32,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     .from("organizations").select("name").eq("id", ra.org_id).maybeSingle();
 
   const assessors = await listAssessors(ctx.org.id);
-  const signoffs = await listAcknowledgements("risk_assessment", ra.id);
+  const signoffs = await listAcknowledgements("risk_assessment", ra.id, ctx.org.id);
 
   const input: RamsPdfInput = {
     org_name: orgRow.data?.name ?? "CrewFlow",

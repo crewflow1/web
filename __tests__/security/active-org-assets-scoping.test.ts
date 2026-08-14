@@ -113,7 +113,9 @@ describe("asset detail pages — by-id reads are active-org scoped", () => {
 
     it(`${label} uses requireOrgContext's ctx rather than discarding it`, () => {
       const SRC = src(path);
-      expect(SRC).toMatch(/const \{ ctx \} = await requireOrgContext\(\)/);
+      // `ctx` must be destructured (other keys like `user` may accompany it — the
+      // diary edit form also needs `user` for the offline-write identity).
+      expect(SRC).toMatch(/const \{ ctx[,\s}][^=]*= await requireOrgContext\(\)/);
       expect(
         SRC,
         "a bare `await requireOrgContext();` means the org was never used for scoping",

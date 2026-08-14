@@ -9,7 +9,7 @@ import {
   pointerToNormalized, isTap, pinsForSheet, filterPins, toStoredPage, DEFAULT_PIN_FILTER,
   type BlueprintPin,
 } from "@/lib/blueprints/pins";
-import { getPinsAction, getLinkableSnagsAction } from "./pin-actions";
+import { getPinsAction, getLinkableSnagsAction, getAssignableMembersAction } from "./pin-actions";
 import { PinMarker, DraftMarker, PlacementSheet, PinDetail, FilterChips } from "./_pins-ui";
 import {
   appendSample, simplifyStroke, isDegenerate, markupForSheet,
@@ -96,6 +96,7 @@ export default function BlueprintViewer(props: Props) {
   const editingDisabled = !online || byteSource === "offline";
   const [pins, setPins] = useState<BlueprintPin[]>([]);
   const [linkable, setLinkable] = useState<{ id: string; title: string; status: string }[]>([]);
+  const [members, setMembers] = useState<{ id: string; name: string }[]>([]);
   const [draft, setDraft] = useState<{ u: number; v: number; page: number } | null>(null);
   const [activePinId, setActivePinId] = useState<string | null>(null);
   const [pinFilter, setPinFilter] = useState(DEFAULT_PIN_FILTER);
@@ -140,6 +141,9 @@ export default function BlueprintViewer(props: Props) {
   // Snag linking is an editing convenience, not safety information — an empty
   // picker degrades the link form, it does not misrepresent the drawing.
   useEffect(() => { getLinkableSnagsAction(jobId).then(setLinkable).catch(() => {}); }, [jobId]);
+  // Assignee picker for task pins — a convenience list; an empty list degrades
+  // the picker (no assignee options), it does not misrepresent the drawing.
+  useEffect(() => { getAssignableMembersAction().then(setMembers).catch(() => {}); }, []);
 
   // --- load the document once (fetch bytes, then pdf.js) --------------------
   useEffect(() => {
@@ -632,13 +636,17 @@ export default function BlueprintViewer(props: Props) {
       {draft ? (
         <PlacementSheet
           jobId={jobId} versionId={versionId} page={toStoredPage(draft.page)} u={draft.u} v={draft.v}
-          linkable={linkable}
+          linkable={linkable} members={members}
           onDone={() => { setDraft(null); void refreshPins(); getLinkableSnagsAction(jobId).then(setLinkable).catch(() => {}); }}
           onCancel={() => setDraft(null)}
         />
       ) : null}
       {activePin ? (
-        <PinDetail pin={activePin} jobId={jobId} canDelete={props.canDeletePins} onClose={() => setActivePinId(null)} onChanged={refreshPins} />
+        <PinDetail
+          pin={activePin} jobId={jobId} canDelete={props.canDeletePins}
+          members={members} identity={props.identity ?? null} isAdmin={props.canDeletePins}
+          onClose={() => setActivePinId(null)} onChanged={refreshPins}
+        />
       ) : null}
 
       {placeMode ? (

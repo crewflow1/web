@@ -122,6 +122,29 @@ export function parseMetaWebhookPayload(rawBody: string): MetaWebhookEnvelope | 
 // Normalization → the channel-agnostic ingestion shape
 // ---------------------------------------------------------------------------
 
+/**
+ * The fetchable descriptor of one inbound media object. Parsed from the Meta
+ * message envelope; the bytes themselves are fetched LATER, gated (see
+ * server/services/whatsapp-media-pipeline.ts) — this is metadata only, and
+ * carries NO bytes and NO signed URL.
+ */
+export type WhatsAppMediaDescriptor = {
+  /** Meta media id — the handle passed to the media-download API + the idempotency key. */
+  media_id: string;
+  /** The enclosing message type: image | audio | video | document | sticker. */
+  message_type: string;
+  /** Vendor-declared MIME (e.g. `audio/ogg; codecs=opus`), when present. */
+  mime_type: string | null;
+  /** Vendor-declared SHA-256 of the media, for a post-fetch cross-check. */
+  declared_sha256: string | null;
+  /** Original filename (documents only), when present. */
+  filename: string | null;
+  /** Caption, when present. */
+  caption: string | null;
+  /** True for a WhatsApp VOICE NOTE (audio with `voice: true`) — the transcription target. */
+  is_voice_note: boolean;
+};
+
 /** A single inbound WhatsApp message, normalized for processInboundEnquiry. */
 export type NormalizedWhatsAppMessage = {
   /** Meta's phone_number_id — the routing key to an org. */
@@ -138,6 +161,12 @@ export type NormalizedWhatsAppMessage = {
   message_type: string;
   /** Whether the message carried media (an id we could later fetch). */
   has_media: boolean;
+  /**
+   * The fetchable media descriptor, when this message carried media — metadata
+   * only, no bytes. Null for text/interactive/location/contacts. Consumed by the
+   * gated media-download pipeline; leaving the summary path (raw_text) unchanged.
+   */
+  media: WhatsAppMediaDescriptor | null;
   /** Provider timestamp (unix seconds as string), when present. */
   provider_timestamp: string | null;
 };
@@ -171,6 +200,7 @@ function normalizeOneMessage(
 
   let text = "";
   let hasMedia = false;
+  let media: WhatsAppMediaDescriptor | null = null;
   if (type === "text" && isRecord(msg.text) && typeof msg.text.body === "string") {
     text = msg.text.body;
   } else if (isRecord(msg.interactive)) {
@@ -184,9 +214,14 @@ function normalizeOneMessage(
   } else if (type === "contacts") {
     text = "[contact card]";
   } else if (MEDIA_TYPES.has(type)) {
-    hasMedia = true;
     const caption = readMediaCaption(msg[type]);
     text = caption ? `[${type}] ${caption}` : `[${type}]`;
+    // Parse the media descriptor. `has_media` stays true ONLY when a fetchable
+    // media id is actually present — a malformed media object with no id yields
+    // the placeholder text but no fetch handle, so the pipeline never chases a
+    // non-existent object.
+    media = parseMediaDescriptor(type, msg[type], caption);
+    hasMedia = media !== null;
   } else {
     text = `[${type} message]`;
   }
@@ -199,7 +234,35 @@ function normalizeOneMessage(
     raw_text: text.slice(0, 20_000),
     message_type: type,
     has_media: hasMedia,
+    media,
     provider_timestamp: ts,
+  };
+}
+
+/**
+ * Extract the fetchable descriptor from one Meta media sub-object
+ * (`msg.image` / `msg.audio` / `msg.document` / …). Returns null when there is
+ * no usable media id — the ONE thing the download pipeline cannot work without.
+ * Metadata only: no bytes, no URL.
+ */
+export function parseMediaDescriptor(
+  type: string,
+  raw: unknown,
+  caption: string | null,
+): WhatsAppMediaDescriptor | null {
+  if (!isRecord(raw)) return null;
+  const mediaId = typeof raw.id === "string" ? raw.id : null;
+  if (!mediaId) return null;
+  return {
+    media_id: mediaId,
+    message_type: type,
+    mime_type: typeof raw.mime_type === "string" ? raw.mime_type : null,
+    declared_sha256: typeof raw.sha256 === "string" ? raw.sha256 : null,
+    filename: typeof raw.filename === "string" ? raw.filename : null,
+    caption,
+    // A WhatsApp voice note is `audio` with `voice: true`; a shared audio FILE is
+    // `audio` with `voice` absent/false. Only the former is the transcription target.
+    is_voice_note: type === "audio" && raw.voice === true,
   };
 }
 
