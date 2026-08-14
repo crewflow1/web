@@ -8,6 +8,7 @@ import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import {
   createDecision,
   decide,
+  produceDecisionDebate,
   type Decider,
   type DecisionOutcome,
 } from "@/server/services/hq-decisions";
@@ -164,3 +165,23 @@ const OUTCOME_SAVED: Record<DecisionOutcome, string> = {
   delay: "delayed",
   delegate: "delegated",
 };
+
+const produceDebateSchema = z.object({ id: z.string().uuid() });
+
+/**
+ * Fill a proposed decision's reserved AI-debate slot deterministically from its own signals
+ * (P2 HQ AI Operating System). A thin wrapper over produceDecisionDebate — the service owns the
+ * super-admin gate, the first-write-wins idempotency, the proposed-only guard, and the audit
+ * write; this action parses the id and translates the result into a redirect. No model call.
+ */
+export async function produceDecisionDebateAction(formData: FormData): Promise<void> {
+  const actor = await requireAdmin();
+  const parsed = produceDebateSchema.safeParse({ id: formData.get("id") });
+  if (!parsed.success) backTo({ error: "Invalid decision input." });
+
+  const { id } = parsed.data;
+  const detailPath = `/admin/decisions/${id}`;
+  const res = await produceDecisionDebate(id, actor);
+  if (!res.ok) backTo({ error: describeError(res.error) }, detailPath);
+  backTo({ saved: "debate" }, detailPath);
+}

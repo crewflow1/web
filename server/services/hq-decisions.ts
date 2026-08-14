@@ -3,6 +3,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import {
+  composeDecisionDebate,
+  isInsufficientDebate,
+} from "@/lib/hq/decision-debate";
 
 /**
  * CrewFlow HQ — The Decision Centre service (Master-Plan Phase 16 + the Layer-5 gap).
@@ -301,6 +305,85 @@ export async function decide(input: DecideInput): Promise<DecisionResult> {
       reason: reason || null,
       delay_until: delayUntil,
       delegate_to: delegateTo,
+    },
+  });
+  return { ok: true, decision: updated };
+}
+
+// ---------------------------------------------------------------------
+// 2b. Produce the AI debate — the deterministic Decision-Centre producer.
+// ---------------------------------------------------------------------
+
+/**
+ * Fill a proposed decision's reserved `ai_debate` slot from its REAL signals, deterministically
+ * (P2 HQ AI Operating System). This is the producer the slot has always lacked: it composes a
+ * structured pro/con debate (lib/hq/decision-debate.ts) from the decision's own revenue/demand/
+ * cost/risk/timeline fields and writes it into the proposed row.
+ *
+ *   • FIRST-WRITE-WINS / idempotent: if a debate already exists, it is a no-op success — the
+ *     producer never overwrites an existing debate (including a future generated one).
+ *   • PROPOSED-ONLY: a decided decision is terminal and immutable (DB-enforced); the producer
+ *     refuses with `not_active` rather than attempting a write the guard would reject.
+ *   • HONEST: a decision with no structured signals gets the explicit `insufficient` entry, never
+ *     a fabricated debate. Makes NO model call — the generative tier is dark.
+ *
+ * Super-admin gated, like every other Decision-Centre write.
+ */
+export async function produceDecisionDebate(
+  id: string,
+  actor: Decider,
+): Promise<DecisionResult> {
+  const denied = deciderGate(actor);
+  if (denied) return denied;
+
+  const admin = createAdminClient();
+  const current = await readDecision(admin, id);
+  if (!current) return { ok: false, error: "not_found" };
+  if (current.status !== "proposed") return { ok: false, error: "not_active" };
+
+  // First-write-wins: never overwrite an existing debate (deterministic or, one day, generated).
+  if (Array.isArray(current.ai_debate) && current.ai_debate.length > 0) {
+    return { ok: true, decision: current };
+  }
+
+  const debate = composeDecisionDebate({
+    problem: current.problem,
+    businessImpact: current.business_impact,
+    revenueImpact: current.revenue_impact,
+    demand: current.demand,
+    engineeringCost: current.engineering_cost,
+    risk: current.risk,
+    timeline: current.timeline,
+  });
+
+  const { data, error } = await decisions<DecisionRow>(admin)
+    .update({ ai_debate: debate })
+    .eq("id", id)
+    .eq("status", "proposed")
+    .select(ROW_COLUMNS);
+  if (error) {
+    console.error("[hq-decisions] produceDecisionDebate failed", { id, error: error.message });
+    return { ok: false, error: error.message };
+  }
+  const updated = Array.isArray(data) ? data[0] : null;
+  if (!updated) {
+    // No proposed row matched — it raced to a terminal state or was filled concurrently.
+    const after = await readDecision(admin, id);
+    if (!after) return { ok: false, error: "not_found" };
+    if (after.status !== "proposed") return { ok: false, error: "not_active" };
+    return { ok: true, decision: after };
+  }
+
+  await recordAdminActivity({
+    actorId: actor.id,
+    actorEmail: actor.email,
+    action: "decision.debate_produced",
+    targetTable: "hq_decisions",
+    targetId: id,
+    metadata: {
+      entries: debate.length,
+      source: "deterministic",
+      insufficient: isInsufficientDebate(debate),
     },
   });
   return { ok: true, decision: updated };

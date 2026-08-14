@@ -18,6 +18,10 @@
       "schedule": "30 2 * * *"
     },
     {
+      "path": "/api/cron/hq-ceo-briefing",
+      "schedule": "0 6 * * *"
+    },
+    {
       "path": "/api/cron/notifications-drain",
       "schedule": "*/15 * * * *"
     },

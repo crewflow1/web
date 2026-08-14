@@ -173,33 +173,46 @@ describe("R1 executor shadow — ON, it observes without crossing the execution 
 //    cannot trip a match.
 // =====================================================================
 
-describe("R1+R2 executor shadow — the source observes and persists ONLY a shadow-labelled record", () => {
+describe("R1+R2 executor shadow — the SHADOW branch observes and persists ONLY a shadow-labelled record; the P2 apply is separate + dark", () => {
   const ROOT = resolve(__dirname, "..", "..");
   const code = readFileSync(resolve(ROOT, "server/sdk/tasks.ts"), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "") // block comments (incl. JSDoc)
     .replace(/(^|[^:])\/\/[^\n]*/g, "$1"); // line comments (keep `://`)
 
-  it("calls executor.plan but never executor.apply / executor.execute", () => {
+  it("calls executor.plan but never executor.apply / executor.execute directly", () => {
+    // The P2 apply crosses the boundary through the free `executePlan(plan, invoke)`, never the
+    // facade's apply/execute — so the boundary is still reached only via a planned, validated plan.
     expect(code).toContain("executor.plan(");
     expect(code).not.toContain("executor.apply(");
     expect(code).not.toContain("executor.execute(");
   });
 
-  it("persists durably ONLY through the SHADOW store — never an application / apply-once record", () => {
+  it("the SHADOW persists durably ONLY through the shadow store — never an application marker it could be confused with", () => {
     // It derives the key the real apply WOULD use…
     expect(code).toContain("deriveIdempotencyKey(");
-    // …and in R2 it DOES persist — but ONLY as an explicit shadow-labelled record, through the
-    // durable shadow store (the Shadow Truthfulness Rule made source).
+    // …and in R2 it persists ONLY as an explicit shadow-labelled record, through the durable shadow
+    // store (the Shadow Truthfulness Rule made source).
     expect(code).toContain("shadowObservationRecord(");
     expect(code).toContain("shadowStore.record(");
     expect(code).toContain("createDurableShadowObservationStore");
-    // …NEVER through the application store or the apply-once path: writing an `applied` marker in
-    // shadow would be indistinguishable from a real execution, the exact thing the rule forbids.
+    // The shadow itself NEVER writes an application marker: no in-memory reference store, no
+    // appliedRecord, no direct .put — writing an `applied` marker in shadow would be
+    // indistinguishable from a real execution, the exact thing the rule forbids.
     expect(code).not.toContain("createInMemoryApplicationStore");
-    expect(code).not.toContain("createApplicationStore");
-    expect(code).not.toContain("applyOnce");
     expect(code).not.toContain("appliedRecord");
     expect(code).not.toContain(".put(");
+  });
+
+  it("P2: the runner ALSO composes the DETERMINISTIC apply — but wired DARK (unbound authority + default-off kill-switch)", () => {
+    // The live-executor rollout the shadow was a precursor to. The runner may now compose the
+    // apply-once path (applyOnce / executePlan) for the deterministic branch, but ONLY through the
+    // UNBOUND authority behind the default-off kill-switch — never a bound/live authority, and the
+    // durable store (never the in-memory reference). The full darkness proof lives in
+    // autonomous-apply-dark.test.ts; here we pin that the runner wires ONLY the dark seam.
+    expect(code).toContain("executorAutonomousApplyEnabled");
+    expect(code).toContain("createUnboundAutonomousApplyAuthority");
+    expect(code).not.toContain("createBoundAutonomousApplyAuthority");
+    expect(code).not.toContain("createLiveAutonomousApplyAuthority");
   });
 });
 

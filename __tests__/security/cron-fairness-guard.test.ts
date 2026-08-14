@@ -140,6 +140,8 @@ const ALLOWLIST: Record<string, string> = {
     "LIMIT-bounded (≤500) reads of APPROVED items; each apply is exactly-once via a partial-unique idempotency key, so an applied item leaves the candidate set. Ships DARK (unbound authority applies nothing).",
   "hq-cadence-tick":
     "LIMIT-bounded (≤1000) and ordered by next_run_at ASC (recency cursor); each fired cadence advances next_run_at via an optimistic CAS claim, rotating it to the back.",
+  "hq-ceo-briefing":
+    "Composes and records exactly ONE deterministic CEO briefing per tick from a single in-memory board aggregate plus one idempotent per-day RPC insert (on conflict (briefing_date) do nothing). No persistent external candidate set, no per-item loop, and no per-item network I/O — a bounded single-pass job that finishes in one invocation, like health-recompute.",
   "inspections-due":
     "LIMIT-bounded (BATCH) and ordered by next_due ASC (recency cursor); the INSERT-is-the-claim idempotency makes a generated cycle self-excluding.",
   "invoice-reminders":
