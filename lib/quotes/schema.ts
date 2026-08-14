@@ -108,12 +108,22 @@ export type QuoteFormInput = z.infer<typeof quoteFormSchema>;
  * Public-portal accept/decline payload schema.
  *
  * Signature is stored in quotes.accept_signature jsonb. v1 captures
- * { name, signed_at, ip_hash }. A canvas-based image signature is
- * future polish.
+ * { name, signed_at, ip_hash }. v2 optionally adds a drawn-signature image
+ * (stored in the private `signatures` bucket) referenced by storage path.
+ *
+ * `signature_data_url` is an OPTIONAL canvas PNG data-URL. We only bound its
+ * length here (a hard cap so an oversized payload is rejected before any work);
+ * the byte-level PNG validation happens server-side in lib/signatures/data-url.
+ * A blank field means "typed name only" — acceptance still succeeds.
  */
 export const publicAcceptSchema = z.object({
   signer_name: z.string().trim().min(1, "Please enter your full name").max(200),
   comment: optionalString(2000),
+  signature_data_url: z
+    .string()
+    .max(3_000_000, "Signature image is too large")
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
 });
 
 export const publicDeclineSchema = z.object({

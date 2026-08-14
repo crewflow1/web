@@ -18,6 +18,7 @@ import { sendInvoiceEmail } from "@/lib/email/send-invoice";
 import { loadJobForOrg } from "@/lib/jobs/load";
 import { verifyQuoteReferences } from "@/lib/crm/reference-integrity";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
+import { storeSignatureImage } from "@/server/services/signature-capture";
 import type { Database } from "@/lib/supabase/types";
 import {
   type FormState,
@@ -972,6 +973,7 @@ export async function acceptQuoteByToken(
   ipHash: string | null,
   customerComment: string | null = null,
   userAgent: string | null = null,
+  signatureDataUrl: string | null = null,
 ): Promise<{ ok: true; quoteId: string } | { ok: false; error: string }> {
   const admin = createAdminClient();
   const now = new Date().toISOString();
@@ -995,12 +997,30 @@ export async function acceptQuoteByToken(
     return { ok: false, error: "Quote has expired" };
   }
 
+  // Optional drawn signature: store the PNG in the private `signatures` bucket
+  // first (best-effort — a storage failure never blocks acceptance) so we can
+  // reference its path in both the jsonb snapshot and the signatures row.
+  const drawn = signatureDataUrl
+    ? await storeSignatureImage({
+        orgId: quote.org_id,
+        scope: "quotes",
+        subjectId: quote.id,
+        dataUrl: signatureDataUrl,
+      })
+    : null;
+
   const { error: updErr } = await admin
     .from("quotes")
     .update({
       status: "accepted",
       accepted_at: now,
-      accept_signature: { name: signerName, signed_at: now, ip_hash: ipHash, source: "public" },
+      accept_signature: {
+        name: signerName,
+        signed_at: now,
+        ip_hash: ipHash,
+        source: "public",
+        ...(drawn ? { signature_image_bucket: drawn.bucket, signature_image_path: drawn.path } : {}),
+      },
       customer_comment: customerComment,
     })
     .eq("id", quote.id);
@@ -1026,6 +1046,8 @@ export async function acceptQuoteByToken(
       signed_at: now,
       ip_address: ipHash,
       user_agent: userAgent,
+      signature_image_bucket: drawn?.bucket ?? null,
+      signature_image_path: drawn?.path ?? null,
     })
     .then((r) => {
       if (r.error) {
