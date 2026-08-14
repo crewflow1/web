@@ -72,9 +72,36 @@ type MutChain = {
     eq: (c: string, v: string) => { eq: (c: string, v: string) => { select: (cols: string) => PromiseLike<{ data: Array<{ id: string }> | null; error: { message: string } | null }> } };
   };
   delete: () => { eq: (c: string, v: string) => { eq: (c: string, v: string) => PromiseLike<{ error: { message: string } | null }> } };
-  select: (cols: string) => { eq: (c: string, v: string) => { eq: (c: string, v: string) => { maybeSingle: () => PromiseLike<{ data: { id: string; verified_at: string | null } | null; error: { message: string } | null }> } } };
+  select: (cols: string) => { eq: (c: string, v: string) => { eq: (c: string, v: string) => { maybeSingle: () => PromiseLike<{ data: { id: string; verified_at: string | null; status: string } | null; error: { message: string } | null }> } } };
 };
 type PingRpc = (fn: "webhook_enqueue_ping", args: Record<string, unknown>) => Promise<{ error: { message: string } | null }>;
+type BreakerResetChain = {
+  update: (row: Record<string, unknown>) => {
+    eq: (c: string, v: string) => { eq: (c: string, v: string) => PromiseLike<{ error: { message: string } | null }> };
+  };
+};
+
+/**
+ * Reset an endpoint's circuit breaker to a claimable, non-disabled state via the
+ * SERVICE ROLE. `consecutive_failures` and a `status` off 'disabled_by_failures'
+ * are NOT in the tenant UPDATE grant, and — critically — webhook_claim_deliveries
+ * filters out every delivery for a 'disabled_by_failures' endpoint (pings
+ * included), so without this reset any ping we enqueue against a disabled endpoint
+ * can NEVER be claimed and the endpoint can never recover. Org-pinned exactly like
+ * the other webhook mutations. `verified_at` is left untouched (set-once): an
+ * unverified endpoint stays unverified and re-earns 'active' via a ping success.
+ */
+async function resetBreaker(
+  admin: ReturnType<typeof createAdminClient>,
+  endpointId: string,
+  orgId: string,
+  status: "paused" | "active",
+): Promise<void> {
+  await (admin.from("webhook_endpoints" as never) as unknown as BreakerResetChain)
+    .update({ status, consecutive_failures: 0 })
+    .eq("id", endpointId)
+    .eq("org_id", orgId);
+}
 
 export async function createWebhookEndpoint(
   _prev: FormState<WebhookFormValues>,
@@ -202,13 +229,20 @@ export async function resumeWebhookEndpoint(
   // Never verified yet ⇒ re-verify with a ping instead of activating blindly.
   if (!existing.data.verified_at) {
     const admin = createAdminClient();
+    // Re-enable BEFORE enqueuing. If the breaker has tripped the endpoint is
+    // 'disabled_by_failures', which webhook_claim_deliveries excludes — so the
+    // ping below would never be claimed and the endpoint could never recover
+    // (the old code enqueued a permanently-unclaimable ping and reported
+    // success anyway). Unverified ⇒ 'paused' (it re-earns 'active' on a 2xx).
+    await resetBreaker(admin, result.data.endpoint_id, ctx.org.id, "paused");
     await (admin.rpc.bind(admin) as unknown as PingRpc)("webhook_enqueue_ping", {
       p_endpoint_id: result.data.endpoint_id,
       p_org_id: ctx.org.id,
     });
     revalidatePath("/settings/webhooks");
     return formSuccess<WebhookFormValues>({
-      successMessage: "Sent a fresh verification ping. The endpoint activates once it responds with a 2xx.",
+      successMessage:
+        "Re-enabled the endpoint and sent a fresh verification ping. It activates once it responds with a 2xx.",
     });
   }
 
@@ -243,14 +277,43 @@ export async function repingWebhookEndpoint(
   const result = validateFormData(formData, idSchema);
   if (!result.ok) return result.state as FormState<WebhookFormValues>;
 
+  const supabase = await createClient();
+  const existing = await (supabase.from("webhook_endpoints" as never) as unknown as MutChain)
+    .select("id, verified_at, status")
+    .eq("id", result.data.endpoint_id)
+    .eq("org_id", ctx.org.id)
+    .maybeSingle();
+  if (existing.error || !existing.data) return formError("That webhook wasn't found.");
+
   const admin = createAdminClient();
+  // If the breaker has tripped, re-enable the endpoint BEFORE enqueuing — a
+  // 'disabled_by_failures' endpoint is filtered out of webhook_claim_deliveries,
+  // so a ping enqueued against it can never be claimed and the endpoint could
+  // never recover (Delete + recreate was the only escape). Verified endpoints
+  // return to 'active'; unverified ones to 'paused' (they re-earn 'active' via a
+  // ping 2xx). A healthy endpoint is left as-is so a deliberately-paused endpoint
+  // is never silently reactivated by a test ping.
+  const wasDisabled = existing.data.status === "disabled_by_failures";
+  if (wasDisabled) {
+    await resetBreaker(
+      admin,
+      result.data.endpoint_id,
+      ctx.org.id,
+      existing.data.verified_at ? "active" : "paused",
+    );
+  }
+
   const { error } = await (admin.rpc.bind(admin) as unknown as PingRpc)("webhook_enqueue_ping", {
     p_endpoint_id: result.data.endpoint_id,
     p_org_id: ctx.org.id,
   });
   if (error) return formError("Couldn't send a ping. Try again.");
   revalidatePath("/settings/webhooks");
-  return formSuccess<WebhookFormValues>({ successMessage: "Verification ping sent." });
+  return formSuccess<WebhookFormValues>({
+    successMessage: wasDisabled
+      ? "Re-enabled the endpoint and sent a verification ping."
+      : "Verification ping sent.",
+  });
 }
 
 export async function deleteWebhookEndpoint(
