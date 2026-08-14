@@ -277,6 +277,50 @@ describe("pushJobToCalendar — live path", () => {
     expect(h.createAdminMock).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  // C73-B: a recurring parent must push provider-native recurrence, not a single
+  // anchor event that silently omits every later occurrence. The service reads the
+  // `recurring` column (JOB_PUSH_COLUMNS) and buildEventPayload attaches it.
+  it("pushes a recurring job WITH provider recurrence in the serialised body", async () => {
+    h.state.job = { ...JOB, recurring: { pattern: "weekly" } };
+    const res = await pushJobToCalendar("org-1", "job-1");
+    expect(res).toMatchObject({ ok: true, status: "pushed" });
+    const body = JSON.parse(String((fetchMock.mock.calls[0]![1] as RequestInit).body));
+    // Google RRULE, open-ended → COUNT-bounded (matches expandRecurring's cap).
+    expect(body.recurrence).toEqual(["RRULE:FREQ=WEEKLY;INTERVAL=1;COUNT=60"]);
+  });
+
+  it("SURFACES an inexpressible recurrence as a loud error (no misleading anchor-only push)", async () => {
+    // monthly anchored on the 31st: expandRecurring's month rollover has no RRULE
+    // equivalent, so we refuse rather than silently drop occurrences.
+    h.state.job = { ...JOB, scheduled_date: "2026-01-31", recurring: { pattern: "monthly" } };
+    const res = await pushJobToCalendar("org-1", "job-1");
+    expect(res).toMatchObject({ ok: false, status: "error" });
+    expect(res.message).toContain("recurrence is not pushable");
+    // Nothing was pushed and no link was written — surfaced, not hidden.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(h.state.eventLinks.size).toBe(0);
+  });
+
+  it("a non-recurring job still emits NO recurrence (unchanged)", async () => {
+    const res = await pushJobToCalendar("org-1", "job-1");
+    expect(res.ok).toBe(true);
+    const body = JSON.parse(String((fetchMock.mock.calls[0]![1] as RequestInit).body));
+    expect(body.recurrence).toBeUndefined();
+  });
+});
+
+describe("JOB_PUSH_COLUMNS wiring (source) — the push read selects `recurring`", () => {
+  const src = readFileSync(
+    join(process.cwd(), "server/services/calendar-connections.ts"),
+    "utf8",
+  );
+  it("the job push read selects the recurring column", () => {
+    // Non-vacuous: without this column the row's `recurring` is undefined, so a
+    // recurring parent would push as a single anchor event. The list must include it.
+    const cols = src.match(/const JOB_PUSH_COLUMNS =\s*([^;]+);/)![1]!;
+    expect(cols).toContain("recurring");
+  });
 });
 
 describe("bestEffortPushJob — caller seam", () => {

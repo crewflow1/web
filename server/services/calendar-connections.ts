@@ -277,6 +277,10 @@ type JobRow = {
   scheduled_date: string | null;
   notes: string | null;
   assigned_to: string | null;
+  // The recurring jsonb payload ({ pattern, end_date? }) or null. Load-bearing:
+  // omitting it makes a recurring parent push as a single anchor event, silently
+  // dropping every later occurrence CrewFlow renders internally.
+  recurring: unknown;
   site_address_line1: string | null;
   site_address_line2: string | null;
   site_city: string | null;
@@ -286,7 +290,7 @@ type JobRow = {
 };
 
 const JOB_PUSH_COLUMNS =
-  "id, org_id, status, scheduled_date, notes, assigned_to, " +
+  "id, org_id, status, scheduled_date, notes, assigned_to, recurring, " +
   "site_address_line1, site_address_line2, site_city, site_county, site_postcode, site_country";
 
 /**
@@ -374,6 +378,21 @@ export async function pushJobToCalendar(
       provider: active.provider,
       externalEventId: null,
       message: `Job ${job.id} has no scheduled date to place on a calendar.`,
+    };
+  }
+
+  // SURFACE, DON'T HIDE. A recurring job whose cadence cannot be faithfully
+  // expressed as a single provider recurrence rule (a monthly/quarterly series
+  // anchored on day 29–31, where expandRecurring's JS-Date month rollover has no
+  // RRULE equivalent) is refused rather than pushed as a misleading anchor-only
+  // event that silently omits every later occurrence. Loud error > silent loss.
+  if (payload.recurrenceUnsupported) {
+    return {
+      ok: false,
+      status: "error",
+      provider: active.provider,
+      externalEventId: null,
+      message: `Job ${job.id} recurrence is not pushable: ${payload.recurrenceUnsupported}`,
     };
   }
 
