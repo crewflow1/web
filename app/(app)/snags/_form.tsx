@@ -11,6 +11,7 @@ import {
   SNAG_PRIORITIES,
   SNAG_PRIORITY_LABELS,
 } from "@/lib/snags/schema";
+import { withPreservedOption } from "@/lib/quotes/preserve-option";
 
 /**
  * The "log a snag" form — extracted from the new page so it can carry the
@@ -151,6 +152,20 @@ export function SnagForm({
   );
 
   const canQueue = Boolean(offline) && isWriteQueueSupported();
+
+  // PICKER-COMPLETION (F-1). job is OPTIONAL here (a snag need not belong to a
+  // job), so this <select> cannot lean on `required` the way the delay/report
+  // job pickers do. The page pages the complete job set, but preserve the
+  // deep-linked `?job=` preset regardless so an out-of-list id is ALWAYS a
+  // selectable <option>: without it the browser falls to the leading
+  // "No job (general)" empty option and an untouched submit silently NULLs the
+  // job (optionalUuid coerces "" → undefined). A preset that isn't a real job in
+  // this org is rejected LOUDLY by createSnagRecord's job guard, not mis-filed.
+  const jobOptions = withPreservedOption(jobs, presetJob || null, (id) => ({
+    id,
+    label: "Selected job",
+  }));
+
   const input =
     "mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500";
   const label = "block text-sm font-medium text-slate-800";
@@ -258,7 +273,7 @@ export function SnagForm({
             className={input}
           >
             <option value="">No job (general)</option>
-            {jobs.map((j) => (
+            {jobOptions.map((j) => (
               <option key={j.id} value={j.id}>
                 {j.label}
               </option>

@@ -4,7 +4,8 @@ import { requireOrgContext } from "@/server/auth/session";
 import { listStaffForOrg } from "../../jobs/_form-helpers";
 import { createSnag } from "../actions";
 import { SnagForm } from "../_form";
-import { readFailure } from "@/lib/supabase/read-failure";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 const ERROR_MAP: Record<string, string> = {
   record_failed: "Couldn't save the snag. Try again.",
@@ -34,18 +35,33 @@ export default async function NewSnagPage({
   const supabase = await createClient();
 
   const [{ data: jobsRaw, error: jobsError }, staff] = await Promise.all([
-    supabase
-      .from("jobs")
-      .select("id, status, scheduled_date, customer:customers ( name )")
-      // ACTIVE-org pin — the staff picker beside it was pinned in #456; the
-      // job picker was left on RLS alone.
-      .eq("org_id", ctx.org.id)
-      .order("created_at", { ascending: false })
-      .limit(200),
+    // PAGED (F-1 picker-completion class). This feeds the snag's OPTIONAL job
+    // <select>, which is deep-linked with `?job=<id>` from every job detail page
+    // (jobs/[id]/_job-snags.tsx → /snags/new?job=<id>). The old 200-row cap
+    // silently dropped every job older than the 200 newest, so a deep-linked job
+    // past the cap had no matching <option>; the browser fell back to the leading
+    // "No job (general)" empty option and `optionalUuid` coerced "" → NULL — the
+    // snag was filed against NO job, silently. Unlike the required delay/report
+    // pickers, this one can't lean on `required` (a snag need not have a job), so
+    // the complete set is paged on a stable, unique order (created_at desc + id
+    // desc) and the form preserve-injects the preset (withPreservedOption).
+    // ACTIVE-org pin — the job picker must not offer the other org's jobs.
+    fetchAllRows<JobOption>((from, to) =>
+      supabase
+        .from("jobs")
+        .select("id, status, scheduled_date, customer:customers ( name )")
+        .eq("org_id", ctx.org.id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to) as unknown as PromiseLike<{
+        data: JobOption[] | null;
+        error: unknown;
+      }>,
+    ),
     listStaffForOrg(ctx.org.id),
   ]);
-  if (jobsError) throw readFailure("snags: job picker", jobsError);
-  const jobs = ((jobsRaw ?? []) as unknown as JobOption[]).map((j) => ({
+  if (jobsError) throw readFailure("snags: job picker", jobsError as SupabaseReadError);
+  const jobs = (jobsRaw ?? []).map((j) => ({
     id: j.id,
     label:
       (j.customer?.name ?? "Job") +
@@ -56,7 +72,10 @@ export default async function NewSnagPage({
   const errorMessage = sp.error
     ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
     : null;
-  // Allow deep-linking a job in (e.g. from a future "log snag" button on a job).
+  // Deep-linking a job is LIVE: every job detail page renders a "Log a snag"
+  // button (jobs/[id]/_job-snags.tsx → /snags/new?job=<id>). The form
+  // preserve-injects this preset so an out-of-list id is always a selectable
+  // option and an untouched submit round-trips it, never silently "No job".
   const presetJob = sp.job ?? "";
 
   return (
