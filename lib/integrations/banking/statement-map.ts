@@ -222,3 +222,108 @@ export function normalizeTrueLayerTransactions(
     };
   });
 }
+
+/**
+ * A Plaid `/transactions/get` transaction (the subset the mapper needs).
+ *
+ * SIGN CONVENTION (Plaid, the opposite of TrueLayer): `amount` is POSITIVE when
+ * money moves OUT of the account (a debit) and NEGATIVE when money moves IN (a
+ * credit). We normalise to the provider-agnostic absolute-amount-plus-direction
+ * form so the ONE canonical sign transform still lives in this mapper.
+ */
+export type PlaidTransaction = {
+  transaction_id: string;
+  /** Posted date, `YYYY-MM-DD`. `authorized_date` is a fallback when absent. */
+  date: string;
+  authorized_date?: string | null;
+  /** Positive = money OUT (debit); negative = money IN (credit). */
+  amount: number;
+  name?: string | null;
+  merchant_name?: string | null;
+  account_id?: string | null;
+  payment_meta?: { reference_number?: string | null } | null;
+};
+
+/**
+ * Normalise Plaid's native transactions into the provider-agnostic shape. Plaid
+ * signs the OPPOSITE way to TrueLayer (positive = money out), so a positive
+ * amount is a DEBIT and a non-positive amount is a CREDIT; the magnitude is taken
+ * absolute so the mapper's `direction → sign` step is the single source of sign.
+ * Pure.
+ */
+export function normalizePlaidTransactions(
+  rows: readonly PlaidTransaction[],
+): AggregatorTransaction[] {
+  return rows.map((r) => {
+    const amt = Number(r.amount);
+    const direction: BankTransactionDirection =
+      Number.isFinite(amt) && amt > 0 ? "debit" : "credit";
+    return {
+      id: r.transaction_id,
+      bookedAt: r.date || r.authorized_date || "",
+      amount: Math.abs(Number.isFinite(amt) ? amt : 0),
+      direction,
+      description: r.merchant_name ?? r.name ?? null,
+      reference: r.payment_meta?.reference_number ?? null,
+    };
+  });
+}
+
+/**
+ * A Nordigen / GoCardless Bank Account Data transaction (the subset the mapper
+ * needs), as returned under `transactions.booked[]` by
+ * `/api/v2/accounts/{id}/transactions/`.
+ *
+ * SIGN CONVENTION: `transactionAmount.amount` is a SIGNED decimal STRING —
+ * negative = money out (debit), positive = money in (credit). Some banks omit
+ * `transactionId`; the GoCardless-generated `internalTransactionId` is the stable
+ * fallback so the idempotency key (provider_tx_id) is never lost.
+ */
+export type NordigenTransaction = {
+  transactionId?: string | null;
+  internalTransactionId?: string | null;
+  bookingDate?: string | null;
+  bookingDateTime?: string | null;
+  valueDate?: string | null;
+  transactionAmount: { amount: string; currency?: string | null };
+  remittanceInformationUnstructured?: string | null;
+  remittanceInformationUnstructuredArray?: string[] | null;
+  creditorName?: string | null;
+  debtorName?: string | null;
+  endToEndId?: string | null;
+};
+
+/**
+ * Normalise Nordigen's native booked transactions into the provider-agnostic
+ * shape. The amount is a signed string (negative = out); a non-negative amount is
+ * a CREDIT, a negative one a DEBIT, and the magnitude is taken absolute. The
+ * stable id prefers `transactionId`, falling back to `internalTransactionId` so
+ * the dedupe key survives banks that do not supply the former. Pure.
+ */
+export function normalizeNordigenTransactions(
+  rows: readonly NordigenTransaction[],
+): AggregatorTransaction[] {
+  return rows.map((r) => {
+    const amt = Number(r.transactionAmount?.amount);
+    const direction: BankTransactionDirection =
+      Number.isFinite(amt) && amt < 0 ? "debit" : "credit";
+    const arrayText =
+      r.remittanceInformationUnstructuredArray &&
+      r.remittanceInformationUnstructuredArray.length > 0
+        ? r.remittanceInformationUnstructuredArray.join(" ")
+        : null;
+    return {
+      id: r.transactionId ?? r.internalTransactionId ?? "",
+      bookedAt: r.bookingDate ?? r.bookingDateTime ?? r.valueDate ?? "",
+      amount: Math.abs(Number.isFinite(amt) ? amt : 0),
+      direction,
+      description:
+        r.remittanceInformationUnstructured ??
+        arrayText ??
+        r.creditorName ??
+        r.debtorName ??
+        null,
+      reference: r.endToEndId ?? null,
+    };
+  });
+}

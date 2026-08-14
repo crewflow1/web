@@ -300,6 +300,15 @@ const envSchema = z.object({
   BANKING_PROVIDER: z.string().optional(),
   BANKING_CLIENT_ID: z.string().optional(),
   BANKING_CLIENT_SECRET: z.string().optional(),
+  // Non-secret aggregator API host overrides (mirrors QBO_API_BASE_URL). Plaid
+  // ships three environments (sandbox / development / production) on distinct
+  // hosts; GoCardless Bank Account Data (Nordigen) has one production host but a
+  // separate host is useful for a self-hosted proxy. Both DEFAULT to the provider
+  // production host when unset and are SSRF-guarded in the adapters to the
+  // provider's own domain (an override can never be re-pointed at an internal
+  // address or an IP literal). Neither is a credential; both optional.
+  PLAID_API_BASE_URL: z.string().optional(),
+  NORDIGEN_API_BASE_URL: z.string().optional(),
 
   // -- Telematics / GPS fleet feed (20261103 — DARK, provider-choice gated) ----
   // The single OAuth client the telematics substrate binds to, plus the aggregator
