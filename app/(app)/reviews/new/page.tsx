@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
+import { withPreservedOption } from "@/lib/quotes/preserve-option";
 import { createReviewRequestAction } from "../actions";
 
 const ERROR_MAP: Record<string, string> = {
@@ -46,21 +47,40 @@ export default async function NewReviewRequestPage({
           .order("id", { ascending: true })
           .range(from, to) as unknown as PromiseLike<PageResult<CustomerOption>>,
     ),
-    // The JOB picker is a deliberate "recent 200 completed jobs" sample — you
-    // request a review off a RECENT job, not one from years ago — and this is a
-    // NEW form (no saved reference re-rendered through it). Bounded by design;
-    // allowlisted in the F-1 producer guards.
-    supabase
-      .from("jobs")
-      .select("id, customer_id, status, notes" as never)
-      .eq("org_id", ctx.org.id)
-      .eq("status", "done")
-      .order("updated_at", { ascending: false })
-      .limit(200),
+    // COMPLETE read (F-1 picker-completion class) for the JOB picker. The old
+    // 200-row cap on `updated_at desc` silently dropped every completed
+    // job older than the 200 most-recently-touched, so with >200 done jobs you
+    // could not attribute a review to an older one — the same picker-completion
+    // shape the customer picker beside it already fixed. Page the whole org-scoped
+    // completed set on a stable, unique order (updated_at desc + id desc). The
+    // `?job_id=` preset is preserve-injected below so an out-of-list id is always
+    // a selectable <option> and an untouched submit never silently drops it.
+    fetchAllRows<JobOption>(
+      (from, to) =>
+        supabase
+          .from("jobs")
+          .select("id, customer_id, status, notes" as never)
+          .eq("org_id", ctx.org.id)
+          .eq("status", "done")
+          .order("updated_at", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, to) as unknown as PromiseLike<PageResult<JobOption>>,
+    ),
   ]);
 
   const customers = (customersRes.data ?? []) as unknown as CustomerOption[];
   const jobs = (jobsRes.data ?? []) as unknown as JobOption[];
+  // Preserve the `?job_id=` preset as a selectable option even if a future
+  // cap/filter would drop it (belt-and-braces atop the complete read). The job
+  // picker is OPTIONAL, so it can't lean on the `required` exemption the customer
+  // picker uses — the preserved option is what keeps an out-of-list preset from
+  // silently resolving to "— No specific job —".
+  const jobOptions = withPreservedOption(jobs, sp.job_id || null, (id) => ({
+    id,
+    customer_id: null,
+    status: null,
+    notes: "Selected job",
+  }));
   const errorMessage = sp.error
     ? ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)
     : null;
@@ -132,7 +152,7 @@ export default async function NewReviewRequestPage({
             className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
           >
             <option value="">— No specific job —</option>
-            {jobs.map((j) => (
+            {jobOptions.map((j) => (
               <option key={j.id} value={j.id}>
                 {(j.notes ?? "Job").slice(0, 60)} · {j.status}
               </option>

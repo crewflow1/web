@@ -93,10 +93,20 @@ const ALLOWLIST: Record<string, string> = {
   // reference for an untouched save to null. The EDIT counterparts resolve the
   // saved reference some other way (a single .eq('id') lookup, or a separate
   // preserve-injected control).
-  "app/(app)/snags/_form.tsx:job_id":
-    "create/new snag form — job_id defaults to the ?jobId preset, not a saved record; the EDIT surface (snags/[id]/page.tsx reassign) is the assignee picker and IS preserve-injected",
-  "app/(app)/reviews/new/page.tsx:job_id":
-    "create/new review form — job_id defaults to the ?job_id search param, not a saved record; there is no edit-a-review picker",
+  // NOTE: snags/_form.tsx:job_id was allowlisted here with the reason
+  // "defaults to a preset, not a saved record, so nothing to null". That reason
+  // was VACUOUS — the OPTIONAL preset picker is deep-linked (?job=<id>) and its
+  // out-of-cap preset fell to the leading "No job" empty option, silently NULLing
+  // the job (the exact silent-null this class is about). It is now fixed at the
+  // source: snags/new pages the reader and snags/_form preserve-injects the
+  // preset (withPreservedOption), so the shape detector keeps it green legitimately.
+  // NOTE: reviews/new/page.tsx:job_id was allowlisted here with the same refuted
+  // "preset, not a saved record" reason. Its OPTIONAL job picker read only the
+  // recent-200 completed jobs, so with >200 done jobs an older one could not be
+  // attributed and a `?job_id=` preset past the cap fell to "— No specific job —".
+  // Now fixed at source: reviews/new pages the completed-job set (fetchAllRows)
+  // and preserve-injects the ?job_id preset (withPreservedOption), so the shape
+  // detector keeps it green legitimately — no allowlist.
   "app/(app)/staff/rota/_create-form.tsx:job_id":
     "create-only rota shift form — job_id echoes a failed submit (pick()), not a saved record; assigning a shift is a create action, not an edit re-render of a saved reference",
 };
@@ -334,6 +344,33 @@ describe("picker-completion class — no writable-ref <select> can silently NULL
       `</select>`,
     ].join("\n");
     expect(pickerOffendersIn("app/(app)/toolbox/_talk-form.tsx", postInline)).toEqual([]);
+  });
+
+  // The OPTIONAL preset-on-create variant (snags/new). Unlike the delay/report
+  // job pickers it CANNOT lean on `required` — a snag need not belong to a job —
+  // so a non-empty preset that is absent from the option list cannot fall to a
+  // "first enabled option" the way a required select does; it falls to the
+  // LEADING empty "No job" option and an untouched submit silently NULLs the job.
+  // The ONLY defence is preserve-protecting the source in-file; a bare `jobs.map`
+  // over a prop is the offending shape and MUST stay RED (this is what reverting
+  // the snags fix reduces to — proving the guard's teeth, not the allowlist).
+  it("RED on the pre-fix OPTIONAL preset-on-create job picker (snags); GREEN once preserve-wrapped", () => {
+    const preFix = [
+      `<select id="job_id" name="job_id" defaultValue={presetJob ?? ""}>`,
+      `  <option value="">No job (general)</option>`,
+      `  {jobs.map((j) => (<option key={j.id} value={j.id}>{j.label}</option>))}`,
+      `</select>`,
+    ].join("\n");
+    expect(pickerOffendersIn("app/(app)/snags/_form.tsx", preFix).length).toBeGreaterThan(0);
+
+    const postFix = [
+      `const jobOptions = withPreservedOption(jobs, presetJob || null, (id) => ({ id, label: "Selected job" }));`,
+      `<select id="job_id" name="job_id" defaultValue={presetJob ?? ""}>`,
+      `  <option value="">No job (general)</option>`,
+      `  {jobOptions.map((j) => (<option key={j.id} value={j.id}>{j.label}</option>))}`,
+      `</select>`,
+    ].join("\n");
+    expect(pickerOffendersIn("app/(app)/snags/_form.tsx", postFix)).toEqual([]);
   });
 
   it("no false positive on enum / required / create-only selects", () => {
