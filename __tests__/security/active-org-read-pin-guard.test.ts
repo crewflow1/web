@@ -48,8 +48,10 @@ import { deriveOrgScopedTables } from "./org-scoped-tables";
  *   - Single-row reads only (`.single()`/`.maybeSingle()`). List reads carry no
  *     `.eq("id", …)` subject and are covered by the list-scoping suites.
  *   - Writes are out of scope (the write-pin guard owns `.update()`/`.delete()`).
- *   - Scoped to dynamic `app/(app)` `[id]` detail routes: a by-id subject read
- *     addressed by a URL param is exactly the shape this class is about.
+ *   - Scoped to dynamic `[id]` detail routes under BOTH `app/(app)` (detail
+ *     pages) AND `app/api` (route handlers): a by-id subject read addressed by a
+ *     URL param is exactly the shape this class is about, and `app/api` was a
+ *     blind spot that let three PDF route handlers leak cross-org rows.
  *   - This guard adds NO migration and changes NO RLS policy — a static scan.
  */
 
@@ -317,6 +319,13 @@ function walkDynamicRoutes(dir: string, acc: string[]): void {
 function scanRepo(orgTables: Set<string>): ReadOffender[] {
   const files: string[] = [];
   walkDynamicRoutes(join(ROOT, "app/(app)"), files);
+  // ALSO scan app/api dynamic routes. A route handler under app/api/**/[id]/**
+  // addresses a subject by URL param exactly like an app/(app) detail page, and
+  // it was a BLIND SPOT: the original scan never reached it, so three PDF route
+  // handlers (site-reports / completion-certificates / payroll lines) leaked
+  // another of the viewer's orgs' rows via an unpinned by-id read. Mirroring the
+  // same walkDynamicRoutes over app/api brings those handlers under the guard.
+  walkDynamicRoutes(join(ROOT, "app/api"), files);
   const out: ReadOffender[] = [];
   for (const f of files) {
     out.push(
@@ -414,6 +423,18 @@ const ALLOWLIST: Record<string, string> = {
   // "not found". Mirrors the confirmBankMatch entry in the write-pin guard.
   "app/(app)/invoices/[id]/payment-actions.ts::invoice_payments::paymentId":
     "resolve-then-compare: row.org_id is checked against ctx.org.id before use and the follow-up DELETE is org-pinned; the read selects org_id precisely to run that check",
+  // app/api resolve-then-compare mutation gates (surfaced when the app/api scope
+  // was added). Each SELECTs org_id and refuses a mismatch
+  // (`if (row.org_id !== ctx.org.id) return not_found`) BEFORE sending, keeping
+  // the deliberate 404-vs-existence distinction the canonical sibling
+  // (invoices/[id]/send/route.ts:65) established; an in-chain pin would collapse
+  // that. These are email-send gates, not rendered detail reads.
+  "app/api/invoices/[id]/send/route.ts::invoices::id":
+    "resolve-then-compare: `if (!inv || inv.org_id !== ctx.org.id) return not_found` before sendInvoiceEmail (itself re-pinned via orgId); the read selects org_id to run that check",
+  "app/api/invoices/[id]/remind/route.ts::invoices::id":
+    "resolve-then-compare: `if (inv.org_id !== ctx.org.id) return not_found` before sendInvoiceEmail (reminder, orgId re-pinned); the read selects org_id to run that check",
+  "app/api/quotes/[id]/send/route.ts::quotes::id":
+    "resolve-then-compare: `if (!q || q.org_id !== ctx.org.id) return not_found` before sendQuoteEmail (orgId re-pinned); the read selects org_id to run that check",
 };
 
 // ===========================================================================
@@ -565,6 +586,27 @@ describe("active-org read-pin guard · every dynamic detail route is swept", () 
     for (const [rel, table] of cases) {
       const raw = readFileSync(join(ROOT, rel), "utf8");
       // Remove every active-org pin so the subject read reverts to by-id only.
+      const stripped = raw.replace(/\.eq\(\s*["']org_id["'][^)]*\)/g, "");
+      const found = findReadOffendersInSource(rel, stripped, orgTables);
+      expect(
+        found.some((o) => o.table === table),
+        `${rel}: with the org pin stripped the detector must flag the ${table} by-id read`,
+      ).toBe(true);
+    }
+  });
+
+  it("RED-calibration: stripping the pin from each app/api PDF route re-flags it (app/api scope is live, not vacuous)", () => {
+    // The three app/api PDF route handlers the C70 wave found unpinned — the
+    // sub-class the guard never scanned. This proves the extended app/api scope
+    // genuinely reaches these handlers and would catch a regression: remove
+    // their in-statement `.eq("org_id", …)` and each becomes an offender again.
+    const cases: Array<[string, string]> = [
+      ["app/api/site-reports/[id]/pdf/route.ts", "site_reports"],
+      ["app/api/completion-certificates/[id]/pdf/route.tsx", "completion_certificates"],
+      ["app/api/payroll/lines/[id]/pdf/route.ts", "payroll_lines"],
+    ];
+    for (const [rel, table] of cases) {
+      const raw = readFileSync(join(ROOT, rel), "utf8");
       const stripped = raw.replace(/\.eq\(\s*["']org_id["'][^)]*\)/g, "");
       const found = findReadOffendersInSource(rel, stripped, orgTables);
       expect(

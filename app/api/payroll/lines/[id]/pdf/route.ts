@@ -12,8 +12,11 @@ export const runtime = "nodejs";
  * Access:
  *   - the line's own user_id (staff downloading their own)
  *   - owner/admin (downloading anyone in their org)
- * RLS on payroll_lines enforces this already; we double-check at the app
- * layer for a friendlier 403.
+ * RLS on payroll_lines enforces the tenant boundary, but admits EVERY org the
+ * viewer belongs to — and isAdmin below is the ACTIVE-org role. So the by-id
+ * read must ALSO pin the active org in-statement; otherwise a dual-org
+ * owner/admin could pull a payslip from another of their orgs. We double-check
+ * isOwn/isAdmin at the app layer for a friendlier 403.
  */
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -33,6 +36,8 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
       `,
     )
     .eq("id", id)
+    // Active-org pin: RLS alone would admit any of the viewer's orgs' rows.
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (lineError) {

@@ -28,10 +28,14 @@ export async function DELETE(_request: NextRequest, { params }: Ctx) {
   const decoded = decodeURIComponent(filename);
 
   const supabase = await createClient();
+  // ACTIVE-org pin, not merely RLS: `current_org_ids()` spans every org the
+  // viewer belongs to, so `.eq("id", …)` alone would let a multi-org member
+  // detach a photo from a job in their OTHER org. Mirrors the GET/POST handlers.
   const { data: job, error: jobErr } = await supabase
     .from("jobs")
     .select("id, photos")
     .eq("id", jobId)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (jobErr || !job) {
     return NextResponse.json({ error: "Job not found" }, { status: 404 });

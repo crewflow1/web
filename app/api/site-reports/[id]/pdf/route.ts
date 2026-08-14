@@ -49,9 +49,12 @@ type ReportRow = {
 /**
  * GET /api/site-reports/[id]/pdf — the branded, client-ready PDF.
  *
- * RLS-scoped via the user JWT (requireOrgContext). An issued report renders from
- * its FROZEN snapshot; a draft renders a live preview from current content +
- * freshly-gathered sources.
+ * RLS-scoped via the user JWT (requireOrgContext). RLS admits EVERY org the
+ * viewer belongs to (`org_id in current_org_ids()`), so a by-id read must ALSO
+ * pin the ACTIVE org in-statement — otherwise a dual-org member could render
+ * another of their orgs' reports (customer PII, diary, snags, toolbox talks).
+ * An issued report renders from its FROZEN snapshot; a draft renders a live
+ * preview from current content + freshly-gathered sources.
  */
 export async function GET(_request: NextRequest, { params }: Ctx) {
   const { ctx } = await requireOrgContext();
@@ -62,10 +65,12 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     supabase.from("site_reports" as never) as unknown as {
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
-          maybeSingle: () => Promise<{
-            data: ReportRow | null;
-            error: SupabaseReadError | null;
-          }>;
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{
+              data: ReportRow | null;
+              error: SupabaseReadError | null;
+            }>;
+          };
         };
       };
     }
@@ -74,6 +79,8 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
       "id, report_number, title, revision, status, period_start, period_end, customer_id, job_id, content, snapshot, prepared_by, approved_by, approved_at, issued_at",
     )
     .eq("id", id)
+    // Active-org pin: RLS alone would admit any of the viewer's orgs' rows.
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (reportError) {
@@ -104,6 +111,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
       .from("customers")
       .select("name")
       .eq("id", report.customer_id)
+      .eq("org_id", ctx.org.id)
       .maybeSingle();
     customerName = cust?.name ?? null;
     jobLabel = jobLabel ?? customerName;
