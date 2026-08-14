@@ -100,8 +100,13 @@ const ALLOWLIST: Record<string, string> = {
   // the job (the exact silent-null this class is about). It is now fixed at the
   // source: snags/new pages the reader and snags/_form preserve-injects the
   // preset (withPreservedOption), so the shape detector keeps it green legitimately.
-  "app/(app)/reviews/new/page.tsx:job_id":
-    "create/new review form — job_id defaults to the ?job_id search param, not a saved record; there is no edit-a-review picker",
+  // NOTE: reviews/new/page.tsx:job_id was allowlisted here with the same refuted
+  // "preset, not a saved record" reason. Its OPTIONAL job picker read only the
+  // recent-200 completed jobs, so with >200 done jobs an older one could not be
+  // attributed and a `?job_id=` preset past the cap fell to "— No specific job —".
+  // Now fixed at source: reviews/new pages the completed-job set (fetchAllRows)
+  // and preserve-injects the ?job_id preset (withPreservedOption), so the shape
+  // detector keeps it green legitimately — no allowlist.
   "app/(app)/staff/rota/_create-form.tsx:job_id":
     "create-only rota shift form — job_id echoes a failed submit (pick()), not a saved record; assigning a shift is a create action, not an edit re-render of a saved reference",
 };

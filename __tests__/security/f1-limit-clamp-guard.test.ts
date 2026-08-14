@@ -210,12 +210,11 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
 
   // NEW-form recency pickers — no saved reference is re-rendered through the list
   // (the EDIT counterpart resolves it separately), so no picker silent-null.
-  "app/(app)/reviews/new/page.tsx:54":
-    "bounded: recent-200 completed-jobs sample on the NEW review form (no saved ref re-rendered); the customer picker beside it IS paged complete",
-  "app/(app)/site-reports/new/page.tsx:33":
-    "bounded: recent-200 jobs sample on the NEW site-report form; the EDIT page resolves the saved job via a single .eq('id') lookup, so no picker silent-null",
-  "app/(app)/snags/new/page.tsx:38":
-    "bounded: recent-200 jobs sample on the NEW snag form; the EDIT page resolves the saved job via a single .eq('id') lookup",
+  //
+  // reviews/new:54 and snags/new:38 were HERE as "recent-200 jobs sample" — both
+  // are now PAGED via fetchAllRows (the picker-completion class fix), so neither
+  // carries a producer .limit and neither needs an entry. (site-reports/new was
+  // paged by the same class fix in #721; its stale key was likewise dropped.)
   "app/(app)/toolbox/_form-options.ts:41":
     "bounded: recent-200 jobs sample for the toolbox-talk picker; the EDIT form (_talk-form.tsx) preserve-injects the saved job_id so an out-of-sample link can never be dropped",
   "server/services/rota.ts:81":

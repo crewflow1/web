@@ -29,6 +29,12 @@ import { withPreservedOption } from "@/lib/quotes/preserve-option";
  *      selectable <option> and an untouched submit round-trips it. The form does
  *      this in-file (not just the page) because the OPTIONAL select cannot use
  *      the `required` exemption its siblings rely on.
+ *
+ * The SAME optional preset-on-create shape lives on the review-request form
+ * (app/(app)/reviews/new): an optional `Completed job` <select defaultValue={
+ * sp.job_id ?? ""}>` that read only the recent-200 completed jobs while the
+ * customer picker beside it was already paged complete. Its source teeth are
+ * asserted at the bottom of this file alongside the snags ones.
  */
 
 const ROOT = resolve(__dirname, "..", "..");
@@ -121,5 +127,28 @@ describe("snags/new job picker pages the reader and preserves the deep-linked pr
     expect(src).toMatch(/withPreservedOption/);
     // The rendered <select> must map the PRESERVED source, not the raw prop.
     expect(src).toMatch(/\{jobOptions\.map\(/);
+  });
+});
+
+// ── reviews/new — the same OPTIONAL preset-on-create job picker. The customer
+// picker in that file was already paged; the job picker was left on a
+// recent-200 cap and the vacuous allowlist. ──────────────────────────────────
+describe("reviews/new job picker pages the reader and preserves the preset", () => {
+  const read = (rel: string) => readFileSync(resolve(ROOT, rel), "utf8");
+  const src = () => read("app/(app)/reviews/new/page.tsx");
+
+  it("pages the completed-job set (fetchAllRows) with no .limit(200) cap and a unique order", () => {
+    const s = src();
+    // Both pickers page now; assert there is NO bare .limit(200) left anywhere,
+    // and the jobs read carries the unique `id` tiebreaker for stable paging.
+    expect(s).not.toMatch(/\.limit\(\s*200\s*\)/);
+    expect(s).toMatch(/fetchAllRows<JobOption>/);
+    expect(s).toMatch(/order\("id"/);
+  });
+
+  it("preserve-injects the ?job_id preset via withPreservedOption and maps the preserved source", () => {
+    const s = src();
+    expect(s).toMatch(/withPreservedOption\(jobs, sp\.job_id/);
+    expect(s).toMatch(/\{jobOptions\.map\(/);
   });
 });
