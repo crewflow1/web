@@ -7,6 +7,7 @@ import {
 } from "../_data";
 import { createDelayEvent } from "../actions";
 import { DelayCreateForm } from "../_create-form";
+import { withPreservedOption } from "@/lib/quotes/preserve-option";
 
 /**
  * /delays/new — draft a delay event.
@@ -25,7 +26,19 @@ export default async function NewDelayEventPage({ searchParams }: { searchParams
   const { ctx, user } = await requireOrgContext();
   const sp = await searchParams;
   const jobs = await listJobOptions(ctx.org.id);
-  const preselectedJob = jobs.find((j) => j.id === sp.jobId) ?? null;
+  const presetJobId = sp.jobId ?? "";
+  const preselectedJob = jobs.find((j) => j.id === presetJobId) ?? null;
+  // PICKER-COMPLETION (F-1). The reader is paged so a deep-linked job is present,
+  // and this preserves the ?jobId= preset as a selectable <option> even if a
+  // future cap/filter would drop it — belt-and-braces. The form is handed the
+  // RESOLVED id as its defaultValue, so the correct job is the selected option
+  // and an untouched submit attributes to it, never the first job in the list.
+  // (A preset that isn't a real job in this org is rejected LOUDLY by the action's
+  // job guard, not silently mis-attributed.)
+  const jobOptions = withPreservedOption(jobs, presetJobId || null, (id) => ({
+    id,
+    label: "Selected job",
+  }));
 
   const [diaryOptions, variationOptions] = preselectedJob
     ? await Promise.all([
@@ -80,8 +93,8 @@ export default async function NewDelayEventPage({ searchParams }: { searchParams
         // marker on a shared tablet (#456).
         <DelayCreateForm
           action={createDelayEvent}
-          jobs={jobs}
-          preselectedJobId={preselectedJob?.id ?? ""}
+          jobs={jobOptions}
+          preselectedJobId={presetJobId}
           diaryOptions={diaryOptions}
           variationOptions={variationOptions}
           offline={{ userId: user.id, orgId: ctx.org.id }}
