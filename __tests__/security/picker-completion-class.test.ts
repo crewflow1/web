@@ -61,6 +61,10 @@ const WRITABLE_REF_NAMES = new Set<string>([
   "property_id",
   "lead_id",
   "job_id",
+  // camelCase variant — the quality pickers use name="jobId" (create + draft-edit),
+  // written back to inspection_test_plans.job_id by updateInspectionPlan. Without
+  // this the required edit re-render of a saved job_id slipped every net.
+  "jobId",
   "supplier_id",
   "finance_provider_id",
   "preferred_supplier_id",
@@ -109,6 +113,19 @@ const ALLOWLIST: Record<string, string> = {
   // detector keeps it green legitimately — no allowlist.
   "app/(app)/staff/rota/_create-form.tsx:job_id":
     "create-only rota shift form — job_id echoes a failed submit (pick()), not a saved record; assigning a shift is a create action, not an edit re-render of a saved reference",
+  // Surfaced by the tightened `required` exemption (a required select bound to a
+  // SAVED record field, l.matched_invoice_id, is no longer blanket-exempt). This
+  // one is genuinely NOT a silent-null edit re-render: each bank line renders its
+  // OWN one-field <form> whose only control is this required invoice_id <select>
+  // (pre-selected to that line's suggested match) and whose only action is
+  // confirmBankMatch for THAT line. There is no unrelated "untouched save" that
+  // could null a stored reference — if the suggested match is absent the select
+  // shows empty and `required` refuses the per-line Confirm LOUDLY, and the
+  // options are the line's suggested invoices, not a capped global reader. This is
+  // the "per-line explicit-confirm action" category, not the silent-null this
+  // class targets.
+  "app/(app)/payments/reconcile/[id]/page.tsx:invoice_id":
+    "per-line explicit-confirm — single-field form, required select pre-set to the line's suggested match, only action confirms THAT line; empty submit is refused loudly, options are per-line suggestions not a capped reader; not a silent-null edit re-render",
 };
 
 function stripComments(src: string): string {
@@ -160,6 +177,22 @@ function extractBinding(openTag: string): string | null {
   return null;
 }
 
+/** True when `binding` reads a field off a LOADED record object
+ * (`plan.job_id`, `row.supplier_id`, `l.matched_invoice_id`, `entry.job_id`) —
+ * the edit-re-render shape a `required` attribute CANNOT protect. A create-only
+ * echo is NOT this: a bare preset identifier (`presetJob`, `preselectedJobId`,
+ * `customerId`), a query-string field (`sp.jobId`, `searchParams.x`,
+ * `params.id`), or a `pick(...)` call. */
+function isSavedRecordField(binding: string): boolean {
+  // Drop a trailing default coalesce (`?? ""`, `|| ''`, `?? \`\``).
+  const core = binding.replace(/\s*(?:\?\?|\|\|)\s*(?:""|''|``)\s*$/, "").trim();
+  const m = /^([A-Za-z_$][\w$]*)\??\.[\w$]+$/.exec(core);
+  if (!m) return false; // not a simple member access → create-only echo / literal
+  const obj = m[1]!;
+  // Query-string / form-echo objects are create-only, never a saved record.
+  return !["sp", "searchParams", "params", "query", "props"].includes(obj);
+}
+
 /** The options-source identifier: the FIRST `<ident>.map(` in the tag+children
  * region. For a <SelectField options={[…, ...SRC.map(…)]}> the SRC is inside the
  * tag; for a raw <select>…{SRC.map(…)} it is in the children. */
@@ -209,17 +242,32 @@ export function pickerOffendersIn(rel: string, raw: string): PickerOffender[] {
     const tagEnd = openTagEnd(src, tagStart);
     const openTag = src.slice(tagStart, tagEnd);
 
-    const nameM = /\bname="([a-z_]+)"/.exec(openTag);
+    const nameM = /\bname="([a-zA-Z_]+)"/.exec(openTag);
     if (!nameM) continue; // dynamic name={…} (a wrapper component) — not scanned here
     const name = nameM[1]!;
     if (!WRITABLE_REF_NAMES.has(name)) continue; // enum/status/etc — never a ref
 
-    // required ⇒ an empty submit fails validation LOUDLY, not a silent NULL.
-    if (/(?:^|\s)required(?:\s|=|\/|>|$)/.test(openTag)) continue;
-
     const binding = extractBinding(openTag);
     if (binding === null) continue; // uncontrolled — not a saved-value re-render
     if (binding === "" || binding === '""') continue; // create-only, no saved id
+
+    // `required` was BLANKET-exempt on the premise that an empty submit fails
+    // validation LOUDLY. That premise holds for a CREATE form — the value is
+    // echoed from the query string / a failed-submit pick(), and an empty submit
+    // is refused with the fields intact. It is FALSE for an EDIT re-render of a
+    // SAVED record's required reference: an out-of-cap saved id renders the select
+    // EMPTY, and the operator is forced to abandon the edit or re-attribute to a
+    // WRONG in-list option (silent mis-attribution) — not a loud refusal of an
+    // empty save. So exempt a required select ONLY when its bound value is a
+    // create-only echo (a bare preset identifier, a searchParams/params field, a
+    // pick() echo, or a literal empty), never when it re-renders a SAVED record
+    // field (`plan.job_id`, `row.supplier_id`, …). Saved-record required
+    // edit-pickers fall through and must be preserve-protected (paged reader +
+    // preserved option) or explicitly allowlisted with a reason — the reader-side
+    // paging (see the auto-discovery guard below) is what actually protects them.
+    if (/(?:^|\s)required(?:\s|=|\/|>|$)/.test(openTag) && !isSavedRecordField(binding)) {
+      continue;
+    }
 
     const region = src.slice(tagStart, Math.min(src.length, tagEnd + 600));
     // Inline `withPreservedOption(list, savedId, …).map(…)` directly in the
@@ -373,6 +421,38 @@ describe("picker-completion class — no writable-ref <select> can silently NULL
     expect(pickerOffendersIn("app/(app)/snags/_form.tsx", postFix)).toEqual([]);
   });
 
+  // (b)+(c) teeth: a REQUIRED select is NOT a get-out-of-jail card when it
+  // re-renders a SAVED record field — the quality draft-edit shape. This also
+  // exercises the camelCase `jobId` writable-ref name the quality pickers use.
+  it("RED on a required EDIT re-render of a saved job_id (quality/[id]); GREEN once preserve-wrapped", () => {
+    const preFix = [
+      `<select id="edit-jobId" name="jobId" required defaultValue={plan.job_id ?? ""}>`,
+      `  <option value="">Select a job…</option>`,
+      `  {jobs.map((j) => (<option key={j.id} value={j.id}>{j.label}</option>))}`,
+      `</select>`,
+    ].join("\n");
+    expect(pickerOffendersIn("app/(app)/quality/[id]/page.tsx", preFix).length).toBeGreaterThan(0);
+
+    const postFix = [
+      `const jobOptions = withPreservedOption(jobs, plan.job_id ?? null, (id) => ({ id, label: "Current job" }));`,
+      `<select id="edit-jobId" name="jobId" required defaultValue={plan.job_id ?? ""}>`,
+      `  <option value="">Select a job…</option>`,
+      `  {jobOptions.map((j) => (<option key={j.id} value={j.id}>{j.label}</option>))}`,
+      `</select>`,
+    ].join("\n");
+    expect(pickerOffendersIn("app/(app)/quality/[id]/page.tsx", postFix)).toEqual([]);
+
+    // A required CREATE select that echoes the query string stays exempt (loud
+    // empty submit, no saved id) — quality/new is `defaultValue={sp.jobId ?? ""}`.
+    const createEcho = [
+      `<select id="jobId" name="jobId" required defaultValue={sp.jobId ?? ""}>`,
+      `  <option value="">Select a job…</option>`,
+      `  {jobs.map((j) => (<option key={j.id} value={j.id}>{j.label}</option>))}`,
+      `</select>`,
+    ].join("\n");
+    expect(pickerOffendersIn("app/(app)/quality/new/page.tsx", createEcho)).toEqual([]);
+  });
+
   it("no false positive on enum / required / create-only selects", () => {
     // A status enum dropdown is not a writable ref → never flagged.
     const enumSelect = [
@@ -399,9 +479,25 @@ describe("picker-completion class — no writable-ref <select> can silently NULL
 });
 
 // ── READER-LAYER TEETH: the option-source loaders that the missed surfaces used
-// must PAGE (fetchAllRows), never a bare `.limit(500)`. This nails the exact
+// must PAGE (fetchAllRows), never a bare capped read. This nails the exact
 // readers the table-keyed F-1 guards were blind to. ──────────────────────────
+
+/** Return the body of `function <fn>` in `src`, from the declaration to the next
+ * top-level `export ` (these reader files declare one exported fn per reader). */
+function readerBody(src: string, fn: string): string | null {
+  const start = src.indexOf(`function ${fn}`);
+  if (start === -1) return null;
+  const nextExport = src.indexOf("\nexport ", start + 1);
+  return src.slice(start, nextExport === -1 ? src.length : nextExport);
+}
+
 describe("picker option-source readers page the complete set (F-1)", () => {
+  // NON-JOB option-source readers (memberships / customers / suppliers / sites).
+  // These live OUTSIDE _data.ts and read tables other than `jobs`, so the
+  // jobs-table auto-discovery below cannot reach them — they stay individually
+  // pinned here. The job pickers (delays / quality / diary / any future one) are
+  // covered by AUTO-DISCOVERY, not this list, so a new job picker is caught
+  // without a hand-list edit.
   const mustPage: Array<{ file: string; fn: string }> = [
     { file: "app/(app)/jobs/_form-helpers.ts", fn: "listStaffForOrg" },
     { file: "app/(app)/jobs/_form-helpers.ts", fn: "listCustomersForOrg" },
@@ -409,24 +505,17 @@ describe("picker option-source readers page the complete set (F-1)", () => {
     { file: "app/(app)/leads/_form-helpers.ts", fn: "listCustomersForLead" },
     { file: "server/services/suppliers.ts", fn: "listSuppliersForOrg" },
     { file: "server/services/sites.ts", fn: "listSitesForOrg" },
-    // The delay/EOT create form's REQUIRED job picker (jobs/[id] deep-links a
-    // ?jobId= that can be older than any cap) — must page the full job set.
-    { file: "app/(app)/delays/_data.ts", fn: "listJobOptions" },
   ];
 
   it("staff / customer / supplier / site loaders use fetchAllRows and carry no capped memberships/suppliers/sites read", () => {
     const failures: string[] = [];
     for (const { file, fn } of mustPage) {
       const src = stripComments(readFileSync(resolve(ROOT, file), "utf8"));
-      const start = src.indexOf(`function ${fn}`);
-      if (start === -1) {
+      const body = readerBody(src, fn);
+      if (body === null) {
         failures.push(`${file}: ${fn} not found (renamed? update this guard)`);
         continue;
       }
-      // Body: up to the next top-level `export ` after the fn (good enough — these
-      // files declare one exported fn per reader).
-      const nextExport = src.indexOf("\nexport ", start + 1);
-      const body = src.slice(start, nextExport === -1 ? src.length : nextExport);
       if (!/fetchAllRows/.test(body)) {
         failures.push(`${file}: ${fn} must page the complete set via fetchAllRows (F-1 picker class)`);
       }
@@ -434,6 +523,103 @@ describe("picker option-source readers page the complete set (F-1)", () => {
       // provable capped list on the picker default path is the silent-null cause.
       if (/\.limit\(\s*500\s*\)/.test(body)) {
         failures.push(`${file}: ${fn} still carries a bare .limit(500) on the picker read`);
+      }
+    }
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+});
+
+// ── AUTO-DISCOVERY (kills the hand-list blind spot) ──────────────────────────
+// The `mustPage` list above was, for job pickers, a HAND-MAINTAINED enumeration
+// that only ever contained `delays`. Its siblings quality/_data.ts and
+// diary/_data.ts read jobs at `.limit(200)` with no paging and were simply never
+// listed, so the class re-hid. Instead of trusting a human to add each new
+// picker reader, DISCOVER them: every `app/(app)/**/_data.ts` that exports a
+// `list…Options` function reading the `jobs` table is a writable-ref job-picker
+// source and MUST page via fetchAllRows. A picker reader added later is caught
+// automatically — no allowlist edit, no way to silently miss it.
+
+/** Reason-carrying allowlist for a discovered jobs-picker reader that legitimately
+ * does NOT page (e.g. a genuinely bounded, non-writable use). Empty by design —
+ * page the reader, don't allowlist it. */
+const READER_PAGING_ALLOWLIST: Record<string, string> = {};
+
+function walkDataFiles(dir: string, out: string[]): void {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    if (name === "node_modules" || name === ".next" || name.startsWith(".")) continue;
+    const p = join(dir, name);
+    const st = statSync(p);
+    if (st.isDirectory()) walkDataFiles(p, out);
+    else if (name === "_data.ts") out.push(p);
+  }
+}
+
+type JobPickerReader = { key: string; file: string; fn: string; body: string };
+
+/** Every `list…Options` function in an app/(app) _data.ts that reads the `jobs`
+ * table — the writable-ref job-picker option sources, discovered structurally. */
+function discoverJobPickerReaders(): JobPickerReader[] {
+  const dataFiles: string[] = [];
+  walkDataFiles(resolve(ROOT, "app/(app)"), dataFiles);
+  const found: JobPickerReader[] = [];
+  for (const abs of dataFiles) {
+    const rel = abs.slice(ROOT.length + 1);
+    const src = stripComments(readFileSync(abs, "utf8"));
+    const fnRe = /export\s+(?:async\s+)?function\s+(list[A-Za-z0-9_]*Options)\b/g;
+    let m: RegExpExecArray | null;
+    while ((m = fnRe.exec(src))) {
+      const fn = m[1]!;
+      const nextExport = src.indexOf("\nexport ", m.index + 1);
+      const body = src.slice(m.index, nextExport === -1 ? src.length : nextExport);
+      // Reads the jobs table? (`.from("jobs")` — quotes/backtick tolerant)
+      if (/\.from\(\s*["'`]jobs["'`]\s*\)/.test(body)) {
+        found.push({ key: `${rel}:${fn}`, file: rel, fn, body });
+      }
+    }
+  }
+  return found;
+}
+
+describe("every _data.ts job-picker reader pages the complete set — AUTO-DISCOVERED (no hand list)", () => {
+  const readers = discoverJobPickerReaders();
+
+  it("discovery is non-vacuous and covers the known job pickers (delays / quality / diary)", () => {
+    // The discovery must actually inspect real files — an empty set would make
+    // the paging assertion below trivially pass (the vacuous-guard failure mode).
+    expect(readers.length).toBeGreaterThanOrEqual(3);
+    expect(readers.map((r) => r.key).sort()).toEqual(
+      expect.arrayContaining([
+        "app/(app)/delays/_data.ts:listJobOptions",
+        "app/(app)/diary/_data.ts:listJobOptions",
+        "app/(app)/quality/_data.ts:listJobOptions",
+      ]),
+    );
+  });
+
+  it("each discovered job-picker reader pages via fetchAllRows and carries no bare .limit( on the jobs read", () => {
+    const failures: string[] = [];
+    for (const r of readers) {
+      if (READER_PAGING_ALLOWLIST[r.key]) continue;
+      if (!/fetchAllRows/.test(r.body)) {
+        failures.push(
+          `${r.key} reads the jobs table for a picker but does NOT page via fetchAllRows ` +
+            `(F-1 picker-completion). An out-of-cap saved/preset job would be dropped from ` +
+            `the option list. Page it on a stable (created_at desc, id desc) order like ` +
+            `delays/_data.ts, or (only if genuinely bounded & non-writable) add a ` +
+            `READER_PAGING_ALLOWLIST entry with a reason.`,
+        );
+      }
+      if (/\.limit\(/.test(r.body)) {
+        failures.push(
+          `${r.key} carries a bare .limit( on the jobs picker read — a provable cap is the ` +
+            `silent-drop cause. Remove it and page via fetchAllRows.range(from, to).`,
+        );
       }
     }
     expect(failures, failures.join("\n")).toEqual([]);

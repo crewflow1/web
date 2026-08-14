@@ -4,6 +4,7 @@ import {
 } from "@/lib/health-safety/permits";
 import { PermitDateTimeField } from "./_datetime-field";
 import { inputClass, labelClass } from "./_meta";
+import { withPreservedOption } from "@/lib/quotes/preserve-option";
 
 /**
  * The shared permit field set, rendered inside both the create form
@@ -45,22 +46,17 @@ export function PermitFormFields({
 }) {
   // Preserve links to records outside the fetched option lists (a superseded
   // RAMS, or a job beyond the fetch window) so editing + re-saving a draft never
-  // silently drops an existing link.
-  const rams = [...ramsOptions];
-  if (
-    defaults.riskAssessmentId &&
-    !rams.some((r) => r.id === defaults.riskAssessmentId)
-  ) {
-    rams.unshift({
-      id: defaults.riskAssessmentId,
-      label: "Currently linked risk assessment",
-      job_id: null,
-    });
-  }
-  const jobList = [...jobs];
-  if (defaults.jobId && !jobList.some((j) => j.id === defaults.jobId)) {
-    jobList.unshift({ id: defaults.jobId, label: "Currently linked job" });
-  }
+  // silently drops an existing link (F-1 picker-completion). Uses the canonical
+  // withPreservedOption helper so the class guard recognises the protection.
+  const rams = withPreservedOption(ramsOptions, defaults.riskAssessmentId ?? null, (id) => ({
+    id,
+    label: "Currently linked risk assessment",
+    job_id: null,
+  }));
+  const jobList = withPreservedOption(jobs, defaults.jobId ?? null, (id) => ({
+    id,
+    label: "Currently linked job",
+  }));
 
   return (
     <>

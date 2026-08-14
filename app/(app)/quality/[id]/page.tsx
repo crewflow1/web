@@ -21,6 +21,7 @@ import {
   withdrawPlan,
 } from "../actions";
 import { isLive } from "@/lib/quality/ncr";
+import { withPreservedOption } from "@/lib/quotes/preserve-option";
 import {
   CONTROL_POINTS,
   CONTROL_POINT_META,
@@ -164,6 +165,17 @@ export default async function InspectionPlanPage({
     editable
       ? await Promise.all([listJobOptions(ctx.org.id), listMembers(ctx.org.id)])
       : [[], []];
+
+  // PICKER-COMPLETION (F-1). This is an EDIT re-render of a REQUIRED select bound
+  // to the SAVED plan.job_id — the exact shape `required` cannot protect: an
+  // out-of-cap saved job would render the select EMPTY and force the operator to
+  // abandon the edit or re-attribute to a wrong in-list job on save. The reader
+  // is now paged (listJobOptions), and this preserve-injects the saved job_id so
+  // it always has a matching <option> even if a future cap/filter re-appeared.
+  const jobOptions = withPreservedOption(jobs, plan.job_id ?? null, (id) => ({
+    id,
+    label: "Current job",
+  }));
 
   const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)) : null;
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
@@ -645,7 +657,7 @@ export default async function InspectionPlanPage({
                 className={inputClass}
               >
                 <option value="">Select a job…</option>
-                {jobs.map((j) => (
+                {jobOptions.map((j) => (
                   <option key={j.id} value={j.id}>
                     {j.label}
                   </option>
