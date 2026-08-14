@@ -72,6 +72,10 @@ export const ATTACHMENT_TARGET_TABLES = [
   // works-quality M2: the photo of the nonconformity, the rework, the re-test
   // certificate — evidence on an NCR (20261081).
   "non_conformance_reports",
+  // blueprint pins: a photo attached DIRECTLY to a marker on a drawing (P2
+  // pins wave, 20261122000001) — the photo of the thing the pin flags, no
+  // longer only reachable through a linked snag.
+  "blueprint_pins",
 ] as const;
 export type AttachmentTargetTable = (typeof ATTACHMENT_TARGET_TABLES)[number];
 

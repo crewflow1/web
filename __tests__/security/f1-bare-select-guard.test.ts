@@ -1095,6 +1095,7 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   // ---- PER-PARENT (bounded by ONE parent row) ----
   blueprint_markup: "PER-PARENT: .eq('blueprint_version_id') — one drawing version's markup shapes",
   blueprint_pins: "PER-PARENT: .eq('blueprint_version_id')/.eq('job_id') — one drawing's/job's pins",
+  blueprint_pin_comments: "PER-PARENT/PAGED: .eq('pin_id') — one pin's discussion thread, always fetchAllRows-paged (blueprint-pin-comments.ts)",
   blueprint_versions: "PER-PARENT: .eq('blueprint_id') — one blueprint's version history",
   blueprints: "PER-PARENT: .eq('job_id') — one job's drawings register",
   permit_conditions: "PER-PARENT: .eq('permit_id') — one permit's condition checklist",
