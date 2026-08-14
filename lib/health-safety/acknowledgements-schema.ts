@@ -9,6 +9,14 @@ export const acknowledgeSchema = z.object({
   subjectId: z.string().uuid(),
   subjectVersion: z.string().trim().min(1).max(60),
   signedName: z.string().trim().min(2).max(120),
+  // Optional drawn-signature PNG data-URL. Only length-bounded here; the
+  // byte-level PNG validation is server-side in lib/signatures/data-url. Blank
+  // means "typed name only" — the acknowledgement still records normally.
+  signatureDataUrl: z
+    .string()
+    .max(3_000_000, "Signature image is too large")
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
 });
 export type AcknowledgeInput = z.infer<typeof acknowledgeSchema>;
 

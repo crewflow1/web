@@ -5,6 +5,7 @@ import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { VariationSummary } from "./_variation-summary";
+import { SignaturePad } from "@/app/_components/signature-pad";
 import { buildPortalVariationView, type PortalVariationView } from "@/lib/variations/portal";
 import type { CashQuote } from "@/lib/commercial/cash";
 
@@ -526,6 +527,11 @@ export default async function PublicQuotePage({
                 today&apos;s date, your IP and browser are all recorded as part
                 of the audit trail.
               </p>
+              <SignaturePad
+                name="signature_data_url"
+                label="Draw your signature (optional)"
+                hint="Optional — adds a handwritten signature image to the record alongside your typed name."
+              />
               <textarea
                 name="comment"
                 rows={2}

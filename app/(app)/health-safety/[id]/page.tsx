@@ -107,7 +107,7 @@ export default async function RiskAssessmentDetailPage({
   // `ra`, so run them in parallel rather than serially (mobile-latency win, M6c perf).
   const isIssued = ra.status === "issued";
   const [acks, required, priorSignoff] = await Promise.all([
-    isIssued ? listAcknowledgements("risk_assessment", ra.id) : Promise.resolve([]),
+    isIssued ? listAcknowledgements("risk_assessment", ra.id, ctx.org.id) : Promise.resolve([]),
     isIssued ? requiredOperatives(ra.job_id) : Promise.resolve([]),
     isIssued && ra.revision_number > 1
       ? priorRevisionSignoff(ra.root_risk_assessment_id, ra.revision_number, userId)

@@ -26,6 +26,7 @@ import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
 import { formatVariationLabel } from "@/lib/variations/schema";
 import { jobHref } from "@/lib/jobs/schema";
 import { ShareLinkPanel } from "@/app/_components/share-link-panel";
+import { signatureImageUrl } from "@/server/services/signature-capture";
 import { SendQuote } from "./_send-quote";
 import { VariationPanel, type VariationPanelQuote } from "./_variation-panel";
 import { env } from "@/lib/env";
@@ -193,6 +194,8 @@ export default async function EditQuotePage({
     signed_at: string;
     ip_address: string | null;
     user_agent: string | null;
+    signature_image_bucket: string | null;
+    signature_image_path: string | null;
   };
   const [customers, properties, leads, signaturesRes] = await Promise.all([
     listCustomersForQuote(ctx.org.id),
@@ -212,13 +215,23 @@ export default async function EditQuotePage({
       }
     )
       .select(
-        "id, signer_name, signer_email, signature_text, signed_at, ip_address, user_agent",
+        "id, signer_name, signer_email, signature_text, signed_at, ip_address, user_agent, signature_image_bucket, signature_image_path",
       )
       .eq("target_table", "quotes")
       .eq("target_id", id)
       .order("signed_at", { ascending: false }),
   ]);
   const signatures = signaturesRes.data ?? [];
+  // Mint short-lived signed URLs for any drawn-signature images, org-scoped.
+  const signatureImageUrls = new Map<string, string>();
+  for (const sig of signatures) {
+    const url = await signatureImageUrl(
+      sig.signature_image_bucket,
+      sig.signature_image_path,
+      ctx.org.id,
+    );
+    if (url) signatureImageUrls.set(sig.id, url);
+  }
 
   const status = quote.status as QuoteStatus;
   // Banner messages from lifecycle button actions (send/approve/etc.)
@@ -632,6 +645,17 @@ export default async function EditQuotePage({
                   Typed by <strong className="text-slate-700">{sig.signer_name}</strong>
                   {sig.signer_email ? ` (${sig.signer_email})` : ""}
                 </p>
+                {signatureImageUrls.has(sig.id) ? (
+                  <div className="mt-2">
+                    <p className="text-xs font-medium text-slate-500">Drawn signature</p>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={signatureImageUrls.get(sig.id)}
+                      alt={`Drawn signature by ${sig.signer_name}`}
+                      className="mt-1 max-h-24 rounded-md border border-slate-200 bg-white p-1"
+                    />
+                  </div>
+                ) : null}
                 {sig.ip_address || sig.user_agent ? (
                   <details className="mt-1 text-xs text-slate-500">
                     <summary className="cursor-pointer">Audit trail</summary>

@@ -40,6 +40,13 @@ const ALLOWLIST: Record<string, string> = {
     "Customer-portal surface: scope is the PORTAL TOKEN's org (orgId resolved from the " +
     "token, not an active_org cookie); it already filters .eq(\"org_id\", orgId) for that " +
     "token-derived org. Not an active-org-cookie code path.",
+  "server/services/signature-capture.ts":
+    "signatureImageUrl performs NO row read — it takes an explicit orgId argument and " +
+    "REFUSES to mint unless storagePathBelongsToOrg(path, orgId) (the object's org-first " +
+    "prefix equals that orgId). Every caller passes the ACTIVE org (quote detail: ctx.org.id " +
+    "after an org-scoped quote load; _signoff-data.listAcknowledgements: ctx.org.id, which it " +
+    "also pins with .eq(\"org_id\", orgId) on the feeding read). So the active-org pin is applied " +
+    "at the argument boundary, not via a by-id .eq() inside this helper.",
 };
 
 /** The two C42 fixes — asserted pinned AND never allowlisted (explicit regression pin). */
