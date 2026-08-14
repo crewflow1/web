@@ -15,6 +15,7 @@ type DiaryRow = {
   work_summary: string | null;
   delays: string | null;
   notes: string | null;
+  updated_at: string;
 };
 
 const ERROR_MAP: Record<string, string> = {
@@ -31,7 +32,7 @@ export default async function EditDiaryEntryPage({
 }) {
   const { id } = await params;
   const sp = await searchParams;
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const supabase = await createClient();
 
   // Pinned to the ACTIVE org — RLS admits every org the viewer belongs to, so a
@@ -49,7 +50,7 @@ export default async function EditDiaryEntryPage({
       }
     )
       .select(
-        "id, entry_date, job_id, weather, labour_count, work_summary, delays, notes",
+        "id, entry_date, job_id, weather, labour_count, work_summary, delays, notes, updated_at",
       )
       .eq("id", id)
       .eq("org_id", ctx.org.id)
@@ -90,6 +91,9 @@ export default async function EditDiaryEntryPage({
         defaults={entry}
         submitLabel="Save changes"
         cancelHref={`/diary/${entry.id}`}
+        mode="update"
+        baseVersion={entry.updated_at}
+        offline={{ userId: user.id, orgId: ctx.org.id }}
       />
     </div>
   );

@@ -5,9 +5,11 @@ import {
   isWriteQueueSupported,
   listForPartition,
   markAttemptFailed,
+  markConflicted,
   markRejected,
   purgeForeignUsers,
   removeQueued,
+  resolveKeepMine,
   type QueuedWrite,
 } from "@/lib/offline/write-queue";
 import { offlineWriteEntity } from "@/lib/offline/registry";
@@ -81,12 +83,27 @@ export function OfflineOutbox({
             orgId: item.orgId,
             payload: item.payload,
             authoredAt: item.authoredAt,
+            // UPDATE kinds carry the concurrency anchor + merge base + any prior
+            // "keep mine" resolution; create kinds leave these undefined.
+            baseVersion: item.baseVersion,
+            baseValues: item.baseValues,
+            resolution: item.resolution,
           });
           if (outcome.status === "accepted" || outcome.status === "duplicate") {
             // The ONLY delete path. "duplicate" means the row already exists — the
             // idempotency key did its job, so the item is done, not lost.
             await removeQueued(item.key);
             sent += 1;
+            continue;
+          }
+          if (outcome.status === "conflict") {
+            // An offline edit that diverged from a concurrent server change. HELD,
+            // not lost and not overwritten — the author is shown what clashed and
+            // decides. Later items may still be fine, so do not stop the drain.
+            await markConflicted(item.key, {
+              serverVersion: outcome.serverVersion,
+              fields: outcome.fields,
+            });
             continue;
           }
           if (outcome.status === "rejected") {
@@ -155,6 +172,7 @@ export function OfflineOutbox({
 
   const pending = items.filter((i) => i.status === "pending");
   const rejected = items.filter((i) => i.status === "rejected");
+  const conflicted = items.filter((i) => i.status === "conflict");
 
   // Nothing queued and nothing to confess → render nothing at all.
   if (items.length === 0 && syncedCount === 0) return null;
@@ -174,13 +192,16 @@ export function OfflineOutbox({
 
   const tone = rejected.length
     ? "border-red-200 bg-red-50 text-red-900"
-    : "border-amber-200 bg-amber-50 text-amber-900";
+    : conflicted.length
+      ? "border-orange-200 bg-orange-50 text-orange-900"
+      : "border-amber-200 bg-amber-50 text-amber-900";
 
   return (
     <div
       data-outbox
       data-outbox-pending={pending.length}
       data-outbox-rejected={rejected.length}
+      data-outbox-conflict={conflicted.length}
       className={`border-b ${tone}`}
     >
       <div className="container flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2">
@@ -194,6 +215,19 @@ export function OfflineOutbox({
                 {rejected.length === 1 ? "entry was" : "entries were"} not accepted
               </strong>{" "}
               — open to copy the text before discarding.
+              {conflicted.length > 0
+                ? ` ${conflicted.length} need${conflicted.length === 1 ? "s" : ""} your review.`
+                : ""}
+              {pending.length > 0 ? ` ${pending.length} still waiting to sync.` : ""}
+            </>
+          ) : conflicted.length > 0 ? (
+            <>
+              <strong>
+                {conflicted.length}{" "}
+                {conflicted.length === 1 ? "edit needs" : "edits need"} your review
+              </strong>{" "}
+              — someone changed the same details while you were offline. Open to
+              choose which version to keep.
               {pending.length > 0 ? ` ${pending.length} still waiting to sync.` : ""}
             </>
           ) : (
@@ -247,11 +281,20 @@ const REJECT_REASON: Record<string, string> = {
     "A catalogue item on this request isn't in this company. Copy the text below and re-enter it.",
   org_mismatch:
     "This was written for a different company. It has NOT been filed anywhere. Copy the text below and re-enter it in the right company.",
+  target_missing:
+    "The entry you edited no longer exists in this company. Copy your text below and re-enter it as a new entry.",
   not_permitted:
     "You no longer have permission to add entries here. Copy the text below before discarding.",
   unknown_kind: "This kind of entry can't be synced. Copy the text below.",
   malformed_item: "This saved entry is unreadable. Copy anything useful below.",
 };
+
+/** A conflict value for display: "" / null / undefined all read as "(empty)". */
+function showValue(v: unknown): string {
+  if (v === undefined || v === null) return "(empty)";
+  const s = String(v);
+  return s.trim() === "" ? "(empty)" : s;
+}
 
 /**
  * One queued item. A REJECTED item shows its full content: the server refused it,
@@ -267,6 +310,85 @@ function OutboxItem({
 }) {
   const entity = offlineWriteEntity(item.kind);
   const rejected = item.status === "rejected";
+  const isConflict = item.status === "conflict" && !!item.conflict;
+
+  // ── CONFLICT ─────────────────────────────────────────────────────────────
+  // An offline edit that clashed, field by field, with a concurrent server
+  // change. Nothing was overwritten; the author chooses. Their words are on
+  // screen either way, so a "Keep my version" cannot lose them.
+  if (isConflict && item.conflict) {
+    return (
+      <li
+        data-outbox-conflict-item
+        className="rounded-lg border border-orange-300 bg-white p-3 text-slate-800"
+      >
+        <p className="text-xs font-semibold">
+          {entity.label}
+          {" · "}
+          <span className="font-normal text-slate-500">
+            edited {new Date(item.authoredAt).toLocaleString()} on this device
+          </span>
+        </p>
+        <p className="mt-0.5 text-xs font-medium text-orange-800">
+          Someone changed the same details while you were offline. Choose which
+          version to keep for each — or keep all of yours.
+        </p>
+        <ul className="mt-2 space-y-2">
+          {item.conflict.fields.map((f) => (
+            <li
+              key={f.field}
+              data-outbox-conflict-field
+              className="rounded border border-slate-200 bg-slate-50 p-2 text-[11px]"
+            >
+              <p className="font-semibold text-slate-700">{f.field}</p>
+              <p className="mt-0.5 text-slate-600">
+                <span className="font-medium">Your version:</span>{" "}
+                {showValue(f.mine)}
+              </p>
+              <p className="text-slate-600">
+                <span className="font-medium">Now on the server:</span>{" "}
+                {showValue(f.theirs)}
+              </p>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={async () => {
+              // Re-queue with the author's values forced on the divergent fields,
+              // anchored to the version they just acknowledged. The server still
+              // compare-and-swaps, so a further change re-surfaces rather than
+              // clobbers.
+              await resolveKeepMine(item.key);
+              await onChanged();
+              window.dispatchEvent(new Event("crewflow:outbox-changed"));
+            }}
+            className="min-h-[44px] rounded-md border border-orange-400 bg-orange-100 px-3 text-xs font-semibold text-orange-900"
+          >
+            Keep my version
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              if (
+                !window.confirm(
+                  "Discard your edit and keep the server's version? Your changes above will be gone for good.",
+                )
+              )
+                return;
+              await removeQueued(item.key);
+              await onChanged();
+            }}
+            className="min-h-[44px] rounded-md border border-slate-300 px-3 text-xs font-semibold text-slate-700"
+          >
+            Discard my edit
+          </button>
+        </div>
+      </li>
+    );
+  }
+
   const text = entity.recoverFields
     .map((f) => {
       const v = item.payload[f];

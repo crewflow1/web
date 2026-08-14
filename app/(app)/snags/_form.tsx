@@ -32,14 +32,30 @@ import { withPreservedOption } from "@/lib/quotes/preserve-option";
  * Photos are EXCLUDED offline exactly as the diary excludes them (the queue
  * carries JSON, never binary) and the copy under the details field says so.
  *
- * Status/assignment CHANGES have no offline branch and do not get one:
- * replaying "fixed" hours later would overwrite whatever the office did to the
- * snag in the meantime, and there is no conflict UI to ask with
- * (lib/offline/registry.ts).
+ * ── The offline branch for EDIT (`mode="update"`) ─────────────────────────────
+ * A snag's owned free-text/scalar detail (title, location, trade, priority, the
+ * fix note, job/assignee, due date) can now be edited offline: the queued item
+ * carries the row version the form was rendered with and the values it was opened
+ * with, so the server 3-way-merges the edit against any concurrent office change —
+ * a clash on the SAME field is surfaced in the outbox, never silently reverted
+ * (lib/offline/merge.ts). The STATUS lifecycle stays online-only: replaying
+ * "fixed" hours later carries server-pinned provenance a merge cannot honour, and
+ * the update schema has no status field to carry it (lib/offline/registry.ts).
  */
 
 export type SnagJobOption = { id: string; label: string };
 export type SnagStaffOption = { id: string; label: string };
+
+export type SnagDefaults = {
+  title?: string | null;
+  description?: string | null;
+  location?: string | null;
+  trade?: string | null;
+  priority?: string | null;
+  job_id?: string | null;
+  assigned_to?: string | null;
+  due_date?: string | null;
+};
 
 /** Server-trusted identity, from the page's own `requireOrgContext()`. */
 export type SnagOfflineConfig = { userId: string; orgId: string };
@@ -60,6 +76,8 @@ const ENQUEUE_ERROR: Record<EnqueueError, string> = {
   unsupported:
     "This browser can't save snags offline. Reconnect and save again — your text is still here.",
   unknown_kind: "This form can't be saved offline. Reconnect and save again.",
+  missing_base:
+    "This edit can't be saved offline right now — reconnect and save again. Your text is still here.",
   invalid_payload:
     "Check the fields above, then save again — nothing has been lost.",
   too_large:
@@ -86,6 +104,12 @@ export function SnagForm({
   staff,
   presetJob,
   offline,
+  defaults,
+  hiddenId,
+  mode = "create",
+  baseVersion,
+  submitLabel,
+  cancelHref = "/snags",
 }: {
   action: (formData: FormData) => void | Promise<void>;
   jobs: SnagJobOption[];
@@ -93,7 +117,17 @@ export function SnagForm({
   presetJob?: string;
   /** Present ⇒ this form may be saved offline. Absent ⇒ online only. */
   offline?: SnagOfflineConfig;
+  /** Edit mode: pre-fill from the existing snag. */
+  defaults?: SnagDefaults;
+  hiddenId?: string;
+  /** "update" ⇒ an offline save queues a conflict-resolved edit, not a create. */
+  mode?: "create" | "update";
+  /** UPDATE only: the row version (updated_at) this form was rendered with. */
+  baseVersion?: string;
+  submitLabel?: string;
+  cancelHref?: string;
 }) {
+  const d = defaults ?? {};
   const [online, setOnline] = useState(true);
   const [state, setState] = useState<OfflineState>({ kind: "idle" });
 
@@ -119,12 +153,31 @@ export function SnagForm({
       const fd = new FormData(form);
       const payload: Record<string, string> = {};
       for (const f of FIELDS) payload[f] = String(fd.get(f) ?? "");
-      const res = await enqueue({
-        userId: offline.userId,
-        orgId: offline.orgId,
-        kind: "snag.create",
-        payload,
-      });
+      const res =
+        mode === "update" && hiddenId && baseVersion
+          ? await enqueue({
+              userId: offline.userId,
+              orgId: offline.orgId,
+              kind: "snag.update",
+              payload: { id: hiddenId, ...payload },
+              baseVersion,
+              baseValues: {
+                title: d.title ?? "",
+                description: d.description ?? "",
+                location: d.location ?? "",
+                trade: d.trade ?? "",
+                priority: d.priority ?? "medium",
+                job_id: d.job_id ?? "",
+                assigned_to: d.assigned_to ?? "",
+                due_date: d.due_date ?? "",
+              },
+            })
+          : await enqueue({
+              userId: offline.userId,
+              orgId: offline.orgId,
+              kind: "snag.create",
+              payload,
+            });
       if (!res.ok) {
         // LOUD failure. The form is deliberately NOT reset, so the words are
         // still on screen to copy or retry with.
@@ -138,7 +191,7 @@ export function SnagForm({
       form.reset();
       return true;
     },
-    [offline],
+    [offline, mode, hiddenId, baseVersion, d],
   );
 
   const onSubmit = useCallback(
@@ -161,10 +214,21 @@ export function SnagForm({
   // "No job (general)" empty option and an untouched submit silently NULLs the
   // job (optionalUuid coerces "" → undefined). A preset that isn't a real job in
   // this org is rejected LOUDLY by createSnagRecord's job guard, not mis-filed.
-  const jobOptions = withPreservedOption(jobs, presetJob || null, (id) => ({
+  const selectedJob = d.job_id ?? presetJob ?? "";
+  const jobOptions = withPreservedOption(jobs, selectedJob || null, (id) => ({
     id,
     label: "Selected job",
   }));
+
+  // PICKER-COMPLETION (F-1) for the assignee too, now this form edits: a saved
+  // assignee who has dropped out of the recent-staff list must stay a selectable
+  // <option>, or an untouched save would submit '' and silently unassign them.
+  const selectedAssignee = d.assigned_to ?? "";
+  const staffOptions = withPreservedOption(
+    staff,
+    selectedAssignee || null,
+    (id) => ({ id, label: "Current assignee" }),
+  );
 
   const input =
     "mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500";
@@ -179,6 +243,8 @@ export function SnagForm({
       className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       data-snag-form
     >
+      {hiddenId ? <input type="hidden" name="id" value={hiddenId} /> : null}
+
       {/* Honest, persistent connectivity state — shown BEFORE the user types. */}
       {!online ? (
         <div
@@ -235,6 +301,7 @@ export function SnagForm({
           type="text"
           required
           autoFocus
+          defaultValue={d.title ?? ""}
           placeholder="Cracked tile in the ensuite"
           className={input}
         />
@@ -245,7 +312,12 @@ export function SnagForm({
           <label htmlFor="priority" className={label}>
             Priority
           </label>
-          <select id="priority" name="priority" defaultValue="medium" className={input}>
+          <select
+            id="priority"
+            name="priority"
+            defaultValue={d.priority ?? "medium"}
+            className={input}
+          >
             {SNAG_PRIORITIES.map((p) => (
               <option key={p} value={p}>
                 {SNAG_PRIORITY_LABELS[p]}
@@ -257,7 +329,13 @@ export function SnagForm({
           <label htmlFor="due_date" className={label}>
             Target fix date
           </label>
-          <input id="due_date" name="due_date" type="date" className={input} />
+          <input
+            id="due_date"
+            name="due_date"
+            type="date"
+            defaultValue={d.due_date ?? ""}
+            className={input}
+          />
         </div>
       </div>
 
@@ -269,7 +347,7 @@ export function SnagForm({
           <select
             id="job_id"
             name="job_id"
-            defaultValue={presetJob ?? ""}
+            defaultValue={selectedJob}
             className={input}
           >
             <option value="">No job (general)</option>
@@ -284,9 +362,14 @@ export function SnagForm({
           <label htmlFor="assigned_to" className={label}>
             Assign to
           </label>
-          <select id="assigned_to" name="assigned_to" defaultValue="" className={input}>
+          <select
+            id="assigned_to"
+            name="assigned_to"
+            defaultValue={selectedAssignee}
+            className={input}
+          >
             <option value="">Unassigned</option>
-            {staff.map((s) => (
+            {staffOptions.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.label}
               </option>
@@ -304,6 +387,7 @@ export function SnagForm({
             id="location"
             name="location"
             type="text"
+            defaultValue={d.location ?? ""}
             placeholder="Kitchen, north wall"
             className={input}
           />
@@ -316,6 +400,7 @@ export function SnagForm({
             id="trade"
             name="trade"
             type="text"
+            defaultValue={d.trade ?? ""}
             placeholder="Plumbing"
             className={input}
           />
@@ -330,6 +415,7 @@ export function SnagForm({
           id="description"
           name="description"
           rows={3}
+          defaultValue={d.description ?? ""}
           placeholder="Anything the trade needs to know to put it right."
           className={input}
         />
@@ -350,10 +436,10 @@ export function SnagForm({
             ? "Saving…"
             : !online && canQueue
               ? "Save on this device"
-              : "Log snag"}
+              : (submitLabel ?? (mode === "update" ? "Save changes" : "Log snag"))}
         </button>
         <Link
-          href="/snags"
+          href={cancelHref}
           className="inline-flex min-h-[44px] items-center text-sm font-medium text-slate-600 hover:text-slate-900"
         >
           Cancel

@@ -31,9 +31,14 @@ import {
  * then owns the rest of the story ("waiting to sync" → "synced" / "not accepted"),
  * so the user is never left guessing which half happened.
  *
- * EDIT has no offline branch and does not get one: replaying an update would
- * silently revert an admin's change made while the tablet had no signal, and there
- * is no conflict UI in this milestone to ask with (lib/offline/registry.ts).
+ * ── The offline branch for EDIT (`mode="update"`) ─────────────────────────────
+ * EDIT now HAS an offline branch, because there is finally a conflict UI to ask
+ * with. When `mode="update"` the queued item carries the row version the form was
+ * rendered with (`baseVersion`) and the values it was opened with (the merge base),
+ * so the server can 3-way-merge the edit against whatever the office changed
+ * meanwhile: an admin's concurrent change to a DIFFERENT field survives, and a
+ * change to the SAME field is surfaced in the outbox for the author to resolve —
+ * never silently reverted (lib/offline/merge.ts, lib/offline/registry.ts).
  */
 
 export type DiaryDefaults = {
@@ -64,6 +69,8 @@ const ENQUEUE_ERROR: Record<EnqueueError, string> = {
   unsupported:
     "This browser can't save entries offline. Reconnect and save again — your text is still here.",
   unknown_kind: "This form can't be saved offline. Reconnect and save again.",
+  missing_base:
+    "This edit can't be saved offline right now — reconnect and save again. Your text is still here.",
   invalid_payload:
     "Check the date and the fields above, then save again — nothing has been lost.",
   too_large:
@@ -92,6 +99,8 @@ export function DiaryForm({
   cancelHref,
   hiddenId,
   offline,
+  mode = "create",
+  baseVersion,
 }: {
   action: (formData: FormData) => void | Promise<void>;
   jobs: JobOption[];
@@ -101,6 +110,10 @@ export function DiaryForm({
   hiddenId?: string;
   /** Present ⇒ this form may be saved offline. Absent ⇒ online only. */
   offline?: DiaryOfflineConfig;
+  /** "update" ⇒ an offline save queues a conflict-resolved edit, not a create. */
+  mode?: "create" | "update";
+  /** UPDATE only: the row version (updated_at) this form was rendered with. */
+  baseVersion?: string;
 }) {
   const d = defaults ?? {};
   const [online, setOnline] = useState(true);
@@ -139,12 +152,33 @@ export function DiaryForm({
       const fd = new FormData(form);
       const payload: Record<string, string> = {};
       for (const f of FIELDS) payload[f] = String(fd.get(f) ?? "");
-      const res = await enqueue({
-        userId: offline.userId,
-        orgId: offline.orgId,
-        kind: "site_diary.create",
-        payload,
-      });
+      // For an offline EDIT, carry the target id, the row version the form was
+      // rendered with, and the values it was opened with (the merge base) so the
+      // server can reconcile the edit rather than blindly overwrite.
+      const res =
+        mode === "update" && hiddenId && baseVersion
+          ? await enqueue({
+              userId: offline.userId,
+              orgId: offline.orgId,
+              kind: "site_diary.update",
+              payload: { id: hiddenId, ...payload },
+              baseVersion,
+              baseValues: {
+                entry_date: d.entry_date ?? "",
+                job_id: d.job_id ?? "",
+                weather: d.weather ?? "",
+                labour_count: d.labour_count ?? "",
+                work_summary: d.work_summary ?? "",
+                delays: d.delays ?? "",
+                notes: d.notes ?? "",
+              },
+            })
+          : await enqueue({
+              userId: offline.userId,
+              orgId: offline.orgId,
+              kind: "site_diary.create",
+              payload,
+            });
       if (!res.ok) {
         // LOUD failure. The form is deliberately NOT reset, so the words the
         // foreman typed are still on screen to copy or retry with.
@@ -158,7 +192,7 @@ export function DiaryForm({
       form.reset();
       return true;
     },
-    [offline],
+    [offline, mode, hiddenId, baseVersion, d],
   );
 
   const onSubmit = useCallback(

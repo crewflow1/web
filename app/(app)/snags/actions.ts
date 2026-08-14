@@ -14,6 +14,7 @@ import {
   resolvedAtForTransition,
   setSnagPrioritySchema,
   snagIdSchema,
+  updateSnagSchema,
   updateSnagStatusSchema,
   type SnagStatus,
 } from "@/lib/snags/schema";
@@ -89,6 +90,21 @@ type AttachmentIdsChain = {
     };
   };
 };
+type LookupChain = {
+  select: (cols: string) => {
+    eq: (k: string, v: unknown) => {
+      eq: (
+        k: string,
+        v: unknown,
+      ) => {
+        maybeSingle: () => Promise<{
+          data: { id?: string; user_id?: string } | null;
+          error: { message: string } | null;
+        }>;
+      };
+    };
+  };
+};
 
 export async function createSnag(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
@@ -133,6 +149,93 @@ export async function createSnag(formData: FormData): Promise<void> {
 
   revalidatePath("/snags");
   redirect(`/snags/${outcome.id}?saved=created`);
+}
+
+export async function updateSnag(formData: FormData): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+
+  const parsed = updateSnagSchema.safeParse({
+    id: formData.get("id") ?? "",
+    title: formData.get("title") ?? "",
+    description: formData.get("description") ?? "",
+    location: formData.get("location") ?? "",
+    trade: formData.get("trade") ?? "",
+    priority: formData.get("priority") ?? "medium",
+    job_id: formData.get("job_id") ?? "",
+    assigned_to: formData.get("assigned_to") ?? "",
+    due_date: formData.get("due_date") ?? "",
+  });
+  if (!parsed.success) {
+    const id = String(formData.get("id") ?? "");
+    redirect(`/snags/${id}/edit?error=validation`);
+  }
+  const data = parsed.success ? parsed.data : null;
+  const id = data?.id ?? "";
+
+  const tenant = await createClient();
+
+  // Cross-org guards, pinned to the ACTIVE org — the create core's guards, applied
+  // to the online edit too (snags.job_id / assigned_to carry plain FKs with no
+  // org guard, and RLS admits every org a multi-org member belongs to).
+  if (data?.job_id) {
+    const { data: job, error } = await (
+      tenant.from("jobs" as never) as unknown as LookupChain
+    )
+      .select("id")
+      .eq("id", data.job_id)
+      .eq("org_id", ctx.org.id)
+      .maybeSingle();
+    if (error) redirect(`/snags/${id}/edit?error=record_failed`);
+    if (!job) redirect(`/snags/${id}/edit?error=job_missing`);
+  }
+  if (data?.assigned_to) {
+    const { data: member, error } = await (
+      tenant.from("memberships" as never) as unknown as LookupChain
+    )
+      .select("user_id")
+      .eq("user_id", data.assigned_to)
+      .eq("org_id", ctx.org.id)
+      .maybeSingle();
+    if (error) redirect(`/snags/${id}/edit?error=record_failed`);
+    if (!member) redirect(`/snags/${id}/edit?error=assignee_missing`);
+  }
+
+  const { error, count } = await (
+    tenant.from("snags" as never) as unknown as UpdateChain
+  )
+    .update(
+      {
+        title: data?.title,
+        description: data?.description ?? null,
+        location: data?.location ?? null,
+        trade: data?.trade ?? null,
+        priority: data?.priority ?? "medium",
+        job_id: data?.job_id ?? null,
+        assigned_to: data?.assigned_to ?? null,
+        due_date: data?.due_date ?? null,
+      },
+      { count: "exact" },
+    )
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
+  if (error) {
+    console.error("[snags] update failed", error);
+    redirect(`/snags/${id}/edit?error=record_failed`);
+  }
+  if (!count) redirect(`/snags?error=not_found`);
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "snag.updated",
+    targetTable: "snags",
+    targetId: id,
+    metadata: { title: data?.title ?? null, priority: data?.priority ?? null },
+  });
+
+  revalidatePath("/snags");
+  revalidatePath(`/snags/${id}`);
+  redirect(`/snags/${id}?saved=updated`);
 }
 
 export async function updateSnagStatus(formData: FormData): Promise<void> {

@@ -125,7 +125,10 @@ describe("expansion cores — exactly as privileged as the online forms", () => 
   it("lifecycle state is server-pinned: snags born 'open', requests born 'draft', nothing else ever written", () => {
     // `status:` also names the OUTCOME envelope; filter those to leave only
     // what is written INTO a database row.
-    const OUTCOMES = ["accepted", "duplicate", "rejected", "retry"];
+    // "conflict" is the offline-UPDATE outcome envelope status (added with the
+    // conflict-resolution milestone); like the others it names a RESULT, never a
+    // row status written to the database.
+    const OUTCOMES = ["accepted", "duplicate", "rejected", "retry", "conflict"];
     const rowStatuses = (src: string) =>
       [...code(src).matchAll(/status:\s*["'`]([a-z_]+)["'`]/g)]
         .map((m) => m[1]!)

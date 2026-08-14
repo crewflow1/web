@@ -67,6 +67,7 @@ const SAVED_MAP: Record<string, string> = {
   status: "Status updated.",
   assigned: "Assignee updated.",
   priority: "Priority updated.",
+  updated: "Snag updated.",
 };
 
 export default async function SnagDetailPage({
@@ -183,6 +184,12 @@ export default async function SnagDetailPage({
               ) : null}
             </div>
           </div>
+          <Link
+            href={`/snags/${snag.id}/edit`}
+            className="inline-flex min-h-[44px] shrink-0 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Edit
+          </Link>
         </div>
       </header>
 

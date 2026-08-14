@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   dispatchOfflineWrite,
-  type OfflineWriteOutcome,
+  type OfflineUpdateOutcome,
   type QueuedWriteEnvelope,
 } from "@/server/services/offline-writes";
 import { isOfflineWriteKind, offlineWriteEntity } from "@/lib/offline/registry";
@@ -36,7 +36,7 @@ import { isOfflineWriteKind, offlineWriteEntity } from "@/lib/offline/registry";
  */
 export async function syncQueuedWrite(
   item: QueuedWriteEnvelope,
-): Promise<OfflineWriteOutcome> {
+): Promise<OfflineUpdateOutcome> {
   const { ctx, user } = await requireOrgContext();
 
   const outcome = await dispatchOfflineWrite({ ctx, user, item });
