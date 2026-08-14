@@ -4,6 +4,7 @@ import { requireUser } from "@/server/auth/session";
 import { env } from "@/lib/env";
 import {
   MfaSection,
+  RecoveryCodesSection,
   LinkingSection,
   type FactorView,
   type IdentityView,
@@ -38,6 +39,20 @@ export default async function SecuritySettingsPage() {
     provider: i.provider,
   }));
 
+  const hasVerifiedFactor = factors.some((f) => f.status === "verified");
+
+  // Remaining recovery codes via the guarded SECURITY DEFINER reader (returns
+  // only a count, never hashes). Bind the error: a failed read shows "unknown",
+  // never a misleading "0 codes" that would nudge the user to regenerate need-
+  // lessly. Only meaningful once a factor exists.
+  let recoveryRemaining: number | null = null;
+  if (hasVerifiedFactor) {
+    const { data: remaining, error: remErr } = await supabase.rpc(
+      "mfa_recovery_codes_remaining",
+    );
+    recoveryRemaining = remErr ? null : (remaining ?? 0);
+  }
+
   const linkingEnabled = env.NEXT_PUBLIC_FEATURE_ACCOUNT_LINKING === "true";
 
   return (
@@ -50,6 +65,10 @@ export default async function SecuritySettingsPage() {
       </div>
 
       <MfaSection factors={factors} loadError={!!factorError} />
+
+      {hasVerifiedFactor ? (
+        <RecoveryCodesSection remaining={recoveryRemaining} />
+      ) : null}
 
       <LinkingSection
         identities={identities}

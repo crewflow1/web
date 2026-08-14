@@ -8,9 +8,11 @@ import {
   enrollTotp,
   verifyTotpEnrollment,
   unenrollFactor,
+  generateRecoveryCodes,
   linkGoogleIdentity,
   linkMicrosoftIdentity,
   type EnrollResult,
+  type RecoveryCodesResult,
 } from "./actions";
 
 export type FactorView = {
@@ -205,6 +207,122 @@ function UnenrollButton({
         <Pending idle="Remove" busy="Removing…" />
       </button>
     </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MFA recovery (backup) codes
+// ---------------------------------------------------------------------------
+
+export function RecoveryCodesSection({ remaining }: { remaining: number | null }) {
+  const router = useRouter();
+  const [result, setResult] = useState<RecoveryCodesResult | null>(null);
+  const [working, startWork] = useTransition();
+  const [copied, setCopied] = useState(false);
+
+  const hasCodes = remaining !== null && remaining > 0;
+  const low = remaining !== null && remaining > 0 && remaining <= 3;
+
+  const codes = result && result.ok ? result.codes : null;
+
+  function generate() {
+    setCopied(false);
+    startWork(async () => {
+      const res = await generateRecoveryCodes();
+      setResult(res);
+      if (res.ok) router.refresh();
+    });
+  }
+
+  async function copyAll() {
+    if (!codes) return;
+    try {
+      await navigator.clipboard.writeText(codes.join("\n"));
+      setCopied(true);
+    } catch {
+      // clipboard may be unavailable — the codes are on screen regardless.
+    }
+  }
+
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-6">
+      <h2 className="text-lg font-semibold text-slate-900">Recovery codes</h2>
+      <p className="mt-1 text-sm text-slate-600">
+        One-time backup codes to sign in if you lose your authenticator. Store
+        them somewhere safe — each works once.
+      </p>
+
+      {codes ? (
+        <div className="mt-4 space-y-3">
+          <div
+            role="status"
+            className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+          >
+            These codes are shown once. Save them now — you won&apos;t be able to
+            see them again.
+          </div>
+          <ul className="grid grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-4 font-mono text-sm text-slate-800">
+            {codes.map((c) => (
+              <li key={c} className="tracking-wider">
+                {c}
+              </li>
+            ))}
+          </ul>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={copyAll}
+              className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              {copied ? "Copied" : "Copy codes"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setResult(null)}
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-4 space-y-3">
+          {result && !result.ok ? (
+            <p className="text-sm text-red-600" role="alert">
+              {result.error}
+            </p>
+          ) : null}
+
+          <p className="text-sm text-slate-600">
+            {remaining === null
+              ? "We couldn't load how many codes you have left. Reload the page."
+              : hasCodes
+                ? `${remaining} unused ${remaining === 1 ? "code" : "codes"} remaining.`
+                : "No recovery codes yet."}
+            {low ? " Running low — generate a fresh set." : ""}
+          </p>
+
+          <button
+            type="button"
+            disabled={working}
+            onClick={generate}
+            className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm hover:bg-slate-50 disabled:opacity-60"
+          >
+            {working
+              ? "Generating…"
+              : hasCodes
+                ? "Regenerate recovery codes"
+                : "Generate recovery codes"}
+          </button>
+
+          {hasCodes ? (
+            <p className="text-xs text-slate-500">
+              Regenerating replaces your current codes — the old ones stop working.
+            </p>
+          ) : null}
+        </div>
+      )}
+    </section>
   );
 }
 

@@ -1366,6 +1366,30 @@ export type Database = {
           },
         ]
       }
+      mfa_recovery_codes: {
+        Row: {
+          code_hash: string
+          created_at: string
+          id: string
+          used_at: string | null
+          user_id: string
+        }
+        Insert: {
+          code_hash: string
+          created_at?: string
+          id?: string
+          used_at?: string | null
+          user_id: string
+        }
+        Update: {
+          code_hash?: string
+          created_at?: string
+          id?: string
+          used_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       missed_call_textbacks: {
         Row: {
           call_id: string | null
@@ -2351,6 +2375,7 @@ export type Database = {
       current_org_ids: { Args: never; Returns: string[] }
       is_org_admin: { Args: { target_org: string }; Returns: boolean }
       is_org_member: { Args: { target_org: string }; Returns: boolean }
+      mfa_recovery_codes_remaining: { Args: never; Returns: number }
       next_invoice_number: { Args: { target_org: string }; Returns: string }
       next_quote_number: { Args: { target_org: string }; Returns: string }
       next_variation_number: { Args: { target_job: string }; Returns: number }
