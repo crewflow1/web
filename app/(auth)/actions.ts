@@ -4,8 +4,10 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { env } from "@/lib/env";
 import { consume, DEFAULT_LIMITS } from "@/lib/security/rate-limit";
+import { verifyRecoveryCode } from "@/lib/auth/recovery-codes";
 import {
   type FormState,
   formError,
@@ -518,6 +520,110 @@ export async function challengeMfa(
   if (verifyErr) {
     return formError("That code didn't match. Check your authenticator app and try again.");
   }
+
+  return formSuccess({ redirectTo: safeLanding(user.email ?? null, next) });
+}
+
+// ===========================================================================
+// MFA RECOVERY CODE  (lost-device escape hatch at the login challenge)
+// ===========================================================================
+
+const recoveryCodeSchema = z.object({
+  // Accept the code in any casing / with-or-without the display dash & spaces;
+  // normalisation happens inside verifyRecoveryCode. 8–32 chars covers the
+  // formatted (11) and bare (10) forms with slack.
+  code: z
+    .string()
+    .trim()
+    .min(8, "Enter one of your recovery codes")
+    .max(32, "That doesn't look like a recovery code"),
+  next: z.string().optional(),
+});
+
+/**
+ * Redeem an MFA recovery (backup) code at the login challenge.
+ *
+ * This is the escape hatch for a user who enrolled TOTP and lost the device:
+ * with a live aal1 session (created by the password step) they present a backup
+ * code instead of an authenticator code. On a match we:
+ *   1. mark that single code used (one-time — a redeemed code never works again),
+ *   2. remove the user's TOTP factor(s) via the admin API, and
+ *   3. delete their remaining recovery codes (the set is spent once used to
+ *      recover — they'll be prompted to re-enrol and mint a fresh batch).
+ *
+ * Removing the lost factor is what actually lets them back in: with no verified
+ * factor, the aal1 session is sufficient (MFA is opt-in / not force-gated). This
+ * mirrors the existing self-service recovery ("remove the factor") but works
+ * WITHOUT a second working sign-in method — the whole point of backup codes.
+ *
+ * Security posture: rate-limited (shares the auth limiter, keyed by user id),
+ * constant-time hash comparison, non-enumerating error, and all secret-table
+ * access via the service-role client scoped to this user's id. Never logs a code.
+ */
+export async function redeemRecoveryCode(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const result = validateFormData(formData, recoveryCodeSchema);
+  if (!result.ok) return result.state;
+  const { code, next } = result.data;
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return formError("Your session expired. Please sign in again.");
+  }
+
+  // Throttle guessing — same limiter as the rest of auth, keyed by the user id
+  // (a code is ~50 bits so this is defence-in-depth, not the primary barrier).
+  // Fails OPEN (see lib/security/rate-limit) so a limiter fault never strands a
+  // locked-out user.
+  const limit = await consume("auth", user.id, DEFAULT_LIMITS.auth);
+  if (!limit.allowed) {
+    return formError("Too many attempts. Please wait a few minutes and try again.");
+  }
+
+  const admin = createAdminClient();
+  const { data: rows, error: readErr } = await admin
+    .from("mfa_recovery_codes")
+    .select("id, code_hash")
+    .eq("user_id", user.id)
+    .is("used_at", null);
+  if (readErr) {
+    return formError("We couldn't verify that code just now. Try again.");
+  }
+
+  const match = (rows ?? []).find((r) => verifyRecoveryCode(code, r.code_hash));
+  if (!match) {
+    return formError("That recovery code isn't valid. Check it and try again.");
+  }
+
+  // Consume the used code (one-time). If this write fails, refuse rather than
+  // proceed — a code that couldn't be burned must not grant access.
+  const { error: burnErr } = await admin
+    .from("mfa_recovery_codes")
+    .update({ used_at: new Date().toISOString() })
+    .eq("id", match.id)
+    .is("used_at", null);
+  if (burnErr) {
+    return formError("We couldn't complete recovery just now. Try again.");
+  }
+
+  // Remove the lost factor(s) so the aal1 session is sufficient to get back in.
+  const { data: factors } = await supabase.auth.mfa.listFactors();
+  for (const f of factors?.totp ?? []) {
+    try {
+      await admin.auth.admin.mfa.deleteFactor({ id: f.id, userId: user.id });
+    } catch {
+      // best-effort per factor; a residual factor just means another challenge,
+      // and the user has already burned a code — don't hard-fail the recovery.
+    }
+  }
+
+  // The set is spent — clear the rest so a stale batch can't linger.
+  await admin.from("mfa_recovery_codes").delete().eq("user_id", user.id);
 
   return formSuccess({ redirectTo: safeLanding(user.email ?? null, next) });
 }

@@ -1144,6 +1144,7 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   sites: "PER-ORG/PAGED: fetchAllRows-paged picker + a .limit(Math.min(opts.limit,SITE_LIST_LIMIT)) bounded sample",
   stock_items: "PER-ORG/SINGLE: .eq('org_id') with a Math.min-bounded .limit, or a .limit(1) in-org existence probe",
   material_requests: "PAGED/SINGLE: fetchAllRows demand read, a bounded list .limit, or .eq('id').limit(1)",
+  mfa_recovery_codes: "PER-USER/BOUNDED: .eq('user_id').is('used_at',null) — the caller's OWN unused MFA backup codes, minted in fixed batches of RECOVERY_CODE_COUNT (10) and replaced-not-appended, so the set is a tiny closed per-user list; never cross-tenant, never summed. Read via the service-role client scoped to the authenticated user id (the table is RLS service-role-only).",
   suppliers: "PER-ORG/PAGED/ID-BATCH: fetchAllRows-paged list, a Math.min-bounded .limit sample, or .in(supplierIds) lookup",
   snags: "PER-PARENT/PAGED: .eq('job_id')/.in(snagIds) or fetchAllRows-paged (intelligence patterns)",
   rota_entries: "PER-PARENT/PER-ORG/PAGED: .eq('job_id')/.eq('user_id')+date-window, or fetchAllRows-paged",

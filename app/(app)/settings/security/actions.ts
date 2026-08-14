@@ -4,7 +4,9 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { env } from "@/lib/env";
+import { generateRecoveryCodes as mintRecoveryCodes } from "@/lib/auth/recovery-codes";
 import {
   type FormState,
   formError,
@@ -120,6 +122,68 @@ export async function verifyTotpEnrollment(
   });
 }
 
+export type RecoveryCodesResult =
+  | { ok: true; codes: string[] }
+  | { ok: false; error: string };
+
+/**
+ * Generate (or regenerate) the signed-in user's MFA recovery codes.
+ *
+ * Recovery codes are the escape hatch for a lost authenticator — see
+ * lib/auth/recovery-codes.ts and app/(auth)/actions.ts#redeemRecoveryCode. This
+ * is a REPLACE operation: any previously issued codes for the user are deleted
+ * and a fresh batch minted, so a user who regenerates immediately invalidates
+ * an old (possibly leaked or half-used) set.
+ *
+ * The plaintext codes are returned ONCE for display; only their scrypt hashes
+ * are stored. Writes go through the service-role client (RLS makes the table
+ * unreachable to the authenticated role) scoped explicitly to this user's id.
+ *
+ * Gated on having a verified TOTP factor: recovery codes only mean anything
+ * once MFA is actually on, and offering them otherwise would mislead.
+ */
+export async function generateRecoveryCodes(): Promise<RecoveryCodesResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "You're signed out. Sign in and try again." };
+
+  const { data: factors, error: listErr } = await supabase.auth.mfa.listFactors();
+  if (listErr) {
+    return { ok: false, error: "Couldn't check your authenticators. Try again." };
+  }
+  const hasVerified = (factors?.totp ?? []).some((f) => f.status === "verified");
+  if (!hasVerified) {
+    return {
+      ok: false,
+      error: "Set up an authenticator app first — recovery codes back it up.",
+    };
+  }
+
+  const { display, hashes } = mintRecoveryCodes();
+
+  const admin = createAdminClient();
+  // Replace the whole set atomically enough for this path: delete old, insert
+  // new. Both are scoped to THIS user's id — never a blanket table op.
+  const { error: delErr } = await admin
+    .from("mfa_recovery_codes")
+    .delete()
+    .eq("user_id", user.id);
+  if (delErr) {
+    return { ok: false, error: "Couldn't refresh your recovery codes. Try again." };
+  }
+
+  const { error: insErr } = await admin.from("mfa_recovery_codes").insert(
+    hashes.map((code_hash) => ({ user_id: user.id, code_hash })),
+  );
+  if (insErr) {
+    return { ok: false, error: "Couldn't save your recovery codes. Try again." };
+  }
+
+  return { ok: true, codes: display };
+}
+
 const unenrollSchema = z.object({ factorId: z.string().min(1) });
 
 /**
@@ -142,6 +206,22 @@ export async function unenrollFactor(
 
   const { error } = await supabase.auth.mfa.unenroll({ factorId: result.data.factorId });
   if (error) return formError(error.message);
+
+  // Purge recovery codes once no verified factor remains — stale backup codes
+  // for a user with no MFA are dead weight. Best-effort: a cleanup blip must
+  // never fail the (already successful) unenrol. We bind the factors-read error
+  // and only purge when we've POSITIVELY confirmed no protection remains — on a
+  // read error we leave the (inert, hashed) codes untouched rather than guess.
+  try {
+    const { data: factors, error: listErr } = await supabase.auth.mfa.listFactors();
+    const stillProtected = (factors?.totp ?? []).some((f) => f.status === "verified");
+    if (!listErr && !stillProtected) {
+      const admin = createAdminClient();
+      await admin.from("mfa_recovery_codes").delete().eq("user_id", user.id);
+    }
+  } catch {
+    // non-fatal — the factor is gone; leftover hashed codes are inert.
+  }
 
   return formSuccess({ successMessage: "Authenticator removed." });
 }
