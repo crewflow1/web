@@ -1166,3 +1166,31 @@ describe("the weather-fetch cron route is gated, dark-safe and unscheduled", () 
     expect(vercel).not.toContain("weather-fetch");
   });
 });
+
+// =====================================================================
+// 10. FAIR ORDERING + PASS BUDGET (C71) — the cron cannot starve a tail.
+// =====================================================================
+
+describe("weather-fetch fair ordering + pass budget (C71)", () => {
+  const code = () => codeOf(read(FETCH_SERVICE));
+
+  it("orders the district list by most-recent fetched_at — NOT a lexicographic prefix", () => {
+    // The bug: `[...new Set(...)].sort().slice(0, MAX_DISTRICTS_PER_RUN)` froze the
+    // cap on the same lexicographically-first districts every tick, so every
+    // district after the cap was NEVER a candidate — permanently empty. The fix
+    // orders by each district's most-recent fetched_at ASC (never-fetched first)
+    // so the un-fetched tail leads the next tick and the cap ROTATES.
+    const c = code();
+    expect(c).toMatch(/latestByDistrict/);
+    // the old lexicographic freeze is gone (a bare .sort() feeding .slice()).
+    expect(c).not.toMatch(/\.sort\(\)\s*\.slice\(/);
+  });
+
+  it("bounds the fetch pass by a wall-clock budget and breaks", () => {
+    // maxDuration=60 would otherwise kill the pass mid-fetch, self-stranding the
+    // tail. The loop stops cleanly before starting a district it cannot finish.
+    const c = code();
+    expect(c).toMatch(/PASS_BUDGET_MS/);
+    expect(c).toMatch(/-\s*startedAt\s*\+\s*PER_DISTRICT_BUDGET_MS\s*>\s*passBudgetMs\)\s*break/);
+  });
+});

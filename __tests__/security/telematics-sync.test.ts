@@ -115,6 +115,31 @@ describe("runTelematicsSync — dark gate first, idempotent, org-pinned", () => 
     // the decrypt-on-use seam is the only place tokens become plaintext.
     expect(code).toMatch(/decryptStoredTokens\(/);
   });
+
+  it("FAIR ORDERING (C71): the connected read orders by last_sync_at nulls-first, NOT id", () => {
+    // A pass has a wall-clock budget (below) and clears only a handful of
+    // connections; the pre-fix tick-stable `id` order re-serviced the same low-id
+    // head every tick while the high-id tail was never reached and silently never
+    // synced. Ordering by the success-only cursor (last_sync_at ASC, nulls-first)
+    // sinks each just-synced connection to the back so the tail leads the next pass.
+    expect(code).toMatch(
+      /\.order\(\s*"last_sync_at",\s*\{\s*ascending:\s*true,\s*nullsFirst:\s*true\s*\}\s*\)/,
+    );
+    // `id` remains only as the deterministic tiebreak, AFTER last_sync_at.
+    const primary = code.indexOf('.order("last_sync_at"');
+    const idOrder = code.indexOf('.order("id"');
+    expect(primary).toBeGreaterThan(-1);
+    expect(primary).toBeLessThan(idOrder);
+  });
+
+  it("PASS BUDGET (C71): the pass is bounded by a wall-clock budget and breaks", () => {
+    // Without a budget the cron's maxDuration=60 kills the loop mid-pass, self-
+    // stranding the tail. The loop must stop CLEANLY before starting a connection
+    // it cannot finish, leaving the rest for the next (fairly-ordered) pass.
+    expect(code).toMatch(/PASS_BUDGET_MS/);
+    expect(code).toMatch(/PER_ORG_BUDGET_MS/);
+    expect(code).toMatch(/-\s*startedAt\s*\+\s*perOrgBudgetMs\s*>\s*passBudgetMs\)\s*break/);
+  });
 });
 
 // ---------------------------------------------------------------------------

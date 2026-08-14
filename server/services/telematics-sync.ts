@@ -72,6 +72,35 @@ const READINGS_CONFLICT = "org_id,connection_id,source_event_id";
  */
 const READINGS_WRITE_CHUNK = 500;
 
+/**
+ * Wall-clock budget (ms) for a SINGLE sync pass — the C39/C70-D fair-ordering +
+ * pass-budget class, applied to the telematics cron (the sibling of bank-sync).
+ *
+ * The cron that drives `runTelematicsSync` has maxDuration=60
+ * (app/api/cron/telematics-sync). A pass iterates connected orgs SEQUENTIALLY,
+ * and every connection costs several external round-trips (OAuth
+ * proactive/reactive refresh + the Samsara /stats cursor loop paginated to
+ * MAX_PAGES=40), so a realistic pass clears only a handful before the 60s limit.
+ * Left unbounded, Vercel KILLS the loop mid-pass; combined with the old
+ * tick-stable `id` ordering, the SAME low-id head was re-serviced every tick
+ * while the identical high-id TAIL was never reached — those feeds silently never
+ * synced (status stayed 'connected', last_sync_at frozen, no error).
+ *
+ * This budget is the guard: the loop starts no connection that could push the
+ * pass past the budget, stopping CLEANLY with headroom under maxDuration instead
+ * of being killed mid-connection. Un-processed connections are simply left for
+ * the next pass — NEVER marked errored — and the last_sync_at fair ordering (see
+ * the connected read) guarantees they LEAD next time, so the tail can never be
+ * permanently starved. Mirrors bank-sync's PASS_BUDGET_MS / PER_ORG_BUDGET_MS.
+ */
+export const PASS_BUDGET_MS = 45_000;
+/**
+ * Headroom (ms) reserved for one connection's work when deciding whether to start
+ * it — the "never start what you can't finish" discipline bank-sync + webhook-
+ * dispatch use, so a started connection is guaranteed to finish within the pass.
+ */
+export const PER_ORG_BUDGET_MS = 5_000;
+
 export type TelematicsConnectionSyncOutcome = {
   connectionId: string;
   orgId: string;
@@ -97,7 +126,7 @@ export type TelematicsSyncSummary = {
 };
 
 /** A connection row as read service-role (token columns included). */
-type ConnectionRow = {
+export type ConnectionRow = {
   id: string;
   org_id: string;
   provider: string;
@@ -144,7 +173,7 @@ type WriteResult = { error: { message: string } | null };
  */
 type SelectChain<T> = PromiseLike<DbResult<T>> & {
   eq(col: string, val: string): SelectChain<T>;
-  order(col: string, opts: { ascending: boolean }): SelectChain<T>;
+  order(col: string, opts: { ascending: boolean; nullsFirst?: boolean }): SelectChain<T>;
   range(from: number, to: number): PromiseLike<DbResult<T>>;
 };
 type UpdateChain = PromiseLike<WriteResult> & {
@@ -179,10 +208,23 @@ function needsRefresh(tokenExpiresAt: string | null): boolean {
 }
 
 /**
+ * Options for a sync pass. `now`/budgets are injectable ONLY so the pass-budget
+ * can be exercised deterministically in tests; production always uses the real
+ * clock + the exported constants.
+ */
+export type RunTelematicsSyncOptions = {
+  now?: () => number;
+  passBudgetMs?: number;
+  perOrgBudgetMs?: number;
+};
+
+/**
  * Run one telematics sync pass across every connected org for the bound provider.
  * Dark-safe: returns `{ ran:false }` with no DB access when not activated.
  */
-export async function runTelematicsSync(): Promise<TelematicsSyncSummary> {
+export async function runTelematicsSync(
+  opts: RunTelematicsSyncOptions = {},
+): Promise<TelematicsSyncSummary> {
   // ── DARK GATE FIRST — before any client / DB / network ──────────────────────
   const provider = resolveActiveTelematicsProvider();
   if (!provider || !telematicsProviderReady(provider)) {
@@ -201,7 +243,17 @@ export async function runTelematicsSync(): Promise<TelematicsSyncSummary> {
 
   // F-1: this cron must process EVERY connected org across the platform. A bare
   // `.select()` is clamped to PostgREST max_rows (1000), silently skipping
-  // connections beyond that; page the full set on a stable unique `id` order.
+  // connections beyond that; page the full set.
+  //
+  // FAIR ORDERING (C71, the C39/C70-D class on the telematics cron): order by
+  // last_sync_at ASC with NULLS FIRST, NOT by `id`. A pass has a wall-clock budget
+  // (see the loop below) and clears only a handful of connections, so a tick-stable
+  // `id` order re-serviced the same low-id head every tick while the high-id tail
+  // was never reached and silently never synced. last_sync_at is a success-only
+  // cursor (markSynced stamps it to `now` only on success), so never-synced
+  // connections (NULL) lead, then the stalest — sinking each just-synced connection
+  // to the back of the queue. `id` remains the deterministic tiebreak (unique, so
+  // the paginate contract still has a total order), NOT the primary sort.
   const { data: connections, error } = await fetchAllRows<ConnectionRow>(
     (from, to) =>
       (loose
@@ -211,6 +263,7 @@ export async function runTelematicsSync(): Promise<TelematicsSyncSummary> {
         ) as SelectChain<ConnectionRow[]>)
         .eq("provider", provider)
         .eq("status", "connected")
+        .order("last_sync_at", { ascending: true, nullsFirst: true })
         .order("id", { ascending: true })
         .range(from, to) as PromiseLike<PageResult<ConnectionRow>>,
   );
@@ -227,23 +280,54 @@ export async function runTelematicsSync(): Promise<TelematicsSyncSummary> {
     };
   }
 
-  const rows = connections;
-  const outcomes: TelematicsConnectionSyncOutcome[] = [];
-  let totalWritten = 0;
-
-  for (const conn of rows) {
-    const outcome = await syncOneConnection(loose, provider, conn);
-    outcomes.push(outcome);
-    totalWritten += outcome.written;
-  }
+  const { processed, written } = await runTelematicsConnectionPass(
+    connections,
+    (conn) => syncOneConnection(loose, provider, conn),
+    opts,
+  );
 
   return {
     ran: true,
     provider,
-    connections: rows.length,
-    written: totalWritten,
-    outcomes,
+    // The number of connections actually PROCESSED this pass (not the full set) —
+    // an honest count when the budget stops the pass early.
+    connections: processed.length,
+    written,
+    outcomes: processed,
   };
+}
+
+/**
+ * The budgeted pass loop, extracted so the PASS BUDGET is exercisable
+ * deterministically (an injected clock + a fake `syncOne`) without a live DB.
+ *
+ * PASS BUDGET (C71): stop cleanly with headroom instead of being killed mid-
+ * connection by the cron's maxDuration=60. Checked at the TOP of the loop so a
+ * connection is only STARTED when it can finish within the budget; un-processed
+ * connections are left untouched (NOT errored) for the next pass, and the
+ * last_sync_at fair ordering of the connected read guarantees they LEAD it — so no
+ * connection is ever permanently starved. `now`/budgets are injectable for
+ * deterministic tests only; production uses the real clock + the exported consts.
+ */
+export async function runTelematicsConnectionPass(
+  connections: readonly ConnectionRow[],
+  syncOne: (conn: ConnectionRow) => Promise<TelematicsConnectionSyncOutcome>,
+  opts: RunTelematicsSyncOptions = {},
+): Promise<{ processed: TelematicsConnectionSyncOutcome[]; written: number }> {
+  const now = opts.now ?? Date.now;
+  const passBudgetMs = opts.passBudgetMs ?? PASS_BUDGET_MS;
+  const perOrgBudgetMs = opts.perOrgBudgetMs ?? PER_ORG_BUDGET_MS;
+  const startedAt = now();
+
+  const processed: TelematicsConnectionSyncOutcome[] = [];
+  let written = 0;
+  for (const conn of connections) {
+    if (now() - startedAt + perOrgBudgetMs > passBudgetMs) break;
+    const outcome = await syncOne(conn);
+    processed.push(outcome);
+    written += outcome.written;
+  }
+  return { processed, written };
 }
 
 /** Sync a single connected org: refresh-if-needed, fetch+map, write, record state. */
