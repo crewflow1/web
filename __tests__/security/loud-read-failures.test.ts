@@ -491,7 +491,19 @@ const RATCHET: Array<{
     // <select> preserve-injects the saved id, so a partial/empty list can never
     // silent-NULL a saved site. The net across the codebase is neutral (app/(app)
     // retired one clamped bare read, above). See docs/loud-read-failures.md (C ledger).
-    discard: 36,
+    // 36 → 38 (P2 blueprint pins wave): two best-effort DISPLAY-NAME joins were
+    // added, each a `const { data } = await …` that deliberately drops `error`
+    // exactly like the pre-existing snag-title join beside it —
+    // (a) server/services/blueprint-pins.ts::listPinsForVersion resolves task-pin
+    //     ASSIGNEE names (.in(assigneeIds) on users); a failed lookup shows the
+    //     assignee as "Member"/null, it never blanks or hides a pin.
+    // (b) server/services/blueprint-pin-comments.ts::listPinComments resolves
+    //     comment AUTHOR names (.in(authorIds) on users); a failed lookup shows the
+    //     author as "Member", it never drops a comment.
+    // Both PRIMARY reads (the pins list; the paged comment thread) bind + throw
+    // readFailure, so a real read failure is still loud — only the decorative name
+    // enrichment degrades. See docs/loud-read-failures.md (C ledger).
+    discard: 38,
     // 61 → 62: server/services/hq-support-snapshot.ts `listSupportTicketRowsForHq`
     // is the lean, message-free board reader (HQ Support AI) — it degrades to `[]`
     // exactly like its sibling `listSupportTicketsForHq` in the same file, and the

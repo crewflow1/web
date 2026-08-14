@@ -3,10 +3,13 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import {
   createNotePinSchema, createSnagPinSchema, linkSnagPinSchema, movePinSchema,
+  createTaskPinSchema, updateTaskPinSchema,
   type BlueprintPin, type CreateNotePinInput, type CreateSnagPinInput,
-  type LinkSnagPinInput, type MovePinInput,
+  type LinkSnagPinInput, type MovePinInput, type CreateTaskPinInput,
+  type UpdateTaskPinInput, type TaskPinStatus,
 } from "@/lib/blueprints/pins";
 import type { SnagStatus } from "@/lib/snags/schema";
 
@@ -50,7 +53,8 @@ const pc = (c: Awaited<ReturnType<typeof createClient>>) => c as unknown as PinC
 
 type RawPin = {
   id: string; blueprint_version_id: string; page_number: number; u: number; v: number;
-  kind: "snag" | "note"; title: string | null; note: string | null; snag_id: string | null; created_at: string;
+  kind: "snag" | "note" | "task"; title: string | null; note: string | null; snag_id: string | null; created_at: string;
+  task_status: TaskPinStatus | null; assigned_to: string | null; due_date: string | null;
 };
 
 /**
@@ -67,7 +71,7 @@ export async function listPinsForVersion(versionId: string): Promise<BlueprintPi
   const supabase = pc(await createClient());
   const { data: rows, error } = await supabase
     .from("blueprint_pins")
-    .select("id, blueprint_version_id, page_number, u, v, kind, title, note, snag_id, created_at")
+    .select("id, blueprint_version_id, page_number, u, v, kind, title, note, snag_id, created_at, task_status, assigned_to, due_date")
     .eq("blueprint_version_id", versionId)
     .eq("org_id", ctx.org.id)
     .order("created_at", { ascending: true });
@@ -88,6 +92,20 @@ export async function listPinsForVersion(versionId: string): Promise<BlueprintPi
     }
   }
 
+  // Batched assignee display names for task pins (no N+1). Pinned to the active
+  // org so a name is only ever resolved from this org's user set.
+  const assigneeIds = [...new Set(pins.filter((p) => p.assigned_to).map((p) => p.assigned_to as string))];
+  const nameById = new Map<string, string>();
+  if (assigneeIds.length > 0) {
+    const { data: userRows } = await supabase
+      .from("users")
+      .select("id, full_name, email")
+      .in("id", assigneeIds);
+    for (const u of (userRows ?? []) as unknown as { id: string; full_name: string | null; email: string | null }[]) {
+      nameById.set(u.id, u.full_name || u.email || "Member");
+    }
+  }
+
   return pins.map((p) => {
     const snag = p.snag_id ? snagById.get(p.snag_id) : undefined;
     return {
@@ -96,8 +114,43 @@ export async function listPinsForVersion(versionId: string): Promise<BlueprintPi
       created_at: p.created_at,
       snag_status: snag?.status ?? null,
       snag_title: snag?.title ?? null,
+      task_status: p.task_status,
+      assigned_to: p.assigned_to,
+      due_date: p.due_date,
+      assignee_name: p.assigned_to ? nameById.get(p.assigned_to) ?? null : null,
     };
   });
+}
+
+/**
+ * Members of the ACTIVE org, for the task-pin assignee picker.
+ *
+ * A picker must see the FULL member set, so this is F-1 paged via fetchAllRows
+ * on a stable, unique order (memberships is a policed high-value table — a bare
+ * `.eq('org_id')` select would silently clip an org's members at the PostgREST
+ * cap; see __tests__/security/f1-bare-select-guard.test.ts).
+ */
+export async function listAssignableMembers(): Promise<{ id: string; name: string }[]> {
+  const { ctx } = await requireOrgContext();
+  const supabase = await createClient();
+  type MRow = { user_id: string; users: { full_name: string | null; email: string | null } | null };
+  const page = supabase.from("memberships") as unknown as {
+    select: (c: string) => {
+      eq: (k: string, v: unknown) => {
+        order: (k: string, o: { ascending: boolean }) => {
+          range: (from: number, to: number) => PromiseLike<PageResult<MRow>>;
+        };
+      };
+    };
+  };
+  const { data, error } = await fetchAllRows<MRow>((from, to) =>
+    page.select("user_id, users(full_name, email)")
+      .eq("org_id", ctx.org.id)
+      .order("user_id", { ascending: true })
+      .range(from, to),
+  );
+  if (error) throw readFailure("blueprint-pins: assignable members", error as SupabaseReadError);
+  return (data ?? []).map((m) => ({ id: m.user_id, name: m.users?.full_name || m.users?.email || "Member" }));
 }
 
 /** Open snags on a job that a pin could link to (for the "link existing" flow). */
@@ -193,6 +246,68 @@ export async function linkSnagPin(raw: LinkSnagPinInput): Promise<PinResult> {
     metadata: { kind: "snag", snag_id: parsed.data.snag_id, org_id: ctx.org.id },
   });
   return { ok: true, data };
+}
+
+/** Place a first-class task pin (assignee/status/due date owned by the pin). */
+export async function createTaskPin(raw: CreateTaskPinInput): Promise<PinResult> {
+  const parsed = createTaskPinSchema.safeParse(raw);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid task pin." };
+  const { ctx, user } = await requireOrgContext();
+  const supabase = pc(await createClient());
+  const { data, error } = await supabase
+    .from("blueprint_pins")
+    .insert({
+      blueprint_version_id: parsed.data.blueprint_version_id,
+      page_number: parsed.data.page_number,
+      u: parsed.data.u, v: parsed.data.v,
+      kind: "task",
+      title: parsed.data.title,
+      note: parsed.data.note ?? null,
+      task_status: "open",
+      assigned_to: parsed.data.assigned_to ?? null,
+      due_date: parsed.data.due_date ?? null,
+      created_by: user.id,
+    })
+    .select("id")
+    .single();
+  if (error || !data) return { ok: false, error: friendly(error?.message) };
+  await recordAdminActivity({
+    actorId: user.id, actorEmail: user.email ?? null, action: "blueprint_pin.created",
+    targetTable: "blueprint_pins", targetId: data.id,
+    metadata: { kind: "task", org_id: ctx.org.id, blueprint_version_id: parsed.data.blueprint_version_id },
+  });
+  return { ok: true, data };
+}
+
+/**
+ * Update a task pin's lifecycle (status / assignee / due date). Member-allowed
+ * (mirrors snag status/assignment edits). ACTIVE-org + kind='task' pinned and
+ * count-gated: a dual-org member can't touch the other org's pin, and only a
+ * task pin's lifecycle fields are ever written.
+ */
+export async function updateTaskPin(raw: UpdateTaskPinInput): Promise<PinResult> {
+  const parsed = updateTaskPinSchema.safeParse(raw);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid task update." };
+  // Build the patch from only the fields the caller actually supplied. `null`
+  // is a meaningful value (clear assignee / clear due date); `undefined` means
+  // "leave unchanged" (the zod schema distinguishes the two).
+  const patch: Record<string, unknown> = {};
+  if (parsed.data.status !== undefined) patch.task_status = parsed.data.status;
+  if (parsed.data.assigned_to !== undefined) patch.assigned_to = parsed.data.assigned_to;
+  if (parsed.data.due_date !== undefined) patch.due_date = parsed.data.due_date;
+  if (Object.keys(patch).length === 0) return { ok: false, error: "Nothing to update." };
+
+  const { ctx } = await requireOrgContext();
+  const supabase = pc(await createClient());
+  const { error, count } = await supabase
+    .from("blueprint_pins")
+    .update(patch, { count: "exact" })
+    .eq("id", parsed.data.id)
+    .eq("org_id", ctx.org.id)
+    .eq("kind", "task");
+  if (error) return { ok: false, error: friendly(error.message) };
+  if (!count) return { ok: false, error: "Task pin not found." };
+  return { ok: true, data: { id: parsed.data.id } };
 }
 
 /** Reposition a pin (member-allowed; not audited — position refinement). */
