@@ -229,8 +229,10 @@ describeIntegration("hmrc connections · RLS + constraints", () => {
     expect(bad.error, "cross-org connection binding must be refused by the composite FK").not.toBeNull();
   });
 
-  it("REFUSES a filed/submitted status (no such state exists)", async () => {
-    const bad = await db(serviceClient())
+  it("ACCEPTS the 'submitted' state (MTD submit pipeline) but REFUSES an unknown status", async () => {
+    // The submit pipeline (20261130) widened the CHECK to allow the live-submit
+    // states. 'submitted' is now a real state and must be accepted...
+    const ok = await db(serviceClient())
       .from("hmrc_submissions")
       .insert({
         org_id: orgA,
@@ -241,7 +243,21 @@ describeIntegration("hmrc connections · RLS + constraints", () => {
         payload: {},
       })
       .select("id");
-    expect(bad.error, "a 'submitted' status must be refused by the CHECK").not.toBeNull();
+    expect(ok.error, "'submitted' is a valid MTD-submit state").toBeNull();
+
+    // ...while a genuinely nonexistent state is still refused by the CHECK.
+    const bad = await db(serviceClient())
+      .from("hmrc_submissions")
+      .insert({
+        org_id: orgA,
+        connection_id: connAId,
+        kind: "vat_return",
+        period_key: "18A3",
+        status: "filed",
+        payload: {},
+      })
+      .select("id");
+    expect(bad.error, "an unknown 'filed' status must be refused by the CHECK").not.toBeNull();
   });
 
   it("a MEMBER may READ submissions but NOT insert", async () => {

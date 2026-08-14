@@ -167,6 +167,11 @@ const INTERNAL_RLS: readonly string[] = [
   "toolbox_talks_risk_assessment_id_fkey",
   "weather_watches_job_id_fkey",
   "weather_watches_site_id_fkey",
+  // P2 cohort — service-role/webhook-derived nullable back-references, RLS + own
+  // org_id + ON DELETE SET NULL; never tenant-supplied. invoice_payment_intents
+  // additionally carries its own unique(id, org_id).
+  "invoice_payment_intents_invoice_payment_id_fkey",
+  "whatsapp_assistant_actions_enquiry_id_fkey",
 ];
 
 const SELF_REASON =
