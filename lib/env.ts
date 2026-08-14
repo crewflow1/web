@@ -38,6 +38,18 @@ const envSchema = z.object({
   WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
   WHATSAPP_GRAPH_VERSION: z.string().optional(),
 
+  // -- Voice-note transcription (DARK) -----------------------------------
+  // A GOVERNOR-DARK seam mirroring the AI model-binding pattern: transcription
+  // only reaches a provider when BOTH a build-time binding exists (see
+  // lib/ai/transcription.ts TRANSCRIPTION_MODEL, deliberately null) AND this
+  // credential is present. Both absent ⇒ transcribeVoiceNote() returns a
+  // `deferred` result with transcript=null and NEVER fabricates a transcript.
+  // A free-string provider selector so arming a vendor needs no schema edit;
+  // deliberately NOT ANTHROPIC_API_KEY/OPENAI_API_KEY (those are the governed
+  // inference doors — transcription is a separate audio→text modality).
+  TRANSCRIPTION_PROVIDER: z.string().optional(),
+  TRANSCRIPTION_API_KEY: z.string().optional(),
+
   // -- Twilio + Vapi (required when telephony code runs) ------------------
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),

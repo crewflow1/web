@@ -10,6 +10,11 @@ import {
   type NormalizedWhatsAppMessage,
   type NormalizedWhatsAppStatus,
 } from "@/lib/comms/providers/meta-whatsapp";
+import { downloadInboundWhatsAppMedia } from "@/server/services/whatsapp-media-pipeline";
+import {
+  resolveJobForCaller,
+  runWhatsAppAssistantActions,
+} from "@/server/services/whatsapp-assistant-actions";
 
 /**
  * WhatsApp inbound webhook handler — claim → route → hand off.
@@ -225,7 +230,7 @@ async function handleMessage(
     // claim. provider_timestamp + has_media are persisted on the enquiry (metadata only in v1).
     // (contact_name is captured in the normalized message + the webhook_events payload, but
     // InboundEnquiryInput does not accept it today — a deliberate follow-up.)
-    await processInboundEnquiry({
+    const dispatch = await processInboundEnquiry({
       org_id: orgId,
       channel: "whatsapp_msg",
       raw_text: msg.raw_text,
@@ -236,12 +241,66 @@ async function handleMessage(
       has_media: msg.has_media,
     });
     result.dispatched++;
+
+    // MEDIA + ASSISTANT AUTO-ACTIONS — best-effort, AFTER the durable enquiry is
+    // recorded. This is the P2 assistant layer: fetch inbound media bytes (dark
+    // ⇒ refuse-before-fetch, no network) and turn the message into the right
+    // entity (evidence auto-created; commitments queued for review). It NEVER
+    // affects the ingestion contract: a failure here is logged and swallowed, the
+    // enquiry is already durable, and the event is marked processed regardless.
+    // Idempotent throughout (media id + (org,wamid,action_type)), so a retry that
+    // reaches here again cannot double-act.
+    await runAssistantLayer(orgId, msg, dispatch.enquiry_id).catch((e) => {
+      console.error("[whatsapp-webhook] assistant layer failed (swallowed)", {
+        wamid: msg.wamid,
+        message: e instanceof Error ? e.message : String(e),
+      });
+    });
+
     await markProcessed(eventKey);
   } catch (e) {
     // Leave processed_at NULL so a retry re-runs — never a silent drop.
     result.failed++;
     await markFailed(eventKey, e instanceof Error ? e.message : String(e));
   }
+}
+
+/**
+ * The P2 assistant layer for ONE dispatched message: download any media (dark ⇒
+ * refuse-before-fetch), resolve the job it concerns, then run the auto-actions.
+ * Entirely best-effort — the caller has already made the enquiry durable.
+ */
+async function runAssistantLayer(
+  orgId: string,
+  msg: NormalizedWhatsAppMessage,
+  enquiryId: string | null,
+): Promise<void> {
+  // 1. Media bytes. Only for messages that actually carry a fetchable media
+  //    descriptor; the pipeline refuses-before-fetch when creds are dark.
+  let media: { bytes: Uint8Array; mimeType: string | null } | null = null;
+  if (msg.has_media && msg.media) {
+    const dl = await downloadInboundWhatsAppMedia({
+      orgId,
+      wamid: msg.wamid,
+      media: msg.media,
+    });
+    if (dl.status === "stored") {
+      media = { bytes: dl.bytes, mimeType: dl.mimeType };
+    }
+  }
+
+  // 2. Deterministic job resolution (caller → customer → most recent open job).
+  const jobId = await resolveJobForCaller(orgId, msg.caller);
+
+  // 3. Auto-actions.
+  await runWhatsAppAssistantActions({
+    orgId,
+    wamid: msg.wamid,
+    enquiryId,
+    message: msg,
+    jobId,
+    media,
+  });
 }
 
 async function handleStatus(
