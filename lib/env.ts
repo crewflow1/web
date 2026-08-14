@@ -361,6 +361,16 @@ const envSchema = z.object({
   // by (and untouching of) the SaaS-billing Stripe integration.
   NEXT_PUBLIC_FEATURE_PORTAL_PAYMENTS: z.enum(["true", "false"]).default("false"),
 
+  // Builders' merchant connect surface (20261124). DEFAULTS OFF. Switch 1 of two:
+  // while off, isMerchantConnectable() returns false regardless of credentials and
+  // the settings panel renders "not configured". The SECOND switch is per-merchant
+  // credentials + endpoint (MERCHANT_<P>_API_KEY + MERCHANT_<P>_ENDPOINT); the flag
+  // alone opens no door — isMerchantConnectable() requires BOTH. Above both sits a
+  // COMMERCIAL gate: a live link needs a trade-account integration contract with the
+  // merchant (the endpoint is provisioned per contract, not a public host). Never
+  // flip to "true" before all three exist for at least one merchant.
+  NEXT_PUBLIC_FEATURE_MERCHANTS: z.enum(["true", "false"]).default("false"),
+
   // -- Open Banking / bank-feed aggregator (20261100 — DARK, FCA-gated) ---
   // The single OAuth client the bank-feed substrate binds to, plus the aggregator
   // it is bound to. UNSET in every environment today. Activation is a
@@ -407,6 +417,32 @@ const envSchema = z.object({
   // adapter vets every outbound URL built from this base through the shared SSRF
   // policy before any fetch, so a mis-set host can never reach an internal address.
   VERIZON_CONNECT_API_BASE_URL: z.string().optional(),
+
+  // -- Builders' merchants (20261124 — DARK, commercial-contract gated) --------
+  // Per-merchant credentials + endpoint (NOT one bound aggregator — an org may
+  // link several merchants at once, so each is gated independently, the accounting
+  // per-provider posture). UNSET in every environment today. Activation per
+  // merchant is credentials + endpoint + the NEXT_PUBLIC_FEATURE_MERCHANTS flag,
+  // AND a trade-account INTEGRATION CONTRACT (the endpoint is provisioned by the
+  // merchant per contract — none of the four publishes a public API host). The
+  // substrate (lib/integrations/merchants/*) REFUSES-before-fetch while any of
+  // these is absent, and every operator-supplied endpoint/price-file URL is
+  // SSRF-validated (lib/webhooks/ssrf.ts) before any request, so no live merchant
+  // call is reachable. Per-org account secrets at rest reuse
+  // INTEGRATION_TOKEN_ENCRYPTION_KEY (read by token-crypto.ts). ENDPOINT is the
+  // cXML/OCI order gateway URL; PRICE_FILE_URL is the optional price-file location.
+  MERCHANT_JP_CORRY_API_KEY: z.string().optional(),
+  MERCHANT_JP_CORRY_ENDPOINT: z.string().optional(),
+  MERCHANT_JP_CORRY_PRICE_FILE_URL: z.string().optional(),
+  MERCHANT_JEWSON_API_KEY: z.string().optional(),
+  MERCHANT_JEWSON_ENDPOINT: z.string().optional(),
+  MERCHANT_JEWSON_PRICE_FILE_URL: z.string().optional(),
+  MERCHANT_TRAVIS_PERKINS_API_KEY: z.string().optional(),
+  MERCHANT_TRAVIS_PERKINS_ENDPOINT: z.string().optional(),
+  MERCHANT_TRAVIS_PERKINS_PRICE_FILE_URL: z.string().optional(),
+  MERCHANT_HALDANE_FISHER_API_KEY: z.string().optional(),
+  MERCHANT_HALDANE_FISHER_ENDPOINT: z.string().optional(),
+  MERCHANT_HALDANE_FISHER_PRICE_FILE_URL: z.string().optional(),
 
   // -- Calendar connect (Google Calendar + Microsoft Graph) — 20261097 DARK --
   // The OAuth client credentials the calendar-connect substrate binds to, plus its

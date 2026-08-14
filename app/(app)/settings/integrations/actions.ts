@@ -12,6 +12,11 @@ import {
   TELEMATICS_PROVIDERS,
   type TelematicsProvider,
 } from "@/lib/integrations/telematics/oauth";
+import { disconnectMerchantProvider } from "@/server/services/merchant-connections";
+import {
+  isMerchantProvider,
+  type MerchantProvider,
+} from "@/lib/integrations/merchants/connect";
 
 /**
  * Calendar integration actions — the admin disconnect that wires the panel's
@@ -114,6 +119,36 @@ export async function disconnectTelematicsConnection(formData: FormData): Promis
   }
 
   const res = await disconnectTelematicsProvider(ctx.org.id, provider);
+  if (!res.ok) {
+    throw new Error(res.error ?? "Disconnect failed.");
+  }
+
+  revalidatePath("/settings/integrations");
+}
+
+/**
+ * Merchant integration disconnect — wires the panel's "Disconnect" control to
+ * `disconnectMerchantProvider`. Clears the account secret + connection handle and
+ * returns the row to `disconnected`.
+ *
+ * AUTHORISATION IS DOUBLED. The role check here refuses a non-admin loudly; the
+ * admin-write RLS on merchant_connections (20261124000000) is the real boundary
+ * for the UPDATE, which runs under the caller's JWT. Org-pinned via ctx.org.id.
+ * LOUD.
+ */
+export async function disconnectMerchantConnection(formData: FormData): Promise<void> {
+  const providerRaw = String(formData.get("provider") ?? "");
+  if (!isMerchantProvider(providerRaw)) {
+    throw new Error("Unknown merchant.");
+  }
+  const provider: MerchantProvider = providerRaw;
+
+  const { ctx } = await requireOrgContext();
+  if (!isAdminRole(ctx.membership.role)) {
+    throw new Error("Only an owner or admin may disconnect a merchant.");
+  }
+
+  const res = await disconnectMerchantProvider(ctx.org.id, provider);
   if (!res.ok) {
     throw new Error(res.error ?? "Disconnect failed.");
   }

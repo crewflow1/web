@@ -1126,6 +1126,7 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   accounting_connections: "PER-ORG: .eq('org_id') accounting connection config — one/few provider rows",
   bank_connections: "PER-ORG/PAGED: .eq('org_id') config; the estate lister is fetchAllRows-paged",
   calendar_connections: "PER-ORG: .eq('org_id') calendar connection config",
+  merchant_connections: "PER-ORG/PAGED: .eq('org_id') builders'-merchant connection config (one row per (org,provider), ≤4 rows); the lister is fetchAllRows-paged",
   hmrc_submissions: "PER-ORG/SINGLE: .eq('org_id') submission list + a .limit(1) period-key existence probe",
   automation_rules: "PER-ORG/CLOSED: .eq('org_id') rule overrides — a closed automation-rule registry",
   automation_schedules: "PER-ORG/CLOSED: .eq('org_id') schedules — a closed schedule set",
