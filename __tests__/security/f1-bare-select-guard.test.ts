@@ -322,8 +322,8 @@ const ALLOWLIST: Record<string, string> = {
   // surfaced these pre-existing reads that were ALSO only green via neighbour
   // bleed. Each is verified GENUINELY bounded / paged / not-a-read — none is a
   // truncation bug (none needed paging), so each carries an honest reason:
-  "app/(app)/delays/_data.ts:92":
-    "bounded: jobs label lookup .in('id', ids) where ids is a de-duped Set drawn from the delays register (a bounded parent set) — batched name/date labels, ≤ parent rows, never near 1000. Same class as diary/page.tsx:83.",
+  "app/(app)/delays/_data.ts:93":
+    "bounded: jobs label lookup .in('id', ids) where ids is a de-duped Set drawn from the delays register (a bounded parent set) — batched name/date labels, ≤ parent rows, never near 1000. Same class as diary/page.tsx:83. (Line moved 92→93 when listJobOptions was paged via fetchAllRows for the F-1 picker-completion wave, adding the paginate import.)",
   "app/(app)/quality/_data.ts:241":
     "bounded: jobs label lookup .in('id', ids) where ids is a de-duped Set drawn from the quality register (a bounded parent set) — batched name/date labels, ≤ parent rows. Same class as diary/page.tsx:83.",
   "app/(app)/jobs/[id]/billing/actions.ts:81":

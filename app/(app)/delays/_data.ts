@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import type { DelayEventRow } from "@/lib/eot/pack";
 
 /**
@@ -102,18 +103,40 @@ async function loadJobLabels(
   return out;
 }
 
-/** Jobs the ACTIVE org can log a delay against (the quality job-picker idiom). */
+type JobPickerRow = {
+  id: string;
+  status: string | null;
+  scheduled_date: string | null;
+  customer: { name: string | null } | null;
+};
+
+/**
+ * Jobs the ACTIVE org can log a delay against (the quality job-picker idiom).
+ *
+ * PAGED (F-1 picker-completion class). This feeds the delay/EOT create form's
+ * REQUIRED job <select>, and `jobs/[id]` deep-links `/delays/new?jobId=<id>` for
+ * any job on the register. The old 200-row cap silently dropped every job older
+ * than the 200 newest, so a deep-linked job past the cap had NO matching
+ * <option> — the required select then discarded the preset and fell to the first
+ * enabled option, a DIFFERENT job, and an untouched submit mis-attributed the
+ * delay. Page the complete set on a stable, unique order (created_at desc + id
+ * desc tiebreaker) so no row shifts across a page boundary and every job is
+ * offered.
+ */
 export async function listJobOptions(
   orgId: string,
 ): Promise<Array<{ id: string; label: string }>> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("jobs")
-    .select("id, status, scheduled_date, customer:customers ( name )")
-    .eq("org_id", orgId)
-    .order("created_at", { ascending: false })
-    .limit(200);
-  if (error) throw readFailure("delays: job picker", error);
+  const { data, error } = await fetchAllRows<JobPickerRow>((from, to) =>
+    supabase
+      .from("jobs")
+      .select("id, status, scheduled_date, customer:customers ( name )")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to) as unknown as PromiseLike<{ data: JobPickerRow[] | null; error: unknown }>,
+  );
+  if (error) throw readFailure("delays: job picker", error as SupabaseReadError);
   return (data ?? []).map((j) => {
     const customer = (j as unknown as { customer: { name: string | null } | null }).customer;
     const parts = [

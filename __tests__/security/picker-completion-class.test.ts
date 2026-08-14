@@ -372,6 +372,9 @@ describe("picker option-source readers page the complete set (F-1)", () => {
     { file: "app/(app)/leads/_form-helpers.ts", fn: "listCustomersForLead" },
     { file: "server/services/suppliers.ts", fn: "listSuppliersForOrg" },
     { file: "server/services/sites.ts", fn: "listSitesForOrg" },
+    // The delay/EOT create form's REQUIRED job picker (jobs/[id] deep-links a
+    // ?jobId= that can be older than any cap) — must page the full job set.
+    { file: "app/(app)/delays/_data.ts", fn: "listJobOptions" },
   ];
 
   it("staff / customer / supplier / site loaders use fetchAllRows and carry no capped memberships/suppliers/sites read", () => {
