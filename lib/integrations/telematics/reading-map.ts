@@ -314,3 +314,121 @@ export function normalizeSamsaraSamples(
   }
   return out;
 }
+
+/**
+ * A Verizon Connect (Reveal) vehicle-status record (the subset the mapper needs).
+ *
+ * The two documented differences from Samsara, both handled by the normaliser
+ * below so THIS mapper stays single-purpose:
+ *   • coordinates are top-level and CAPITALISED (`Latitude`/`Longitude`), not
+ *     nested under a `gps` stat; and
+ *   • the odometer is reported in MILES already (`Odometer`), so there is NO
+ *     metres → miles conversion (contrast Samsara's `obdOdometerMeters`).
+ */
+export type VerizonConnectVehicleStatus = {
+  /**
+   * The Reveal vehicle number — opaque to CrewFlow, stable per vehicle. It is the
+   * idempotency anchor (carried into `eventId`) AND the last-resort resolution key.
+   * Reveal reports it as `VehicleNumber`. A record without one has no stable
+   * idempotency key, so the normaliser drops it rather than risk a duplicating id.
+   */
+  VehicleNumber?: string | null;
+  /**
+   * The vehicle's Reveal display name — a last-resort resolution key after VIN and
+   * registration (trades fleets often name a vehicle by its plate). Optional.
+   */
+  Name?: string | null;
+  /**
+   * The registration / number plate as Reveal reports it (`RegistrationNumber`).
+   * This is the primary REGISTRATION key a UK-trades fleet resolves on: the register
+   * populates `assets.registration` and usually leaves `fleet_vehicles.vin` blank,
+   * so without threading the plate through a registration-keyed fleet resolves ZERO
+   * samples (the silent-activation-dead symptom). Optional.
+   */
+  RegistrationNumber?: string | null;
+  /**
+   * The VIN as Reveal reports it — a PLAIN string field (`Vin`), NOT a namespaced
+   * map like Samsara's `externalIds["samsara.vin"]`. The VIN is the strongest
+   * identifier both Reveal and the CrewFlow register (fleet_vehicles.vin) carry, so
+   * it is the FIRST resolution key. Optional (blank on a registration-keyed fleet).
+   */
+  Vin?: string | null;
+  /**
+   * The odometer in MILES. Reveal reports miles NATIVELY — there is deliberately no
+   * unit conversion here (unlike Samsara's metres). Absent / non-finite ⇒ this
+   * sample carries no odometer signal.
+   */
+  Odometer?: number | null;
+  /** Decimal-degree latitude (`Latitude`) — top-level + capitalised. */
+  Latitude?: number | null;
+  /** Decimal-degree longitude (`Longitude`). */
+  Longitude?: number | null;
+  /**
+   * ISO-8601 UTC instant the status was recorded (`UpdateUTC`). `recorded_at` is
+   * NOT NULL in the DB, so a record with no timestamp is DROPPED (never coined to a
+   * fabricated "now") — the same faithful-transcription rule the Samsara normaliser
+   * applies to `gps.time`.
+   */
+  UpdateUTC?: string | null;
+};
+
+/**
+ * Normalise Verizon Connect (Reveal) vehicle-status records into the SAME provider-
+ * agnostic `TelematicsSample` shape `normalizeSamsaraSamples` produces, so either
+ * aggregator lands byte-identical rows once activated. Reveal reports the odometer
+ * in MILES (no conversion) and coordinates under capitalised `Latitude`/`Longitude`
+ * — the two documented differences — but the RESOLUTION KEY SET and the
+ * drop-when-untimestamped / drop-when-unmapped rules are IDENTICAL to Samsara. Pure.
+ *
+ * RESOLUTION KEY SET, tried in priority order against BOTH fleet indexes (VIN then
+ * normalised registration — see buildFleetIndex), mirroring normalizeSamsaraSamples
+ * exactly: VIN (strongest), then RegistrationNumber (the UK-trades reg key), then
+ * the Reveal display name (fleets often name a vehicle by its plate), then the
+ * opaque VehicleNumber (final fallback). The FIRST key that resolves wins; the
+ * idempotency key stays anchored to the stable VehicleNumber regardless of which
+ * key resolved the vehicle.
+ */
+export function normalizeVerizonConnectSamples(
+  rows: readonly VerizonConnectVehicleStatus[],
+  resolveVehicleId: (verizonVehicleId: string) => string | null,
+): TelematicsSample[] {
+  const out: TelematicsSample[] = [];
+  for (const r of rows) {
+    // The stable idempotency anchor. A record with no VehicleNumber has no stable
+    // id to dedupe on, so DROP it rather than mint one that could duplicate.
+    const vehicleNumber =
+      typeof r.VehicleNumber === "string" ? r.VehicleNumber.trim() : "";
+    if (vehicleNumber.length === 0) continue;
+
+    const candidateKeys = [r.Vin, r.RegistrationNumber, r.Name, vehicleNumber];
+    let vehicleId: string | null = null;
+    for (const key of candidateKeys) {
+      if (typeof key !== "string" || key.trim().length === 0) continue;
+      vehicleId = resolveVehicleId(key);
+      if (vehicleId) break;
+    }
+    if (!vehicleId) continue; // unmapped vehicle — skip rather than guess.
+
+    // recorded_at is NOT NULL: drop a record with no provider timestamp rather than
+    // coin a fabricated "now" (faithful transcription; matches the Samsara mapper).
+    const rawTime =
+      typeof r.UpdateUTC === "string" && r.UpdateUTC.length > 0 ? r.UpdateUTC : null;
+    if (rawTime === null) continue;
+    const recordedAt = rawTime;
+
+    // Reveal reports miles already — pass through (mapSampleToReading's miles()
+    // rounds + clamps to the CHECK range). Non-finite ⇒ no odometer signal.
+    const odometerMiles =
+      typeof r.Odometer === "number" && Number.isFinite(r.Odometer) ? r.Odometer : null;
+
+    out.push({
+      vehicleId,
+      eventId: `${vehicleNumber}:${recordedAt}`,
+      recordedAt,
+      latitude: typeof r.Latitude === "number" ? r.Latitude : null,
+      longitude: typeof r.Longitude === "number" ? r.Longitude : null,
+      odometerMiles,
+    });
+  }
+  return out;
+}
