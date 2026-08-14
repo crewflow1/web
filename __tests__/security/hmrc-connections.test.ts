@@ -262,8 +262,17 @@ describe("HMRC connect routes are gated + dark", () => {
     expect(code).toMatch(/status:\s*503/);
   });
 
-  it("callback never writes a connected row without a VRN handle", () => {
+  it("callback resolves the VRN from the org (cookie stash + organizations.vat_number), NOT a param HMRC never sends", () => {
     const code = codeOf(read(CALLBACK));
+    // The old dead-end sourced the VRN from `searchParams.get('vrn')` — a param
+    // HMRC's OAuth callback NEVER appends, so a connected row could never be
+    // written. That source is gone; the VRN now comes from the connect-route
+    // cookie stash, falling back to a fresh authed re-read of the org's VAT
+    // number. The end-to-end callback behaviour is proven by a REAL driven
+    // callback in __tests__/integrations/hmrc-connect-callback.test.ts.
+    expect(code).not.toMatch(/searchParams\.get\(["']vrn["']\)/);
+    expect(code).toMatch(/VRN_COOKIE\(flow\)/);
+    expect(code).toMatch(/vat_number/);
     expect(code).toMatch(/no_vrn/);
     expect(code).toMatch(/status:\s*"connected"/);
   });

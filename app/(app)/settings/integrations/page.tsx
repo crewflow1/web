@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { listCalendarConnections } from "@/server/services/calendar-connections";
 import { getHmrcConnection } from "@/server/services/hmrc-connections";
@@ -53,6 +55,21 @@ export default async function IntegrationsSettingsPage() {
   const bankConnections = await listBankConnections(ctx.org.id);
   const telematicsConnections = await listTelematicsConnections(ctx.org.id);
 
+  // The HMRC connect flow resolves the VRN from organizations.vat_number (HMRC
+  // never returns one). Read it org-pinned so the panel can surface the
+  // precondition — offering Connect only when a VAT number is on file.
+  const supabase = await createClient();
+  const { data: orgRow, error: orgErr } = await supabase
+    .from("organizations")
+    .select("vat_number" as never)
+    .eq("id", ctx.org.id)
+    .maybeSingle();
+  // Loud: a failed read must not silently render "add your VAT number" (a lie
+  // that would block a correctly-configured org from connecting).
+  if (orgErr) throw readFailure("integrations settings: org vat_number", orgErr);
+  const vatRaw = (orgRow as { vat_number?: unknown } | null)?.vat_number;
+  const hasVatNumber = typeof vatRaw === "string" && vatRaw.trim().length > 0;
+
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <Header />
@@ -63,7 +80,11 @@ export default async function IntegrationsSettingsPage() {
           microsoft: isMicrosoftCalendarConnectable(),
         }}
       />
-      <HmrcConnectionPanel connection={hmrc} connectable={isHmrcConnectable()} />
+      <HmrcConnectionPanel
+        connection={hmrc}
+        connectable={isHmrcConnectable()}
+        hasVatNumber={hasVatNumber}
+      />
       <BankConnectionsPanel
         connections={bankConnections}
         connectable={{

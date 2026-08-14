@@ -58,15 +58,22 @@ function stateMatches(a: string, b: string): boolean {
 
 const STATE_COOKIE = (f: string) => `hmrc_oauth_state_${f}`;
 const VERIFIER_COOKIE = (f: string) => `hmrc_oauth_verifier_${f}`;
+const VRN_COOKIE = (f: string) => `hmrc_oauth_vrn_${f}`;
+
+/** Trim a VAT number to a non-empty handle, or null when truly absent. */
+function normaliseVat(v: unknown): string | null {
+  return typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
+}
 
 /**
- * Clear the single-use PKCE/state cookies on the callback response so a consumed
- * state+verifier pair cannot be replayed within the 600s cookie window.
+ * Clear the single-use PKCE/state/VRN cookies on the callback response so a
+ * consumed state+verifier pair cannot be replayed within the 600s cookie window.
  */
 function clearOAuthCookies(res: NextResponse, flow: string): void {
   const expire = { path: "/", maxAge: 0 } as const;
   res.cookies.set(STATE_COOKIE(flow), "", expire);
   res.cookies.set(VERIFIER_COOKIE(flow), "", expire);
+  res.cookies.set(VRN_COOKIE(flow), "", expire);
 }
 
 function backToSettings(origin: string, status: string, flow: string): NextResponse {
@@ -131,7 +138,6 @@ export async function GET(
   // ── LIVE PATH (unreachable dark) ────────────────────────────────────────────
   const code = searchParams.get("code");
   const state = searchParams.get("state");
-  const vrn = searchParams.get("vrn"); // the VAT registration handle, when carried.
 
   // Anti-CSRF: constant-time compare of the echoed state against the cookie.
   const stateCookie = request.cookies.get(STATE_COOKIE(flow))?.value ?? null;
@@ -147,14 +153,31 @@ export async function GET(
     return backToSettings(origin, "error", flow);
   }
 
+  // Resolve the VRN. HMRC's OAuth callback returns ONLY code+state — never a VRN —
+  // so we take the handle the connect route stashed (httpOnly cookie), falling
+  // back to a fresh authed re-read of organizations.vat_number for the active org.
+  // Only `no_vrn` when the org TRULY has no VAT number (the DB CHECK forbids a
+  // `connected` row without one). The connect route precondition-checks this too,
+  // so a real flow only reaches here with a VRN.
+  const supabase = await createClient();
+  let vrn = normaliseVat(request.cookies.get(VRN_COOKIE(flow))?.value ?? null);
   if (!vrn) {
-    // The DB CHECK forbids a connected row without a VRN handle; refuse rather
-    // than write an invalid row.
+    const { data: orgRow, error: orgErr } = await supabase
+      .from("organizations")
+      .select("vat_number" as never)
+      .eq("id", ctx.org.id)
+      .maybeSingle();
+    if (orgErr) {
+      return backToSettings(origin, "error", flow);
+    }
+    vrn = normaliseVat((orgRow as { vat_number?: unknown } | null)?.vat_number);
+  }
+  if (!vrn) {
+    // The org has no VAT number at all — refuse rather than write an invalid row.
     return backToSettings(origin, "no_vrn", flow);
   }
 
   const refreshToken = exchanged.tokens.refreshToken;
-  const supabase = await createClient();
   // hmrc_connections post-dates the generated types.ts; cast to a minimal upsert
   // builder. RLS (admin-write) is the real authorisation for this write.
   const loose = supabase as unknown as {
