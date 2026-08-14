@@ -303,13 +303,16 @@ describe("Xero adapter push", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("maps a non-2xx (non-401) provider response to an error result", async () => {
+  it("maps a TRANSIENT non-2xx (5xx) provider response to an error result", async () => {
+    // A 5xx is transient — abort the whole run so it retries. (A PERMANENT 4xx is
+    // instead a per-row SKIP; that distinction is pinned in the batch-poisoning
+    // security guard, both directions.)
     enableXero();
-    const fetchMock = vi.fn(async () => jsonResponse({ error: "bad" }, 400));
+    const fetchMock = vi.fn(async () => jsonResponse({ error: "bad" }, 500));
     vi.stubGlobal("fetch", fetchMock);
     const res = await getAccountingAdapter("xero").pushInvoices(baseInput());
     expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.message).toMatch(/400/);
+    if (!res.ok) expect(res.message).toMatch(/500/);
   });
 
   it("empty rows ⇒ no network call, ok pushed 0", async () => {
@@ -425,13 +428,13 @@ describe("Xero per-entity idempotency (push-once defence-in-depth)", () => {
     expect(keyForAOnSecondSync).toBe(keyFirst);
   });
 
-  it("reports the ACCEPTED PREFIX count when a mid-batch row fails", async () => {
+  it("reports the ACCEPTED PREFIX count when a mid-batch row hits a TRANSIENT failure", async () => {
     enableXero();
-    // First invoice 200, second 400 → accepted prefix is 1.
+    // First invoice 200, second 500 (transient) → abort, accepted prefix is 1.
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ Invoices: [] }, 200))
-      .mockResolvedValueOnce(jsonResponse({ error: "bad" }, 400));
+      .mockResolvedValueOnce(jsonResponse({ error: "bad" }, 500));
     vi.stubGlobal("fetch", fetchMock);
 
     const res = await getAccountingAdapter("xero").pushInvoices(base([A, B]));
@@ -664,20 +667,22 @@ describe("QuickBooks adapter push", () => {
     );
   });
 
-  it("maps a failed invoice create to an error result", async () => {
+  it("maps a TRANSIENT (5xx) invoice create failure to an error result", async () => {
+    // A 5xx aborts the run for a retry. (A PERMANENT 4xx create rejection is a
+    // per-row SKIP — pinned in the batch-poisoning security guard.)
     enableQbo();
     const fetchMock = qboRouter({
       itemQuery: () => jsonResponse({ QueryResponse: { Item: [{ Id: "7" }] } }),
       customerQuery: () => jsonResponse({ QueryResponse: { Customer: [{ Id: "3" }] } }),
-      invoiceCreate: () => jsonResponse({ Fault: {} }, 400),
+      invoiceCreate: () => jsonResponse({ Fault: {} }, 500),
     });
     vi.stubGlobal("fetch", fetchMock);
     const res = await getAccountingAdapter("quickbooks").pushInvoices(baseInput());
     expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.message).toMatch(/400/);
+    if (!res.ok) expect(res.message).toMatch(/500/);
   });
 
-  it("reports the ACCEPTED PREFIX count when the 2nd invoice fails (push-once)", async () => {
+  it("reports the ACCEPTED PREFIX count when the 2nd invoice hits a TRANSIENT failure (push-once)", async () => {
     enableQbo();
     let invPost = 0;
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -693,9 +698,10 @@ describe("QuickBooks adapter push", () => {
       }
       if (method === "POST" && url.includes("/invoice")) {
         invPost += 1;
+        // First 200, second 500 (transient) → abort with accepted prefix 1.
         return invPost === 1
           ? jsonResponse({ Invoice: { Id: "11" } })
-          : jsonResponse({ Fault: {} }, 400);
+          : jsonResponse({ Fault: {} }, 500);
       }
       return jsonResponse({}, 500);
     });

@@ -8,7 +8,7 @@ import type {
   AccountingPushResult,
   SkippedInvoice,
 } from "./types";
-import { unavailable } from "./types";
+import { isPermanentRowRejection, unavailable } from "./types";
 import {
   buildXeroInvoicesBody,
   buildXeroPaymentsBody,
@@ -113,7 +113,10 @@ export class XeroAdapter implements AccountingAdapter {
    * PER-ROW ISOLATION. `bodyFor` builds+validates ONE row: `{ skip }` drops just
    * that invoice (an unmappable VAT rate), `{ one }` posts it. A build throw for a
    * single invoice can NEVER zero the whole org's push — the batch-poisoning
-   * (C61) posture on the accounting surface. Returns the EXPLICIT accepted set
+   * (C61) posture on the accounting surface. A PERMANENT provider REJECTION of one
+   * row (HTTP 4xx except 429 — see isPermanentRowRejection) is isolated the SAME
+   * way (skip + surface), NOT a whole-batch abort; only a TRANSIENT failure (5xx /
+   * 429 / network / auth) aborts the run for a retry (C73-C). Returns the EXPLICIT accepted set
    * (`pushedSourceIds` / `pushedInvoiceNumbers`) plus `skipped`, so the caller
    * records exactly what Xero took and re-pushes only the tail — a mid-batch skip
    * leaves a hole, so an input-order prefix count is not enough.
@@ -205,6 +208,22 @@ export class XeroAdapter implements AccountingAdapter {
         };
       }
       if (res.status < 200 || res.status >= 300) {
+        if (isPermanentRowRejection(res.status)) {
+          // PERMANENT per-row rejection (400 rejected field, 422 duplicate
+          // InvoiceNumber / archived contact, …). Xero will never accept THIS
+          // row's data on retry, so ISOLATE it — skip + surface loudly, keep
+          // pushing the tail — exactly like a map-time skip. Leaving it
+          // UNRECORDED (we do NOT increment `pushed` or push its id) lets a
+          // corrected row retry on a later sync. An EARLIER poison row no longer
+          // re-aborts every later row on every sync.
+          skipped.push({
+            invoiceNumber: row.invoice_number || "(no number)",
+            reason: `Xero rejected this ${kind === "invoices" ? "invoice" : "payment"} (HTTP ${res.status})`,
+          });
+          continue;
+        }
+        // TRANSIENT (5xx / 429 / network handled above / 3xx / auth-after-refresh):
+        // worth aborting-and-retrying the WHOLE run.
         return {
           ok: false,
           provider: this.provider,

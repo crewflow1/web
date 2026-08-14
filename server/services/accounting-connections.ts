@@ -568,6 +568,7 @@ export async function syncToProvider(
   // The count of payments the provider accepted, and the EXPLICIT accepted ids.
   const payAccepted = payRes.ok ? payRes.pushed : payRes.pushed ?? 0;
   const payAcceptedSourceIds = payRes.pushedSourceIds ?? [];
+  const paySkipped = payRes.skipped ?? [];
 
   // Record EXACTLY what landed — by explicit source id, so it is excluded next
   // sync and a re-run never re-sends it. A skipped invoice is NEVER recorded (it
@@ -597,14 +598,20 @@ export async function syncToProvider(
 
   const pushed = invAccepted + payAccepted;
 
-  // LOUD SKIP NOTE. Name the invoices dropped for an unmappable VAT rate so the
-  // operator knows exactly which to fix. A skip is NOT a sync error — postable
-  // invoices still synced — so it rides on the SUCCESS path as a note, never an
-  // error-stamp that would retry-forever.
+  // LOUD SKIP NOTE. Name every row dropped this sync — an unmappable VAT rate
+  // (map-time) OR a PERMANENT provider rejection (HTTP 4xx except 429, e.g. a
+  // rejected field / duplicate DocNumber) — together with WHY, across BOTH the
+  // invoice and payment loops, so the operator knows exactly which rows to fix.
+  // A skip is NOT a sync error — every postable row still synced and the skipped
+  // rows are UNRECORDED so they retry once fixed — so it rides on the SUCCESS path
+  // as a note, never an error-stamp that would retry-forever. Carrying each row's
+  // reason keeps the connection honest ("N skipped … HTTP 400") instead of
+  // reading silently connected-clean.
+  const allSkipped = [...invSkipped, ...paySkipped];
   const skipNote =
-    invSkipped.length > 0
-      ? `${invSkipped.length} invoice(s) skipped (unmappable VAT rate): ` +
-        invSkipped.map((s) => s.invoiceNumber).join(", ")
+    allSkipped.length > 0
+      ? `${allSkipped.length} row(s) skipped (not recorded — fix and re-sync): ` +
+        allSkipped.map((s) => `${s.invoiceNumber} — ${s.reason}`).join("; ")
       : null;
 
   if (invRes.ok && payRes.ok) {

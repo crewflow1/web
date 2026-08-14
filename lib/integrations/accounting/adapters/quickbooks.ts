@@ -8,7 +8,7 @@ import type {
   AccountingPushResult,
   SkippedInvoice,
 } from "./types";
-import { unavailable } from "./types";
+import { isPermanentRowRejection, unavailable } from "./types";
 import {
   buildQboInvoiceBody,
   buildQboPaymentBody,
@@ -234,7 +234,24 @@ export class QuickBooksAdapter implements AccountingAdapter {
         body,
         requestId("inv", realmId, row.sourceId ?? JSON.stringify(body)),
       );
-      if (!res.ok) return this.err(this.reason("invoice", res), pushed, acc());
+      if (!res.ok) {
+        if (isPermanentRowRejection(res.status)) {
+          // PERMANENT per-row rejection (400 validation / rejected field, 422
+          // duplicate DocNumber / archived contact, …). QBO will never accept
+          // THIS invoice's data on retry, so ISOLATE it — skip + surface loudly,
+          // keep pushing the tail — like the map-time unmappable-rate skip above.
+          // Left UNRECORDED (no `pushed++`, no id captured) so a corrected row
+          // retries later; an EARLIER poison invoice no longer re-aborts every
+          // later invoice on every sync (C73-C).
+          skipped.push({
+            invoiceNumber: row.invoice_number || "(no number)",
+            reason: this.reason("invoice", res),
+          });
+          continue;
+        }
+        // TRANSIENT (5xx / 429 / network / auth): abort-and-retry the whole run.
+        return this.err(this.reason("invoice", res), pushed, acc());
+      }
       pushed += 1;
       if (row.sourceId) pushedSourceIds.push(row.sourceId);
       if (row.invoice_number) pushedInvoiceNumbers.push(row.invoice_number);
@@ -258,10 +275,13 @@ export class QuickBooksAdapter implements AccountingAdapter {
     const ctx: AuthCtx = { token: input.accessToken, refreshed: false, refresh: input.refresh };
 
     let pushed = 0;
-    // Payments carry no VAT rate, so they never skip; still track the accepted
+    // Payments carry no VAT rate, so they never MAP-skip; but a PERMANENT provider
+    // rejection of one payment (4xx except 429) is isolated the same way an invoice
+    // rejection is — skip + surface, never abort the tail. Track the accepted
     // identities so the caller records EXACTLY the payments that landed.
     const pushedSourceIds: string[] = [];
-    const acc = () => ({ pushedSourceIds });
+    const skipped: SkippedInvoice[] = [];
+    const acc = () => ({ pushedSourceIds, skipped });
     for (const row of input.rows) {
       const customer = await this.resolveCustomerId(ctx, realmId, row.customer);
       if (!customer.ok) return this.err(customer.message, pushed, acc());
@@ -305,11 +325,24 @@ export class QuickBooksAdapter implements AccountingAdapter {
         body,
         requestId("pay", realmId, row.sourceId ?? JSON.stringify(body)),
       );
-      if (!res.ok) return this.err(this.reason("payment", res), pushed, acc());
+      if (!res.ok) {
+        if (isPermanentRowRejection(res.status)) {
+          // PERMANENT per-row rejection — QBO refuses THIS payment's data (e.g.
+          // 400 malformed link/amount). Isolate it: skip + surface, keep the tail
+          // going, leave it unrecorded so a corrected row retries later.
+          skipped.push({
+            invoiceNumber: row.invoice_number || "(no number)",
+            reason: this.reason("payment", res),
+          });
+          continue;
+        }
+        // TRANSIENT (5xx / 429 / network / auth): abort-and-retry the whole run.
+        return this.err(this.reason("payment", res), pushed, acc());
+      }
       pushed += 1;
       if (row.sourceId) pushedSourceIds.push(row.sourceId);
     }
-    return { ok: true, provider: this.provider, pushed, pushedSourceIds };
+    return { ok: true, provider: this.provider, pushed, pushedSourceIds, skipped };
   }
 
   // ── guards + result helpers ────────────────────────────────────────────────
