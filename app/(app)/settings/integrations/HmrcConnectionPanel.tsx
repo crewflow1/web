@@ -26,11 +26,21 @@ const FLOW_LABEL: Record<"vat" | "cis", string> = {
 export function HmrcConnectionPanel({
   connection,
   connectable,
+  hasVatNumber,
 }: {
   connection: HmrcConnection;
   connectable: boolean;
+  /**
+   * Whether the org has a VAT number on file. Connecting HMRC needs it: the OAuth
+   * callback resolves the VRN from `organizations.vat_number` (HMRC never returns
+   * one), and the connect route refuses without it. Surface it as a precondition
+   * so the tenant fixes it BEFORE starting the flow rather than dead-ending.
+   */
+  hasVatNumber: boolean;
 }) {
   const isConnected = connection.status === "connected";
+  // Connect is only offered when configured AND the VAT-number precondition holds.
+  const canConnect = connectable && hasVatNumber;
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -67,6 +77,16 @@ export function HmrcConnectionPanel({
                   <span className="text-emerald-700">Connected · VRN {connection.vrn}</span>
                 ) : connection.status === "error" ? (
                   <span className="text-amber-700">Connection error — reconnect required</span>
+                ) : connectable && !hasVatNumber ? (
+                  <span className="text-amber-700">
+                    Add your VAT number first ·{" "}
+                    <a
+                      href="/settings"
+                      className="font-medium underline hover:text-amber-900"
+                    >
+                      Company settings
+                    </a>
+                  </span>
                 ) : connectable ? (
                   "Not connected"
                 ) : (
@@ -75,7 +95,7 @@ export function HmrcConnectionPanel({
               </p>
             </div>
 
-            {connectable && !isConnected ? (
+            {canConnect && !isConnected ? (
               // LIVE (unreachable dark): a real link into the OAuth connect flow.
               <a
                 href={`/api/integrations/hmrc/${flow}/connect`}
@@ -84,15 +104,23 @@ export function HmrcConnectionPanel({
                 Connect
               </a>
             ) : (
-              // DARK: disabled — no link to the OAuth flow while dark.
+              // DARK or precondition unmet: disabled — no link to the OAuth flow.
               <button
                 type="button"
                 disabled
                 aria-disabled="true"
                 className="cursor-not-allowed rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-400 shadow-sm"
-                title="HMRC activates once its OAuth client credentials are configured, the feature is enabled, and HMRC recognition is in place."
+                title={
+                  connectable && !hasVatNumber
+                    ? "Add your organisation's VAT number in Company settings before connecting HMRC."
+                    : "HMRC activates once its OAuth client credentials are configured, the feature is enabled, and HMRC recognition is in place."
+                }
               >
-                {isConnected ? "Connected" : "Connect (not configured)"}
+                {isConnected
+                  ? "Connected"
+                  : connectable && !hasVatNumber
+                    ? "Add VAT number first"
+                    : "Connect (not configured)"}
               </button>
             )}
           </li>

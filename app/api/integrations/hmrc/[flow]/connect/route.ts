@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { buildAuthorizeUrl, isHmrcFlow, type HmrcFlow } from "@/lib/integrations/hmrc/oauth";
 
@@ -29,6 +30,19 @@ function isAdminRole(role: string): boolean {
 
 const STATE_COOKIE = (f: string) => `hmrc_oauth_state_${f}`;
 const VERIFIER_COOKIE = (f: string) => `hmrc_oauth_verifier_${f}`;
+const VRN_COOKIE = (f: string) => `hmrc_oauth_vrn_${f}`;
+
+/** Trim the org's VAT number to a non-empty handle, or null when truly absent. */
+function normaliseVat(v: unknown): string | null {
+  return typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
+}
+
+/** Redirect back to the integrations settings page carrying an `hmrc` status code. */
+function backToSettings(origin: string, status: string): NextResponse {
+  const u = new URL(`${origin}/settings/integrations`);
+  u.searchParams.set("hmrc", status);
+  return NextResponse.redirect(u);
+}
 
 export async function GET(
   request: NextRequest,
@@ -51,7 +65,8 @@ export async function GET(
     );
   }
 
-  const redirectUri = `${new URL(request.url).origin}/api/integrations/hmrc/${flow}/callback`;
+  const { origin } = new URL(request.url);
+  const redirectUri = `${origin}/api/integrations/hmrc/${flow}/callback`;
   const authorize = buildAuthorizeUrl(flow, redirectUri);
 
   // DARK: not configured → 503, no redirect, no cookies.
@@ -62,7 +77,29 @@ export async function GET(
     );
   }
 
-  // LIVE (unreachable dark): persist PKCE + state, redirect to HMRC.
+  // PRECONDITION: the connection needs the org's VAT registration number. HMRC's
+  // OAuth callback returns only `code`+`state` (never a VRN), and the DB CHECK
+  // forbids a `connected` row without `hmrc_vrn`. So we resolve the VRN here from
+  // `organizations.vat_number` (org-pinned, collected at onboarding) and stash it
+  // for the callback. If the org has no VAT number we REFUSE up front with a clear
+  // precondition code — rather than dead-ending the tenant AFTER a token exchange.
+  const supabase = await createClient();
+  const { data: orgRow, error: orgErr } = await supabase
+    .from("organizations")
+    .select("vat_number" as never)
+    .eq("id", ctx.org.id)
+    .maybeSingle();
+  if (orgErr) {
+    return backToSettings(origin, "error");
+  }
+  const vatNumber = normaliseVat((orgRow as { vat_number?: unknown } | null)?.vat_number);
+  if (!vatNumber) {
+    return backToSettings(origin, "no_vat_number");
+  }
+
+  // LIVE (unreachable dark): persist PKCE + state + the resolved VRN, redirect to
+  // HMRC. The VRN cookie is httpOnly (matching the verifier), so the callback
+  // reads it server-side and the browser cannot read/forge it from script.
   const res = NextResponse.redirect(authorize.challenge.url);
   const cookieOpts = {
     httpOnly: true,
@@ -73,5 +110,6 @@ export async function GET(
   };
   res.cookies.set(STATE_COOKIE(flow), authorize.challenge.state, cookieOpts);
   res.cookies.set(VERIFIER_COOKIE(flow), authorize.challenge.codeVerifier, cookieOpts);
+  res.cookies.set(VRN_COOKIE(flow), vatNumber, cookieOpts);
   return res;
 }
