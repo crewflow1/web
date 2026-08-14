@@ -334,7 +334,7 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE invoice's payments (.eq('invoice_id', id)) — the payment ledger for a single invoice folded into paidTotal; a single invoice has a handful of payments, never near 1000",
   "app/admin/billing/actions.ts:160":
     "not a read: `untypedAdminTable('billing_invoices').insert(insert).select('id')` — INSERT…RETURNING, bounded by the inserted row, cannot truncate a read; flagged only because the statement carries `.select(`. Same class as notifications-service.ts:140.",
-  "server/services/bank-sync.ts:640":
+  "server/services/bank-sync.ts:699":
     "bounded: chunked dedupe read .in('provider_tx_id', batch) where batch = providerTxIds.slice(i, i+DEDUPE_IN_CHUNK) — each call returns ≤ DEDUPE_IN_CHUNK rows, well below the 1000 cap. Same class as cis-statements.ts:169.",
 
   // ── C65 MEMBERSHIPS / COMPLETION_CERTIFICATES WAVE — surfaced once memberships

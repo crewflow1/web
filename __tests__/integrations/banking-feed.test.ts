@@ -12,6 +12,8 @@ import {
   syncBankConnection,
   runBankSync,
   isDueForSync,
+  PASS_BUDGET_MS,
+  PER_ORG_BUDGET_MS,
   type BankSyncGateway,
   type StoredBankConnection,
 } from "@/server/services/bank-sync";
@@ -918,5 +920,166 @@ describe("runBankSync — dark no-op across orgs", () => {
     // Both orgs' lines were written, each pinned to its own org.
     const orgs = new Set(fg.state.inserted.map((r) => r.org_id));
     expect(orgs).toEqual(new Set([ORG, orgB]));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. Pass budget + FAIR ORDERING — the tail is never permanently starved (C70)
+//
+// The banking cron has maxDuration=60 and each org costs several external HTTP
+// round-trips, so a pass clears only tens of orgs. Before this fix runBankSync had
+// (a) NO wall-clock budget — Vercel killed the loop mid-pass — and (b) listConnected
+// ordered by org_id (tick-stable), so the SAME low-org_id head was re-serviced every
+// 6-hourly tick while the identical tail was NEVER reached and silently never synced
+// (status stayed 'connected', last_error null, last_sync_at frozen). This is the C39
+// webhook-dispatch fair-ordering/pass-budget class on the banking cron. The fix:
+//   • a PASS_BUDGET_MS wall-clock budget that stops the loop CLEANLY with headroom
+//     (never starting an org it cannot finish), leaving the rest for the next pass;
+//   • listConnected orders by last_sync_at ASC nulls-first, so a successful sync
+//     pushes an org to the BACK of the queue and the unreached tail LEADS next pass.
+// ---------------------------------------------------------------------------
+
+/** A store-backed gateway modelling the DB's ordering + success-only cursor. */
+function fairGateway(opts: {
+  orgIds: string[];
+  /** Mirror the fixed query ("last_sync_at" nulls-first, org_id tiebreak) or the pre-fix "org_id". */
+  orderBy: "last_sync_at" | "org_id";
+  /** ms of wall-clock each processed org consumes (advanced in markSynced). */
+  perOrgMs: number;
+}) {
+  type Row = { orgId: string; lastSyncAt: string | null; existing: Set<string> };
+  const store = new Map<string, Row>(
+    opts.orgIds.map((id) => [id, { orgId: id, lastSyncAt: null, existing: new Set<string>() }]),
+  );
+  let wall = 0; // injected wall clock; advanced once per processed org
+  let seq = 0; // monotonic source for the success cursor timestamps
+  const CURSOR_BASE = Date.parse("2026-01-01T00:00:00Z");
+
+  const gateway: BankSyncGateway = {
+    listConnected: async () => {
+      const rows = [...store.values()];
+      rows.sort((a, b) => {
+        if (opts.orderBy === "org_id") return a.orgId.localeCompare(b.orgId);
+        // last_sync_at ASC, NULLS FIRST, org_id tiebreak (exactly the fixed query).
+        if (a.lastSyncAt === b.lastSyncAt) return a.orgId.localeCompare(b.orgId);
+        if (a.lastSyncAt === null) return -1;
+        if (b.lastSyncAt === null) return 1;
+        return a.lastSyncAt < b.lastSyncAt ? -1 : 1;
+      });
+      return rows.map((r) =>
+        connection({ orgId: r.orgId, lastSyncAt: r.lastSyncAt }),
+      );
+    },
+    saveRefreshedTokens: async () => {},
+    existingProviderTxIds: async (orgId, ids) => {
+      const set = store.get(orgId)?.existing ?? new Set<string>();
+      return new Set(ids.filter((id) => set.has(id)));
+    },
+    createStatement: async () => `stmt-${++seq}`,
+    insertLines: async (rows) => {
+      for (const r of rows) {
+        const orgId = String((r as { org_id?: string }).org_id);
+        const id = (r as { provider_tx_id?: string }).provider_tx_id;
+        if (id) store.get(orgId)?.existing.add(id);
+      }
+      return { inserted: rows.length, constraintError: null, transientError: null };
+    },
+    deleteStatement: async () => {},
+    updateStatementLineCount: async () => {},
+    markSynced: async (orgId, _provider, fields) => {
+      wall += opts.perOrgMs; // this org consumed a slice of the pass budget
+      if (fields.advanceSyncCursor) {
+        seq += 1;
+        const row = store.get(orgId);
+        if (row) row.lastSyncAt = new Date(CURSOR_BASE + seq * 1000).toISOString();
+      }
+    },
+  };
+  return { gateway, now: () => wall, store };
+}
+
+describe("runBankSync — pass budget + fair ordering (C70, C39 class)", () => {
+  it("BUDGET: the pass STOPS with headroom instead of running unbounded over every org", async () => {
+    enableTrueLayer();
+    vi.stubGlobal("fetch", trueLayerRouter(TWO_TX));
+    // 50 healthy orgs; the pass must not attempt all 50 in one go.
+    const orgIds = Array.from({ length: 50 }, (_, i) => `org-${String(i).padStart(3, "0")}`);
+    const fair = fairGateway({ orgIds, orderBy: "last_sync_at", perOrgMs: PER_ORG_BUDGET_MS });
+
+    const res = await runBankSync(fair.gateway, {
+      now: fair.now,
+      passBudgetMs: PASS_BUDGET_MS,
+      perOrgBudgetMs: PER_ORG_BUDGET_MS,
+    });
+
+    expect(res.ran).toBe(true);
+    // With PER_ORG headroom the loop starts an org only while it can finish inside the
+    // budget: floor(PASS_BUDGET / PER_ORG) = 9 for 45s/5s. The point is that it BREAKS
+    // (< 50), not the exact count — pre-fix (no budget) this processed all 50.
+    const expected = Math.floor(PASS_BUDGET_MS / PER_ORG_BUDGET_MS);
+    expect(res.results.length).toBe(expected);
+    expect(res.results.length).toBeLessThan(orgIds.length);
+    expect(res.results.every((r) => r.ok)).toBe(true);
+  });
+
+  it("FAIR ORDERING: across consecutive budgeted passes EVERY org is eventually synced (tail not starved)", async () => {
+    enableTrueLayer();
+    vi.stubGlobal("fetch", trueLayerRouter(TWO_TX));
+    const N = 10;
+    const K = 3; // orgs served per pass under the budget below
+    const orgIds = Array.from({ length: N }, (_, i) => `org-${String(i).padStart(2, "0")}`);
+    const fair = fairGateway({ orgIds, orderBy: "last_sync_at", perOrgMs: 10 });
+    const budget = { now: fair.now, passBudgetMs: K * 10, perOrgBudgetMs: 10 };
+
+    const pass = async () =>
+      (await runBankSync(fair.gateway, budget)).results.map((r) => r.orgId);
+
+    const p1 = await pass();
+    const p2 = await pass();
+    expect(p1).toHaveLength(K);
+    expect(p2).toHaveLength(K);
+    // The tail LEADS the next pass: pass 2 serves orgs pass 1 could not reach — not
+    // the same head again (which is exactly the pre-fix org_id-ordering starvation).
+    expect(p1.some((o) => p2.includes(o))).toBe(false);
+
+    // Drive enough passes to cover the whole set: ceil(N/K) = 4 for 10/3.
+    const seen = new Set([...p1, ...p2]);
+    for (let i = 0; i < Math.ceil(N / K); i++) for (const o of await pass()) seen.add(o);
+    // Every org — including the original tail — was serviced; none permanently starved.
+    expect(seen.size).toBe(N);
+    expect([...seen].sort()).toEqual([...orgIds].sort());
+  });
+
+  it("RED→GREEN control: pre-fix org_id ordering permanently STARVES the tail; last_sync_at ordering does not", async () => {
+    enableTrueLayer();
+    vi.stubGlobal("fetch", trueLayerRouter(TWO_TX));
+    const N = 10;
+    const K = 3;
+    const orgIds = Array.from({ length: N }, (_, i) => `org-${String(i).padStart(2, "0")}`);
+    const budgetFor = (now: () => number) => ({ now, passBudgetMs: K * 10, perOrgBudgetMs: 10 });
+
+    // RED: tick-stable org_id ordering (the pre-fix query) re-serves the SAME head
+    // every pass, so the tail is NEVER reached no matter how many passes run.
+    const oldWay = fairGateway({ orgIds, orderBy: "org_id", perOrgMs: 10 });
+    const starved = new Set<string>();
+    for (let i = 0; i < 8; i++) {
+      for (const r of (await runBankSync(oldWay.gateway, budgetFor(oldWay.now))).results) {
+        starved.add(r.orgId);
+      }
+    }
+    expect(starved.size).toBe(K); // only the first K orgs ever sync
+    expect([...starved].sort()).toEqual(orgIds.slice(0, K).sort());
+    expect(orgIds.slice(K).some((o) => starved.has(o))).toBe(false); // tail forever unsynced
+
+    // GREEN: the last_sync_at nulls-first ordering rotates the queue; the SAME number
+    // of passes covers every org — the fix is what removes the starvation.
+    const newWay = fairGateway({ orgIds, orderBy: "last_sync_at", perOrgMs: 10 });
+    const covered = new Set<string>();
+    for (let i = 0; i < 8; i++) {
+      for (const r of (await runBankSync(newWay.gateway, budgetFor(newWay.now))).results) {
+        covered.add(r.orgId);
+      }
+    }
+    expect(covered.size).toBe(N);
   });
 });

@@ -68,6 +68,32 @@ describe("bank-sync engine — refuse-before-fetch + org-pinned writes", () => {
     expect(code).toMatch(/refreshAndPersist\(/);
   });
 
+  it("FAIR ORDERING (C70): listConnected orders by last_sync_at nulls-first, NOT org_id", () => {
+    // A pass has a wall-clock budget and clears only tens of orgs; a tick-stable
+    // org_id order re-serviced the same head every tick while the tail was never
+    // reached. Ordering by the success-only cursor (last_sync_at ASC, nulls-first)
+    // pushes each just-synced org to the back so the tail leads the next pass.
+    expect(code).toMatch(
+      /\.order\(\s*"last_sync_at",\s*\{\s*ascending:\s*true,\s*nullsFirst:\s*true\s*\}\s*\)/,
+    );
+    // A deterministic tiebreak on the unique org_id follows (paginate contract), but
+    // org_id must NOT be the PRIMARY sort any more.
+    const primary = code.indexOf('.order("last_sync_at"');
+    const orgIdOrder = code.indexOf('.order("org_id"');
+    expect(primary).toBeGreaterThan(-1);
+    expect(primary).toBeLessThan(orgIdOrder); // last_sync_at is primary, org_id is the tiebreak
+  });
+
+  it("PASS BUDGET (C70): runBankSync bounds the pass by a wall-clock budget and breaks", () => {
+    // Without a budget the cron's maxDuration=60 kills the loop mid-pass, self-
+    // stranding the tail. The loop must stop CLEANLY before starting an org it
+    // cannot finish, leaving the rest for the next (fairly-ordered) pass.
+    expect(code).toMatch(/PASS_BUDGET_MS/);
+    expect(code).toMatch(/PER_ORG_BUDGET_MS/);
+    // The break decision is a wall-clock check inside the per-org loop.
+    expect(code).toMatch(/perOrgBudgetMs\s*>\s*passBudgetMs\)\s*break/);
+  });
+
   it("logs NO secret", () => {
     const logs = code.match(/console\.\w+\([^;]*\)/g) ?? [];
     for (const call of logs) {
