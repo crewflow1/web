@@ -304,6 +304,16 @@ describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
     // reverse-charge allocation of £15 self-accounts into BOTH box 1 and box 4,
     // so it lifts output AND input VAT by £15 (net-neutral) — the trend must
     // reflect it, matching /tax, the PDF and the frozen 9-box return.
+    //
+    // C73-A fixture basis: the RC notional VAT is now windowed on the BILL's
+    // finances.created_at (the same column as boxes 4/7), NOT the payment's
+    // paid_at. So the allocation must name its reverse-charge BILL (finance_id →
+    // a finances row, vat_total 0, created_at in-window), exactly as production
+    // stores it. The old fixture omitted the bill and keyed only off paid_at —
+    // that encoded the buggy basis this fix removes.
+    h.tables.finances = [
+      { id: "fin-rc", org_id: ORG, vat_total: 0, amount: 75, created_at: daysAgoIso(2) },
+    ];
     h.tables.supplier_payments = [
       {
         id: "sp-1",
@@ -317,6 +327,7 @@ describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
         id: "spa-1",
         org_id: ORG,
         payment_id: "sp-1",
+        finance_id: "fin-rc",
         amount: 75,
         cis_reverse_charge_vat: 15,
         cis_vat_treatment: "reverse_charge",
@@ -701,6 +712,16 @@ describe("vatPerQuarter reconciles EXACTLY with the single VAT authority", () =>
         amount: 20,
         created_at: daysAgoIso(2),
       },
+      // C73-A: the reverse-charge BILL is itself a finances row (vat_total 0), and
+      // its created_at is the tax point the RC notional VAT is now windowed on —
+      // the same column as boxes 4/7. The allocation names it via finance_id.
+      {
+        id: "fin-rc",
+        org_id: ORG,
+        vat_total: 0,
+        amount: 75,
+        created_at: daysAgoIso(2),
+      },
     ];
     h.tables.supplier_payments = [
       { id: "sp-1", org_id: ORG, voided_at: null, paid_at: daysAgoIso(2) },
@@ -710,6 +731,7 @@ describe("vatPerQuarter reconciles EXACTLY with the single VAT authority", () =>
         id: "spa-1",
         org_id: ORG,
         payment_id: "sp-1",
+        finance_id: "fin-rc",
         amount: 75,
         cis_reverse_charge_vat: 6,
         cis_vat_treatment: "reverse_charge",

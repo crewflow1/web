@@ -198,10 +198,15 @@ describe("prepareVatReturnAction — composes + inserts a prepared record", () =
       data: [{ id: "inv-1", number: "INV-1", vat_total: 100, amount: 500, total: 600 }],
       error: null,
     });
-    mock.enqueue("supplierPayments", { data: [], error: null }); // no reverse-charge payments
+    // C73-A: the reverse-charge VAT is now windowed on the BILL's
+    // finances.created_at (the same column as boxes 4/7), so gatherReverseCharge
+    // reads `finances` FIRST. An empty RC-gather page → no reverse-charge bills →
+    // it returns £0 without touching allocations/payments. The box-4/7 finances
+    // page follows in the same FIFO queue.
+    mock.enqueue("finances", { data: [], error: null }); // RC-gather window: no RC bills
     mock.enqueue("finances", {
       // £40 input VAT on a finance row inside the quarter (accrual basis)
-      data: [{ vat_total: 40, created_at: "2026-08-15T00:00:00.000Z" }],
+      data: [{ id: "fin-1", vat_total: 40, created_at: "2026-08-15T00:00:00.000Z" }],
       error: null,
     });
     mock.enqueue("connSelect", { data: null, error: null }); // no connection yet
@@ -260,7 +265,10 @@ describe("prepareVatReturnAction — paginates a >1000-row quarter (F-1)", () =>
       data: [{ id: "inv-1", number: "INV-1", vat_total: 1, amount: 0, total: 1 }],
       error: null,
     });
-    mock.enqueue("supplierPayments", { data: [], error: null }); // no reverse-charge payments
+    // C73-A: gatherReverseCharge reads `finances` first (windowed on the bill's
+    // created_at). An empty RC-gather page → £0 reverse charge, no allocation/
+    // payment reads. The box-4/7 finance pages follow in the FIFO queue.
+    mock.enqueue("finances", { data: [], error: null }); // RC-gather window: no RC bills
     // 1100 finance rows → £1100 input VAT (pages 500 + 500 + 100).
     mock.enqueue("finances", { data: finPage(500), error: null });
     mock.enqueue("finances", { data: finPage(500), error: null });
@@ -308,8 +316,10 @@ describe("prepareVatReturnAction — admin gate + org scope", () => {
   it("pins the insert to ctx.org.id, never a client-supplied org", async () => {
     mock.enqueue("subFind", { data: [], error: null });
     mock.enqueue("invoicePayments", { data: [], error: null });
-    mock.enqueue("supplierPayments", { data: [], error: null });
-    mock.enqueue("finances", { data: [], error: null });
+    // C73-A: RC-gather reads `finances` first (empty → £0), then prepareVatReturn
+    // reads `finances` for boxes 4/7 (also empty here). Two finances pops.
+    mock.enqueue("finances", { data: [], error: null }); // RC-gather window
+    mock.enqueue("finances", { data: [], error: null }); // boxes 4/7
     mock.enqueue("connSelect", { data: { id: "conn-9" }, error: null });
     mock.enqueue("subInsert", { data: { id: "sub-9", status: "prepared" }, error: null });
 
