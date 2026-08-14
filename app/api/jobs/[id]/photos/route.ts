@@ -136,13 +136,17 @@ export async function POST(request: NextRequest, { params }: Ctx) {
     }
   }
 
-  // Verify the job exists in the caller's org via the user-context client.
-  // RLS will return null if not visible, so this is the org check too.
+  // Verify the job exists in the caller's ACTIVE org. RLS alone is not enough:
+  // `current_org_ids()` spans EVERY org the viewer belongs to, so `.eq("id", …)`
+  // without the active-org pin would let a multi-org member attach photos to a
+  // job in their OTHER org (uploaded under this org's prefix). The pin mirrors
+  // the GET handler above.
   const supabase = await createClient();
   const { data: job, error: jobErr } = await supabase
     .from("jobs")
     .select("id, photos")
     .eq("id", jobId)
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (jobErr || !job) {
     return NextResponse.json({ error: "Job not found" }, { status: 404 });

@@ -29,9 +29,14 @@ type CertRow = {
 /**
  * GET /api/completion-certificates/[id]/pdf — the branded PDF.
  *
- * RLS-scoped via the user JWT (requireOrgContext). An ISSUED cert renders from
- * its FROZEN customer-safe snapshot; a draft renders a live preview from current
- * content. A cross-org id resolves to null under RLS → 404 (no enumeration).
+ * RLS-scoped via the user JWT (requireOrgContext). NOTE: RLS admits EVERY org
+ * the viewer belongs to (`org_id in current_org_ids()`) — it does NOT constrain
+ * the read to the ACTIVE org, so a cross-org id belonging to ANOTHER of the
+ * viewer's own orgs would resolve here without the in-statement active-org pin
+ * below. The `.eq("org_id", ctx.org.id)` pin is what enforces the 404 across the
+ * active-org boundary (it only resolves to null for a NON-member). An ISSUED
+ * cert renders from its FROZEN customer-safe snapshot; a draft renders a live
+ * preview from current content.
  */
 export async function GET(_request: NextRequest, { params }: Ctx) {
   const { ctx } = await requireOrgContext();
@@ -40,11 +45,13 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
 
   const { data: cert, error: certError } = await (
     supabase.from("completion_certificates" as never) as unknown as {
-      select: (c: string) => { eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: CertRow | null; error: SupabaseReadError | null }> } };
+      select: (c: string) => { eq: (k: string, v: unknown) => { eq: (k: string, v: unknown) => { maybeSingle: () => Promise<{ data: CertRow | null; error: SupabaseReadError | null }> } } };
     }
   )
     .select("id, status, job_id, certificate_number, content, snapshot")
     .eq("id", id)
+    // Active-org pin: RLS alone would admit any of the viewer's orgs' rows.
+    .eq("org_id", ctx.org.id)
     .maybeSingle();
   if (certError) {
     return NextResponse.json({ error: "query_failed" }, { status: 500 });
@@ -96,6 +103,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
         .from("jobs")
         .select("id, site_address_line1, site_address_line2, site_city, site_county, site_postcode, site_country, customer:customers ( name, address_line1, address_line2, city, county, postcode, country )")
         .eq("id", cert.job_id)
+        .eq("org_id", ctx.org.id)
         .maybeSingle();
       const jobCustomer = (job as { customer?: Record<string, unknown> } | null)?.customer ?? null;
       customerName = (jobCustomer as { name?: string } | null)?.name ?? null;
