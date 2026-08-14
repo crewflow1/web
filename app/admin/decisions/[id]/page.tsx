@@ -9,7 +9,7 @@ import {
   type DecisionRow,
 } from "@/server/services/hq-decisions";
 import { relativeTime } from "@/lib/time/relative";
-import { decideAction } from "../actions";
+import { decideAction, produceDecisionDebateAction } from "../actions";
 import { DecisionStatusPill } from "../_status";
 
 /**
@@ -93,8 +93,9 @@ export default async function DecisionDetailPage({
         <ProposalField label="Timeline" value={decision.timeline} />
       </section>
 
-      {/* The AI-employee debate — empty until a model tier is bound. */}
-      <AiDebate debate={decision.ai_debate} />
+      {/* The AI-employee debate — the deterministic producer fills it from the decision's own
+          signals; the generative tier is dark. */}
+      <AiDebate decision={decision} isOpen={isOpen} />
 
       {/* The decision, or the record of it. */}
       {isOpen ? (
@@ -128,19 +129,38 @@ function ProposalField({
   );
 }
 
-function AiDebate({ debate }: { debate: DecisionRow["ai_debate"] }) {
+function AiDebate({ decision, isOpen }: { decision: DecisionRow; isOpen: boolean }) {
+  const debate = decision.ai_debate;
+  const empty = !debate || debate.length === 0;
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 className="text-sm font-semibold text-slate-900">AI debate</h2>
-      {!debate || debate.length === 0 ? (
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-slate-900">AI debate</h2>
+        {/* The deterministic producer — fills the slot from the decision's real signals. Only a
+            proposed decision can be filled (a decided one is terminal + immutable). */}
+        {isOpen && empty ? (
+          <form action={produceDecisionDebateAction}>
+            <input type="hidden" name="id" value={decision.id} />
+            <button
+              type="submit"
+              className="rounded-md border border-violet-300 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 hover:bg-violet-100"
+            >
+              Generate debate
+            </button>
+          </form>
+        ) : null}
+      </div>
+      {empty ? (
         <p className="mt-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-xs text-slate-500">
-          AI debate populates once a model tier is bound.
+          {isOpen
+            ? "No debate yet — generate a deterministic pro/con from this decision's signals. (Generative prose is dark until a model tier is bound.)"
+            : "No debate was recorded for this decision."}
         </p>
       ) : (
         <ul className="mt-3 space-y-2">
           {debate.map((entry, i) => (
             <li key={i}>
-              {/* Untrusted model output — rendered as escaped text, never HTML. */}
+              {/* Untrusted output — rendered as escaped text, never HTML. */}
               <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono text-xs leading-relaxed text-slate-700">
                 {JSON.stringify(entry, null, 2)}
               </pre>

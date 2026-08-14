@@ -16,14 +16,24 @@ import { createEvents } from "@/server/sdk/events";
 import { createComms } from "@/server/sdk/comms";
 import { drainEvidenceInto } from "@/server/sdk/output";
 import { evaluateAction } from "@/server/sdk/gate";
-import { REFERENCE_EXECUTOR, type Executor } from "@/server/sdk/executor";
-import { deriveIdempotencyKey } from "@/server/sdk/application";
+import { REFERENCE_EXECUTOR, executePlan, type Executor } from "@/server/sdk/executor";
+import {
+  applyOnce,
+  deriveIdempotencyKey,
+  type ApplicationStore,
+} from "@/server/sdk/application";
+import {
+  createUnboundAutonomousApplyAuthority,
+  executorAutonomousApplyEnabled,
+  type AutonomousApplyAuthority,
+} from "@/server/sdk/autonomous-apply";
 import {
   shadowObservationRecord,
   type ExecutorShadowObservation,
   type ShadowObservationStore,
 } from "@/server/sdk/shadow";
 import { createDurableShadowObservationStore } from "@/server/services/executor-shadow";
+import { createDurableApplicationStore } from "@/server/services/hq-application";
 import { requestApproval } from "@/server/services/hq-approvals";
 import type { BoundEvents } from "@/server/sdk/events";
 import type { BoundComms } from "@/server/sdk/comms";
@@ -524,6 +534,58 @@ function observeExecutorShadow(
   }
 }
 
+/** Re-export the autonomous-apply kill-switch so the runner and its suite read one switch. */
+export { executorAutonomousApplyEnabled };
+
+/**
+ * Apply ONE cleared action autonomously through the executor and the apply-once store — the
+ * DETERMINISTIC apply path (P2 HQ AI Operating System). This is where the executor is finally
+ * COMPOSED into the runner's autonomous branch: it PLANS the action (pure — {@link
+ * Executor.plan} never applies), asks the sanctioned {@link AutonomousApplyAuthority} for a
+ * deterministic tool implementation, and — ONLY if one is bound — crosses the boundary EXACTLY
+ * ONCE via {@link applyOnce}, keyed by the `autonomous` execution identity so a task retry
+ * re-applies nothing.
+ *
+ * DETERMINISTIC ONLY. A generative/irreversible/unmapped action resolves to `null` at the
+ * authority and is SKIPPED — the governor is dark, so there is nothing to generate; the action's
+ * audit emit and shadow observation already happened, and the action is left for the approval
+ * path. Nothing is fabricated. It NEVER throws: any fault is logged and swallowed, so an apply
+ * fault can never break the run it accompanies (mirroring the shadow and the best-effort audit).
+ */
+async function applyExecutorAutonomously(
+  executor: Executor,
+  authority: AutonomousApplyAuthority,
+  store: ApplicationStore,
+  action: ProposedAction,
+  verdict: GateVerdict,
+  taskId: string,
+  correlationId: string,
+): Promise<void> {
+  try {
+    const planned = executor.plan(action, verdict);
+    if (!planned.ok) return; // the executor refused (uncleared/ill-formed) — nothing to apply.
+    const invoke = authority.resolve(action);
+    if (!invoke) return; // the authority declined (generative/irreversible/unmapped) — dark.
+    await applyOnce({
+      store,
+      identity: {
+        source: "autonomous",
+        correlationId,
+        taskId,
+        toolLabel: planned.plan.tool.label,
+        actionId: `${action.subjectType}:${action.subjectId}:${action.type}`,
+      },
+      apply: () => executePlan(planned.plan, invoke),
+    });
+  } catch (err) {
+    console.error("[sdk/tasks] autonomous apply threw; the run continues", {
+      taskId,
+      correlationId,
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 /**
  * Build the in-handler `ctx.proposeActions` doorman, bound to this run's policy inputs and
  * its events facet (#014 / D-04, Phase B). For each proposed action it asks the PURE gate
@@ -560,6 +622,14 @@ export function createProposeActions(deps: {
   executor?: Executor;
   shadow?: boolean;
   shadowStore?: ShadowObservationStore;
+  // Autonomous apply (P2 HQ AI Operating System) — all OPTIONAL with dark defaults so the
+  // doorman's existing callers and tests are unchanged. `apply` defaults OFF; `applyAuthority`
+  // defaults to the UNBOUND authority (resolves everything to null); `applyStore` absent
+  // ⇒ nothing is applied. Even when all three are wired, the posture floor keeps every
+  // verdict `needs_approval`, so this branch is never reached for a real employee.
+  apply?: boolean;
+  applyAuthority?: AutonomousApplyAuthority;
+  applyStore?: ApplicationStore;
 }): (actions: ProposedAction[]) => Promise<GateVerdict[]> {
   const {
     identity,
@@ -572,6 +642,9 @@ export function createProposeActions(deps: {
     executor = REFERENCE_EXECUTOR,
     shadow = false,
     shadowStore,
+    apply = false,
+    applyAuthority = createUnboundAutonomousApplyAuthority(),
+    applyStore,
   } = deps;
   return async function proposeActions(actions: ProposedAction[]): Promise<GateVerdict[]> {
     const verdicts: GateVerdict[] = [];
@@ -630,6 +703,21 @@ export function createProposeActions(deps: {
             ),
           );
         }
+        // P2 (autonomous apply): AFTER the audit + shadow, compose the executor's APPLY for
+        // the DETERMINISTIC path. Default-off (`apply=false`) and, when on, dark by the
+        // UNBOUND authority (resolves everything to null) — so today this applies nothing.
+        // The posture floor keeps this branch unreachable for a real employee regardless.
+        if (apply && applyStore) {
+          await applyExecutorAutonomously(
+            executor,
+            applyAuthority,
+            applyStore,
+            action,
+            verdict,
+            taskId,
+            correlationId,
+          );
+        }
       }
       verdicts.push(verdict);
     }
@@ -666,6 +754,9 @@ function buildContext(
   // Read the default-off kill-switch ONCE: it gates both whether the shadow runs and whether a
   // durable store is wired, so a single read keeps the two decisions consistent within this build.
   const shadowOn = executorShadowEnabled();
+  // The autonomous-apply kill-switch (P2), read once for the same reason. Off (default), no
+  // apply is composed; on, the apply is still dark by the UNBOUND authority default.
+  const applyOn = executorAutonomousApplyEnabled();
   const ctx: RunContext = {
     task,
     identity,
@@ -688,6 +779,12 @@ function buildContext(
       // observation store (server-only, service-role-only, SECURITY DEFINER). Off, no store is
       // wired and nothing is persisted, exactly as before. It is NEVER the application store.
       shadowStore: shadowOn ? createDurableShadowObservationStore() : undefined,
+      // P2: when autonomous apply is enabled, wire the durable apply-once store and the UNBOUND
+      // authority (dark — resolves everything to null, applies nothing). Off, no apply is
+      // composed at all. Binding a real authority + lifting the execution lock is later work.
+      apply: applyOn,
+      applyAuthority: applyOn ? createUnboundAutonomousApplyAuthority() : undefined,
+      applyStore: applyOn ? createDurableApplicationStore() : undefined,
     }),
     correlationId: task.correlation_id,
     budget,
