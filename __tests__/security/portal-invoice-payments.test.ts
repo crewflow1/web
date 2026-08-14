@@ -286,7 +286,7 @@ function makeIntent(over: Partial<IntentRow> = {}): IntentRow {
 /** An in-memory store that behaves like the DB claim (set-once-while-null). */
 function makeStore(intent: IntentRow) {
   const inserted: Array<{ id: string; orgId: string; invoiceId: string; amount: number }> = [];
-  let deleted: string[] = [];
+  const deleted: string[] = [];
   let seq = 0;
   const deps: SettleDeps = {
     findIntent: async ({ sessionId, paymentIntentId }) => {
