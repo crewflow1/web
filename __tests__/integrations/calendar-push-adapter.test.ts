@@ -2,12 +2,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import {
   buildEventPayload,
+  buildEventRecurrence,
   buildRotaEventPayload,
   pushEventToProvider,
   deleteEventFromProvider,
   type JobForEvent,
   type RotaForEvent,
 } from "@/lib/integrations/calendar/push-adapter";
+import { MAX_OCCURRENCES } from "@/lib/schedule/recurring";
 
 /**
  * Calendar event-push adapter — unit tests (hermetic; provider HTTP mocked).
@@ -41,6 +43,7 @@ const JOB: JobForEvent = {
   status: "scheduled",
   scheduled_date: "2026-09-01",
   notes: "Fix the boiler\nBring parts",
+  recurring: null,
   site_address_line1: "1 High St",
   site_address_line2: null,
   site_city: "Leeds",
@@ -82,6 +85,131 @@ describe("buildEventPayload", () => {
 
   it("returns null for an unscheduled job (nothing to place on a calendar)", () => {
     expect(buildEventPayload({ ...JOB, scheduled_date: null })).toBeNull();
+  });
+});
+
+// ── RECURRENCE (C73-B: a recurring parent must push provider-native recurrence,
+// not a single anchor-only event) ──────────────────────────────────────────────
+//
+// A recurring job is ONE jobs row + one anchor; occurrences exist internally only
+// via expandRecurring. The push path was recurrence-BLIND, so on activation a
+// weekly parent pushed exactly one event and silently omitted every later
+// occurrence. These pin the fix: buildEventPayload derives a provider-neutral
+// recurrence for each supported pattern, and BOTH serialisers emit it (Google
+// RRULE / Microsoft recurrence object) with the right bounded/open-ended cap.
+//
+// DELETE-THE-FIX PROOF: remove the recurrence branch in buildEventPayload (so the
+// payload carries no `recurrence`) and every "emits recurrence" assertion below
+// fails — the serialised body would carry no `recurrence`/RRULE at all. The
+// non-recurring test still passes, proving the assertions are non-vacuous.
+describe("buildEventPayload — recurrence (provider-native)", () => {
+  // 2026-09-01 is a Tuesday (drives the Microsoft weekly daysOfWeek assertion).
+  const recurringJob = (recurring: unknown): JobForEvent => ({ ...JOB, recurring });
+
+  async function googleBody(job: JobForEvent): Promise<Record<string, unknown>> {
+    fetchMock.mockResolvedValueOnce(jsonRes(200, { id: "evt-g", etag: "e" }));
+    await pushEventToProvider({
+      provider: "google",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      payload: buildEventPayload(job)!,
+      externalEventId: null,
+    });
+    return JSON.parse(String((fetchMock.mock.calls.at(-1)![1] as RequestInit).body));
+  }
+  async function microsoftBody(job: JobForEvent): Promise<Record<string, unknown>> {
+    fetchMock.mockResolvedValueOnce(jsonRes(201, { id: "evt-m", "@odata.etag": 'W/"1"' }));
+    await pushEventToProvider({
+      provider: "microsoft",
+      tokens: { accessToken: "AT", refreshToken: "RT" },
+      payload: buildEventPayload(job)!,
+      externalEventId: null,
+    });
+    return JSON.parse(String((fetchMock.mock.calls.at(-1)![1] as RequestInit).body));
+  }
+
+  // pattern → the RRULE FREQ/INTERVAL the code derives from lib/schedule/recurring.ts.
+  const cases = [
+    { pattern: "weekly", freq: "WEEKLY", interval: 1 },
+    { pattern: "biweekly", freq: "WEEKLY", interval: 2 },
+    { pattern: "monthly", freq: "MONTHLY", interval: 1 },
+    { pattern: "quarterly", freq: "MONTHLY", interval: 3 },
+  ] as const;
+
+  for (const { pattern, freq, interval } of cases) {
+    it(`open-ended ${pattern} → Google RRULE FREQ=${freq};INTERVAL=${interval};COUNT=${MAX_OCCURRENCES}`, async () => {
+      const body = await googleBody(recurringJob({ pattern }));
+      expect(body.recurrence).toEqual([`RRULE:FREQ=${freq};INTERVAL=${interval};COUNT=${MAX_OCCURRENCES}`]);
+    });
+
+    it(`bounded ${pattern} (end_date) → Google RRULE …;UNTIL=<end>Z (no COUNT)`, async () => {
+      const body = await googleBody(recurringJob({ pattern, end_date: "2027-03-31" }));
+      expect(body.recurrence).toEqual([
+        `RRULE:FREQ=${freq};INTERVAL=${interval};UNTIL=20270331T235959Z`,
+      ]);
+    });
+  }
+
+  it("weekly → Microsoft weekly recurrence anchored on the anchor's weekday, numbered when open-ended", async () => {
+    const body = await microsoftBody(recurringJob({ pattern: "weekly" }));
+    expect(body.recurrence).toEqual({
+      pattern: { type: "weekly", interval: 1, daysOfWeek: ["tuesday"] },
+      range: { type: "numbered", startDate: "2026-09-01", numberOfOccurrences: MAX_OCCURRENCES },
+    });
+  });
+
+  it("biweekly → Microsoft weekly interval 2", async () => {
+    const body = await microsoftBody(recurringJob({ pattern: "biweekly" }));
+    expect((body.recurrence as { pattern: { interval: number } }).pattern.interval).toBe(2);
+  });
+
+  it("monthly (day ≤28) → Microsoft absoluteMonthly with the anchor day-of-month; bounded uses endDate range", async () => {
+    const body = await microsoftBody(recurringJob({ pattern: "monthly", end_date: "2027-03-31" }));
+    expect(body.recurrence).toEqual({
+      pattern: { type: "absoluteMonthly", interval: 1, dayOfMonth: 1 },
+      range: { type: "endDate", startDate: "2026-09-01", endDate: "2027-03-31" },
+    });
+  });
+
+  it("quarterly → Microsoft absoluteMonthly interval 3", async () => {
+    const body = await microsoftBody(recurringJob({ pattern: "quarterly" }));
+    expect((body.recurrence as { pattern: { type: string; interval: number } }).pattern).toMatchObject({
+      type: "absoluteMonthly",
+      interval: 3,
+    });
+  });
+
+  it("a NON-recurring job emits NO recurrence on either provider (unchanged behaviour)", async () => {
+    expect((await googleBody(JOB)).recurrence).toBeUndefined();
+    expect((await microsoftBody(JOB)).recurrence).toBeUndefined();
+    // An invalid/foreign payload is treated as non-recurring, not an error.
+    expect((await googleBody(recurringJob({ pattern: "nonsense" }))).recurrence).toBeUndefined();
+    expect((await googleBody(recurringJob({ notAPattern: true }))).recurrence).toBeUndefined();
+  });
+
+  // Faithfulness guard: expandRecurring steps monthly/quarterly with JS-Date month
+  // arithmetic that ROLLS overflow forward (Jan-31 → Mar-3 → Apr-3…), which no
+  // single RRULE / MS rule reproduces. Rather than silently approximate, a
+  // monthly/quarterly anchor on day 29–31 is flagged INEXPRESSIBLE so the caller
+  // surfaces it (see the service test) instead of pushing a misleading event.
+  for (const pattern of ["monthly", "quarterly"] as const) {
+    for (const day of ["29", "30", "31"] as const) {
+      it(`${pattern} anchored on the ${day}th is flagged inexpressible (not approximated)`, () => {
+        const r = buildEventRecurrence({ pattern }, `2026-01-${day}`);
+        expect(r).not.toBeNull();
+        expect(r && "inexpressible" in r && r.inexpressible).toBe(true);
+        // buildEventPayload surfaces it as recurrenceUnsupported and emits NO recurrence.
+        const p = buildEventPayload({ ...JOB, recurring: { pattern }, scheduled_date: `2026-01-${day}` });
+        expect(p!.recurrence).toBeUndefined();
+        expect(p!.recurrenceUnsupported).toBeTruthy();
+      });
+    }
+  }
+
+  it("weekly/biweekly are ALWAYS expressible regardless of day-of-month (pure day arithmetic)", () => {
+    for (const pattern of ["weekly", "biweekly"] as const) {
+      const r = buildEventRecurrence({ pattern }, "2026-01-31");
+      expect(r && "freq" in r && r.freq).toBe("WEEKLY");
+    }
   });
 });
 

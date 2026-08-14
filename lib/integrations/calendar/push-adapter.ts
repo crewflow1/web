@@ -5,6 +5,11 @@ import {
   refreshAccessToken,
   type CalendarProvider,
 } from "./oauth";
+import {
+  isValidRecurringPayload,
+  MAX_OCCURRENCES,
+  type RecurringPattern,
+} from "@/lib/schedule/recurring";
 
 /**
  * Calendar event-push adapter — the provider HTTP half of the one-way push.
@@ -29,6 +34,35 @@ import {
  * Every `fetch` lives strictly AFTER that guard. No token is ever logged.
  */
 
+/**
+ * A provider-neutral recurrence, derived from a job's `recurring` payload + its
+ * anchor `scheduled_date`. Serialised per-provider (Google RRULE / Microsoft
+ * recurrence object) so an EXTERNAL calendar expands the same series CrewFlow
+ * renders internally via `expandRecurring`, instead of the parent landing as a
+ * single anchor-only event.
+ *
+ * The four CrewFlow patterns (weekly/biweekly/monthly/quarterly — see
+ * `lib/schedule/recurring.ts`) collapse onto two provider frequencies:
+ *   - weekly   → { freq: "WEEKLY",  interval: 1 }
+ *   - biweekly → { freq: "WEEKLY",  interval: 2 }
+ *   - monthly  → { freq: "MONTHLY", interval: 1 }
+ *   - quarterly→ { freq: "MONTHLY", interval: 3 }
+ *
+ * `until` mirrors `expandRecurring`'s inclusive `end_date`; when the series is
+ * open-ended, `count` bounds it at exactly `MAX_OCCURRENCES` — the SAME hard cap
+ * `expandRecurring` applies — so neither view runs away unbounded.
+ */
+export type EventRecurrence = {
+  freq: "WEEKLY" | "MONTHLY";
+  interval: number;
+  /** The anchor date (YYYY-MM-DD) — weekday (weekly) / day-of-month (monthly) source. */
+  anchorDate: string;
+  /** Inclusive series end (YYYY-MM-DD), or null for an open-ended (count-bounded) series. */
+  until: string | null;
+  /** Occurrence cap for an open-ended series (null when `until` is set). */
+  count: number | null;
+};
+
 /** A provider-neutral calendar event. Serialised per-provider before the write. */
 export type CalendarEventPayload = {
   summary: string;
@@ -38,6 +72,16 @@ export type CalendarEventPayload = {
   startDateTime: string;
   endDateTime: string;
   timeZone: string;
+  /** Provider-neutral recurrence when the source job carries a VALID, expressible recurring payload. */
+  recurrence?: EventRecurrence;
+  /**
+   * Set when the source job IS recurring but its cadence cannot be faithfully
+   * expressed as a single provider recurrence rule (see `buildEventRecurrence`).
+   * The caller MUST surface this rather than push a misleading anchor-only or
+   * approximated event — silently dropping occurrences is the exact defect this
+   * change exists to close.
+   */
+  recurrenceUnsupported?: string;
 };
 
 /** The subset of a job row this adapter maps into an event. */
@@ -46,6 +90,8 @@ export type JobForEvent = {
   status: string;
   scheduled_date: string | null;
   notes: string | null;
+  /** The job's `recurring` jsonb payload ({ pattern, end_date? }) or null; validated before use. */
+  recurring: unknown;
   site_address_line1: string | null;
   site_address_line2: string | null;
   site_city: string | null;
@@ -53,6 +99,101 @@ export type JobForEvent = {
   site_postcode: string | null;
   site_country: string | null;
 };
+
+/**
+ * Map a job's validated `recurring` payload + its anchor date onto a
+ * provider-neutral recurrence, or a reason it is INEXPRESSIBLE.
+ *
+ *   - null                     → not recurring (or an invalid/foreign payload):
+ *                                the job pushes as a single dated event, unchanged.
+ *   - EventRecurrence          → an expressible cadence to attach.
+ *   - { inexpressible, reason }→ a recurring job whose CrewFlow expansion cannot be
+ *                                reproduced by any single provider rule.
+ *
+ * FAITHFULNESS. `expandRecurring` steps monthly/quarterly with JS `Date`
+ * month-arithmetic, which ROLLS FORWARD on day-of-month overflow (e.g. a Jan-31
+ * anchor becomes Mar-3, then Apr-3, …). No single Google RRULE / Microsoft
+ * recurrence reproduces that roll-forward — they either skip or clamp the missing
+ * day. For an anchor on day 1–28 (every month has that day) there is NO overflow,
+ * so `FREQ=MONTHLY` is byte-faithful; for an anchor on day 29–31 the two views
+ * would DIVERGE, so we refuse to approximate and return `inexpressible`. Weekly /
+ * biweekly are pure day arithmetic and always faithful.
+ */
+export function buildEventRecurrence(
+  recurring: unknown,
+  anchorDate: string,
+): EventRecurrence | null | { inexpressible: true; reason: string } {
+  if (!isValidRecurringPayload(recurring)) return null;
+  const { pattern, end_date } = recurring as RecurringPattern;
+
+  const until = end_date ?? null;
+  // Open-ended series are bounded by the SAME cap expandRecurring enforces, so the
+  // provider never materialises an unbounded series CrewFlow would itself clip.
+  const count = until ? null : MAX_OCCURRENCES;
+
+  switch (pattern) {
+    case "weekly":
+      return { freq: "WEEKLY", interval: 1, anchorDate, until, count };
+    case "biweekly":
+      return { freq: "WEEKLY", interval: 2, anchorDate, until, count };
+    case "monthly":
+    case "quarterly": {
+      const dayOfMonth = new Date(`${anchorDate}T00:00:00Z`).getUTCDate();
+      if (Number.isNaN(dayOfMonth)) {
+        return { inexpressible: true, reason: `unparseable anchor date "${anchorDate}"` };
+      }
+      if (dayOfMonth > 28) {
+        return {
+          inexpressible: true,
+          reason:
+            `a ${pattern} series anchored on day ${dayOfMonth} of the month cannot be ` +
+            "expressed as provider-native recurrence: expandRecurring rolls month overflow " +
+            "forward (JS Date math), which no single RRULE / Microsoft rule reproduces.",
+        };
+      }
+      return { freq: "MONTHLY", interval: pattern === "monthly" ? 1 : 3, anchorDate, until, count };
+    }
+  }
+}
+
+/** RFC-5545 RRULE for Google Calendar. UNTIL is UTC (Z) end-of-day so the inclusive end_date occurrence is kept. */
+function toGoogleRrule(r: EventRecurrence): string {
+  const parts = [`FREQ=${r.freq}`, `INTERVAL=${r.interval}`];
+  if (r.until) parts.push(`UNTIL=${r.until.replace(/-/g, "")}T235959Z`);
+  else if (r.count) parts.push(`COUNT=${r.count}`);
+  return `RRULE:${parts.join(";")}`;
+}
+
+const MS_WEEKDAYS = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+] as const;
+
+/** Microsoft Graph recurrence object (pattern + range) mirroring the same series. */
+function toMicrosoftRecurrence(r: EventRecurrence): Record<string, unknown> {
+  const anchor = new Date(`${r.anchorDate}T00:00:00Z`);
+  const pattern =
+    r.freq === "WEEKLY"
+      ? {
+          type: "weekly",
+          interval: r.interval,
+          daysOfWeek: [MS_WEEKDAYS[anchor.getUTCDay()]],
+        }
+      : {
+          type: "absoluteMonthly",
+          interval: r.interval,
+          dayOfMonth: anchor.getUTCDate(),
+        };
+  const range = r.until
+    ? { type: "endDate", startDate: r.anchorDate, endDate: r.until }
+    : { type: "numbered", startDate: r.anchorDate, numberOfOccurrences: r.count };
+  return { pattern, range };
+}
 
 /** The unified default rota shift a scheduled job occupies when no explicit time exists. */
 const DEFAULT_SHIFT_START = "08:00:00";
@@ -89,6 +230,13 @@ export function buildEventPayload(job: JobForEvent): CalendarEventPayload | null
     .filter((l) => l.trim().length > 0)
     .join("\n");
 
+  // Recurrence: a recurring parent is ONE jobs row + one anchor; internally its
+  // occurrences exist only via read-time expandRecurring. Emit provider-native
+  // recurrence so the external calendar expands the SAME series rather than the
+  // parent landing as a single anchor-only event (silently omitting every later
+  // occurrence). An inexpressible cadence is flagged, NOT approximated.
+  const recurrence = buildEventRecurrence(job.recurring, job.scheduled_date);
+
   return {
     summary,
     description,
@@ -96,6 +244,11 @@ export function buildEventPayload(job: JobForEvent): CalendarEventPayload | null
     startDateTime: `${job.scheduled_date}T${DEFAULT_SHIFT_START}`,
     endDateTime: `${job.scheduled_date}T${DEFAULT_SHIFT_END}`,
     timeZone: DEFAULT_TIME_ZONE,
+    ...(recurrence
+      ? "inexpressible" in recurrence
+        ? { recurrenceUnsupported: recurrence.reason }
+        : { recurrence }
+      : {}),
   };
 }
 
@@ -168,6 +321,7 @@ const EVENT_API: Record<CalendarProvider, ProviderEventApi> = {
       ...(p.location ? { location: p.location } : {}),
       start: { dateTime: p.startDateTime, timeZone: p.timeZone },
       end: { dateTime: p.endDateTime, timeZone: p.timeZone },
+      ...(p.recurrence ? { recurrence: [toGoogleRrule(p.recurrence)] } : {}),
     }),
     readId: (j) => (typeof j.id === "string" ? j.id : null),
     readEtag: (j) => (typeof j.etag === "string" ? j.etag : null),
@@ -180,6 +334,7 @@ const EVENT_API: Record<CalendarProvider, ProviderEventApi> = {
       ...(p.location ? { location: { displayName: p.location } } : {}),
       start: { dateTime: p.startDateTime, timeZone: p.timeZone },
       end: { dateTime: p.endDateTime, timeZone: p.timeZone },
+      ...(p.recurrence ? { recurrence: toMicrosoftRecurrence(p.recurrence) } : {}),
     }),
     readId: (j) => (typeof j.id === "string" ? j.id : null),
     readEtag: (j) =>
