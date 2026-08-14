@@ -119,6 +119,42 @@ const BREAKER_TRIP_AFTER = 3;
 const MAX_DISTRICTS_PER_RUN = 200;
 
 /**
+ * Lookback window (ms) for the RECENCY read that fair-orders the district list.
+ *
+ * We need each candidate district's most-recent `fetched_at` to sort the least-
+ * recently-refreshed to the FRONT, but reading every historical reading (weather_
+ * readings keeps observations forever) does not scale. Bound the read to this
+ * window: a district not fetched inside it ranks as "never fetched" (leads, as the
+ * stalest). It MUST exceed both staleness horizons so the same read still answers
+ * freshness exactly, and it must exceed the cron cadence × the number of ticks a
+ * full rotation takes, so a just-fetched district stays "recent" (sinks) until the
+ * whole backlog has rotated once. 30 days gives ample headroom for both.
+ */
+const RECENCY_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Wall-clock budget (ms) for a SINGLE fetch pass — the C39/C70-D fair-ordering +
+ * pass-budget class, applied to the weather cron.
+ *
+ * The cron that drives `runWeatherFetch` has maxDuration=60
+ * (app/api/cron/weather-fetch). The pass fetches district×kind SEQUENTIALLY and
+ * each call carries a bounded, jittered retry, so a large watch list could run
+ * past the function limit and be KILLED mid-pass. Combined with the OLD lexico-
+ * graphic `.sort()` over the district list, the same lexicographically-first
+ * districts were serviced every tick while every district after the cap was NEVER
+ * fetched — permanently empty. This budget stops the pass cleanly with headroom;
+ * un-fetched districts are simply left for the next tick, and the recency ordering
+ * (below) guarantees they LEAD it, so no district is ever permanently starved.
+ */
+export const PASS_BUDGET_MS = 45_000;
+/**
+ * Headroom (ms) reserved for one district's work (up to two kinds × a bounded
+ * retry) when deciding whether to start it — the "never start what you can't
+ * finish" discipline the bank-sync / webhook-dispatch passes use.
+ */
+const PER_DISTRICT_BUDGET_MS = 8_000;
+
+/**
  * How many district ids to send per `weather_readings` `.in()` batch. Mirrors
  * weather-watch-sync's CUSTOMER_IN_CHUNK: a wide `.in()` serialises every id
  * into the GET query string and overflows the request-line limit (→ 414/400),
@@ -196,6 +232,14 @@ export type WeatherFetchOptions = {
   /** Test seam for the jitter. Defaults to Math.random. */
   readonly random?: () => number;
   readonly maxDistricts?: number;
+  /**
+   * Monotonic clock for the wall-clock PASS BUDGET, injectable for deterministic
+   * tests only. Defaults to Date.now. (`now` above is the wall time the windows +
+   * expiries derive from; this is the elapsed-time source for the budget break.)
+   */
+  readonly clock?: () => number;
+  /** Pass-budget override — tests only; production uses PASS_BUDGET_MS. */
+  readonly passBudgetMs?: number;
 };
 
 const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -293,17 +337,19 @@ export async function runWeatherFetch(
     };
   }
 
-  const districts = [
+  // The FULL candidate district set — distinct + validated, NOT yet ordered or
+  // capped. Fair ordering + the MAX_DISTRICTS_PER_RUN cap are applied AFTER the
+  // recency read below, so the cap rotates across the whole set tick over tick
+  // rather than freezing on a lexicographic prefix.
+  const candidateDistricts = [
     ...new Set(
       watchesRes.data
         .map((w) => w.postcode_district)
         .filter((d): d is PostcodeDistrict => isPostcodeDistrict(d)),
     ),
-  ]
-    .sort()
-    .slice(0, maxDistricts);
+  ];
 
-  if (districts.length === 0) {
+  if (candidateDistricts.length === 0) {
     return {
       ok: true,
       ran: true,
@@ -316,25 +362,28 @@ export async function runWeatherFetch(
     };
   }
 
-  // ── 2. Freshness: one read covering both kinds' horizons. ─────────────────
-  const oldestCutoff = new Date(
-    now.getTime() - Math.max(FORECAST_STALE_AFTER_MS, OBSERVATION_STALE_AFTER_MS),
-  );
+  // ── 2. Recency + freshness: ONE read serving both. ────────────────────────
+  // We need each candidate district's most-recent fetched_at to fair-order the
+  // list (least-recently-refreshed first), AND the per-(district,kind) fetched_at
+  // for the freshness skip. Both come from this single read.
+  //
   // F-1: chunk the district `.in()` at ≤200 ids (a wide list would 414 the GET
-  // request line) AND page each chunk. A national freshness read easily crosses
-  // max_rows=1000, and a truncated freshness set makes fetched districts look
-  // stale — isFresh() returns false, so the pipeline re-fetches them and burns
-  // the vendor call budget redundantly. Page on the UNIQUE identity order
-  // (postcode_district, kind, valid_at) with provider fixed by the .eq above.
+  // request line) AND page each chunk. A national read easily crosses max_rows=
+  // 1000, and a truncated set both mis-orders the fair rotation and makes fetched
+  // districts look stale (→ redundant vendor calls). Windowed to RECENCY_LOOKBACK
+  // so the read stays bounded; districts with no reading inside the window rank as
+  // never-fetched and LEAD (correct — they are the stalest). Paged on the UNIQUE
+  // identity order (postcode_district, kind, valid_at) with provider fixed above.
+  const recencyCutoff = new Date(now.getTime() - RECENCY_LOOKBACK_MS);
   const recentRows: FreshRow[] = [];
-  for (let i = 0; i < districts.length; i += DISTRICT_IN_CHUNK) {
-    const batch = districts.slice(i, i + DISTRICT_IN_CHUNK);
+  for (let i = 0; i < candidateDistricts.length; i += DISTRICT_IN_CHUNK) {
+    const batch = candidateDistricts.slice(i, i + DISTRICT_IN_CHUNK);
     const chunk = await fetchAllRows<FreshRow>((from, to) =>
       table(admin, "weather_readings")
         .select<FreshRow>("postcode_district, kind, fetched_at")
         .eq("provider", provider.info.provider)
         .in("postcode_district", batch)
-        .gte("fetched_at", oldestCutoff.toISOString())
+        .gte("fetched_at", recencyCutoff.toISOString())
         .order("postcode_district", { ascending: true })
         .order("kind", { ascending: true })
         .order("valid_at", { ascending: true })
@@ -349,7 +398,7 @@ export async function runWeatherFetch(
         ok: false,
         ran: true,
         provider: provider.info.provider,
-        districtCount: districts.length,
+        districtCount: candidateDistricts.length,
         written: 0,
         breakerTripped: false,
         outcomes: [],
@@ -360,12 +409,16 @@ export async function runWeatherFetch(
   }
 
   const latestFetch = new Map<string, number>();
+  // Most-recent fetched_at per DISTRICT (max over kinds) — the fairness cursor.
+  const latestByDistrict = new Map<string, number>();
   for (const row of recentRows) {
     const at = Date.parse(row.fetched_at);
     if (Number.isNaN(at)) continue;
     const key = `${row.postcode_district}:${row.kind}`;
     const prev = latestFetch.get(key);
     if (prev === undefined || at > prev) latestFetch.set(key, at);
+    const dPrev = latestByDistrict.get(row.postcode_district);
+    if (dPrev === undefined || at > dPrev) latestByDistrict.set(row.postcode_district, at);
   }
   const isFresh = (district: PostcodeDistrict, kind: WeatherReadingKind): boolean => {
     const at = latestFetch.get(`${district}:${kind}`);
@@ -373,6 +426,27 @@ export async function runWeatherFetch(
     const horizon = kind === "forecast" ? FORECAST_STALE_AFTER_MS : OBSERVATION_STALE_AFTER_MS;
     return now.getTime() - at < horizon;
   };
+
+  // ── FAIR ORDERING (C71) then cap. ─────────────────────────────────────────
+  // Order the WHOLE candidate set by each district's most-recent fetched_at
+  // ASCENDING, with never-fetched (undefined → beyond the recency window) FIRST,
+  // then cap at MAX_DISTRICTS_PER_RUN. This replaces the old lexicographic
+  // `.sort().slice()` that froze the cap on the same prefix every tick and left
+  // every later district permanently empty. Each district this pass fetches gets a
+  // fresh fetched_at and sinks to the back, so the tail leads the next tick — the
+  // cap now ROTATES across the full set. Ties (equal recency, e.g. the whole
+  // never-fetched group) break lexicographically for a deterministic page.
+  const districts = [...candidateDistricts]
+    .sort((a, b) => {
+      const av = latestByDistrict.get(a);
+      const bv = latestByDistrict.get(b);
+      if (av === undefined && bv === undefined) return a < b ? -1 : a > b ? 1 : 0;
+      if (av === undefined) return -1; // never-fetched leads
+      if (bv === undefined) return 1;
+      if (av !== bv) return av - bv; // least-recently-fetched leads
+      return a < b ? -1 : a > b ? 1 : 0;
+    })
+    .slice(0, maxDistricts);
 
   // ── The per-kind windows. ──────────────────────────────────────────────────
   const hourNow = floorToHour(now);
@@ -420,7 +494,18 @@ export async function runWeatherFetch(
     outcomes.push(o);
   };
 
+  // PASS BUDGET (C71): the wall-clock bound that stops the pass cleanly instead of
+  // being killed mid-fetch by the cron's maxDuration. Checked at the TOP of each
+  // district so a district is only STARTED when its work can finish within the
+  // budget; un-fetched districts are left for the next tick, where the recency
+  // ordering above guarantees they lead. `clock`/budget are injectable for
+  // deterministic tests only — production uses Date.now + PASS_BUDGET_MS.
+  const clock = options.clock ?? Date.now;
+  const passBudgetMs = options.passBudgetMs ?? PASS_BUDGET_MS;
+  const startedAt = clock();
+
   for (const district of districts) {
+    if (clock() - startedAt + PER_DISTRICT_BUDGET_MS > passBudgetMs) break;
     const coordinates = resolveDistrictCoordinates(district);
     if (coordinates === null) {
       // NO GUESSING: no centroid ⇒ no call. GY/JE/IM and retired districts
