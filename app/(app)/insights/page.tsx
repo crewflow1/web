@@ -7,9 +7,12 @@ import {
 import { resolveInsightNarrative } from "@/server/services/ai-insights";
 import { loadCompanySignals } from "@/server/services/intelligence";
 import { loadCompanyHealth } from "@/server/services/company-health";
+import { loadForecasts } from "@/server/services/forecasting";
+import { cashOutVisibleToRole } from "@/server/services/org-cash-out";
 import { InsightsSection } from "../dashboard/_insights";
 import { CompanySignals } from "./_company-signals";
 import { CompanyHealthSection } from "./_company-health";
+import { ForecastsSection } from "./_forecasts";
 import { QuestionBox } from "./_question-box";
 import { isInferenceTierActivated } from "@/lib/ai/governor/readiness";
 
@@ -69,6 +72,16 @@ export default async function InsightsPage() {
   // composes the H&S snapshot, the profitability authority and the supplier
   // measurement on top. No model anywhere.
   const companyHealth = await loadCompanyHealth(ctx.org.id, new Date(), companySignals);
+
+  // FORECASTS — the deterministic forward layer (cash timeline, labour capacity,
+  // delay/commercial risk boards). Composes the already-loaded company signals so
+  // the heavy intelligence read is not repeated. Management-gated: the cash
+  // timeline's outflow side (VAT/CIS/payables) is admin-only at RLS, so a role
+  // that can't see it gets no forecasts section rather than a half-a-ledger one.
+  const canSeeForecasts = cashOutVisibleToRole(ctx.membership.role);
+  const forecasts = canSeeForecasts
+    ? await loadForecasts(ctx.org.id, ctx.membership.role, companySignals, new Date())
+    : null;
 
   return (
     <div className="space-y-6">
@@ -131,6 +144,16 @@ export default async function InsightsPage() {
         data bands as "Not enough data", never green.
       */}
       <CompanyHealthSection view={companyHealth} />
+
+      {/*
+        FORECASTS — the deterministic FORWARD layer (Train P2): cash timeline,
+        labour capacity, and the delay/commercial risk boards. Forward-looking
+        but still deterministic — money is placed on its due/scheduled/statutory
+        date, risks are recorded signals with the rule that flagged them, no
+        composite grade and no model. Shown only to roles that can see the cash
+        outflow side, so the timeline is never drawn with half a ledger.
+      */}
+      {forecasts ? <ForecastsSection view={forecasts} /> : null}
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">
