@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
 import { listJobOptions, listMembers } from "../_data";
 import { createInspectionPlan } from "../actions";
+import { withPreservedOption } from "@/lib/quotes/preserve-option";
 
 /**
  * /quality/new — draft a new inspection & test plan header.
@@ -32,6 +33,17 @@ export default async function NewInspectionPlanPage({ searchParams }: { searchPa
     listJobOptions(ctx.org.id),
     listMembers(ctx.org.id),
   ]);
+
+  // PICKER-COMPLETION (F-1). The reader is paged so a ?jobId= preset is present,
+  // and this preserves that preset as a selectable <option> even if a future
+  // cap/filter would drop it — belt-and-braces, so the REQUIRED select never
+  // silently discards the preset and falls to a different job on an untouched
+  // submit. (A preset that isn't a real job in this org is rejected LOUDLY by
+  // the action's job guard, not silently mis-attributed.)
+  const jobOptions = withPreservedOption(jobs, sp.jobId || null, (id) => ({
+    id,
+    label: "Selected job",
+  }));
 
   const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)) : null;
 
@@ -85,7 +97,7 @@ export default async function NewInspectionPlanPage({ searchParams }: { searchPa
               className={inputClass}
             >
               <option value="">Select a job…</option>
-              {jobs.map((j) => (
+              {jobOptions.map((j) => (
                 <option key={j.id} value={j.id}>
                   {j.label}
                 </option>

@@ -193,10 +193,12 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
     "bounded: recent-200 jobs referencing this asset — detail-page display list, not a write-back picker",
   "app/(app)/delays/_data.ts:111":
     "bounded: recent-200 jobs sample for the delays report display",
-  "app/(app)/diary/_data.ts:21":
-    "bounded: recent-200 jobs sample for the diary register display",
-  "app/(app)/quality/_data.ts:260":
-    "bounded: recent-200 jobs sample for the quality report display",
+  // diary/_data.ts:21 and quality/_data.ts:260 were HERE as "recent-200 jobs
+  // sample" picker reads. Both are now PAGED via fetchAllRows (the C72
+  // picker-completion class fix — they feed REQUIRED writable job pickers on
+  // create AND draft-edit, so an out-of-cap saved job was silently mis-attributed),
+  // so neither carries a producer .limit and neither needs an entry. Same
+  // treatment as reviews/new, snags/new and site-reports/new below.
   "app/(app)/dashboard/page.tsx:185":
     "bounded: dashboard 'recent 5 leads' widget — an intentional top-5 display",
   "app/(app)/leads/[id]/page.tsx:132":

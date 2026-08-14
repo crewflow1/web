@@ -324,8 +324,8 @@ const ALLOWLIST: Record<string, string> = {
   // truncation bug (none needed paging), so each carries an honest reason:
   "app/(app)/delays/_data.ts:93":
     "bounded: jobs label lookup .in('id', ids) where ids is a de-duped Set drawn from the delays register (a bounded parent set) — batched name/date labels, ≤ parent rows, never near 1000. Same class as diary/page.tsx:83. (Line moved 92→93 when listJobOptions was paged via fetchAllRows for the F-1 picker-completion wave, adding the paginate import.)",
-  "app/(app)/quality/_data.ts:241":
-    "bounded: jobs label lookup .in('id', ids) where ids is a de-duped Set drawn from the quality register (a bounded parent set) — batched name/date labels, ≤ parent rows. Same class as diary/page.tsx:83.",
+  "app/(app)/quality/_data.ts:242":
+    "bounded: jobs label lookup .in('id', ids) where ids is a de-duped Set drawn from the quality register (a bounded parent set) — batched name/date labels, ≤ parent rows. Same class as diary/page.tsx:83. (Line moved 241→242 when listJobOptions was paged via fetchAllRows for the F-1 picker-completion wave, adding the paginate import.)",
   "app/(app)/jobs/[id]/billing/actions.ts:81":
     "bounded: ONE plan's stages (.eq('org_id').eq('plan_id', planId)) — the stages of a single billing plan; a plan has a handful of stages, never near 1000",
   "lib/schedule/calendar-data.ts:92":
