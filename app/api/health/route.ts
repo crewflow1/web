@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCommsReadiness } from "@/lib/comms/readiness";
 import { getIntegrationsReadiness } from "@/lib/integrations/readiness";
 import { getWeatherReadiness } from "@/lib/weather/readiness";
+import { getMonitoringReadiness } from "@/lib/monitoring/readiness";
 import { probeDatabase } from "@/lib/health/db-probe";
 
 /**
@@ -47,6 +48,18 @@ export async function GET() {
   // /api/v1/me probe — the substrate's living proof, not a product surface.
   const integrations = getIntegrationsReadiness();
 
+  // Error-monitoring readiness (Sentry). `enabled` — "this runtime will
+  // ACTUALLY capture and report an error right now" — never the weaker "the SDK
+  // is in the build". It is `false` in every environment today because no DSN
+  // is set anywhere (the dark-gating doctrine: no DSN ⇒ inert), and it can
+  // never go true without `sdkIntegrated`. Reported here for the same reason
+  // comms/weather are: so a deploy that BELIEVES it has monitoring but is dark
+  // is visible to the smoke test rather than discovered when a silent failure
+  // goes unreported. Booleans only — this endpoint is public and must never
+  // name env vars nor leak the DSN. Does NOT gate `ok`: dark monitoring is a
+  // launch-readiness note, not an outage.
+  const monitoring = getMonitoringReadiness();
+
   // Live database reachability. This is the ONLY signal that gates `ok`/`status`: an unreachable
   // Postgres means the app cannot serve requests, so the endpoint must go non-green. The comms,
   // weather and integrations booleans above are READINESS signals (can-this-channel-send, etc.)
@@ -80,6 +93,12 @@ export async function GET() {
         // The build-time half, so a false `available` is diagnosable without
         // shell access: "no adapter" and "no key" need different actions.
         providerImplemented: weather.providerImplemented,
+      },
+      monitoring: {
+        enabled: monitoring.enabled,
+        // The build-time half, so a false `enabled` is diagnosable without
+        // shell access: "SDK missing" and "no DSN" need different actions.
+        sdkIntegrated: monitoring.sdkIntegrated,
       },
       timestamp: new Date().toISOString(),
     },

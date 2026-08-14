@@ -207,6 +207,10 @@ const envSchema = z.object({
   INNGEST_SIGNING_KEY: z.string().optional(),
 
   // -- Observability ------------------------------------------------------
+  // Server/edge DSN (falls back to the public one in the SDK configs). Dark
+  // by default — unset ⇒ error monitoring initialises nothing and sends no
+  // network request (see lib/monitoring/readiness.ts).
+  SENTRY_DSN: z.string().optional(),
   NEXT_PUBLIC_SENTRY_DSN: z.string().optional(),
   SENTRY_ORG: z.string().default("crewflow"),
   SENTRY_PROJECT: z.string().default("web"),
