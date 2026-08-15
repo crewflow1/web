@@ -68,6 +68,19 @@ const HIGH_VALUE_TABLES = new Set<string>([
   // with totals but only the first 1000 lines — and the builder re-save would
   // then wipe the dropped lines.
   "quote_line_items",
+  // ── Estimating price-book / rate-library + saved quote templates (P3 wave).
+  //    All carry MONEY (integer pence) and are cross-tenant (RLS admits every org
+  //    the caller belongs to). Their reads feed the quote-builder picker, the
+  //    "apply template" control and the /pricing management list — a clamped read
+  //    silently drops rate-card items or template lines, understating a quote.
+  //    Every read is PAGED via fetchAllRows (lib/pricing/queries.ts) or a
+  //    single-row lookup (getPriceBookItem .maybeSingle).
+  //   price_book_items      — the curated rate library; picker + management list.
+  //   quote_templates       — saved multi-line scopes; management + apply lists.
+  //   quote_template_lines  — the priced lines of a template (unit_price pence).
+  "price_book_items",
+  "quote_templates",
+  "quote_template_lines",
   "stock_movements",
   "bank_statement_lines",
   "telematics_connections",

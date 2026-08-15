@@ -9,6 +9,10 @@ import {
 } from "../_form-helpers";
 import { createQuote } from "../actions";
 import { getQuoteWriterReadiness } from "@/lib/ai/quote-writer-readiness";
+import {
+  listPriceBookForPicker,
+  listQuoteTemplatesForBuilder,
+} from "@/lib/pricing/queries";
 
 /**
  * New-quote page.
@@ -30,17 +34,20 @@ export default async function NewQuotePage({ searchParams }: { searchParams: SP 
   const sp = await searchParams;
   const supabase = await createClient();
 
-  const [customers, properties, leads, orgRow] = await Promise.all([
-    listCustomersForQuote(ctx.org.id),
-    listPropertiesForQuote(ctx.org.id),
-    listLeadsForQuote(ctx.org.id),
-    supabase
-      .from("organizations")
-      .select("default_terms")
-      .eq("id", ctx.org.id)
-      .maybeSingle()
-      .then((r) => r.data),
-  ]);
+  const [customers, properties, leads, orgRow, priceBookItems, templates] =
+    await Promise.all([
+      listCustomersForQuote(ctx.org.id),
+      listPropertiesForQuote(ctx.org.id),
+      listLeadsForQuote(ctx.org.id),
+      supabase
+        .from("organizations")
+        .select("default_terms")
+        .eq("id", ctx.org.id)
+        .maybeSingle()
+        .then((r) => r.data),
+      listPriceBookForPicker(ctx.org.id),
+      listQuoteTemplatesForBuilder(ctx.org.id),
+    ]);
 
   // Pre-fill from /leads/[id] "Create a quote" CTA. Validates the IDs are
   // org-visible (RLS already filtered both lists, so we just check inclusion).
@@ -78,6 +85,8 @@ export default async function NewQuotePage({ searchParams }: { searchParams: SP 
         defaultCustomerId={prefillCustomerId}
         defaultLeadId={prefillLeadId}
         defaultTerms={orgRow?.default_terms ?? ""}
+        priceBookItems={priceBookItems}
+        templates={templates}
         // READINESS IS COMPUTED, NEVER ASSUMED. `getQuoteWriterReadiness()` is a
         // pure, build-time-anchored read: no model bound ⇒ not available, whatever
         // the environment says. It touches no database, so mounting the panel on a

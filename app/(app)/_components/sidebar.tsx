@@ -42,6 +42,7 @@ const ADMIN_LINKS = [
   { href: "/site-reports", label: "Site reports" },
   { href: "/customers", label: "Customers" },
   { href: "/quotes", label: "Quotes" },
+  { href: "/price-book", label: "Price book" },
   { href: "/suppliers", label: "Suppliers" },
   { href: "/purchase-orders", label: "Purchase orders" },
   { href: "/expenses", label: "Expenses" },

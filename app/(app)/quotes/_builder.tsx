@@ -22,6 +22,11 @@ import { NumericInput } from "@/components/forms/NumericInput";
 import { QuoteWriterPanel } from "./_quote-writer-panel";
 import { withPreservedOption } from "@/lib/quotes/preserve-option";
 import type { QuoteWriterReadiness } from "@/lib/ai/quote-writer-readiness";
+import type {
+  PriceBookPickerItem,
+  QuoteTemplateApplyOption,
+} from "@/lib/pricing/schema";
+import { PriceBookPicker } from "./_price-book-picker";
 
 /**
  * Quote builder — used by both /quotes/new and /quotes/[id].
@@ -79,6 +84,8 @@ export function QuoteBuilder({
   defaultLineItems,
   cancelHref = "/quotes",
   quoteWriter,
+  priceBookItems,
+  templates,
 }: {
   action: QuoteAction;
   submitLabel: string;
@@ -93,6 +100,18 @@ export function QuoteBuilder({
   defaultTerms?: string;
   defaultLineItems?: LineItem[];
   cancelHref?: string;
+  /**
+   * The org's curated price-book items, offered as pickable line templates.
+   * OPTIONAL: absent means the picker is not rendered — a caller that knows
+   * nothing about the price book keeps working unchanged. Money is POUNDS
+   * (already converted from stored pence) so populating a line needs no maths.
+   */
+  priceBookItems?: PriceBookPickerItem[];
+  /**
+   * Saved multi-line quote templates, offered via an "apply" control. Lines are
+   * pounds-native, so Apply is a pure client setItems — no round-trip.
+   */
+  templates?: QuoteTemplateApplyOption[];
   /**
    * The AI quote writer's mount point. OPTIONAL, and absent means the panel is
    * not rendered at all — a caller that knows nothing about AI keeps working
@@ -196,6 +215,48 @@ export function QuoteBuilder({
   }
   function removeLine(idx: number) {
     setItems((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx)));
+  }
+
+  // True when the list is just the single untouched default line — so a picked
+  // item or an applied template REPLACES the blank rather than appending under it.
+  function isJustEmptyDefault(list: LineItem[]): boolean {
+    if (list.length !== 1) return false;
+    const only = list[0]!;
+    return (
+      only.description.trim() === "" &&
+      Number(only.unit_price) === 0 &&
+      Number(only.qty) === 1
+    );
+  }
+
+  // Populate a NEW line from a price-book item (still fully editable after).
+  function addLineFromPriceBook(item: PriceBookPickerItem) {
+    const line: LineItem = {
+      description: item.description,
+      qty: 1,
+      unit: item.unit || "ea",
+      unit_price: item.unit_price,
+      vat_rate: (QUOTE_VAT_RATES as readonly number[]).includes(item.vat_rate)
+        ? item.vat_rate
+        : 20,
+    };
+    setItems((prev) => (isJustEmptyDefault(prev) ? [line] : [...prev, line]));
+  }
+
+  // Apply a saved template's lines. Appends to real work, replaces a blank quote.
+  function applyTemplate(templateId: string) {
+    const tpl = (templates ?? []).find((t) => t.id === templateId);
+    if (!tpl || tpl.lines.length === 0) return;
+    const applied: LineItem[] = tpl.lines.map((l) => ({
+      description: l.description,
+      qty: l.qty,
+      unit: l.unit || "ea",
+      unit_price: l.unit_price,
+      vat_rate: (QUOTE_VAT_RATES as readonly number[]).includes(l.vat_rate)
+        ? l.vat_rate
+        : 20,
+    }));
+    setItems((prev) => (isJustEmptyDefault(prev) ? applied : [...prev, ...applied]));
   }
 
   const customerError = state.fieldErrors?.customer_id;
@@ -355,6 +416,45 @@ export function QuoteBuilder({
           <p role="alert" className="mt-3 text-xs text-red-700">
             {lineItemsError}
           </p>
+        ) : null}
+
+        {(priceBookItems && priceBookItems.length > 0) ||
+        (templates && templates.length > 0) ? (
+          <div className="mt-4 flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-start">
+            {priceBookItems && priceBookItems.length > 0 ? (
+              <div className="min-w-0 flex-1">
+                <PriceBookPicker items={priceBookItems} onPick={addLineFromPriceBook} />
+              </div>
+            ) : null}
+            {templates && templates.length > 0 ? (
+              <div className="sm:w-64">
+                <label
+                  htmlFor="apply-template"
+                  className="block text-xs font-semibold uppercase tracking-wide text-slate-500"
+                >
+                  Apply a saved template
+                </label>
+                <select
+                  id="apply-template"
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) applyTemplate(e.target.value);
+                    e.target.value = "";
+                  }}
+                  className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                >
+                  <option value="">Choose a template…</option>
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                      {t.job_type ? ` (${t.job_type})` : ""} · {t.lines.length} line
+                      {t.lines.length === 1 ? "" : "s"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+          </div>
         ) : null}
 
         <div className="mt-4 overflow-x-auto">

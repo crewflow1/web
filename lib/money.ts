@@ -33,6 +33,32 @@ export function formatGbp(v: number | string | null | undefined): string {
 }
 
 /**
+ * Pounds (major units, 2dp) → INTEGER PENCE. `Math.round` because float
+ * multiplication of e.g. 19.99 does not land exactly on 1999. A non-finite /
+ * null input is treated as 0. This is the write boundary for the curated
+ * price-book / template tables, whose money columns are integer pence.
+ */
+export function poundsToPence(v: number | string | null | undefined): number {
+  return Math.round(toPounds(v) * 100);
+}
+
+/**
+ * INTEGER PENCE → pounds (major units). The read boundary: the legacy
+ * quotes/quote_line_items columns are `numeric` pounds, so a picked price-book
+ * item or an applied template line converts here before it populates a quote
+ * line. Non-integer / null input is treated as 0 pence.
+ */
+export function penceToPounds(pence: number | string | null | undefined): number {
+  const n = Number(pence ?? 0);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n) / 100;
+}
+
+export function formatPence(pence: number | string | null | undefined): string {
+  return GBP.format(penceToPounds(pence));
+}
+
+/**
  * Split `total` into parts proportional to `weights`, PENNY-EXACT: the returned
  * amounts always sum to EXACTLY round2(total) (largest-remainder method), so a
  * percentage stage split like 33.33 / 33.33 / 33.34 of £10,000 yields
