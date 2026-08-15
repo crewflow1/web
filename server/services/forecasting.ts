@@ -133,7 +133,7 @@ export function vatPaymentDeadline(quarterStartIso: string): string {
   return addDays(addMonths(endInclusive, 1), 7);
 }
 
-async function gatherCashTimeline(
+export async function gatherCashTimeline(
   db: ForecastingClient,
   orgId: string,
   now: Date,

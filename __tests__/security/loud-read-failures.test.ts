@@ -503,7 +503,15 @@ const RATCHET: Array<{
     // Both PRIMARY reads (the pins list; the paged comment thread) bind + throw
     // readFailure, so a real read failure is still loud — only the decorative name
     // enrichment degrades. See docs/loud-read-failures.md (C ledger).
-    discard: 38,
+    // 38 → 39 (P3 reporting): lib/reports/export-render.ts::loadReportOrg reads the
+    // org letterhead (name/phone/VAT/logo/address) for the shared report PDF and
+    // deliberately drops `error` — a missing/errored letterhead falls back to
+    // "CrewFlow" and null fields, exactly like the pre-existing best-effort
+    // letterhead read in app/api/site-reports/[id]/pdf. The report's DATA is
+    // composed by buildReportDocument, whose every underlying read is loud
+    // (readFailure) + F-1-paged; only the decorative header degrades, never a
+    // figure. See docs/loud-read-failures.md (C ledger).
+    discard: 39,
     // 61 → 62: server/services/hq-support-snapshot.ts `listSupportTicketRowsForHq`
     // is the lean, message-free board reader (HQ Support AI) — it degrades to `[]`
     // exactly like its sibling `listSupportTicketsForHq` in the same file, and the
