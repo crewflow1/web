@@ -106,7 +106,7 @@ export default async function ThreadPage({
       ) : null}
       {sp.error ? (
         <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          Couldn't complete that action. Try again.
+          Couldn&apos;t complete that action. Try again.
         </div>
       ) : null}
 
