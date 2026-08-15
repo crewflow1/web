@@ -305,8 +305,8 @@ const ALLOWLIST: Record<string, string> = {
   // NOT A READ: `.from('notifications').insert(payload).select(ALL_COLS)` — an
   // INSERT…RETURNING. The returned set is bounded by the payload it just wrote,
   // so it cannot truncate; it trips only because the region carries `.select(`.
-  "server/services/notifications-service.ts:140":
-    "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read",
+  "server/services/notifications-service.ts:142":
+    "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read. (Line moved 140→142 when the P3 per-user preference honoring added a two-line import to the top of the file.)",
 
   // ── Job-billing schedule / retention wave — genuinely-bounded SINGLE-SCOPE
   //    reads surfaced once job_billing_plans/job_billing_stages/retention_releases
@@ -359,8 +359,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE org's members (.eq('org_id')) — the assessor picker (listAssessors); an org's headcount is tens/low-hundreds, never near 1000",
   "app/(app)/health-safety/_signoff-data.ts:137":
     "bounded: name lookup .in('user_id', ids) where ids is a de-duped Set of sign-off user_ids from a bounded parent set — ≤ parent rows, never near 1000",
-  "app/(app)/settings/page.tsx:72":
-    "bounded: ONE org's members (.eq('org_id')) — the settings team panel; bounded by the org's headcount, never near 1000",
+  "app/(app)/settings/page.tsx:73":
+    "bounded: ONE org's members (.eq('org_id')) — the settings team panel; bounded by the org's headcount, never near 1000. (Line moved 72→73 when the P3 notification-preferences section added a one-line import to page.tsx.)",
   "app/(app)/staff/leave/page.tsx:96":
     "bounded: ONE org's members (.eq('org_id')) — the leave-page name lookup; bounded by the org's headcount",
   "app/(app)/staff/page.tsx:56":
@@ -1091,6 +1091,10 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   site_diary_entries: "PAGED: fetchAllRows (EOT pack diary; .in(ids) paged)",
   notification_email_queue:
     "PAGED/SINGLE: the CIS dedupe read is fetchAllRows-paged; the queue-drain read is a bounded worker .limit(DRAIN_BATCH<1000)",
+  notification_preferences:
+    "PER-USER-CONFIG/PAGED: getPreferencesForUser is .eq('org_id').eq('user_id') — ONE user's per-category preference rows (≤ the fixed category count, ~11); the sender-honoring bulk read (getPreferencesForUserKeys) and the digest-cron eligibility scan are both fetchAllRows-paged. No cross-tenant/aggregate set-read.",
+  notification_digest_cursors:
+    "PAGED: fetchCursors is the only set-read and is fetchAllRows-paged (bulk digest cursor read); the per-cadence cursor advance is an upsert write, not a read. Service-role only.",
 
   // ---- PER-PARENT (bounded by ONE parent row) ----
   blueprint_markup: "PER-PARENT: .eq('blueprint_version_id') — one drawing version's markup shapes",

@@ -26,6 +26,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/cron/notifications-digest",
+      "schedule": "0 7 * * *"
+    },
+    {
       "path": "/api/cron/alerts-poll",
       "schedule": "0 3 * * *"
     },
