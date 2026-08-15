@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
-import { guardPublicJobsRequest } from "@/lib/public-api/guard";
+import {
+  guardPublicJobsRequest,
+  guardPublicApiRequest,
+} from "@/lib/public-api/guard";
+import { verifyCustomerInOrg } from "@/lib/crm/reference-integrity";
 import {
   JOB_DTO_SELECT,
   toPublicJobDto,
@@ -9,6 +13,8 @@ import {
   rangeFor,
   type JobRowForDto,
 } from "@/lib/public-api/jobs";
+import { createJobSchema } from "@/lib/public-api/write-schemas";
+import { parseJsonBody, created, writeError } from "@/lib/public-api/write";
 
 /**
  * GET /api/v1/jobs — the public, key-authenticated JOBS READ (Train K).
@@ -103,4 +109,84 @@ export async function GET(request: Request): Promise<Response> {
       has_more,
     },
   });
+}
+
+/** Minimal typed surface for the org-pinned insert + allowlisted readback. */
+type JobInsertWrite = {
+  insert: (row: {
+    org_id: string;
+    status?: string;
+    scheduled_date: string | null;
+    customer_id: string | null;
+    notes: string | null;
+    site_address_line1: string | null;
+    site_address_line2: string | null;
+    site_city: string | null;
+    site_county: string | null;
+    site_postcode: string | null;
+    site_country: string | null;
+  }) => {
+    select: (cols: string) => {
+      single: () => Promise<{
+        data: JobRowForDto | null;
+        error: { message?: string | null } | null;
+      }>;
+    };
+  };
+};
+
+/**
+ * POST /api/v1/jobs — create a job in the KEY'S org.
+ *
+ * Requires the DISTINCT `write:jobs` scope (routed through the generic guard, a
+ * `read:jobs`-only key is forbidden). Strict body (unknown keys rejected),
+ * org_id pinned to the key's org, and an optional customer_id verified in-org
+ * BEFORE the insert. The created row is returned through the read DTO allowlist.
+ */
+export async function POST(request: Request): Promise<Response> {
+  const guard = await guardPublicApiRequest(request, "write:jobs");
+  if (!guard.ok) return guard.response;
+
+  const body = await parseJsonBody(request, createJobSchema);
+  if (!body.ok) return body.response;
+  const input = body.value;
+
+  const admin = createAdminClient();
+
+  if (input.customer_id) {
+    const ref = await verifyCustomerInOrg(
+      admin as never,
+      input.customer_id,
+      guard.key.orgId,
+    );
+    if (!ref.ok) return writeError(422, "invalid_reference", ref.message);
+  }
+
+  const { data, error } = await (
+    admin.from("jobs") as unknown as JobInsertWrite
+  )
+    .insert({
+      // ORG PINNING — the key's own org, never a client-supplied value.
+      org_id: guard.key.orgId,
+      // Only override the DB default status when the caller set one.
+      ...(input.status ? { status: input.status } : {}),
+      scheduled_date: input.scheduled_date ?? null,
+      customer_id: input.customer_id ?? null,
+      notes: input.notes ?? null,
+      site_address_line1: input.site_address_line1 ?? null,
+      site_address_line2: input.site_address_line2 ?? null,
+      site_city: input.site_city ?? null,
+      site_county: input.site_county ?? null,
+      site_postcode: input.site_postcode ?? null,
+      site_country: input.site_country ?? null,
+    })
+    .select(JOB_DTO_SELECT)
+    .single();
+
+  if (error || !data) {
+    console.error("[public-api] job create failed", error?.message);
+    return writeError(500, "write_failed", "Couldn't create the job.");
+  }
+
+  return created(toPublicJobDto(data));
 }
