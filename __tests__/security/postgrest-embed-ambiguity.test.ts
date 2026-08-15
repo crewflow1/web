@@ -249,7 +249,20 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   // embed must name its FK constraint; test 2 enforces it.
   "inspection_witness_invitations → users",
   "invoice_payments → invoices",
+  // Job checklists (P3, 20261132000000): created_by + done_by → users. Reviewed
+  // 2026-08-15: the only reader (app/(app)/jobs/[id]/_job-checklist.tsx) selects
+  // scalar columns only and never embeds users(...). Two FKs is inherent — who
+  // ADDED the step and who TICKED it are separate accountable acts. Any future
+  // embed must name its FK constraint; test 2 enforces it.
+  "job_checklists → users",
   "job_documents → users",
+  // Milestone dependencies (P3, 20261132000002): milestone_id +
+  // depends_on_milestone_id both → job_milestones. Reviewed 2026-08-15: the only
+  // reader (_job-programme.tsx) selects the two scalar id columns and joins them
+  // to titles in memory — it never embeds job_milestones(...). Two FKs is the
+  // whole point of an edge (successor + predecessor). Any future embed must name
+  // its FK constraint; test 2 enforces it.
+  "job_milestone_dependencies → job_milestones",
   // Job warranties (20261079): created_by + portal_published_by + voided_by all
   // → users. Reviewed 2026-07-31: no read of this table embeds users(...) — the
   // operator page and actions select scalar columns only, and the customer

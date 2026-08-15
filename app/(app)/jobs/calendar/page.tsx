@@ -5,7 +5,9 @@ import { requireOrgContext } from "@/server/auth/session";
 import { listStaffForOrg } from "../_form-helpers";
 import { CalendarClient } from "./_calendar";
 import { MonthView } from "./_month-view";
+import { GanttView } from "./_gantt-view";
 import { fetchCalendarJobs } from "@/lib/schedule/calendar-data";
+import { fetchJobSpansForWindow } from "@/lib/jobs/schedule-spans";
 import {
   expandRecurring,
   isValidRecurringPayload,
@@ -73,18 +75,83 @@ export default async function CalendarPage({ searchParams }: { searchParams: SP 
     sp.d && /^\d{4}-\d{2}-\d{2}$/.test(sp.d)
       ? sp.d
       : new Date().toISOString().slice(0, 10);
-  const view = sp.view === "month" ? "month" : "week";
+  const view =
+    sp.view === "month"
+      ? "month"
+      : sp.view === "gantt"
+        ? "gantt"
+        : sp.view === "resource"
+          ? "resource"
+          : "week";
+
+  // Gantt + resource views span four weeks from the anchor's week start, wide
+  // enough to see multi-day jobs and resource load without scrolling per week.
+  const timelineRange = (() => {
+    const weekStart = startOfWeekIso(anchorIso);
+    return {
+      from: weekStart,
+      to: isoFromUtc(addDays(new Date(`${weekStart}T00:00:00Z`), 27)),
+    };
+  })();
 
   const range =
     view === "month"
       ? monthGridRange(anchorIso)
-      : (() => {
-          const weekStart = startOfWeekIso(anchorIso);
-          return { from: weekStart, to: isoFromUtc(addDays(new Date(`${weekStart}T00:00:00Z`), 6)) };
-        })();
+      : view === "gantt" || view === "resource"
+        ? timelineRange
+        : (() => {
+            const weekStart = startOfWeekIso(anchorIso);
+            return { from: weekStart, to: isoFromUtc(addDays(new Date(`${weekStart}T00:00:00Z`), 6)) };
+          })();
 
   const staff = await listStaffForOrg(ctx.org.id);
   const supabase = await createClient();
+
+  // Build a switch-view header that preserves the active filters + anchor.
+  function tlLinkQs(target: "week" | "month" | "gantt" | "resource"): string {
+    const params = new URLSearchParams({ d: anchorIso, view: target });
+    if (sp.status) params.set("status", sp.status);
+    if (sp.staff) params.set("staff", sp.staff);
+    return params.toString();
+  }
+
+  // ── Gantt / resource-swimlane views (multi-day spans, read-only) ──
+  if (view === "gantt" || view === "resource") {
+    const { rows: spanRows, error: spanError } = await fetchJobSpansForWindow({
+      supabase,
+      orgId: ctx.org.id,
+      range,
+      statusFilter: sp.status,
+      staffFilter: sp.staff,
+    });
+    if (spanError) throw readFailure("jobs calendar: spans", spanError);
+    return (
+      <div className="space-y-4">
+        <ViewToggle
+          weekHref={`/jobs/calendar?${tlLinkQs("week")}`}
+          monthHref={`/jobs/calendar?${tlLinkQs("month")}`}
+          ganttHref={`/jobs/calendar?${tlLinkQs("gantt")}`}
+          resourceHref={`/jobs/calendar?${tlLinkQs("resource")}`}
+          active={view}
+          orgName={ctx.org.name}
+        />
+        <header>
+          <h1 className="text-2xl font-bold text-slate-900">
+            {view === "resource" ? "Resource lanes" : "Gantt"}
+          </h1>
+          <p className="mt-1 text-sm text-slate-600">
+            {ctx.org.name} · {range.from} → {range.to}
+          </p>
+        </header>
+        <GanttView
+          rows={spanRows}
+          staff={staff.map((s) => ({ id: s.id, name: s.full_name ?? s.email }))}
+          range={range}
+          mode={view}
+        />
+      </div>
+    );
+  }
   // WINDOW-SCOPED (F-1): the old read pulled ALL org jobs with a blind
   // 1000-row cap, so once an org crossed 1000 jobs the PostgREST cap silently
   // dropped some from the grid. fetchCalendarJobs scopes non-recurring jobs to
@@ -100,14 +167,6 @@ export default async function CalendarPage({ searchParams }: { searchParams: SP 
     staffFilter: sp.staff,
   });
   if (error) throw readFailure("jobs calendar: jobs", error);
-
-  // Build a switch-view header that preserves the active filters + anchor.
-  function viewLinkQs(target: "week" | "month"): string {
-    const params = new URLSearchParams({ d: anchorIso, view: target });
-    if (sp.status) params.set("status", sp.status);
-    if (sp.staff) params.set("staff", sp.staff);
-    return params.toString();
-  }
 
   if (view === "month") {
     // Expand recurring + flatten into CalendarJob[] for the month grid.
@@ -155,8 +214,10 @@ export default async function CalendarPage({ searchParams }: { searchParams: SP 
     return (
       <div className="space-y-4">
         <ViewToggle
-          weekHref={`/jobs/calendar?${viewLinkQs("week")}`}
-          monthHref={`/jobs/calendar?${viewLinkQs("month")}`}
+          weekHref={`/jobs/calendar?${tlLinkQs("week")}`}
+          monthHref={`/jobs/calendar?${tlLinkQs("month")}`}
+          ganttHref={`/jobs/calendar?${tlLinkQs("gantt")}`}
+          resourceHref={`/jobs/calendar?${tlLinkQs("resource")}`}
           active="month"
           orgName={ctx.org.name}
         />
@@ -173,8 +234,10 @@ export default async function CalendarPage({ searchParams }: { searchParams: SP 
   return (
     <div className="space-y-4">
       <ViewToggle
-        weekHref={`/jobs/calendar?${viewLinkQs("week")}`}
-        monthHref={`/jobs/calendar?${viewLinkQs("month")}`}
+        weekHref={`/jobs/calendar?${tlLinkQs("week")}`}
+        monthHref={`/jobs/calendar?${tlLinkQs("month")}`}
+        ganttHref={`/jobs/calendar?${tlLinkQs("gantt")}`}
+        resourceHref={`/jobs/calendar?${tlLinkQs("resource")}`}
         active="week"
         orgName={ctx.org.name}
       />
@@ -197,38 +260,40 @@ export default async function CalendarPage({ searchParams }: { searchParams: SP 
 function ViewToggle({
   weekHref,
   monthHref,
+  ganttHref,
+  resourceHref,
   active,
 }: {
   weekHref: string;
   monthHref: string;
-  active: "week" | "month";
+  ganttHref: string;
+  resourceHref: string;
+  active: "week" | "month" | "gantt" | "resource";
   orgName: string;
 }) {
+  const tabs: { href: string; key: typeof active; label: string }[] = [
+    { href: weekHref, key: "week", label: "Week" },
+    { href: monthHref, key: "month", label: "Month" },
+    { href: ganttHref, key: "gantt", label: "Gantt" },
+    { href: resourceHref, key: "resource", label: "Resource" },
+  ];
   return (
     <div className="flex justify-end">
       <nav className="inline-flex overflow-hidden rounded-md border border-slate-300 bg-white text-xs">
-        <Link
-          href={weekHref}
-          aria-current={active === "week" ? "page" : undefined}
-          className={
-            active === "week"
-              ? "bg-slate-900 px-3 py-1.5 font-medium text-white"
-              : "px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
-          }
-        >
-          Week
-        </Link>
-        <Link
-          href={monthHref}
-          aria-current={active === "month" ? "page" : undefined}
-          className={
-            active === "month"
-              ? "bg-slate-900 px-3 py-1.5 font-medium text-white"
-              : "px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
-          }
-        >
-          Month
-        </Link>
+        {tabs.map((t) => (
+          <Link
+            key={t.key}
+            href={t.href}
+            aria-current={active === t.key ? "page" : undefined}
+            className={
+              active === t.key
+                ? "bg-slate-900 px-3 py-1.5 font-medium text-white"
+                : "px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+            }
+          >
+            {t.label}
+          </Link>
+        ))}
       </nav>
     </div>
   );

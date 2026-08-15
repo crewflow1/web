@@ -199,6 +199,12 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
             Calendar
           </Link>
           <Link
+            href="/jobs/templates"
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Templates
+          </Link>
+          <Link
             href="/jobs/new"
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
           >

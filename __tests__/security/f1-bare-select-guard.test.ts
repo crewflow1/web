@@ -286,8 +286,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE job's retention releases (.eq('job_id').eq('org_id')) — feeds the committed/forecast retention figure for a single job; retention is released in 1-2 tranches per job, never near 1000. (Surfaced once C66-B de-vacuumed the cast-form windowing; the read is org-pinned per C66-A's cross-org money-injection fix.)",
   "app/(app)/jobs/[id]/commercial/page.tsx:181":
     "bounded: ONE job's purchase orders (.eq('job_id')) — feeds the committed-costs tile for a single job; a job has a handful to dozens of POs, never near 1000",
-  "app/(app)/jobs/[id]/page.tsx:315":
-    "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap",
+  "app/(app)/jobs/[id]/page.tsx:317":
+    "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap. (Moved 315→317 when the P3 span column + checklist import were added above it.)",
   "app/(app)/jobs/retention-actions.ts:163":
     "bounded: ONE job's invoices (.eq('job_id')) — folded into the retention position for a single job; a job's invoices are a handful",
   "app/(app)/purchase-orders/[id]/page.tsx:149":
@@ -349,6 +349,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE plan's stages (.eq('org_id').eq('plan_id', planId)) — the stages of a single billing plan; a plan has a handful of stages, never near 1000",
   "lib/schedule/calendar-data.ts:92":
     "paged: the jobs read IS complete — .from('jobs') lives in a `scoped()` builder-closure and is paged via fetchAllRows((from,to) => scoped()…range(from,to)) at the two call sites (nonRecurring + recurring) in a SEPARATE statement, beyond the statement-scoped window. Same builder class as leads/page.tsx:51.",
+  "lib/jobs/schedule-spans.ts:62":
+    "paged: the gantt/resource jobs read IS complete — .from('jobs') lives in a `scoped()` builder-closure and is paged via fetchAllRows((from,to) => scoped()…range(from,to)) in a SEPARATE statement, beyond the statement-scoped window. Same builder class as calendar-data.ts:92.",
   "app/(app)/invoices/[id]/page.tsx:110":
     "bounded: ONE invoice's payments (.eq('invoice_id', id)) — the payment ledger for a single invoice folded into paidTotal; a single invoice has a handful of payments, never near 1000",
   "app/admin/billing/actions.ts:160":
@@ -1099,6 +1101,8 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   compliance_documents: "PAGED: fetchAllRows (daily briefing compliance)",
   delay_events: "PAGED: fetchAllRows (EOT pack + intelligence delay analysis)",
   job_milestones: "PAGED: fetchAllRows (intelligence programme + job-progress)",
+  job_templates:
+    "PAGED/BOUNDED (P3): the active-template picker (lib/jobs/template-list.ts) is fetchAllRows-paged; the /jobs/templates list (page.tsx) is an EXACT-count .range() page. Per-org admin config (a firm has a handful of templates), never a cross-tenant scan.",
   job_programme_baselines: "PAGED: fetchAllRows (intelligence + job-progress baselines)",
   job_progress_observations: "PAGED: fetchAllRows (job-progress observations)",
   site_diary_entries: "PAGED: fetchAllRows (EOT pack diary; .in(ids) paged)",
