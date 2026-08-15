@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { encryptToken } from "@/lib/integrations/token-crypto";
 
 import type { CalendarProvider } from "./oauth";
+import type { PulledEvent } from "./pull-adapter";
 
 /**
  * Calendar token + event-link STORE — the service-role (RLS-bypass) DB seam for
@@ -359,5 +360,339 @@ export async function deleteEventLinksForConnection(
     .eq("connection_id", connectionId);
   if (error) {
     throw new Error(`calendar event-link connection-wide delete failed: ${error.message}`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PULL SIDE — watch channels + pulled events (service-role, org-pinned).
+//
+// These back the INBOUND direction (20261138). Like the token columns above,
+// calendar_watch_channels.verification_token is a SECRET: encrypted before write,
+// stripped from the authenticated read surface, and only readable here under the
+// service role. Every query is org-pinned in code AND bound by the composite FK.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Collect the external event ids CrewFlow has PUSHED for one connection — the
+ * authoritative dedup set. An inbound pulled event whose id is in this set is one
+ * CrewFlow itself created, so it must not be re-imported as an external commitment.
+ * Paged under the PostgREST cap so a large push history is never silently truncated
+ * (F-1). Org + connection pinned.
+ */
+export async function listPushedExternalEventIds(
+  orgId: string,
+  connectionId: string,
+): Promise<Set<string>> {
+  const admin = createAdminClient();
+  const loose = admin as unknown as {
+    from: (t: string) => {
+      select: (c: string) => {
+        eq: (col: string, val: string) => {
+          eq: (col: string, val: string) => {
+            range: (from: number, to: number) => PromiseLike<{
+              data: { external_event_id: string }[] | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
+      };
+    };
+  };
+  const PAGE = 500;
+  const out = new Set<string>();
+  for (let from = 0; from < 500 * 1000; from += PAGE) {
+    const { data, error } = await loose
+      .from("calendar_event_links")
+      .select("external_event_id")
+      .eq("org_id", orgId)
+      .eq("connection_id", connectionId)
+      .range(from, from + PAGE - 1);
+    if (error) {
+      throw new Error(`calendar pushed-id read failed: ${error.message}`);
+    }
+    const batch = data ?? [];
+    for (const row of batch) out.add(row.external_event_id);
+    if (batch.length < PAGE) break;
+  }
+  return out;
+}
+
+export type StoredWatchChannel = {
+  id: string;
+  orgId: string;
+  connectionId: string;
+  provider: CalendarProvider;
+  channelId: string;
+  resourceId: string | null;
+  /** Ciphertext, as stored — decrypt before comparing to an inbound token. */
+  verificationToken: string | null;
+  syncToken: string | null;
+  status: string;
+  expiration: string | null;
+};
+
+type WatchRow = {
+  id: string;
+  org_id: string;
+  connection_id: string;
+  provider: string;
+  channel_id: string;
+  resource_id: string | null;
+  verification_token: string | null;
+  sync_token: string | null;
+  status: string;
+  expiration: string | null;
+};
+
+function toStoredWatch(row: WatchRow): StoredWatchChannel {
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    connectionId: row.connection_id,
+    provider: row.provider as CalendarProvider,
+    channelId: row.channel_id,
+    resourceId: row.resource_id,
+    verificationToken: row.verification_token,
+    syncToken: row.sync_token,
+    status: row.status,
+    expiration: row.expiration,
+  };
+}
+
+const WATCH_COLUMNS =
+  "id, org_id, connection_id, provider, channel_id, resource_id, verification_token, sync_token, status, expiration";
+
+/**
+ * Resolve a watch channel by its provider channel id — the UNAUTHENTICATED inbound
+ * lookup the webhook receiver uses (it has no org context; the channel id in the
+ * notification IS the tenant handle). channel_id is globally unique, so this maps
+ * to at most one org. Service-role — the only reader permitted verification_token.
+ */
+export async function findWatchChannelByChannelId(
+  channelId: string,
+): Promise<StoredWatchChannel | null> {
+  const admin = createAdminClient();
+  const loose = admin as unknown as {
+    from: (t: string) => {
+      select: (c: string) => {
+        eq: (col: string, val: string) => {
+          maybeSingle: () => PromiseLike<{
+            data: WatchRow | null;
+            error: { message: string } | null;
+          }>;
+        };
+      };
+    };
+  };
+  const { data, error } = await loose
+    .from("calendar_watch_channels")
+    .select(WATCH_COLUMNS)
+    .eq("channel_id", channelId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`calendar watch-channel lookup failed: ${error.message}`);
+  }
+  return data ? toStoredWatch(data) : null;
+}
+
+/** Read the watch channel for a connection (for incremental sync / teardown). Org + connection pinned. */
+export async function readWatchChannel(
+  orgId: string,
+  connectionId: string,
+): Promise<StoredWatchChannel | null> {
+  const admin = createAdminClient();
+  const loose = admin as unknown as {
+    from: (t: string) => {
+      select: (c: string) => {
+        eq: (col: string, val: string) => {
+          eq: (col: string, val: string) => {
+            maybeSingle: () => PromiseLike<{
+              data: WatchRow | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
+      };
+    };
+  };
+  const { data, error } = await loose
+    .from("calendar_watch_channels")
+    .select(WATCH_COLUMNS)
+    .eq("org_id", orgId)
+    .eq("connection_id", connectionId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`calendar watch-channel read failed: ${error.message}`);
+  }
+  return data ? toStoredWatch(data) : null;
+}
+
+/**
+ * Upsert a registered watch channel. The verification token is ENCRYPTED
+ * application-side before write (never plaintext) — it is the secret an inbound
+ * notification is authenticated against. Org + connection pinned; one row per
+ * connection (onConflict connection_id). Carries org_id explicitly (the composite
+ * FK binds it to the connection's org).
+ */
+export async function upsertWatchChannel(params: {
+  orgId: string;
+  connectionId: string;
+  provider: CalendarProvider;
+  channelId: string;
+  resourceId: string | null;
+  verificationToken: string;
+  expiration: string | null;
+  syncToken?: string | null;
+}): Promise<void> {
+  const admin = createAdminClient();
+  const loose = admin as unknown as {
+    from: (t: string) => {
+      upsert: (
+        row: Record<string, unknown>,
+        opts: { onConflict: string },
+      ) => PromiseLike<{ error: { message: string } | null }>;
+    };
+  };
+  const row: Record<string, unknown> = {
+    org_id: params.orgId,
+    connection_id: params.connectionId,
+    provider: params.provider,
+    channel_id: params.channelId,
+    resource_id: params.resourceId,
+    verification_token: encryptToken(params.verificationToken),
+    expiration: params.expiration,
+    status: "active",
+    updated_at: new Date().toISOString(),
+  };
+  if (params.syncToken !== undefined) row.sync_token = params.syncToken;
+  const { error } = await loose
+    .from("calendar_watch_channels")
+    .upsert(row, { onConflict: "connection_id" });
+  if (error) {
+    throw new Error(`calendar watch-channel upsert failed: ${error.message}`);
+  }
+}
+
+/**
+ * Persist the incremental sync cursor + sync outcome after a pull. Org + connection
+ * pinned. Never writes verification_token (that is registration-only).
+ */
+export async function updateWatchSyncState(
+  orgId: string,
+  connectionId: string,
+  patch: { syncToken?: string | null; status?: string; lastError?: string | null },
+): Promise<void> {
+  const admin = createAdminClient();
+  const loose = admin as unknown as {
+    from: (t: string) => {
+      update: (row: Record<string, unknown>) => {
+        eq: (col: string, val: string) => {
+          eq: (col: string, val: string) => PromiseLike<{ error: { message: string } | null }>;
+        };
+      };
+    };
+  };
+  const row: Record<string, unknown> = { last_synced_at: new Date().toISOString() };
+  if (patch.syncToken !== undefined) row.sync_token = patch.syncToken;
+  if (patch.status !== undefined) row.status = patch.status;
+  if (patch.lastError !== undefined) row.last_error = patch.lastError;
+  const { error } = await loose
+    .from("calendar_watch_channels")
+    .update(row)
+    .eq("org_id", orgId)
+    .eq("connection_id", connectionId);
+  if (error) {
+    throw new Error(`calendar watch sync-state update failed: ${error.message}`);
+  }
+}
+
+/** Stamp last_notified_at when a verified inbound notification arrives. Org + connection pinned; never throws. */
+export async function markWatchNotified(orgId: string, connectionId: string): Promise<void> {
+  const admin = createAdminClient();
+  const loose = admin as unknown as {
+    from: (t: string) => {
+      update: (row: Record<string, unknown>) => {
+        eq: (col: string, val: string) => {
+          eq: (col: string, val: string) => PromiseLike<{ error: { message: string } | null }>;
+        };
+      };
+    };
+  };
+  const { error } = await loose
+    .from("calendar_watch_channels")
+    .update({ last_notified_at: new Date().toISOString() })
+    .eq("org_id", orgId)
+    .eq("connection_id", connectionId);
+  if (error) {
+    console.error("[calendar] failed to stamp watch notification", { message: error.message });
+  }
+}
+
+/** Delete the watch channel row after the provider channel is stopped. Org + connection pinned; idempotent. */
+export async function deleteWatchChannel(orgId: string, connectionId: string): Promise<void> {
+  const admin = createAdminClient();
+  const loose = admin as unknown as {
+    from: (t: string) => {
+      delete: () => {
+        eq: (col: string, val: string) => {
+          eq: (col: string, val: string) => PromiseLike<{ error: { message: string } | null }>;
+        };
+      };
+    };
+  };
+  const { error } = await loose
+    .from("calendar_watch_channels")
+    .delete()
+    .eq("org_id", orgId)
+    .eq("connection_id", connectionId);
+  if (error) {
+    throw new Error(`calendar watch-channel delete failed: ${error.message}`);
+  }
+}
+
+/**
+ * Upsert a batch of normalised pulled events, org + connection pinned, one row per
+ * (connection, external event) so a re-pull UPDATES rather than duplicates. Carries
+ * org_id explicitly on every row (the composite FK binds it to the connection's org).
+ * `isCrewflowOrigin` is the caller's final dedup decision (stored-id OR body-marker).
+ */
+export async function upsertPulledEvents(
+  orgId: string,
+  connectionId: string,
+  events: Array<PulledEvent & { isCrewflowOrigin: boolean }>,
+): Promise<void> {
+  if (events.length === 0) return;
+  const admin = createAdminClient();
+  const loose = admin as unknown as {
+    from: (t: string) => {
+      upsert: (
+        rows: Record<string, unknown>[],
+        opts: { onConflict: string },
+      ) => PromiseLike<{ error: { message: string } | null }>;
+    };
+  };
+  const now = new Date().toISOString();
+  const rows = events.map((e) => ({
+    org_id: orgId,
+    connection_id: connectionId,
+    external_event_id: e.externalEventId,
+    ical_uid: e.icalUid,
+    summary: e.summary,
+    location: e.location,
+    starts_at: e.startsAt,
+    ends_at: e.endsAt,
+    is_all_day: e.isAllDay,
+    status: e.status,
+    is_busy: e.isBusy,
+    is_crewflow_origin: e.isCrewflowOrigin,
+    etag: e.etag,
+    provider_updated_at: e.providerUpdatedAt,
+    updated_at: now,
+  }));
+  const { error } = await loose
+    .from("calendar_pulled_events")
+    .upsert(rows, { onConflict: "connection_id,external_event_id" });
+  if (error) {
+    throw new Error(`calendar pulled-events upsert failed: ${error.message}`);
   }
 }

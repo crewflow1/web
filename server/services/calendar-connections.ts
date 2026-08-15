@@ -49,8 +49,11 @@ import {
  * without provider client credentials + FEATURE_CALENDAR_CONNECT.
  * `pushJobToCalendar` composes the local entity → event mapping with the
  * (credential-gated) adapter and returns `skipped_dark` when no live provider is
- * reachable. Two-way pull / webhook watch channels are a documented follow-up and
- * are deliberately NOT built here.
+ * reachable. The INBOUND half — two-way pull / free-busy / provider webhook watch
+ * channels + the receiving route — is built (DARK, same gating) in the sibling
+ * composer server/services/calendar-pull.ts (adapters: lib/integrations/calendar/
+ * pull-adapter.ts + watch-adapter.ts; tables: migration 20261138). This module
+ * remains the OUTBOUND (push) half.
  */
 
 export type CalendarConnection = {
