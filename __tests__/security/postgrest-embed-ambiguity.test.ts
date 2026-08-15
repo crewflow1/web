@@ -183,6 +183,14 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   "asset_inspections → users",
   "asset_maintenance_cases → users",
   "asset_qr_identities → users",
+  // Custom automation rules (20261133): created_by + updated_by both → users.
+  // Reviewed 2026-08-15: the only readers are server/services/automation-custom-
+  // rules.ts (selects scalar columns via RULE_COLS — "id, org_id, name,
+  // description, trigger_event, definition, enabled, created_by, updated_by, ..."
+  // — no users(...) embed) and the settings page, which renders those scalars.
+  // Two FKs are inherent to the audit trail (who created vs who last edited the
+  // rule); collapsing them would lose that. Any future embed must name its FK.
+  "automation_custom_rules → users",
   "blueprint_markup → users",
   "blueprints → users",
   "cis_bill_details → users",

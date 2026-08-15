@@ -12,6 +12,14 @@ import {
   deleteSchedule,
   setScheduleEnabled,
 } from "@/server/services/automation-schedules";
+import {
+  createCustomRule,
+  updateCustomRule,
+  setCustomRuleEnabled,
+  deleteCustomRule,
+  decideApproval,
+  type AutomationCustomRuleClient,
+} from "@/server/services/automation-custom-rules";
 import { isValidCron } from "@/lib/automation/cron";
 
 /**
@@ -208,4 +216,255 @@ export async function removeAutomationSchedule(formData: FormData): Promise<void
 
   revalidatePath("/settings/automations");
   redirect("/settings/automations?saved=schedule_deleted");
+}
+
+// ── Custom rules (the no-code builder) ────────────────────────────────────────
+//
+// Same doubled authorisation as the toggles above: the role check redirects the
+// operator; the automation_custom_rules / automation_approvals admin-write RLS
+// policies are the REAL boundary, and the tenant client carries the user's JWT so
+// those policies apply. The DEFINITION is validated in the service via
+// validateCustomRuleDefinition — the injection chokepoint — before any persist.
+// Route depth is 2, so a plain redirect() is safe (not the deep-swap ≥4 trap).
+
+const createCustomRuleSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(500).optional().default(""),
+  definition: z.string().min(1).max(20_000),
+});
+const editCustomRuleSchema = createCustomRuleSchema.extend({
+  rule_id: z.string().uuid(),
+});
+const ruleIdSchema = z.object({ rule_id: z.string().uuid() });
+const toggleCustomRuleSchema = z.object({
+  rule_id: z.string().uuid(),
+  enabled: z.enum(["true", "false"]),
+});
+const decideApprovalSchema = z.object({
+  approval_id: z.string().uuid(),
+  decision: z.enum(["approve", "reject"]),
+  note: z.string().trim().max(500).optional().default(""),
+});
+
+/** Parse the builder's JSON payload safely — a malformed string is a validation
+ *  error, never an exception that 500s the action. */
+function parseDefinitionJson(raw: string): unknown | null {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function customClient(supabase: unknown): AutomationCustomRuleClient {
+  return supabase as unknown as AutomationCustomRuleClient;
+}
+
+export async function createCustomRuleAction(formData: FormData): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  if (!isManager(ctx.membership.role)) {
+    redirect("/settings/automations?error=forbidden");
+  }
+  const parsed = createCustomRuleSchema.safeParse({
+    name: formData.get("name") ?? "",
+    description: formData.get("description") ?? "",
+    definition: formData.get("definition") ?? "",
+  });
+  if (!parsed.success) {
+    redirect("/settings/automations?error=custom_validation");
+  }
+  const definition = parseDefinitionJson(parsed.data.definition);
+  if (definition === null) {
+    redirect("/settings/automations?error=custom_validation");
+  }
+
+  const supabase = await createClient();
+  let newId = "";
+  try {
+    newId = await createCustomRule(
+      customClient(supabase),
+      ctx.org.id,
+      {
+        name: parsed.data.name,
+        description: parsed.data.description || null,
+        definition,
+      },
+      user.id,
+    );
+  } catch (e) {
+    console.error("[settings/automations] custom rule create failed", e);
+    redirect("/settings/automations?error=custom_save_failed");
+  }
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "automation_custom_rule.created",
+    targetTable: "automation_custom_rules",
+    targetId: newId,
+    metadata: { name: parsed.data.name },
+  });
+
+  revalidatePath("/settings/automations");
+  redirect("/settings/automations?saved=custom_rule");
+}
+
+export async function updateCustomRuleAction(formData: FormData): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  if (!isManager(ctx.membership.role)) {
+    redirect("/settings/automations?error=forbidden");
+  }
+  const parsed = editCustomRuleSchema.safeParse({
+    rule_id: formData.get("rule_id") ?? "",
+    name: formData.get("name") ?? "",
+    description: formData.get("description") ?? "",
+    definition: formData.get("definition") ?? "",
+  });
+  if (!parsed.success) {
+    redirect("/settings/automations?error=custom_validation");
+  }
+  const definition = parseDefinitionJson(parsed.data.definition);
+  if (definition === null) {
+    redirect("/settings/automations?error=custom_validation");
+  }
+
+  const supabase = await createClient();
+  try {
+    await updateCustomRule(
+      customClient(supabase),
+      ctx.org.id,
+      parsed.data.rule_id,
+      {
+        name: parsed.data.name,
+        description: parsed.data.description || null,
+        definition,
+      },
+      user.id,
+    );
+  } catch (e) {
+    console.error("[settings/automations] custom rule update failed", e);
+    redirect("/settings/automations?error=custom_save_failed");
+  }
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "automation_custom_rule.updated",
+    targetTable: "automation_custom_rules",
+    targetId: parsed.data.rule_id,
+    metadata: { name: parsed.data.name },
+  });
+
+  revalidatePath("/settings/automations");
+  redirect("/settings/automations?saved=custom_rule");
+}
+
+export async function toggleCustomRuleAction(formData: FormData): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  if (!isManager(ctx.membership.role)) {
+    redirect("/settings/automations?error=forbidden");
+  }
+  const parsed = toggleCustomRuleSchema.safeParse({
+    rule_id: formData.get("rule_id") ?? "",
+    enabled: formData.get("enabled") ?? "",
+  });
+  if (!parsed.success) {
+    redirect("/settings/automations?error=custom_validation");
+  }
+  const enabled = parsed.data.enabled === "true";
+  const supabase = await createClient();
+  try {
+    await setCustomRuleEnabled(
+      customClient(supabase),
+      ctx.org.id,
+      parsed.data.rule_id,
+      enabled,
+    );
+  } catch (e) {
+    console.error("[settings/automations] custom rule toggle failed", e);
+    redirect("/settings/automations?error=custom_save_failed");
+  }
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "automation_custom_rule.toggled",
+    targetTable: "automation_custom_rules",
+    targetId: parsed.data.rule_id,
+    metadata: { enabled },
+  });
+
+  revalidatePath("/settings/automations");
+  redirect("/settings/automations?saved=custom_rule");
+}
+
+export async function deleteCustomRuleAction(formData: FormData): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  if (!isManager(ctx.membership.role)) {
+    redirect("/settings/automations?error=forbidden");
+  }
+  const parsed = ruleIdSchema.safeParse({ rule_id: formData.get("rule_id") ?? "" });
+  if (!parsed.success) {
+    redirect("/settings/automations?error=custom_validation");
+  }
+  const supabase = await createClient();
+  try {
+    await deleteCustomRule(customClient(supabase), ctx.org.id, parsed.data.rule_id);
+  } catch (e) {
+    console.error("[settings/automations] custom rule delete failed", e);
+    redirect("/settings/automations?error=custom_save_failed");
+  }
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "automation_custom_rule.deleted",
+    targetTable: "automation_custom_rules",
+    targetId: parsed.data.rule_id,
+    metadata: {},
+  });
+
+  revalidatePath("/settings/automations");
+  redirect("/settings/automations?saved=custom_rule_deleted");
+}
+
+export async function decideApprovalAction(formData: FormData): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  if (!isManager(ctx.membership.role)) {
+    redirect("/settings/automations?error=forbidden");
+  }
+  const parsed = decideApprovalSchema.safeParse({
+    approval_id: formData.get("approval_id") ?? "",
+    decision: formData.get("decision") ?? "",
+    note: formData.get("note") ?? "",
+  });
+  if (!parsed.success) {
+    redirect("/settings/automations?error=custom_validation");
+  }
+  const supabase = await createClient();
+  try {
+    await decideApproval(
+      customClient(supabase),
+      ctx.org.id,
+      parsed.data.approval_id,
+      user.id,
+      parsed.data.decision,
+      parsed.data.note || null,
+    );
+  } catch (e) {
+    console.error("[settings/automations] approval decision failed", e);
+    redirect("/settings/automations?error=approval_failed");
+  }
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: `automation_approval.${parsed.data.decision}`,
+    targetTable: "automation_approvals",
+    targetId: parsed.data.approval_id,
+    metadata: {},
+  });
+
+  revalidatePath("/settings/automations");
+  redirect("/settings/automations?saved=approval");
 }

@@ -166,8 +166,11 @@ describe("Phase 4 — built-in rules", () => {
 
 describe("Phase 4 — dispatchAutomation", () => {
   it("checks (rule_id, correlation_id) before running — idempotency", () => {
+    // The claim/finish helpers now take a `ruleId` string (catalogue passes
+    // rule.id, custom rules pass `custom:<id>`), so the pin reads `ruleId` —
+    // the (rule_id, correlation_id) idempotency invariant is unchanged.
     expect(DISPATCHER).toMatch(
-      /\.eq\("rule_id", rule\.id\)[\s\S]*\.eq\("correlation_id", correlationId\)/,
+      /\.eq\("rule_id", ruleId\)[\s\S]*\.eq\("correlation_id", correlationId\)/,
     );
     expect(DISPATCHER).toMatch(/status: "skipped"/);
   });

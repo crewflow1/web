@@ -1079,6 +1079,10 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   // ---- PAGED (always fetchAllRows) ----
   accounting_pushed_entities: "PAGED: fetchAllRows (accounting-export ledger reconcile read)",
   activity_log: "PAGED: fetchAllRows on every read (activity feed, dashboard tile, AI aggregates)",
+  automation_approvals:
+    "PER-ORG/PAGED: the only set-read is listPendingApprovals (server/services/automation-custom-rules.ts) — .eq('org_id').eq('status','pending') F-1 paged via .range on a stable (created_at desc, id asc) order (CUSTOM_RULE_PAGE_SIZE window). The decideApproval reads are an .update(...).select() RETURNING (id-filtered, ≤1 row); the rest are inserts/updates.",
+  automation_custom_rules:
+    "PER-ORG config-scale/PAGED: listCustomRulesForOrg (server/services/automation-custom-rules.ts) is .eq('org_id') F-1 paged via .range on a stable (created_at desc, id asc) order; the dispatcher's loadEnabledCustomRulesForDispatch is .eq('org_id').eq('trigger_event').eq('enabled') .limit(500) (config-scale, far under the clamp); getCustomRule is .maybeSingle(). Never summed cross-tenant.",
   asset_fuel_logs: "PAGED: fetchAllRows (fleet fuel rollup)",
   bank_statements: "PAGED: fetchAllRows (payments page statements list)",
   briefing_dismissals: "PAGED: fetchAllRows (daily briefing)",
