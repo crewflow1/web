@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createJob } from "../actions";
 import { listCustomersForOrg, listStaffForOrg } from "../_form-helpers";
+import { listActiveJobTemplates } from "@/lib/jobs/template-list";
 import { JobForm } from "../_form";
 import { requireOrgContext } from "@/server/auth/session";
 
@@ -15,9 +16,10 @@ import { requireOrgContext } from "@/server/auth/session";
  */
 export default async function NewJobPage() {
   const { ctx } = await requireOrgContext();
-  const [customers, staff] = await Promise.all([
+  const [customers, staff, templates] = await Promise.all([
     listCustomersForOrg(ctx.org.id),
     listStaffForOrg(ctx.org.id),
+    listActiveJobTemplates(ctx.org.id),
   ]);
 
   return (
@@ -40,6 +42,7 @@ export default async function NewJobPage() {
         cancelHref="/jobs"
         customers={customers}
         staff={staff}
+        templates={templates}
       />
     </div>
   );

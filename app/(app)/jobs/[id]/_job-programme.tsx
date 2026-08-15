@@ -6,6 +6,8 @@ import { Field } from "@/components/forms/Field";
 import { formatDateShortUK } from "@/lib/time/format";
 import { readWeight, WEIGHT_SUM_TOLERANCE } from "@/lib/job-programme/planned";
 import { setJobProgramme } from "./programme-actions";
+import { setMilestoneDependencies } from "./dependency-actions";
+import { computeCriticalPath, type CpmNode } from "@/lib/jobs/critical-path";
 
 /**
  * Job Programme panel — the planned window, its milestones, and the way to
@@ -52,6 +54,11 @@ type MilestoneRow = {
   weight: number | string | null;
   customer_visible: boolean;
   sort: number;
+};
+
+type DependencyRow = {
+  milestone_id: string;
+  depends_on_milestone_id: string;
 };
 
 export async function JobProgrammeSection({ jobId }: { jobId: string }) {
@@ -124,6 +131,33 @@ export async function JobProgrammeSection({ jobId }: { jobId: string }) {
     }
     milestones = (msRes.data ?? []) as MilestoneRow[];
   }
+
+  // Dependency edges for this baseline + the derived critical path. Best-effort:
+  // a read failure degrades to "no dependencies" (the milestones still render),
+  // never a broken panel — the edges are an enhancement over the flat list.
+  let dependencies: DependencyRow[] = [];
+  if (baseline && milestones.length > 0) {
+    const depRes = await tbl(supabase)("job_milestone_dependencies")
+      .select("milestone_id, depends_on_milestone_id")
+      .eq("org_id", ctx.org.id)
+      .eq("baseline_id", baseline.id);
+    if (!depRes.error) {
+      dependencies = (depRes.data ?? []) as DependencyRow[];
+    }
+  }
+
+  const cpm = computeCriticalPath(
+    milestones.map((m) => ({
+      id: m.id,
+      planned_start: m.planned_start,
+      planned_end: m.planned_end,
+      sort: m.sort,
+    })),
+    dependencies,
+  );
+  const cpmById = new Map<string, CpmNode>(cpm.nodes.map((n) => [n.id, n]));
+  const titleById = new Map<string, string>(milestones.map((m) => [m.id, m.title]));
+  const hasDeps = dependencies.length > 0;
 
   // Weight status, computed with the SAME reader the planned line uses so the
   // sentence below and the chart above can never disagree.
@@ -200,34 +234,81 @@ export async function JobProgrammeSection({ jobId }: { jobId: string }) {
           ) : null}
 
           {milestones.length > 0 ? (
-            <ul className="mt-4 divide-y divide-slate-100 border-t border-slate-100">
-              {milestones.map((m) => (
-                <li
-                  key={m.id}
-                  className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-2"
-                >
-                  <span className="min-w-0 flex-1 truncate text-sm text-slate-800">
-                    {m.title}
+            <>
+              {hasDeps && !cpm.cyclic ? (
+                <p className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-xs text-indigo-900">
+                  <span className="font-semibold">Critical path.</span>{" "}
+                  {cpm.criticalPath.length > 0
+                    ? cpm.criticalPath
+                        .map((id) => titleById.get(id) ?? "—")
+                        .join(" → ")
+                    : "No milestones are on the critical path yet."}{" "}
+                  <span className="text-indigo-700">
+                    ({cpm.projectDurationDays} day
+                    {cpm.projectDurationDays === 1 ? "" : "s"} across{" "}
+                    {dependencies.length} link
+                    {dependencies.length === 1 ? "" : "s"})
                   </span>
-                  <span className="text-xs tabular-nums text-slate-600">
-                    {m.planned_start
-                      ? `${formatDateShortUK(m.planned_start)} → `
-                      : "by "}
-                    {formatDateShortUK(m.planned_end)}
-                  </span>
-                  {readWeight(m.weight) !== null ? (
-                    <span className="text-xs tabular-nums text-slate-500">
-                      {readWeight(m.weight)}%
-                    </span>
-                  ) : null}
-                  {m.customer_visible ? (
-                    <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-medium text-sky-800">
-                      Customer sees this
-                    </span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
+                </p>
+              ) : null}
+              {hasDeps && cpm.cyclic ? (
+                <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+                  These dependencies form a loop, so no critical path can be
+                  drawn. Edit the links below to break the cycle.
+                </p>
+              ) : null}
+              <ul className="mt-4 divide-y divide-slate-100 border-t border-slate-100">
+                {milestones.map((m) => {
+                  const node = cpmById.get(m.id);
+                  const critical = !cpm.cyclic && node?.isCritical && hasDeps;
+                  const float = node && !cpm.cyclic ? node.totalFloat : null;
+                  return (
+                    <li
+                      key={m.id}
+                      className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-2"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-sm text-slate-800">
+                        {m.title}
+                      </span>
+                      <span className="text-xs tabular-nums text-slate-600">
+                        {m.planned_start
+                          ? `${formatDateShortUK(m.planned_start)} → `
+                          : "by "}
+                        {formatDateShortUK(m.planned_end)}
+                      </span>
+                      {readWeight(m.weight) !== null ? (
+                        <span className="text-xs tabular-nums text-slate-500">
+                          {readWeight(m.weight)}%
+                        </span>
+                      ) : null}
+                      {critical ? (
+                        <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-800">
+                          Critical
+                        </span>
+                      ) : hasDeps && !cpm.cyclic && float !== null ? (
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                          {float}d float
+                        </span>
+                      ) : null}
+                      {m.customer_visible ? (
+                        <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-medium text-sky-800">
+                          Customer sees this
+                        </span>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          ) : null}
+
+          {isAdmin && milestones.length >= 2 ? (
+            <MilestoneDependencyEditor
+              jobId={jobId}
+              baselineId={baseline.id}
+              milestones={milestones}
+              dependencies={dependencies}
+            />
           ) : null}
         </>
       ) : (
@@ -368,5 +449,84 @@ export async function JobProgrammeSection({ jobId }: { jobId: string }) {
         </StateForm>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * Dependency editor — for each milestone, tick the milestones that must finish
+ * before it starts. Submits the whole edge set; the RPC re-validates and refuses
+ * a cycle. Admin-only (the presentational gate; the DB is the real one). Kept
+ * compact: a full matrix would overwhelm, so each successor lists the OTHER
+ * milestones as candidate predecessors.
+ */
+function MilestoneDependencyEditor({
+  jobId,
+  baselineId,
+  milestones,
+  dependencies,
+}: {
+  jobId: string;
+  baselineId: string;
+  milestones: MilestoneRow[];
+  dependencies: DependencyRow[];
+}) {
+  const preds = new Map<string, Set<string>>();
+  for (const d of dependencies) {
+    if (!preds.has(d.milestone_id)) preds.set(d.milestone_id, new Set());
+    preds.get(d.milestone_id)!.add(d.depends_on_milestone_id);
+  }
+  const milestoneIds = milestones.map((m) => m.id).join(",");
+
+  return (
+    <details className="mt-5 rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+      <summary className="cursor-pointer text-sm font-medium text-slate-700">
+        Milestone dependencies &amp; critical path
+      </summary>
+      <p className="mt-2 text-xs text-slate-500">
+        Tick what each milestone waits on. The critical path (and each
+        milestone&apos;s float) is derived from these links — a loop is refused.
+      </p>
+      <StateForm
+        action={setMilestoneDependencies.bind(null, jobId, baselineId)}
+        className="mt-3 space-y-3"
+      >
+        <input type="hidden" name="milestone_ids" value={milestoneIds} />
+        <div className="space-y-3">
+          {milestones.map((m) => {
+            const chosen = preds.get(m.id) ?? new Set<string>();
+            const candidates = milestones.filter((o) => o.id !== m.id);
+            return (
+              <div key={m.id} className="rounded-lg border border-slate-200 bg-white p-3">
+                <p className="text-sm font-medium text-slate-800">{m.title}</p>
+                <p className="mt-0.5 text-[11px] text-slate-500">must wait for:</p>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5">
+                  {candidates.map((o) => (
+                    <label
+                      key={o.id}
+                      className="flex items-center gap-1.5 text-xs text-slate-600"
+                    >
+                      <input
+                        type="checkbox"
+                        name={`deps_${m.id}`}
+                        value={o.id}
+                        defaultChecked={chosen.has(o.id)}
+                        className="h-3.5 w-3.5 rounded border-slate-300"
+                      />
+                      {o.title}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <button
+          type="submit"
+          className="h-9 rounded-lg bg-slate-900 px-4 text-sm font-medium text-white hover:bg-slate-800"
+        >
+          Save dependencies
+        </button>
+      </StateForm>
+    </details>
   );
 }

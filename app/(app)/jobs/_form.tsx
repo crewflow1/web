@@ -33,6 +33,7 @@ export function JobForm({
   customers,
   staff,
   defaults,
+  templates,
 }: {
   action: JobAction;
   submitLabel: string;
@@ -40,6 +41,8 @@ export function JobForm({
   customers: { id: string; name: string }[];
   staff: { id: string; full_name: string | null; email: string }[];
   defaults?: Partial<Record<string, string | null | undefined>>;
+  /** Job templates offered on CREATE only (clone milestones + a checklist). */
+  templates?: { id: string; name: string; job_type: string | null }[];
 }) {
   const [state, formAction, pending] = useActionState(
     action,
@@ -143,14 +146,41 @@ export function JobForm({
           { value: "blocked", label: "Blocked" },
         ]}
       />
-      <Field
-        name="scheduled_date"
-        label="Scheduled date"
-        type="date"
-        optional
-        defaultValue={pick("scheduled_date")}
-        error={fe.scheduled_date}
-      />
+      {templates && templates.length > 0 ? (
+        <SelectField
+          name="template_id"
+          label="Start from a template"
+          defaultValue={pick("template_id")}
+          error={fe.template_id}
+          options={[
+            { value: "", label: "— Blank job —" },
+            ...templates.map((t) => ({
+              value: t.id,
+              label: t.job_type ? `${t.name} (${t.job_type})` : t.name,
+            })),
+          ]}
+          help="Pre-loads a checklist, and (for admins, with a scheduled date) a programme baseline."
+        />
+      ) : null}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field
+          name="scheduled_date"
+          label="Scheduled date"
+          type="date"
+          optional
+          defaultValue={pick("scheduled_date")}
+          error={fe.scheduled_date}
+        />
+        <Field
+          name="scheduled_end_date"
+          label="End date"
+          type="date"
+          optional
+          defaultValue={pick("scheduled_end_date")}
+          error={fe.scheduled_end_date}
+          help="Optional — for a job that spans several days."
+        />
+      </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <SelectField
           name="recurring_pattern"
