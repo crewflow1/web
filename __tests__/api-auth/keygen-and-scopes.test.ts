@@ -101,7 +101,7 @@ describe("hashApiKey — stability", () => {
 });
 
 describe("SCOPES registry — the drift guard", () => {
-  it("v1 defines EXACTLY the per-resource read scopes — growing this list is a reviewed decision", () => {
+  it("v1 defines EXACTLY the per-resource read + write scopes — growing this list is a reviewed decision", () => {
     // Deep-equal, not contains: adding, renaming or removing a scope must
     // fail here and be changed consciously, together with its enforcement.
     expect([...SCOPES]).toEqual([
@@ -109,6 +109,10 @@ describe("SCOPES registry — the drift guard", () => {
       "read:customers",
       "read:invoices",
       "read:quotes",
+      "write:customers",
+      "write:leads",
+      "write:jobs",
+      "write:quotes",
     ]);
   });
 
@@ -132,8 +136,8 @@ describe("validateScopes", () => {
   });
 
   it("refuses unknown scopes and names them", () => {
-    const r = validateScopes(["read:jobs", "write:jobs", "admin:*"]);
-    expect(r).toEqual({ ok: false, invalid: ["write:jobs", "admin:*"] });
+    const r = validateScopes(["read:jobs", "delete:jobs", "admin:*"]);
+    expect(r).toEqual({ ok: false, invalid: ["delete:jobs", "admin:*"] });
   });
 
   it("refuses the empty set — a key with no scopes is a creation mistake", () => {

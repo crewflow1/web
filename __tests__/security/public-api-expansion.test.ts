@@ -46,6 +46,12 @@ type Resource = {
   columns: string[];
   /** Field names that must NEVER appear in the projection. */
   forbidden: string[];
+  /**
+   * Write verbs this COLLECTION route file is expected to export, and the write
+   * scope they gate on. Empty ⇒ the resource is read-only on this route.
+   */
+  writeVerbs: string[];
+  writeScope?: string;
 };
 
 const RESOURCES: Resource[] = [
@@ -57,6 +63,8 @@ const RESOURCES: Resource[] = [
     columnsConst: "CUSTOMER_DTO_COLUMNS",
     toDtoFn: "toPublicCustomerDto",
     selectConst: "CUSTOMER_DTO_SELECT",
+    writeVerbs: ["POST"],
+    writeScope: "write:customers",
     columns: ["id", "name", "city", "county", "postcode", "country", "created_at", "updated_at"],
     forbidden: [
       "email",
@@ -78,6 +86,7 @@ const RESOURCES: Resource[] = [
     columnsConst: "INVOICE_DTO_COLUMNS",
     toDtoFn: "toPublicInvoiceDto",
     selectConst: "INVOICE_DTO_SELECT",
+    writeVerbs: [],
     columns: [
       "id",
       "number",
@@ -101,6 +110,8 @@ const RESOURCES: Resource[] = [
     columnsConst: "QUOTE_DTO_COLUMNS",
     toDtoFn: "toPublicQuoteDto",
     selectConst: "QUOTE_DTO_SELECT",
+    writeVerbs: ["POST"],
+    writeScope: "write:quotes",
     columns: [
       "id",
       "number",
@@ -190,12 +201,33 @@ describe.each(RESOURCES)("public $name read — dark, org-pinned, read-only, all
     );
   });
 
-  it("is a GET-only surface — no write verb is exported", () => {
+  it("exports exactly the expected verbs — no unexpected write verb leaks in", () => {
     for (const verb of ["POST", "PUT", "PATCH", "DELETE"]) {
-      expect(ROUTE, `${r.name} exports ${verb}`).not.toMatch(
-        new RegExp(`export (async )?function ${verb}\\b`),
+      const exported = new RegExp(`export (async )?function ${verb}\\b`).test(
+        ROUTE,
       );
+      if (r.writeVerbs.includes(verb)) {
+        expect(exported, `${r.name} should export ${verb}`).toBe(true);
+      } else {
+        expect(exported, `${r.name} must not export ${verb}`).toBe(false);
+      }
     }
+  });
+
+  it("any write verb gates on the resource's DISTINCT write scope (not its read scope)", () => {
+    if (r.writeVerbs.length === 0) {
+      // A read-only route must never reference a write scope at all.
+      expect(ROUTE).not.toMatch(/write:/);
+      return;
+    }
+    expect(r.writeScope).toBeTruthy();
+    expect(ROUTE).toMatch(
+      new RegExp(`guardPublicApiRequest\\(request, "${r.writeScope}"\\)`),
+    );
+    // The write must pin org_id to the key's org, never a client value.
+    expect(ROUTE).toMatch(/org_id: guard\.key\.orgId/);
+    // A body must be strictly validated through the shared parser.
+    expect(ROUTE).toMatch(/parseJsonBody\(request,/);
   });
 
   it("pins the read to key.orgId and never selects '*' nor reads org from the query", () => {

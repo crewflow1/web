@@ -2,6 +2,8 @@ import { JOB_DTO_COLUMNS } from "@/lib/public-api/jobs";
 import { CUSTOMER_DTO_COLUMNS } from "@/lib/public-api/customers";
 import { INVOICE_DTO_COLUMNS } from "@/lib/public-api/invoices";
 import { QUOTE_DTO_COLUMNS } from "@/lib/public-api/quotes";
+import { LEAD_DTO_COLUMNS } from "@/lib/public-api/leads";
+import { SCOPE_LABELS } from "@/lib/api-auth/scopes";
 
 /**
  * The static OpenAPI 3.1 document for CrewFlow's public read API (v1).
@@ -80,6 +82,18 @@ const QUOTE_FIELD_TYPES: Record<string, SchemaType> = {
   updated_at: "string",
 };
 
+const LEAD_FIELD_TYPES: Record<string, SchemaType> = {
+  id: "string",
+  source: "string",
+  service: "string",
+  status: "string",
+  urgency: "string",
+  estimated_value: "number",
+  postcode: "string",
+  created_at: "string",
+  updated_at: "string",
+};
+
 /** Build an object schema from an ordered column list + its type map. */
 function objectSchema(
   columns: readonly string[],
@@ -152,6 +166,169 @@ function listOperation(
   };
 }
 
+/**
+ * A create/update operation description, gated by a write scope with a JSON
+ * request body ($ref to an input schema). The shared 4xx responses mirror the
+ * write surface's coded envelopes.
+ */
+function writeOperation(opts: {
+  tag: string;
+  summary: string;
+  scope: string;
+  bodyRef: string;
+  resultRef: string;
+  /** 201 for a create, 200 for an update. */
+  successStatus: "200" | "201";
+  /** Path-param present ⇒ this is an item operation (adds a 404). */
+  hasIdParam?: boolean;
+}): Record<string, unknown> {
+  const responses: Record<string, unknown> = {
+    [opts.successStatus]: {
+      description:
+        opts.successStatus === "201" ? "Created." : "Updated.",
+      content: {
+        "application/json": {
+          schema: {
+            type: "object",
+            properties: { data: { $ref: opts.resultRef } },
+          },
+        },
+      },
+    },
+    "400": { description: "Malformed JSON or non-object body." },
+    "401": { description: "Missing, malformed, unknown, revoked or expired API key." },
+    "403": { description: "The key lacks the required write scope." },
+    "413": { description: "Request body exceeds the size limit." },
+    "415": { description: "Content-Type must be application/json." },
+    "422": { description: "Validation failed (per-field messages in field_errors) or a referenced id is not in your organisation." },
+    "429": { description: "Rate limit exceeded (120 requests/minute per key)." },
+  };
+  if (opts.hasIdParam) {
+    responses["404"] = { description: "No such record in this organisation." };
+  }
+  return {
+    tags: [opts.tag],
+    summary: opts.summary,
+    security: [{ apiKey: [opts.scope] }],
+    ...(opts.hasIdParam
+      ? {
+          parameters: [
+            { name: "id", in: "path", required: true, schema: { type: "string" } },
+          ],
+        }
+      : {}),
+    requestBody: {
+      required: true,
+      content: { "application/json": { schema: { $ref: opts.bodyRef } } },
+    },
+    responses,
+  };
+}
+
+// --- write-input (request body) schemas: descriptive, hand-authored ----------
+
+const CustomerWriteInput: Record<string, unknown> = {
+  type: "object",
+  required: ["name"],
+  additionalProperties: false,
+  properties: {
+    name: { type: "string", maxLength: 200 },
+    email: { type: "string", format: "email", maxLength: 254 },
+    phone: { type: "string", maxLength: 50 },
+    address_line1: { type: "string", maxLength: 200 },
+    address_line2: { type: "string", maxLength: 200 },
+    city: { type: "string", maxLength: 120 },
+    county: { type: "string", maxLength: 120 },
+    postcode: { type: "string", maxLength: 20 },
+    country: { type: "string", maxLength: 100 },
+    notes: { type: "string", maxLength: 5000 },
+  },
+};
+
+const CustomerUpdateInput: Record<string, unknown> = {
+  ...CustomerWriteInput,
+  required: [],
+  description: "At least one field must be provided. Omitted fields are left unchanged.",
+};
+
+const LeadWriteInput: Record<string, unknown> = {
+  type: "object",
+  required: ["contact_name", "source"],
+  additionalProperties: false,
+  description: "At least one of contact_email or contact_phone is required.",
+  properties: {
+    contact_name: { type: "string", maxLength: 200 },
+    contact_email: { type: "string", format: "email", maxLength: 254 },
+    contact_phone: { type: "string", maxLength: 50 },
+    source: {
+      type: "string",
+      enum: ["phone", "web", "referral", "walk_in", "social", "repeat", "portal", "other"],
+    },
+    service: { type: "string", maxLength: 200 },
+    urgency: { type: "string", enum: ["low", "normal", "high", "urgent"] },
+    postcode: { type: "string", maxLength: 20 },
+    estimated_value: { type: "number", minimum: 0 },
+    notes: { type: "string", maxLength: 5000 },
+    customer_id: { type: "string", format: "uuid" },
+  },
+};
+
+const JobWriteInput: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    status: { type: "string", enum: ["new", "in-progress", "completed", "blocked"] },
+    scheduled_date: { type: "string", description: "YYYY-MM-DD" },
+    customer_id: { type: "string", format: "uuid" },
+    notes: { type: "string", maxLength: 5000 },
+    site_address_line1: { type: "string", maxLength: 200 },
+    site_address_line2: { type: "string", maxLength: 200 },
+    site_city: { type: "string", maxLength: 120 },
+    site_county: { type: "string", maxLength: 120 },
+    site_postcode: { type: "string", maxLength: 20 },
+    site_country: { type: "string", maxLength: 100 },
+  },
+};
+
+const JobUpdateInput: Record<string, unknown> = {
+  ...JobWriteInput,
+  description: "At least one field must be provided. Omitted fields are left unchanged.",
+};
+
+const QuoteLineItemInput: Record<string, unknown> = {
+  type: "object",
+  required: ["description", "qty", "unit_price", "vat_rate"],
+  additionalProperties: false,
+  properties: {
+    description: { type: "string", maxLength: 500 },
+    qty: { type: "number", exclusiveMinimum: 0 },
+    unit: { type: "string", maxLength: 20, default: "ea" },
+    unit_price: { type: "number", minimum: 0 },
+    vat_rate: { type: "number", enum: [0, 5, 20] },
+  },
+};
+
+const QuoteWriteInput: Record<string, unknown> = {
+  type: "object",
+  required: ["customer_id", "line_items"],
+  additionalProperties: false,
+  description:
+    "Totals (subtotal, vat_total, total) are computed server-side from the line items — never send them.",
+  properties: {
+    customer_id: { type: "string", format: "uuid" },
+    property_id: { type: "string", format: "uuid" },
+    lead_id: { type: "string", format: "uuid" },
+    valid_until: { type: "string", description: "YYYY-MM-DD" },
+    notes: { type: "string", maxLength: 5000 },
+    terms: { type: "string", maxLength: 20000 },
+    line_items: {
+      type: "array",
+      minItems: 1,
+      items: { $ref: "#/components/schemas/QuoteLineItemInput" },
+    },
+  },
+};
+
 /** Build the full OpenAPI 3.1 document. Pure — no env, no I/O. */
 export function buildOpenApiDocument(): Record<string, unknown> {
   return {
@@ -160,13 +337,21 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       title: "CrewFlow Public API",
       version: "1.0.0",
       description:
-        "Read-only, key-authenticated access to your CrewFlow organisation's " +
-        "data. Every request is scoped to the organisation that owns the API " +
-        "key; there is no cross-organisation access and no write access. " +
+        "Key-authenticated read and write access to your CrewFlow " +
+        "organisation's data. Every request is scoped to the organisation that " +
+        "owns the API key; there is NO cross-organisation access. Read and " +
+        "write are DISTINCT scopes — a key must hold the matching write scope " +
+        "(e.g. write:customers) to create or update, even if it can already " +
+        "read. Writes validate their body strictly (unknown fields are " +
+        "rejected), pin every new row to the key's organisation, compute money " +
+        "server-side, and return the created/updated record. Updates via PATCH " +
+        "are idempotent (re-sending the same body yields the same state); a " +
+        "repeated create (POST) makes a new record. " +
         "VERSIONING: the version is in the URL path (/api/v1). Breaking changes " +
         "ship under a new prefix (/api/v2) while /api/v1 keeps working; " +
         "additive changes (new optional fields, new endpoints) are made in place.",
     },
+    "x-scopes": SCOPE_LABELS,
     "x-api-versioning": {
       strategy: "uri-path",
       current: "v1",
@@ -196,6 +381,15 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         InvoiceList: listEnvelope("#/components/schemas/Invoice"),
         Quote: objectSchema(QUOTE_DTO_COLUMNS, QUOTE_FIELD_TYPES),
         QuoteList: listEnvelope("#/components/schemas/Quote"),
+        Lead: objectSchema(LEAD_DTO_COLUMNS, LEAD_FIELD_TYPES),
+        // Write-input (request body) schemas.
+        CustomerWriteInput,
+        CustomerUpdateInput,
+        LeadWriteInput,
+        JobWriteInput,
+        JobUpdateInput,
+        QuoteLineItemInput,
+        QuoteWriteInput,
       },
     },
     paths: {
@@ -225,7 +419,17 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           },
         },
       },
-      "/jobs": { get: listOperation("Jobs", "List jobs.", "read:jobs", "Job") },
+      "/jobs": {
+        get: listOperation("Jobs", "List jobs.", "read:jobs", "Job"),
+        post: writeOperation({
+          tag: "Jobs",
+          summary: "Create a job.",
+          scope: "write:jobs",
+          bodyRef: "#/components/schemas/JobWriteInput",
+          resultRef: "#/components/schemas/Job",
+          successStatus: "201",
+        }),
+      },
       "/jobs/{id}": {
         get: {
           tags: ["Jobs"],
@@ -252,15 +456,86 @@ export function buildOpenApiDocument(): Record<string, unknown> {
             "429": { description: "Rate limit exceeded (120 requests/minute per key)." },
           },
         },
+        patch: writeOperation({
+          tag: "Jobs",
+          summary: "Update a job.",
+          scope: "write:jobs",
+          bodyRef: "#/components/schemas/JobUpdateInput",
+          resultRef: "#/components/schemas/Job",
+          successStatus: "200",
+          hasIdParam: true,
+        }),
       },
       "/customers": {
         get: listOperation("Customers", "List customers.", "read:customers", "Customer"),
+        post: writeOperation({
+          tag: "Customers",
+          summary: "Create a customer.",
+          scope: "write:customers",
+          bodyRef: "#/components/schemas/CustomerWriteInput",
+          resultRef: "#/components/schemas/Customer",
+          successStatus: "201",
+        }),
+      },
+      "/customers/{id}": {
+        get: {
+          tags: ["Customers"],
+          summary: "Fetch a single customer by id.",
+          security: [{ apiKey: ["read:customers"] }],
+          parameters: [
+            { name: "id", in: "path", required: true, schema: { type: "string" } },
+          ],
+          responses: {
+            "200": {
+              description: "The customer.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { data: { $ref: "#/components/schemas/Customer" } },
+                  },
+                },
+              },
+            },
+            "401": { description: "Missing, malformed, unknown, revoked or expired API key." },
+            "403": { description: "The key lacks the read:customers scope." },
+            "404": { description: "No such customer in this organisation." },
+            "429": { description: "Rate limit exceeded (120 requests/minute per key)." },
+          },
+        },
+        patch: writeOperation({
+          tag: "Customers",
+          summary: "Update a customer.",
+          scope: "write:customers",
+          bodyRef: "#/components/schemas/CustomerUpdateInput",
+          resultRef: "#/components/schemas/Customer",
+          successStatus: "200",
+          hasIdParam: true,
+        }),
+      },
+      "/leads": {
+        post: writeOperation({
+          tag: "Leads",
+          summary: "Capture a lead.",
+          scope: "write:leads",
+          bodyRef: "#/components/schemas/LeadWriteInput",
+          resultRef: "#/components/schemas/Lead",
+          successStatus: "201",
+        }),
       },
       "/invoices": {
         get: listOperation("Invoices", "List invoices.", "read:invoices", "Invoice"),
       },
       "/quotes": {
         get: listOperation("Quotes", "List quotes.", "read:quotes", "Quote"),
+        post: writeOperation({
+          tag: "Quotes",
+          summary: "Create a draft quote.",
+          scope: "write:quotes",
+          bodyRef: "#/components/schemas/QuoteWriteInput",
+          resultRef: "#/components/schemas/Quote",
+          successStatus: "201",
+        }),
       },
     },
   };
