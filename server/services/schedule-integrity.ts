@@ -1,6 +1,8 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
+import { readFailure } from "@/lib/supabase/read-failure";
+import { generateRota, type RotaPlan } from "@/lib/schedule/solver";
 import {
   detectScheduleConflicts,
   summariseScheduleConflicts,
@@ -599,6 +601,80 @@ export async function loadScheduleConflicts(
  * conflict build. Dark today ⇒ a single readiness check with ZERO database
  * access, so it costs a briefing nothing until a provider is bound.
  */
+/**
+ * Job-day → postcode district for the window, for the rota generator's location
+ * term. A LOUD read (see lib/supabase/read-failure): a failed lookup throws
+ * rather than silently returning an empty map, which would read as "no job has a
+ * location" and quietly drop the "already near there" signal for the whole plan.
+ * F-1 paged, org-pinned on top of RLS (the #456 rule), ordered by the unique id.
+ * A job with no derivable postcode is simply absent from the map — never guessed.
+ */
+async function readJobDistricts(
+  db: ScheduleClient,
+  orgId: string,
+  window: ScheduleWindow,
+): Promise<Map<string, string | null>> {
+  const { data, error } = await fetchAllRows<JobLocationRow>(
+    (from, to) =>
+      db
+        .from("jobs")
+        .select(JOB_LOCATION_COLS)
+        .eq("org_id", orgId)
+        .gte("scheduled_date", window.fromDay)
+        .lte("scheduled_date", window.toDay)
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<JobLocationRow>>,
+  );
+  if (error) throw readFailure("rota plan: job locations", error as never);
+
+  const out = new Map<string, string | null>();
+  for (const j of data) {
+    const customer = Array.isArray(j.customers) ? j.customers[0] : j.customers;
+    const district = districtForAddress(resolveJobAddress(j, customer ?? null));
+    out.set(j.id, district);
+  }
+  return out;
+}
+
+export interface RotaPlanReport {
+  window: ScheduleWindow;
+  plan: RotaPlan;
+  generatedAt: string;
+}
+
+/**
+ * Build a proposed rota for one org's window — the GENERATE surface behind
+ * /staff/rota/generate.
+ *
+ * Reads exactly the rows detection reads (via `gatherScheduleFacts`) plus each
+ * window job's location, then hands them to the PURE solver (lib/schedule/
+ * solver.ts). This module still only ever reads — the plan is a set of proposals
+ * and pre-filled links; a shift is written only when a human presses Assign on
+ * the rota, by `createRotaEntry`, under its own admin gate.
+ *
+ * Loud by contract, unlike the best-effort conflict build: a rota a manager is
+ * about to act on must fail visibly rather than render a misleadingly empty or
+ * partial plan. `gatherScheduleFacts` keeps its own best-effort posture for the
+ * shared reads; the location read here throws on failure.
+ */
+export async function buildRotaPlan(
+  orgId: string,
+  options: { now?: Date; days?: number } = {},
+): Promise<RotaPlanReport> {
+  const now = options.now ?? new Date();
+  const window = buildScheduleWindow(now, options.days ?? SCHEDULE_WINDOW_DAYS);
+  const generatedAt = now.toISOString();
+
+  const supabase = await createClient();
+  const client = supabase as unknown as ScheduleClient;
+
+  const facts = await gatherScheduleFacts(client, orgId, window);
+  const jobDistricts = await readJobDistricts(client, orgId, window);
+
+  const plan = generateRota({ ...facts, jobDistricts });
+  return { window, plan, generatedAt };
+}
+
 export async function loadScheduleWeatherSignal(
   orgId: string,
   now: Date = new Date(),
