@@ -69,6 +69,11 @@ const ADMIN_LINKS = [
   // The company's own places (depots, yards, lock-ups) — reference data both
   // registers above point at. NOT customer job sites, which live on the job.
   { href: "/sites", label: "Sites" },
+  // Per-site inductions, visitor log and live fire-muster roll. Sits by Sites
+  // (the register of places) because it operates ON those places, and by H&S in
+  // spirit — the gate that puts a worker onto a site and accounts for everyone
+  // on it. Distinct from /compliance (the org's insurance/certificate library).
+  { href: "/site-compliance", label: "Site compliance" },
   { href: "/compliance", label: "Compliance" },
   { href: "/reviews", label: "Reviews" },
   { href: "/imports", label: "Migrate data" },
@@ -86,6 +91,10 @@ const STAFF_LINKS = [
   { href: "/snags", label: "Snagging" },
   { href: "/diary", label: "Site diary" },
   { href: "/toolbox", label: "Toolbox talks" },
+  // Site staff run the gate: they induct operatives, sign visitors in/out and
+  // pull the muster when the alarm goes. This is site work, so it is in the slim
+  // nav too.
+  { href: "/site-compliance", label: "Site compliance" },
   // Staff need this: the person signing off a hold point on site IS site staff.
   { href: "/quality", label: "Works quality" },
   // ...and the person standing in the rain when work stops is the one who
