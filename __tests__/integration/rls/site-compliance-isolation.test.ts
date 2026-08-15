@@ -27,10 +27,14 @@ interface Upd extends PromiseLike<Res<Row[]>> {
 interface Ins extends PromiseLike<Res<Row[]>> {
   select(columns?: string): { single(): PromiseLike<Res<Row>> };
 }
+interface Del extends PromiseLike<Res<Row[]>> {
+  eq(column: string, value: unknown): Del;
+}
 interface Table {
   select(columns?: string): Sel;
   insert(rows: Row | Row[]): Ins;
   update(patch: Row): Upd;
+  delete(): Del;
 }
 const db = (client: unknown) => client as unknown as { from(t: string): Table };
 

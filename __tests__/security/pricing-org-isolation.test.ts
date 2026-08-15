@@ -35,7 +35,7 @@ const codeOf = (ts: string) =>
 
 const MIGRATION = "supabase/migrations/20261131000000_price_book_and_quote_templates.sql";
 const QUERIES = "lib/pricing/queries.ts";
-const ACTIONS = "app/(app)/pricing/actions.ts";
+const ACTIONS = "app/(app)/price-book/actions.ts";
 
 const NEW_TABLES = ["price_book_items", "quote_templates", "quote_template_lines"];
 
