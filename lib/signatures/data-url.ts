@@ -69,7 +69,7 @@ export function looksLikeSignatureDataUrl(input: unknown): input is string {
   return typeof input === "string" && input.startsWith("data:image/png;base64,");
 }
 
-export type SignatureScope = "quotes" | "safety_acknowledgements";
+export type SignatureScope = "quotes" | "safety_acknowledgements" | "site_inductions";
 
 /**
  * Build the org-first, server-controlled storage key. No user input reaches the

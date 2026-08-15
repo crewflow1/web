@@ -286,7 +286,16 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   "permits_to_work → users",
   "risk_assessments → users",
   "rota_entries → users",
+  // site_inductions: user_id (the inductee) + created_by (the supervisor who
+  // recorded the gate) both → users (20261140000000). The _data.ts reads resolve
+  // worker names via a separate listStaffForOrg lookup, never a users() embed, so
+  // no query is ambiguous; a future embed must FK-hint (test 2 enforces it).
+  "site_inductions → users",
   "site_reports → users",
+  // site_visitors: host_user_id + signed_in_by + signed_out_by all → users
+  // (20261140000001). Host/recorder names are resolved via a separate lookup, not
+  // an embed, so no query is ambiguous.
+  "site_visitors → users",
   "snags → users",
   "staff_secrets → users",
   "supplier_payments → users",
