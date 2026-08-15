@@ -7,6 +7,7 @@ import { ProfileForm, OrganizationForm } from "./_forms";
 import { LogoUpload } from "./_logo-upload";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 import { outboundWebhooksEnabled } from "@/lib/webhooks/flags";
+import { NotificationPreferences } from "./_notification-prefs";
 
 /**
  * Settings — Profile + Organisation + Members in one page.
@@ -238,6 +239,9 @@ export default async function SettingsPage() {
           </div>
         </section>
       ) : null}
+
+      {/* Notification preferences -------------------------------------- */}
+      <NotificationPreferences />
 
       {/* Security ------------------------------------------------------ */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
