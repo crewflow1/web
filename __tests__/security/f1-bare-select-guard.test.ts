@@ -1082,6 +1082,8 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   asset_fuel_logs: "PAGED: fetchAllRows (fleet fuel rollup)",
   bank_statements: "PAGED: fetchAllRows (payments page statements list)",
   briefing_dismissals: "PAGED: fetchAllRows (daily briefing)",
+  calendar_event_links:
+    "PAGED: listPushedExternalEventIds (calendar pull dedup) reads external_event_id in an explicit .range(from,from+PAGE-1) loop under the PostgREST cap (PAGE=500) until a short page — the complete pushed-id set, never truncated. Service-role, org+connection pinned.",
   cis_subcontractors: "PAGED: fetchAllRows (CIS subcontractor roster)",
   compliance_documents: "PAGED: fetchAllRows (daily briefing compliance)",
   delay_events: "PAGED: fetchAllRows (EOT pack + intelligence delay analysis)",
