@@ -6,9 +6,16 @@ import {
   topCustomersByRevenue,
 } from "@/lib/reports/aggregates";
 import { requireOrgContext } from "@/server/auth/session";
+import { createClient } from "@/lib/supabase/server";
 import { AccountingExportPanel } from "./accounting/AccountingExportPanel";
 import { AccountingConnectionsPanel } from "./accounting/AccountingConnectionsPanel";
+import { ReportSubscriptionsPanel } from "./ReportSubscriptionsPanel";
 import { listAccountingConnections } from "@/server/services/accounting-connections";
+import {
+  listReportSubscriptions,
+  type SubscriptionsClient,
+} from "@/lib/reports/subscriptions";
+import { REPORTS } from "@/lib/reports/registry";
 import {
   isXeroConnectable,
   isQuickbooksConnectable,
@@ -84,13 +91,17 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
   const { ctx } = await requireOrgContext();
   const isAdmin =
     ctx.membership.role === "owner" || ctx.membership.role === "admin";
-  const [jobs, revenue, vat, top, connections] = await Promise.all([
+  const supabase = await createClient();
+  const [jobs, revenue, vat, top, connections, subscriptions] = await Promise.all([
     jobsPerWeek(ctx.org.id, 8),
     revenuePerMonth(ctx.org.id, 12),
     vatPerQuarter(ctx.org.id, 4),
     topCustomersByRevenue(ctx.org.id, 10),
     isAdmin
       ? listAccountingConnections(ctx.org.id)
+      : Promise.resolve([]),
+    isAdmin
+      ? listReportSubscriptions(supabase as unknown as SubscriptionsClient, ctx.org.id)
       : Promise.resolve([]),
   ]);
 
@@ -166,6 +177,33 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
           </Link>
         ))}
       </nav>
+
+      {/* Report library ------------------------------------------------
+          The composed reports — each reuses an existing compute authority
+          (profitability, cash timeline, utilisation, pipeline) and offers a
+          shared PDF/CSV export. Cashflow is admin-only (it exposes VAT/CIS/
+          payables), so it is hidden from a non-admin's library. */}
+      <nav aria-label="Report library" className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {(["profit", "cashflow", "utilisation", "pipeline"] as const)
+          .map((k) => REPORTS[k])
+          .filter((r) => isAdmin || !r.managementOnly)
+          .map((r) => (
+            <Link
+              key={r.key}
+              href={r.href ?? "/reports"}
+              className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow"
+            >
+              <p className="text-sm font-semibold text-slate-900">{r.title}</p>
+              <p className="mt-1 text-xs text-slate-600">{r.description}</p>
+            </Link>
+          ))}
+      </nav>
+
+      {/* Scheduled delivery — admin-only. Emails a report on a cadence; dark
+          until email is configured (the cron skips cleanly with no key). */}
+      {isAdmin ? (
+        <ReportSubscriptionsPanel subscriptions={subscriptions} />
+      ) : null}
 
       {/* Accounting export — CSV works now; Xero/QuickBooks are dark seams.
           Admin-only: generating a bookkeeping export is an admin act, doubled

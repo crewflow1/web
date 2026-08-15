@@ -149,6 +149,7 @@
     "receptionist_conversations",
     "receptionist_messages",
     "receptionist_review_resolutions",
+    "report_subscriptions",
     "retention_releases",
     "review_requests",
     "risk_assessment_hazards",

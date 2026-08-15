@@ -30,6 +30,17 @@ import {
  * aggregates / RPC views, but that is deliberate, separate work.
  */
 
+/**
+ * Injectable Supabase client. The page/export routes pass nothing (each
+ * function builds its own user-JWT client, RLS-gated); the delivery cron passes
+ * the SERVICE-ROLE admin client so it can render a report for an org it has no
+ * JWT for. Either way every read below is org-pinned in-statement, so the
+ * admin path (RLS bypassed) never blends orgs. Typed as the ssr server client
+ * so the existing typed reads below compile unchanged; the cron passes the
+ * service-role client cast to this type.
+ */
+export type ReportsDb = Awaited<ReturnType<typeof createClient>>;
+
 export type JobsPerWeek = {
   /** Monday of the week (ISO date). */
   week_start: string;
@@ -80,8 +91,12 @@ function startOfQuarter(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), q * 3, 1));
 }
 
-export async function jobsPerWeek(orgId: string, weeks = 8): Promise<JobsPerWeek[]> {
-  const supabase = await createClient();
+export async function jobsPerWeek(
+  orgId: string,
+  weeks = 8,
+  db?: ReportsDb,
+): Promise<JobsPerWeek[]> {
+  const supabase = db ?? (await createClient());
   const since = new Date(Date.now() - weeks * 7 * DAY_MS).toISOString().slice(0, 10);
 
   const { data, error } = await fetchAllRows<{
@@ -125,8 +140,9 @@ export async function jobsPerWeek(orgId: string, weeks = 8): Promise<JobsPerWeek
 export async function revenuePerMonth(
   orgId: string,
   months = 12,
+  db?: ReportsDb,
 ): Promise<RevenuePerMonth[]> {
-  const supabase = await createClient();
+  const supabase = db ?? (await createClient());
   // Build the window from a DAY-1-NORMALISED UTC base. Mutating a live Date with
   // setUTCMonth WHILE it still holds day 29/30/31 overflows into the next month
   // for shorter target months (setUTCMonth clamps day-of-month AFTER the shift,
@@ -183,8 +199,9 @@ export async function revenuePerMonth(
 export async function vatPerQuarter(
   orgId: string,
   quarters = 4,
+  db?: ReportsDb,
 ): Promise<VatPerQuarter[]> {
-  const supabase = await createClient();
+  const supabase = db ?? (await createClient());
   // Day-1-normalised UTC base (see revenuePerMonth): the mutable-Date idiom would
   // overflow on a 31st. startOfQuarter flooring later absorbs the slip here, but
   // build it safely for consistency with the revenue path.
@@ -238,12 +255,12 @@ export async function vatPerQuarter(
   // authority (SAME call shape as the /tax page and the quarterly-PDF route),
   // then compute boxes 1/4/5 with the one pure function. The EXCLUSIVE upper
   // bound keeps a next-quarter payment out.
-  const db = supabase as unknown as VatInputsDb;
+  const vatDb = supabase as unknown as VatInputsDb;
   const rows = await Promise.all(
     quarterStarts.map(async (quarterStartIso) => {
       const quarterEndExclusiveIso = endOfQuarterExclusiveIso(quarterStartIso);
       const inputs = await gatherVatQuarterInputs(
-        db,
+        vatDb,
         orgId,
         quarterStartIso,
         quarterEndExclusiveIso,
@@ -281,8 +298,9 @@ export const UNATTRIBUTED_CUSTOMER_LABEL = "Unattributed";
 export async function topCustomersByRevenue(
   orgId: string,
   limit = 10,
+  db?: ReportsDb,
 ): Promise<TopCustomer[]> {
-  const supabase = await createClient();
+  const supabase = db ?? (await createClient());
 
   // Two paged, org-pinned, loud reads (the vatPerQuarter shape):
   //  1. paid invoices — with the DENORMALISED `customer_id` (20260915) read
