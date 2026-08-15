@@ -49,14 +49,13 @@ create table if not exists public.report_subscriptions (
   -- Where to send it. At least one recipient; each must look like an email. The
   -- cron additionally routes every send through the shared sendEmail self-loop
   -- guard, so a bad address fails soft (logged) rather than 500-ing the run.
+  -- Count bound only: Postgres forbids a subquery in a CHECK constraint, so the
+  -- per-address email-format rule is enforced by the BEFORE INSERT/UPDATE trigger
+  -- report_subscriptions_validate_recipients (defined below) plus app-layer Zod.
   recipients    text[]      not null
                             check (
                               array_length(recipients, 1) >= 1
                               and array_length(recipients, 1) <= 20
-                              and not exists (
-                                select 1 from unnest(recipients) r
-                                where r !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'
-                              )
                             ),
 
   -- Paused subscriptions are retained but never delivered.
@@ -124,6 +123,31 @@ drop trigger if exists report_subscriptions_set_updated_at on public.report_subs
 create trigger report_subscriptions_set_updated_at
   before update on public.report_subscriptions
   for each row execute function public.report_subscriptions_set_updated_at();
+
+-- 4. Per-recipient email-format validation. A CHECK constraint cannot contain a
+-- subquery (Postgres 0A000), so the "every recipient looks like an email" rule
+-- lives here (a trigger may iterate the array) rather than in the table CHECK,
+-- which now enforces only the 1..20 count bound. App-layer Zod validates on write
+-- and the delivery cron additionally fails soft per address.
+create or replace function public.report_subscriptions_validate_recipients()
+  returns trigger language plpgsql as $$
+declare
+  r text;
+begin
+  foreach r in array new.recipients loop
+    if r !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
+      raise exception 'invalid recipient email address: %', r
+        using errcode = 'check_violation';
+    end if;
+  end loop;
+  return new;
+end;
+$$;
+
+drop trigger if exists report_subscriptions_validate_recipients on public.report_subscriptions;
+create trigger report_subscriptions_validate_recipients
+  before insert or update on public.report_subscriptions
+  for each row execute function public.report_subscriptions_validate_recipients();
 
 comment on table public.report_subscriptions is
   'Scheduled report delivery config (P3 Reporting). Members read, admins write; the report-delivery cron drains it on the service-role client. report_key CHECK is kept in lock-step with lib/reports/registry.ts.';
