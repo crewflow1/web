@@ -547,6 +547,48 @@ export type Database = {
           },
         ]
       }
+      help_articles: {
+        Row: {
+          active: boolean
+          body: string
+          category: string
+          created_at: string
+          id: string
+          keywords: string[]
+          slug: string
+          sort_order: number
+          summary: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          body: string
+          category: string
+          created_at?: string
+          id?: string
+          keywords?: string[]
+          slug: string
+          sort_order?: number
+          summary?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          body?: string
+          category?: string
+          created_at?: string
+          id?: string
+          keywords?: string[]
+          slug?: string
+          sort_order?: number
+          summary?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       import_audit: {
         Row: {
           created_at: string

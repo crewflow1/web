@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
+import { HelpLink } from "../_components/help-link";
 import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
 
 /**
@@ -92,7 +93,10 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
     <div className="space-y-6">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Quotes</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-slate-900">Quotes</h1>
+            <HelpLink article="creating-a-quote" label="Help with quotes" />
+          </div>
           <p className="mt-1 text-sm text-slate-600">
             {totalCount} {totalCount === 1 ? "quote" : "quotes"}
           </p>
