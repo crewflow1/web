@@ -34,6 +34,21 @@ export const jobFormSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
     .or(z.literal("").transform(() => undefined))
     .optional(),
+  // Optional multi-day span end (20261132000003). When set it must land on or
+  // after scheduled_date (a cross-field rule enforced in the action, since Zod
+  // object refinement is applied there alongside the existing recurring rules).
+  scheduled_end_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
+    .or(z.literal("").transform(() => undefined))
+    .optional(),
+  // Optional job-template to clone milestones + a checklist from on create
+  // (20261132000001). Ignored on edit.
+  template_id: z
+    .string()
+    .uuid()
+    .or(z.literal("").transform(() => undefined))
+    .optional(),
   notes: z
     .string()
     .trim()

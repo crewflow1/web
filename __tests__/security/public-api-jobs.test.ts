@@ -185,8 +185,8 @@ describe("response envelope + surface accounting", () => {
     expect(BYID).toMatch(/data: toPublicJobDto\(row\)/);
   });
 
-  it("readiness endpoint count matches the real /api/v1 route file count (7 — probe + jobs pair + customers/invoices/quotes + openapi)", async () => {
+  it("readiness endpoint count matches the real /api/v1 route file count (9 — probe + jobs pair + customers pair + invoices/quotes + leads + openapi)", async () => {
     const { getApiKeysReadiness } = await import("@/lib/integrations/readiness");
-    expect(getApiKeysReadiness().endpoints).toBe(7);
+    expect(getApiKeysReadiness().endpoints).toBe(9);
   });
 });

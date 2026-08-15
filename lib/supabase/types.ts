@@ -547,6 +547,48 @@ export type Database = {
           },
         ]
       }
+      help_articles: {
+        Row: {
+          active: boolean
+          body: string
+          category: string
+          created_at: string
+          id: string
+          keywords: string[]
+          slug: string
+          sort_order: number
+          summary: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          body: string
+          category: string
+          created_at?: string
+          id?: string
+          keywords?: string[]
+          slug: string
+          sort_order?: number
+          summary?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          body?: string
+          category?: string
+          created_at?: string
+          id?: string
+          keywords?: string[]
+          slug?: string
+          sort_order?: number
+          summary?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       import_audit: {
         Row: {
           created_at: string
@@ -1023,6 +1065,87 @@ export type Database = {
           },
         ]
       }
+      job_checklists: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          done_at: string | null
+          done_by: string | null
+          id: string
+          is_done: boolean
+          job_id: string
+          label: string
+          org_id: string
+          requires_photo: boolean
+          sort: number
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          done_at?: string | null
+          done_by?: string | null
+          id?: string
+          is_done?: boolean
+          job_id: string
+          label: string
+          org_id: string
+          requires_photo?: boolean
+          sort: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          done_at?: string | null
+          done_by?: string | null
+          id?: string
+          is_done?: boolean
+          job_id?: string
+          label?: string
+          org_id?: string
+          requires_photo?: boolean
+          sort?: number
+        }
+        Relationships: []
+      }
+      job_templates: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          default_status: string | null
+          description: string | null
+          id: string
+          is_active: boolean
+          job_type: string | null
+          name: string
+          org_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          default_status?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          job_type?: string | null
+          name: string
+          org_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          default_status?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          job_type?: string | null
+          name?: string
+          org_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       jobs: {
         Row: {
           ai_summary: string | null
@@ -1035,6 +1158,7 @@ export type Database = {
           photos: string[]
           recurring: Json | null
           scheduled_date: string | null
+          scheduled_end_date: string | null
           site_address_line1: string | null
           site_address_line2: string | null
           site_city: string | null
@@ -1055,6 +1179,7 @@ export type Database = {
           photos?: string[]
           recurring?: Json | null
           scheduled_date?: string | null
+          scheduled_end_date?: string | null
           site_address_line1?: string | null
           site_address_line2?: string | null
           site_city?: string | null
@@ -1075,6 +1200,7 @@ export type Database = {
           photos?: string[]
           recurring?: Json | null
           scheduled_date?: string | null
+          scheduled_end_date?: string | null
           site_address_line1?: string | null
           site_address_line2?: string | null
           site_city?: string | null
@@ -2371,6 +2497,15 @@ export type Database = {
       append_job_photo: {
         Args: { photo_path: string; target_job_id: string }
         Returns: undefined
+      }
+      clone_job_template: {
+        Args: {
+          p_anchor_date: string | null
+          p_job_id: string
+          p_org_id: string
+          p_template_id: string
+        }
+        Returns: string
       }
       current_org_ids: { Args: never; Returns: string[] }
       is_org_admin: { Args: { target_org: string }; Returns: boolean }

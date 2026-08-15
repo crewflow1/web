@@ -170,6 +170,12 @@ export default async function RotaPage({ searchParams }: { searchParams: SP }) {
         </div>
         <div className="flex items-center gap-2">
           <Link
+            href="/staff/rota/generate"
+            className="rounded-md border border-slate-900 bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+          >
+            Generate rota
+          </Link>
+          <Link
             href="/staff/rota/conflicts"
             className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-slate-50"
           >

@@ -183,6 +183,14 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   "asset_inspections → users",
   "asset_maintenance_cases → users",
   "asset_qr_identities → users",
+  // Custom automation rules (20261133): created_by + updated_by both → users.
+  // Reviewed 2026-08-15: the only readers are server/services/automation-custom-
+  // rules.ts (selects scalar columns via RULE_COLS — "id, org_id, name,
+  // description, trigger_event, definition, enabled, created_by, updated_by, ..."
+  // — no users(...) embed) and the settings page, which renders those scalars.
+  // Two FKs are inherent to the audit trail (who created vs who last edited the
+  // rule); collapsing them would lose that. Any future embed must name its FK.
+  "automation_custom_rules → users",
   "blueprint_markup → users",
   "blueprints → users",
   "cis_bill_details → users",
@@ -249,7 +257,20 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   // embed must name its FK constraint; test 2 enforces it.
   "inspection_witness_invitations → users",
   "invoice_payments → invoices",
+  // Job checklists (P3, 20261132000000): created_by + done_by → users. Reviewed
+  // 2026-08-15: the only reader (app/(app)/jobs/[id]/_job-checklist.tsx) selects
+  // scalar columns only and never embeds users(...). Two FKs is inherent — who
+  // ADDED the step and who TICKED it are separate accountable acts. Any future
+  // embed must name its FK constraint; test 2 enforces it.
+  "job_checklists → users",
   "job_documents → users",
+  // Milestone dependencies (P3, 20261132000002): milestone_id +
+  // depends_on_milestone_id both → job_milestones. Reviewed 2026-08-15: the only
+  // reader (_job-programme.tsx) selects the two scalar id columns and joins them
+  // to titles in memory — it never embeds job_milestones(...). Two FKs is the
+  // whole point of an edge (successor + predecessor). Any future embed must name
+  // its FK constraint; test 2 enforces it.
+  "job_milestone_dependencies → job_milestones",
   // Job warranties (20261079): created_by + portal_published_by + voided_by all
   // → users. Reviewed 2026-07-31: no read of this table embeds users(...) — the
   // operator page and actions select scalar columns only, and the customer
@@ -286,7 +307,16 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   "permits_to_work → users",
   "risk_assessments → users",
   "rota_entries → users",
+  // site_inductions: user_id (the inductee) + created_by (the supervisor who
+  // recorded the gate) both → users (20261140000000). The _data.ts reads resolve
+  // worker names via a separate listStaffForOrg lookup, never a users() embed, so
+  // no query is ambiguous; a future embed must FK-hint (test 2 enforces it).
+  "site_inductions → users",
   "site_reports → users",
+  // site_visitors: host_user_id + signed_in_by + signed_out_by all → users
+  // (20261140000001). Host/recorder names are resolved via a separate lookup, not
+  // an embed, so no query is ambiguous.
+  "site_visitors → users",
   "snags → users",
   "staff_secrets → users",
   "supplier_payments → users",

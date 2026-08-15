@@ -68,6 +68,19 @@ const HIGH_VALUE_TABLES = new Set<string>([
   // with totals but only the first 1000 lines — and the builder re-save would
   // then wipe the dropped lines.
   "quote_line_items",
+  // ── Estimating price-book / rate-library + saved quote templates (P3 wave).
+  //    All carry MONEY (integer pence) and are cross-tenant (RLS admits every org
+  //    the caller belongs to). Their reads feed the quote-builder picker, the
+  //    "apply template" control and the /pricing management list — a clamped read
+  //    silently drops rate-card items or template lines, understating a quote.
+  //    Every read is PAGED via fetchAllRows (lib/pricing/queries.ts) or a
+  //    single-row lookup (getPriceBookItem .maybeSingle).
+  //   price_book_items      — the curated rate library; picker + management list.
+  //   quote_templates       — saved multi-line scopes; management + apply lists.
+  //   quote_template_lines  — the priced lines of a template (unit_price pence).
+  "price_book_items",
+  "quote_templates",
+  "quote_template_lines",
   "stock_movements",
   "bank_statement_lines",
   "telematics_connections",
@@ -87,6 +100,14 @@ const HIGH_VALUE_TABLES = new Set<string>([
   // sites from the builder and — on an edit — nulls an out-of-cap property_id.
   // (F-1 picker-class wave.)
   "properties",
+  // P3 unified inbox: the tenant-facing conversation container + message timeline.
+  // listInboxConversations reads the org's FULL conversation set AND its FULL message set
+  // (to derive the latest-message preview + awaiting-reply per thread), so both are
+  // completeness-sensitive full-set scans — a clamped read would silently drop threads
+  // from the inbox or mis-derive "awaiting reply". Both reads are PAGED via fetchAllRows
+  // in server/services/inbox-conversations.ts. (F-1 P3-inbox wave.)
+  "conversations",
+  "messages",
   // Support OS: CROSS-TENANT service-role reads (createAdminClient, no org pin)
   // whose FULL row set is mapped + counted in JS into figures the pure layers
   // label "fact" — the live /admin/support board + KPI tiles, the /admin/support-ai
@@ -260,7 +281,7 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the snags register (.limit(500)) — ≤500 unique PKs",
   "app/(app)/toolbox/page.tsx:89":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the toolbox register (.limit(500)) — ≤500 unique PKs",
-  "app/(app)/jobs/page.tsx:133":
+  "app/(app)/jobs/page.tsx:134":
     "bounded: the 'Today's jobs' panel query — one org × one calendar day (.eq('scheduled_date', todayIso)), a handful of rows, never near the cap. The paginated list query above it is windowed via .range().",
   "app/(app)/leads/page.tsx:51":
     "paged: the pipeline read IS complete — executed via fetchAllRows((from,to) => query.range(from,to)) at the bottom of the fn; the builder pattern places the .range terminator beyond the static region window, so the analyser can't see it",
@@ -273,8 +294,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE job's retention releases (.eq('job_id').eq('org_id')) — feeds the committed/forecast retention figure for a single job; retention is released in 1-2 tranches per job, never near 1000. (Surfaced once C66-B de-vacuumed the cast-form windowing; the read is org-pinned per C66-A's cross-org money-injection fix.)",
   "app/(app)/jobs/[id]/commercial/page.tsx:181":
     "bounded: ONE job's purchase orders (.eq('job_id')) — feeds the committed-costs tile for a single job; a job has a handful to dozens of POs, never near 1000",
-  "app/(app)/jobs/[id]/page.tsx:315":
-    "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap",
+  "app/(app)/jobs/[id]/page.tsx:317":
+    "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap. (Moved 315→317 when the P3 span column + checklist import were added above it.)",
   "app/(app)/jobs/retention-actions.ts:163":
     "bounded: ONE job's invoices (.eq('job_id')) — folded into the retention position for a single job; a job's invoices are a handful",
   "app/(app)/purchase-orders/[id]/page.tsx:149":
@@ -305,8 +326,8 @@ const ALLOWLIST: Record<string, string> = {
   // NOT A READ: `.from('notifications').insert(payload).select(ALL_COLS)` — an
   // INSERT…RETURNING. The returned set is bounded by the payload it just wrote,
   // so it cannot truncate; it trips only because the region carries `.select(`.
-  "server/services/notifications-service.ts:140":
-    "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read",
+  "server/services/notifications-service.ts:142":
+    "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read. (Line moved 140→142 when the P3 per-user preference honoring added a two-line import to the top of the file.)",
 
   // ── Job-billing schedule / retention wave — genuinely-bounded SINGLE-SCOPE
   //    reads surfaced once job_billing_plans/job_billing_stages/retention_releases
@@ -336,6 +357,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE plan's stages (.eq('org_id').eq('plan_id', planId)) — the stages of a single billing plan; a plan has a handful of stages, never near 1000",
   "lib/schedule/calendar-data.ts:92":
     "paged: the jobs read IS complete — .from('jobs') lives in a `scoped()` builder-closure and is paged via fetchAllRows((from,to) => scoped()…range(from,to)) at the two call sites (nonRecurring + recurring) in a SEPARATE statement, beyond the statement-scoped window. Same builder class as leads/page.tsx:51.",
+  "lib/jobs/schedule-spans.ts:62":
+    "paged: the gantt/resource jobs read IS complete — .from('jobs') lives in a `scoped()` builder-closure and is paged via fetchAllRows((from,to) => scoped()…range(from,to)) in a SEPARATE statement, beyond the statement-scoped window. Same builder class as calendar-data.ts:92.",
   "app/(app)/invoices/[id]/page.tsx:110":
     "bounded: ONE invoice's payments (.eq('invoice_id', id)) — the payment ledger for a single invoice folded into paidTotal; a single invoice has a handful of payments, never near 1000",
   "app/admin/billing/actions.ts:160":
@@ -359,7 +382,7 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE org's members (.eq('org_id')) — the assessor picker (listAssessors); an org's headcount is tens/low-hundreds, never near 1000",
   "app/(app)/health-safety/_signoff-data.ts:137":
     "bounded: name lookup .in('user_id', ids) where ids is a de-duped Set of sign-off user_ids from a bounded parent set — ≤ parent rows, never near 1000",
-  "app/(app)/settings/page.tsx:72":
+  "app/(app)/settings/page.tsx:74":
     "bounded: ONE org's members (.eq('org_id')) — the settings team panel; bounded by the org's headcount, never near 1000",
   "app/(app)/staff/leave/page.tsx:96":
     "bounded: ONE org's members (.eq('org_id')) — the leave-page name lookup; bounded by the org's headcount",
@@ -1079,18 +1102,36 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   // ---- PAGED (always fetchAllRows) ----
   accounting_pushed_entities: "PAGED: fetchAllRows (accounting-export ledger reconcile read)",
   activity_log: "PAGED: fetchAllRows on every read (activity feed, dashboard tile, AI aggregates)",
+  automation_approvals:
+    "PER-ORG/PAGED: the only set-read is listPendingApprovals (server/services/automation-custom-rules.ts) — .eq('org_id').eq('status','pending') F-1 paged via .range on a stable (created_at desc, id asc) order (CUSTOM_RULE_PAGE_SIZE window). The decideApproval reads are an .update(...).select() RETURNING (id-filtered, ≤1 row); the rest are inserts/updates.",
+  automation_custom_rules:
+    "PER-ORG config-scale/PAGED: listCustomRulesForOrg (server/services/automation-custom-rules.ts) is .eq('org_id') F-1 paged via .range on a stable (created_at desc, id asc) order; the dispatcher's loadEnabledCustomRulesForDispatch is .eq('org_id').eq('trigger_event').eq('enabled') .limit(500) (config-scale, far under the clamp); getCustomRule is .maybeSingle(). Never summed cross-tenant.",
   asset_fuel_logs: "PAGED: fetchAllRows (fleet fuel rollup)",
   bank_statements: "PAGED: fetchAllRows (payments page statements list)",
   briefing_dismissals: "PAGED: fetchAllRows (daily briefing)",
+  calendar_event_links:
+    "PAGED: listPushedExternalEventIds (calendar pull dedup) reads external_event_id in an explicit .range(from,from+PAGE-1) loop under the PostgREST cap (PAGE=500) until a short page — the complete pushed-id set, never truncated. Service-role, org+connection pinned.",
   cis_subcontractors: "PAGED: fetchAllRows (CIS subcontractor roster)",
+  customer_contacts:
+    "PAGED: fetchAllRows (portal contacts — the customer's own contacts .eq(org_id).eq(customer_id), paged in app/customer-portal/_contacts.ts)",
+  service_bookings:
+    "PAGED: fetchAllRows on every set-read (portal servicing — the customer's own bookings .eq(org_id).eq(customer_id), and the org-wide live-count read for slot availability .in(slot_id) — both paged in app/customer-portal/_booking.ts)",
+  service_booking_slots:
+    "PAGED: fetchAllRows on every set-read (portal servicing — the org's active future slots and the per-booking slot detail lookup .in(id) — both paged in app/customer-portal/_booking.ts)",
   compliance_documents: "PAGED: fetchAllRows (daily briefing compliance)",
   delay_events: "PAGED: fetchAllRows (EOT pack + intelligence delay analysis)",
   job_milestones: "PAGED: fetchAllRows (intelligence programme + job-progress)",
+  job_templates:
+    "PAGED/BOUNDED (P3): the active-template picker (lib/jobs/template-list.ts) is fetchAllRows-paged; the /jobs/templates list (page.tsx) is an EXACT-count .range() page. Per-org admin config (a firm has a handful of templates), never a cross-tenant scan.",
   job_programme_baselines: "PAGED: fetchAllRows (intelligence + job-progress baselines)",
   job_progress_observations: "PAGED: fetchAllRows (job-progress observations)",
   site_diary_entries: "PAGED: fetchAllRows (EOT pack diary; .in(ids) paged)",
   notification_email_queue:
     "PAGED/SINGLE: the CIS dedupe read is fetchAllRows-paged; the queue-drain read is a bounded worker .limit(DRAIN_BATCH<1000)",
+  notification_preferences:
+    "PER-USER-CONFIG/PAGED: getPreferencesForUser is .eq('org_id').eq('user_id') — ONE user's per-category preference rows (≤ the fixed category count, ~11); the sender-honoring bulk read (getPreferencesForUserKeys) and the digest-cron eligibility scan are both fetchAllRows-paged. No cross-tenant/aggregate set-read.",
+  notification_digest_cursors:
+    "PAGED: fetchCursors is the only set-read and is fetchAllRows-paged (bulk digest cursor read); the per-cadence cursor advance is an upsert write, not a read. Service-role only.",
 
   // ---- PER-PARENT (bounded by ONE parent row) ----
   blueprint_markup: "PER-PARENT: .eq('blueprint_version_id') — one drawing version's markup shapes",
@@ -1165,6 +1206,7 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   toolbox_talks: "PER-PARENT/RECENT-N: .eq('job_id') / .limit recent / per-root revision series — bounded display",
 
   // ---- CLOSED registry / SINGLE existence ----
+  help_articles: "CLOSED/GLOBAL: the platform help/knowledge-base — curated CrewFlow-authored content shared by every org (NOT tenant data, no org_id, service-role-only writes). listHelpArticles reads all active rows (.eq('active',true)); a hand-authored closed content set of tens of articles, never near the cap, never summed or fed to a count. Per-article reads are .eq('slug').maybeSingle().",
   hq_capabilities: "CLOSED: .in('token', <the closed capability registry>) — a fixed lookup set",
   hq_capability_grants: "CLOSED: .or(<clauses from the closed capability registry>) — bounded by the registry",
   billing_events: "SINGLE: .limit(1) existence probe (stripe verify) — not a set read",

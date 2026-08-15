@@ -93,6 +93,60 @@ export async function queueNotificationEmail(input: {
 }
 
 /**
+ * Queue a DIGEST email — a batch of notifications composed into ONE message by
+ * the notifications-digest cron. Unlike `queueNotificationEmail` this is not
+ * tied to a single notification row: `notification_id` is null and the subject /
+ * body are pre-composed by the pure `buildDigestEmail`. It rides the SAME
+ * notification_email_queue → drain → Resend pipeline, so the digest cron itself
+ * does no network I/O (the existing notifications-drain cron sends it).
+ *
+ * Best-effort: a queue-insert failure is logged and swallowed (returns null) so
+ * one user's digest never blocks the pass.
+ */
+export async function queueDigestEmail(input: {
+  org_id: string;
+  user_id: string;
+  to_email: string;
+  subject: string;
+  body_text: string;
+  body_html?: string | null;
+  reply_to_email?: string | null;
+}): Promise<EmailQueueRow | null> {
+  const payload = {
+    notification_id: null,
+    org_id: input.org_id,
+    user_id: input.user_id,
+    to_email: input.to_email,
+    reply_to_email: input.reply_to_email ?? null,
+    subject: input.subject,
+    body_text: input.body_text,
+    body_html: input.body_html ?? null,
+    status: "queued" as const,
+    retry_count: 0,
+    last_error: null,
+    provider: null,
+    provider_message_id: null,
+    scheduled_for: new Date().toISOString(),
+  };
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("notification_email_queue" as never)
+    .insert(payload as never)
+    .select(
+      "id, notification_id, org_id, user_id, to_email, reply_to_email, subject, body_text, body_html, status, retry_count, last_error, provider, provider_message_id, created_at, scheduled_for, sent_at, failed_at, updated_at" as never,
+    )
+    .single();
+  if (error) {
+    console.error(
+      "[notification-email] digest queue insert failed",
+      error.message ?? String(error),
+    );
+    return null;
+  }
+  return data as unknown as EmailQueueRow;
+}
+
+/**
  * Send one queued row via Resend. Returns the new status.
  *
  *   queued → sent      on Resend success

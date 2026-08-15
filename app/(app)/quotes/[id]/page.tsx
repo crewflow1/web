@@ -31,6 +31,12 @@ import { SendQuote } from "./_send-quote";
 import { VariationPanel, type VariationPanelQuote } from "./_variation-panel";
 import { env } from "@/lib/env";
 import { getQuoteWriterReadiness } from "@/lib/ai/quote-writer-readiness";
+import {
+  listPriceBookForPicker,
+  listQuoteTemplatesForBuilder,
+} from "@/lib/pricing/queries";
+import { saveQuoteAsTemplate } from "@/app/(app)/price-book/actions";
+import { SaveAsTemplatePanel } from "./_save-template-panel";
 
 /**
  * Quote edit + lifecycle actions page.
@@ -197,10 +203,19 @@ export default async function EditQuotePage({
     signature_image_bucket: string | null;
     signature_image_path: string | null;
   };
-  const [customers, properties, leads, signaturesRes] = await Promise.all([
+  const [
+    customers,
+    properties,
+    leads,
+    priceBookItems,
+    templates,
+    signaturesRes,
+  ] = await Promise.all([
     listCustomersForQuote(ctx.org.id),
     listPropertiesForQuote(ctx.org.id),
     listLeadsForQuote(ctx.org.id),
+    listPriceBookForPicker(ctx.org.id),
+    listQuoteTemplatesForBuilder(ctx.org.id),
     (
       supabase.from("signatures" as never) as unknown as {
         select: (cols: string) => {
@@ -604,6 +619,8 @@ export default async function EditQuotePage({
           defaultTerms={quote.terms ?? ""}
           defaultLineItems={lineItems}
           cancelHref="/quotes"
+          priceBookItems={priceBookItems}
+          templates={templates}
           // See the note on the /quotes/new mount: readiness is a computed,
           // build-time-anchored fact, and rendering the panel performs no
           // database read and reaches no model.
@@ -614,6 +631,10 @@ export default async function EditQuotePage({
           }}
         />
       )}
+
+      {lineItems.length > 0 ? (
+        <SaveAsTemplatePanel action={saveQuoteAsTemplate.bind(null, quote.id)} />
+      ) : null}
 
       {signatures.length > 0 ? (
         <section

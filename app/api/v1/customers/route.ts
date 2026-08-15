@@ -8,6 +8,8 @@ import {
   type CustomerRowForDto,
 } from "@/lib/public-api/customers";
 import { parsePagination, rangeFor } from "@/lib/public-api/jobs";
+import { createCustomerSchema } from "@/lib/public-api/write-schemas";
+import { parseJsonBody, created, writeError } from "@/lib/public-api/write";
 
 /**
  * GET /api/v1/customers — the public, key-authenticated CUSTOMERS READ.
@@ -103,4 +105,76 @@ export async function GET(request: Request): Promise<Response> {
       has_more,
     },
   });
+}
+
+/** Minimal typed surface for the org-pinned insert + allowlisted readback. */
+type CustomerInsertWrite = {
+  insert: (row: {
+    org_id: string;
+    name: string;
+    email: string | null;
+    phone: string | null;
+    address_line1: string | null;
+    address_line2: string | null;
+    city: string | null;
+    county: string | null;
+    postcode: string | null;
+    country?: string;
+    notes: string | null;
+  }) => {
+    select: (cols: string) => {
+      single: () => Promise<{
+        data: CustomerRowForDto | null;
+        error: { message?: string | null } | null;
+      }>;
+    };
+  };
+};
+
+/**
+ * POST /api/v1/customers — create a customer in the KEY'S org.
+ *
+ * Same dark flag + guard as the read; requires the DISTINCT `write:customers`
+ * scope (a read-only key cannot create). The body is strictly validated
+ * (unknown keys rejected — no mass assignment), org_id is pinned to the key's
+ * org (never taken from the body), and the created row is returned through the
+ * SAME read DTO allowlist so a write can never expose a field a read would not.
+ */
+export async function POST(request: Request): Promise<Response> {
+  const guard = await guardPublicApiRequest(request, "write:customers");
+  if (!guard.ok) return guard.response;
+
+  const body = await parseJsonBody(request, createCustomerSchema);
+  if (!body.ok) return body.response;
+  const input = body.value;
+
+  const admin = createAdminClient();
+  const { data, error } = await (
+    admin.from("customers") as unknown as CustomerInsertWrite
+  )
+    .insert({
+      // ORG PINNING — the key's own org, never a client-supplied value.
+      org_id: guard.key.orgId,
+      name: input.name,
+      email: input.email ?? null,
+      phone: input.phone ?? null,
+      address_line1: input.address_line1 ?? null,
+      address_line2: input.address_line2 ?? null,
+      city: input.city ?? null,
+      county: input.county ?? null,
+      postcode: input.postcode ?? null,
+      // Only override the DB default country when the caller set one.
+      ...(input.country ? { country: input.country } : {}),
+      notes: input.notes ?? null,
+    })
+    .select(CUSTOMER_DTO_SELECT)
+    .single();
+
+  if (error || !data) {
+    // Loud server-side; generic to the caller (raw Postgres text never leaks).
+    console.error("[public-api] customer create failed", error?.message);
+    return writeError(500, "write_failed", "Couldn't create the customer.");
+  }
+
+  return created(toPublicCustomerDto(data));
 }

@@ -23,14 +23,16 @@ export type ApiKeysReadiness = {
    */
   implemented: boolean;
   /**
-   * How many /api/v1 route files this build ships. Currently 7 — the
-   * /api/v1/me probe, the Train K jobs read pair (/api/v1/jobs and
-   * /api/v1/jobs/[id]), the Open-API expansion reads (/api/v1/customers,
-   * /api/v1/invoices, /api/v1/quotes) and the /api/v1/openapi.json spec. The
-   * whole read surface ships DARK behind FEATURE_PUBLIC_API_JOBS (each 404s
-   * until the CEO enables it), so this count is the built surface, not the live
-   * one. The drift-guard test ties it to the real file count so a route cannot
-   * be added or removed without a conscious diff here.
+   * How many /api/v1 route files this build ships. Currently 9 — the
+   * /api/v1/me probe, the jobs read pair (/api/v1/jobs and /api/v1/jobs/[id]),
+   * the customers pair (/api/v1/customers and /api/v1/customers/[id]), the
+   * /api/v1/invoices + /api/v1/quotes reads, the /api/v1/leads write, and the
+   * /api/v1/openapi.json spec. Several of these files now carry WRITE verbs
+   * (POST/PATCH) too. The whole surface ships DARK behind
+   * FEATURE_PUBLIC_API_JOBS (each 404s until the CEO enables it), so this count
+   * is the built surface, not the live one. The drift-guard test ties it to the
+   * real file count so a route cannot be added or removed without a conscious
+   * diff here.
    */
   endpoints: number;
 };
@@ -43,10 +45,11 @@ export type IntegrationsReadiness = {
 export function getApiKeysReadiness(): ApiKeysReadiness {
   return {
     // lib/api-auth/{keygen,resolve,scopes}.ts + app/api/v1/me/route.ts
-    // + the Train K jobs read pair + the Open-API expansion (customers,
-    // invoices, quotes, openapi.json) — all dark behind FEATURE_PUBLIC_API_JOBS.
+    // + the jobs read/write pair + customers read/write pair + invoices/quotes
+    // reads (quotes also writes) + the leads write + openapi.json — all dark
+    // behind FEATURE_PUBLIC_API_JOBS.
     implemented: true,
-    endpoints: 7,
+    endpoints: 9,
   };
 }
 

@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
+import { HelpLink } from "../_components/help-link";
 import { resolveJobAddress, formatAddressOneLine } from "@/lib/address";
 import {
   ilikeOrFilter,
@@ -184,7 +185,10 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
     <div className="space-y-6">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Jobs</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-slate-900">Jobs</h1>
+            <HelpLink article="converting-a-quote-to-a-job" label="Help with jobs" />
+          </div>
           <p className="mt-1 text-sm text-slate-600">
             {term
               ? `${totalCount} matching “${term}”`
@@ -197,6 +201,12 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
             className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
             Calendar
+          </Link>
+          <Link
+            href="/jobs/templates"
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Templates
           </Link>
           <Link
             href="/jobs/new"

@@ -27,9 +27,11 @@ type TabId =
   | "photos"
   | "reports"
   | "warranties"
+  | "servicing"
   | "documents"
   | "messages"
   | "requests"
+  | "contacts"
   | "profile";
 
 /** The four destinations that earn a permanent slot on the phone bottom bar. */
@@ -62,9 +64,11 @@ export function PortalShell({
     { id: "photos", href: `${base}/photos`, label: "Photos" },
     { id: "reports", href: `${base}/reports`, label: "Reports" },
     { id: "warranties", href: `${base}/warranties`, label: "Warranties" },
+    { id: "servicing", href: `${base}/servicing`, label: "Servicing" },
     { id: "documents", href: `${base}/documents`, label: "Documents" },
     { id: "messages", href: `${base}/messages`, label: "Messages" },
     { id: "requests", href: `${base}/requests`, label: "Requests" },
+    { id: "contacts", href: `${base}/contacts`, label: "Contacts" },
     { id: "profile", href: `${base}/profile`, label: "Profile" },
   ];
 

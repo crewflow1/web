@@ -296,21 +296,23 @@ describe("GET /api/v1/me — the substrate's living proof", () => {
     expect(route).not.toMatch(/keyId(?!,\s*\n?\s*DEFAULT_LIMITS)/); // key id only feeds the limiter
   });
 
-  it("is one of exactly SEVEN /api/v1 routes: the probe + jobs read pair + the Open-API expansion (all dark behind one flag)", () => {
-    // The probe (/me) needs no flag; the jobs read pair (Train K) plus the
-    // Open-API expansion (customers, invoices, quotes reads + the openapi.json
-    // spec) all ship DARK behind the ONE FEATURE_PUBLIC_API_JOBS flag — every
-    // one 404s until the CEO enables it (see lib/public-api/flag.ts). Exposing
-    // them is that decision; this pin makes any FURTHER /api/v1 surface a
-    // conscious diff.
+  it("is one of exactly NINE /api/v1 route files: the probe + the read/write surface (all dark behind one flag)", () => {
+    // The probe (/me) needs no flag; the jobs read/write pair, the customers
+    // read/write pair, the invoices + quotes reads (quotes also writes), the
+    // leads write, and the openapi.json spec all ship DARK behind the ONE
+    // FEATURE_PUBLIC_API_JOBS flag — every one 404s until the CEO enables it
+    // (see lib/public-api/flag.ts). Exposing them is that decision; this pin
+    // makes any FURTHER /api/v1 surface a conscious diff.
     const routes = [...walk(resolve(ROOT, "app/api/v1"))].filter((f) =>
       /route\.tsx?$/.test(f),
     );
     expect(routes.map((f) => f.replace(`${ROOT}/`, "")).sort()).toEqual([
+      "app/api/v1/customers/[id]/route.ts",
       "app/api/v1/customers/route.ts",
       "app/api/v1/invoices/route.ts",
       "app/api/v1/jobs/[id]/route.ts",
       "app/api/v1/jobs/route.ts",
+      "app/api/v1/leads/route.ts",
       "app/api/v1/me/route.ts",
       "app/api/v1/openapi.json/route.ts",
       "app/api/v1/quotes/route.ts",

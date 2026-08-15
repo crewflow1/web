@@ -44,6 +44,20 @@ function buildRecurring(
   return endDate ? { pattern, end_date: endDate } : { pattern };
 }
 
+/**
+ * Cross-field span rule (mirrors the jobs_span_forward CHECK). Returns an error
+ * sentence or null. An end date without a start, or before the start, is refused.
+ */
+function validateSpan(
+  start: string | undefined,
+  end: string | undefined,
+): string | null {
+  if (!end) return null;
+  if (!start) return "Set a scheduled date before adding an end date.";
+  if (end < start) return "The end date can't be before the scheduled date.";
+  return null;
+}
+
 export async function createJob(
   _prevState: FormState<JobValues>,
   formData: FormData,
@@ -64,6 +78,15 @@ export async function createJob(
   });
   if (!refs.ok) return formError(refs.message, result.data as JobValues);
 
+  // Multi-day span: an end date is only meaningful alongside a start, and must
+  // not precede it (mirrors the jobs_span_forward CHECK; refused here with a
+  // sentence rather than surfacing a raw constraint error).
+  const spanError = validateSpan(
+    result.data.scheduled_date,
+    result.data.scheduled_end_date,
+  );
+  if (spanError) return formError(spanError, result.data as JobValues);
+
   const recurring = buildRecurring(
     result.data.recurring_pattern,
     result.data.recurring_end_date,
@@ -76,6 +99,7 @@ export async function createJob(
       assigned_to: result.data.assigned_to ?? null,
       status: result.data.status,
       scheduled_date: result.data.scheduled_date ?? null,
+      scheduled_end_date: result.data.scheduled_end_date ?? null,
       notes: result.data.notes ?? null,
       recurring,
       site_address_line1: result.data.site_address_line1 ?? null,
@@ -91,6 +115,23 @@ export async function createJob(
   if (error || !data) {
     console.error("[jobs] create failed", error);
     return formError("Couldn't save the job. Try again.", result.data as JobValues);
+  }
+
+  // Clone a job template's checklist (and, for admins with a scheduled date, its
+  // programme baseline) onto the new job. Best-effort: the job is already saved,
+  // so a template that no longer exists or a partial clone must never fail the
+  // create. The RPC is atomic and org-pinned; a member's clone silently skips
+  // the admin-only baseline (see clone_job_template, 20261132000001).
+  if (result.data.template_id) {
+    const { error: cloneError } = await supabase.rpc("clone_job_template", {
+      p_job_id: data.id,
+      p_org_id: ctx.org.id,
+      p_template_id: result.data.template_id,
+      p_anchor_date: result.data.scheduled_date ?? null,
+    });
+    if (cloneError) {
+      console.error("[jobs] template clone failed", cloneError);
+    }
   }
 
   revalidatePath("/jobs");
@@ -148,6 +189,12 @@ export async function updateJob(
   });
   if (!refs.ok) return formError(refs.message, result.data as JobValues);
 
+  const spanError = validateSpan(
+    result.data.scheduled_date,
+    result.data.scheduled_end_date,
+  );
+  if (spanError) return formError(spanError, result.data as JobValues);
+
   const recurring = buildRecurring(
     result.data.recurring_pattern,
     result.data.recurring_end_date,
@@ -161,6 +208,7 @@ export async function updateJob(
         assigned_to: result.data.assigned_to ?? null,
         status: result.data.status,
         scheduled_date: result.data.scheduled_date ?? null,
+        scheduled_end_date: result.data.scheduled_end_date ?? null,
         notes: result.data.notes ?? null,
         recurring,
         site_address_line1: result.data.site_address_line1 ?? null,

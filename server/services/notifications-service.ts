@@ -3,6 +3,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { queueNotificationEmail } from "@/lib/notifications/email";
 import { resolveEmailRecipient } from "@/lib/notifications/email-routing";
+import { resolveNotificationDelivery } from "@/lib/notifications/preferences";
+import { getPreferencesForUserKeys } from "@/server/services/notification-preferences-service";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import {
   notificationCategoryForType,
@@ -205,9 +207,41 @@ async function queueEmailsForNotifications(
 ): Promise<void> {
   if (inputs.length === 0 || inputs.length !== rows.length) return;
 
-  const pending = inputs
+  const pendingAll = inputs
     .map((input, i) => ({ input, row: rows[i] as NotificationRow }))
     .filter((p) => p.input.email != null);
+  if (pendingAll.length === 0) return;
+
+  // PER-USER PREFERENCE HONORING. For notifications DIRECTED AT a specific user
+  // (row.user_id set), consult that user's stored preference before queueing an
+  // immediate email: an opt-out suppresses it, a digest cadence defers it to the
+  // notifications-digest cron, and immediate/critical falls through unchanged.
+  // ORG-WIDE notifications (user_id null) are left exactly as before — there is
+  // no single user to key a preference on, and the digest cron handles their
+  // per-user fan-out via each member's own cursor. The critical floor
+  // (money/security category or urgent priority) always sends, whatever the
+  // preference — enforced in resolveNotificationDelivery.
+  const userKeys = pendingAll
+    .filter((p) => p.row.user_id != null)
+    .map((p) => ({ org_id: p.row.org_id, user_id: p.row.user_id as string }));
+  const prefIndex =
+    userKeys.length > 0
+      ? await getPreferencesForUserKeys(userKeys)
+      : new Map();
+
+  const pending = pendingAll.filter(({ row }) => {
+    if (row.user_id == null) return true; // org-wide: unchanged behaviour
+    const pref =
+      prefIndex.get(`${row.org_id}::${row.user_id}::${row.category}`) ?? null;
+    const decision = resolveNotificationDelivery({
+      category: row.category,
+      priority: row.priority,
+      preference: pref,
+    });
+    // Only an IMMEDIATE decision queues here; 'off' suppresses and 'digest'
+    // is picked up by the digest cron.
+    return decision.email === "immediate";
+  });
   if (pending.length === 0) return;
 
   // One roster read for all opted-in orgs in this emit — not one per row.

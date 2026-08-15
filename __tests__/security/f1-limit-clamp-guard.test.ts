@@ -160,6 +160,17 @@ const PRODUCER_TABLES = new Set<string>([
  * The overdue producer scan is DELIBERATELY absent: it is the real offender and
  * was fixed by paging (fetchAllRows), not allowlisted. */
 const BOUNDARY_ALLOWLIST: Record<string, string> = {
+  // P3 notifications digest — a per-(user, cadence) batch read of a user's
+  // digest-eligible notifications, capped at .limit(MAX_NOTIFS_PER_DIGEST=200)
+  // and ordered created_at ASC. This is a GENUINELY-bounded, self-draining
+  // per-pass batch, NOT a completeness-sensitive set read: the cursor advances
+  // ONLY to the created_at of the LAST notification actually included in the
+  // email, so any overflow beyond 200 is not dropped — it rolls into the next
+  // digest pass. A single digest email deliberately must not enumerate thousands
+  // of notifications; 200 is the display bound. (Sibling class to the queue-drain
+  // worker's bounded .limit(DRAIN_BATCH_SIZE).)
+  "server/services/notification-preferences-service.ts:383":
+    "bounded batch: ONE user's digest-eligible notifications (.eq('org_id') for that user, category-filtered) capped at 200 and ordered created_at ASC; the digest cursor advances only to the last INCLUDED row, so overflow rolls to the next pass rather than being dropped — a self-draining per-pass batch, not a completeness read.",
   // countPostedReceipts: REMOVED (C66). The PO register above it is now fully
   // PAGED, so purchaseOrderIds can exceed the cap and the old bounded reason
   // ("ONE list page's POs") is no longer true. The read is now CHUNKED + PAGED
@@ -242,7 +253,7 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
     "bounded: search leads — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
   "app/api/search/route.ts:292":
     "bounded: search invoices — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
-  "app/(app)/jobs/page.tsx:92":
+  "app/(app)/jobs/page.tsx:93":
     "bounded: search-match helper — collects up to 200 matching customer ids to fold into the .range()-paged jobs query; a name-search sub-sample, not a materialised set",
 
   // Customer-portal reads.

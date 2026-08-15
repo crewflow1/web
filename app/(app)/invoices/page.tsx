@@ -12,6 +12,7 @@ import {
   invoiceDisplayStatus,
 } from "@/lib/invoices/overdue";
 import { EmptyState } from "../_components/empty-state";
+import { HelpLink } from "../_components/help-link";
 import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
@@ -152,7 +153,10 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
     <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Invoices</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-slate-900">Invoices</h1>
+            <HelpLink article="sending-your-first-invoice" label="Help with invoicing" />
+          </div>
           <p className="mt-1 text-sm text-slate-600">
             {totalCount} {totalCount === 1 ? "invoice" : "invoices"}
           </p>

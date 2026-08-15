@@ -19,6 +19,7 @@ import { JobDelaysSection } from "./_job-delays";
 import { JobDiarySection } from "./_job-diary";
 import { JobProgressSection } from "./_job-progress";
 import { JobProgrammeSection } from "./_job-programme";
+import { JobChecklistSection } from "./_job-checklist";
 import { JobSnagsSection } from "./_job-snags";
 import { JobMaterialsSection } from "./_job-materials";
 import { SiteTimelineSection } from "./_site-timeline";
@@ -63,6 +64,7 @@ type JobDetail = {
   id: string;
   status: string;
   scheduled_date: string | null;
+  scheduled_end_date: string | null;
   notes: string | null;
   customer_id: string | null;
   assigned_to: string | null;
@@ -119,7 +121,7 @@ export default async function EditJobPage({
     id,
     ctx.org.id,
     `
-        id, status, scheduled_date, notes, customer_id, assigned_to, recurring,
+        id, status, scheduled_date, scheduled_end_date, notes, customer_id, assigned_to, recurring,
         site_address_line1, site_address_line2, site_city, site_county, site_postcode, site_country,
         customer:customers ( id, name, address_line1, address_line2, city, county, postcode, country )
       `,
@@ -493,7 +495,8 @@ export default async function EditJobPage({
       saved === "retention_release" ||
       saved === "retention_schedule" ||
       saved === "progress" ||
-      saved === "programme" ? (
+      saved === "programme" ||
+      saved === "dependencies" ? (
         <div
           role="status"
           className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
@@ -506,7 +509,9 @@ export default async function EditJobPage({
                 ? "Progress update recorded."
                 : saved === "programme"
                   ? "Programme baseline recorded."
-                  : "Retention release recorded."}
+                  : saved === "dependencies"
+                    ? "Milestone dependencies saved."
+                    : "Retention release recorded."}
         </div>
       ) : null}
 
@@ -546,6 +551,7 @@ export default async function EditJobPage({
               assigned_to: job.assigned_to ?? "",
               status: job.status,
               scheduled_date: job.scheduled_date ?? "",
+              scheduled_end_date: job.scheduled_end_date ?? "",
               recurring_pattern: recurring?.pattern ?? "",
               recurring_end_date: recurring?.end_date ?? "",
               notes: job.notes ?? "",
@@ -921,6 +927,10 @@ export default async function EditJobPage({
       {/* Programme baseline — sits directly under progress: the planned line
           on the chart above is earned by the weighted milestones set here. */}
       <JobProgrammeSection jobId={job.id} />
+
+      {/* Checklist — the crew's run-list, distinct from snags & the quality
+          plan. Pre-loadable from a job template on create. */}
+      <JobChecklistSection jobId={job.id} />
 
       <JobDiarySection jobId={job.id} orgId={ctx.membership.org_id} />
 

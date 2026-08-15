@@ -55,7 +55,10 @@ describe("Phase 3 — token model", () => {
   });
 
   it("portal load fails closed (null = InvalidLinkPage)", () => {
-    expect(HELPERS).toMatch(/if \(!data \|\| !data\.org\) return null/);
+    // A broken customer row (no joined org) fails closed. A missing customer row
+    // falls to the ADDITIVE contact-token path (P3), which itself fails closed.
+    expect(HELPERS).toMatch(/if \(!data\.org\) return null/);
+    expect(HELPERS).toMatch(/if \(!data\) return resolveContactToken\(admin, token\)/);
   });
 });
 

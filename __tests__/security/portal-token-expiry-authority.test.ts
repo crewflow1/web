@@ -72,8 +72,19 @@ describe("expiry is decided in ONE authority", () => {
 describe("the loader fails CLOSED", () => {
   it("returns null on a bad token shape, a missing row, and a DB error", () => {
     expect(HELPERS).toMatch(/if \(!\/\^\[0-9a-f\]/); // shape guard → return null
-    expect(HELPERS).toMatch(/if \(!data \|\| !data\.org\) return null/);
+    // A broken customer row (no joined org) still fails closed.
+    expect(HELPERS).toMatch(/if \(!data\.org\) return null/);
     expect(HELPERS).toMatch(/console\.error\("\[customer-portal\] lookup failed"/);
+  });
+
+  it("a missing customer row falls to the ADDITIVE contact-token path, which also fails closed", () => {
+    // The primary single-token path is unchanged; only when it misses (!data) do
+    // we try customer_contacts.portal_token — and that branch returns null on any
+    // miss / disabled access / expired contact token (fail-closed, same as above).
+    expect(HELPERS).toMatch(/if \(!data\) return resolveContactToken\(admin, token\)/);
+    expect(HELPERS).toMatch(/function resolveContactToken/);
+    expect(HELPERS).toMatch(/if \(!data \|\| !data\.customer \|\| !data\.customer\.org\) return null/);
+    expect(HELPERS).toMatch(/\.eq\("portal_access_enabled", true\)/);
   });
 
   it("returns null when a set expiry is in the past", () => {

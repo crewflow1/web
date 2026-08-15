@@ -158,6 +158,8 @@ const ALLOWLIST: Record<string, string> = {
     "Bounded by p_limit RPCs and its OWN wall-clock deadline (Date.now() + maxRunMs); sweeps are terminal/idempotent, so processed rows leave the candidate set.",
   "notifications-drain":
     "LIMIT-bounded (DRAIN_BATCH_SIZE=50); a sent row leaves the queue and a failed row reschedules via backoff (scheduled_for moves forward = recency rotation) — self-draining.",
+  "notifications-digest":
+    "Network-free per user (only DB reads + queue inserts into notification_email_queue, drained separately by notifications-drain — nothing goes on any wire here) and self-draining: each user is processed STALEST-cursor-first (MAX_USERS_PER_PASS bound), and advancing that user's per-cadence digest cursor removes those notifications from the next pass, so a stable order cannot re-service the same head.",
   "outreach-drain":
     "Claim-N-and-exit off an atomic FOR UPDATE SKIP LOCKED task lease, bounded by `limit`; a claimed task takes a lease so overlapping passes never re-serve it.",
   "overdue-invoices":
@@ -166,6 +168,8 @@ const ALLOWLIST: Record<string, string> = {
     "Claim-N-and-exit off an atomic FOR UPDATE SKIP LOCKED task lease, bounded by `limit`; leased tasks are never re-served by an overlapping pass.",
   "quote-followup":
     "Self-draining send queue: a follow-up marker excludes a processed quote from the next pass's candidates. Reads paged in full (F-1).",
+  "report-delivery":
+    "Self-draining daily delivery: candidates are ordered by last_run_on ASC NULLS FIRST (stalest/never-run first — a recency cursor) and each processed subscription's last_run_on advances to today, so a delivered subscription LEAVES the day's candidate set and a pass killed mid-list resumes from the tail on the next tick rather than re-servicing the head. Single-pass daily; reads paged in full (F-1).",
   "research-drain":
     "Claim-N-and-exit off an atomic FOR UPDATE SKIP LOCKED task lease, bounded by `limit`; leased tasks are never re-served.",
   "review-requests":

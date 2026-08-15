@@ -21,8 +21,35 @@ import {
 import type {
   AutomationActionType,
   AutomationEvent,
+  AutomationEventType,
   AutomationRule,
 } from "@/lib/automation/events";
+import { evaluateConditions } from "@/lib/automation/conditions";
+import {
+  validateCustomRuleDefinition,
+  immediateActions,
+  downstreamActions,
+  type CustomRuleAction,
+  type CustomRuleDefinition,
+} from "@/lib/automation/custom-rules";
+import {
+  isCustomAvailableAction,
+  sanitizeActionParams,
+} from "@/lib/automation/action-registry";
+
+/** A minimal rule reference — id (for telemetry) + label (for copy). Both an
+ *  AutomationRule and a custom rule satisfy this, so the shared action handlers
+ *  take this instead of the full catalogue rule. */
+type RuleRef = { id: string; label: string };
+
+/** User-selectable overrides a custom-rule action may carry. All are DATA:
+ *  display copy or bounded enums — never identifiers or recipients. */
+type ActionOverrides = {
+  title?: string;
+  priority?: "low" | "medium" | "high";
+  audience?: "customer" | "hq";
+  note?: string;
+};
 
 /**
  * Automation OS dispatcher.
@@ -58,8 +85,13 @@ export type DispatchResult = {
 export async function dispatchAutomation(
   event: AutomationEvent,
 ): Promise<DispatchResult> {
+  // Both the built-in CATALOGUE rules and the per-org CUSTOM rules can watch this
+  // event. Custom rules may target ANY event type — including ones no catalogue
+  // rule watches — so we must NOT early-return on an empty catalogue match; the
+  // custom-rule pass below still runs. The custom-rule read is a single indexed
+  // lookup (partial index on org_id, trigger_event where enabled), so an event
+  // with no rules at all costs one cheap query.
   const matched = rulesForEvent(event.type);
-  if (matched.length === 0) return { ran: [] };
 
   const admin = createAdminClient();
   const out: Array<{ rule_id: string; status: "ok" | "failed" | "skipped"; error?: string }> = [];
@@ -70,10 +102,13 @@ export async function dispatchAutomation(
   // back to the catalogue defaults, so the engine never throws and never changes
   // behaviour on a transient error. Pinning to event.org_id is also a tenancy
   // guard: a rule's enable-state is resolved against its own org, never blended.
-  const overrides = await loadRuleOverridesBestEffort(
-    admin as unknown as { from: (t: string) => never },
-    event.org_id,
-  );
+  const overrides =
+    matched.length > 0
+      ? await loadRuleOverridesBestEffort(
+          admin as unknown as { from: (t: string) => never },
+          event.org_id,
+        )
+      : new Map<string, boolean>();
 
   for (const rule of matched) {
     const correlationId = correlationIdFor(
@@ -85,7 +120,7 @@ export async function dispatchAutomation(
     if (!effectiveEnabled(rule, overrides)) {
       // Terminal + immediate: claim and stamp complete in one step, so a
       // disabled rule can never be "reclaimed" and re-skipped forever.
-      await recordDisabled(admin, event, rule, correlationId);
+      await recordTerminalSkip(admin, event, rule.id, correlationId, "rule_disabled");
       out.push({ rule_id: rule.id, status: "skipped" });
       continue;
     }
@@ -96,7 +131,7 @@ export async function dispatchAutomation(
     // execution: two callers both read "not found", both ran the actions, and
     // only the second INSERT collided — so the duplicate alert/notification had
     // already happened. The unique constraint guarded the row, never the work.
-    const claim = await claimRun(admin, event, rule, correlationId);
+    const claim = await claimRun(admin, event, rule.id, correlationId);
     if (!claim.ok) {
       // A database error during the claim is surfaced, never swallowed: we do
       // not know whether we hold the claim, so we must not act.
@@ -131,7 +166,7 @@ export async function dispatchAutomation(
     const status: "ok" | "failed" = ruleError ? "failed" : "ok";
     await finishRun(
       admin,
-      rule,
+      rule.id,
       correlationId,
       status,
       actionResults,
@@ -141,7 +176,219 @@ export async function dispatchAutomation(
     out.push({ rule_id: rule.id, status, error: ruleError ?? undefined });
   }
 
+  // ── CUSTOM RULES ──────────────────────────────────────────────────────────
+  // Per-org, user-composed rules (automation_custom_rules) fire ALONGSIDE the
+  // built-in catalogue for THIS event's org, through the same claim + telemetry.
+  // Best-effort: a custom-rule read/eval failure never derails the domain action
+  // or the catalogue rules that already ran.
+  await dispatchCustomRules(admin, event, out);
+
   return { ran: out };
+}
+
+/**
+ * Dispatch the org's enabled CUSTOM rules for this event.
+ *
+ * For each custom rule whose trigger matches:
+ *   1. Re-parse the stored definition (the injection boundary runs again on read
+ *      — a row hand-edited in the DB to something unsafe is SKIPPED, not run).
+ *   2. Evaluate its condition tree against the payload; a false gate → skip.
+ *   3. Claim (custom:<id>, correlation_id) atomically, exactly like a catalogue
+ *      rule, so a re-fired event never double-runs.
+ *   4. Run the IMMEDIATE actions (those before an approval node).
+ *   5. If the rule has an approval gate, create ONE pending approval row carrying
+ *      the downstream actions + an event snapshot, then stop — downstream runs
+ *      only when a human approves (server/services/automation-custom-rules.ts).
+ *   6. Otherwise run every action, then close the run.
+ *
+ * Org-pinned throughout: the read is pinned to event.org_id and every action
+ * pins event.org_id, so a custom rule can only ever act inside its own org.
+ */
+async function dispatchCustomRules(
+  admin: ReturnType<typeof createAdminClient>,
+  event: AutomationEvent,
+  out: Array<{ rule_id: string; status: "ok" | "failed" | "skipped"; error?: string }>,
+): Promise<void> {
+  const rows = await loadEnabledCustomRulesForDispatch(admin, event.org_id, event.type);
+  for (const row of rows) {
+    const ruleId = `custom:${row.id}`;
+    const correlationId = correlationIdFor(
+      event.type,
+      event.source_table,
+      event.source_id,
+    );
+
+    const parsed = validateCustomRuleDefinition(row.definition);
+    if (!parsed.ok) {
+      await recordTerminalSkip(admin, event, ruleId, correlationId, "invalid_definition");
+      out.push({ rule_id: ruleId, status: "skipped" });
+      continue;
+    }
+    const def = parsed.value;
+
+    if (!evaluateConditions(def.conditions, event.payload)) {
+      await recordTerminalSkip(admin, event, ruleId, correlationId, "condition_not_met");
+      out.push({ rule_id: ruleId, status: "skipped" });
+      continue;
+    }
+
+    const claim = await claimRun(admin, event, ruleId, correlationId);
+    if (!claim.ok) {
+      out.push({ rule_id: ruleId, status: "failed", error: claim.error });
+      continue;
+    }
+    if (!claim.won) {
+      out.push({ rule_id: ruleId, status: "skipped" });
+      continue;
+    }
+
+    const ruleRef: RuleRef = { id: ruleId, label: row.name };
+    const startedAt = Date.now();
+    const actionResults: Record<string, unknown> = {};
+    let ruleError: string | null = null;
+
+    for (const action of immediateActions(def)) {
+      try {
+        actionResults[action.type] = await runCustomAction(action, event, ruleRef);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        actionResults[action.type] = { ok: false, error: msg };
+        ruleError = ruleError ?? `${action.type}: ${msg}`;
+        console.error("[automation] custom action failed", {
+          rule: ruleId,
+          action: action.type,
+          error: msg,
+        });
+      }
+    }
+
+    if (def.requiresApproval) {
+      try {
+        const gate = await createApprovalGate(admin, event, row, def, correlationId);
+        actionResults.__approval__ = gate;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        actionResults.__approval__ = { ok: false, error: msg };
+        ruleError = ruleError ?? `approval_gate: ${msg}`;
+        console.error("[automation] approval gate failed", { rule: ruleId, error: msg });
+      }
+    }
+
+    const status: "ok" | "failed" = ruleError ? "failed" : "ok";
+    await finishRun(
+      admin,
+      ruleId,
+      correlationId,
+      status,
+      actionResults,
+      ruleError,
+      Date.now() - startedAt,
+    );
+    out.push({ rule_id: ruleId, status, error: ruleError ?? undefined });
+  }
+}
+
+type CustomRuleRow = {
+  id: string;
+  name: string;
+  definition: unknown;
+};
+
+/**
+ * Load an org's ENABLED custom rules for a trigger. Best-effort + org-pinned: a
+ * read failure logs and returns [] so the engine falls back to running only the
+ * catalogue (never throws into the domain action). Bounded read (F-1): a single
+ * org's rule set is small and capped well under the PostgREST clamp.
+ */
+async function loadEnabledCustomRulesForDispatch(
+  admin: ReturnType<typeof createAdminClient>,
+  orgId: string,
+  trigger: string,
+): Promise<CustomRuleRow[]> {
+  try {
+    const res = await (
+      admin.from("automation_custom_rules" as never) as unknown as {
+        select: (c: string) => {
+          eq: (k: string, v: unknown) => {
+            eq: (k: string, v: unknown) => {
+              eq: (k: string, v: unknown) => {
+                order: (k: string, o: { ascending: boolean }) => {
+                  limit: (n: number) => Promise<{
+                    data: CustomRuleRow[] | null;
+                    error: { message: string } | null;
+                  }>;
+                };
+              };
+            };
+          };
+        };
+      }
+    )
+      .select("id, name, definition")
+      .eq("org_id", orgId)
+      .eq("trigger_event", trigger)
+      .eq("enabled", true)
+      .order("created_at", { ascending: true })
+      .limit(500); // provable cap, far under the PostgREST 1000-row clamp
+    if (res.error) {
+      console.error("[automation] custom-rule read failed", {
+        org_id: orgId,
+        trigger,
+        error: res.error.message,
+      });
+      return [];
+    }
+    return res.data ?? [];
+  } catch (e) {
+    console.error("[automation] custom-rule read threw", {
+      org_id: orgId,
+      trigger,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return [];
+  }
+}
+
+/**
+ * Create ONE pending approval gate for a custom rule that reached its approval
+ * node. Idempotent on (custom_rule_id, correlation_id): a re-fired event
+ * ON CONFLICT DO NOTHING, so the gate is created at most once. The downstream
+ * actions + an event snapshot are stored so approval is a self-contained replay.
+ */
+async function createApprovalGate(
+  admin: ReturnType<typeof createAdminClient>,
+  event: AutomationEvent,
+  row: CustomRuleRow,
+  def: CustomRuleDefinition,
+  correlationId: string,
+): Promise<Record<string, unknown>> {
+  const pending = downstreamActions(def);
+  const res = await (
+    admin.from("automation_approvals" as never) as unknown as {
+      insert: (r: unknown, opts?: { onConflict?: string }) => Promise<{
+        error: { message: string; code?: string } | null;
+      }>;
+    }
+  ).insert(
+    {
+      org_id: event.org_id,
+      custom_rule_id: row.id,
+      rule_name: row.name,
+      event_type: event.type,
+      source_table: event.source_table,
+      source_id: event.source_id,
+      correlation_id: correlationId,
+      payload: event.payload ?? {},
+      pending_actions: pending,
+      status: "pending",
+    },
+    { onConflict: "custom_rule_id,correlation_id" },
+  );
+  // 23505 is expected + benign: the gate for this occurrence already exists.
+  if (res.error && res.error.code !== "23505") {
+    throw new Error(`approval gate insert failed: ${res.error.message}`);
+  }
+  return { ok: true, kind: "awaiting_approval", pending: pending.length };
 }
 
 /** How long a 'running' claim is honoured before it is treated as orphaned. */
@@ -176,7 +423,7 @@ type ClaimOutcome =
 async function claimRun(
   admin: ReturnType<typeof createAdminClient>,
   event: AutomationEvent,
-  rule: AutomationRule,
+  ruleId: string,
   correlationId: string,
 ): Promise<ClaimOutcome> {
   const nowIso = new Date().toISOString();
@@ -195,7 +442,7 @@ async function claimRun(
       {
         org_id: event.org_id,
         event_type: event.type,
-        rule_id: rule.id,
+        rule_id: ruleId,
         correlation_id: correlationId,
         status: "running",
         claimed_at: nowIso,
@@ -214,7 +461,7 @@ async function claimRun(
     // A real database failure — surfaced, never swallowed. The old code
     // discarded this entirely (the `{ error }` return was never checked).
     console.error("[automation] claim insert failed", {
-      rule: rule.id,
+      rule: ruleId,
       correlation_id: correlationId,
       code: ins.error.code,
       message: ins.error.message,
@@ -243,7 +490,7 @@ async function claimRun(
     }
   )
     .update({ status: "running", claimed_at: nowIso, error_message: null })
-    .eq("rule_id", rule.id)
+    .eq("rule_id", ruleId)
     .eq("correlation_id", correlationId)
     // Never steal completed work — completed_at is the only proof of done.
     .is("completed_at", null)
@@ -252,7 +499,7 @@ async function claimRun(
 
   if (upd.error) {
     console.error("[automation] claim reclaim failed", {
-      rule: rule.id,
+      rule: ruleId,
       correlation_id: correlationId,
       message: upd.error.message,
     });
@@ -282,7 +529,7 @@ async function claimRun(
  */
 async function finishRun(
   admin: ReturnType<typeof createAdminClient>,
-  rule: AutomationRule,
+  ruleId: string,
   correlationId: string,
   status: "ok" | "failed",
   result: Record<string, unknown>,
@@ -309,14 +556,14 @@ async function finishRun(
       duration_ms: durationMs,
       completed_at: status === "ok" ? new Date().toISOString() : null,
     })
-    .eq("rule_id", rule.id)
+    .eq("rule_id", ruleId)
     .eq("correlation_id", correlationId);
 
   // Explicit: Supabase RETURNS { error } rather than throwing, so the old
   // try/catch here could never fire and silently discarded every failure.
   if (res.error) {
     console.error("[automation] failed to record run outcome", {
-      rule: rule.id,
+      rule: ruleId,
       correlation_id: correlationId,
       status,
       message: res.error.message,
@@ -325,16 +572,19 @@ async function finishRun(
 }
 
 /**
- * A disabled rule: terminal immediately, in one write.
+ * A terminal SKIP: claimed and completed together in one write.
  *
- * Claimed and completed together — there is no work to interrupt, so it must
- * never sit 'running' waiting on a lease that will never expire meaningfully.
+ * Used for a disabled rule and for a custom rule that failed its condition gate
+ * or carried an invalid definition — there is no work to interrupt, so the row
+ * must never sit 'running' waiting on a lease that will never expire meaningfully.
+ * `reason` records WHY so the run log stays honest.
  */
-async function recordDisabled(
+async function recordTerminalSkip(
   admin: ReturnType<typeof createAdminClient>,
   event: AutomationEvent,
-  rule: AutomationRule,
+  ruleId: string,
   correlationId: string,
+  reason: string,
 ): Promise<void> {
   const nowIso = new Date().toISOString();
   const res = await (
@@ -347,10 +597,10 @@ async function recordDisabled(
     {
       org_id: event.org_id,
       event_type: event.type,
-      rule_id: rule.id,
+      rule_id: ruleId,
       correlation_id: correlationId,
       status: "skipped",
-      result: { reason: "rule_disabled" },
+      result: { reason },
       duration_ms: 0,
       claimed_at: nowIso,
       completed_at: nowIso,
@@ -360,9 +610,10 @@ async function recordDisabled(
   // 23505 is expected and benign here: another caller already recorded this
   // exact skip. Anything else is surfaced rather than discarded.
   if (res.error && res.error.code !== "23505") {
-    console.error("[automation] failed to record disabled-rule skip", {
-      rule: rule.id,
+    console.error("[automation] failed to record skip", {
+      rule: ruleId,
       correlation_id: correlationId,
+      reason,
       message: res.error.message,
     });
   }
@@ -457,9 +708,11 @@ async function runAction(
  */
 async function runSendEmailQueue(
   event: AutomationEvent,
-  rule: AutomationRule,
+  rule: RuleRef,
+  overrides: ActionOverrides = {},
 ): Promise<Record<string, unknown>> {
-  const audience = event.type.startsWith("demo.") ? "hq" : "customer";
+  const audience =
+    overrides.audience ?? (event.type.startsWith("demo.") ? "hq" : "customer");
 
   // Recipient directive. The default `{}` means "resolve from the audience" —
   // for a customer/both audience that is `organizations.email`, the ORG's OWN
@@ -755,7 +1008,7 @@ async function runCreateInvoiceDraft(
  */
 function notificationTitleFor(
   event: AutomationEvent,
-  rule: AutomationRule,
+  rule: RuleRef,
 ): string {
   const titles: Record<string, string> = {
     "quote.accepted": "A quote was just accepted",
@@ -801,17 +1054,23 @@ function actionUrlForEvent(event: AutomationEvent): string {
 
 async function runCreateNotification(
   event: AutomationEvent,
-  rule: AutomationRule,
+  rule: RuleRef,
+  overrides: ActionOverrides = {},
 ): Promise<Record<string, unknown>> {
-  const audience = event.type.startsWith("demo.") ? "hq" : "customer";
+  const audience =
+    overrides.audience ?? (event.type.startsWith("demo.") ? "hq" : "customer");
+  const priority =
+    overrides.priority ?? (event.type === "invoice.overdue" ? "high" : "medium");
   const note: NotificationCreate = {
     org_id: event.org_id,
     user_id: null,
-    audience: audience as "customer" | "hq",
+    audience,
     type: `automation.${event.type}`,
     category: "system",
-    priority: event.type === "invoice.overdue" ? "high" : "medium",
-    title: notificationTitleFor(event, rule),
+    priority,
+    // A user-supplied title is DISPLAY COPY only — never an identifier — so it is
+    // safe to surface verbatim (bounded to 200 chars by the action registry).
+    title: overrides.title || notificationTitleFor(event, rule),
     body: null,
     action_url: actionUrlForEvent(event),
     source_module: "automation",
@@ -821,6 +1080,129 @@ async function runCreateNotification(
 
   await emitNotifications([note]);
   return { ok: true, kind: "notification_emitted", audience };
+}
+
+/**
+ * Run one CUSTOM-rule action. The action's params were sanitised by the action
+ * registry (whitelisted keys, enum-checked, length-capped) before they ever
+ * reached here, so each is safe DATA handed to the same wired authority the
+ * built-in catalogue uses — display copy or a bounded enum, never an identifier,
+ * a table, or a free-form recipient. An unsupported/blocked type is a no-op.
+ */
+async function runCustomAction(
+  action: CustomRuleAction,
+  event: AutomationEvent,
+  rule: RuleRef,
+): Promise<Record<string, unknown>> {
+  const p = action.params;
+  const str = (k: string): string | undefined =>
+    typeof p[k] === "string" ? (p[k] as string) : undefined;
+  const audience =
+    str("audience") === "hq" ? "hq" : str("audience") === "customer" ? "customer" : undefined;
+
+  switch (action.type) {
+    case "create_notification":
+      return runCreateNotification(event, rule, {
+        title: str("title"),
+        priority:
+          str("priority") === "low" || str("priority") === "high"
+            ? (str("priority") as "low" | "high")
+            : str("priority") === "medium"
+              ? "medium"
+              : undefined,
+        audience,
+      });
+    case "send_email_queue":
+      return runSendEmailQueue(event, rule, { audience });
+    case "add_internal_note":
+      return recordAutomationAudit(event, rule.id, "note", str("note"));
+    case "create_alert":
+      return recordAutomationAudit(event, rule.id, "alert", str("note"));
+    case "create_milestone":
+      return recordAutomationAudit(event, rule.id, "milestone", str("note"));
+    case "create_invoice_draft":
+      return runCreateInvoiceDraft(event);
+    default:
+      // update_status (documented no-op) or anything not whitelisted for custom
+      // rules — never reached after validation, but fail-closed regardless.
+      return { ok: true, kind: "custom_action_noop" };
+  }
+}
+
+/**
+ * Audit-trail action shared by add_internal_note / create_alert /
+ * create_milestone for custom rules. `note` is user text (≤500 chars, registry-
+ * capped) stored as metadata — data on the audit row, never executed.
+ */
+async function recordAutomationAudit(
+  event: AutomationEvent,
+  ruleId: string,
+  kind: "note" | "alert" | "milestone",
+  note: string | undefined,
+): Promise<Record<string, unknown>> {
+  await recordAdminActivity({
+    actorId: null,
+    actorEmail: event.actor_email ?? null,
+    action: `automation.${ruleId}.${kind}`,
+    targetTable: event.source_table,
+    targetId: event.source_id,
+    metadata: {
+      event_type: event.type,
+      payload: event.payload,
+      ...(note ? { note } : {}),
+    },
+  });
+  return { ok: true, kind: `${kind}_recorded` };
+}
+
+/**
+ * Execute the DOWNSTREAM actions of an APPROVED custom rule.
+ *
+ * Called by the approval server action (server/services/automation-custom-rules.ts)
+ * AFTER it has atomically flipped the gate pending → approved, so this runs at
+ * most once per gate. The event is reconstructed from the gate's snapshot; each
+ * action is RE-SANITISED against the registry before running (defence in depth —
+ * a pending_actions row hand-edited in the DB is neutralised here too).
+ */
+export async function runApprovedDownstream(input: {
+  org_id: string;
+  event_type: string;
+  source_table: string;
+  source_id: string;
+  payload: unknown;
+  rule_name: string;
+  actions: unknown;
+}): Promise<{ ran: Array<{ type: string; ok: boolean; error?: string }> }> {
+  const event: AutomationEvent = {
+    type: input.event_type as AutomationEventType,
+    org_id: input.org_id,
+    source_table: input.source_table,
+    source_id: input.source_id,
+    payload:
+      input.payload !== null && typeof input.payload === "object"
+        ? (input.payload as Record<string, unknown>)
+        : {},
+  };
+  const ruleRef: RuleRef = { id: "custom:approved", label: input.rule_name };
+  const raw = Array.isArray(input.actions) ? input.actions : [];
+  const ran: Array<{ type: string; ok: boolean; error?: string }> = [];
+
+  for (const item of raw) {
+    const type = (item as { type?: unknown })?.type;
+    if (typeof type !== "string" || !isCustomAvailableAction(type)) {
+      ran.push({ type: String(type), ok: false, error: "action_not_allowed" });
+      continue;
+    }
+    const t = type as AutomationActionType;
+    const params = sanitizeActionParams(t, (item as { params?: unknown })?.params);
+    try {
+      await runCustomAction({ type: t, params }, event, ruleRef);
+      ran.push({ type: t, ok: true });
+    } catch (e) {
+      ran.push({ type: t, ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return { ran };
 }
 
 // ---------------------------------------------------------------------
