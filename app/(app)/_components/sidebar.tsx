@@ -19,6 +19,7 @@ const ADMIN_LINKS = [
   // position: the page now answers "where do we stand", not just "who owes us".
   { href: "/cash", label: "Cash position" },
   { href: "/inbox", label: "Inbox" },
+  { href: "/inbox/conversations", label: "Conversations" },
   { href: "/leads", label: "Leads" },
   { href: "/jobs", label: "Jobs" },
   { href: "/snags", label: "Snagging" },
