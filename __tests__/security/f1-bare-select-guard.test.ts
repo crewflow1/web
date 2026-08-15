@@ -87,6 +87,14 @@ const HIGH_VALUE_TABLES = new Set<string>([
   // sites from the builder and — on an edit — nulls an out-of-cap property_id.
   // (F-1 picker-class wave.)
   "properties",
+  // P3 unified inbox: the tenant-facing conversation container + message timeline.
+  // listInboxConversations reads the org's FULL conversation set AND its FULL message set
+  // (to derive the latest-message preview + awaiting-reply per thread), so both are
+  // completeness-sensitive full-set scans — a clamped read would silently drop threads
+  // from the inbox or mis-derive "awaiting reply". Both reads are PAGED via fetchAllRows
+  // in server/services/inbox-conversations.ts. (F-1 P3-inbox wave.)
+  "conversations",
+  "messages",
   // Support OS: CROSS-TENANT service-role reads (createAdminClient, no org pin)
   // whose FULL row set is mapped + counted in JS into figures the pure layers
   // label "fact" — the live /admin/support board + KPI tiles, the /admin/support-ai
