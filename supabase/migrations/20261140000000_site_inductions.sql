@@ -147,16 +147,18 @@ begin
     raise exception 'inductee is not a member of this organisation';
   end if;
 
-  -- 3. The recorder (created_by), when supplied, must be a member too — an
-  --    induction is recorded by someone on the site's team.
+  -- 3. Bind the record to the authenticated session: default the recorder to the
+  --    signed-in supervisor when the client omits created_by (the common case),
+  --    and reject a supplied created_by that impersonates a different user.
+  if new.created_by is null then
+    new.created_by := auth.uid();
+  elsif auth.uid() is not null and new.created_by is distinct from auth.uid() then
+    raise exception 'an induction is recorded by the signed-in supervisor';
+  end if;
+  -- The recorder (now resolved), when set, must be a member of the site's org.
   if new.created_by is not null
      and not exists (select 1 from public.memberships where org_id = s_org and user_id = new.created_by) then
     raise exception 'recorder is not a member of this organisation';
-  end if;
-  -- Bind the record to the authenticated session (the app never writes these
-  -- with the service key; RLS also enforces membership on insert).
-  if auth.uid() is not null and new.created_by is distinct from auth.uid() then
-    raise exception 'an induction is recorded by the signed-in supervisor';
   end if;
 
   -- 4. Pin the evidence timestamps server-side — sign time can't be backdated.

@@ -204,13 +204,24 @@ describeIntegration("automation custom rules + approvals · RLS", () => {
     expect(staffRead.error, staffRead.error?.message).toBeNull();
     expect((staffRead.data ?? []).length).toBeGreaterThan(0);
 
-    // Staff CANNOT decide it.
+    // Staff CANNOT decide it. The UPDATE policy USING (is_org_admin) filters the
+    // row out for a non-admin, so PostgREST returns success with ZERO rows
+    // changed (an RLS-filtered UPDATE does not raise — only a WITH CHECK on a
+    // visible row does). The security property is "the row is not modified",
+    // which we assert directly: zero rows affected AND status still pending.
     const staffDecide = await db(userClient(staffToken))
       .from("automation_approvals")
       .update({ status: "approved" })
       .eq("id", gateId)
       .eq("org_id", orgA);
-    expect(staffDecide.error, "staff must not decide approvals").not.toBeNull();
+    expect(staffDecide.error, staffDecide.error?.message).toBeNull();
+    // The security property is "the row is NOT modified" — the UPDATE policy
+    // USING (is_org_admin) filters the row out for staff, so nothing changes.
+    const afterStaff = await db(userClient(adminAToken))
+      .from("automation_approvals")
+      .select("status")
+      .eq("id", gateId);
+    expect(afterStaff.data?.[0]?.status, "staff must not change the approval status").toBe("pending");
 
     // Admin CAN decide it.
     const adminDecide = await db(userClient(adminAToken))
