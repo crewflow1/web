@@ -523,6 +523,8 @@ const WRITE_PATH_CLASSES: WritePathClass[] = [
       // portal ticket creators — the two that were silently missing the producer.
       "app/customer-portal/_message-action.ts",
       "app/customer-portal/_preferences-action.ts",
+      // P3 — the warranty claim also opens a support ticket and dispatches.
+      "app/customer-portal/_warranty-claim-action.ts",
     ],
     allow: {},
   },
@@ -654,6 +656,7 @@ const PRODUCER_SITES: ProducerSite[] = [
   { verb: "support.ticket.created", file: "app/(app)/support/actions.ts", fn: "createSupportTicket" },
   { verb: "support.ticket.created", file: "app/customer-portal/_message-action.ts", fn: "sendPortalMessage" },
   { verb: "support.ticket.created", file: "app/customer-portal/_preferences-action.ts", fn: "requestProfileUpdate" },
+  { verb: "support.ticket.created", file: "app/customer-portal/_warranty-claim-action.ts", fn: "submitWarrantyClaim" },
 ];
 
 describe("producer coverage — direct per-function producer pins (C57 non-vacuity backstop)", () => {

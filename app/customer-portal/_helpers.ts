@@ -34,6 +34,19 @@ export type PortalCustomer = {
   phone: string | null;
 };
 
+/**
+ * When the token belonged to a NAMED CONTACT (customer_contacts.portal_token)
+ * rather than the customer's own token, this carries WHO that contact is. It is
+ * purely informative — every scope decision downstream uses `customer.id` /
+ * `customer.org_id` (the PARENT customer), so a contact sees exactly the parent
+ * customer's data and nothing more. Absent for the primary single-token path.
+ */
+export type PortalContactIdentity = {
+  id: string;
+  name: string;
+  role: string;
+};
+
 export type PortalOrg = {
   id: string;
   name: string;
@@ -53,7 +66,11 @@ export type PortalOrg = {
 
 export async function loadCustomerByPortalToken(
   token: string,
-): Promise<{ customer: PortalCustomer; org: PortalOrg } | null> {
+): Promise<{
+  customer: PortalCustomer;
+  org: PortalOrg;
+  contact?: PortalContactIdentity;
+} | null> {
   // Token must look like a uuid before we hit the DB so a stray "/quotes"
   // path segment can't trigger an obviously-invalid lookup.
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
@@ -77,7 +94,14 @@ export async function loadCustomerByPortalToken(
     console.error("[customer-portal] lookup failed", error);
     return null;
   }
-  if (!data || !data.org) return null;
+  // ADDITIVE: no customer owns this token → it may be a NAMED CONTACT's scoped
+  // token (customer_contacts.portal_token). This branch is reached ONLY when the
+  // primary single-token path missed, so the existing behaviour is byte-for-byte
+  // unchanged for a real customer token. A resolved contact returns the PARENT
+  // customer, so all downstream scoping is by that customer — never a new
+  // tenant boundary.
+  if (!data) return resolveContactToken(admin, token);
+  if (!data.org) return null;
 
   // EXPIRY — the auth decision, made here and nowhere else. A NULL expiry never
   // expires; a set expiry in the past fails closed exactly like an unknown
@@ -140,6 +164,155 @@ export async function loadCustomerByPortalToken(
  * Awaited internally but never rethrows: any failure is logged and dropped, so
  * a valid portal request never fails because telemetry couldn't be written.
  */
+/**
+ * Resolve a NAMED-CONTACT token (customer_contacts.portal_token) to its PARENT
+ * customer + org — the additive multi-contact portal-access path.
+ *
+ * SECURITY — the load-bearing guarantees:
+ *   • The contact must have portal_access_enabled = true AND a non-expired token
+ *     (contact-level expiry, independent of the customer token). Fails closed to
+ *     null on any miss, exactly like the customer path.
+ *   • It returns the PARENT customer's id/org_id, so EVERY downstream portal
+ *     query scopes by the parent customer — a contact sees precisely the parent
+ *     customer's data, never another customer's, and never a wider org view.
+ *   • The org is loaded from the parent customer's org row through the SAME
+ *     composite binding the rest of the schema uses (customer_contacts is bound
+ *     to customers(id, org_id)); a contact can never surface a different org.
+ */
+async function resolveContactToken(
+  admin: ReturnType<typeof createAdminClient>,
+  token: string,
+): Promise<{
+  customer: PortalCustomer;
+  org: PortalOrg;
+  contact: PortalContactIdentity;
+} | null> {
+  const { data, error } = await (
+    admin.from("customer_contacts" as never) as unknown as {
+      select: (c: string) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{
+              data: {
+                id: string;
+                name: string;
+                role: string;
+                portal_token_expires_at: string | null;
+                portal_token_last_used_at: string | null;
+                customer:
+                  | {
+                      id: string;
+                      org_id: string;
+                      name: string;
+                      email: string | null;
+                      phone: string | null;
+                      org: {
+                        id: string;
+                        name: string;
+                        phone: string | null;
+                        logo_path: string | null;
+                        logo_url: string | null;
+                        address: unknown;
+                      } | null;
+                    }
+                  | null;
+              } | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
+      };
+    }
+  )
+    .select(
+      `
+        id, name, role, portal_token_expires_at, portal_token_last_used_at,
+        customer:customers (
+          id, org_id, name, email, phone,
+          org:organizations ( id, name, phone, logo_path, logo_url, address )
+        )
+      `,
+    )
+    .eq("portal_token", token)
+    .eq("portal_access_enabled", true)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[customer-portal] contact lookup failed", error);
+    return null;
+  }
+  if (!data || !data.customer || !data.customer.org) return null;
+
+  // Contact-level expiry — independent of the customer's own token.
+  if (
+    data.portal_token_expires_at &&
+    Date.parse(data.portal_token_expires_at) <= Date.now()
+  ) {
+    return null;
+  }
+
+  // Telemetry — debounced touch of the CONTACT's last-used, never authority.
+  await touchContactLastUsed(admin, token, data.portal_token_last_used_at);
+
+  const c = data.customer;
+  const cOrg = c.org;
+  if (!cOrg) return null;
+  return {
+    customer: {
+      id: c.id,
+      org_id: c.org_id,
+      name: c.name,
+      email: c.email,
+      phone: c.phone,
+    },
+    org: {
+      id: cOrg.id,
+      name: cOrg.name,
+      phone: cOrg.phone ?? null,
+      logo_url: await resolveOrgLogoSrc(
+        { logo_path: cOrg.logo_path, logo_url: cOrg.logo_url },
+        admin,
+      ),
+      address: (cOrg.address as PortalOrg["address"]) ?? null,
+    },
+    contact: { id: data.id, name: data.name, role: data.role },
+  };
+}
+
+/** Debounced, never-throwing last-used touch for a contact token — mirrors the
+ *  customer-token telemetry; scoped to the ONE contact by its unique token. */
+async function touchContactLastUsed(
+  admin: ReturnType<typeof createAdminClient>,
+  token: string,
+  lastUsedAt: string | null,
+): Promise<void> {
+  try {
+    const cutoffMs = Date.now() - LAST_USED_TOUCH_INTERVAL_MS;
+    if (lastUsedAt && Date.parse(lastUsedAt) > cutoffMs) return;
+    const cutoffIso = new Date(cutoffMs).toISOString();
+    const { error } = await (
+      admin.from("customer_contacts" as never) as unknown as {
+        update: (row: unknown) => {
+          eq: (k: string, v: unknown) => {
+            or: (f: string) => Promise<{ error: { message: string } | null }>;
+          };
+        };
+      }
+    )
+      .update({ portal_token_last_used_at: new Date().toISOString() })
+      .eq("portal_token", token)
+      .or(`portal_token_last_used_at.is.null,portal_token_last_used_at.lt.${cutoffIso}`);
+    if (error) {
+      console.error("[customer-portal] contact last_used touch failed", error.message);
+    }
+  } catch (e) {
+    console.error(
+      "[customer-portal] contact last_used touch threw",
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+}
+
 async function touchLastUsed(
   admin: ReturnType<typeof createAdminClient>,
   token: string,
