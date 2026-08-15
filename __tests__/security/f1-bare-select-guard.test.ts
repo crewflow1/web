@@ -1083,6 +1083,12 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   bank_statements: "PAGED: fetchAllRows (payments page statements list)",
   briefing_dismissals: "PAGED: fetchAllRows (daily briefing)",
   cis_subcontractors: "PAGED: fetchAllRows (CIS subcontractor roster)",
+  customer_contacts:
+    "PAGED: fetchAllRows (portal contacts — the customer's own contacts .eq(org_id).eq(customer_id), paged in app/customer-portal/_contacts.ts)",
+  service_bookings:
+    "PAGED: fetchAllRows on every set-read (portal servicing — the customer's own bookings .eq(org_id).eq(customer_id), and the org-wide live-count read for slot availability .in(slot_id) — both paged in app/customer-portal/_booking.ts)",
+  service_booking_slots:
+    "PAGED: fetchAllRows on every set-read (portal servicing — the org's active future slots and the per-booking slot detail lookup .in(id) — both paged in app/customer-portal/_booking.ts)",
   compliance_documents: "PAGED: fetchAllRows (daily briefing compliance)",
   delay_events: "PAGED: fetchAllRows (EOT pack + intelligence delay analysis)",
   job_milestones: "PAGED: fetchAllRows (intelligence programme + job-progress)",
