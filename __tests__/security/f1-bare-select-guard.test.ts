@@ -281,7 +281,7 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the snags register (.limit(500)) — ≤500 unique PKs",
   "app/(app)/toolbox/page.tsx:89":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the toolbox register (.limit(500)) — ≤500 unique PKs",
-  "app/(app)/jobs/page.tsx:133":
+  "app/(app)/jobs/page.tsx:134":
     "bounded: the 'Today's jobs' panel query — one org × one calendar day (.eq('scheduled_date', todayIso)), a handful of rows, never near the cap. The paginated list query above it is windowed via .range().",
   "app/(app)/leads/page.tsx:51":
     "paged: the pipeline read IS complete — executed via fetchAllRows((from,to) => query.range(from,to)) at the bottom of the fn; the builder pattern places the .range terminator beyond the static region window, so the analyser can't see it",
@@ -383,7 +383,7 @@ const ALLOWLIST: Record<string, string> = {
   "app/(app)/health-safety/_signoff-data.ts:137":
     "bounded: name lookup .in('user_id', ids) where ids is a de-duped Set of sign-off user_ids from a bounded parent set — ≤ parent rows, never near 1000",
   "app/(app)/settings/page.tsx:73":
-    "bounded: ONE org's members (.eq('org_id')) — the settings team panel; bounded by the org's headcount, never near 1000. (Line moved 72→73 when the P3 notification-preferences section added a one-line import to page.tsx.)",
+    "bounded: ONE org's members (.eq('org_id')) — the settings team panel; bounded by the org's headcount, never near 1000",
   "app/(app)/staff/leave/page.tsx:96":
     "bounded: ONE org's members (.eq('org_id')) — the leave-page name lookup; bounded by the org's headcount",
   "app/(app)/staff/page.tsx:56":
@@ -1200,6 +1200,7 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   toolbox_talks: "PER-PARENT/RECENT-N: .eq('job_id') / .limit recent / per-root revision series — bounded display",
 
   // ---- CLOSED registry / SINGLE existence ----
+  help_articles: "CLOSED/GLOBAL: the platform help/knowledge-base — curated CrewFlow-authored content shared by every org (NOT tenant data, no org_id, service-role-only writes). listHelpArticles reads all active rows (.eq('active',true)); a hand-authored closed content set of tens of articles, never near the cap, never summed or fed to a count. Per-article reads are .eq('slug').maybeSingle().",
   hq_capabilities: "CLOSED: .in('token', <the closed capability registry>) — a fixed lookup set",
   hq_capability_grants: "CLOSED: .or(<clauses from the closed capability registry>) — bounded by the registry",
   billing_events: "SINGLE: .limit(1) existence probe (stripe verify) — not a set read",

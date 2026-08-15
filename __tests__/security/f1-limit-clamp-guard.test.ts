@@ -253,7 +253,7 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
     "bounded: search leads — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
   "app/api/search/route.ts:292":
     "bounded: search invoices — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
-  "app/(app)/jobs/page.tsx:92":
+  "app/(app)/jobs/page.tsx:93":
     "bounded: search-match helper — collects up to 200 matching customer ids to fold into the .range()-paged jobs query; a name-search sub-sample, not a materialised set",
 
   // Customer-portal reads.

@@ -8,6 +8,7 @@ import { LogoUpload } from "./_logo-upload";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 import { outboundWebhooksEnabled } from "@/lib/webhooks/flags";
 import { NotificationPreferences } from "./_notification-prefs";
+import { HelpLink } from "../_components/help-link";
 
 /**
  * Settings — Profile + Organisation + Members in one page.
@@ -112,7 +113,10 @@ export default async function SettingsPage() {
     <div className="mx-auto max-w-3xl space-y-8">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
+            <HelpLink article="inviting-your-team" label="Help with your team &amp; settings" />
+          </div>
           <p className="mt-1 text-sm text-slate-600">
             Your profile, your organisation, and the people in it.
           </p>

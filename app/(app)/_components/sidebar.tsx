@@ -75,6 +75,7 @@ const ADMIN_LINKS = [
   { href: "/reports", label: "Reports" },
   { href: "/insights", label: "AI insights" },
   { href: "/notifications", label: "Notifications" },
+  { href: "/help", label: "Help" },
   { href: "/support", label: "Support" },
   { href: "/settings", label: "Settings" },
 ];
@@ -92,6 +93,7 @@ const STAFF_LINKS = [
   { href: "/delays", label: "Delays & EOT" },
   { href: "/staff/leave", label: "Leave" },
   { href: "/notifications", label: "Notifications" },
+  { href: "/help", label: "Help" },
   { href: "/support", label: "Support" },
   { href: "/settings", label: "Settings" },
 ];
