@@ -159,7 +159,12 @@ describeIntegration("site-compliance · tenant isolation + triggers", () => {
       .update({ signed_name: "Tampered" })
       .eq("id", String(ins.data?.id))
       .select("id");
-    expect(upd.error, "append-only trigger must block the UPDATE").not.toBeNull();
+    // Append-only is enforced by RLS having NO update policy (a tenant UPDATE
+    // matches zero rows and returns no error) with the no_update trigger as the
+    // service-role backstop. The property is immutability — assert zero rows
+    // changed rather than expecting an error PostgREST never raises here.
+    expect(upd.error, upd.error?.message).toBeNull();
+    expect((upd.data ?? []).length, "append-only: tenant UPDATE must change no rows").toBe(0);
   });
 
   it("an induction cannot point at another org's site (cross-tenant FK)", async () => {
