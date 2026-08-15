@@ -48,14 +48,19 @@ vi.mock("@/lib/reports/export-render", () => ({
   reportFilenameStem: () => "stem",
 }));
 vi.mock("@/lib/email/send", () => ({ sendEmail: sendEmailMock }));
-vi.mock("@/lib/reports/subscriptions", () => ({
-  listActiveSubscriptionsForDelivery: listDueMock,
-  markSubscriptionRun: markRunMock,
-}));
+vi.mock("@/lib/reports/subscriptions", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/reports/subscriptions")>();
+  return {
+    ...actual, // keep the real, pure isSubscriptionDue
+    listActiveSubscriptionsForDelivery: listDueMock,
+    markSubscriptionRun: markRunMock,
+  };
+});
 // Pin "today" to a Monday the 1st so daily/weekly/monthly can all be exercised.
 vi.mock("@/lib/time/format", () => ({ formatDayKeyUK: () => "2026-06-01" }));
 
-const { GET, isSubscriptionDue } = await import("@/app/api/cron/report-delivery/route");
+const { GET } = await import("@/app/api/cron/report-delivery/route");
+const { isSubscriptionDue } = await import("@/lib/reports/subscriptions");
 
 beforeEach(() => {
   isCronAuthorisedMock.mockReset().mockReturnValue(true);

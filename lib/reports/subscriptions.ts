@@ -141,3 +141,28 @@ export async function markSubscriptionRun(
     .eq("id", id);
   return { error: (res as { error?: unknown }).error ?? null };
 }
+
+/**
+ * Is a subscription due for delivery on the given London day-key (YYYY-MM-DD)?
+ * Pure + deterministic. Lives here (not in the cron route) because Next.js route
+ * files may only export HTTP handlers + config — see report-delivery/route.ts.
+ */
+export function isSubscriptionDue(
+  sub: Pick<ReportSubscription, "cadence" | "last_run_on">,
+  todayKey: string,
+): boolean {
+  if (sub.last_run_on === todayKey) return false; // already delivered today
+  switch (sub.cadence) {
+    case "daily":
+      return true;
+    case "weekly": {
+      // Monday. Noon-anchored so no timezone edge flips the weekday.
+      const dow = new Date(`${todayKey}T12:00:00Z`).getUTCDay();
+      return dow === 1;
+    }
+    case "monthly":
+      return todayKey.slice(8, 10) === "01";
+    default:
+      return false;
+  }
+}

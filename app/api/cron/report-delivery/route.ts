@@ -16,6 +16,7 @@ import type { ReportsDb } from "@/lib/reports/aggregates";
 import {
   listActiveSubscriptionsForDelivery,
   markSubscriptionRun,
+  isSubscriptionDue,
   type ReportSubscription,
   type SubscriptionsClient,
 } from "@/lib/reports/subscriptions";
@@ -75,27 +76,6 @@ export async function GET(request: Request) {
     runReportDelivery(),
   );
   return NextResponse.json(payload, { status });
-}
-
-/** Is a subscription due on the given London day? */
-export function isSubscriptionDue(
-  sub: Pick<ReportSubscription, "cadence" | "last_run_on">,
-  todayKey: string,
-): boolean {
-  if (sub.last_run_on === todayKey) return false; // already delivered today
-  switch (sub.cadence) {
-    case "daily":
-      return true;
-    case "weekly": {
-      // Monday. Noon-anchored so no timezone edge flips the weekday.
-      const dow = new Date(`${todayKey}T12:00:00Z`).getUTCDay();
-      return dow === 1;
-    }
-    case "monthly":
-      return todayKey.slice(8, 10) === "01";
-    default:
-      return false;
-  }
 }
 
 async function runReportDelivery() {
