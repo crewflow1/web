@@ -10,11 +10,16 @@
  * is a REAL registered Verb, so a typo or a renamed verb fails the build rather
  * than silently subscribing to nothing.
  *
- * WHY THESE, AND ONLY THESE (v1): each verb here resolves to an owning org
- * reliably in the fan-out (webhook_resolve_org, migration §6) — the event's
- * object is a tenant row (job / customer / quote) with an org_id. Verbs whose
- * org attribution is not yet reliable on the spine (billing, support, org.*) are
- * intentionally NOT exposed yet; broadening the set is a CEO data-boundary call.
+ * WHY THESE: each verb here resolves to an owning org reliably in the fan-out
+ * (webhook_resolve_org, migration §6) — the event's object is a tenant row
+ * (job / customer / quote / invoice) with an org_id — AND each has a real spine
+ * producer. The two BILLING verbs (invoice.created, invoice.paid) landed in
+ * MP R4: webhook_resolve_org already had an `invoice` branch, and migration
+ * 20261164000000 completed their producer edges in hq_emit_from_activity (both
+ * activity actions — the invoices INSERT trigger's `invoice.created` and the
+ * status-change trigger's `invoice.paid` — already flow through
+ * _record_activity). The remaining billing verbs and support/org.* are still
+ * NOT exposed: broadening further is a CEO data-boundary call.
  *
  * NOT exposed, and why (drift correction, C26): the registry `Verb` union also
  * contains `job.scheduled` and `job.cancelled`, but NEITHER has a spine PRODUCER
@@ -49,6 +54,8 @@ export const EXPOSABLE_WEBHOOK_EVENTS = [
   "customer.updated",
   "quote.sent",
   "quote.accepted",
+  "invoice.created",
+  "invoice.paid",
 ] as const satisfies readonly Verb[];
 
 /** The union of exposable webhook verbs. */
@@ -64,6 +71,8 @@ export const WEBHOOK_EVENT_LABELS: Readonly<Record<ExposableWebhookEvent, string
   "customer.updated": "Customer updated",
   "quote.sent": "Quote sent",
   "quote.accepted": "Quote accepted",
+  "invoice.created": "Invoice created",
+  "invoice.paid": "Invoice paid",
 };
 
 /** Runtime guard — is `value` a subscribable webhook verb? */
@@ -121,6 +130,8 @@ export const WEBHOOK_REDACTION_MAP: Readonly<
   "customer.updated": ["fields"],
   "quote.sent": ["number", "total"],
   "quote.accepted": ["number", "total", "source"],
+  "invoice.created": ["number", "total"],
+  "invoice.paid": ["number", "total", "from", "to"],
 };
 
 /**

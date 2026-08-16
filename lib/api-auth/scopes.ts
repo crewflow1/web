@@ -9,20 +9,23 @@
  *
  * v1 defines a per-RESOURCE, per-VERB scope, one string per public-API
  * capability. The READS: `read:jobs`, `read:customers`, `read:invoices`,
- * `read:quotes`. The WRITES: `write:customers`, `write:leads`, `write:jobs`,
- * `write:quotes` (create/update the corresponding resource). Each names a
- * capability the matching /api/v1 endpoint enforces via {@link hasScope}, so a
- * key granted only `read:jobs` cannot read invoices, and a key granted only
- * `read:customers` cannot CREATE a customer — least privilege is expressed in
- * the grant, not just the route. Read and write are DISTINCT capabilities: a
- * key must hold `write:customers` to POST/PATCH a customer even if it already
- * holds `read:customers`. The whole surface ships DARK behind
- * FEATURE_PUBLIC_API_JOBS (lib/public-api/flag.ts); these scopes are inert
- * until that flag is flipped.
+ * `read:quotes`, `read:leads`. The WRITES: `write:customers`, `write:leads`,
+ * `write:jobs`, `write:quotes`, `write:invoices` (create/update the
+ * corresponding resource). Each names a capability the matching /api/v1
+ * endpoint enforces via {@link hasScope}, so a key granted only `read:jobs`
+ * cannot read invoices, and a key granted only `read:customers` cannot CREATE a
+ * customer — least privilege is expressed in the grant, not just the route.
+ * Read and write are DISTINCT capabilities: a key must hold `write:customers` to
+ * POST/PATCH a customer even if it already holds `read:customers`. The whole
+ * surface ships DARK behind FEATURE_PUBLIC_API_JOBS (lib/public-api/flag.ts);
+ * these scopes are inert until that flag is flipped.
  *
- * There is deliberately NO `read:leads` (no leads read endpoint yet) and NO
- * write scope for invoices (invoicing is an accounting operation the public
- * API does not open) — a scope exists only where a route enforces it.
+ * `write:invoices` grants ONLY the create-from-accepted-quote path the app
+ * itself uses (POST /api/v1/invoices generates a draft invoice from a quote the
+ * key's org already accepted — totals/customer/line-items come from the quote,
+ * never the request body); it does NOT open arbitrary invoice mutation, and
+ * there is no invoice update or delete scope. A scope exists only where a route
+ * enforces it.
  *
  * Adding a scope here is a reviewed code change: the drift-guard test in
  * __tests__/api-auth freezes this array with a deep-equal, so growth is a
@@ -40,10 +43,12 @@ export const SCOPES = [
   "read:customers",
   "read:invoices",
   "read:quotes",
+  "read:leads",
   "write:customers",
   "write:leads",
   "write:jobs",
   "write:quotes",
+  "write:invoices",
 ] as const;
 
 /** Compile-time union of every scope this build understands. */
@@ -56,10 +61,12 @@ export const SCOPE_LABELS: Readonly<Record<Scope, string>> = {
   "read:customers": "Read customers",
   "read:invoices": "Read invoices",
   "read:quotes": "Read quotes",
+  "read:leads": "Read leads",
   "write:customers": "Create & update customers",
   "write:leads": "Create leads",
   "write:jobs": "Create & update jobs",
   "write:quotes": "Create quotes",
+  "write:invoices": "Create invoices from accepted quotes",
 };
 
 export function isScope(value: string): value is Scope {

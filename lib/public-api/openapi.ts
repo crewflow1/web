@@ -329,6 +329,21 @@ const QuoteWriteInput: Record<string, unknown> = {
   },
 };
 
+const InvoiceWriteInput: Record<string, unknown> = {
+  type: "object",
+  required: ["quote_id"],
+  additionalProperties: false,
+  description:
+    "Create a draft invoice from an ACCEPTED quote in your organisation. The " +
+    "amount, VAT, customer and line items all come from the quote — never send " +
+    "them. The quote must be accepted (a 422 is returned otherwise).",
+  properties: {
+    quote_id: { type: "string", format: "uuid" },
+    due_date: { type: "string", description: "YYYY-MM-DD (defaults to net-14)" },
+    notes: { type: "string", maxLength: 5000 },
+  },
+};
+
 /** Build the full OpenAPI 3.1 document. Pure — no env, no I/O. */
 export function buildOpenApiDocument(): Record<string, unknown> {
   return {
@@ -382,6 +397,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         Quote: objectSchema(QUOTE_DTO_COLUMNS, QUOTE_FIELD_TYPES),
         QuoteList: listEnvelope("#/components/schemas/Quote"),
         Lead: objectSchema(LEAD_DTO_COLUMNS, LEAD_FIELD_TYPES),
+        LeadList: listEnvelope("#/components/schemas/Lead"),
         // Write-input (request body) schemas.
         CustomerWriteInput,
         CustomerUpdateInput,
@@ -390,6 +406,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         JobUpdateInput,
         QuoteLineItemInput,
         QuoteWriteInput,
+        InvoiceWriteInput,
       },
     },
     paths: {
@@ -514,6 +531,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         }),
       },
       "/leads": {
+        get: listOperation("Leads", "List leads.", "read:leads", "Lead"),
         post: writeOperation({
           tag: "Leads",
           summary: "Capture a lead.",
@@ -525,6 +543,14 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       },
       "/invoices": {
         get: listOperation("Invoices", "List invoices.", "read:invoices", "Invoice"),
+        post: writeOperation({
+          tag: "Invoices",
+          summary: "Create a draft invoice from an accepted quote.",
+          scope: "write:invoices",
+          bodyRef: "#/components/schemas/InvoiceWriteInput",
+          resultRef: "#/components/schemas/Invoice",
+          successStatus: "201",
+        }),
       },
       "/quotes": {
         get: listOperation("Quotes", "List quotes.", "read:quotes", "Quote"),
