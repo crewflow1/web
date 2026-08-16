@@ -5,6 +5,7 @@ import {
   annualIncomeTax,
   computePayrollLine,
   computeEmployeeDeductionsForStoredLine,
+  employeeInputFromStoredProfile,
   employmentAllowanceReliefForRun,
 } from "@/lib/payroll/compute";
 import { resolveEmploymentCostRates } from "@/lib/payroll/rates";
@@ -211,5 +212,105 @@ describe("employmentAllowanceReliefForRun", () => {
     const ea = employmentAllowanceReliefForRun(0, "2025-05-01");
     expect(ea.relief_this_run).toBe(0);
     expect(ea.employer_ni_after).toBe(0);
+  });
+});
+
+describe("employeeInputFromStoredProfile — stored row → calculator input", () => {
+  it("default profile maps to an EMPTY input (base behaviour)", () => {
+    expect(
+      employeeInputFromStoredProfile({
+        tax_region: "rest_of_uk",
+        student_loan_plan: "none",
+        salary_sacrifice_annual_pence: 0,
+      }),
+    ).toEqual({});
+    expect(employeeInputFromStoredProfile(null)).toEqual({});
+    expect(employeeInputFromStoredProfile(undefined)).toEqual({});
+  });
+
+  it("maps Scotland, a plan, and pence→£ salary sacrifice", () => {
+    expect(
+      employeeInputFromStoredProfile({
+        tax_region: "scotland",
+        student_loan_plan: "plan_2",
+        salary_sacrifice_annual_pence: 120_000, // £1,200
+      }),
+    ).toEqual({
+      taxRegion: "scotland",
+      studentLoanPlan: "plan_2",
+      salarySacrificeAnnual: 1_200,
+    });
+  });
+
+  it("ignores unknown/blank enum values and string-encoded pence", () => {
+    expect(
+      employeeInputFromStoredProfile({
+        tax_region: "somewhere",
+        student_loan_plan: "plan_9",
+        salary_sacrifice_annual_pence: "50000" as unknown as number,
+      }),
+    ).toEqual({ salarySacrificeAnnual: 500 });
+  });
+});
+
+describe("end-to-end fidelity: input → stored → applied", () => {
+  it("a Scottish + Plan-2 + salary-sacrifice employee gets the fidelity figures", () => {
+    // The stored payroll_tax_profiles row an admin would save via the staff form.
+    const storedRow = {
+      tax_region: "scotland",
+      student_loan_plan: "plan_2",
+      salary_sacrifice_annual_pence: 120_000, // £1,200/yr = £100/mo
+    };
+    // The exact call the payroll run page makes: map the stored row → inputs, then
+    // apply against the stored gross at the run's period rates.
+    const ded = computeEmployeeDeductionsForStoredLine(3_200, "monthly", "2025-05-01", {
+      ...employeeInputFromStoredProfile(storedRow),
+      employeePensionRate: undefined,
+    });
+
+    // Region + plan flowed through.
+    expect(ded.tax_region).toBe("scotland");
+    expect(ded.student_loan_plan).toBe("plan_2");
+    // Salary sacrifice: £100/mo removed from the tax/NI base.
+    expect(ded.salary_sacrifice).toBeCloseTo(100, 2);
+    expect(ded.taxable_pay).toBeCloseTo(3_100, 2);
+    // Scottish PAYE on annual base 37,200 → 4,994.82 / 12 = 416.24.
+    expect(ded.paye_estimate).toBeCloseTo(416.24, 1);
+    // NI on 37,200 → (37,200−12,570)×8%/12 = 164.20.
+    expect(ded.ni_estimate).toBeCloseTo(164.2, 2);
+    // Plan 2 student loan on 37,200 → (37,200−28,470)×9%/12 = 65.48.
+    expect(ded.student_loan_estimate).toBeCloseTo(65.48, 1);
+    // Take-home is internally consistent.
+    expect(ded.net_pay).toBeCloseTo(
+      3_200 -
+        ded.salary_sacrifice -
+        ded.paye_estimate -
+        ded.ni_estimate -
+        ded.student_loan_estimate,
+      2,
+    );
+
+    // And it genuinely DIFFERS from the base (no-profile) figure — proof it applied.
+    const base = computeEmployeeDeductionsForStoredLine(3_200, "monthly", "2025-05-01", {});
+    expect(ded.net_pay).toBeLessThan(base.net_pay);
+    expect(ded.student_loan_estimate).toBeGreaterThan(0);
+    expect(base.student_loan_estimate).toBe(0);
+  });
+
+  it("a default profile applied end-to-end equals the stored base line", () => {
+    const base = computePayrollLine(160, 20, "monthly", "2025-05-01");
+    const ded = computeEmployeeDeductionsForStoredLine(
+      base.gross_pay,
+      "monthly",
+      "2025-05-01",
+      employeeInputFromStoredProfile({
+        tax_region: "rest_of_uk",
+        student_loan_plan: "none",
+        salary_sacrifice_annual_pence: 0,
+      }),
+    );
+    expect(ded.paye_estimate).toBe(base.paye_estimate);
+    expect(ded.ni_estimate).toBe(base.ni_estimate);
+    expect(ded.net_pay).toBe(base.net_pay);
   });
 });

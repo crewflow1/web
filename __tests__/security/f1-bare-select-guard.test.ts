@@ -1147,6 +1147,8 @@ const COVERAGE_REVIEWED: Record<string, string> = {
     "PAGED: fetchCursors is the only set-read and is fetchAllRows-paged (bulk digest cursor read); the per-cadence cursor advance is an upsert write, not a read. Service-role only.",
   pension_enrolments:
     "PER-EMPLOYEE-CONFIG/PAGED: both set-reads in server/services/pension-enrolment.ts are .eq('org_id') and fetchAllRows-paged via .range on a stable id order — getPensionEnrolmentsForOrg (the payroll employer-cost map, one row per employee) and getOptOutRegisterForOrg (.eq('status','opted_out')). Bounded by org headcount, never summed cross-tenant; getPensionEnrolment is .maybeSingle(). The write path is an upsert.",
+  payroll_tax_profiles:
+    "PER-EMPLOYEE-CONFIG/PAGED: the only set-read is getPayrollTaxProfilesForOrg (server/services/payroll-tax-profile.ts) — .eq('org_id') fetchAllRows-paged via .range on a stable id order (the payroll take-home input map, one row per employee, bounded by org headcount, never summed cross-tenant). getPayrollTaxProfile is .maybeSingle(); the write path is an upsert.",
 
   // ---- PER-PARENT (bounded by ONE parent row) ----
   blueprint_markup: "PER-PARENT: .eq('blueprint_version_id') — one drawing version's markup shapes",

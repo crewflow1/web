@@ -9,6 +9,7 @@ import { fetchNiNumbersForOrg, maskNiNumber } from "@/lib/staff/secrets";
 import {
   employerCostsForStoredLineWithPension,
   computeEmployeeDeductionsForStoredLine,
+  employeeInputFromStoredProfile,
   employmentAllowanceReliefForRun,
   type EmployerCostEstimate,
   type EmployeeDeductionsEstimate,
@@ -22,6 +23,7 @@ import {
   getPensionEnrolmentsForOrg,
   getEmployeePensionRatesForOrg,
 } from "@/server/services/pension-enrolment";
+import { getPayrollTaxProfilesForOrg } from "@/server/services/payroll-tax-profile";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -107,6 +109,9 @@ export default async function PayrollRunPage({
   // staff profile but, until now, never applied to take-home pay. Where present,
   // the employee's contribution is deducted from net as a relief-at-source estimate.
   const employeePensionRates = await getEmployeePensionRatesForOrg(ctx.org.id);
+  // Per-employee tax inputs (region, student-loan plan, salary sacrifice), set on the
+  // staff profile. Absent ⇒ base figures (rest-of-UK / no loan / no sacrifice).
+  const taxProfiles = await getPayrollTaxProfilesForOrg(ctx.org.id);
   const lines = linesRaw ?? [];
 
   // -----------------------------------------------------------------
@@ -191,6 +196,7 @@ export default async function PayrollRunPage({
     employeeByLine.set(
       l.id,
       computeEmployeeDeductionsForStoredLine(l.gross_pay, runCycle, run.period_start, {
+        ...employeeInputFromStoredProfile(taxProfiles.get(l.user_id)),
         employeePensionRate: employeePensionRates.get(l.user_id),
       }),
     );
@@ -198,6 +204,12 @@ export default async function PayrollRunPage({
   const employeePensionTracked = lines.filter((l) =>
     employeePensionRates.has(l.user_id),
   ).length;
+  // Employees whose take-home differs from the stored net because a fidelity input
+  // (region, student loan, sacrifice, or pension) actually applied to them.
+  const fidelityApplied = lines.filter((l) => {
+    const d = employeeByLine.get(l.id);
+    return d ? Math.abs(d.net_pay - Number(l.net_pay ?? 0)) >= 0.005 : false;
+  }).length;
 
   const trackedEnrolments = lines.filter((l) =>
     pensionByUser.has(l.user_id),
@@ -389,7 +401,7 @@ export default async function PayrollRunPage({
         <Stat label="Net" value={GBP.format(totals.net)} emphasis />
       </section>
 
-      {employeePensionTracked > 0 ? (
+      {fidelityApplied > 0 ? (
         <section className="space-y-2">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
             <Stat
@@ -399,11 +411,15 @@ export default async function PayrollRunPage({
             <Stat label="Take-home est" value={GBP.format(totals.takeHome)} emphasis />
           </div>
           <p className="text-xs text-slate-500">
-            Take-home is net pay <strong>after</strong> the employee&apos;s own pension
-            contribution for {employeePensionTracked} enrolled employee(s), estimated as
-            a relief-at-source deduction from their qualifying earnings. It does not
-            reduce the PAYE/NI shown above. Everyone without a tracked enrolment
-            take-home equals their net pay.
+            Take-home refines net pay with the per-employee tax inputs set on staff
+            profiles — Scottish income-tax bands, student-loan repayments, salary
+            sacrifice and the employee&apos;s own pension contribution — for{" "}
+            {fidelityApplied} employee(s) this run
+            {employeePensionTracked > 0
+              ? ` (${employeePensionTracked} with a pension contribution, estimated relief-at-source)`
+              : ""}
+            . Salary sacrifice reduces the PAYE/NI base; pension and student loan reduce
+            take-home only. Everyone without inputs set has take-home equal to net pay.
           </p>
         </section>
       ) : null}

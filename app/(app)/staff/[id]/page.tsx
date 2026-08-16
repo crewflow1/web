@@ -8,6 +8,7 @@ import {
   removeStaff,
   upsertHolidayEntitlementAction,
   upsertPensionEnrolmentAction,
+  upsertPayrollTaxProfileAction,
   addStaffQualification,
   deleteStaffQualification,
 } from "../actions";
@@ -15,12 +16,14 @@ import { STAFF_ROLES } from "@/lib/staff/schema";
 import { StaffProfileForm } from "./_profile-form";
 import { HolidayEntitlementForm } from "./_holiday-form";
 import { PensionEnrolmentForm } from "./_pension-form";
+import { PayrollTaxProfileForm } from "./_payroll-tax-form";
 import { AddQualificationForm } from "./_qualifications";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { getHolidayBalanceForUser } from "@/server/services/holiday-balance";
 import { getPensionEnrolment } from "@/server/services/pension-enrolment";
+import { getPayrollTaxProfile } from "@/server/services/payroll-tax-profile";
 import { DEFAULT_HOLIDAY_ENTITLEMENT } from "@/lib/staff/holiday";
 import { listStaffQualifications } from "@/server/services/staff-qualifications";
 import { getStaffPerformance } from "@/server/services/staff-performance";
@@ -91,6 +94,7 @@ export default async function StaffDetailPage({
   // Reads are org-pinned inside the services; RLS admits admins across the org.
   const holiday = await getHolidayBalanceForUser(ctx.org.id, id);
   const enrolment = isAdmin ? await getPensionEnrolment(ctx.org.id, id) : null;
+  const taxProfile = isAdmin ? await getPayrollTaxProfile(ctx.org.id, id) : null;
 
   // Competency + performance (loud reads: a failure throws to the error
   // boundary, never a false-empty scorecard). Any org member may read both.
@@ -134,6 +138,13 @@ export default async function StaffDetailPage({
     enrolment_date: enrolment?.enrolment_date ?? "",
     opt_out_date: enrolment?.opt_out_date ?? "",
     postponement_end_date: enrolment?.postponement_end_date ?? "",
+  };
+  const payrollTaxDefaults = {
+    tax_region: taxProfile?.tax_region ?? "rest_of_uk",
+    student_loan_plan: taxProfile?.student_loan_plan ?? "none",
+    salary_sacrifice_annual_pounds: taxProfile
+      ? String(Math.round(taxProfile.salary_sacrifice_annual_pence) / 100)
+      : "0",
   };
 
   const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
@@ -394,6 +405,21 @@ export default async function StaffDetailPage({
           <PensionEnrolmentForm
             action={upsertPensionEnrolmentAction.bind(null, id)}
             defaults={pensionDefaults}
+          />
+        </section>
+      ) : null}
+
+      {/* Payroll tax inputs — income-tax region, student loan, salary sacrifice (admin only) */}
+      {isAdmin ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">Payroll tax inputs</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Refines this employee&apos;s take-home <strong>estimate</strong> on payroll
+            runs. Defaults leave pay unchanged.
+          </p>
+          <PayrollTaxProfileForm
+            action={upsertPayrollTaxProfileAction.bind(null, id)}
+            defaults={payrollTaxDefaults}
           />
         </section>
       ) : null}

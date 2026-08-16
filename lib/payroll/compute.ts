@@ -559,6 +559,46 @@ export function computeEmployeeDeductionsForStoredLine(
   };
 }
 
+/**
+ * A stored `payroll_tax_profiles` row (or the subset we read), as it comes back from
+ * the DB — text/numeric fields possibly string-encoded.
+ */
+export type StoredPayrollTaxProfile = {
+  tax_region?: string | null;
+  student_loan_plan?: string | null;
+  salary_sacrifice_annual_pence?: number | string | null;
+};
+
+/**
+ * Translate a stored per-employee tax profile into calculator inputs.
+ *
+ * The single mapping point from persisted config → {@link EmployeeDeductionsInput}, so
+ * the page and the tests apply exactly the same rules. Defaults collapse to an EMPTY
+ * input (rest-of-UK, no plan, no sacrifice) so an absent/defaulted profile reproduces
+ * the base figures — the whole point of the backward-compatibility guarantee. Salary
+ * sacrifice is stored as annual PENCE and converted to the £ amount the calculator
+ * expects.
+ */
+export function employeeInputFromStoredProfile(
+  profile: StoredPayrollTaxProfile | null | undefined,
+): EmployeeDeductionsInput {
+  if (!profile) return {};
+  const input: EmployeeDeductionsInput = {};
+  if (profile.tax_region === "scotland") input.taxRegion = "scotland";
+  const plan = profile.student_loan_plan;
+  if (
+    plan === "plan_1" ||
+    plan === "plan_2" ||
+    plan === "plan_4" ||
+    plan === "postgraduate"
+  ) {
+    input.studentLoanPlan = plan;
+  }
+  const pence = Math.max(0, Number(profile.salary_sacrifice_annual_pence ?? 0) || 0);
+  if (pence > 0) input.salarySacrificeAnnual = pence / 100;
+  return input;
+}
+
 // ---------------------------------------------------------------------------
 // Employment Allowance — org-level employer-NI offset
 // ---------------------------------------------------------------------------

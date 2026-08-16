@@ -136,6 +136,7 @@
     "payments",
     "payroll_lines",
     "payroll_runs",
+    "payroll_tax_profiles",
     "pension_enrolments",
     "permit_conditions",
     "permits_to_work",
