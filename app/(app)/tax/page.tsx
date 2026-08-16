@@ -7,10 +7,11 @@ import {
   computeVatQuarter,
   computePayeMonth,
   computeCorpTaxYear,
-  startOfQuarterIso,
-  endOfQuarterExclusiveIso,
+  startOfVatPeriodIso,
+  endOfVatPeriodExclusiveIso,
   startOfTaxYearIso,
 } from "@/lib/tax/compute";
+import { readOrgSettings } from "@/lib/org-config/service";
 import {
   getHmrcSubmissions,
   type HmrcSubmission,
@@ -52,21 +53,25 @@ function formatDate(iso: string): string {
   });
 }
 
-function nextVatDeadline(quarterStart: Date): Date {
-  // Filing/payment due 1 month + 7 days after the quarter ends.
-  const qEnd = new Date(
-    Date.UTC(quarterStart.getUTCFullYear(), quarterStart.getUTCMonth() + 3, 0),
-  );
-  return new Date(
-    Date.UTC(qEnd.getUTCFullYear(), qEnd.getUTCMonth() + 1, 7),
-  );
+function nextVatDeadline(periodEndExclusiveIso: string): Date {
+  // Filing/payment due after the period ends. Derived from the period's EXCLUSIVE
+  // upper bound (the first day of the month after the period ends) so it is
+  // stagger-agnostic: for a calendar quarter this reproduces the previous figure
+  // exactly, and it tracks a monthly or non-standard stagger's shorter period.
+  const excl = new Date(periodEndExclusiveIso);
+  return new Date(Date.UTC(excl.getUTCFullYear(), excl.getUTCMonth(), 7));
 }
 
 export default async function TaxDashboardPage() {
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
-  const quarterStartIso = startOfQuarterIso();
+  // The org's HMRC VAT stagger drives WHICH period the VAT figures cover. A LOUD
+  // read (throws on a real error) — a config failure must not silently fall back
+  // to the wrong period. Absence of a row degrades to the default (calendar
+  // quarter), so an org that never set a stagger is unchanged.
+  const orgSettings = await readOrgSettings(supabase, ctx.org.id);
+  const quarterStartIso = startOfVatPeriodIso(orgSettings.vat_stagger);
   const yearStartIso = startOfTaxYearIso();
   // The finances read feeds BOTH computeCorpTaxYear (whole tax year) and
   // computeVatQuarter (this quarter). The calendar quarter starts 1 April while
@@ -182,7 +187,10 @@ export default async function TaxDashboardPage() {
   // and the frozen HMRC return also use, on the SAME bounded window — so the tile
   // can never drift from them. The quarter's EXCLUSIVE upper bound keeps a
   // next-quarter payment out.
-  const quarterEndExclusiveIso = endOfQuarterExclusiveIso(quarterStartIso);
+  const quarterEndExclusiveIso = endOfVatPeriodExclusiveIso(
+    quarterStartIso,
+    orgSettings.vat_stagger,
+  );
   const vatInputs = await gatherVatQuarterInputs(
     supabase as unknown as VatInputsDb,
     ctx.org.id,
@@ -205,8 +213,7 @@ export default async function TaxDashboardPage() {
   const canPrepare =
     ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
-  const quarterStartDate = new Date(quarterStartIso);
-  const vatDeadline = nextVatDeadline(quarterStartDate);
+  const vatDeadline = nextVatDeadline(quarterEndExclusiveIso);
   const yearStartDate = new Date(yearStartIso);
   // CT filing deadline = 12 months after year end; payment = 9 months + 1 day.
   const yearEnd = new Date(

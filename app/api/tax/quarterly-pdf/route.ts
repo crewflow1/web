@@ -11,9 +11,10 @@ import {
 } from "@/lib/pdf/tax-quarter-pdf";
 import {
   computeVatQuarter,
-  startOfQuarterIso,
-  endOfQuarterExclusiveIso,
+  startOfVatPeriodIso,
+  endOfVatPeriodExclusiveIso,
 } from "@/lib/tax/compute";
+import { readOrgSettings } from "@/lib/org-config/service";
 import {
   gatherVatQuarterInputs,
   type VatInputsDb,
@@ -24,30 +25,39 @@ export const runtime = "nodejs";
 
 /**
  * Quarterly VAT PDF — totals + the underlying rows so an accountant can
- * tie the numbers back. Accepts ?quarterStart=YYYY-MM-DD (defaults to
- * the current calendar quarter).
+ * tie the numbers back. Accepts ?quarterStart=YYYY-MM-DD (defaults to the
+ * current VAT period for the org's HMRC stagger).
  */
 
-function quarterEndIso(startIso: string): string {
-  const d = new Date(startIso);
-  const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 3, 0));
-  return end.toISOString().slice(0, 10);
+/** Inclusive last day of a period: the day before its EXCLUSIVE upper bound. */
+function inclusiveEndIso(endExclusiveIso: string): string {
+  const d = new Date(endExclusiveIso);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - 1))
+    .toISOString()
+    .slice(0, 10);
 }
 
 export async function GET(request: NextRequest) {
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
+  // The org's HMRC VAT stagger fixes the period LENGTH (quarter vs month) and
+  // phase. LOUD read (throws on a real error); absence degrades to the default
+  // calendar quarter, so an org that never set a stagger is unchanged. The tax
+  // page links here with the matching quarterStart, so the two surfaces agree.
+  const orgSettings = await readOrgSettings(supabase, ctx.org.id);
+  const stagger = orgSettings.vat_stagger;
+
   const url = new URL(request.url);
   const qStartParam = url.searchParams.get("quarterStart");
   const qStart =
     qStartParam && /^\d{4}-\d{2}-\d{2}$/.test(qStartParam)
       ? qStartParam
-      : startOfQuarterIso();
-  const qEnd = quarterEndIso(qStart);
-  // The EXCLUSIVE upper bound = start of the next quarter, so a future-dated
+      : startOfVatPeriodIso(stagger);
+  // The EXCLUSIVE upper bound = start of the next period, so a future-dated
   // payment/cost cannot leak in. Used for BOTH the finances read and the ledger.
-  const qEndExclusiveIso = endOfQuarterExclusiveIso(qStart);
+  const qEndExclusiveIso = endOfVatPeriodExclusiveIso(qStart, stagger);
+  const qEnd = inclusiveEndIso(qEndExclusiveIso);
 
   const [
     inputs,

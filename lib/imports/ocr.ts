@@ -85,8 +85,12 @@ export class OcrUnavailableError extends Error {
 }
 
 type OcrExtraction = {
-  kind: "invoice" | "quote" | "receipt" | "unknown";
+  kind: "invoice" | "quote" | "receipt" | "delivery_note" | "unknown";
   customer_name: string | null;
+  // A delivery/goods-received note is issued BY a supplier, so the party is the
+  // SUPPLIER, not a customer. Optional on the shared shape (null for invoices /
+  // quotes / receipts, which carry customer_name instead).
+  supplier_name: string | null;
   document_number: string | null;
   document_date: string | null;
   vat_number: string | null;
@@ -104,20 +108,54 @@ type OcrExtraction = {
   }>;
 };
 
-const SYSTEM_PROMPT = `You extract invoice, quote, and receipt data from
-PDFs and photos for CrewFlow — UK construction-company software. Output
+/**
+ * The DELIVERY-NOTE (goods-received) extraction — the structured subset a
+ * delivery note carries, feeding the RECEIVED leg of three-way matching
+ * (lib/purchase-orders/matching.ts reads goods_received_notes + lines). A
+ * delivery note has NO money on it — it evidences that goods ARRIVED, not what
+ * they cost — so the schema is deliberately supplier + note number + date +
+ * quantities/descriptions, with no VAT or price fields. Distilled from the
+ * shared `OcrExtraction` so the ONE governed vision call classifies the document
+ * and this shape is derived from it — no second model round-trip.
+ */
+export type DeliveryNoteExtraction = {
+  supplier_name: string | null;
+  delivery_note_number: string | null;
+  delivery_date: string | null;
+  line_items: Array<{ description: string; qty: number | null }>;
+};
+
+/** Project the shared extraction onto the delivery-note shape (pure). */
+export function toDeliveryNoteExtraction(e: OcrExtraction): DeliveryNoteExtraction {
+  return {
+    supplier_name: e.supplier_name,
+    delivery_note_number: e.document_number,
+    delivery_date: e.document_date,
+    line_items: (e.line_items ?? []).map((li) => ({
+      description: li.description ?? "",
+      qty: li.qty,
+    })),
+  };
+}
+
+const SYSTEM_PROMPT = `You extract invoice, quote, receipt, and delivery-note
+data from PDFs and photos for CrewFlow — UK construction-company software. Output
 strict JSON only, no commentary. If a field isn't legible, set it to
 null. Never invent values. Normalise amounts to GBP numerics (no
-currency symbols). Dates as YYYY-MM-DD when possible. Confidence is
-deliberately moderate because OCR mistakes happen — the operator
+currency symbols). Dates as YYYY-MM-DD when possible. A DELIVERY NOTE (or
+goods-received note) evidences goods that ARRIVED: it names the SUPPLIER, a
+delivery-note number, a date and line items with quantities — usually NO prices
+or VAT; set kind to "delivery_note" and fill supplier_name (not customer_name).
+Confidence is deliberately moderate because OCR mistakes happen — the operator
 reviews everything before commit.`;
 
 const RESPONSE_INSTRUCTION = `Return JSON of this exact shape and
 nothing else:
 
 {
-  "kind": "invoice" | "quote" | "receipt" | "unknown",
+  "kind": "invoice" | "quote" | "receipt" | "delivery_note" | "unknown",
   "customer_name": string | null,
+  "supplier_name": string | null,
   "document_number": string | null,
   "document_date": string | null,
   "vat_number": string | null,
@@ -228,7 +266,69 @@ export async function ocrFileToSheet(input: {
     return emptySheet(input.filename);
   }
 
+  // A delivery note maps to the RECEIVED (goods-received) leg, not the money
+  // documents — different columns, no price/VAT — so it gets its own sheet shape.
+  if (extracted.kind === "delivery_note") {
+    return deliveryNoteExtractionToSheet(
+      input.filename,
+      toDeliveryNoteExtraction(extracted),
+    );
+  }
+
   return extractionToSheet(input.filename, extracted);
+}
+
+/**
+ * Flatten a delivery-note extraction into a ParsedSheet feeding the three-way-
+ * matching RECEIVED leg (a goods-received note: supplier + note number + date +
+ * received quantities). PURE. One summary row carries the document-level fields;
+ * one row per line item carries description + qty. No price / VAT columns — a
+ * delivery note has none. Column names mirror the goods-received vocabulary so
+ * the receipt leg recognises them.
+ */
+export function deliveryNoteExtractionToSheet(
+  filename: string,
+  e: DeliveryNoteExtraction,
+): ParsedSheet {
+  const header = [
+    "entity_type",
+    "supplier_name",
+    "delivery_note_number",
+    "delivery_date",
+    "description",
+    "qty",
+    "source_filename",
+  ];
+
+  const rows: Cell[][] = [];
+
+  // Summary row — document-level fields; line columns blank so downstream
+  // mapping doesn't double-count.
+  rows.push([
+    "goods_received",
+    e.supplier_name,
+    e.delivery_note_number,
+    e.delivery_date,
+    null, // description
+    null, // qty
+    filename,
+  ]);
+
+  // One row per delivered line — same supplier / note number so the lines
+  // collapse under their parent note.
+  for (const li of e.line_items ?? []) {
+    rows.push([
+      "goods_received_line",
+      e.supplier_name,
+      e.delivery_note_number,
+      e.delivery_date,
+      li.description ?? "",
+      li.qty,
+      filename,
+    ]);
+  }
+
+  return { name: filename, header, rows };
 }
 
 /**

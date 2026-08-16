@@ -15,6 +15,11 @@
  */
 
 import { z } from "zod";
+import {
+  VAT_STAGGERS,
+  DEFAULT_VAT_STAGGER,
+  type VatStagger,
+} from "@/lib/tax/compute";
 
 // ---------------------------------------------------------------------------
 // Working hours
@@ -124,11 +129,24 @@ export const MONTH_LABEL: Record<number, string> = {
   12: "December",
 };
 
+/**
+ * HMRC VAT return period cadence ("stagger"). The valid values + the period math
+ * are owned by the single VAT authority (lib/tax/compute.ts); this module only
+ * validates the stored org_settings column against that authority's list.
+ */
+export const VAT_STAGGER_LABEL: Record<VatStagger, string> = {
+  group_1: "Quarterly — group 1 (periods end Mar / Jun / Sep / Dec)",
+  group_2: "Quarterly — group 2 (periods end Apr / Jul / Oct / Jan)",
+  group_3: "Quarterly — group 3 (periods end Feb / May / Aug / Nov)",
+  monthly: "Monthly",
+};
+
 export type TaxDefaults = {
   default_vat_rate: VatRate;
   cis_default_rate: CisRate;
   financial_year_start_month: number;
   default_payment_terms_days: number;
+  vat_stagger: VatStagger;
 };
 
 export const taxDefaultsSchema = z.object({
@@ -152,15 +170,20 @@ export const taxDefaultsSchema = z.object({
     .int("Enter whole days")
     .min(0, "Cannot be negative")
     .max(365, "Use 365 days or fewer"),
+  vat_stagger: z.enum(VAT_STAGGERS),
 });
 
-/** Default tax config — UK 20% VAT, 20% CIS, April FY start, 30-day terms. */
+/**
+ * Default tax config — UK 20% VAT, 20% CIS, April FY start, 30-day terms,
+ * calendar-quarter VAT stagger (group 1 = the existing behaviour).
+ */
 export function defaultTaxDefaults(): TaxDefaults {
   return {
     default_vat_rate: 20,
     cis_default_rate: 20,
     financial_year_start_month: 4,
     default_payment_terms_days: 30,
+    vat_stagger: DEFAULT_VAT_STAGGER,
   };
 }
 
