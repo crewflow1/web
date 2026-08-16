@@ -4,16 +4,21 @@ import { createHash } from "node:crypto";
 import { isProviderConnectable } from "../oauth";
 import type {
   AccountingAdapter,
+  AccountingImportAdapter,
+  AccountingPullInput,
+  AccountingPullResult,
   AccountingPushInput,
   AccountingPushResult,
+  PulledContact,
+  PulledInvoice,
   SkippedInvoice,
 } from "./types";
-import { isPermanentRowRejection, unavailable } from "./types";
+import { isPermanentRowRejection, pullUnavailable, unavailable } from "./types";
 import {
   buildXeroInvoicesBody,
   buildXeroPaymentsBody,
 } from "../provider-payloads";
-import type { CanonicalAccountingRow } from "../canonical";
+import { money2, type CanonicalAccountingRow } from "../canonical";
 
 /**
  * Build ONE row's provider body, or signal that this ONE row must be SKIPPED
@@ -67,11 +72,185 @@ function idempotencyKey(kind: string, tenantId: string, seed: string): string {
   return `crewflow-xero-${kind}-${h.slice(0, 32)}`;
 }
 
-export class XeroAdapter implements AccountingAdapter {
+/** Xero pages the Accounting API at 100 rows/page; loop until a short page. */
+const XERO_PAGE_SIZE = 100;
+/** Hard cap on pages walked, so a misbehaving provider can never loop forever. */
+const XERO_MAX_PAGES = 1000;
+
+export class XeroAdapter implements AccountingAdapter, AccountingImportAdapter {
   readonly provider = "xero" as const;
 
   isAvailable(): boolean {
     return isProviderConnectable(this.provider);
+  }
+
+  // ── IMPORT (PULL) ──────────────────────────────────────────────────────────
+
+  /**
+   * Pull every Contact from the connected Xero tenant, F-1 paginated (100/page).
+   * DARK GUARD FIRST — no credentials / flag off ⇒ `unavailable`, no network.
+   */
+  async pullContacts(
+    input: AccountingPullInput,
+  ): Promise<AccountingPullResult<PulledContact>> {
+    return this.pullPaged<PulledContact>(input, "Contacts", (json) => {
+      const list = asArray((json as XeroContactsResponse | null)?.Contacts);
+      return list.map((c) => ({
+        sourceId: str(c.ContactID),
+        name: str(c.Name),
+        email: nonEmpty(c.EmailAddress),
+        phone: firstXeroPhone(c.Phones),
+        addressLine1: firstXeroAddressField(c.Addresses, "AddressLine1"),
+        city: firstXeroAddressField(c.Addresses, "City"),
+        postcode: firstXeroAddressField(c.Addresses, "PostalCode"),
+      }));
+    });
+  }
+
+  /**
+   * Pull every ACCREC (sales) invoice from the connected Xero tenant, F-1
+   * paginated. Purchase bills (ACCPAY) are excluded server-side via `where`.
+   * DARK GUARD FIRST — no credentials / flag off ⇒ `unavailable`, no network.
+   */
+  async pullInvoices(
+    input: AccountingPullInput,
+  ): Promise<AccountingPullResult<PulledInvoice>> {
+    return this.pullPaged<PulledInvoice>(
+      input,
+      "Invoices",
+      (json) => {
+        const list = asArray((json as XeroInvoicesResponse | null)?.Invoices);
+        return list
+          // Defence in depth behind the server-side where= filter: never seed a
+          // purchase bill as a CrewFlow sales invoice.
+          .filter((inv) => (inv.Type ?? "ACCREC") === "ACCREC")
+          .map((inv) => {
+            const net = num(inv.SubTotal);
+            const vat = num(inv.TotalTax);
+            const gross =
+              inv.Total !== undefined && inv.Total !== null
+                ? num(inv.Total)
+                : net + vat;
+            return {
+              sourceId: str(inv.InvoiceID),
+              number: str(inv.InvoiceNumber),
+              customerName: str(inv.Contact?.Name),
+              net: money2(net),
+              vat: money2(vat),
+              gross: money2(gross),
+              status: mapXeroInvoiceStatus(inv.Status),
+              date: xeroDate(inv.DateString ?? inv.Date),
+            };
+          });
+      },
+      `where=${encodeURIComponent('Type=="ACCREC"')}`,
+    );
+  }
+
+  /**
+   * The shared paged GET loop. Walks `page=1,2,…` until a page returns fewer than
+   * a full page (or empty), accumulating each page's mapped rows. A 401 on any
+   * page refreshes the token ONCE (shared across the loop) and retries that page.
+   * Any non-2xx / network failure aborts the whole pull with an `error` — never a
+   * silent partial. The single `fetch` (in `get`) lives strictly AFTER the dark
+   * guard, so it is unreachable without credentials.
+   */
+  private async pullPaged<T>(
+    input: AccountingPullInput,
+    endpoint: "Contacts" | "Invoices",
+    mapPage: (json: unknown) => T[],
+    extraQuery?: string,
+  ): Promise<AccountingPullResult<T>> {
+    if (!this.isAvailable()) {
+      return pullUnavailable<T>(
+        this.provider,
+        "Xero is not connected. Add the Xero OAuth credentials and enable " +
+          "FEATURE_ACCOUNTING_CONNECT to enable the import sync; CSV import works today.",
+      );
+    }
+    if (!input.tenantId) {
+      return {
+        ok: false,
+        provider: this.provider,
+        reason: "error",
+        message: "Xero import has no tenant id; reconnect the Xero account.",
+      };
+    }
+    const tenantId = input.tenantId;
+    const ctx = { token: input.accessToken, refreshed: false };
+    const items: T[] = [];
+
+    for (let page = 1; page <= XERO_MAX_PAGES; page++) {
+      const query = [extraQuery, `page=${page}`, `pageSize=${XERO_PAGE_SIZE}`]
+        .filter(Boolean)
+        .join("&");
+      const url = `${XERO_API}/${endpoint}?${query}`;
+
+      let res = await this.get(url, ctx.token, tenantId);
+      if (res.status === 401 && !ctx.refreshed) {
+        ctx.refreshed = true;
+        const fresh = await input.refresh();
+        if (!fresh) {
+          return {
+            ok: false,
+            provider: this.provider,
+            reason: "error",
+            message: "Xero rejected the token and it could not be refreshed.",
+          };
+        }
+        ctx.token = fresh;
+        res = await this.get(url, ctx.token, tenantId);
+      }
+      if (res.networkError) {
+        return {
+          ok: false,
+          provider: this.provider,
+          reason: "error",
+          message: `Xero import failed: ${res.networkError}`,
+        };
+      }
+      if (res.status < 200 || res.status >= 300) {
+        return {
+          ok: false,
+          provider: this.provider,
+          reason: "error",
+          message: `Xero ${endpoint} pull returned ${res.status}`,
+        };
+      }
+      const pageItems = mapPage(res.json);
+      for (const it of pageItems) items.push(it);
+      // A short page (or empty) is the last page — stop.
+      if (pageItems.length < XERO_PAGE_SIZE) break;
+    }
+
+    return { ok: true, provider: this.provider, items };
+  }
+
+  /** One authed GET. Never throws — a network failure is reported on the result. */
+  private async get(
+    url: string,
+    accessToken: string,
+    tenantId: string,
+  ): Promise<{ status: number; json?: unknown; networkError?: string }> {
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          "Xero-tenant-id": tenantId,
+          accept: "application/json",
+        },
+      });
+      let json: unknown;
+      try {
+        json = await res.json();
+      } catch {
+        json = undefined;
+      }
+      return { status: res.status, json };
+    } catch (e) {
+      return { status: 0, networkError: e instanceof Error ? e.message : "network error" };
+    }
   }
 
   async pushInvoices(input: AccountingPushInput): Promise<AccountingPushResult> {
@@ -273,5 +452,108 @@ export class XeroAdapter implements AccountingAdapter {
     } catch (e) {
       return { status: 0, networkError: e instanceof Error ? e.message : "network error" };
     }
+  }
+}
+
+// ── pure JSON shape helpers (Xero Contacts / Invoices responses) ─────────────
+
+type XeroPhone = {
+  PhoneType?: string;
+  PhoneNumber?: string;
+  PhoneAreaCode?: string;
+  PhoneCountryCode?: string;
+};
+type XeroAddress = {
+  AddressType?: string;
+  AddressLine1?: string;
+  City?: string;
+  PostalCode?: string;
+};
+type XeroContact = {
+  ContactID?: string;
+  Name?: string;
+  EmailAddress?: string;
+  Phones?: XeroPhone[];
+  Addresses?: XeroAddress[];
+};
+type XeroContactsResponse = { Contacts?: XeroContact[] };
+type XeroInvoice = {
+  InvoiceID?: string;
+  InvoiceNumber?: string;
+  Type?: string;
+  Status?: string;
+  Contact?: { Name?: string };
+  SubTotal?: number | string;
+  TotalTax?: number | string;
+  Total?: number | string;
+  Date?: string;
+  DateString?: string;
+};
+type XeroInvoicesResponse = { Invoices?: XeroInvoice[] };
+
+function asArray<T>(v: T[] | undefined | null): T[] {
+  return Array.isArray(v) ? v : [];
+}
+function str(v: unknown): string {
+  return typeof v === "string" ? v : v == null ? "" : String(v);
+}
+function nonEmpty(v: unknown): string | null {
+  const s = str(v).trim();
+  return s.length > 0 ? s : null;
+}
+function num(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** The first non-empty Xero phone, assembled from country/area/number parts. */
+function firstXeroPhone(phones: XeroPhone[] | undefined): string | null {
+  for (const p of asArray(phones)) {
+    const parts = [p.PhoneCountryCode, p.PhoneAreaCode, p.PhoneNumber]
+      .map((x) => str(x).trim())
+      .filter((x) => x.length > 0);
+    if (parts.length > 0) return parts.join(" ");
+  }
+  return null;
+}
+
+/**
+ * The named field of the first address that carries it, preferring a STREET
+ * address over a PO box (Xero returns both types).
+ */
+function firstXeroAddressField(
+  addresses: XeroAddress[] | undefined,
+  field: "AddressLine1" | "City" | "PostalCode",
+): string | null {
+  const list = asArray(addresses);
+  const preferred = list.find((a) => a.AddressType === "STREET") ?? list[0];
+  return nonEmpty(preferred?.[field]);
+}
+
+/** A Xero timestamp/date-string → `YYYY-MM-DD`, or null. Handles `/Date(…)/`. */
+function xeroDate(value: string | undefined): string | null {
+  if (!value) return null;
+  // Xero often returns the .NET epoch form `/Date(1512345600000+0000)/`.
+  const epoch = /\/Date\((\d+)/.exec(value);
+  if (epoch) {
+    const ms = Number(epoch[1]);
+    if (Number.isFinite(ms)) return new Date(ms).toISOString().slice(0, 10);
+  }
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(value);
+  return m ? m[1]! : null;
+}
+
+/** Map a Xero invoice Status onto a CrewFlow-writable status (else `sent`). */
+function mapXeroInvoiceStatus(status: string | undefined): string {
+  switch ((status ?? "").toUpperCase()) {
+    case "DRAFT":
+      return "draft";
+    case "PAID":
+      return "paid";
+    case "SUBMITTED":
+    case "AUTHORISED":
+      return "sent";
+    default:
+      return "sent";
   }
 }

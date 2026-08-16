@@ -176,3 +176,117 @@ export function unavailable(
 ): AccountingPushResult {
   return { ok: false, provider, reason: "unavailable", message };
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// IMPORT (PULL) SEAM — the INVERSE of the push adapter.
+//
+// The push adapter sends CrewFlow finance OUT to a bookkeeping package. The pull
+// adapter reads a connected book's customers/contacts (and optionally invoices)
+// IN, so the Migration OS can seed a new CrewFlow org straight from the account's
+// existing data via the SAME import preview → dedupe → commit pipeline (the
+// normalised rows are staged as `import_rows`; nothing is written to a live table
+// until the operator commits).
+//
+// DARK BY THE SAME TWO-SWITCH GATE. `isAvailable()` is `isProviderConnectable`
+// (feature flag + client credentials) — false ALWAYS today. Every pull method
+// REFUSES with `pullUnavailable` as its FIRST statement when dark, so the single
+// `fetch` per page is structurally unreachable without credentials. The per-org
+// access token + provider handle (Xero tenant id / QBO realm id) arrive on
+// {@link AccountingPullInput}, resolved by the connections service from the
+// encrypted connection row — exactly like the push path. No new provider secret.
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Everything an adapter needs to PULL ONE org's data from its connected book —
+ * resolved (and DECRYPTED) by the connections service only AFTER the connectable
+ * guard, so none of this exists on the dark path. Mirrors AccountingPushInput
+ * minus the rows.
+ */
+export type AccountingPullInput = {
+  /** DECRYPTED access token for the connected org. */
+  accessToken: string;
+  /** Xero tenant id — required by the `Xero-tenant-id` header. Null for QBO. */
+  tenantId?: string | null;
+  /** QBO realm id — the company path segment. Null for Xero. */
+  realmId?: string | null;
+  /**
+   * Refresh-and-persist callback. On a provider 401 the adapter calls this ONCE
+   * to obtain a fresh DECRYPTED access token, then retries; null means refresh is
+   * impossible and the pull surfaces the auth failure (never a silent empty pull).
+   */
+  refresh: () => Promise<string | null>;
+};
+
+/** ONE contact/customer pulled from a connected book. Provider-agnostic. */
+export type PulledContact = {
+  /** The provider's immutable id (Xero ContactID / QBO Customer.Id) — provenance. */
+  sourceId: string;
+  /** Display / company name. "" only when the provider row has none. */
+  name: string;
+  email: string | null;
+  phone: string | null;
+  addressLine1: string | null;
+  city: string | null;
+  postcode: string | null;
+};
+
+/** ONE sales invoice (ACCREC) pulled from a connected book. Provider-agnostic. */
+export type PulledInvoice = {
+  /** The provider's immutable id (Xero InvoiceID / QBO Invoice.Id) — provenance. */
+  sourceId: string;
+  /** The human invoice number (Xero InvoiceNumber / QBO DocNumber). "" when absent. */
+  number: string;
+  /** The bill-to customer name, or "" when the provider did not resolve one. */
+  customerName: string;
+  /** Ex-VAT net, fixed 2dp string. */
+  net: string;
+  /** VAT amount, fixed 2dp string. */
+  vat: string;
+  /** Gross amount, fixed 2dp string. */
+  gross: string;
+  /**
+   * A best-effort CrewFlow-writable status (draft/sent/awaiting_payment/
+   * partially_paid/paid). Anything else the import layer normalises to `sent`.
+   */
+  status: string;
+  /** Tax-point / issue date, `YYYY-MM-DD`, or null when the source has none. */
+  date: string | null;
+};
+
+/**
+ * The outcome of a pull.
+ *   - ok           — items read from the connected book (may be empty).
+ *   - unavailable  — credentials absent; NOTHING was fetched (the dark path).
+ *   - error        — credentials present but the pull failed (transport / auth).
+ */
+export type AccountingPullResult<T> =
+  | { ok: true; provider: AccountingProvider; items: readonly T[] }
+  | {
+      ok: false;
+      provider: AccountingProvider;
+      reason: "unavailable" | "error";
+      message: string;
+    };
+
+/** The import (pull) half of a provider adapter. Implemented by the SAME class. */
+export interface AccountingImportAdapter {
+  readonly provider: AccountingProvider;
+  /** Same two-switch gate as the push adapter — a pure env read, no network. */
+  isAvailable(): boolean;
+  /** Pull every customer/contact. Returns `unavailable` (no network) when dark. */
+  pullContacts(
+    input: AccountingPullInput,
+  ): Promise<AccountingPullResult<PulledContact>>;
+  /** Pull every sales invoice. Returns `unavailable` (no network) when dark. */
+  pullInvoices(
+    input: AccountingPullInput,
+  ): Promise<AccountingPullResult<PulledInvoice>>;
+}
+
+/** The `unavailable` pull result — the ONLY outcome the dark pull path may produce. */
+export function pullUnavailable<T>(
+  provider: AccountingProvider,
+  message: string,
+): AccountingPullResult<T> {
+  return { ok: false, provider, reason: "unavailable", message };
+}

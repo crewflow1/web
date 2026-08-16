@@ -9,19 +9,32 @@
  * — and both are dark today.
  */
 
-import type { AccountingAdapter, AccountingProvider } from "./types";
+import type {
+  AccountingAdapter,
+  AccountingImportAdapter,
+  AccountingProvider,
+} from "./types";
 import { XeroAdapter } from "./xero";
 import { QuickBooksAdapter } from "./quickbooks";
 
-const ADAPTERS: Record<AccountingProvider, AccountingAdapter> = {
+// One instance per provider satisfies BOTH the push (AccountingAdapter) and the
+// pull (AccountingImportAdapter) contracts — same class, same two-switch gate.
+const ADAPTERS: Record<AccountingProvider, XeroAdapter | QuickBooksAdapter> = {
   xero: new XeroAdapter(),
   quickbooks: new QuickBooksAdapter(),
 };
 
-/** Resolve the adapter for a provider. */
+/** Resolve the PUSH adapter for a provider. */
 export function getAccountingAdapter(
   provider: AccountingProvider,
 ): AccountingAdapter {
+  return ADAPTERS[provider];
+}
+
+/** Resolve the IMPORT (PULL) adapter for a provider. Same instance as the push adapter. */
+export function getAccountingImportAdapter(
+  provider: AccountingProvider,
+): AccountingImportAdapter {
   return ADAPTERS[provider];
 }
 
@@ -57,3 +70,10 @@ export function getAccountingReadiness(): AccountingReadiness {
 
 export type { AccountingAdapter, AccountingProvider } from "./types";
 export type { AccountingPushResult, AccountingPushInput } from "./types";
+export type {
+  AccountingImportAdapter,
+  AccountingPullInput,
+  AccountingPullResult,
+  PulledContact,
+  PulledInvoice,
+} from "./types";

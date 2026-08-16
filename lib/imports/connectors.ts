@@ -26,6 +26,15 @@ export type Connector = {
   steps: string[];
   /** Optional URL to the vendor's export documentation. */
   docs?: string;
+  /**
+   * True when a DIRECT-API import sync exists for this source (Xero / QuickBooks):
+   * once the org connects the account, the Migration OS can pull its contacts (and
+   * optionally invoices) straight into the same preview → dedupe → commit pipeline,
+   * no file export needed. DARK by the accounting connect gate (feature flag + OAuth
+   * client credentials) — the guided file-export flow above always works regardless.
+   * A connector without this flag is guided-only.
+   */
+  apiSync?: boolean;
 };
 
 export const CONNECTORS: ReadonlyArray<Connector> = [
@@ -49,6 +58,7 @@ export const CONNECTORS: ReadonlyArray<Connector> = [
     blurb:
       "Export Contacts, Invoices and Quotes from Xero and upload them — we map them in.",
     status: "guided",
+    apiSync: true,
     exportHints: ["CSV", "Excel", "ZIP"],
     steps: [
       "In Xero, go to Contacts → Export, and Business → Invoices/Quotes → Export.",
@@ -63,6 +73,7 @@ export const CONNECTORS: ReadonlyArray<Connector> = [
     blurb:
       "Export customers, invoices and items from QuickBooks and upload them.",
     status: "guided",
+    apiSync: true,
     exportHints: ["CSV", "Excel", "ZIP"],
     steps: [
       "In QuickBooks, open Reports → Customer Contact List / Invoice List.",
