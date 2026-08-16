@@ -10,6 +10,7 @@ import {
   type CreateBlueprintInput, type Discipline, type BlueprintMime,
 } from "@/lib/blueprints/schema";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 /**
  * Blueprint Centre service — the drawing register (Phase 2 WOW).
@@ -198,6 +199,61 @@ export async function listBlueprints(jobId: string): Promise<BlueprintRow[]> {
     .eq("job_id", jobId).eq("org_id", ctx.org.id).order("drawing_number", { ascending: true });
   if (error) throw readFailure("blueprints: register", error);
   return (data ?? []) as unknown as BlueprintRow[];
+}
+
+export type OrgBlueprintRow = {
+  id: string;
+  job_id: string;
+  drawing_number: string;
+  title: string;
+  discipline: string | null;
+  status: string;
+  current_version: number | null;
+  updated_at: string;
+};
+
+/**
+ * Every drawing across the ACTIVE org — the top-level Blueprint Centre register.
+ *
+ * Org-pinned (RLS admits every org the viewer belongs to, so the explicit
+ * `.eq("org_id")` is the scope) and fully PAGED via fetchAllRows on a stable,
+ * unique order (updated_at desc + id desc) so no drawing is silently dropped
+ * past the PostgREST cap. LOUD: throws on a failed read rather than render a
+ * short register as complete. Grouping by job is the caller's (pure) concern.
+ */
+export async function listBlueprintsForOrg(orgId: string): Promise<OrgBlueprintRow[]> {
+  const tenant = await createClient();
+  const { data, error } = await fetchAllRows<OrgBlueprintRow>(
+    (from, to) =>
+      (
+        bp(tenant).from("blueprints").select(
+          "id, job_id, drawing_number, title, discipline, status, current_version, updated_at",
+        ) as unknown as {
+          eq: (k: string, v: unknown) => {
+            order: (
+              k: string,
+              o: { ascending: boolean },
+            ) => {
+              order: (
+                k: string,
+                o: { ascending: boolean },
+              ) => {
+                range: (
+                  f: number,
+                  t: number,
+                ) => PromiseLike<{ data: OrgBlueprintRow[] | null; error: unknown }>;
+              };
+            };
+          };
+        }
+      )
+        .eq("org_id", orgId)
+        .order("updated_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to),
+  );
+  if (error) throw readFailure("blueprints: org register", error as SupabaseReadError);
+  return data ?? [];
 }
 
 /** Full immutable revision history for one drawing (lazy, per-blueprint). */

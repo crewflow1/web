@@ -13,8 +13,10 @@ import {
   CIS_RATES,
   CIS_RATE_LABEL,
   MONTH_LABEL,
+  VAT_STAGGER_LABEL,
   type TaxDefaults,
 } from "@/lib/org-config/schema";
+import { VAT_STAGGERS } from "@/lib/tax/compute";
 
 type Action = (
   prev: FormState,
@@ -142,6 +144,31 @@ export function TaxDefaultsForm({
               <p role="alert" className="mt-1 text-xs text-red-700">{fe.default_payment_terms_days}</p>
             ) : (
               <p className="mt-1 text-xs text-slate-500">How long new invoices are due after issue (0 = on receipt).</p>
+            )}
+          </div>
+
+          <div className="sm:col-span-2">
+            <label htmlFor="vat_stagger" className="block text-sm font-medium text-slate-800">
+              VAT return period (stagger)
+            </label>
+            <select
+              id="vat_stagger"
+              name="vat_stagger"
+              defaultValue={defaults.vat_stagger}
+              className={selectClass}
+            >
+              {VAT_STAGGERS.map((s) => (
+                <option key={s} value={s}>
+                  {VAT_STAGGER_LABEL[s]}
+                </option>
+              ))}
+            </select>
+            {fe.vat_stagger ? (
+              <p role="alert" className="mt-1 text-xs text-red-700">{fe.vat_stagger}</p>
+            ) : (
+              <p className="mt-1 text-xs text-slate-500">
+                HMRC assigns your quarterly stagger (or monthly returns) when you register. This selects which VAT period the tax dashboard and returns are computed for.
+              </p>
             )}
           </div>
         </div>

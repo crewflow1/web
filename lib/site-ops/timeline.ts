@@ -11,6 +11,14 @@ import {
   type InspectionOutcome,
   type InspectionStatus,
 } from "@/lib/assets/inspection";
+import {
+  DELAY_CATEGORY_LABELS,
+  DELAY_STATUS_LABELS,
+  type DelayCategory,
+  type DelayEventStatus,
+} from "@/lib/eot/lifecycle";
+import { SITE_REPORT_STATUS_LABELS, type SiteReportStatus } from "@/lib/site-reports/state";
+import { BLUEPRINT_STATUS_LABELS, type BlueprintStatus } from "@/lib/blueprints/schema";
 
 /**
  * Site Timeline — the composed "what happened on this job" feed (PURE).
@@ -37,12 +45,15 @@ import {
 
 export const SITE_EVENT_KINDS = [
   "diary",
+  "delay",
   "snag_raised",
   "snag_resolved",
   "toolbox_talk",
   "rams",
   "permit",
   "inspection",
+  "report",
+  "drawing",
   "document",
   "photo",
 ] as const;
@@ -55,12 +66,15 @@ export type SiteEventKind = (typeof SITE_EVENT_KINDS)[number];
  */
 export const SITE_EVENT_KIND_META: Record<SiteEventKind, { label: string; tone: string }> = {
   diary: { label: "Diary", tone: "bg-sky-100 text-sky-800" },
+  delay: { label: "Delay", tone: "bg-orange-100 text-orange-800" },
   snag_raised: { label: "Snag raised", tone: "bg-rose-100 text-rose-800" },
   snag_resolved: { label: "Snag closed", tone: "bg-emerald-100 text-emerald-800" },
   toolbox_talk: { label: "Toolbox talk", tone: "bg-amber-100 text-amber-800" },
   rams: { label: "RAMS", tone: "bg-indigo-100 text-indigo-800" },
   permit: { label: "Permit", tone: "bg-violet-100 text-violet-800" },
   inspection: { label: "Inspection", tone: "bg-teal-100 text-teal-800" },
+  report: { label: "Site report", tone: "bg-blue-100 text-blue-800" },
+  drawing: { label: "Drawing", tone: "bg-cyan-100 text-cyan-800" },
   document: { label: "Document", tone: "bg-slate-100 text-slate-700" },
   photo: { label: "Photo", tone: "bg-slate-100 text-slate-700" },
 };
@@ -74,14 +88,17 @@ export const SITE_EVENT_KIND_META: Record<SiteEventKind, { label: string; tone: 
  */
 const KIND_RANK: Record<SiteEventKind, number> = {
   diary: 0,
-  snag_raised: 1,
-  snag_resolved: 2,
-  toolbox_talk: 3,
-  rams: 4,
-  permit: 5,
-  inspection: 6,
-  document: 7,
-  photo: 8,
+  delay: 1,
+  snag_raised: 2,
+  snag_resolved: 3,
+  toolbox_talk: 4,
+  rams: 5,
+  permit: 6,
+  inspection: 7,
+  report: 8,
+  drawing: 9,
+  document: 10,
+  photo: 11,
 };
 
 export interface SiteTimelineEvent {
@@ -192,16 +209,58 @@ export type AttachmentEventRow = {
   created_at: string;
 };
 
+export type DelayEventRow = {
+  id: string;
+  category: string;
+  status: string;
+  started_on: string;
+  ended_on: string | null;
+  working_days_lost: number | null;
+  description: string | null;
+};
+
+export type SiteReportEventRow = {
+  id: string;
+  title: string;
+  report_number: string | null;
+  status: string;
+  revision: number;
+  period_start: string;
+  period_end: string;
+  issued_at: string | null;
+  created_at: string;
+};
+
+/**
+ * ONE blueprint revision (a `blueprint_versions` row) enriched with its parent
+ * drawing's identity — the caller resolves `drawing_*` from the `blueprints`
+ * rows it already holds, so the timeline reads a self-contained event.
+ */
+export type BlueprintRevisionEventRow = {
+  /** blueprint_versions.id (the revision) — the event's stable source id. */
+  id: string;
+  blueprint_id: string;
+  drawing_number: string;
+  drawing_title: string;
+  drawing_status: string | null;
+  revision: string;
+  revision_date: string | null;
+  uploaded_at: string;
+};
+
 export interface SiteTimelineInput {
   /** Clock, injected so permit expiry (and therefore output) is reproducible. */
   now: Date;
   jobId: string;
   diary?: readonly DiaryEventRow[];
   snags?: readonly SnagEventRow[];
+  delays?: readonly DelayEventRow[];
   toolbox?: readonly ToolboxEventRow[];
   rams?: readonly RamsEventRow[];
   permits?: readonly PermitEventRow[];
   inspections?: readonly InspectionEventRow[];
+  reports?: readonly SiteReportEventRow[];
+  drawings?: readonly BlueprintRevisionEventRow[];
   documents?: readonly JobDocumentEventRow[];
   attachments?: readonly AttachmentEventRow[];
   /** asset_id → display name, resolved by the caller in one batched read. */
@@ -336,6 +395,29 @@ function fromSnags(rows: readonly SnagEventRow[]): Array<SiteTimelineEvent | nul
   return out;
 }
 
+/**
+ * A delay/EOT event is dated by the day the stoppage STARTED (the register's own
+ * primary sort). Category + status reuse the EOT vocabulary so the timeline can
+ * never drift from the delays register that owns them.
+ */
+function fromDelays(rows: readonly DelayEventRow[]): Array<SiteTimelineEvent | null> {
+  return rows.map((r) => {
+    const category = label(DELAY_CATEGORY_LABELS as Record<DelayCategory, string>, r.category);
+    return event("delay", r.id, r.started_on, {
+      title: category ? `Delay — ${category}` : "Delay",
+      detail: detailLine(
+        clip(r.description, 120),
+        typeof r.working_days_lost === "number"
+          ? `${r.working_days_lost} working day${r.working_days_lost === 1 ? "" : "s"} lost`
+          : null,
+        r.ended_on ? `Ended ${formatDiaryDate(r.ended_on)}` : "Ongoing",
+      ),
+      status: label(DELAY_STATUS_LABELS as Record<DelayEventStatus, string>, r.status),
+      href: `/delays/${r.id}`,
+    });
+  });
+}
+
 function fromToolbox(rows: readonly ToolboxEventRow[]): Array<SiteTimelineEvent | null> {
   return rows.map((r) =>
     event("toolbox_talk", r.id, r.talk_date, {
@@ -395,6 +477,48 @@ function fromInspections(
       ),
       status: label(INSPECTION_STATUS_LABELS as Record<InspectionStatus, string>, r.status),
       href: `/assets/${r.asset_id}`,
+    }),
+  );
+}
+
+/**
+ * A site report is dated by ISSUE (the moment it went to the client); a draft
+ * that has never issued falls back to when it entered the record. Status reuses
+ * the site-report vocabulary.
+ */
+function fromReports(rows: readonly SiteReportEventRow[]): Array<SiteTimelineEvent | null> {
+  return rows.map((r) =>
+    event("report", r.id, r.issued_at ?? r.created_at, {
+      title: r.revision > 1 ? `${r.title} (rev ${r.revision})` : r.title,
+      detail: detailLine(
+        r.report_number,
+        `${formatDiaryDate(r.period_start)} – ${formatDiaryDate(r.period_end)}`,
+      ),
+      status: label(SITE_REPORT_STATUS_LABELS as Record<SiteReportStatus, string>, r.status),
+      href: `/site-reports/${r.id}`,
+    }),
+  );
+}
+
+/**
+ * A drawing revision is dated by its human REVISION DATE where present (the date
+ * printed on the sheet), else by when the file was uploaded. Every revision is
+ * its own event, so the timeline shows a drawing's issue history, not just its
+ * latest state. Links into the job's drawing register (the Blueprint Centre),
+ * which owns the viewer/compare/markup experience.
+ */
+function fromBlueprintRevisions(
+  rows: readonly BlueprintRevisionEventRow[],
+  jobId: string,
+): Array<SiteTimelineEvent | null> {
+  return rows.map((r) =>
+    event("drawing", r.id, r.revision_date ?? r.uploaded_at, {
+      title: `${r.drawing_number} — ${r.drawing_title}`,
+      detail: detailLine(
+        `Rev ${r.revision}`,
+        label(BLUEPRINT_STATUS_LABELS as Record<BlueprintStatus, string>, r.drawing_status),
+      ),
+      href: `/jobs/${jobId}/blueprints`,
     }),
   );
 }
@@ -491,10 +615,13 @@ export function composeSiteTimeline(
   const events = [
     ...fromDiary(input.diary ?? []),
     ...fromSnags(input.snags ?? []),
+    ...fromDelays(input.delays ?? []),
     ...fromToolbox(input.toolbox ?? []),
     ...fromRams(input.rams ?? []),
     ...fromPermits(input.permits ?? [], input.now),
     ...fromInspections(input.inspections ?? [], input.assetNames),
+    ...fromReports(input.reports ?? []),
+    ...fromBlueprintRevisions(input.drawings ?? [], input.jobId),
     ...fromDocuments(input.documents ?? [], input.jobId),
     ...fromAttachments(input.attachments ?? [], input.attachmentContext, input.jobId),
   ].filter((e): e is SiteTimelineEvent => e !== null);

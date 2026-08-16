@@ -8,9 +8,11 @@ import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
-  createRaSchema, updateRaSchema, raIdSchema, hazardSchema, hazardIdSchema, orNull,
+  createRaSchema, updateRaSchema, raIdSchema, hazardSchema, hazardIdSchema,
+  generateRamsSchema, orNull,
 } from "@/lib/health-safety/schema";
 import { canIssue } from "@/lib/health-safety/rams";
+import { buildRamsDraftFromTemplate } from "@/lib/health-safety/rams-templates";
 import { getRiskAssessment } from "./_data";
 
 /**
@@ -75,6 +77,77 @@ export async function createRiskAssessment(formData: FormData): Promise<void> {
 
   revalidatePath("/health-safety");
   redirect(`/health-safety/${id}?saved=created`);
+}
+
+/**
+ * Deterministically generate a DRAFT RAMS from a curated in-repo template
+ * (lib/health-safety/rams-templates.ts) — NO model calls. The template supplies
+ * the header (title, activity, PPE, method statement) and the standard hazards
+ * with their default 5×5 scores + controls; this action stamps org/tenant + the
+ * optional job link and writes them as an ordinary draft, so the record enters
+ * the EXISTING pipeline (human edits → names an assessor → issues). It never
+ * sets an assessor and never issues — a human keeps approval.
+ *
+ * Tenant safety is inherited from the destination tables: the header insert is
+ * pinned to ctx.org.id under RLS, and each hazard's org_id is authoritatively
+ * derived from its parent by the DB trigger (tg_rah_derive_org), so a caller can
+ * never anchor generated hazards into another tenant. A partial hazard-insert
+ * failure rolls the whole draft back (delete the just-created header) so we never
+ * leave a header stranded without its assessed hazards.
+ */
+export async function generateRamsDraft(formData: FormData): Promise<void> {
+  const { user, ctx } = await requireOrgContext();
+  const parsed = generateRamsSchema.safeParse({
+    templateKey: formData.get("templateKey"),
+    jobId: (formData.get("jobId") as string) || null,
+  });
+  if (!parsed.success) redirect(`/health-safety/new?error=${encodeURIComponent(firstError(parsed.error.issues))}`);
+
+  const draft = buildRamsDraftFromTemplate(parsed.data.templateKey);
+  // Fail closed on an unknown template key (never generate an empty RAMS).
+  if (!draft) redirect(`/health-safety/new?error=unknown_template`);
+
+  const id = randomUUID();
+  const supabase = await createClient();
+  const { error: headerError } = await tbl(supabase)("risk_assessments").insert({
+    id,
+    org_id: ctx.org.id,
+    job_id: parsed.data.jobId ?? null,
+    title: draft.header.title,
+    activity: draft.header.activity,
+    ppe: draft.header.ppe,
+    method_statement: draft.header.methodStatement,
+    created_by: user.id,
+  });
+  if (headerError) redirect(`/health-safety/new?error=${encodeURIComponent(headerError.message)}`);
+
+  if (draft.hazards.length > 0) {
+    // org_id is trigger-derived from the parent; we pass the caller's org so the
+    // RLS insert-check passes for the normal (same-org) case.
+    const { error: hazardsError } = await tbl(supabase)("risk_assessment_hazards").insert(
+      draft.hazards.map((h) => ({
+        org_id: ctx.org.id,
+        risk_assessment_id: id,
+        hazard: h.hazard,
+        who_at_risk: orNull(h.whoAtRisk),
+        likelihood: h.likelihood,
+        severity: h.severity,
+        control_measures: h.controlMeasures,
+        residual_likelihood: h.residualLikelihood,
+        residual_severity: h.residualSeverity,
+        sort_order: h.sortOrder,
+      })),
+    );
+    if (hazardsError) {
+      // Roll the header back so a failed hazard write never strands an empty
+      // draft (the draft is freely deletable; RLS scopes the delete to the org).
+      await tbl(supabase)("risk_assessments").delete().eq("id", id).eq("org_id", ctx.org.id);
+      redirect(`/health-safety/new?error=${encodeURIComponent(hazardsError.message)}`);
+    }
+  }
+
+  revalidatePath("/health-safety");
+  redirect(`/health-safety/${id}?saved=generated`);
 }
 
 export async function updateRiskAssessment(formData: FormData): Promise<void> {

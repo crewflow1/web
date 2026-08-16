@@ -204,6 +204,37 @@ export type PensionEnrolmentFormInput = z.infer<
 >;
 
 // -------------------------------------------------------------------------
+// Payroll tax inputs (income-tax region, student loan, salary sacrifice)
+// -------------------------------------------------------------------------
+
+export const TAX_REGIONS = ["rest_of_uk", "scotland"] as const;
+export type TaxRegionInput = (typeof TAX_REGIONS)[number];
+
+export const STUDENT_LOAN_PLANS = [
+  "none",
+  "plan_1",
+  "plan_2",
+  "plan_4",
+  "postgraduate",
+] as const;
+export type StudentLoanPlanInput = (typeof STUDENT_LOAN_PLANS)[number];
+
+/** Annual salary sacrifice, entered in POUNDS (0..1,000,000), empty ⇒ 0. */
+const salarySacrificePounds = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? 0 : v),
+  z.coerce.number().min(0).max(1_000_000),
+);
+
+export const payrollTaxProfileFormSchema = z.object({
+  tax_region: z.enum(TAX_REGIONS),
+  student_loan_plan: z.enum(STUDENT_LOAN_PLANS),
+  salary_sacrifice_annual_pounds: salarySacrificePounds,
+});
+export type PayrollTaxProfileFormInput = z.infer<
+  typeof payrollTaxProfileFormSchema
+>;
+
+// -------------------------------------------------------------------------
 // Conflict detection
 // -------------------------------------------------------------------------
 type Interval = { starts_at: string; ends_at: string };

@@ -1132,10 +1132,10 @@ describe("the fetch pipeline writes with service role, honestly, and dark-first"
 });
 
 // =====================================================================
-// 10. The cron seam — authorised, dark-safe, and DELIBERATELY unscheduled.
+// 10. The cron seam — authorised, dark-safe, and SCHEDULED (still dark).
 // =====================================================================
 
-describe("the weather-fetch cron route is gated, dark-safe and unscheduled", () => {
+describe("the weather-fetch cron route is gated, dark-safe and scheduled", () => {
   const code = () => codeOf(read(CRON_ROUTE));
 
   it("auth first, readiness second, telemetry only after BOTH — dark is a 204 with zero DB access", () => {
@@ -1158,12 +1158,21 @@ describe("the weather-fetch cron route is gated, dark-safe and unscheduled", () 
     expect(c).not.toMatch(/createAdminClient|createClient/);
   });
 
-  it("is ABSENT from vercel.json — scheduling it is an activation step, not an engineering one", () => {
-    // The pin that keeps 'built' and 'running' as two different decisions:
-    // adding the schedule is a visible diff against this test's expectation
-    // of silence, to be updated in the activation change itself.
-    const vercel = read("vercel.json");
-    expect(vercel).not.toContain("weather-fetch");
+  it("is REGISTERED in vercel.json on a recurring schedule — activation is now a pure config flip", () => {
+    // The pin flipped when the cron was wired (this describe's history): the
+    // route is now scheduled so activation needs NO code change — only the
+    // provider selection + credential. The dark-safety of a scheduled tick is
+    // proven separately above (auth → readiness → 204 no-op, zero DB access)
+    // and at runtime in weather-fetch-cron-dark.test.ts, so scheduling a route
+    // that no-ops while dark is safe. Assert the entry exists AND carries a
+    // real cron schedule — presence without a schedule would be a dead entry.
+    const vercel = JSON.parse(read("vercel.json")) as {
+      crons?: Array<{ path?: string; schedule?: string }>;
+    };
+    const entry = (vercel.crons ?? []).find((c) => c.path === "/api/cron/weather-fetch");
+    expect(entry, "weather-fetch must be registered in vercel.json crons").toBeTruthy();
+    // A five-field cron expression (standard vercel.json shape).
+    expect(entry?.schedule ?? "").toMatch(/^\S+\s+\S+\s+\S+\s+\S+\s+\S+$/);
   });
 });
 

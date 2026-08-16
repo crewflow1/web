@@ -54,6 +54,15 @@ export type DiaryDefaults = {
 /** Server-trusted identity, from the page's own `requireOrgContext()`. */
 export type DiaryOfflineConfig = { userId: string; orgId: string };
 
+/**
+ * Present ⇒ the weather field was PRE-FILLED from the day's cached readings for
+ * the job's site (the automatic diary). Renders an honest "suggested" note under
+ * the field so the author knows the value is a suggestion to check, not a fact
+ * typed by a person, and carries the provider's licence attribution (the CC-BY
+ * string that MUST appear wherever that provider's data is shown).
+ */
+export type DiaryWeatherHint = { attribution: string | null };
+
 const FIELDS = [
   "entry_date",
   "job_id",
@@ -99,6 +108,7 @@ export function DiaryForm({
   cancelHref,
   hiddenId,
   offline,
+  weatherHint,
   mode = "create",
   baseVersion,
 }: {
@@ -108,6 +118,8 @@ export function DiaryForm({
   submitLabel: string;
   cancelHref: string;
   hiddenId?: string;
+  /** Present ⇒ the weather field was auto-suggested from cached readings. */
+  weatherHint?: DiaryWeatherHint;
   /** Present ⇒ this form may be saved offline. Absent ⇒ online only. */
   offline?: DiaryOfflineConfig;
   /** "update" ⇒ an offline save queues a conflict-resolved edit, not a create. */
@@ -326,7 +338,19 @@ export function DiaryForm({
             defaultValue={d.weather ?? ""}
             placeholder="Dry am, heavy rain pm"
             className={input}
+            aria-describedby={weatherHint ? "weather-hint" : undefined}
           />
+          {weatherHint ? (
+            <p id="weather-hint" data-weather-suggested className="mt-1 text-xs text-slate-500">
+              Suggested from the forecast for this job&apos;s site — edit if it
+              doesn&apos;t match what you saw.
+              {weatherHint.attribution ? (
+                <span className="mt-0.5 block text-slate-400">
+                  {weatherHint.attribution}
+                </span>
+              ) : null}
+            </p>
+          ) : null}
         </div>
         <div>
           <label htmlFor="labour_count" className={label}>

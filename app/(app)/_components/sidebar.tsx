@@ -41,6 +41,11 @@ const ADMIN_LINKS = [
   // connected, and the page says so rather than showing a forecast it has not got.
   { href: "/weather", label: "Weather" },
   { href: "/site-reports", label: "Site reports" },
+  // The drawing register across every job (the Blueprint Centre). The full
+  // viewer/compare/markup experience stays job-scoped at /jobs/[id]/blueprints;
+  // this top-level entry is the org-wide index into it. Sits with the other
+  // document-shaped surfaces (site reports, documents).
+  { href: "/blueprints", label: "Drawings" },
   // Org-wide document home: aggregates per-job documents + the universal
   // attachment store into one searchable list. Sits after Site reports (the
   // other document-shaped surface) and before the commercial group.
@@ -95,6 +100,10 @@ const STAFF_LINKS = [
   { href: "/snags", label: "Snagging" },
   { href: "/diary", label: "Site diary" },
   { href: "/toolbox", label: "Toolbox talks" },
+  // Site staff read drawings on site (view / compare revisions / mark up), so the
+  // register belongs in the slim nav too. Links to the org-wide index; the viewer
+  // itself stays job-scoped.
+  { href: "/blueprints", label: "Drawings" },
   // Site staff run the gate: they induct operatives, sign visitors in/out and
   // pull the muster when the alarm goes. This is site work, so it is in the slim
   // nav too.

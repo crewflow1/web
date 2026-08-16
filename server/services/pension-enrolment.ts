@@ -120,6 +120,37 @@ export async function getPensionEnrolmentsForOrg(
   return out;
 }
 
+/**
+ * Employee pension CONTRIBUTION rates for the org, keyed by user_id, for the
+ * take-home (net-pay) estimate on the payroll run detail. Only ENROLLED employees
+ * have a deduction — opted-out / postponed / not-enrolled contribute nothing — so
+ * this returns a rate strictly for `status === "enrolled"` rows. Empty map on error
+ * or for an org that tracks nothing, in which case net pay is the statutory
+ * PAYE+NI-only figure (unchanged). Paged (F-1), org-pinned; admin RLS is the gate.
+ */
+export async function getEmployeePensionRatesForOrg(
+  orgId: string,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const db = (await createClient()) as unknown as PensionDb;
+  const { data, error } = await fetchAllRows<PagedRow>((from, to) =>
+    db
+      .from("pension_enrolments")
+      .select("user_id, status, employee_contribution_rate, id")
+      .eq("org_id", orgId)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (error) return out;
+  for (const raw of data ?? []) {
+    const r = coerce(raw);
+    if (r.status === "enrolled" && r.employee_contribution_rate > 0) {
+      out.set(r.user_id, r.employee_contribution_rate);
+    }
+  }
+  return out;
+}
+
 /** The opt-out register for an org: every enrolment currently opted out. */
 export async function getOptOutRegisterForOrg(
   orgId: string,

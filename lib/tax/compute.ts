@@ -353,12 +353,105 @@ export function computeCorpTaxYear(
   };
 }
 
-/** Start of the calendar quarter containing `now`. */
-export function startOfQuarterIso(now: Date = new Date()): string {
-  const q = Math.floor(now.getUTCMonth() / 3);
-  return new Date(Date.UTC(now.getUTCFullYear(), q * 3, 1))
+/**
+ * VAT RETURN PERIOD SELECTION — the SINGLE place the [start, end) window fed to
+ * `computeVatQuarter` is derived. This is period SELECTION, not VAT arithmetic:
+ * `computeVatQuarter` remains the one and only VAT calculator; these helpers
+ * only pick WHICH window it sums over, driven by the org's HMRC stagger.
+ *
+ * HMRC assigns every VAT-registered business one of three quarterly "staggers"
+ * (or monthly returns):
+ *   group_1  periods END Mar/Jun/Sep/Dec  → START Jan/Apr/Jul/Oct  (calendar quarter)
+ *   group_2  periods END Apr/Jul/Oct/Jan  → START Feb/May/Aug/Nov
+ *   group_3  periods END Feb/May/Aug/Nov  → START Dec/Mar/Jun/Sep
+ *   monthly  one calendar month per return
+ *
+ * `group_1` is the DEFAULT and is byte-for-byte the previous calendar-quarter
+ * behaviour, so an org that never sets a stagger sees no change.
+ */
+export const VAT_STAGGERS = ["group_1", "group_2", "group_3", "monthly"] as const;
+export type VatStagger = (typeof VAT_STAGGERS)[number];
+
+/** The default stagger: HMRC group 1 == the calendar quarter (unchanged behaviour). */
+export const DEFAULT_VAT_STAGGER: VatStagger = "group_1";
+
+/** Narrow an unknown/stored value to a VatStagger, falling back to the default. */
+export function normalizeVatStagger(value: unknown): VatStagger {
+  return (VAT_STAGGERS as readonly string[]).includes(value as string)
+    ? (value as VatStagger)
+    : DEFAULT_VAT_STAGGER;
+}
+
+/** Months in one VAT return period for a stagger (quarters = 3, monthly = 1). */
+function vatPeriodMonths(stagger: VatStagger): number {
+  return stagger === "monthly" ? 1 : 3;
+}
+
+/**
+ * The calendar-month phase each stagger's periods begin on, modulo the period
+ * length. group_1 starts Jan/Apr/Jul/Oct (phase 0), group_2 starts
+ * Feb/May/Aug/Nov (phase 1), group_3 starts Dec/Mar/Jun/Sep (phase 2), monthly
+ * every month (phase 0).
+ */
+function vatStaggerPhase(stagger: VatStagger): number {
+  switch (stagger) {
+    case "group_1":
+      return 0;
+    case "group_2":
+      return 1;
+    case "group_3":
+      return 2;
+    case "monthly":
+      return 0;
+  }
+}
+
+/**
+ * Start (YYYY-MM-DD, inclusive) of the VAT return period containing `now` for
+ * the given stagger. Date.UTC absorbs a negative month (e.g. group_3 in January
+ * belongs to the Dec–Feb period, which starts the prior December).
+ */
+export function startOfVatPeriodIso(
+  stagger: VatStagger = DEFAULT_VAT_STAGGER,
+  now: Date = new Date(),
+): string {
+  const months = vatPeriodMonths(stagger);
+  const phase = vatStaggerPhase(stagger);
+  const m = now.getUTCMonth();
+  // How many months `now` sits past its period's start month.
+  const offset = (((m - phase) % months) + months) % months;
+  return new Date(Date.UTC(now.getUTCFullYear(), m - offset, 1))
     .toISOString()
     .slice(0, 10);
+}
+
+/**
+ * EXCLUSIVE upper bound of the VAT period that starts at `periodStartIso` for
+ * the given stagger: the first day of the NEXT period. Feed this to
+ * `computeVatQuarter` so a future-dated payment cannot leak in, keeping the
+ * tile, PDF, HMRC composer and /cash on one boundary.
+ */
+export function endOfVatPeriodExclusiveIso(
+  periodStartIso: string,
+  stagger: VatStagger = DEFAULT_VAT_STAGGER,
+): string {
+  const d = new Date(periodStartIso);
+  return new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + vatPeriodMonths(stagger), 1),
+  )
+    .toISOString()
+    .slice(0, 10);
+}
+
+/**
+ * Start of the calendar quarter containing `now`.
+ *
+ * Backward-compatible thin wrapper over the stagger-aware selector (group_1 ==
+ * calendar quarter). Existing callers that do not know about staggers keep the
+ * exact previous behaviour; stagger-aware callers use `startOfVatPeriodIso`.
+ */
+export function startOfQuarterIso(now: Date = new Date()): string {
+  return startOfVatPeriodIso(DEFAULT_VAT_STAGGER, now);
 }
 
 /**
@@ -366,12 +459,11 @@ export function startOfQuarterIso(now: Date = new Date()): string {
  * the one starting at `quarterStartIso`. Feed this to `computeVatQuarter` so a
  * future-dated payment cannot leak into the current quarter, and to keep the
  * dashboard tile, the PDF working paper and the HMRC composer on one boundary.
+ *
+ * Backward-compatible thin wrapper over `endOfVatPeriodExclusiveIso` (group_1).
  */
 export function endOfQuarterExclusiveIso(quarterStartIso: string): string {
-  const d = new Date(quarterStartIso);
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 3, 1))
-    .toISOString()
-    .slice(0, 10);
+  return endOfVatPeriodExclusiveIso(quarterStartIso, DEFAULT_VAT_STAGGER);
 }
 
 /** Start of the UK tax year containing `now` (6 April). */

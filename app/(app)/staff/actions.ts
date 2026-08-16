@@ -25,9 +25,11 @@ import {
   inviteStaffSchema,
   holidayEntitlementFormSchema,
   pensionEnrolmentFormSchema,
+  payrollTaxProfileFormSchema,
 } from "@/lib/staff/schema";
 import { upsertHolidayEntitlement } from "@/server/services/holiday-balance";
 import { upsertPensionEnrolment } from "@/server/services/pension-enrolment";
+import { upsertPayrollTaxProfile } from "@/server/services/payroll-tax-profile";
 import { staffQualificationFormSchema } from "@/lib/staff/qualifications";
 import {
   type FormState,
@@ -761,6 +763,43 @@ export async function upsertPensionEnrolmentAction(
 
   revalidatePath(`/staff/${userId}`);
   return formSuccess({ successMessage: "Pension enrolment saved." });
+}
+
+/**
+ * Set/replace an employee's payroll TAX INPUTS (income-tax region, student-loan plan,
+ * annual salary sacrifice). Admin-only. Sacrifice is entered in pounds and stored as
+ * pence. org_id is pinned from ctx; the upsert runs on the user JWT so the admin-only
+ * RLS write policy is the real boundary. Revalidates the run pages so a live draft's
+ * take-home estimate reflects the change.
+ */
+export async function upsertPayrollTaxProfileAction(
+  userId: string,
+  _prevState: FormState<Record<string, unknown>>,
+  formData: FormData,
+): Promise<FormState<Record<string, unknown>>> {
+  const { ctx } = await requireOrgContext();
+  requireAdmin(ctx);
+  if (!uuid.safeParse(userId).success) return formError("Invalid staff id.");
+
+  const result = validateFormData(formData, payrollTaxProfileFormSchema);
+  if (!result.ok) return result.state as FormState<Record<string, unknown>>;
+
+  const d = result.data;
+  const ok = await upsertPayrollTaxProfile(ctx.org.id, userId, {
+    tax_region: d.tax_region,
+    student_loan_plan: d.student_loan_plan,
+    salary_sacrifice_annual_pence: Math.round(d.salary_sacrifice_annual_pounds * 100),
+  });
+  if (!ok) {
+    return formError(
+      "Couldn't save payroll tax inputs. Try again.",
+      d as Record<string, unknown>,
+    );
+  }
+
+  revalidatePath(`/staff/${userId}`);
+  revalidatePath("/payroll");
+  return formSuccess({ successMessage: "Payroll tax inputs saved." });
 }
 
 function round4(n: number): number {

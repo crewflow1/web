@@ -286,6 +286,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: jobs name lookup CHUNKED .in('id', idsChunk) where each chunk is ≤JOB_IN_CHUNK=500 unique PKs — jobs.id is unique so a chunk yields ≤500 rows. (C66: the reports register above is now fully PAGED, so jobIds can exceed 500; the lookup is chunked to stay below the cap, and the line moved 99→111.)",
   "app/(app)/snags/page.tsx:134":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the snags register (.limit(500)) — ≤500 unique PKs",
+  "app/(app)/blueprints/page.tsx:68":
+    "bounded: jobs name lookup CHUNKED .in('id', idsChunk) where each chunk is ≤JOB_IN_CHUNK=500 unique PKs — jobs.id is unique so a chunk yields ≤500 rows. The blueprints register above is fully PAGED (listBlueprintsForOrg → fetchAllRows), so the job-id set can exceed 500; the lookup is chunked to stay below the cap. Same class as site-reports/page.tsx:111.",
   "app/(app)/toolbox/page.tsx:89":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the toolbox register (.limit(500)) — ≤500 unique PKs",
   "app/(app)/jobs/page.tsx:134":
@@ -1147,6 +1149,8 @@ const COVERAGE_REVIEWED: Record<string, string> = {
     "PAGED: fetchCursors is the only set-read and is fetchAllRows-paged (bulk digest cursor read); the per-cadence cursor advance is an upsert write, not a read. Service-role only.",
   pension_enrolments:
     "PER-EMPLOYEE-CONFIG/PAGED: both set-reads in server/services/pension-enrolment.ts are .eq('org_id') and fetchAllRows-paged via .range on a stable id order — getPensionEnrolmentsForOrg (the payroll employer-cost map, one row per employee) and getOptOutRegisterForOrg (.eq('status','opted_out')). Bounded by org headcount, never summed cross-tenant; getPensionEnrolment is .maybeSingle(). The write path is an upsert.",
+  payroll_tax_profiles:
+    "PER-EMPLOYEE-CONFIG/PAGED: the only set-read is getPayrollTaxProfilesForOrg (server/services/payroll-tax-profile.ts) — .eq('org_id') fetchAllRows-paged via .range on a stable id order (the payroll take-home input map, one row per employee, bounded by org headcount, never summed cross-tenant). getPayrollTaxProfile is .maybeSingle(); the write path is an upsert.",
 
   // ---- PER-PARENT (bounded by ONE parent row) ----
   blueprint_markup: "PER-PARENT: .eq('blueprint_version_id') — one drawing version's markup shapes",

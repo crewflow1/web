@@ -70,6 +70,7 @@ const ERROR_MAP: Record<string, string> = {
 
 const SAVED_MAP: Record<string, string> = {
   created: "Draft created — add hazards, then issue it.",
+  generated: "Draft generated from a template. Review every hazard and control, name an assessor, then issue it.",
   updated: "Risk assessment saved.",
   issued: "Risk assessment issued. It's now a frozen record.",
   superseded: "Risk assessment superseded.",
