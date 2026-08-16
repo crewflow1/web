@@ -4,7 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
-import { finalisePayrollRun, deletePayrollRun } from "../actions";
+import { finalisePayrollRun, deletePayrollRun, prepareFpsRunAction } from "../actions";
+import { RTI_NO_FILING_NOTICE } from "@/lib/integrations/hmrc/rti-fps";
 import { fetchNiNumbersForOrg, maskNiNumber } from "@/lib/staff/secrets";
 import {
   employerCostsForStoredLineWithPension,
@@ -150,7 +151,9 @@ export default async function PayrollRunPage({
       ? "Run finalised. Time entries are now locked."
       : sp.saved === "created"
         ? "Draft created."
-        : null
+        : sp.saved === "fps_prepared"
+          ? "RTI (FPS) prepared and held. Nothing was filed with HMRC — see the Tax dashboard for the frozen record."
+          : null
     : null;
 
   return (
@@ -340,6 +343,35 @@ export default async function PayrollRunPage({
         1257L tax code and 2025-26 thresholds. Confirm with your accountant
         or HMRC&apos;s Basic PAYE Tools before submitting RTI.
       </p>
+
+      {/* RTI (FPS) — prepared & held internally (never filed). Only a finalised
+          run's frozen figures can be prepared; the terminal SUBMIT is deliberately
+          absent (recognition-gated). */}
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-base font-semibold text-slate-900">
+          RTI — Full Payment Submission (FPS)
+        </h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Freeze this run&apos;s figures into an internal FPS record.
+        </p>
+        <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          {RTI_NO_FILING_NOTICE}
+        </p>
+        {run.status === "finalised" ? (
+          <form action={prepareFpsRunAction.bind(null, run.id)} className="mt-4">
+            <button
+              type="submit"
+              className="rounded-md border border-slate-900 bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+            >
+              Prepare RTI (FPS)
+            </button>
+          </form>
+        ) : (
+          <p className="mt-4 text-xs text-slate-500">
+            Finalise this run to prepare its FPS — draft figures can still change.
+          </p>
+        )}
+      </section>
     </div>
   );
 }

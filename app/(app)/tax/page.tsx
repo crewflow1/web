@@ -513,6 +513,7 @@ function ConfidencePill({ value }: { value: "computed" | "placeholder" }) {
 const HMRC_KIND_LABEL: Record<HmrcSubmission["kind"], string> = {
   vat_return: "VAT return",
   cis300: "CIS300 monthly return",
+  fps: "RTI Full Payment Submission",
 };
 
 function HmrcReturnsSection({

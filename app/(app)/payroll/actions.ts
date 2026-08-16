@@ -9,6 +9,7 @@ import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { hoursByUser, type TimeEntry } from "@/lib/time/compute";
 import { computePayrollLine } from "@/lib/payroll/compute";
+import { prepareFpsReturn } from "@/server/services/hmrc-connections";
 import {
   type FormState,
   formError,
@@ -381,6 +382,34 @@ export async function deletePayrollRun(runId: string) {
     .eq("org_id", ctx.org.id);
   revalidatePath("/payroll");
   redirect("/payroll?saved=deleted");
+}
+
+/**
+ * Prepare + HOLD an RTI Full Payment Submission (FPS) for a finalised run — an
+ * internal FROZEN record built from this run's own payroll_lines. It does NOT
+ * file to HMRC: there is no submit/network path, and RTI filing stays legally
+ * recognition-gated (see lib/integrations/hmrc/rti-fps.ts and migration 20261156).
+ *
+ * AUTHORISATION IS DOUBLED. The role check here refuses a non-admin; the
+ * admin-insert RLS on hmrc_submissions / hmrc_connections (20261099) is the real
+ * boundary. Org-pinned via ctx.org.id — never a client-supplied org — and the run
+ * id is re-resolved org-pinned inside prepareFpsReturn, so a multi-org admin
+ * cannot prepare against another org's run.
+ */
+export async function prepareFpsRunAction(runId: string) {
+  const { ctx, user } = await requireOrgContext();
+  if (!isOwnerOrAdmin(ctx.membership.role)) redirect("/dashboard?error=forbidden");
+
+  const res = await prepareFpsReturn({
+    orgId: ctx.org.id,
+    preparedBy: user.id,
+    payrollRunId: runId,
+  });
+  if (!res.ok) {
+    redirect(`/payroll/${runId}?error=${encodeURIComponent(res.error)}`);
+  }
+  revalidatePath(`/payroll/${runId}`);
+  redirect(`/payroll/${runId}?saved=fps_prepared`);
 }
 
 function isOwnerOrAdmin(role: string): boolean {
