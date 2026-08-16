@@ -353,58 +353,70 @@ export type Database = {
           address_line1: string | null
           address_line2: string | null
           city: string | null
+          company_number: string | null
           country: string
           county: string | null
           created_at: string
+          customer_type: string
           email: string | null
           id: string
           name: string
           notes: string | null
           org_id: string
+          parent_customer_id: string | null
           phone: string | null
           portal_token: string | null
           portal_token_expires_at: string | null
           portal_token_last_used_at: string | null
           postcode: string | null
           updated_at: string
+          vat_number: string | null
         }
         Insert: {
           address_line1?: string | null
           address_line2?: string | null
           city?: string | null
+          company_number?: string | null
           country?: string
           county?: string | null
           created_at?: string
+          customer_type?: string
           email?: string | null
           id?: string
           name: string
           notes?: string | null
           org_id: string
+          parent_customer_id?: string | null
           phone?: string | null
           portal_token?: string | null
           portal_token_expires_at?: string | null
           portal_token_last_used_at?: string | null
           postcode?: string | null
           updated_at?: string
+          vat_number?: string | null
         }
         Update: {
           address_line1?: string | null
           address_line2?: string | null
           city?: string | null
+          company_number?: string | null
           country?: string
           county?: string | null
           created_at?: string
+          customer_type?: string
           email?: string | null
           id?: string
           name?: string
           notes?: string | null
           org_id?: string
+          parent_customer_id?: string | null
           phone?: string | null
           portal_token?: string | null
           portal_token_expires_at?: string | null
           portal_token_last_used_at?: string | null
           postcode?: string | null
           updated_at?: string
+          vat_number?: string | null
         }
         Relationships: [
           {
@@ -413,6 +425,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "organizations"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "customers_parent_org_fkey"
+            columns: ["parent_customer_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id", "org_id"]
           },
         ]
       }

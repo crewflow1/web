@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { createClient } from "@/lib/supabase/server";
+import { requireOrgContext } from "@/server/auth/session";
+import { loadBusinessOptions } from "@/lib/customers/companies";
 import { createCustomer } from "../actions";
 import { CustomerForm } from "../_form";
 
@@ -7,8 +10,16 @@ import { CustomerForm } from "../_form";
  *
  * Inline validation + state preservation are handled by `CustomerForm`
  * via React 19 `useActionState`. No `?error=` round-trip.
+ *
+ * Loads the org's business customers so a new record can be rolled up under a
+ * parent business immediately (loud read — a failure throws, never a silent
+ * empty picker). Active-org pinned inside the loader.
  */
-export default function NewCustomerPage() {
+export default async function NewCustomerPage() {
+  const { ctx } = await requireOrgContext();
+  const supabase = await createClient();
+  const parentOptions = await loadBusinessOptions(supabase, ctx.org.id);
+
   return (
     <div className="mx-auto max-w-xl space-y-6">
       <div className="flex items-center gap-2 text-sm text-slate-500">
@@ -30,6 +41,7 @@ export default function NewCustomerPage() {
         action={createCustomer}
         submitLabel="Save customer"
         cancelHref="/customers"
+        parentOptions={parentOptions}
       />
     </div>
   );

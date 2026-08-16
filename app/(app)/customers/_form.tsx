@@ -13,8 +13,11 @@ import {
 import { SubmitButton } from "@/components/forms/FormShell";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { Field, TextareaField } from "../_components/field";
+import { Field, TextareaField, SelectField } from "../_components/field";
 import type { CustomerFormInput } from "@/lib/customers/schema";
+
+/** A candidate parent business the operator can roll this customer up under. */
+export type ParentOption = { id: string; name: string };
 
 /**
  * Client form for create/edit-customer.
@@ -35,11 +38,14 @@ export function CustomerForm({
   submitLabel,
   cancelHref,
   defaults,
+  parentOptions = [],
 }: {
   action: CustomerAction;
   submitLabel: string;
   cancelHref: string;
   defaults?: Partial<CustomerFormInput>;
+  /** Business customers in the org this record can roll up under (excl. self). */
+  parentOptions?: ParentOption[];
 }) {
   const [state, formAction, pending] = useActionState(
     action,
@@ -104,6 +110,61 @@ export function CustomerForm({
         defaultValue={v.phone ?? defaults?.phone ?? ""}
         error={state.fieldErrors?.phone}
       />
+
+      <fieldset className="space-y-4 rounded-lg border border-slate-200 p-4">
+        <legend className="px-1 text-sm font-semibold text-slate-700">
+          Business
+        </legend>
+        <SelectField
+          name="customer_type"
+          label="Customer type"
+          options={[
+            { value: "individual", label: "Individual" },
+            { value: "business", label: "Business" },
+          ]}
+          defaultValue={
+            v.customer_type ?? defaults?.customer_type ?? "individual"
+          }
+          help="Businesses can carry a company number, VAT number, and roll-up sites."
+          error={state.fieldErrors?.customer_type}
+        />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            name="company_number"
+            label="Company number"
+            optional
+            placeholder="12345678"
+            defaultValue={
+              v.company_number ?? defaults?.company_number ?? ""
+            }
+            error={state.fieldErrors?.company_number}
+          />
+          <Field
+            name="vat_number"
+            label="VAT number"
+            optional
+            placeholder="GB123456789"
+            defaultValue={v.vat_number ?? defaults?.vat_number ?? ""}
+            error={state.fieldErrors?.vat_number}
+          />
+        </div>
+        {parentOptions.length > 0 ? (
+          <SelectField
+            name="parent_customer_id"
+            label="Parent business"
+            options={[
+              { value: "", label: "— None (top-level) —" },
+              ...parentOptions.map((p) => ({ value: p.id, label: p.name })),
+            ]}
+            defaultValue={
+              v.parent_customer_id ?? defaults?.parent_customer_id ?? ""
+            }
+            help="Roll this record up under a business account (e.g. a site or contact)."
+            error={state.fieldErrors?.parent_customer_id}
+          />
+        ) : null}
+      </fieldset>
+
       <fieldset className="space-y-4 rounded-lg border border-slate-200 p-4">
         <legend className="px-1 text-sm font-semibold text-slate-700">
           Address
