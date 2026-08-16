@@ -8,6 +8,8 @@ import { LogoUpload } from "./_logo-upload";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 import { outboundWebhooksEnabled } from "@/lib/webhooks/flags";
 import { NotificationPreferences } from "./_notification-prefs";
+import { WorkingHoursSettings } from "./_working-hours";
+import { TaxDefaultsSettings } from "./_tax-defaults";
 import { HelpLink } from "../_components/help-link";
 
 /**
@@ -191,6 +193,12 @@ export default async function SettingsPage() {
           }}
         />
       </section>
+
+      {/* Working hours ------------------------------------------------- */}
+      <WorkingHoursSettings />
+
+      {/* Tax & defaults ------------------------------------------------ */}
+      <TaxDefaultsSettings />
 
       {/* AI Receptionist ----------------------------------------------- */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
