@@ -79,12 +79,13 @@ describe("working hours", () => {
 });
 
 describe("tax defaults", () => {
-  it("defaults are 20% VAT, 20% CIS, April FY start, 30-day terms", () => {
+  it("defaults are 20% VAT, 20% CIS, April FY start, 30-day terms, group_1 stagger", () => {
     expect(defaultTaxDefaults()).toEqual({
       default_vat_rate: 20,
       cis_default_rate: 20,
       financial_year_start_month: 4,
       default_payment_terms_days: 30,
+      vat_stagger: "group_1",
     });
   });
 
@@ -96,6 +97,7 @@ describe("tax defaults", () => {
           cis_default_rate: 20,
           financial_year_start_month: 4,
           default_payment_terms_days: 30,
+          vat_stagger: "group_1",
         }).success,
       ).toBe(true);
     }
@@ -106,9 +108,33 @@ describe("tax defaults", () => {
           cis_default_rate: c,
           financial_year_start_month: 4,
           default_payment_terms_days: 30,
+          vat_stagger: "group_1",
         }).success,
       ).toBe(true);
     }
+  });
+
+  it("accepts every HMRC stagger and rejects an unknown one", () => {
+    for (const s of ["group_1", "group_2", "group_3", "monthly"]) {
+      expect(
+        taxDefaultsSchema.safeParse({
+          default_vat_rate: 20,
+          cis_default_rate: 20,
+          financial_year_start_month: 4,
+          default_payment_terms_days: 30,
+          vat_stagger: s,
+        }).success,
+      ).toBe(true);
+    }
+    expect(
+      taxDefaultsSchema.safeParse({
+        default_vat_rate: 20,
+        cis_default_rate: 20,
+        financial_year_start_month: 4,
+        default_payment_terms_days: 30,
+        vat_stagger: "quarterly",
+      }).success,
+    ).toBe(false);
   });
 
   it("coerces string form values (VAT '20', terms '14')", () => {
@@ -117,12 +143,14 @@ describe("tax defaults", () => {
       cis_default_rate: "30",
       financial_year_start_month: "4",
       default_payment_terms_days: "14",
+      vat_stagger: "group_2",
     });
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       expect(parsed.data.default_vat_rate).toBe(20);
       expect(parsed.data.cis_default_rate).toBe(30);
       expect(parsed.data.default_payment_terms_days).toBe(14);
+      expect(parsed.data.vat_stagger).toBe("group_2");
     }
   });
 
@@ -133,6 +161,7 @@ describe("tax defaults", () => {
         cis_default_rate: 20,
         financial_year_start_month: 4,
         default_payment_terms_days: 30,
+        vat_stagger: "group_1",
       }).success,
     ).toBe(false);
     expect(
@@ -141,12 +170,13 @@ describe("tax defaults", () => {
         cis_default_rate: 25,
         financial_year_start_month: 4,
         default_payment_terms_days: 30,
+        vat_stagger: "group_1",
       }).success,
     ).toBe(false);
   });
 
   it("rejects an out-of-range month and negative / oversized terms", () => {
-    const base = { default_vat_rate: 20, cis_default_rate: 20 };
+    const base = { default_vat_rate: 20, cis_default_rate: 20, vat_stagger: "group_1" };
     expect(
       taxDefaultsSchema.safeParse({ ...base, financial_year_start_month: 0, default_payment_terms_days: 30 }).success,
     ).toBe(false);

@@ -144,6 +144,7 @@ export async function saveTaxDefaults(
         cis_default_rate: result.data.cis_default_rate,
         financial_year_start_month: result.data.financial_year_start_month,
         default_payment_terms_days: result.data.default_payment_terms_days,
+        vat_stagger: result.data.vat_stagger,
       } as never,
       { onConflict: "org_id" } as never,
     );

@@ -58,6 +58,16 @@ function makeMock() {
   }
 
   function makeChain(table: string) {
+    // org_settings is read by the prepare action to resolve the org's VAT
+    // stagger. It is NOT part of the prepare/hold queues under test; return an
+    // empty row so readOrgSettings degrades to the default (calendar quarter),
+    // without disturbing the other queues.
+    if (table === "org_settings") {
+      const os: Record<string, unknown> = {};
+      for (const m of ["select", "eq"]) os[m] = () => os;
+      os.maybeSingle = async () => ({ data: null, error: null });
+      return os;
+    }
     const state = { calledOrder: false };
     const chain: Record<string, unknown> = {};
     // `.is`/`.in` are used by the VAT-authority reads (server/services/vat-quarter-inputs.ts):

@@ -6,6 +6,11 @@ import {
   computeCorpTaxYear,
   startOfQuarterIso,
   endOfQuarterExclusiveIso,
+  startOfVatPeriodIso,
+  endOfVatPeriodExclusiveIso,
+  normalizeVatStagger,
+  DEFAULT_VAT_STAGGER,
+  VAT_STAGGERS,
   startOfTaxYearIso,
   type InvoicePaymentRow,
 } from "@/lib/tax/compute";
@@ -756,5 +761,129 @@ describe("C73-A read-layer: reverse-charge boxes 1/4/7 reconcile in ONE quarter"
       "2026-08-25T00:00:00.000Z";
     const inputs = await gatherVatQuarterInputs(makeDb(tables), ORG, Q1_START, Q1_END);
     expect(inputs.reverseCharge.vat).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// VAT STAGGER — period SELECTION (not VAT arithmetic). computeVatQuarter is the
+// one calculator; these helpers only pick the [start, end) window it sums over.
+// ---------------------------------------------------------------------------
+
+const at = (y: number, month1to12: number, day = 15): Date =>
+  new Date(Date.UTC(y, month1to12 - 1, day));
+
+describe("VAT stagger — period selection", () => {
+  it("the default stagger is group_1 (calendar quarter)", () => {
+    expect(DEFAULT_VAT_STAGGER).toBe("group_1");
+    expect(VAT_STAGGERS).toEqual(["group_1", "group_2", "group_3", "monthly"]);
+  });
+
+  describe("backward compatibility — group_1 IS the old calendar-quarter behaviour", () => {
+    // Every month of a year, plus period boundaries, must be byte-identical to
+    // the legacy startOfQuarterIso / endOfQuarterExclusiveIso.
+    for (let m = 1; m <= 12; m++) {
+      it(`month ${m}: startOfVatPeriodIso('group_1') === startOfQuarterIso`, () => {
+        const now = at(2026, m);
+        const legacyStart = startOfQuarterIso(now);
+        expect(startOfVatPeriodIso("group_1", now)).toBe(legacyStart);
+        expect(startOfVatPeriodIso(undefined, now)).toBe(legacyStart); // default arg
+        expect(endOfVatPeriodExclusiveIso(legacyStart, "group_1")).toBe(
+          endOfQuarterExclusiveIso(legacyStart),
+        );
+      });
+    }
+  });
+
+  describe("group_1 — periods end Mar/Jun/Sep/Dec (calendar quarter)", () => {
+    it("Jan/Feb/Mar map to the Jan–Mar period", () => {
+      for (const m of [1, 2, 3]) {
+        expect(startOfVatPeriodIso("group_1", at(2026, m))).toBe("2026-01-01");
+      }
+      expect(endOfVatPeriodExclusiveIso("2026-01-01", "group_1")).toBe("2026-04-01");
+    });
+    it("Oct/Nov/Dec map to the Oct–Dec period", () => {
+      for (const m of [10, 11, 12]) {
+        expect(startOfVatPeriodIso("group_1", at(2026, m))).toBe("2026-10-01");
+      }
+      expect(endOfVatPeriodExclusiveIso("2026-10-01", "group_1")).toBe("2027-01-01");
+    });
+  });
+
+  describe("group_2 — periods end Apr/Jul/Oct/Jan", () => {
+    it("Feb/Mar/Apr map to the Feb–Apr period", () => {
+      for (const m of [2, 3, 4]) {
+        expect(startOfVatPeriodIso("group_2", at(2026, m))).toBe("2026-02-01");
+      }
+      expect(endOfVatPeriodExclusiveIso("2026-02-01", "group_2")).toBe("2026-05-01");
+    });
+    it("January belongs to the Nov–Jan period that STARTED the previous year", () => {
+      expect(startOfVatPeriodIso("group_2", at(2026, 1))).toBe("2025-11-01");
+      expect(endOfVatPeriodExclusiveIso("2025-11-01", "group_2")).toBe("2026-02-01");
+    });
+    it("November opens a fresh Nov–Jan period", () => {
+      expect(startOfVatPeriodIso("group_2", at(2026, 11))).toBe("2026-11-01");
+    });
+  });
+
+  describe("group_3 — periods end Feb/May/Aug/Nov", () => {
+    it("Mar/Apr/May map to the Mar–May period", () => {
+      for (const m of [3, 4, 5]) {
+        expect(startOfVatPeriodIso("group_3", at(2026, m))).toBe("2026-03-01");
+      }
+      expect(endOfVatPeriodExclusiveIso("2026-03-01", "group_3")).toBe("2026-06-01");
+    });
+    it("Jan and Feb belong to the Dec–Feb period that STARTED the previous year", () => {
+      expect(startOfVatPeriodIso("group_3", at(2026, 1))).toBe("2025-12-01");
+      expect(startOfVatPeriodIso("group_3", at(2026, 2))).toBe("2025-12-01");
+      expect(endOfVatPeriodExclusiveIso("2025-12-01", "group_3")).toBe("2026-03-01");
+    });
+    it("December opens a fresh Dec–Feb period", () => {
+      expect(startOfVatPeriodIso("group_3", at(2026, 12))).toBe("2026-12-01");
+    });
+  });
+
+  describe("monthly — one calendar month per return", () => {
+    it("every month maps to its own first day and a one-month window", () => {
+      for (let m = 1; m <= 12; m++) {
+        const start = startOfVatPeriodIso("monthly", at(2026, m));
+        expect(start).toBe(`2026-${String(m).padStart(2, "0")}-01`);
+        const end = endOfVatPeriodExclusiveIso(start, "monthly");
+        const expectedEnd =
+          m === 12 ? "2027-01-01" : `2026-${String(m + 1).padStart(2, "0")}-01`;
+        expect(end).toBe(expectedEnd);
+      }
+    });
+  });
+
+  describe("period length is 3 months for every quarterly stagger, 1 for monthly", () => {
+    const monthsBetween = (startIso: string, endIso: string): number => {
+      const s = new Date(startIso);
+      const e = new Date(endIso);
+      return (
+        (e.getUTCFullYear() - s.getUTCFullYear()) * 12 +
+        (e.getUTCMonth() - s.getUTCMonth())
+      );
+    };
+    for (const stagger of ["group_1", "group_2", "group_3"] as const) {
+      it(`${stagger} spans exactly 3 months`, () => {
+        const start = startOfVatPeriodIso(stagger, at(2026, 6));
+        expect(monthsBetween(start, endOfVatPeriodExclusiveIso(start, stagger))).toBe(3);
+      });
+    }
+    it("monthly spans exactly 1 month", () => {
+      const start = startOfVatPeriodIso("monthly", at(2026, 6));
+      expect(monthsBetween(start, endOfVatPeriodExclusiveIso(start, "monthly"))).toBe(1);
+    });
+  });
+
+  describe("normalizeVatStagger — coerces stored/unknown values", () => {
+    it("passes every valid stagger through unchanged", () => {
+      for (const s of VAT_STAGGERS) expect(normalizeVatStagger(s)).toBe(s);
+    });
+    it("falls back to the default for anything unrecognised", () => {
+      for (const bad of ["quarterly", "", null, undefined, 1, {}]) {
+        expect(normalizeVatStagger(bad)).toBe(DEFAULT_VAT_STAGGER);
+      }
+    });
   });
 });

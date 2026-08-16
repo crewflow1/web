@@ -6,7 +6,9 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import {
   computeVatNetTotals,
   computeVatQuarter,
-  endOfQuarterExclusiveIso,
+  endOfVatPeriodExclusiveIso,
+  DEFAULT_VAT_STAGGER,
+  type VatStagger,
 } from "@/lib/tax/compute";
 import {
   gatherVatQuarterInputs,
@@ -308,12 +310,23 @@ export async function prepareVatReturn(params: {
   orgId: string;
   preparedBy: string;
   quarterStartIso: string;
+  /**
+   * The org's HMRC stagger — fixes the period LENGTH (a monthly filer's return
+   * covers one month, not three). The caller resolves it from org_settings and
+   * passes it so the frozen 9-box record spans the SAME window the tax page and
+   * PDF showed. Defaults to the calendar quarter, so an org that never set a
+   * stagger is unchanged.
+   */
+  stagger?: VatStagger;
   status?: HmrcSubmissionStatus;
 }): Promise<PrepareSubmissionResult> {
   const { orgId, preparedBy } = params;
   const status = params.status ?? "prepared";
   const quarterStartIso = params.quarterStartIso;
-  const quarterEndIso = endOfQuarterExclusiveIso(quarterStartIso);
+  const quarterEndIso = endOfVatPeriodExclusiveIso(
+    quarterStartIso,
+    params.stagger ?? DEFAULT_VAT_STAGGER,
+  );
   const periodKey = quarterStartIso.slice(0, 10);
 
   const db = await looseDb();

@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 
 import { requireOrgContext } from "@/server/auth/session";
-import { startOfQuarterIso } from "@/lib/tax/compute";
+import { createClient } from "@/lib/supabase/server";
+import { startOfVatPeriodIso } from "@/lib/tax/compute";
+import { readOrgSettings } from "@/lib/org-config/service";
 import { cisTaxMonthEnd } from "@/lib/cis/tax-month";
 import {
   prepareVatReturn,
@@ -37,14 +39,25 @@ export async function prepareVatReturnAction(formData: FormData): Promise<void> 
     throw new Error("Only an owner or admin may prepare a VAT return.");
   }
 
-  // A caller may pass an explicit quarter start; default to the current quarter.
+  // The org's HMRC stagger fixes the VAT period; resolve it once and use it both
+  // for the default period start and to size the frozen return's window (a
+  // monthly filer's return covers one month, not three).
+  const supabase = await createClient();
+  const orgSettings = await readOrgSettings(supabase, ctx.org.id);
+  const stagger = orgSettings.vat_stagger;
+
+  // A caller may pass an explicit period start; default to the current period for
+  // the org's stagger (the page always posts the matching value).
   const raw = String(formData.get("quarterStart") ?? "").trim();
-  const quarterStartIso = /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw : startOfQuarterIso();
+  const quarterStartIso = /^\d{4}-\d{2}-\d{2}/.test(raw)
+    ? raw
+    : startOfVatPeriodIso(stagger);
 
   const res = await prepareVatReturn({
     orgId: ctx.org.id,
     preparedBy: user.id,
     quarterStartIso,
+    stagger,
   });
   if (!res.ok) {
     throw new Error(res.error || "Could not prepare the VAT return.");
