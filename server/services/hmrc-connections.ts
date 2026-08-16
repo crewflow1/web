@@ -15,6 +15,11 @@ import {
 import { composeVatReturn } from "@/lib/integrations/hmrc/vat-return";
 import { composeCis300Return } from "@/lib/integrations/hmrc/cis-return";
 import {
+  composeFpsReturn,
+  type FpsInputEmployee,
+  type FpsYearToDate,
+} from "@/lib/integrations/hmrc/rti-fps";
+import {
   getContractorProfile,
   liveReturnDataset,
 } from "@/server/services/cis-statements";
@@ -115,7 +120,7 @@ export async function getHmrcConnection(orgId: string): Promise<HmrcConnection> 
 // tax figures a member may already see. This module never selects a token column.
 // ---------------------------------------------------------------------------
 
-export type HmrcSubmissionKind = "vat_return" | "cis300";
+export type HmrcSubmissionKind = "vat_return" | "cis300" | "fps";
 export type HmrcSubmissionStatus = "prepared" | "held";
 
 export type HmrcSubmission = {
@@ -156,7 +161,9 @@ type DbResult<T> = { data: T | null; error: { message: string } | null };
 interface QueryBuilder<T> extends PromiseLike<DbResult<T[]>> {
   eq(col: string, val: unknown): QueryBuilder<T>;
   gte(col: string, val: unknown): QueryBuilder<T>;
+  lte(col: string, val: unknown): QueryBuilder<T>;
   lt(col: string, val: unknown): QueryBuilder<T>;
+  in(col: string, vals: unknown[]): QueryBuilder<T>;
   order(col: string, opts?: { ascending?: boolean }): QueryBuilder<T>;
   limit(n: number): QueryBuilder<T>;
   range(from: number, to: number): QueryBuilder<T>;
@@ -434,6 +441,187 @@ export async function prepareCis300Return(params: {
     orgId,
     preparedBy,
     kind: "cis300",
+    periodKey,
+    status,
+    payload: composed.payload,
+  });
+}
+
+/**
+ * The UK tax-year START (6 April) that contains an ISO date. HMRC's tax year runs
+ * 6 April → 5 April. A pure date boundary — not a tax calculation. Used to window
+ * the year-to-date gather for an FPS.
+ */
+function taxYearStartForDate(dateIso: string): string {
+  const d = new Date(`${dateIso}T00:00:00Z`);
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth(); // 0 = Jan
+  const day = d.getUTCDate();
+  const startYear = m > 3 || (m === 3 && day >= 6) ? y : y - 1;
+  return `${startYear}-04-06`;
+}
+
+/**
+ * Prepare + HOLD an internal RTI Full Payment Submission (FPS) for a FINALISED
+ * payroll run. Reads the org's own frozen `payroll_lines`, gathers each
+ * employee's tax-year-to-date cumulatives, composes the FPS payload and freezes
+ * it in hmrc_submissions (kind 'fps'). Idempotent per run. Nothing is transmitted
+ * to HMRC; the "final submission" declaration is never asserted (the composer
+ * leaves it false). RTI filing stays legally recognition-gated (see
+ * lib/integrations/hmrc/rti-fps.ts and migration 20261156).
+ *
+ * ONLY A FINALISED RUN. A draft run's figures can still change; filing draft pay
+ * would file figures that are not yet real, so a draft run is refused.
+ */
+export async function prepareFpsReturn(params: {
+  orgId: string;
+  preparedBy: string;
+  payrollRunId: string;
+  status?: HmrcSubmissionStatus;
+}): Promise<PrepareSubmissionResult> {
+  const { orgId, preparedBy, payrollRunId } = params;
+  const status = params.status ?? "prepared";
+
+  const db = await looseDb();
+
+  // Load the run, ORG-PINNED + LOUD. current_org_ids() admits every org a
+  // multi-org admin belongs to, so the pin is load-bearing: without it a run id
+  // from another company could be filed under this org.
+  const { data: runData, error: runErr } = await db
+    .from("payroll_runs")
+    .select("id, cycle, period_start, period_end, status")
+    .eq("id", payrollRunId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (runErr) throw readFailure("hmrc fps prepare: run", runErr);
+  const run = runData as unknown as {
+    id: string;
+    cycle: string;
+    period_start: string;
+    period_end: string;
+    status: string;
+  } | null;
+  if (!run) return { ok: false, error: "No such payroll run for this org." };
+  if (run.status !== "finalised") {
+    return { ok: false, error: "Only a finalised payroll run can be prepared as an FPS." };
+  }
+  const cycle: "weekly" | "monthly" = run.cycle === "weekly" ? "weekly" : "monthly";
+
+  // Period key is unique per run within the org (payroll_runs is UNIQUE on
+  // (org_id, cycle, period_start, period_end)), so idempotency binds one FPS to
+  // one run — a re-prepare returns the existing frozen record, never a duplicate.
+  const periodKey = `${cycle}:${run.period_start}..${run.period_end}`;
+  const existing = await findSubmission(db, orgId, "fps", periodKey);
+  if (existing) return { ok: true, id: existing.id, created: false, status: existing.status };
+
+  // YEAR-TO-DATE. An FPS carries each employee's cumulative tax-year figures to
+  // the pay date. Gather every FINALISED run in this run's tax year up to and
+  // INCLUDING it, then sum this run's own lines for the period figures and all
+  // in-year lines for the YTD. PAGED (F-1) + LOUD: a truncated/errored read must
+  // never freeze an understated FPS.
+  const taxYearStart = taxYearStartForDate(run.period_end);
+
+  const { data: yearRunRows, error: yearRunErr } = await fetchAllRows((from, to) =>
+    db
+      .from("payroll_runs")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("status", "finalised")
+      .gte("period_end", taxYearStart)
+      .lte("period_end", run.period_end)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (yearRunErr) throw readFailure("hmrc fps prepare: year runs", yearRunErr);
+  const yearRunIds = ((yearRunRows ?? []) as unknown as Array<{ id: string }>).map((r) => r.id);
+  // The current run is finalised and inside the window, so it MUST be present.
+  // If a read anomaly dropped it, fail closed rather than freeze an FPS missing
+  // the very run it is for.
+  if (!yearRunIds.includes(run.id)) {
+    return { ok: false, error: "Could not resolve the payroll run's tax-year context." };
+  }
+
+  type LineRow = {
+    payroll_run_id: string;
+    user_id: string;
+    hours: number | string | null;
+    gross_pay: number | string | null;
+    paye_estimate: number | string | null;
+    ni_estimate: number | string | null;
+    net_pay: number | string | null;
+    user?: { full_name?: string | null } | null;
+  };
+  // Chunk the run-id list so a busy year's run set never overflows a single
+  // `.in(...)`; each chunk is fully paged.
+  const ID_CHUNK = 200;
+  const allLines: LineRow[] = [];
+  for (let i = 0; i < yearRunIds.length; i += ID_CHUNK) {
+    const idsChunk = yearRunIds.slice(i, i + ID_CHUNK);
+    const { data: lineRows, error: lineErr } = await fetchAllRows((from, to) =>
+      db
+        .from("payroll_lines")
+        .select(
+          "payroll_run_id, user_id, hours, gross_pay, paye_estimate, ni_estimate, net_pay, user:users ( full_name )",
+        )
+        .eq("org_id", orgId)
+        .in("payroll_run_id", idsChunk)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+    if (lineErr) throw readFailure("hmrc fps prepare: payroll lines", lineErr);
+    for (const r of (lineRows ?? []) as unknown as LineRow[]) allLines.push(r);
+  }
+
+  const num = (v: number | string | null | undefined) => Number(v ?? 0) || 0;
+
+  // YTD cumulatives per user across the whole in-year set.
+  const ytdByUser = new Map<string, FpsYearToDate>();
+  for (const l of allLines) {
+    const prev = ytdByUser.get(l.user_id) ?? { taxablePay: 0, taxDeducted: 0, employeeNic: 0 };
+    ytdByUser.set(l.user_id, {
+      taxablePay: prev.taxablePay + num(l.gross_pay),
+      taxDeducted: prev.taxDeducted + num(l.paye_estimate),
+      employeeNic: prev.employeeNic + num(l.ni_estimate),
+    });
+  }
+
+  // This period's employees are the current run's own lines.
+  const periodLines = allLines.filter((l) => l.payroll_run_id === run.id);
+  if (periodLines.length === 0) {
+    return { ok: false, error: "This payroll run has no lines to file." };
+  }
+  const employees: FpsInputEmployee[] = periodLines.map((l) => ({
+    employeeId: l.user_id,
+    name: l.user?.full_name ?? null,
+    hoursWorked: num(l.hours),
+    grossPay: num(l.gross_pay),
+    payeDeducted: num(l.paye_estimate),
+    employeeNic: num(l.ni_estimate),
+    netPay: num(l.net_pay),
+    yearToDate: ytdByUser.get(l.user_id),
+  }));
+
+  // Employer identity — the SAME PAYE / Accounts-Office references CIS uses.
+  // Absent ⇒ nulls; never invented.
+  const profile = await getContractorProfile(orgId);
+  const employer = profile
+    ? {
+        employerPayeReference: profile.employer_paye_reference,
+        accountsOfficeReference: profile.accounts_office_reference,
+        name: profile.legal_name,
+      }
+    : undefined;
+
+  const composed = composeFpsReturn(
+    { payDate: run.period_end, paymentFrequency: cycle, employees, employer },
+    { allowInternalPrepare: true },
+  );
+  if (!composed.ok) return { ok: false, error: composed.message };
+
+  return insertSubmission(db, {
+    orgId,
+    preparedBy,
+    kind: "fps",
     periodKey,
     status,
     payload: composed.payload,
