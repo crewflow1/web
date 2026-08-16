@@ -110,6 +110,69 @@ export function notificationCategoryForType(
   return stored;
 }
 
+/**
+ * A stored Web Push subscription (mirror of public.push_subscriptions minus
+ * DB-managed columns). Server/client-safe.
+ */
+export type PushSubscriptionRecord = {
+  org_id: string;
+  user_id: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  user_agent?: string | null;
+};
+
+/**
+ * The JSON payload delivered to the service worker's `push` handler. Kept small
+ * and free of any private body the user hasn't already been shown in-app — the
+ * title/body mirror the notification row, and `url` deep-links back into the app.
+ */
+export type PushPayload = {
+  title: string;
+  body: string;
+  url: string;
+  tag: string;
+  category: NotificationCategory;
+};
+
+const PUSH_FALLBACK_URL = "/notifications";
+
+/**
+ * Build the service-worker push payload from a notification row. Pure — no I/O.
+ * `action_url` is used as the deep link when present (relative in-app path),
+ * otherwise the notifications centre. `tag` coalesces repeat pushes for the same
+ * source so a burst doesn't stack duplicate OS notifications.
+ */
+export function buildPushPayload(n: {
+  id: string;
+  title: string;
+  body?: string | null;
+  action_url?: string | null;
+  category: NotificationCategory;
+  source_module?: string | null;
+  source_id?: string | null;
+}): PushPayload {
+  const rawUrl = typeof n.action_url === "string" ? n.action_url.trim() : "";
+  // Only accept a same-origin RELATIVE path as the deep link — never an absolute
+  // URL from stored data, so a poisoned action_url can't redirect the click off
+  // to another origin when the SW opens it.
+  const url = rawUrl.startsWith("/") && !rawUrl.startsWith("//")
+    ? rawUrl
+    : PUSH_FALLBACK_URL;
+  const tag =
+    n.source_module && n.source_id
+      ? `${n.source_module}:${n.source_id}`
+      : `notification:${n.id}`;
+  return {
+    title: n.title || "CrewFlow",
+    body: (n.body ?? "").toString(),
+    url,
+    tag,
+    category: n.category,
+  };
+}
+
 export type NotificationRow = {
   id: string;
   org_id: string;

@@ -8,11 +8,13 @@ import {
   isCriticalNotification,
 } from "@/lib/notifications/preferences";
 import { NOTIFICATION_CATEGORY_LABEL } from "@/lib/notifications/types";
+import { getPushPublicKey } from "@/lib/notifications/push";
 import { saveNotificationPreferences } from "./notification-prefs-actions";
 import {
   NotificationPrefsForm,
   type PrefRowView,
 } from "./_notification-prefs.client";
+import { PushDeviceToggle } from "./_push-toggle.client";
 
 /**
  * Settings → Notification preferences (P3) — self-contained section.
@@ -41,8 +43,14 @@ export async function NotificationPreferences() {
       critical,
       inApp: pref ? pref.in_app_enabled : true,
       emailChoice,
+      push: pref ? pref.push_enabled : true, // default-on (opt-down)
+      sms: pref ? pref.sms_enabled : false, // default-off (opt-in)
     };
   });
+
+  // The Web Push channel is DARK unless VAPID is configured. Only offer the
+  // device subscription control when it's actually usable.
+  const pushPublicKey = getPushPublicKey();
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -51,9 +59,14 @@ export async function NotificationPreferences() {
       </h2>
       <p className="mt-1 text-sm text-slate-600">
         Choose how you&apos;re notified for each kind of update — in the app, by
-        email as it happens, or rolled into a daily or weekly digest.
+        email as it happens or in a digest, or by push notification.
       </p>
-      <NotificationPrefsForm rows={rows} action={saveNotificationPreferences} />
+      {pushPublicKey ? <PushDeviceToggle publicKey={pushPublicKey} /> : null}
+      <NotificationPrefsForm
+        rows={rows}
+        action={saveNotificationPreferences}
+        pushConfigured={pushPublicKey != null}
+      />
     </section>
   );
 }

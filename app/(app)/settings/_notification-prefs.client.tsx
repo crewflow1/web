@@ -22,6 +22,10 @@ export type PrefRowView = {
   inApp: boolean;
   /** "off" | "immediate" | "daily" | "weekly" */
   emailChoice: "off" | NotificationCadence;
+  /** Web Push toggle (default on; only fires once a device is subscribed). */
+  push: boolean;
+  /** SMS toggle (default off; transport is dark / Twilio-gated). */
+  sms: boolean;
 };
 
 type Action = (prev: FormState, formData: FormData) => Promise<FormState>;
@@ -43,9 +47,12 @@ const EMAIL_OPTIONS: Array<{ value: "off" | NotificationCadence; label: string }
 export function NotificationPrefsForm({
   rows,
   action,
+  pushConfigured = false,
 }: {
   rows: PrefRowView[];
   action: Action;
+  /** Whether the Web Push channel is configured (VAPID set). */
+  pushConfigured?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(
     action,
@@ -62,12 +69,14 @@ export function NotificationPrefsForm({
       <FormSuccessBanner message={state.ok ? state.successMessage : null} />
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[28rem] text-sm">
+        <table className="w-full min-w-[34rem] text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
               <th className="py-2 pr-4">Category</th>
               <th className="py-2 pr-4 text-center">In-app</th>
-              <th className="py-2">Email</th>
+              <th className="py-2 pr-4">Email</th>
+              <th className="py-2 pr-4 text-center">Push</th>
+              <th className="py-2 text-center">Text</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -94,7 +103,7 @@ export function NotificationPrefsForm({
                     />
                   )}
                 </td>
-                <td className="py-3">
+                <td className="py-3 pr-4">
                   {row.critical ? (
                     <span className="text-xs text-slate-500">As it happens</span>
                   ) : (
@@ -112,6 +121,32 @@ export function NotificationPrefsForm({
                     </select>
                   )}
                 </td>
+                <td className="py-3 pr-4 text-center">
+                  {row.critical ? (
+                    <span className="text-xs text-slate-400">Required</span>
+                  ) : (
+                    <input
+                      type="checkbox"
+                      name={`push_${row.category}`}
+                      defaultChecked={row.push}
+                      aria-label={`Push notifications for ${row.label}`}
+                      className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
+                    />
+                  )}
+                </td>
+                <td className="py-3 text-center">
+                  {row.critical ? (
+                    <span className="text-xs text-slate-400">Required</span>
+                  ) : (
+                    <input
+                      type="checkbox"
+                      name={`sms_${row.category}`}
+                      defaultChecked={row.sms}
+                      aria-label={`Text message notifications for ${row.label}`}
+                      className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
+                    />
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -122,6 +157,10 @@ export function NotificationPrefsForm({
         Critical alerts (payments and security) are always delivered and can&apos;t
         be turned off. Digest emails are sent daily or weekly, batching everything
         into one message.
+        {pushConfigured
+          ? " Push notifications go to the devices you've enabled above."
+          : " Push notifications aren't available on this workspace yet."}{" "}
+        Text messages are coming soon.
       </p>
 
       <SubmitButton pending={pending}>Save preferences</SubmitButton>

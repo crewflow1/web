@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { queueNotificationEmail } from "@/lib/notifications/email";
 import { resolveEmailRecipient } from "@/lib/notifications/email-routing";
 import { resolveNotificationDelivery } from "@/lib/notifications/preferences";
+import { enqueuePushForNotifications } from "@/lib/notifications/push";
+import { deliverSmsForNotifications } from "@/lib/notifications/sms";
 import { getPreferencesForUserKeys } from "@/server/services/notification-preferences-service";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import {
@@ -167,12 +169,19 @@ export async function createBulkNotifications(
  * "Real actions must create real notifications" — but if the
  * notification insert errors out, we log + swallow.
  *
- * This is also the ONE place the in-app bus bridges to EMAIL. After the
- * rows persist, any input that opted in via its `email` directive is fanned
- * out to the existing notification_email_queue (drained → Resend by the
- * /api/cron/notifications-drain cron). Notifications without an `email`
- * directive stay in-app only — byte-for-byte the historical behaviour — so
- * email delivery is deliberate and per-notification, never a firehose.
+ * This is also the ONE place the in-app bus bridges to the OTHER channels:
+ *   * EMAIL — any input that opted in via its `email` directive is fanned out to
+ *     notification_email_queue (drained → Resend by /api/cron/notifications-drain).
+ *     Notifications without an `email` directive stay in-app-only — byte-for-byte
+ *     the historical behaviour — so email is deliberate and per-notification.
+ *   * WEB PUSH — every persisted row is offered to the push channel, which is
+ *     DARK unless VAPID is configured AND the recipient has a subscription AND
+ *     their per-category push preference is on (default on). It ENQUEUES onto
+ *     push_deliveries (network-free); /api/cron/push-drain dispatches it.
+ *   * SMS — a dark seam (Twilio-gated): the eligibility pipeline runs but no
+ *     transport exists yet (refuse-before-send).
+ * All three bridges are best-effort: a channel failure NEVER breaks the primary
+ * action or the other channels.
  */
 export async function emitNotifications(
   inputs: NotificationCreate | ReadonlyArray<NotificationCreate>,
@@ -182,6 +191,14 @@ export async function emitNotifications(
     if (list.length === 0) return;
     const rows = await insertNotificationsReturning(list);
     await queueEmailsForNotifications(list, rows);
+    // Push + SMS are keyed off the PERSISTED rows (not the email opt-in
+    // directive): they follow the per-user channel preference, not a per-
+    // notification flag. Isolated so one channel's failure can't take the others
+    // (or the primary action) down.
+    await Promise.allSettled([
+      enqueuePushForNotifications(rows),
+      deliverSmsForNotifications(rows),
+    ]);
   } catch (e) {
     console.error(
       "[notifications] emitNotifications threw",

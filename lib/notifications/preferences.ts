@@ -49,6 +49,18 @@ export type NotificationPreference = {
   in_app_enabled: boolean;
   email_enabled: boolean;
   email_cadence: NotificationCadence;
+  /**
+   * Web Push toggle. Default TRUE (opt-down, like email): a push only ever fires
+   * for a user who has actually subscribed a device, so the subscription is the
+   * real opt-in and this just lets them mute a category.
+   */
+  push_enabled: boolean;
+  /**
+   * SMS toggle. Default FALSE (opt-in): SMS is intrusive/costly and its transport
+   * is Twilio-gated (dark). The toggle + sender seam exist so activation is a
+   * config flip, not a schema change.
+   */
+  sms_enabled: boolean;
 };
 
 /**
@@ -132,6 +144,53 @@ export function resolveNotificationDelivery(args: {
     email = "digest";
   }
   return { inApp, email };
+}
+
+/**
+ * Resolve whether a Web Push should fire for ONE user, per category/priority.
+ *
+ * Deliberately SEPARATE from `resolveNotificationDelivery` (which owns the
+ * in-app + email decision and whose shape a lot of the email/digest code and
+ * tests pin) so adding the push channel doesn't perturb that contract. Same
+ * critical floor, same fail-open default:
+ *   1. CRITICAL (money/security category or urgent priority) → true, always,
+ *      overriding an explicit opt-out (the safety floor).
+ *   2. No preference row → true (default-on; a push still only fires if the user
+ *      has a subscription, so this never spams a user who never opted in).
+ *   3. Otherwise honor `push_enabled`.
+ *
+ * NB this is the ELIGIBILITY decision only; the sender additionally requires
+ * VAPID to be configured (else DARK) and at least one subscription to exist.
+ */
+export function resolvePushDelivery(args: {
+  category: NotificationCategory | string;
+  priority: NotificationPriority | string;
+  preference?: NotificationPreference | null;
+}): boolean {
+  const { category, priority, preference } = args;
+  if (isCriticalNotification(category, priority)) return true;
+  if (!preference) return true;
+  return preference.push_enabled;
+}
+
+/**
+ * Resolve whether an SMS should fire for ONE user, per category/priority.
+ *
+ * Mirrors `resolvePushDelivery` but DEFAULT-OFF (opt-in): SMS is intrusive and
+ * costly, so a user with no preference gets none. The critical floor still
+ * overrides — a declined-card / security alert is eligible for SMS even from a
+ * user who never opted a category in — but the SMS transport itself is dark
+ * (Twilio-gated), so this decision is inert until that seam is wired + keyed.
+ */
+export function resolveSmsDelivery(args: {
+  category: NotificationCategory | string;
+  priority: NotificationPriority | string;
+  preference?: NotificationPreference | null;
+}): boolean {
+  const { category, priority, preference } = args;
+  if (isCriticalNotification(category, priority)) return true;
+  if (!preference) return false;
+  return preference.sms_enabled;
 }
 
 /**
