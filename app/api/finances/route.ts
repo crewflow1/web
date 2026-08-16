@@ -1,4 +1,5 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { type NextRequest } from "next/server";
+import * as respond from "@/lib/api/respond";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
@@ -81,10 +82,10 @@ export async function GET(request: NextRequest) {
   const { data, error, count } = await q;
   if (error) {
     console.error("[finances] list failed", error);
-    return NextResponse.json({ error: "Failed to load finances" }, { status: 500 });
+    return respond.error(500, "Failed to load finances");
   }
 
-  return NextResponse.json({ data: data ?? [], count: count ?? 0, limit, offset });
+  return respond.json({ data: data ?? [], count: count ?? 0, limit, offset });
 }
 
 export async function POST(request: NextRequest) {
@@ -108,7 +109,7 @@ export async function POST(request: NextRequest) {
     try {
       fields = (await request.json()) as Record<string, FormDataEntryValue>;
     } catch {
-      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+      return respond.error(400, "Invalid JSON body");
     }
   }
 
@@ -120,10 +121,7 @@ export async function POST(request: NextRequest) {
     job_id: fields.job_id,
   });
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", issues: parsed.error.flatten() },
-      { status: 400 },
-    );
+    return respond.error(400, "Invalid input", { extra: { issues: parsed.error.flatten() } });
   }
 
   const supabase = await createClient();
@@ -136,22 +134,16 @@ export async function POST(request: NextRequest) {
   if (parsed.data.job_id) {
     const ref = await verifyJobInOrg(supabase, parsed.data.job_id, ctx.org.id);
     if (!ref.ok) {
-      return NextResponse.json({ error: ref.message }, { status: 400 });
+      return respond.error(400, ref.message);
     }
   }
 
   if (receiptFile) {
     if (receiptFile.size > RECEIPT_MAX_BYTES) {
-      return NextResponse.json(
-        { error: `Receipt exceeds ${RECEIPT_MAX_BYTES} bytes` },
-        { status: 413 },
-      );
+      return respond.error(413, `Receipt exceeds ${RECEIPT_MAX_BYTES} bytes`);
     }
     if (!isAllowedMime(receiptFile.type)) {
-      return NextResponse.json(
-        { error: `Unsupported receipt type: ${receiptFile.type}` },
-        { status: 415 },
-      );
+      return respond.error(415, `Unsupported receipt type: ${receiptFile.type}`);
     }
   }
 
@@ -170,7 +162,7 @@ export async function POST(request: NextRequest) {
 
   if (insertErr || !inserted) {
     console.error("[finances] create failed", insertErr);
-    return NextResponse.json({ error: "Failed to create finance" }, { status: 500 });
+    return respond.error(500, "Failed to create finance");
   }
 
   let receiptPath: string | null = null;
@@ -190,10 +182,7 @@ export async function POST(request: NextRequest) {
       console.error("[finances] receipt upload failed", upErr);
       // Don't fail the whole request — the row is saved. Surface the partial
       // failure so the client can prompt for re-upload.
-      return NextResponse.json(
-        { id: inserted.id, warning: "Finance saved, but receipt upload failed" },
-        { status: 207 },
-      );
+      return respond.json({ id: inserted.id, warning: "Finance saved, but receipt upload failed" }, { status: 207 });
     }
     const { error: patchErr } = await supabase
       .from("finances")
@@ -204,5 +193,5 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ id: inserted.id, receipt_url: receiptPath }, { status: 201 });
+  return respond.json({ id: inserted.id, receipt_url: receiptPath }, { status: 201 });
 }

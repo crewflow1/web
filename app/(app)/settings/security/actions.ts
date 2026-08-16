@@ -21,15 +21,16 @@ import {
  *   - OAuth identity linking (config-gated behind manual linking).
  *
  * =====================================================================
- * MFA ENFORCEMENT IS A GATED DECISION.
- * Enrolment here is OPT-IN and per-user. We do NOT anywhere require aal2 to
- * use the app — enforcing MFA globally would instantly lock out every existing
- * magic-link / Google user who has no factor, so it must be a deliberate,
- * separately-authorised product decision. If/when MFA is ever enforced, the
- * gate belongs in server/auth/session.ts (requireOrgContext) and/or
- * lib/supabase/middleware.ts — NOT here — and must ship with a migration/rollout
- * that only applies to users who have a verified factor. Leaving enforcement
- * OFF is intentional.
+ * MFA ENFORCEMENT IS A GATED, OPT-IN DECISION (now implemented, default OFF).
+ * Enrolment here is OPT-IN and per-user. Enforcement is OPT-IN per ORG via the
+ * `organizations.require_mfa` flag (migration 20261169000000): while it is off
+ * — the default for every org — nothing changes and this enrolment stays purely
+ * voluntary. When an org turns it ON, the gate lives in server/auth/session.ts
+ * (requireOrgContext), driven by the pure, fail-closed decision in
+ * lib/auth/mfa-policy.ts — NOT here — and applies ONLY to privileged roles
+ * (owner/admin), redirecting them to complete or first enrol TOTP. Global,
+ * all-user enforcement is deliberately NOT done (it would instantly lock out
+ * every existing magic-link / Google user who has no factor).
  * =====================================================================
  */
 

@@ -461,7 +461,7 @@ describe("Microsoft SSO is DARK by default", () => {
 });
 
 // ===========================================================================
-describe("EXISTING flows unchanged + MFA NOT enforced (contract pins)", () => {
+describe("EXISTING flows unchanged + MFA enforcement is opt-in/default-off (contract pins)", () => {
   const actionsSrc = readFileSync(resolve(__dirname, "../../app/(auth)/actions.ts"), "utf8");
 
   it("magic-link still uses signInWithOtp with shouldCreateUser:true → /check-email", () => {

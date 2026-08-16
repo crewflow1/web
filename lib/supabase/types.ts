@@ -1715,6 +1715,7 @@ export type Database = {
           onboarding_state: Json
           phone: string | null
           plan: string
+          require_mfa: boolean
           slug: string
           timezone: string
           trial_ends_at: string | null
@@ -1735,6 +1736,7 @@ export type Database = {
           onboarding_state?: Json
           phone?: string | null
           plan?: string
+          require_mfa?: boolean
           slug: string
           timezone?: string
           trial_ends_at?: string | null
@@ -1755,6 +1757,7 @@ export type Database = {
           onboarding_state?: Json
           phone?: string | null
           plan?: string
+          require_mfa?: boolean
           slug?: string
           timezone?: string
           trial_ends_at?: string | null
