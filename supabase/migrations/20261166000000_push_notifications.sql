@@ -150,10 +150,18 @@ create policy "push_subscriptions: own delete"
 -- 3. push_deliveries — per-recipient send queue (service-role only)
 -- =====================================================================
 
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'notifications_id_org_key') then
+    alter table public.notifications add constraint notifications_id_org_key unique (id, org_id);
+  end if;
+end $$;
+
 create table if not exists public.push_deliveries (
   id              uuid        primary key default gen_random_uuid(),
-  notification_id uuid        not null references public.notifications (id) on delete cascade,
+  notification_id uuid        not null,
   org_id          uuid        not null references public.organizations (id) on delete cascade,
+  constraint push_deliveries_notif_org_fkey
+    foreign key (notification_id, org_id) references public.notifications (id, org_id) on delete cascade,
   user_id         uuid        not null references auth.users (id) on delete cascade,
   -- Denormalised category (from the source notification) so the drain never has
   -- to re-join to decide anything; the eligibility decision was already made at

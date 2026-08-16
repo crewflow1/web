@@ -335,8 +335,10 @@ const ALLOWLIST: Record<string, string> = {
   // NOT A READ: `.from('notifications').insert(payload).select(ALL_COLS)` — an
   // INSERT…RETURNING. The returned set is bounded by the payload it just wrote,
   // so it cannot truncate; it trips only because the region carries `.select(`.
-  "server/services/notifications-service.ts:142":
-    "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read. (Line moved 140→142 when the P3 per-user preference honoring added a two-line import to the top of the file.)",
+  "server/services/notifications-service.ts:144":
+    "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read. (Line moved to 144 as the R4 push/notification-channel branch shifted surrounding lines.)",
+  "lib/notifications/push.ts:533":
+    "bounded: `.from('notifications').select(...).in('id', ids)` where ids is the batch drawn from the just-claimed push_deliveries drain (≤ PUSH_DRAIN_BATCH_SIZE < 1000) — an id-keyed hydrate of an already-bounded set, not a completeness-sensitive scan. Same class as cis-statements.ts:169.",
 
   // ── Job-billing schedule / retention wave — genuinely-bounded SINGLE-SCOPE
   //    reads surfaced once job_billing_plans/job_billing_stages/retention_releases
@@ -1109,6 +1111,21 @@ describe("F-1 bare-select guard — high-value table reads must page or be singl
  */
 const COVERAGE_REVIEWED: Record<string, string> = {
   // ---- PAGED (always fetchAllRows) ----
+  // MP Wave R4 — comms outbound-audit view (server/services/outbound-audit.ts):
+  // each source read is org-pinned (.eq('org_id')) and F-1 PAGED via fetchAllRows.
+  comm_events: "PAGED: fetchAllRows, org-pinned (outbound-audit unified view)",
+  ai_reply_transports: "PAGED: fetchAllRows, org-pinned (outbound-audit unified view)",
+  ai_reply_delivery_receipts: "PAGED: fetchAllRows, org-pinned (outbound-audit unified view)",
+  // MP Wave R4 — Web Push. push_subscriptions read is fetchAllRows-paged +
+  // .in('org_id', orgIds). push_deliveries drain is a self-draining bounded queue
+  // read (.eq('status','queued').lte('scheduled_for',now) ordered scheduled_for
+  // ASC, .limit(PUSH_DRAIN_BATCH_SIZE)) — a sent row leaves 'queued'.
+  push_subscriptions: "PAGED: fetchAllRows, org-pinned .in('org_id', orgIds) (push send path)",
+  push_deliveries:
+    "BOUNDED DRAIN: .eq('status','queued').lte('scheduled_for', now) ordered scheduled_for ASC, .limit(PUSH_DRAIN_BATCH_SIZE); self-draining. Service-role send queue.",
+  // MP Wave R4 — WhatsApp assistant pending-review queue (assistant-review.ts):
+  // fetchAllRows-paged, org-pinned, .eq('status','pending_review').
+  whatsapp_assistant_actions: "PAGED: fetchAllRows, org-pinned pending-review queue",
   accounting_pushed_entities: "PAGED: fetchAllRows (accounting-export ledger reconcile read)",
   activity_log: "PAGED: fetchAllRows on every read (activity feed, dashboard tile, AI aggregates)",
   automation_approvals:

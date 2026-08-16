@@ -29,6 +29,8 @@ const pref = (over: Partial<NotificationPreference>): NotificationPreference => 
   in_app_enabled: true,
   email_enabled: true,
   email_cadence: "immediate",
+  push_enabled: false,
+  sms_enabled: false,
   ...over,
 });
 
