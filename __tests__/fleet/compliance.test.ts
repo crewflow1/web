@@ -120,6 +120,13 @@ describe("complianceSeverity — critical is reserved for a live legal breach", 
     expect(complianceSeverity("service", "overdue", -60, true)).toBe("high");
   });
 
+  it("an overdue tyre check is high, never critical, even in service", () => {
+    // The offence is the tread state, which a missed inspection date does not
+    // prove; so a lapsed tyre check sits with road tax / service, not MOT.
+    expect(complianceSeverity("tyres", "overdue", -60, true)).toBe("high");
+    expect(complianceSeverity("tyres", "overdue", -60, false)).toBe("high");
+  });
+
   it("upcoming renewals are graded by proximity and capped at high", () => {
     expect(complianceSeverity("mot", "due_soon", 0, true)).toBe("high");
     expect(complianceSeverity("mot", "due_soon", 7, true)).toBe("high");
@@ -210,8 +217,8 @@ describe("rollupCompliance", () => {
 });
 
 describe("isFleetComplianceType", () => {
-  it("accepts the four fleet obligations", () => {
-    for (const t of ["mot", "insurance", "road_tax", "service"]) {
+  it("accepts the five fleet obligations", () => {
+    for (const t of ["mot", "insurance", "road_tax", "service", "tyres"]) {
       expect(isFleetComplianceType(t)).toBe(true);
     }
   });
