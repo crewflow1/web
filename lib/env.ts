@@ -355,6 +355,17 @@ const envSchema = z.object({
   // settings UI is read-only. The SECOND flip is per-org: an org must configure
   // AND verify (signed ping) an endpoint before any real event fans out to it.
   NEXT_PUBLIC_FEATURE_OUTBOUND_WEBHOOKS: z.enum(["true", "false"]).default("false"),
+  // GDPR right-to-erasure / account teardown (Art. 17) — the DESTRUCTIVE dark
+  // switch. DEFAULTS OFF. This is a SERVER-ONLY flag (NOT NEXT_PUBLIC): the
+  // erasure surface is server-side only and the flag must never be inlined into
+  // a client bundle. While off, POST /api/gdpr/erase returns 503 BEFORE any auth
+  // or DB work — the capability is inert. Flipping it to "true" is NOT enough to
+  // fire: an erasure additionally requires an authenticated org OWNER (or a
+  // super-admin) AND an explicit confirmation token equal to the org slug, and
+  // the DB primitive is service_role-only and re-checks the token. Three locks,
+  // all required. Left unset in every environment until an erasure is deliberately
+  // performed under human authorisation.
+  FEATURE_GDPR_ERASURE: z.enum(["true", "false"]).default("false"),
   // HMRC MTD connect surface — DEFAULTS OFF. While off the HMRC connect/callback
   // routes 503, isHmrcConnectable() returns false regardless of credentials, and
   // the settings surface renders "not configured". The SECOND switch is the HMRC
