@@ -261,6 +261,27 @@ export const AI_FEATURES = {
     degradesTo: "The deterministic acknowledgement (fallbackResponse).",
   },
   /**
+   * The automated reply on a customer's PORTAL LIVE CHAT (MP Phase 8). When a
+   * customer sends a chat message, the portal posts one automated
+   * acknowledgement back (server/services/chat-auto-reply.ts).
+   *
+   * `drafting`, exactly like `receptionist.reply_draft`: customer-facing prose,
+   * and — like that key — it degrades to a DETERMINISTIC acknowledgement rather
+   * than to nothing, so the customer always gets a reply and cannot tell whether
+   * a model ran. DARK today: no generative tier is bound, so
+   * `maybeGenerateChatReply` returns null before the governor is reached and the
+   * fixed `DETERMINISTIC_CHAT_ACK` is posted. Whatever posts it, the message is
+   * stamped auto_generated = true so the panel labels it "Automated" — an AI
+   * reply is never passed off as a person.
+   */
+  "chat.auto_reply": {
+    key: "chat.auto_reply",
+    label: "Portal live-chat auto reply",
+    taskClass: "drafting",
+    degradesTo:
+      "The deterministic acknowledgement (DETERMINISTIC_CHAT_ACK), posted with auto_generated = true. The customer always receives a reply; nothing is generated while dark.",
+  },
+  /**
    * The AI receptionist's spoken conversation turn on an inbound VOICE call
    * (Wave 8). `drafting`, not `complex`: it is customer-facing prose (spoken to
    * the caller), the same class as the WhatsApp/SMS reply draft, and it reaches
