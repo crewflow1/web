@@ -27,6 +27,14 @@ export type UpdateRaInput = z.infer<typeof updateRaSchema>;
 
 export const raIdSchema = z.object({ id: uuid });
 
+// Generate-from-template: a template key (validated against the in-repo catalogue
+// by the action) + an optional job link. Deterministic draft generation, no AI.
+export const generateRamsSchema = z.object({
+  templateKey: z.string().trim().min(1).max(60),
+  jobId: uuid.optional().nullable(),
+});
+export type GenerateRamsInput = z.infer<typeof generateRamsSchema>;
+
 export const hazardSchema = z.object({
   riskAssessmentId: uuid,
   hazard: trimmed(500),

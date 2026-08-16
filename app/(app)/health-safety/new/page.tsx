@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
+import { ramsTemplateOptions } from "@/lib/health-safety/rams-templates";
 import { listAssessors } from "../_data";
-import { createRiskAssessment } from "../actions";
+import { createRiskAssessment, generateRamsDraft } from "../actions";
 
 /**
  * /health-safety/new — draft a new RAMS header.
@@ -14,6 +15,7 @@ import { createRiskAssessment } from "../actions";
 
 const ERROR_MAP: Record<string, string> = {
   validation: "Please check the form and try again.",
+  unknown_template: "That template is no longer available. Pick another, or draft manually.",
 };
 
 /** Blank PPE rows on the create form — the action drops the empty ones. */
@@ -33,6 +35,7 @@ export default async function NewRiskAssessmentPage({
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const assessors = await listAssessors(ctx.org.id);
+  const templates = ramsTemplateOptions();
 
   const errorMessage = sp.error
     ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
@@ -59,6 +62,59 @@ export default async function NewRiskAssessmentPage({
           {errorMessage}
         </div>
       ) : null}
+
+      <section
+        aria-labelledby="generate-heading"
+        className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-6 shadow-sm"
+      >
+        <div>
+          <h2 id="generate-heading" className="text-base font-semibold text-slate-900">
+            Generate from a template
+          </h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Start from a standards-based template for a common work-type — it pre-fills
+            the activity, PPE, method statement and the usual hazards with default 5&times;5
+            scores and controls. It creates a <span className="font-medium">draft</span> only:
+            review every hazard, name an assessor, then issue it. Nothing is issued
+            automatically.
+          </p>
+        </div>
+        <form action={generateRamsDraft} className="space-y-4">
+          <div>
+            <label htmlFor="templateKey" className={labelClass}>
+              Work-type template<span className="ml-0.5 text-red-500">*</span>
+            </label>
+            <select
+              id="templateKey"
+              name="templateKey"
+              required
+              defaultValue=""
+              className={inputClass}
+            >
+              <option value="" disabled>
+                Choose a template…
+              </option>
+              {templates.map((t) => (
+                <option key={t.key} value={t.key}>
+                  {t.label} — {t.summary}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="submit"
+            className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+          >
+            Generate draft from template
+          </button>
+        </form>
+      </section>
+
+      <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-wide text-slate-400">
+        <span className="h-px flex-1 bg-slate-200" aria-hidden />
+        or draft manually
+        <span className="h-px flex-1 bg-slate-200" aria-hidden />
+      </div>
 
       <form
         action={createRiskAssessment}
