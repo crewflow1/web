@@ -21,7 +21,7 @@ import {
   type DraftResearchContext,
   type DraftQualificationContext,
 } from "@/lib/drafts/model";
-import { createMemory } from "@/server/sdk/memory";
+import { createMemory, type BoundMemory } from "@/server/sdk/memory";
 import { getResearchReport } from "@/server/services/hq-research";
 import { getQualificationReport } from "@/server/services/hq-qualification";
 import { readFailure } from "@/lib/supabase/read-failure";
@@ -404,6 +404,16 @@ export type DraftContextRefs = {
   qualificationTaskId?: string | null;
   /** Bind recall to a running task (working memory), if any. */
   currentTaskId?: string | null;
+  /**
+   * The runner's OWN bound memory facet (`ctx.memory`), when the caller has one.
+   * Supplying it routes the draft's Shared-Memory recall through the SAME
+   * identity-bound facet the run uses — so the recalled ids are captured as the
+   * task's evidence[] (XIII §10) instead of being lost to a detached instance.
+   * Pass `null` to SKIP memory entirely (the caller's capability gate said no);
+   * omit (undefined) to fall back to a fresh facet built from `employeeId` (the
+   * standalone, non-runner path).
+   */
+  memory?: BoundMemory | null;
 };
 
 /**
@@ -420,13 +430,20 @@ export async function assembleDraftContext(refs: DraftContextRefs): Promise<Draf
 }
 
 async function safeMemory(refs: DraftContextRefs): Promise<DraftMemoryContext | null> {
+  // An explicit `null` means the caller's capability gate refused memory — skip
+  // it entirely rather than build a fresh facet behind the gate's back.
+  if (refs.memory === null) return null;
   const query = (refs.memoryQuery ?? refs.subject.name ?? refs.subject.label).trim();
   if (!query) return null;
   try {
-    const memory = createMemory({
-      employeeId: refs.employeeId,
-      currentTaskId: refs.currentTaskId ?? null,
-    });
+    // Prefer the runner's bound facet (so recall captures the run's evidence);
+    // fall back to a fresh facet for the standalone, non-runner path.
+    const memory =
+      refs.memory ??
+      createMemory({
+        employeeId: refs.employeeId,
+        currentTaskId: refs.currentTaskId ?? null,
+      });
     const result = await memory.recall({ query });
     const text = result.context.text.trim();
     if (!text) return null;

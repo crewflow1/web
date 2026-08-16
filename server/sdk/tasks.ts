@@ -9,6 +9,7 @@ import {
   cancelTask as cancelTaskRpc,
   type CancelTaskOptions,
   type EnqueueTaskInput,
+  type TaskPriority,
   type TaskRow,
 } from "@/server/services/hq-tasks";
 import { createMemory, type BoundMemory } from "@/server/sdk/memory";
@@ -175,12 +176,54 @@ export const LOCKED_POSTURE: EmploymentPosture = Object.freeze({
 });
 
 /**
+ * What a handler supplies to `ctx.tasks.handoff` — a deterministic
+ * employee-to-employee handoff (the handoff bus). It is a `create` in spirit
+ * (a child task, same trace, parented to the running task) PLUS the semantics
+ * that make it a handoff: it is assigned to ANOTHER employee, it records the DAG
+ * lineage on `depends_on`, and it emits an auditable `ai.handoff` fact.
+ */
+export interface HandoffInput {
+  /** The task_type of the work handed off — the target employee's runner drains it. */
+  taskType: string;
+  /**
+   * The employee the work is handed TO (the target). Assigned on the child task
+   * so the target's runner claims it; also stamped on the `ai.handoff` fact. Null
+   * enqueues unassigned work (any drainer of the type may claim it).
+   */
+  toEmployeeId?: string | null;
+  /** A short, human-legible reason for the handoff (recorded on the audit fact). */
+  reason: string;
+  /** What the child task is about; defaults to the running task's subject. */
+  subjectKind?: string;
+  subjectId?: string | null;
+  /** The child task's write-once payload. */
+  payload?: Record<string, unknown>;
+  priority?: TaskPriority;
+  maxRetries?: number;
+  /** A capability the target must hold to claim (optional gate). */
+  requiredCapability?: string | null;
+  /**
+   * Extra DAG dependencies beyond the running task. The running (source) task is
+   * ALWAYS added to `depends_on`, so the handoff's lineage is self-recording.
+   */
+  dependsOn?: string[] | null;
+}
+
+/** The outcome of a handoff — the child (handed-off) task, and whether it deduped. */
+export interface HandoffResult {
+  /** The child (handed-off) task id. */
+  taskId: string;
+  /** True when the enqueue matched an existing live task (idempotent dedupe hit). */
+  deduped: boolean;
+}
+
+/**
  * The in-handler `ctx.tasks` facet. Bound to BOTH the employee identity and the
  * RUNNING task, so the handler threads neither lease nor task id by hand.
  *
- * It exposes `create` + `checkpoint` ONLY. `complete`/`fail` are absent BY RULE
- * (XIII §21 rule 3): a handler signals success by returning and failure by
- * throwing; the runner performs the lease-guarded terminal transition.
+ * It exposes `create` + `checkpoint` + `handoff` ONLY. `complete`/`fail` are
+ * absent BY RULE (XIII §21 rule 3): a handler signals success by returning and
+ * failure by throwing; the runner performs the lease-guarded terminal transition.
  */
 export interface BoundTasks {
   /**
@@ -195,6 +238,17 @@ export interface BoundTasks {
    * Throws if the lease was lost (the handler should stop) or on transport error.
    */
   checkpoint(result: Record<string, unknown>): Promise<void>;
+  /**
+   * Hand a bounded unit of work to ANOTHER employee — the deterministic handoff
+   * bus. Models the handoff as a CHILD task (parented to the running task, same
+   * trace, `depends_on` carrying the source task's id) assigned to the target,
+   * then emits an auditable `ai.handoff` fact on the spine (best-effort, as this
+   * employee). A handoff only ENQUEUES work — it takes no irreversible external
+   * action, and the child task still runs under the full posture/approval floor,
+   * so humans keep final approval. Throws if the enqueue fails (throw-based ABI);
+   * the audit emit never throws.
+   */
+  handoff(input: HandoffInput): Promise<HandoffResult>;
 }
 
 /**
@@ -444,13 +498,19 @@ function mintLeaseOwner(identity: EmployeeIdentity): string {
   return `runner:${who}:${crypto.randomUUID()}`;
 }
 
-/** Build the in-handler `ctx.tasks` facet, bound to the running task + lease. */
+/**
+ * Build the in-handler `ctx.tasks` facet, bound to the running task + lease. The
+ * `events` facet is shared with the rest of the run so a `handoff`'s `ai.handoff`
+ * fact lands as the SAME actor + correlation as everything else this run appends.
+ */
 function createTasks(
   identity: EmployeeIdentity,
   task: TaskRow,
   leaseOwner: string,
+  events: BoundEvents,
 ): BoundTasks {
   const createdBy = identity.slug ?? identity.employeeId;
+  const fromEmployee = identity.slug ?? identity.employeeId;
   return {
     async create(input: EnqueueTaskInput): Promise<string> {
       const res = await enqueueTask({
@@ -468,6 +528,55 @@ function createTasks(
       const res = await checkpointTask(task.id, leaseOwner, result);
       if (!res.ok) throw new Error(`ctx.tasks.checkpoint failed: ${res.error}`);
       if (!res.alive) throw new Error("ctx.tasks.checkpoint: lease lost");
+    },
+    async handoff(input: HandoffInput): Promise<HandoffResult> {
+      // The DAG lineage: the child ALWAYS depends on the running (source) task,
+      // plus any extra deps the caller named. De-duplicated so a caller that also
+      // lists the source task cannot double it.
+      const dependsOn = [
+        ...new Set<string>([task.id, ...(input.dependsOn ?? [])]),
+      ];
+      // Model the handoff as a child task: parented to the running task, in the
+      // SAME trace, attributed to this employee, assigned to the target.
+      const enq = await enqueueTask({
+        taskType: input.taskType,
+        payload: input.payload ?? {},
+        subjectKind: input.subjectKind ?? task.subject_kind,
+        subjectId: input.subjectId ?? task.subject_id,
+        priority: input.priority,
+        maxRetries: input.maxRetries,
+        assignedEmployeeId: input.toEmployeeId ?? null,
+        requiredCapability: input.requiredCapability ?? null,
+        parentTaskId: task.id,
+        dependsOn,
+        correlationId: task.correlation_id,
+        createdBy,
+      });
+      if (!enq.ok) throw new Error(`ctx.tasks.handoff failed: ${enq.error}`);
+      const childId = enq.task.id;
+
+      // Emit the auditable handoff fact (best-effort; the events facet never
+      // throws). object = the handed-off child task; target = the receiving
+      // employee. A dedupe hit is NOT a fresh handoff, so no fact is emitted.
+      if (!enq.deduped) {
+        await events.emit({
+          verb: "ai.handoff",
+          objectType: "ai_task",
+          objectId: childId,
+          targetType: input.toEmployeeId ? "ai_employee" : null,
+          targetId: input.toEmployeeId ?? null,
+          payload: {
+            from_task_id: task.id,
+            to_task_id: childId,
+            from_employee: fromEmployee,
+            to_employee: input.toEmployeeId ?? null,
+            task_type: input.taskType,
+            reason: input.reason,
+            depends_on: dependsOn,
+          },
+        });
+      }
+      return { taskId: childId, deduped: enq.deduped };
     },
   };
 }
@@ -761,7 +870,7 @@ function buildContext(
     task,
     identity,
     memory,
-    tasks: createTasks(identity, task, leaseOwner),
+    tasks: createTasks(identity, task, leaseOwner, events),
     events,
     comms: createComms({ slug: identity.slug }, task.correlation_id),
     proposeActions: createProposeActions({

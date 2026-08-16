@@ -70,6 +70,15 @@ const SUPPORT = [
 // action, so deny-by-default is auditable BOTH ways: a needs-approval verdict lands an
 // `approval.requested` row (the Approval Engine), an autonomous one lands this. Past
 // tense, a fact that happened — the doorman permitted the action without a human.
+//
+// `ai.handoff` (the 12th) is the deterministic employee-to-employee handoff fact:
+// one AI employee delegated a bounded unit of work to another by ENQUEUING a child
+// task (parent_task_id + depends_on lineage) assigned to the target. The RUNTIME
+// emits it from the tasks SDK (`ctx.tasks.handoff`), like `ai.action_permitted` —
+// it is an employee ACTION, not a `hq_ai_tasks` state transition, so it lives in
+// the AI domain, never the (SQL-minted) task.* group. A handoff only enqueues
+// work; it takes no irreversible external action, and the child task still runs
+// under the full posture/approval floor. Past tense, a fact that happened.
 const AI = [
   "ai.triggered",
   "ai.run_started",
@@ -82,6 +91,7 @@ const AI = [
   "ai.suspended",
   "ai.escalated",
   "ai.action_permitted",
+  "ai.handoff",
 ] as const;
 
 const APPROVAL = [

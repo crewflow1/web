@@ -46,12 +46,14 @@ describe("event-verb registry — single-source invariants", () => {
     // (the 6th) added under ADR 0007 (Directive #013 / D-03, RunContext Runtime Contract).
     // ai.action_permitted (ai → 11) added under ADR 0008 (Directive #014 / D-04, Phase B):
     // the audit fact the runtime emits when the doorman permits an autonomous action.
-    expect(VERBS).toHaveLength(79);
+    // ai.handoff (ai → 12) added with the deterministic employee-to-employee handoff bus:
+    // the fact the tasks SDK emits when one employee delegates a child task to another.
+    expect(VERBS).toHaveLength(80);
     expect(VERB_GROUPS.org).toHaveLength(10);
     expect(VERB_GROUPS.billing).toHaveLength(9);
     expect(VERB_GROUPS.operations).toHaveLength(8);
     expect(VERB_GROUPS.support).toHaveLength(5);
-    expect(VERB_GROUPS.ai).toHaveLength(11);
+    expect(VERB_GROUPS.ai).toHaveLength(12);
     expect(VERB_GROUPS.approval).toHaveLength(6);
     expect(VERB_GROUPS.memory).toHaveLength(5);
     expect(VERB_GROUPS.comm).toHaveLength(6);
