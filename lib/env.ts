@@ -127,6 +127,14 @@ const envSchema = z.object({
   // exactly like WHATSAPP_APP_SECRET on the Meta webhook. Absent in prod/CI/dev.
   INBOUND_EMAIL_WEBHOOK_SECRET: z.string().optional(),
 
+  // -- Resend delivery events (MP Wave R4 — DARK, two-switch gated) --------
+  // The endpoint signing secret (whsec_<base64>) for the Resend delivery-events
+  // webhook (app/api/webhooks/resend). Resend signs each webhook with the SVIX
+  // scheme; verifyResendSignature reads this secret at call time and fails CLOSED
+  // when it is absent, so with no secret the webhook rejects everything (dark).
+  // Absent in prod/CI/dev until the Resend endpoint is configured.
+  RESEND_WEBHOOK_SECRET: z.string().optional(),
+
   // -- Communication Layer provider (Directive 010 Phase 4) ---------------
   // Names the active outbound email provider for the Communication Layer.
   // Default "auto": use Resend when RESEND_API_KEY is set, else off. As with
@@ -309,6 +317,13 @@ const envSchema = z.object({
   // canRunReceptionistChannel(email) is false and transportChannelForInbound(email)
   // is null, so a mailed enquiry is ingested (lead + notification) but never replied.
   NEXT_PUBLIC_FEATURE_INBOUND_EMAIL: z.enum(["true", "false"]).default("false"),
+  // MP Wave R4 — Resend delivery-EVENTS ingestion (open/click/bounce audit).
+  // DEFAULTS OFF. While off the resend webhook (app/api/webhooks/resend) 404s
+  // before any work and no comm_events row is ever written. The SECOND switch is
+  // the signing secret (RESEND_WEBHOOK_SECRET): isResendEventsLive() requires
+  // BOTH the flag AND the secret, and the route refuses (404) before reading the
+  // body when either is absent. Both unset in prod, CI and dev.
+  NEXT_PUBLIC_FEATURE_RESEND_EVENTS: z.enum(["true", "false"]).default("false"),
   // Wave 8 — inbound VOICE telephony. DEFAULTS OFF. While off the voice webhooks
   // (twilio/voice, twilio/voice/status, vapi) 503 before any work, the org↔number
   // routing/calls/call_events tables carry no rows the substrate populates, and the

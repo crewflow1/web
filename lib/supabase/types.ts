@@ -293,6 +293,63 @@ export type Database = {
           },
         ]
       }
+      comm_events: {
+        Row: {
+          created_at: string
+          event_type: string
+          id: string
+          message_id: string | null
+          occurred_at: string
+          org_id: string | null
+          payload: Json | null
+          provider: string
+          provider_event_id: string
+          provider_message_id: string | null
+          recipient: string | null
+        }
+        Insert: {
+          created_at?: string
+          event_type: string
+          id?: string
+          message_id?: string | null
+          occurred_at?: string
+          org_id?: string | null
+          payload?: Json | null
+          provider?: string
+          provider_event_id: string
+          provider_message_id?: string | null
+          recipient?: string | null
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          id?: string
+          message_id?: string | null
+          occurred_at?: string
+          org_id?: string | null
+          payload?: Json | null
+          provider?: string
+          provider_event_id?: string
+          provider_message_id?: string | null
+          recipient?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "comm_events_message_org_fkey"
+            columns: ["message_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id", "org_id"]
+          },
+          {
+            foreignKeyName: "comm_events_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversations: {
         Row: {
           channel: string
