@@ -1215,6 +1215,7 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   ai_reply_audits: "RECENT-N: .order.limit(REPLY_WINDOW) — HQ QA verdict window display",
   ai_reply_lifecycle: "PER-PARENT/RECENT-N: .eq('audit_id') per audit or a .limit(500) deliveries board display",
   hq_ai_tasks: "RECENT-N: .order.limit(TASK_WINDOW) reliability window / per-employee — HQ display, not a complete-set count",
+  cron_runs: "RECENT-N: .order('started_at' desc).limit(N) recent cron-run reliability window (hq-monitoring-runner incident sweep) — an HQ ops health display over the most recent runs, framed as a recent window and never a complete-set count; the table grows one row per cron run so a complete read is neither useful nor bounded.",
   hq_ai_schedules: "CLOSED/RECENT-N: the cadence-schedule registry — .order or .limit(Math.min(limit,1000)) due-run picker",
   receptionist_conversation_outcomes: "RECENT-N: .order.limit(OUTCOME_WINDOW) — HQ QA window display",
   impersonation_sessions: "RECENT-N: .order.limit(Math.min(limit,1000)) audit list (caller passes 100) — admin display",

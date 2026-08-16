@@ -50,6 +50,10 @@
       "schedule": "0 * * * *"
     },
     {
+      "path": "/api/cron/hq-runners-tick",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/cron/research-drain",
       "schedule": "*/5 * * * *"
     },
