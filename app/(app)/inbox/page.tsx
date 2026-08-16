@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
+import { InboxTabs } from "./_components/inbox-tabs";
 import { markEnquiryStatus } from "./actions";
 
 /**
@@ -105,6 +106,7 @@ export default async function InboxPage({ searchParams }: { searchParams: SP }) 
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
+      <InboxTabs active="enquiries" />
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Inbox</h1>

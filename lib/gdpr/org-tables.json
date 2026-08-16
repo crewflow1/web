@@ -1,5 +1,5 @@
 {
-  "_comment": "GENERATED snapshot — see lib/gdpr/export-tables.ts header for the catalogue query and classification rules. Held as JSON (not .ts) so the sensitive table-NAME literals live outside the source-tree census scans; those scans walk only .ts/.tsx.",
+  "_comment": "GENERATED snapshot \u2014 see lib/gdpr/export-tables.ts header for the catalogue query and classification rules. Held as JSON (not .ts) so the sensitive table-NAME literals live outside the source-tree census scans; those scans walk only .ts/.tsx.",
   "known": [
     "accounting_connections",
     "accounting_export_log",
@@ -60,6 +60,7 @@
     "cis_statement_payments",
     "cis_statements",
     "cis_subcontractors",
+    "comm_events",
     "completion_certificates",
     "compliance_documents",
     "conversations",
@@ -222,13 +223,13 @@
     "whatsapp_number_routes": "credentials/provider routing + secrets",
     "whatsapp_webhook_events": "provider webhook payloads/secrets (service-internal)",
     "asset_qr_identities": "credentials: QR access token",
-    "staff_secrets": "government identifiers (NI numbers) — separate controlled subject-export path, never bulk-dumped",
-    "accounting_pushed_entities": "service telemetry: provider-sync push-once high-water-mark (org/provider/entity_type/entity_id/pushed_at) — internal integration bookkeeping, no tenant business data; the referenced invoices/payments are themselves exported via their own tables",
-    "ai_budget_control_audit": "service telemetry: AI budget governance internals (who changed a ceiling/limit) — HQ-side control audit, not tenant business data",
+    "staff_secrets": "government identifiers (NI numbers) \u2014 separate controlled subject-export path, never bulk-dumped",
+    "accounting_pushed_entities": "service telemetry: provider-sync push-once high-water-mark (org/provider/entity_type/entity_id/pushed_at) \u2014 internal integration bookkeeping, no tenant business data; the referenced invoices/payments are themselves exported via their own tables",
+    "ai_budget_control_audit": "service telemetry: AI budget governance internals (who changed a ceiling/limit) \u2014 HQ-side control audit, not tenant business data",
     "ai_cost_reservations": "service telemetry: AI budget internals",
-    "ai_employee_budget_limits": "service telemetry: AI budget governance internals (per-employee spend caps) — HQ-side control config, not tenant business data",
+    "ai_employee_budget_limits": "service telemetry: AI budget governance internals (per-employee spend caps) \u2014 HQ-side control config, not tenant business data",
     "ai_invocations": "service telemetry: AI invocation ledger",
-    "ai_org_budget_ceilings": "service telemetry: AI budget governance internals (per-org ceiling override) — HQ-side control config, not tenant business data",
+    "ai_org_budget_ceilings": "service telemetry: AI budget governance internals (per-org ceiling override) \u2014 HQ-side control config, not tenant business data",
     "ai_reply_audits": "AI reply transport internals",
     "ai_reply_delivery_receipts": "AI reply transport internals",
     "ai_reply_transports": "AI reply transport internals",
@@ -251,7 +252,7 @@
     "calendar_watch_channels": "credentials/integration state: provider watch verification_token + channel registration",
     "calendar_pulled_events": "integration mirror of external provider calendar events (provider is source of truth; may include third-party attendee data)"
   },
-  "_order_keys_comment": "Stable, unique per-row ORDER BY column for the fully-paged DSAR export (server/services/gdpr-export.ts). Every exported table is paged via fetchAllRows, which REQUIRES a stable total ordering so no row is dropped/repeated at a page boundary. The default key is 'id'; the entries below are the ONLY exported tables lacking an 'id' column — each maps to a column that is unique WITHIN an org-pinned read (the non-org_id part of the table's primary key; org_id is constant under the .eq('org_id', orgId) pin). Ordering by a column that does not exist on a table is a hard read error (Postgres 42703) that would abort the whole export, so this map must stay exhaustive — the integration FORWARD drift test orders each table by its key against live Postgres, failing CI if a key is wrong or a new id-less table appears.",
+  "_order_keys_comment": "Stable, unique per-row ORDER BY column for the fully-paged DSAR export (server/services/gdpr-export.ts). Every exported table is paged via fetchAllRows, which REQUIRES a stable total ordering so no row is dropped/repeated at a page boundary. The default key is 'id'; the entries below are the ONLY exported tables lacking an 'id' column \u2014 each maps to a column that is unique WITHIN an org-pinned read (the non-org_id part of the table's primary key; org_id is constant under the .eq('org_id', orgId) pin). Ordering by a column that does not exist on a table is a hard read error (Postgres 42703) that would abort the whole export, so this map must stay exhaustive \u2014 the integration FORWARD drift test orders each table by its key against live Postgres, failing CI if a key is wrong or a new id-less table appears.",
   "order_keys": {
     "asset_depreciation_settings": "asset_id",
     "asset_maintenance_case_costs": "case_id",
