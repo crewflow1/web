@@ -161,6 +161,15 @@ export const CUSTOM_ACTION_REGISTRY: ReadonlyArray<CustomActionSpec> = [
     availableToCustom: false,
     params: [],
   },
+  {
+    type: "generate_completion_invoice",
+    label: "Auto-draft final invoice on job completion",
+    description:
+      "Not available in custom rules — it acts only on job.completed events and " +
+      "reuses the guarded billing-plan stage-invoice authority.",
+    availableToCustom: false,
+    params: [],
+  },
 ];
 
 const BY_TYPE: ReadonlyMap<AutomationActionType, CustomActionSpec> = new Map(

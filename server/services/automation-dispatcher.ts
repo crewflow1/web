@@ -674,6 +674,8 @@ async function runAction(
       return runSendEmailQueue(event, rule);
     case "create_invoice_draft":
       return runCreateInvoiceDraft(event);
+    case "generate_completion_invoice":
+      return runGenerateCompletionInvoice(event);
     case "update_status":
       // DOCUMENTED NO-OP — deliberately NOT wired, and this is the honest call.
       //
@@ -999,6 +1001,95 @@ async function runCreateInvoiceDraft(
     throw new Error(`invoice_draft insert failed: ${ins.error.message}`);
   }
   return { ok: true, kind: "invoice_draft_created", invoice_id: ins.data?.id };
+}
+
+/**
+ * generate_completion_invoice — WIRED to the billing-plan stage-invoice authority.
+ *
+ * On `job.completed`, generate a DRAFT invoice for EVERY remaining un-invoiced
+ * stage of the job's active billing plan, via the SERVICE-ROLE RPC
+ * `automation_invoice_job_completion` (migration 20261153000000). That RPC reuses
+ * the exact same core `generate_stage_invoice` uses — number allocation, per-stage
+ * VAT, one line-item snapshot, status 'draft', invoice_id CAS — so there is NO
+ * hand-rolled invoice math here and the manual/auto paths can never drift.
+ *
+ * NEVER SENDS: every invoice is created status='draft'; a human reviews and sends.
+ *
+ * ORG-SCOPED: the RPC takes the org EXPLICITLY (p_org_id = event.org_id) and pins
+ * it on every hop — a forged/foreign job_id resolves to nothing. Necessary because
+ * the dispatcher runs service-role, where RLS is bypassed and auth.uid() is null.
+ *
+ * IDEMPOTENT (three layers): the dispatcher's (rule_id, correlation_id) claim (one
+ * run per completion), the RPC's `invoice_id is null` filter, and the per-stage
+ * invoice_id CAS + the DB unique index on job_billing_stages(invoice_id). A
+ * re-fired job.completed therefore never double-invoices.
+ *
+ * HONEST FALLBACK: if there is no active plan, no customer, or the job isn't in
+ * this org, the RPC returns a status this maps to a documented skip — the org's
+ * existing `job_completed_suggest_invoice` rule still fires the "send the invoice?"
+ * notification, so we fall back to suggesting rather than inventing an amount.
+ *
+ * SCOPE — jobs-sourced events only. For any other source_table this is a
+ * documented skip (returns ok) rather than a fabricated invoice.
+ */
+async function runGenerateCompletionInvoice(
+  event: AutomationEvent,
+): Promise<Record<string, unknown>> {
+  if (event.source_table !== "jobs") {
+    return { ok: true, kind: "completion_invoice_skipped_not_job" };
+  }
+  const admin = createAdminClient();
+
+  const res = await (
+    admin as unknown as {
+      rpc: (
+        fn: string,
+        args: Record<string, unknown>,
+      ) => Promise<{ data: unknown; error: { message: string } | null }>;
+    }
+  ).rpc("automation_invoice_job_completion", {
+    p_job_id: event.source_id,
+    p_org_id: event.org_id,
+  });
+  if (res.error) {
+    // A genuine DB failure is surfaced so the run is recorded failed + retryable,
+    // never silently swallowed.
+    throw new Error(`completion_invoice rpc failed: ${res.error.message}`);
+  }
+
+  const data = (res.data ?? {}) as { status?: string; count?: number; invoices?: unknown };
+  switch (data.status) {
+    case "created":
+      return {
+        ok: true,
+        kind: "completion_invoice_created",
+        count: data.count ?? 0,
+        invoices: data.invoices ?? [],
+      };
+    case "nothing_remaining":
+      // A plan exists but every stage is already invoiced — nothing to do, and no
+      // need to suggest (the work is fully billed).
+      return { ok: true, kind: "completion_invoice_nothing_remaining" };
+    case "no_plan":
+    case "no_customer":
+    case "no_job":
+    case "invalid_args":
+      // Ambiguous basis → fall back to the existing suggest behaviour (the
+      // separate job_completed_suggest_invoice rule owns the notification). We do
+      // NOT invent an amount.
+      return {
+        ok: true,
+        kind: "completion_invoice_skipped_suggest",
+        reason: data.status,
+      };
+    default:
+      // An unrecognised status is treated as a safe skip → suggest fallback.
+      return {
+        ok: true,
+        kind: "completion_invoice_skipped_suggest",
+        reason: data.status ?? "unknown",
+      };
+  }
 }
 
 /**
