@@ -100,6 +100,13 @@ const HIGH_VALUE_TABLES = new Set<string>([
   // sites from the builder and — on an edit — nulls an out-of-cap property_id.
   // (F-1 picker-class wave.)
   "properties",
+  // Staff qualifications/certifications (MP staff-competencies wave). Carries an
+  // ORG-WIDE AGGREGATE: loadStaffQualificationSignal (server/services/staff-qualifications.ts)
+  // counts every expiring/expired qualification for the daily briefing — a clamped
+  // read would UNDER-COUNT lapsed CSCS/SMSTS cards and render a false all-clear.
+  // Both set-reads (per-member list + org-wide expiry signal) are PAGED via
+  // fetchAllRows. (F-1 MP-staff wave.)
+  "staff_qualifications",
   // P3 unified inbox: the tenant-facing conversation container + message timeline.
   // listInboxConversations reads the org's FULL conversation set AND its FULL message set
   // (to derive the latest-message preview + awaiting-reply per thread), so both are
@@ -1125,6 +1132,8 @@ const COVERAGE_REVIEWED: Record<string, string> = {
     "PAGED/BOUNDED (P3): the active-template picker (lib/jobs/template-list.ts) is fetchAllRows-paged; the /jobs/templates list (page.tsx) is an EXACT-count .range() page. Per-org admin config (a firm has a handful of templates), never a cross-tenant scan.",
   job_programme_baselines: "PAGED: fetchAllRows (intelligence + job-progress baselines)",
   job_progress_observations: "PAGED: fetchAllRows (job-progress observations)",
+  quote_versions:
+    "PER-PARENT: the only set-read (app/(app)/quotes/[id]/page.tsx) is the version-history panel for ONE quote — .eq('quote_id', id).eq('org_id') ordered version_number desc. Bounded by a single quote's send/re-approve transitions (a handful), never a cross-quote/estate scan or aggregate. Append-only chain; writes are trigger-only.",
   site_diary_entries: "PAGED: fetchAllRows (EOT pack diary; .in(ids) paged)",
   stocktake_sessions:
     "PAGED: fetchAllRows (server/services/stocktake.ts listStocktakeSessions — the org's counts, .eq(org_id) paged via .range on a stable (opened_at desc, id desc) order; loadStocktakeSession is .maybeSingle()).",

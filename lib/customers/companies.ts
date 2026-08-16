@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/types";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 
 /**
  * Reads for the "companies as a first-class entity" (B2B) feature — the
@@ -25,26 +26,30 @@ export type CustomerRef = { id: string; name: string };
  * Business customers in the org, for the "parent business" picker. `excludeId`
  * drops the record being edited so a customer can't be offered itself as its
  * own parent (belt-and-braces beside the DB no-self-parent CHECK). Alphabetical
- * so the dropdown is scannable. Capped at 500 — the picker is a convenience for
- * a human, not an export; beyond that the operator should type-search elsewhere.
+ * so the dropdown is scannable. Fully paged (fetchAllRows) — a picker must see
+ * the COMPLETE set or it silently drops a valid parent past the cap (the F-1
+ * picker-completion class). Stable ordering (name, id) so no row is dropped or
+ * repeated at a page boundary.
  */
 export async function loadBusinessOptions(
   supabase: Client,
   orgId: string,
   excludeId?: string,
 ): Promise<CustomerRef[]> {
-  let query = supabase
-    .from("customers")
-    .select("id, name")
-    .eq("org_id", orgId)
-    .eq("customer_type", "business")
-    .order("name", { ascending: true })
-    .limit(500);
-  if (excludeId) query = query.neq("id", excludeId);
-
-  const { data, error } = await query;
+  const { data, error } = await fetchAllRows<CustomerRef>((from, to) => {
+    let query = supabase
+      .from("customers")
+      .select("id, name")
+      .eq("org_id", orgId)
+      .eq("customer_type", "business")
+      .order("name", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to);
+    if (excludeId) query = query.neq("id", excludeId);
+    return query as unknown as PromiseLike<{ data: CustomerRef[] | null; error: unknown }>;
+  });
   if (error) throw readFailure("customer parent options", error);
-  return (data ?? []) as CustomerRef[];
+  return data;
 }
 
 /**
@@ -57,13 +62,19 @@ export async function loadChildCustomers(
   orgId: string,
   parentId: string,
 ): Promise<CustomerRef[]> {
-  const { data, error } = await supabase
-    .from("customers")
-    .select("id, name")
-    .eq("org_id", orgId)
-    .eq("parent_customer_id", parentId)
-    .order("name", { ascending: true })
-    .order("id", { ascending: true });
+  const { data, error } = await fetchAllRows<CustomerRef>((from, to) =>
+    supabase
+      .from("customers")
+      .select("id, name")
+      .eq("org_id", orgId)
+      .eq("parent_customer_id", parentId)
+      .order("name", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to) as unknown as PromiseLike<{
+      data: CustomerRef[] | null;
+      error: unknown;
+    }>,
+  );
   if (error) throw readFailure("customer children", error);
-  return (data ?? []) as CustomerRef[];
+  return data;
 }
