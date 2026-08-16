@@ -30,6 +30,13 @@ import type { BriefingSeverity } from "@/lib/briefing/types";
  * critical — an untaxed van on axle stands in the yard breaks no law. That
  * carve-out is what keeps `critical` meaning something.
  *
+ * A lapsed TYRE check sits below the legal line on purpose. The offence is the
+ * tread state (RTA 1988 / Construction & Use Regs — below 1.6mm), which a missed
+ * inspection DATE does not prove; so an overdue tyre check is treated like
+ * overdue road tax or service — `high`, needs doing today, but not a proven
+ * driving offence. It is deliberately absent from LEGAL_COMPLIANCE_TYPES and
+ * CRITICAL_WHEN_IN_SERVICE for exactly that reason.
+ *
  * "In service" is `fleet_vehicles.operational_status = 'in_service'` on an
  * `active` asset — i.e. the company's own statement that the vehicle is
  * available to drive. It deliberately does NOT require an open custody
@@ -38,7 +45,13 @@ import type { BriefingSeverity } from "@/lib/briefing/types";
  */
 
 /** The obligations Fleet tracks through `asset_service_schedules`. */
-export const FLEET_COMPLIANCE_TYPES = ["mot", "insurance", "road_tax", "service"] as const;
+export const FLEET_COMPLIANCE_TYPES = [
+  "mot",
+  "insurance",
+  "road_tax",
+  "service",
+  "tyres",
+] as const;
 export type FleetComplianceType = (typeof FLEET_COMPLIANCE_TYPES)[number];
 
 export const FLEET_COMPLIANCE_LABELS: Record<FleetComplianceType, string> = {
@@ -46,6 +59,7 @@ export const FLEET_COMPLIANCE_LABELS: Record<FleetComplianceType, string> = {
   insurance: "Insurance",
   road_tax: "Road tax",
   service: "Service",
+  tyres: "Tyres",
 };
 
 /** The three whose lapse is an offence in itself (service is not). */
