@@ -11,6 +11,7 @@ import {
   MAINTENANCE_TYPE_LABELS,
   type SchedulableMaintenanceType,
 } from "@/lib/assets/maintenance";
+import { LEGAL_COMPLIANCE_TYPES } from "@/lib/fleet/compliance";
 
 /**
  * Service-case generator (M5b) — a direct clone of the PROVEN due-inspection
@@ -120,10 +121,17 @@ export async function runMaintenanceGenerator(
     if ((won ?? []).length > 0) {
       summary.generated += 1;
       const wonId = won?.[0]?.id;
-      // A compliance cadence is a legal deadline, not a workshop booking — it
-      // gets the fleet wording and the fleet deep link. Everything else keeps
-      // the original asset-maintenance copy verbatim.
+      // A compliance cadence is a fleet obligation, not a generic workshop
+      // booking — it gets the fleet wording and the fleet deep link. Whether the
+      // lapse is an OFFENCE is narrower: MOT/insurance/road tax are, so they get
+      // the "driving is an offence" warning; a tyre check is a compliance
+      // obligation but a missed DATE is not itself an offence (the tread state
+      // is), so it gets compliance treatment without the offence line. Anything
+      // outside the compliance set keeps the original asset-maintenance copy.
       const isCompliance = (COMPLIANCE_MAINTENANCE_TYPES as readonly string[]).includes(
+        schedule.maintenance_type,
+      );
+      const isLegalOffence = (LEGAL_COMPLIANCE_TYPES as readonly string[]).includes(
         schedule.maintenance_type,
       );
       await emitNotifications([
@@ -137,9 +145,11 @@ export async function runMaintenanceGenerator(
           title: isCompliance
             ? `${MAINTENANCE_TYPE_LABELS[schedule.maintenance_type]} due — ${title}`
             : `Service due — ${title}`,
-          body: isCompliance
+          body: isLegalOffence
             ? `Due ${schedule.next_due}. Renew it before the date — driving without valid MOT, insurance or tax is an offence.`
-            : `Scheduled for ${schedule.next_due}. Book it in from the asset's maintenance section.`,
+            : isCompliance
+              ? `Due ${schedule.next_due}. Book it in before the date to keep the vehicle compliant.`
+              : `Scheduled for ${schedule.next_due}. Book it in from the asset's maintenance section.`,
           action_url: isCompliance ? `/fleet/vehicles/${schedule.asset_id}` : `/assets/${schedule.asset_id}`,
           source_module: "assets",
           source_id: wonId ?? schedule.id,

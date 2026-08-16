@@ -26,13 +26,23 @@ export type MaintenanceType = (typeof MAINTENANCE_TYPES)[number];
  * replacement — `MAINTENANCE_TYPES` above stays exactly as it was because it
  * drives the generic asset UI's "raise a case" dropdown, and offering "MOT" as
  * a manual case type on a generator or a scaffold tower would be nonsense.
- * These three are raised by the fleet compliance flow instead.
+ * These are raised by the fleet compliance flow instead.
  *
- * Both DB CHECKs accept the union (20261057000000 widened the schedule type AND
- * the case type together, because asset-maintenance-generator.ts passes one
- * straight into the other).
+ * This set MUST stay in step with lib/fleet/compliance.ts FLEET_COMPLIANCE_TYPES
+ * minus 'service' (service IS a generic workshop booking, so it keeps the plain
+ * maintenance treatment). The generator keys `isCompliance` off this list to
+ * pick the fleet deep link + high priority; whether the lapse is a legal OFFENCE
+ * (and so gets the "driving is an offence" wording) is a narrower question
+ * answered by fleet's LEGAL_COMPLIANCE_TYPES, not by membership here — tyres is
+ * compliance but not an offence. __tests__/fleet/compliance-constant-parity
+ * pins the two lists together so a future FLEET_COMPLIANCE_TYPES addition can't
+ * silently regress the generated-case path (the drift that shipped with tyres).
+ *
+ * Both DB CHECKs accept the union (20261057000000 / 20261173000000 widened the
+ * schedule type AND the case type together, because asset-maintenance-generator
+ * .ts passes one straight into the other).
  */
-export const COMPLIANCE_MAINTENANCE_TYPES = ["mot", "insurance", "road_tax"] as const;
+export const COMPLIANCE_MAINTENANCE_TYPES = ["mot", "insurance", "road_tax", "tyres"] as const;
 export type ComplianceMaintenanceType = (typeof COMPLIANCE_MAINTENANCE_TYPES)[number];
 
 /** Everything a service schedule may carry, and everything a case may be. */
@@ -55,6 +65,7 @@ export const MAINTENANCE_TYPE_LABELS: Record<SchedulableMaintenanceType, string>
   mot: "MOT",
   insurance: "Insurance renewal",
   road_tax: "Road tax",
+  tyres: "Tyres",
 };
 
 export const MAINTENANCE_PRIORITIES = ["low", "medium", "high"] as const;
