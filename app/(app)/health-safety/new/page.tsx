@@ -110,7 +110,7 @@ export default async function NewRiskAssessmentPage({
         </form>
       </section>
 
-      <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-wide text-slate-400">
+      <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-wide text-slate-500">
         <span className="h-px flex-1 bg-slate-200" aria-hidden />
         or draft manually
         <span className="h-px flex-1 bg-slate-200" aria-hidden />
