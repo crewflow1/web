@@ -179,6 +179,8 @@
     "staff_secrets",
     "stock_items",
     "stock_movements",
+    "stocktake_lines",
+    "stocktake_sessions",
     "supplier_payment_allocations",
     "supplier_payments",
     "suppliers",

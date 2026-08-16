@@ -39,6 +39,7 @@ export type StockItemFormDefaults = {
   name?: string;
   description?: string;
   sku?: string;
+  barcode?: string;
   unit?: string;
   preferred_supplier_id?: string;
   supplier_reference?: string;
@@ -149,6 +150,16 @@ export function StockItemForm({
           error={fieldErrors.sku}
         />
       </div>
+
+      <Field
+        name="barcode"
+        label="Barcode"
+        optional
+        placeholder="5012345678900"
+        help="The scannable code printed on the product (EAN / UPC). Lets you scan-to-find during a stocktake."
+        defaultValue={defaults?.barcode}
+        error={fieldErrors.barcode}
+      />
 
       <fieldset className="space-y-4 border-t border-slate-100 pt-5">
         <legend className="sr-only">Reordering</legend>

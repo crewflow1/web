@@ -62,6 +62,7 @@ export default async function EditStockItemPage({ params }: { params: Params }) 
           name: item.name,
           description: text(item.description),
           sku: text(item.sku),
+          barcode: text(item.barcode),
           unit: item.unit,
           preferred_supplier_id: text(item.preferred_supplier_id),
           supplier_reference: text(item.supplier_reference),

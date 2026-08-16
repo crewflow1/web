@@ -1126,6 +1126,10 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   job_programme_baselines: "PAGED: fetchAllRows (intelligence + job-progress baselines)",
   job_progress_observations: "PAGED: fetchAllRows (job-progress observations)",
   site_diary_entries: "PAGED: fetchAllRows (EOT pack diary; .in(ids) paged)",
+  stocktake_sessions:
+    "PAGED: fetchAllRows (server/services/stocktake.ts listStocktakeSessions — the org's counts, .eq(org_id) paged via .range on a stable (opened_at desc, id desc) order; loadStocktakeSession is .maybeSingle()).",
+  stocktake_lines:
+    "PAGED: fetchAllRows (server/services/stocktake.ts listStocktakeLines — one session's lines, completeness-sensitive because the variance summary sums them, .eq(org_id).eq(session_id) paged via .range on a unique id order).",
   notification_email_queue:
     "PAGED/SINGLE: the CIS dedupe read is fetchAllRows-paged; the queue-drain read is a bounded worker .limit(DRAIN_BATCH<1000)",
   notification_preferences:
