@@ -149,6 +149,61 @@ export const leaveRequestFormSchema = z
 export type LeaveRequestFormInput = z.infer<typeof leaveRequestFormSchema>;
 
 // -------------------------------------------------------------------------
+// Holiday entitlement config (admin-only) — mirrors holiday_entitlements.
+// -------------------------------------------------------------------------
+export const ACCRUAL_METHODS = ["immediate", "monthly"] as const;
+export type AccrualMethodInput = (typeof ACCRUAL_METHODS)[number];
+
+const nonNegDays = (max: number) =>
+  z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.coerce.number().min(0).max(max),
+  );
+
+export const holidayEntitlementFormSchema = z.object({
+  annual_allowance_days: nonNegDays(366),
+  accrual_method: z.enum(ACCRUAL_METHODS),
+  carry_over_max_days: nonNegDays(366),
+  leave_year_start_month: z.coerce.number().int().min(1).max(12),
+  leave_year_start_day: z.coerce.number().int().min(1).max(31),
+});
+export type HolidayEntitlementFormInput = z.infer<
+  typeof holidayEntitlementFormSchema
+>;
+
+// -------------------------------------------------------------------------
+// Pension auto-enrolment (admin-only) — mirrors pension_enrolments.
+// Contribution rates are entered as PERCENTAGES in the UI and stored as
+// fractions; the action divides by 100.
+// -------------------------------------------------------------------------
+export const PENSION_STATUSES = [
+  "not_enrolled",
+  "enrolled",
+  "opted_out",
+  "postponed",
+] as const;
+export type PensionStatusInput = (typeof PENSION_STATUSES)[number];
+
+const percent = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  z.coerce.number().min(0).max(100),
+);
+
+export const pensionEnrolmentFormSchema = z.object({
+  status: z.enum(PENSION_STATUSES),
+  employee_contribution_percent: percent,
+  employer_contribution_percent: percent,
+  scheme_name: optionalString(120),
+  assessment_date: optionalDate,
+  enrolment_date: optionalDate,
+  opt_out_date: optionalDate,
+  postponement_end_date: optionalDate,
+});
+export type PensionEnrolmentFormInput = z.infer<
+  typeof pensionEnrolmentFormSchema
+>;
+
+// -------------------------------------------------------------------------
 // Conflict detection
 // -------------------------------------------------------------------------
 type Interval = { starts_at: string; ends_at: string };

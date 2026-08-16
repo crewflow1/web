@@ -9,6 +9,7 @@ import {
 import { CreateLeaveForm } from "./_create-form";
 import { formatDateUK } from "@/lib/time/format";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { getHolidayBalanceForUser } from "@/server/services/holiday-balance";
 
 /**
  * Leave requests — submit, review (approve/reject), cancel.
@@ -116,6 +117,10 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
     "id" | "user_id" | "type" | "starts_at" | "ends_at" | "status"
   >[];
 
+  // The current user's own holiday balance (derived). null when no entitlement
+  // is configured for them.
+  const myHoliday = await getHolidayBalanceForUser(ctx.org.id, user.id);
+
   const errorMessage = sp.error
     ? ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)
     : null;
@@ -156,6 +161,39 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
         <div role="status" className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
           {savedMessage}
         </div>
+      ) : null}
+
+      {/* My holiday balance (derived from entitlement + approved/pending leave). */}
+      {myHoliday ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h2 className="text-sm font-semibold text-slate-900">
+            My holiday balance
+          </h2>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <LeaveStat
+              label="Days remaining"
+              value={`${myHoliday.balance.remaining_days}`}
+              emphasis
+            />
+            <LeaveStat
+              label="Allowance"
+              value={`${myHoliday.balance.allowance_days}`}
+            />
+            <LeaveStat label="Taken" value={`${myHoliday.balance.taken_days}`} />
+            <LeaveStat
+              label="Booked"
+              value={`${myHoliday.balance.booked_days}`}
+            />
+          </div>
+          <p className="mt-2 text-xs text-slate-500">
+            Leave year {myHoliday.balance.leave_year_start} →{" "}
+            {myHoliday.balance.leave_year_end}
+            {myHoliday.balance.carried_over_days > 0
+              ? ` · ${myHoliday.balance.carried_over_days} day(s) carried over`
+              : ""}
+            . Days are working days (Mon–Fri).
+          </p>
+        </section>
       ) : null}
 
       {/* Submit form (everyone). */}
@@ -272,5 +310,32 @@ function FilterLink({ active, href, children }: { active: boolean; href: string;
     >
       {children}
     </Link>
+  );
+}
+
+function LeaveStat({
+  label,
+  value,
+  emphasis,
+}: {
+  label: string;
+  value: string;
+  emphasis?: boolean;
+}) {
+  return (
+    <div className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 p-3 text-center">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+        {label}
+      </div>
+      <div
+        className={
+          emphasis
+            ? "mt-1 text-2xl font-bold text-slate-900"
+            : "mt-1 text-lg font-semibold text-slate-800"
+        }
+      >
+        {value}
+      </div>
+    </div>
   );
 }

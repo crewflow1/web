@@ -7,9 +7,10 @@ import { requireOrgContext } from "@/server/auth/session";
 import { finalisePayrollRun, deletePayrollRun } from "../actions";
 import { fetchNiNumbersForOrg, maskNiNumber } from "@/lib/staff/secrets";
 import {
-  employerCostsForStoredLine,
+  employerCostsForStoredLineWithPension,
   type EmployerCostEstimate,
 } from "@/lib/payroll/compute";
+import { getPensionEnrolmentsForOrg } from "@/server/services/pension-enrolment";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -86,6 +87,11 @@ export default async function PayrollRunPage({
   if (linesError) throw readFailure("payroll run: lines", linesError);
   // Per-user NI numbers, sourced from the admin-gated staff_secrets table.
   const niByUser = await fetchNiNumbersForOrg(ctx.org.id);
+  // Tracked pension enrolments — where an employee's auto-enrolment is recorded,
+  // the employer pension estimate uses their real status + scheme rate instead
+  // of the blanket statutory 3%. Empty map ⇒ every line uses the statutory
+  // estimate (unchanged). Org-pinned read inside the service.
+  const pensionByUser = await getPensionEnrolmentsForOrg(ctx.org.id);
   const lines = linesRaw ?? [];
 
   // Employer NI + pension per line, DERIVED from the stored gross at the rates in
@@ -96,9 +102,17 @@ export default async function PayrollRunPage({
   for (const l of lines) {
     employerByLine.set(
       l.id,
-      employerCostsForStoredLine(l.gross_pay, runCycle, run.period_start),
+      employerCostsForStoredLineWithPension(
+        l.gross_pay,
+        runCycle,
+        run.period_start,
+        pensionByUser.get(l.user_id),
+      ),
     );
   }
+  const trackedEnrolments = lines.filter((l) =>
+    pensionByUser.has(l.user_id),
+  ).length;
   const ratesTaxYear =
     employerByLine.values().next().value?.employer_rates_tax_year ?? null;
   const ratesExtrapolated = Array.from(employerByLine.values()).some(
@@ -244,7 +258,10 @@ export default async function PayrollRunPage({
         The Employment Allowance (up to £10,500/year), under-21/apprentice/veteran NI
         categories and pension opt-outs are not modelled, so the employer NI figure
         may be higher than you actually owe. Confirm with your accountant before
-        filing or paying.
+        filing or paying.{" "}
+        {trackedEnrolments > 0
+          ? `Pension for ${trackedEnrolments} employee(s) with a tracked auto-enrolment record uses their recorded status and scheme rate; everyone else uses the statutory 3% estimate.`
+          : "Set an employee's pension auto-enrolment on their staff profile to price their contribution (opt-outs included) instead of the statutory 3% estimate."}
       </p>
 
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">

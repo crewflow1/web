@@ -23,7 +23,11 @@ import {
   rotaEntryFormSchema,
   leaveRequestFormSchema,
   inviteStaffSchema,
+  holidayEntitlementFormSchema,
+  pensionEnrolmentFormSchema,
 } from "@/lib/staff/schema";
+import { upsertHolidayEntitlement } from "@/server/services/holiday-balance";
+import { upsertPensionEnrolment } from "@/server/services/pension-enrolment";
 import {
   type FormState,
   formError,
@@ -678,4 +682,86 @@ export async function cancelLeaveRequest(requestId: string) {
 
   revalidatePath("/staff/leave");
   redirect("/staff/leave?saved=cancelled");
+}
+
+// -------------------------------------------------------------------------
+// Holiday entitlement + pension auto-enrolment (admin-only per-employee config)
+// -------------------------------------------------------------------------
+
+/**
+ * Set/replace an employee's holiday entitlement config. Admin-only. The upsert
+ * runs on the user JWT (admin-only RLS write policy is the boundary); org_id is
+ * pinned from ctx, never client input.
+ */
+export async function upsertHolidayEntitlementAction(
+  userId: string,
+  _prevState: FormState<Record<string, unknown>>,
+  formData: FormData,
+): Promise<FormState<Record<string, unknown>>> {
+  const { ctx } = await requireOrgContext();
+  requireAdmin(ctx);
+  if (!uuid.safeParse(userId).success) return formError("Invalid staff id.");
+
+  const result = validateFormData(formData, holidayEntitlementFormSchema);
+  if (!result.ok) return result.state as FormState<Record<string, unknown>>;
+
+  const ok = await upsertHolidayEntitlement(ctx.org.id, userId, {
+    annual_allowance_days: result.data.annual_allowance_days,
+    accrual_method: result.data.accrual_method,
+    carry_over_max_days: result.data.carry_over_max_days,
+    leave_year_start_month: result.data.leave_year_start_month,
+    leave_year_start_day: result.data.leave_year_start_day,
+  });
+  if (!ok) {
+    return formError(
+      "Couldn't save entitlement. Try again.",
+      result.data as Record<string, unknown>,
+    );
+  }
+
+  revalidatePath(`/staff/${userId}`);
+  revalidatePath("/staff/leave");
+  return formSuccess({ successMessage: "Holiday entitlement saved." });
+}
+
+/**
+ * Set/replace an employee's pension auto-enrolment record. Admin-only.
+ * Contribution rates are entered as percentages and stored as fractions.
+ */
+export async function upsertPensionEnrolmentAction(
+  userId: string,
+  _prevState: FormState<Record<string, unknown>>,
+  formData: FormData,
+): Promise<FormState<Record<string, unknown>>> {
+  const { ctx } = await requireOrgContext();
+  requireAdmin(ctx);
+  if (!uuid.safeParse(userId).success) return formError("Invalid staff id.");
+
+  const result = validateFormData(formData, pensionEnrolmentFormSchema);
+  if (!result.ok) return result.state as FormState<Record<string, unknown>>;
+
+  const d = result.data;
+  const ok = await upsertPensionEnrolment(ctx.org.id, userId, {
+    status: d.status,
+    employee_contribution_rate: round4(d.employee_contribution_percent / 100),
+    employer_contribution_rate: round4(d.employer_contribution_percent / 100),
+    scheme_name: d.scheme_name ?? null,
+    assessment_date: d.assessment_date ?? null,
+    enrolment_date: d.enrolment_date ?? null,
+    opt_out_date: d.opt_out_date ?? null,
+    postponement_end_date: d.postponement_end_date ?? null,
+  });
+  if (!ok) {
+    return formError(
+      "Couldn't save pension enrolment. Try again.",
+      d as Record<string, unknown>,
+    );
+  }
+
+  revalidatePath(`/staff/${userId}`);
+  return formSuccess({ successMessage: "Pension enrolment saved." });
+}
+
+function round4(n: number): number {
+  return Math.round((n + Number.EPSILON) * 10000) / 10000;
 }
