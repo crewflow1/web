@@ -11,6 +11,10 @@ import { buildHealthSafetySnapshot } from "./health-safety-snapshot";
 import { loadScheduleConflicts, loadScheduleWeatherSignal } from "./schedule-integrity";
 import { buildFleetComplianceRollup } from "./fleet-snapshot";
 import { loadLowStockSignal, type StockClient } from "./stock";
+import {
+  loadStaffQualificationSignal,
+  type StaffQualificationsClient,
+} from "./staff-qualifications";
 import { loadCisHmrcSignal, type CashOutClient } from "./org-cash-out";
 import { loadSupplierBillVarianceSignal, type PoMatchingClient } from "./po-matching";
 import { rollupKind } from "@/lib/schedule/conflicts";
@@ -142,6 +146,7 @@ export async function buildDailyBriefing(
       scheduleConflictRows,
       fleetRollup,
       lowStock,
+      staffQualSignal,
       cisDueToHmrc,
       supplierBillVariance,
       scheduleWeather,
@@ -191,6 +196,16 @@ export async function buildDailyBriefing(
       // tracks no stock contributes nothing, and a failed read emits no line
       // rather than a false all-clear. Detection only — nothing is ordered.
       loadLowStockSignal(supabase as unknown as StockClient, orgId),
+      // STAFF QUALIFICATIONS — expired / expiring cards + tickets. Org-pinned and
+      // LOUD (throws on read error): an expiry signal must never render a false
+      // all-clear on a lapsed CSCS card, so a failure degrades the whole briefing
+      // to its honest empty state via the outer catch (same posture as the
+      // compliance-documents read). Detection only — nothing is renewed.
+      loadStaffQualificationSignal(
+        supabase as unknown as StaffQualificationsClient,
+        orgId,
+        todayIso,
+      ),
       // H2-CASH M4 MONEY-OUT — CIS you withheld and owe HMRC, with the statutory
       // deadline. TWO org-pinned reads (not the whole money-out wave), reusing
       // /cash's own `computeCisHmrcDue` so the two surfaces cannot disagree. The
@@ -341,6 +356,7 @@ export async function buildDailyBriefing(
       activeJobsNoCurrentRams: hs.activeJobsNoCurrentRams,
       toolboxAwaitingAck: hs.toolboxAwaitingAck,
       complianceExpiring: { count: complianceCount, soonestDays },
+      staffQualifications: staffQualSignal,
       coldLeads: { count: coldCount, totalValue: coldValue },
       retentionDue: { dueNow: retentionRollup.dueNow, dueJobCount: retentionRollup.dueJobCount },
       readyToInvoice: { totalAmount: readyTotal, jobCount: readyJobCount },

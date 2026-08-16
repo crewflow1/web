@@ -26,6 +26,7 @@ function base(overrides: Partial<BriefingInput> = {}): BriefingInput {
     activeJobsNoCurrentRams: 0,
     toolboxAwaitingAck: 0,
     complianceExpiring: { count: 0, soonestDays: null },
+    staffQualifications: { expired: 0, expiring: { count: 0, soonestDays: null } },
     coldLeads: { count: 0, totalValue: 0 },
     retentionDue: { dueNow: 0, dueJobCount: 0 },
     readyToInvoice: { totalAmount: 0, jobCount: 0 },

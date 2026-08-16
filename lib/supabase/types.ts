@@ -1157,6 +1157,7 @@ export type Database = {
           org_id: string
           photos: string[]
           recurring: Json | null
+          required_qualifications: string[]
           scheduled_date: string | null
           scheduled_end_date: string | null
           site_address_line1: string | null
@@ -1178,6 +1179,7 @@ export type Database = {
           org_id: string
           photos?: string[]
           recurring?: Json | null
+          required_qualifications?: string[]
           scheduled_date?: string | null
           scheduled_end_date?: string | null
           site_address_line1?: string | null
@@ -1199,6 +1201,7 @@ export type Database = {
           org_id?: string
           photos?: string[]
           recurring?: Json | null
+          required_qualifications?: string[]
           scheduled_date?: string | null
           scheduled_end_date?: string | null
           site_address_line1?: string | null
@@ -2195,6 +2198,79 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "service_catalog_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      staff_qualifications: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          document_bucket: string | null
+          document_path: string | null
+          expires_on: string | null
+          id: string
+          issued_on: string | null
+          notes: string | null
+          org_id: string
+          qualification_type: string
+          reference_no: string | null
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          document_bucket?: string | null
+          document_path?: string | null
+          expires_on?: string | null
+          id?: string
+          issued_on?: string | null
+          notes?: string | null
+          org_id: string
+          qualification_type: string
+          reference_no?: string | null
+          title: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          document_bucket?: string | null
+          document_path?: string | null
+          expires_on?: string | null
+          id?: string
+          issued_on?: string | null
+          notes?: string | null
+          org_id?: string
+          qualification_type?: string
+          reference_no?: string | null
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "staff_qualifications_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "staff_qualifications_member_org_fkey"
+            columns: ["org_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "memberships"
+            referencedColumns: ["org_id", "user_id"]
+          },
+          {
+            foreignKeyName: "staff_qualifications_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
