@@ -451,6 +451,12 @@ export default async function EditJobPage({
         >
           Get paid — billing plan
         </Link>
+        <Link
+          href={`/jobs/${job.id}/timeline`}
+          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Site timeline
+        </Link>
       </div>
 
       {/* Programme D — cash-first commercial strip (ledger-truthful). Links to

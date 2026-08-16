@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { formatDiaryDate } from "@/lib/site-diary/schema";
 import {
   summariseJobDiary,
@@ -13,11 +14,14 @@ import {
 import {
   composeSiteTimeline,
   type AttachmentEventRow,
+  type BlueprintRevisionEventRow,
+  type DelayEventRow,
   type DiaryEventRow,
   type InspectionEventRow,
   type JobDocumentEventRow,
   type PermitEventRow,
   type RamsEventRow,
+  type SiteReportEventRow,
   type SiteTimelineEvent,
   type SnagEventRow,
   type ToolboxEventRow,
@@ -90,7 +94,7 @@ async function pagedByJob<T>(
   jobId: string,
   pageSize?: number,
 ): Promise<T[]> {
-  const { data } = await fetchAllRows<Row>(
+  const { data, error } = await fetchAllRows<Row>(
     (from, to) =>
       db
         .from(table)
@@ -101,6 +105,11 @@ async function pagedByJob<T>(
         .range(from, to),
     pageSize,
   );
+  // LOUD: a rejected page must never masquerade as a short (complete) read — a
+  // partial timeline that asserts "nothing else happened" is the lie. Callers
+  // that want a best-effort panel wrap this in try/catch (loadJob*Panel /
+  // loadJobSiteTimeline); the strict route loader lets it propagate.
+  if (error) throw readFailure(`job-site-hub: ${table}`, error as SupabaseReadError);
   return data as unknown as T[];
 }
 
@@ -116,11 +125,12 @@ async function pagedByIds<T>(
   pageSize?: number,
 ): Promise<T[]> {
   if (ids.length === 0) return [];
-  const { data } = await fetchAllRows<Row>((from, to) => {
+  const { data, error } = await fetchAllRows<Row>((from, to) => {
     const base = db.from(table).select(cols).eq("org_id", orgId).in(column, ids);
     const scoped = extra ? base.in(extra.column, extra.values) : base;
     return scoped.order("id", { ascending: true }).range(from, to);
   }, pageSize);
+  if (error) throw readFailure(`job-site-hub: ${table}`, error as SupabaseReadError);
   return data as unknown as T[];
 }
 
@@ -192,14 +202,33 @@ export async function loadJobSnagsPanel(
 export type JobSiteSources = {
   diary: DiaryEventRow[];
   snags: SnagEventRow[];
+  delays: DelayEventRow[];
   toolbox: ToolboxEventRow[];
   rams: RamsEventRow[];
   permits: PermitEventRow[];
   inspections: InspectionEventRow[];
+  reports: SiteReportEventRow[];
+  drawings: BlueprintRevisionEventRow[];
   documents: JobDocumentEventRow[];
   attachments: AttachmentEventRow[];
   assetNames: Map<string, string>;
   attachmentContext: Map<string, string>;
+};
+
+/** One drawing (a `blueprints` row) as needed to enrich its revision events. */
+type BlueprintShellRow = {
+  id: string;
+  drawing_number: string;
+  title: string;
+  status: string | null;
+};
+/** One revision (`blueprint_versions`) before its parent drawing is joined in. */
+type BlueprintVersionRow = {
+  id: string;
+  blueprint_id: string;
+  revision: string;
+  revision_date: string | null;
+  uploaded_at: string;
 };
 
 /**
@@ -217,7 +246,8 @@ export async function gatherJobSiteSources(
   jobId: string,
   pageSize?: number,
 ): Promise<JobSiteSources> {
-  const [diary, snags, toolbox, rams, permits, documents, assignments] = await Promise.all([
+  const [diary, snags, delays, toolbox, rams, permits, reports, blueprints, documents, assignments] =
+    await Promise.all([
     pagedByJob<DiaryEventRow>(
       db,
       "site_diary_entries",
@@ -230,6 +260,15 @@ export async function gatherJobSiteSources(
       db,
       "snags",
       "id, title, status, priority, location, created_at, resolved_at",
+      orgId,
+      jobId,
+      pageSize,
+    ),
+    // Delay/EOT events carry `job_id NOT NULL` — a direct job-pinned read.
+    pagedByJob<DelayEventRow>(
+      db,
+      "delay_events",
+      "id, category, status, started_on, ended_on, working_days_lost, description",
       orgId,
       jobId,
       pageSize,
@@ -258,6 +297,28 @@ export async function gatherJobSiteSources(
       jobId,
       pageSize,
     ),
+    // Site reports carry `job_id` directly. F-1: `site_reports` is a policed
+    // high-value table — pagedByJob reads it via fetchAllRows/.range (never a
+    // bare/clamped select), so the completeness guard is satisfied.
+    pagedByJob<SiteReportEventRow>(
+      db,
+      "site_reports",
+      "id, title, report_number, status, revision, period_start, period_end, issued_at, created_at",
+      orgId,
+      jobId,
+      pageSize,
+    ),
+    // Drawings (blueprints) carry `job_id NOT NULL`. This wave reads only the
+    // drawing shells for the job; their revisions (blueprint_versions) are the
+    // indirect wave-2 read keyed by the blueprint_id set.
+    pagedByJob<BlueprintShellRow>(
+      db,
+      "blueprints",
+      "id, drawing_number, title, status",
+      orgId,
+      jobId,
+      pageSize,
+    ),
     // Private documents are excluded by job_documents' OWN RLS policy for a
     // non-admin viewer, so this needs no extra visibility filter: an admin sees
     // both areas, a staff member sees only 'staff'.
@@ -280,6 +341,7 @@ export async function gatherJobSiteSources(
   ]);
 
   const assetIds = [...new Set(assignments.map((a) => a.asset_id).filter(Boolean))];
+  const blueprintIds = [...new Set(blueprints.map((b) => b.id).filter(Boolean))];
   const attachmentTargets = [
     jobId,
     ...diary.map((d) => d.id),
@@ -287,7 +349,7 @@ export async function gatherJobSiteSources(
     ...toolbox.map((t) => t.id),
   ];
 
-  const [inspections, assets, attachments] = await Promise.all([
+  const [inspections, assets, attachments, versions] = await Promise.all([
     pagedByIds<InspectionEventRow>(
       db,
       "asset_inspections",
@@ -318,7 +380,38 @@ export async function gatherJobSiteSources(
       { column: "target_table", values: ["jobs", "site_diary_entries", "snags", "toolbox_talks"] },
       pageSize,
     ),
+    // Revisions of THIS job's drawings — indirect: blueprint_versions has no
+    // job_id, it reaches a job only through blueprints.blueprint_id (mirrors the
+    // asset_assignments → asset_inspections wave above).
+    pagedByIds<BlueprintVersionRow>(
+      db,
+      "blueprint_versions",
+      "id, blueprint_id, revision, revision_date, uploaded_at",
+      orgId,
+      "blueprint_id",
+      blueprintIds,
+      undefined,
+      pageSize,
+    ),
   ]);
+
+  // Join each revision to its parent drawing's identity (both already in hand).
+  const drawingMeta = new Map(blueprints.map((b) => [b.id, b]));
+  const drawings: BlueprintRevisionEventRow[] = [];
+  for (const v of versions) {
+    const drawing = drawingMeta.get(v.blueprint_id);
+    if (!drawing) continue;
+    drawings.push({
+      id: v.id,
+      blueprint_id: v.blueprint_id,
+      drawing_number: drawing.drawing_number,
+      drawing_title: drawing.title,
+      drawing_status: drawing.status,
+      revision: v.revision,
+      revision_date: v.revision_date,
+      uploaded_at: v.uploaded_at,
+    });
+  }
 
   // Human context for an uploaded file ("Diary 18 Jul 2026") — built from rows
   // already in hand, so it costs no extra query.
@@ -330,10 +423,13 @@ export async function gatherJobSiteSources(
   return {
     diary,
     snags,
+    delays,
     toolbox,
     rams,
     permits,
     inspections,
+    reports,
+    drawings,
     documents,
     attachments,
     assetNames: new Map(assets.map((a) => [a.id, a.name])),
@@ -369,4 +465,31 @@ export async function loadJobSiteTimeline(
     console.error("[job-site-hub] timeline failed", err);
     return { events: [], total: 0 };
   }
+}
+
+/**
+ * The dedicated `/jobs/[id]/timeline` view's loader — LOUD, not best-effort.
+ *
+ * On its own full page a rejected read must NOT render as an empty feed: an
+ * empty timeline there asserts "nothing happened on this site", which is a
+ * claim, not a fallback. So this deliberately does NOT try/catch — a read
+ * failure (thrown by the paged helpers) propagates to the route's error
+ * boundary. Unlike the job-page panel it returns the COMPLETE ordered feed by
+ * default (no display cap); pass `limit` only for a bounded preview.
+ */
+export async function loadJobSiteTimelineStrict(
+  orgId: string,
+  jobId: string,
+  options: { now?: Date; limit?: number } = {},
+): Promise<JobSiteTimeline> {
+  const now = options.now ?? new Date();
+  const supabase = await createClient();
+  const sources = await gatherJobSiteSources(supabase as unknown as SiteHubClient, orgId, jobId);
+  const events = composeSiteTimeline({ now, jobId, ...sources });
+  const limit = options.limit;
+  const shown =
+    typeof limit === "number" && limit >= 0 && events.length > limit
+      ? events.slice(0, limit)
+      : events;
+  return { events: shown, total: events.length };
 }
