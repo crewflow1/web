@@ -248,13 +248,17 @@ export async function requireOrgContext(): Promise<{
     redirect("/access-pending");
   }
 
-  // ── Enforceable per-org MFA (default OFF) ────────────────────────────────
-  // When the org has opted in (require_mfa) we gate its PRIVILEGED members
-  // (owner/admin) to an aal2 session. This is the single chokepoint every
-  // (app) surface funnels through, so it is the correct place to enforce (see
-  // the enforcement note in app/(app)/settings/security/actions.ts). The
-  // decision is pure + fail-closed (lib/auth/mfa-policy.ts): if we cannot
-  // positively confirm aal2 for a privileged member, we never let them in.
+  // ── Enforceable per-org MFA (BUILT, default OFF) ─────────────────────────
+  // DOUBLY gated: enforcement engages only when BOTH the deployment build gate
+  // (FEATURE_MFA_ENFORCEMENT) AND the org's opt-in flag (require_mfa) are on —
+  // otherwise enforceMfaPolicy returns immediately and this path is inert (no
+  // AAL read, no aal2 requirement). When both are on we gate the org's
+  // PRIVILEGED members (owner/admin) to an aal2 session. This is the single
+  // chokepoint every (app) surface funnels through, so it is the correct place
+  // to enforce (see the enforcement note in
+  // app/(app)/settings/security/actions.ts). The decision is pure + fail-closed
+  // (lib/auth/mfa-policy.ts): if we cannot positively confirm aal2 for a
+  // privileged member, we never let them in.
   //
   // Super-admins are exempt: they are bounced to /admin above unless actively
   // impersonating, and forcing a TENANT org's MFA policy onto HQ staff (who
