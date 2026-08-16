@@ -336,12 +336,17 @@ describe("api_v1 rate limit — configuration + the reviewed fail-open trade", (
     expect(DEFAULT_LIMITS.api_v1).toEqual({ limit: 120, windowSeconds: 60 });
   });
 
-  it("the fail-open inheritance is DOCUMENTED at the config site (removing the flag is a red test)", () => {
-    expect(rawSource).toMatch(/DELIBERATE, REVIEWED v1 CHOICE — THE LIMITER FAILS OPEN/);
-    expect(rawSource).toMatch(/must revisit it EXPLICITLY/);
+  it("the two failure postures are DOCUMENTED at the config site (READS fail open, WRITES fail closed)", () => {
+    // The read-only substrate's fail-open trade is retained AND flagged; the
+    // write surface's fail-closed trade is now the explicit "future write-capable
+    // API surface must revisit it" clause, honoured. Both live at the config site
+    // so silently flipping either is a red test.
+    expect(rawSource).toMatch(/READS fail OPEN/);
+    expect(rawSource).toMatch(/WRITES fail CLOSED/);
+    expect(rawSource).toMatch(/enforceIdentifiedStrict/);
   });
 
-  it("and it is TRUE: with the api_v1 config, an internal limiter fault allows the request", async () => {
+  it("and READS are TRUE to it: with the api_v1 config, an internal limiter fault allows the request", async () => {
     const { check, DEFAULT_LIMITS, _resetForTests } = await import("@/lib/security/rate-limit");
     _resetForTests();
     const err = vi.spyOn(console, "error").mockImplementation(() => {});

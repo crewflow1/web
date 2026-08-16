@@ -1,4 +1,5 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { type NextRequest } from "next/server";
+import * as respond from "@/lib/api/respond";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { updateInvoiceSchema } from "@/lib/invoices/schema";
@@ -29,14 +30,11 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return respond.error(400, "Invalid JSON body");
   }
   const parsed = updateInvoiceSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", issues: parsed.error.flatten() },
-      { status: 400 },
-    );
+    return respond.error(400, "Invalid input", { extra: { issues: parsed.error.flatten() } });
   }
 
   const patch: InvoiceUpdate = {};
@@ -51,7 +49,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   if (parsed.data.job_id !== undefined) patch.job_id = parsed.data.job_id;
 
   if (Object.keys(patch).length === 0) {
-    return NextResponse.json({ error: "No fields to update" }, { status: 400 });
+    return respond.error(400, "No fields to update");
   }
 
   const supabase = await createClient();
@@ -66,7 +64,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   if (patch.job_id != null) {
     const ref = await verifyJobInOrg(supabase, patch.job_id, ctx.org.id);
     if (!ref.ok) {
-      return NextResponse.json({ error: ref.message }, { status: 400 });
+      return respond.error(400, ref.message);
     }
   }
 
@@ -84,12 +82,12 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
 
   if (error) {
     console.error("[invoices] update failed", error);
-    return NextResponse.json({ error: "Failed to update" }, { status: 500 });
+    return respond.error(500, "Failed to update");
   }
   if (count === 0) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return respond.error(404, "Not found");
   }
-  return NextResponse.json({ ok: true });
+  return respond.json({ ok: true });
 }
 
 export async function DELETE(_request: NextRequest, { params }: Ctx) {
@@ -107,13 +105,10 @@ export async function DELETE(_request: NextRequest, { params }: Ctx) {
 
   if (error) {
     console.error("[invoices] delete failed", error);
-    return NextResponse.json({ error: "Failed to delete" }, { status: 500 });
+    return respond.error(500, "Failed to delete");
   }
   if (count === 0) {
-    return NextResponse.json(
-      { error: "Not found or not allowed" },
-      { status: 404 },
-    );
+    return respond.error(404, "Not found or not allowed");
   }
-  return NextResponse.json({ ok: true });
+  return respond.json({ ok: true });
 }

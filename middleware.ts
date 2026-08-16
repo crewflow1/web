@@ -1,14 +1,25 @@
 import { type NextRequest } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { updateSession } from "@/lib/supabase/middleware";
 import {
   isMaintenanceMode,
   isMaintenanceBypassed,
   maintenanceResponse,
 } from "@/lib/maintenance";
+import { REQUEST_ID_HEADER, resolveRequestId } from "@/lib/api/request-id";
 
 /**
- * Top-level middleware — delegates to the Supabase session helper.
+ * Top-level middleware — request correlation + delegates to the Supabase
+ * session helper.
  *
+ * Block 0: REQUEST-ID. Mint (or reuse a well-formed inbound) `x-request-id`
+ *   once per request. It is (a) forwarded onto the request so route handlers /
+ *   server code echo it via lib/api/respond.ts, (b) emitted on the response so
+ *   clients + logs can correlate, and (c) attached to the Sentry scope so an
+ *   error report carries the same id the user/CLI saw. Sentry is dark-safe: the
+ *   tag call is a cheap no-op when the SDK isn't initialised (no DSN), so this
+ *   never adds cost or leaks when monitoring is off. The id is a random UUID
+ *   (or a validated opaque inbound token) — never PII — so it is safe to log.
  * Block 1: maintenance-window gate (DB-free) — during a controlled cutover,
  *   customer/app routes return a retry-safe 503 BEFORE any session/DB work, so
  *   it is safe to serve even while the schema is mid-migration. Operators and
@@ -18,11 +29,22 @@ import {
  * Block 2: session refresh + auth redirects.
  */
 export async function middleware(request: NextRequest) {
+  const requestId = resolveRequestId(request.headers.get(REQUEST_ID_HEADER));
+
+  // Best-effort correlation tag. No-op unless Sentry is initialised (dark-safe).
+  try {
+    Sentry.getCurrentScope().setTag("request_id", requestId);
+  } catch {
+    // Never let monitoring wiring break a request.
+  }
+
   if (isMaintenanceMode() && !isMaintenanceBypassed(request)) {
     const wantsHtml = (request.headers.get("accept") ?? "").includes("text/html");
-    return maintenanceResponse(wantsHtml ? "html" : "json");
+    const res = maintenanceResponse(wantsHtml ? "html" : "json");
+    res.headers.set(REQUEST_ID_HEADER, requestId);
+    return res;
   }
-  return await updateSession(request);
+  return await updateSession(request, requestId);
 }
 
 export const config = {

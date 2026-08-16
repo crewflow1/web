@@ -1,4 +1,5 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { type NextRequest } from "next/server";
+import * as respond from "@/lib/api/respond";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 
@@ -61,13 +62,10 @@ export async function GET(request: NextRequest) {
     const { data, error, count } = await q;
     if (error) {
       console.error("[activity] list failed", error);
-      return NextResponse.json(
-        { ok: false, error: "Failed to load activity" },
-        { status: 500 },
-      );
+      return respond.error(500, "Failed to load activity");
     }
     const total = count ?? 0;
-    return NextResponse.json({
+    return respond.json({
       ok: true,
       data: data ?? [],
       page,
@@ -77,9 +75,6 @@ export async function GET(request: NextRequest) {
     });
   } catch (e) {
     console.error("[activity] unhandled", e);
-    return NextResponse.json(
-      { ok: false, error: "Activity feed temporarily unavailable" },
-      { status: 500 },
-    );
+    return respond.error(500, "Activity feed temporarily unavailable");
   }
 }

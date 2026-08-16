@@ -2,8 +2,21 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { resolveApiKey, type ResolvedApiKey } from "@/lib/api-auth/resolve";
 import { hasScope, type Scope } from "@/lib/api-auth/scopes";
-import { DEFAULT_LIMITS, enforceIdentified } from "@/lib/security/rate-limit";
+import {
+  DEFAULT_LIMITS,
+  enforceIdentified,
+  enforceIdentifiedStrict,
+} from "@/lib/security/rate-limit";
 import { isPublicApiJobsEnabled } from "@/lib/public-api/flag";
+import { logApiRequest } from "@/lib/public-api/audit";
+
+/** The status stamped on the per-request audit row for an admitted request. */
+const ADMITTED_STATUS = 200;
+
+/** A write scope is the fail-CLOSED, mutating half of the surface. */
+function isWriteScope(scope: Scope): boolean {
+  return scope.startsWith("write:");
+}
 
 /**
  * The shared front door for EVERY /api/v1 tenant-data handler (Train K → the
@@ -21,7 +34,13 @@ import { isPublicApiJobsEnabled } from "@/lib/public-api/flag";
  *      key that was not granted THIS capability is authenticated but forbidden,
  *      so a `read:jobs`-only key cannot read invoices.
  *   4. RATE LIMIT — keyed by the KEY ID (never IP), the api_v1 budget shared
- *      across every v1 route ⇒ 429 over budget.
+ *      across every v1 route ⇒ 429 over budget. READS metre fail-open; WRITES
+ *      (a `write:*` scope) metre fail-CLOSED — a limiter fault refuses the
+ *      mutation rather than admitting it (see DEFAULT_LIMITS.api_v1).
+ *   5. AUDIT — once admitted, one metadata-only row is written to
+ *      api_request_log (method, route pathname, status). Best-effort; never
+ *      breaks the admitted request. Denials (1–4) write nothing (see
+ *      lib/public-api/audit.ts).
  *
  * Returns the resolved key on success, or a Response to return immediately.
  */
@@ -76,13 +95,15 @@ export async function guardPublicApiRequest(
   }
 
   // 4. Rate limit — AFTER resolution, keyed by the key id (see DEFAULT_LIMITS
-  //    .api_v1). The 401/403 paths above stay un-metered but are cheap.
-  const limited = await enforceIdentified(
-    "api_v1",
-    key.keyId,
-    DEFAULT_LIMITS.api_v1,
-  );
+  //    .api_v1). The 401/403 paths above stay un-metered but are cheap. WRITES
+  //    metre fail-CLOSED (a store fault refuses the mutation); reads fail-open.
+  const limited = isWriteScope(requiredScope)
+    ? await enforceIdentifiedStrict("api_v1", key.keyId, DEFAULT_LIMITS.api_v1)
+    : await enforceIdentified("api_v1", key.keyId, DEFAULT_LIMITS.api_v1);
   if (limited) return { ok: false, response: limited };
+
+  // 5. Audit — the request is admitted; record it (metadata only, best-effort).
+  await logApiRequest(key, request, ADMITTED_STATUS);
 
   return { ok: true, key };
 }
@@ -103,13 +124,17 @@ export async function guardPublicJobsRequest(
   }
 
   // 4. Rate limit — AFTER resolution, keyed by the key id (see DEFAULT_LIMITS
-  //    .api_v1). The 401/403 paths above stay un-metered but are cheap.
+  //    .api_v1). The 401/403 paths above stay un-metered but are cheap. Jobs is
+  //    a READ surface, so it metres fail-open like every other read.
   const limited = await enforceIdentified(
     "api_v1",
     key.keyId,
     DEFAULT_LIMITS.api_v1,
   );
   if (limited) return { ok: false, response: limited };
+
+  // 5. Audit — the request is admitted; record it (metadata only, best-effort).
+  await logApiRequest(key, request, ADMITTED_STATUS);
 
   return { ok: true, key };
 }

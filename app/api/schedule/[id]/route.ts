@@ -1,4 +1,5 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { type NextRequest } from "next/server";
+import * as respond from "@/lib/api/respond";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
@@ -51,24 +52,18 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
   // Reject virtual recurring-occurrence ids — those carry ":<date>" and
   // aren't editable directly. The UI handles them by editing the parent.
   if (id.includes(":")) {
-    return NextResponse.json(
-      { error: "Recurring occurrences aren't editable. Edit the parent job at /jobs/[id]." },
-      { status: 422 },
-    );
+    return respond.error(422, "Recurring occurrences aren't editable. Edit the parent job at /jobs/[id].");
   }
 
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return respond.error(400, "Invalid JSON body");
   }
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", issues: parsed.error.flatten() },
-      { status: 400 },
-    );
+    return respond.error(400, "Invalid input", { extra: { issues: parsed.error.flatten() } });
   }
 
   const patch: JobUpdate = {};
@@ -89,7 +84,7 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
   if (parsed.data.assigned_to) {
     const check = await verifyAssigneeInOrg(supabase, parsed.data.assigned_to, ctx.org.id);
     if (!check.ok) {
-      return NextResponse.json({ error: check.message }, { status: 400 });
+      return respond.error(400, check.message);
     }
   }
 
@@ -104,13 +99,10 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
 
   if (error) {
     console.error("[schedule] update failed", error);
-    return NextResponse.json({ error: "Failed to update" }, { status: 500 });
+    return respond.error(500, "Failed to update");
   }
   if (count === 0) {
-    return NextResponse.json(
-      { error: "Only admins/owners can reschedule or reassign jobs" },
-      { status: 403 },
-    );
+    return respond.error(403, "Only admins/owners can reschedule or reassign jobs");
   }
 
   // Keep the external calendar event in sync, mirroring updateJob. A grid-drag
@@ -127,5 +119,5 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
     }
   }
 
-  return NextResponse.json({ ok: true });
+  return respond.json({ ok: true });
 }

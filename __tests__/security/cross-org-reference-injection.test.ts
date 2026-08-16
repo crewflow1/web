@@ -284,7 +284,9 @@ describe("cross-org reference injection · FINANCES + INVOICES app-layer write r
         /if \(!ref\.ok\)/.test(src),
         `${file} must branch on the check result`,
       ).toBe(true);
-      expect(src).toMatch(/status: 400/);
+      // The rejection is a clean 400 — either the raw NextResponse form or the
+      // unified responder (respond.error(400, ref.message)).
+      expect(src).toMatch(/status: 400|respond\.error\(400,/);
     });
   }
 });

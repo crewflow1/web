@@ -1,4 +1,5 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { type NextRequest } from "next/server";
+import * as respond from "@/lib/api/respond";
 import { createClient } from "@/lib/supabase/server";
 import type { SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
@@ -130,7 +131,7 @@ export async function GET(req: NextRequest) {
 
   const q = (req.nextUrl.searchParams.get("q") ?? "").trim();
   if (q.length < 2) {
-    return NextResponse.json({ hits: [] satisfies Hit[] });
+    return respond.json({ hits: [] satisfies Hit[] });
   }
   // Neutralise control + PostgREST structural/wildcard chars (% _ , ( ) *)
   // before building any filter — a crafted term like `x,email.ilike.*` would
@@ -139,7 +140,7 @@ export async function GET(req: NextRequest) {
   // path via lib/search (sanitizeSearchTerm + the filter builders).
   const safe = sanitizeSearchTerm(q);
   if (safe.length === 0) {
-    return NextResponse.json({ hits: [] satisfies Hit[] });
+    return respond.json({ hits: [] satisfies Hit[] });
   }
   const like = `%${safe}%`;
 
@@ -155,7 +156,7 @@ export async function GET(req: NextRequest) {
   );
   if (!custOr) {
     // safe.length > 0 guarantees a non-null filter; this only narrows the type.
-    return NextResponse.json({ hits: [] satisfies Hit[] });
+    return respond.json({ hits: [] satisfies Hit[] });
   }
 
   // risk_assessments + permits_to_work post-date the generated types → loose cast.
@@ -208,7 +209,7 @@ export async function GET(req: NextRequest) {
     customersRes.error ?? membershipsRes.error ?? ramsRes.error ?? permitsRes.error;
   if (wave1Error) {
     console.error("[search] wave 1 read failed", wave1Error);
-    return NextResponse.json({ error: "query_failed" }, { status: 500 });
+    return respond.error(500, "query_failed");
   }
 
   const customers = customersRes.data ?? [];
@@ -233,7 +234,7 @@ export async function GET(req: NextRequest) {
   const leadOr = combineOr(ilikeOrFilter(q, LEAD_SEARCH_COLUMNS), custIdBranch);
   if (!jobOr || !quoteOr || !leadOr) {
     // Own-column branches are always present for a 2+ char term; narrows types.
-    return NextResponse.json({ hits });
+    return respond.json({ hits });
   }
 
   const [jobsRes, quotesRes, leadsRes] = await Promise.all([
@@ -263,7 +264,7 @@ export async function GET(req: NextRequest) {
   const wave2Error = jobsRes.error ?? quotesRes.error ?? leadsRes.error;
   if (wave2Error) {
     console.error("[search] wave 2 read failed", wave2Error);
-    return NextResponse.json({ error: "query_failed" }, { status: 500 });
+    return respond.error(500, "query_failed");
   }
 
   const jobs = jobsRes.data ?? [];
@@ -382,7 +383,7 @@ export async function GET(req: NextRequest) {
     siteReportsRes.error;
   if (wave3Error) {
     console.error("[search] wave 3 read failed", wave3Error);
-    return NextResponse.json({ error: "query_failed" }, { status: 500 });
+    return respond.error(500, "query_failed");
   }
 
   for (const inv of invoicesRes.data ?? []) {
@@ -469,5 +470,5 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  return NextResponse.json({ hits });
+  return respond.json({ hits });
 }

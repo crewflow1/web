@@ -62,20 +62,28 @@ export const DEFAULT_LIMITS = {
    *  and state-change spam while allowing a customer's normal retries. */
   quote_action: { limit: 20, windowSeconds: 600 } as RateLimitConfig,
   /**
-   * Public API v1 (Bearer api-key routes, Train 9) — identifier is the KEY ID,
-   * not the IP, so one tenant's integration cannot starve another's behind a
-   * shared NAT, and one key cannot dodge its budget by rotating IPs.
+   * Public API v1 (Bearer api-key routes) — identifier is the KEY ID, not the
+   * IP, so one tenant's integration cannot starve another's behind a shared
+   * NAT, and one key cannot dodge its budget by rotating IPs. 120 req/min per
+   * key, shared across every v1 route (read and write).
    *
-   * DELIBERATE, REVIEWED v1 CHOICE — THE LIMITER FAILS OPEN. This module's
-   * design (see the header) is that a fault in the limiter can never take a
-   * route down: `check`/`checkPersistent` both return `allowed: true` on any
-   * internal error. api_v1 INHERITS that: a broken limiter means an
-   * over-budget key gets through, never that a paying integration goes dark.
-   * That trade is correct for a 120 req/min read substrate with zero product
-   * endpoints; a future write-capable API surface must revisit it EXPLICITLY
-   * (fail-closed or a durable dedicated store) rather than inherit this
-   * comment. Pinned by __tests__/security/api-keys.test.ts so the choice
-   * stays flagged, not silent.
+   * TWO FAILURE POSTURES, BY DELIBERATE, REVIEWED DESIGN — pinned by
+   * __tests__/security/api-keys.test.ts so the trade stays flagged, not silent:
+   *
+   *   READS fail OPEN. A fault in the limiter can never take a read route down:
+   *   {@link enforceIdentified} calls {@link consume} without failClosed, so an
+   *   internal error returns `allowed: true`. A broken limiter means an
+   *   over-budget key briefly gets through — never that a paying integration
+   *   goes dark reading its own data.
+   *
+   *   WRITES fail CLOSED. The write API (POST/PATCH) mutates tenant data, so an
+   *   unmetered flood is worse than a refusal: {@link enforceIdentifiedStrict}
+   *   calls {@link consume} with `failClosed`, so if the DURABLE limiter cannot
+   *   be consulted the request is REFUSED (429), not admitted. This is the
+   *   "future write-capable API surface must revisit it EXPLICITLY" clause the
+   *   read-only substrate reserved — now honoured. The durable path is fair
+   *   across cold starts (Postgres rate_limit_counters via `rate_limit_hit`);
+   *   the in-memory path is used only in dev/test where there is no DB.
    */
   api_v1: { limit: 120, windowSeconds: 60 } as RateLimitConfig,
 } as const;
@@ -211,15 +219,26 @@ function persistentStoreEnabled(): boolean {
 }
 
 /**
+ * How a durable check behaves when the store cannot be consulted.
+ *   failClosed:false (default) — a DB blip ALLOWS the request (fail open). The
+ *     right trade for reads/auth: a limiter fault must never black out a route.
+ *   failClosed:true — a DB blip REFUSES the request (fail closed). The right
+ *     trade for the write API: an unmetered mutation flood is worse than a 429.
+ */
+export type RateLimitOptions = { failClosed?: boolean };
+
+/**
  * Durable check-and-record against the shared Postgres counter via the
- * `rate_limit_hit` RPC (service-role admin client). ALWAYS fails open: if the
- * RPC errors (DB blip, misconfig) the request is allowed, so a fault in the
- * limiter can never take down auth/login. Exported for direct testing.
+ * `rate_limit_hit` RPC (service-role admin client). On an RPC error (DB blip,
+ * misconfig) the outcome depends on {@link RateLimitOptions.failClosed}: open
+ * by default (request allowed), or closed for write surfaces (request refused).
+ * Exported for direct testing.
  */
 export async function checkPersistent(
   route: string,
   identifier: string,
   cfg: RateLimitConfig,
+  opts?: RateLimitOptions,
 ): Promise<RateLimitResult> {
   const now = Math.floor(Date.now() / 1000);
   try {
@@ -239,6 +258,15 @@ export async function checkPersistent(
       reset_at_epoch_sec: Math.floor(new Date(row.reset_at).getTime() / 1000),
     };
   } catch (e) {
+    if (opts?.failClosed) {
+      // Fail CLOSED — refuse rather than admit an unmetered write.
+      console.error("[rate-limit] persistent check failed — failing CLOSED", e);
+      return {
+        allowed: false,
+        remaining: 0,
+        reset_at_epoch_sec: now + cfg.windowSeconds,
+      };
+    }
     console.error("[rate-limit] persistent check failed — failing open", e);
     return {
       allowed: true,
@@ -258,10 +286,13 @@ export async function consume(
   route: string,
   identifier: string,
   cfg: RateLimitConfig,
+  opts?: RateLimitOptions,
 ): Promise<RateLimitResult> {
   if (persistentStoreEnabled()) {
-    return checkPersistent(route, identifier, cfg);
+    return checkPersistent(route, identifier, cfg, opts);
   }
+  // In-memory path (dev/test): no external store to fail, so failClosed has no
+  // effect here — the counter is always consultable in-process.
   return check(route, identifier, cfg);
 }
 
@@ -291,6 +322,24 @@ export async function enforceIdentified(
   cfg: RateLimitConfig,
 ): Promise<Response | null> {
   const result = await consume(route, identifier, cfg);
+  if (result.allowed) return null;
+  return rateLimitedResponse(result);
+}
+
+/**
+ * Fail-CLOSED sibling of {@link enforceIdentified} for MUTATING surfaces — the
+ * public API v1 WRITE routes. Identical durable, key-id-keyed metering, but if
+ * the durable store cannot be consulted the request is REFUSED (429) rather
+ * than admitted, so a limiter fault can never wave through an unmetered write
+ * flood (see DEFAULT_LIMITS.api_v1). Returns a 429 Response when limited or on
+ * a store fault, else null.
+ */
+export async function enforceIdentifiedStrict(
+  route: string,
+  identifier: string,
+  cfg: RateLimitConfig,
+): Promise<Response | null> {
+  const result = await consume(route, identifier, cfg, { failClosed: true });
   if (result.allowed) return null;
   return rateLimitedResponse(result);
 }
