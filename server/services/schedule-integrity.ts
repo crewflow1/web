@@ -2,7 +2,12 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { readFailure } from "@/lib/supabase/read-failure";
-import { generateRota, type RotaPlan } from "@/lib/schedule/solver";
+import {
+  generateRota,
+  type MemberQualification,
+  type RotaPlan,
+} from "@/lib/schedule/solver";
+import { qualificationExpiryStatus } from "@/lib/staff/qualifications";
 import {
   detectScheduleConflicts,
   summariseScheduleConflicts,
@@ -636,6 +641,65 @@ async function readJobDistricts(
   return out;
 }
 
+/**
+ * job_id → required qualification TYPES for the window, for the scheduler's
+ * skill-match term. A LOUD read (a failed lookup throws rather than silently
+ * dropping every requirement, which would read as "no job needs skills" and
+ * quietly disable the match). Org-pinned on top of RLS, windowed on
+ * scheduled_date, ordered by the unique id. A job with an empty array is simply
+ * absent from the map (no requirement), never guessed.
+ */
+async function readJobRequiredQualifications(
+  db: ScheduleClient,
+  orgId: string,
+  window: ScheduleWindow,
+): Promise<Map<string, readonly string[]>> {
+  const out = new Map<string, readonly string[]>();
+  const rows = await pagedRows<{ id: string; required_qualifications: string[] | null }>(
+    db,
+    "jobs",
+    "id, required_qualifications",
+    orgId,
+    (b) => b.gte("scheduled_date", window.fromDay).lte("scheduled_date", window.toDay),
+  );
+  for (const r of rows) {
+    const reqs = (r.required_qualifications ?? []).filter(
+      (t): t is string => typeof t === "string" && t.trim() !== "",
+    );
+    if (reqs.length > 0) out.set(r.id, reqs);
+  }
+  return out;
+}
+
+/**
+ * user_id → the qualifications each member CURRENTLY holds (non-expired as of
+ * `todayIso`), for the scheduler's skill-match term. A LOUD read: a failure
+ * throws rather than silently crediting nobody. Org-pinned on top of RLS,
+ * ordered by the unique id. Expired qualifications are filtered out here — the
+ * solver is handed only live tickets, so it can never prefer a lapsed one.
+ */
+async function readMemberQualifications(
+  db: ScheduleClient,
+  orgId: string,
+  todayIso: string,
+): Promise<Map<string, readonly MemberQualification[]>> {
+  const rows = await pagedRows<{
+    id: string;
+    user_id: string;
+    qualification_type: string;
+    expires_on: string | null;
+  }>(db, "staff_qualifications", "id, user_id, qualification_type, expires_on", orgId, (b) => b);
+
+  const out = new Map<string, MemberQualification[]>();
+  for (const r of rows) {
+    if (qualificationExpiryStatus(r.expires_on, todayIso) === "expired") continue;
+    const list = out.get(r.user_id) ?? [];
+    list.push({ id: r.id, qualificationType: r.qualification_type });
+    out.set(r.user_id, list);
+  }
+  return out;
+}
+
 export interface RotaPlanReport {
   window: ScheduleWindow;
   plan: RotaPlan;
@@ -669,9 +733,20 @@ export async function buildRotaPlan(
   const client = supabase as unknown as ScheduleClient;
 
   const facts = await gatherScheduleFacts(client, orgId, window);
-  const jobDistricts = await readJobDistricts(client, orgId, window);
+  const [jobDistricts, jobRequiredQualifications, memberQualifications] = await Promise.all([
+    readJobDistricts(client, orgId, window),
+    readJobRequiredQualifications(client, orgId, window),
+    // Non-expired as of the window's first day (today), so a lapsed ticket is
+    // never credited to a member in the plan.
+    readMemberQualifications(client, orgId, window.fromDay),
+  ]);
 
-  const plan = generateRota({ ...facts, jobDistricts });
+  const plan = generateRota({
+    ...facts,
+    jobDistricts,
+    jobRequiredQualifications,
+    memberQualifications,
+  });
   return { window, plan, generatedAt };
 }
 

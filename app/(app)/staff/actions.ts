@@ -28,6 +28,7 @@ import {
 } from "@/lib/staff/schema";
 import { upsertHolidayEntitlement } from "@/server/services/holiday-balance";
 import { upsertPensionEnrolment } from "@/server/services/pension-enrolment";
+import { staffQualificationFormSchema } from "@/lib/staff/qualifications";
 import {
   type FormState,
   formError,
@@ -764,4 +765,83 @@ export async function upsertPensionEnrolmentAction(
 
 function round4(n: number): number {
   return Math.round((n + Number.EPSILON) * 10000) / 10000;
+}
+
+// -------------------------------------------------------------------------
+// Staff qualifications / certifications (admin-only writes)
+// -------------------------------------------------------------------------
+
+/**
+ * Record a qualification / certification against a member. Admin-only (RLS
+ * `is_org_admin` is the real gate; this re-check gives a clean error). The
+ * org_id is pinned to the ACTIVE org and the composite FK to memberships
+ * refuses a user_id that is not a member of that org.
+ */
+export async function addStaffQualification(
+  userId: string,
+  _prevState: FormState<Record<string, unknown>>,
+  formData: FormData,
+): Promise<FormState<Record<string, unknown>>> {
+  const { user, ctx } = await requireOrgContext();
+  requireAdmin(ctx);
+  if (!uuid.safeParse(userId).success) return formError("Invalid staff id.");
+
+  const result = validateFormData(formData, staffQualificationFormSchema);
+  if (!result.ok) return result.state as FormState<Record<string, unknown>>;
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("staff_qualifications").insert({
+    org_id: ctx.org.id,
+    user_id: userId,
+    qualification_type: result.data.qualification_type,
+    title: result.data.title,
+    reference_no: result.data.reference_no,
+    issued_on: result.data.issued_on,
+    expires_on: result.data.expires_on,
+    notes: result.data.notes,
+    created_by: user.id,
+  });
+  if (error) {
+    console.error("[staff] add qualification failed", error);
+    return formError(
+      "Couldn't save qualification. Try again.",
+      result.data as Record<string, unknown>,
+    );
+  }
+
+  revalidatePath(`/staff/${userId}`);
+  return formSuccess({ successMessage: "Qualification added." });
+}
+
+/**
+ * Delete a qualification. Admin-only, org-pinned. Bound as
+ * `deleteStaffQualification.bind(null, userId)`; the qualification id arrives in
+ * the form body.
+ */
+export async function deleteStaffQualification(
+  userId: string,
+  formData: FormData,
+): Promise<void> {
+  const { ctx } = await requireOrgContext();
+  requireAdmin(ctx);
+  if (!uuid.safeParse(userId).success) redirect("/staff");
+
+  const qualId = String(formData.get("qualification_id") ?? "");
+  if (!uuid.safeParse(qualId).success) {
+    redirect(`/staff/${userId}?error=invalid_qualification`);
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("staff_qualifications")
+    .delete()
+    .eq("id", qualId)
+    .eq("org_id", ctx.org.id);
+  if (error) {
+    console.error("[staff] delete qualification failed", error);
+    redirect(`/staff/${userId}?error=qualification_delete_failed`);
+  }
+
+  revalidatePath(`/staff/${userId}`);
+  redirect(`/staff/${userId}?saved=1`);
 }
