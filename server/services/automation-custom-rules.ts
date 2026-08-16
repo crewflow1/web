@@ -4,6 +4,7 @@ import {
   validateCustomRuleDefinition,
   type CustomRuleDefinition,
 } from "@/lib/automation/custom-rules";
+import { isExposableAutomationTrigger } from "@/lib/automation/events";
 import { runApprovedDownstream } from "@/server/services/automation-dispatcher";
 
 /**
@@ -146,6 +147,14 @@ export async function createCustomRule(
   if (name.length === 0) throw new Error("rule name is required");
   const valid = validateCustomRuleDefinition(input.definition);
   if (!valid.ok) throw new Error(`invalid rule: ${valid.error}`);
+  // The trigger must be a verb a real producer actually fires — otherwise the
+  // rule is a phantom that can never run. The builder only offers exposable
+  // verbs; this is the server-side chokepoint that rejects a crafted payload.
+  if (!isExposableAutomationTrigger(valid.value.trigger)) {
+    throw new Error(
+      `invalid rule: trigger "${valid.value.trigger}" is not available for custom rules`,
+    );
+  }
 
   const res = await client
     .from("automation_custom_rules")
@@ -181,6 +190,11 @@ export async function updateCustomRule(
   if (name.length === 0) throw new Error("rule name is required");
   const valid = validateCustomRuleDefinition(input.definition);
   if (!valid.ok) throw new Error(`invalid rule: ${valid.error}`);
+  if (!isExposableAutomationTrigger(valid.value.trigger)) {
+    throw new Error(
+      `invalid rule: trigger "${valid.value.trigger}" is not available for custom rules`,
+    );
+  }
 
   const res = await client
     .from("automation_custom_rules")

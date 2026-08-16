@@ -430,6 +430,21 @@ export async function sendQuote(id: string) {
     console.error("[quotes] send failed", error);
     redirect(`/quotes/${id}?error=send_failed`);
   }
+
+  // Dispatch `quote.sent` so the automation OS can run custom rules on it
+  // (e.g. "when a quote is sent, remind me to follow up"). sendQuote is the sole
+  // path that transitions a quote to 'sent', so coverage is complete. Idempotent
+  // via (rule_id, correlation_id); org-pinned; best-effort — never derails send.
+  await dispatchAutomation({
+    type: "quote.sent",
+    org_id: ctx.org.id,
+    source_table: "quotes",
+    source_id: id,
+    payload: { sent_at: new Date().toISOString() },
+  }).catch((e) => {
+    console.error("[quotes] quote.sent automation dispatch failed", e);
+  });
+
   revalidatePath(`/quotes/${id}`);
   redirect(`/quotes/${id}?saved=sent`);
 }
@@ -958,6 +973,19 @@ export async function declineQuoteAsOwner(id: string) {
     console.error("[quotes] decline failed", error);
     redirect(`/quotes/${id}?error=decline_failed`);
   }
+
+  // Dispatch `quote.declined` for the automation OS (operator decline path).
+  // Idempotent via (rule_id, correlation_id); org-pinned; best-effort.
+  await dispatchAutomation({
+    type: "quote.declined",
+    org_id: ctx.org.id,
+    source_table: "quotes",
+    source_id: id,
+    payload: { declined_at: new Date().toISOString(), via: "operator" },
+  }).catch((e) => {
+    console.error("[quotes] quote.declined automation dispatch failed", e);
+  });
+
   revalidatePath(`/quotes/${id}`);
   redirect(`/quotes/${id}?saved=declined`);
 }
@@ -1176,7 +1204,7 @@ export async function declineQuoteByToken(
 
   const { data: quote, error: quoteError } = await admin
     .from("quotes")
-    .select("id, status, notes")
+    .select("id, org_id, status, notes")
     .eq("public_token", token)
     .maybeSingle();
   // Public surface — report the failure and return a retryable error distinct
@@ -1207,6 +1235,22 @@ export async function declineQuoteByToken(
     console.error("[quotes] public decline failed", error);
     return { ok: false, error: "Couldn't record decline" };
   }
+
+  // Dispatch `quote.declined` for the automation OS (public portal decline path).
+  // Org-pinned to the quote's OWN org (resolved above), so a token decline can
+  // only ever fire rules inside that tenant. Idempotent via correlation
+  // quote.declined:quotes:<id> — at-most-once even if the operator path also
+  // dispatches it. Best-effort so a dispatch failure never derails the decline.
+  await dispatchAutomation({
+    type: "quote.declined",
+    org_id: quote.org_id,
+    source_table: "quotes",
+    source_id: quote.id,
+    payload: { declined_at: now, via: "public_portal" },
+  }).catch((e) => {
+    console.error("[quotes] public quote.declined automation dispatch failed", e);
+  });
+
   return { ok: true, quoteId: quote.id };
 }
 
