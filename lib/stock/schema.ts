@@ -17,6 +17,8 @@ import { z } from "zod";
 export const STOCK_ITEM_NAME_MAX = 200;
 export const STOCK_UNIT_MAX = 24;
 export const STOCK_SKU_MAX = 64;
+/** Manufacturer/EAN/UPC scannable code — its own identifier, not the sku. */
+export const STOCK_BARCODE_MAX = 64;
 
 /**
  * Units a UK builder actually says, offered as a datalist rather than a select.
@@ -89,6 +91,10 @@ export const stockItemFormSchema = z
       .max(STOCK_ITEM_NAME_MAX, `Keep the name under ${STOCK_ITEM_NAME_MAX} characters`),
     description: optionalText(2000),
     sku: optionalText(STOCK_SKU_MAX),
+    // The scannable code on the product. Distinct from `sku` (the company's own
+    // code); scan-to-find matches either. Mirrors stock_items.barcode
+    // (20261144000000): nullable, bounded, unique per org where present.
+    barcode: optionalText(STOCK_BARCODE_MAX),
     unit: z
       .string()
       .trim()
@@ -204,6 +210,9 @@ export function friendlyStockError(
   if (code === "23505" || /duplicate key/i.test(m)) {
     if (/stock_items_org_sku_unique/.test(m)) {
       return "You already have an item with that code. Codes are matched ignoring capitals.";
+    }
+    if (/stock_items_org_barcode_unique/.test(m)) {
+      return "You already have an item with that barcode. Barcodes are matched ignoring capitals.";
     }
     if (/stock_movements_corrects_uniq/.test(m)) {
       return "That movement has already been corrected once. Record an adjustment instead.";

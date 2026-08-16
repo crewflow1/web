@@ -319,6 +319,10 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   "site_visitors → users",
   "snags → users",
   "staff_secrets → users",
+  // stocktake_sessions: opened_by + posted_by + cancelled_by all → users. The
+  // stocktake service resolves actor names by explicit reads, never a users(...)
+  // embed, so no query on this table is ambiguous (asserted in stocktake.test.ts).
+  "stocktake_sessions → users",
   "supplier_payments → users",
   "support_tickets → users",
 ] as const;

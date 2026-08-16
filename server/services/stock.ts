@@ -79,7 +79,7 @@ export const STOCK_ITEM_LIMIT = 1000;
 export const STOCK_RECENT_LIMIT = 50;
 
 export const STOCK_ITEM_COLUMNS =
-  "id, name, description, sku, unit, active, preferred_supplier_id, supplier_reference, " +
+  "id, name, description, sku, barcode, unit, active, preferred_supplier_id, supplier_reference, " +
   "reorder_level, target_level, reorder_quantity, notes, created_at";
 
 export const STOCK_MOVEMENT_COLUMNS =
@@ -91,6 +91,7 @@ export type StockItemRow = {
   name: string;
   description: string | null;
   sku: string | null;
+  barcode: string | null;
   unit: string;
   active: boolean;
   preferred_supplier_id: string | null;
