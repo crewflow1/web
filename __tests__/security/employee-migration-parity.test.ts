@@ -51,6 +51,23 @@ const MIGRATED = [
     runner: "server/services/hq-qualification.ts",
     taskType: "qualify_company",
   },
+  // MP Wave R3 — the deterministic roster runners. Each reaches the engine the SAME way,
+  // proving the pattern generalises beyond the sales pipeline (the Reference Employee Rule).
+  {
+    name: "analytics-ai",
+    runner: "server/services/hq-analytics-runner.ts",
+    taskType: "analytics_snapshot",
+  },
+  {
+    name: "monitoring-incident-ai",
+    runner: "server/services/hq-monitoring-runner.ts",
+    taskType: "monitoring_sweep",
+  },
+  {
+    name: "notification-ai",
+    runner: "server/services/hq-notification-runner.ts",
+    taskType: "notification_digest",
+  },
 ] as const;
 
 // The canonical engine surface every migrated employee reaches the engine through.
