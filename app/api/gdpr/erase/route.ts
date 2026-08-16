@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
+// NOTE: the erase service (which owns the DARK feature-flag gate) is imported
+// BEFORE the auth/session module ON PURPOSE. LOCK 1 (the flag) must be the first
+// thing this route consults, ahead of any auth or DB work, so the capability is
+// fully inert while dark — and the security test enforces that flag-before-auth
+// ordering at the source level.
+import { eraseOrg, gdprErasureEnabled } from "@/server/services/gdpr-erase";
 import { requireOrgContext } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
-import { eraseOrg, gdprErasureEnabled } from "@/server/services/gdpr-erase";
 
 /**
  * ═════════════════════════════════════════════════════════════════════════════

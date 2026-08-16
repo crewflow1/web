@@ -8,7 +8,7 @@ import {
 } from "@/lib/gdpr/erase-tables";
 
 /**
- * GDPR right-to-erasure (Art. 17, migration 20261168) — trust-boundary proofs
+ * GDPR right-to-erasure (Art. 17, migration 20261169) — trust-boundary proofs
  * (hermetic; filesystem + list algebra, no DB).
  *
  * Section 1: the classification never destroys a statutory record.
@@ -23,7 +23,7 @@ import {
 const ROOT = resolve(__dirname, "..", "..");
 const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 
-const MIG = "supabase/migrations/20261168000000_gdpr_erasure.sql";
+const MIG = "supabase/migrations/20261169000000_gdpr_erasure.sql";
 const SERVICE = "server/services/gdpr-erase.ts";
 const ROUTE = "app/api/gdpr/erase/route.ts";
 
