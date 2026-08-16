@@ -3,19 +3,22 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   mfaGateDecision,
+  mfaEnforcementBuildEnabled,
   isPrivilegedRole,
   MFA_PRIVILEGED_ROLES,
 } from "@/lib/auth/mfa-policy";
 
 /**
  * SECURITY — enforceable per-org MFA (org flag `require_mfa`, migration
- * 20261169000000).
+ * 20261170000000).
  *
  * The decision is pure + FAIL-CLOSED: a privileged member of an MFA-required
- * org is blocked unless we can positively confirm an aal2 session. Default-off
- * is proven to change nothing. Source assertions pin the wiring in
- * requireOrgContext so a future edit can't quietly drop the gate or turn a null
- * flag into an open door.
+ * org is blocked unless we can positively confirm an aal2 session. Enforcement
+ * is additionally DOUBLY gated — it cannot engage unless the deployment build
+ * gate (FEATURE_MFA_ENFORCEMENT) is on AS WELL AS the per-org flag; both default
+ * OFF, proven to change nothing. Source assertions pin the wiring in
+ * requireOrgContext so a future edit can't quietly drop either gate or turn a
+ * null flag into an open door.
  */
 
 const ROOT = resolve(__dirname, "../..");
@@ -94,6 +97,13 @@ describe("requireOrgContext — enforcement wiring is present + fail-closed", ()
     expect(src).toContain("enforceMfaPolicy");
   });
 
+  it("build gate FIRST: returns early when FEATURE_MFA_ENFORCEMENT is off (default)", () => {
+    expect(src).toContain("mfaEnforcementBuildEnabled");
+    expect(src).toMatch(/if \(!mfaEnforcementBuildEnabled\(\)\) return/);
+    // ...and it is default OFF, so a stock deploy never gates anyone.
+    expect(mfaEnforcementBuildEnabled()).toBe(false);
+  });
+
   it("default-off fast path: returns early when require_mfa is false", () => {
     expect(src).toMatch(/if \(!ctx\.org\.require_mfa\) return/);
   });
@@ -124,7 +134,7 @@ describe("require_mfa never defaults ON from a null column", () => {
     expect(src).toMatch(/require_mfa: row\.require_mfa \?\? false/);
   });
   it("the migration ships the flag default false", () => {
-    const mig = read("supabase/migrations/20261169000000_org_mfa_policy.sql");
+    const mig = read("supabase/migrations/20261170000000_org_mfa_policy.sql");
     expect(mig).toMatch(/require_mfa boolean not null default false/i);
   });
 });

@@ -6,7 +6,11 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { PATHNAME_HEADER } from "@/lib/supabase/middleware";
-import { mfaGateDecision, type AalPair } from "@/lib/auth/mfa-policy";
+import {
+  mfaGateDecision,
+  mfaEnforcementBuildEnabled,
+  type AalPair,
+} from "@/lib/auth/mfa-policy";
 
 export type OrgStatus =
   | "pending"
@@ -30,8 +34,9 @@ export type OrgContext = {
     trial_ends_at: string | null;
     created_at: string;
     onboarding_state: Record<string, unknown>;
-    /** Per-org MFA enforcement flag (migration 20261169000000). Default false.
-     * When true, owner/admin members are gated to aal2 in requireOrgContext. */
+    /** Per-org MFA enforcement flag (migration 20261170000000). Default false.
+     * When true AND the FEATURE_MFA_ENFORCEMENT build gate is on, owner/admin
+     * members are gated to aal2 in requireOrgContext. */
     require_mfa: boolean;
   };
 };
@@ -269,7 +274,13 @@ export async function requireOrgContext(): Promise<{
 const MFA_GATE_ALLOWED_PREFIXES = ["/settings/security", "/login/mfa"] as const;
 
 async function enforceMfaPolicy(user: User, ctx: OrgContext): Promise<void> {
-  if (!ctx.org.require_mfa) return; // default-off fast path — zero extra work
+  // BUILD/FEATURE GATE (default OFF, env FEATURE_MFA_ENFORCEMENT). This is the
+  // FIRST guard: while it is off — the default for every deployment — the whole
+  // enforcement layer is inert, so the default session path performs no AAL read
+  // and imposes no aal2 requirement. Enforcement needs BOTH this deployment gate
+  // AND a given org's require_mfa flag before it can engage.
+  if (!mfaEnforcementBuildEnabled()) return;
+  if (!ctx.org.require_mfa) return; // per-org opt-in — default-off fast path
   if (isSuperAdminEmail(user.email)) return; // HQ staff exempt (see caller)
 
   // Resolve AAL. Fail-closed: any error → treat as unknown (→ enrol), never

@@ -14,7 +14,9 @@ import { resolve } from "node:path";
  *   - reset never enumerates accounts; update requires a live session;
  *   - Microsoft SSO ships DARK (flag defaults off, button gated in source);
  *   - the EXISTING magic-link + Google flows are byte-for-byte unchanged;
- *   - MFA is NOT enforced anywhere (no aal2 gate in session/middleware).
+ *   - MFA enforcement is BUILT but doubly gated + default-off: it cannot engage
+ *     unless BOTH the FEATURE_MFA_ENFORCEMENT build gate AND an org's require_mfa
+ *     flag are on, so the default session/middleware path has no active aal2 gate.
  */
 
 // ---- hoisted mocks --------------------------------------------------------
@@ -60,6 +62,7 @@ import {
 } from "@/app/(app)/settings/security/actions";
 import { INITIAL_FORM_STATE } from "@/lib/forms/state";
 import { env } from "@/lib/env";
+import { mfaEnforcementBuildEnabled } from "@/lib/auth/mfa-policy";
 
 // ---- fake supabase builder ------------------------------------------------
 type AuthShape = Record<string, unknown>;
@@ -479,11 +482,29 @@ describe("EXISTING flows unchanged + MFA enforcement is opt-in/default-off (cont
     expect(actionsSrc).toContain("supabase.auth.signOut()");
   });
 
-  it("MFA is NOT enforced: no aal2 gate in the session or middleware guards", () => {
+  it("MFA enforcement is BUILT but DOUBLY gated: engages only behind the build gate AND the per-org flag, both default OFF", () => {
     const sessionSrc = readFileSync(resolve(__dirname, "../../server/auth/session.ts"), "utf8");
     const mwSrc = readFileSync(resolve(__dirname, "../../lib/supabase/middleware.ts"), "utf8");
-    expect(sessionSrc.toLowerCase()).not.toContain("aal2");
+
+    // Enforcement is wired into the single (app) chokepoint...
+    expect(sessionSrc).toContain("enforceMfaPolicy");
+
+    // ...but the DEFAULT path is inert: TWO guards return early BEFORE any AAL
+    // read, so no active aal2 requirement exists unless BOTH switches are on.
+    // (1) the deployment build gate, checked FIRST:
+    expect(sessionSrc).toMatch(/if \(!mfaEnforcementBuildEnabled\(\)\) return/);
+    // (2) the per-org opt-in flag:
+    expect(sessionSrc).toMatch(/if \(!ctx\.org\.require_mfa\) return/);
+
+    // The literal aal2 comparison is ISOLATED in the pure, gated policy module —
+    // it must never appear inline in the default middleware guard path.
     expect(mwSrc.toLowerCase()).not.toContain("aal2");
+
+    // Behavioural proof the gate cannot engage on a stock deploy: the build gate
+    // is OFF by default (env FEATURE_MFA_ENFORCEMENT unset → "false"), so
+    // enforcement is short-circuited no matter what an org sets. The exhaustive
+    // per-org/role/aal decision proofs live in mfa-enforcement.test.ts.
+    expect(mfaEnforcementBuildEnabled()).toBe(false);
   });
 
   it("the enforcement decision is explicitly documented as GATED and left off", () => {

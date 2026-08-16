@@ -1,16 +1,35 @@
 /**
  * Per-org MFA ENFORCEMENT decision — the pure policy at the heart of the
  * enforceable-MFA capability (org flag `organizations.require_mfa`, migration
- * 20261169000000).
+ * 20261170000000).
  *
- * This module is intentionally pure + dependency-free so the fail-closed
- * enforcement rule can be exhaustively unit-tested. The one caller that wires
- * it to a real session is server/auth/session.ts#requireOrgContext, which
- * supplies the org flag, the caller's role, and the Supabase AAL pair.
+ * The decision core (`mfaGateDecision`) is intentionally pure + dependency-free
+ * so the fail-closed enforcement rule can be exhaustively unit-tested. The one
+ * caller that wires it to a real session is
+ * server/auth/session.ts#requireOrgContext, which supplies the org flag, the
+ * caller's role, and the Supabase AAL pair.
  *
- * Existing opt-in TOTP enrol/challenge is UNCHANGED — this only adds the
- * ENFORCEMENT layer, and only when an org has explicitly turned it on.
+ * Enforcement is doubly gated and BUILT-BUT-OFF: it cannot engage unless BOTH
+ * the deployment build gate (`mfaEnforcementBuildEnabled`, env
+ * FEATURE_MFA_ENFORCEMENT, default off) AND a given org's opt-in flag
+ * (require_mfa, default off) are on. Existing opt-in TOTP enrol/challenge is
+ * UNCHANGED — this only adds the ENFORCEMENT layer.
  */
+
+import { env } from "@/lib/env";
+
+/**
+ * BUILD/FEATURE gate for MFA ENFORCEMENT (env FEATURE_MFA_ENFORCEMENT), default
+ * OFF. This is the first, deployment-wide switch: while it is off the default
+ * session path is completely inert (no AAL read, no aal2 requirement), so no
+ * org can be gated regardless of its require_mfa flag. It is deliberately
+ * separate from the pure decision above so the aal2 logic stays exhaustively
+ * unit-testable without env, while the live wiring in requireOrgContext must
+ * clear BOTH this gate and the per-org opt-in before enforcement can engage.
+ */
+export function mfaEnforcementBuildEnabled(): boolean {
+  return env.FEATURE_MFA_ENFORCEMENT === "true";
+}
 
 /** Roles for which MFA can be enforced. Owner + admin are the privileged,
  * data-and-billing-mutating roles; everyone else is out of scope by design so
