@@ -1,4 +1,10 @@
-import { GaugeCircle, CalendarClock, HeartPulse, GitBranch } from "lucide-react";
+import {
+  GaugeCircle,
+  CalendarClock,
+  HeartPulse,
+  GitBranch,
+  SlidersHorizontal,
+} from "lucide-react";
 import {
   PIPELINE_STAGES,
   PIPELINE_STAGE_LABELS,
@@ -8,6 +14,11 @@ import {
   type HealthCard,
   type PipelineSummary,
 } from "@/lib/hq/boardroom-cards";
+import {
+  AI_APPROVAL_LEVELS,
+  type ApprovalLevelResult,
+} from "@/lib/ai-employees/approval-levels";
+import { approvalLevelStyle } from "./_styles";
 
 /**
  * AI Boardroom — the Confidence / ETA / Health cards (the mandated card gap).
@@ -258,5 +269,109 @@ export function PipelineStageStrip({ pipeline }: { pipeline: PipelineSummary }) 
         );
       })}
     </ol>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Approval-level ladder — badge (roster card + header) and panel (detail).
+// Presentation only, over the DETERMINISTIC derivation in
+// lib/ai-employees/approval-levels. The level classifies the CURRENT posture;
+// it grants nothing.
+// ---------------------------------------------------------------------
+
+/** A compact "Ln · Label" pill — the per-employee approval rung on the roster and header. */
+export function ApprovalLevelBadge({
+  result,
+  className = "",
+}: {
+  result: ApprovalLevelResult;
+  className?: string;
+}) {
+  const style = approvalLevelStyle(result.key);
+  return (
+    <span
+      title={result.summary}
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium ${style.pill} ${className}`}
+    >
+      <span className={`inline-block h-1.5 w-1.5 rounded-full ${style.dot}`} aria-hidden />
+      L{result.level} · {result.label}
+    </span>
+  );
+}
+
+/**
+ * The full approval-level panel for the detail page — the derived rung, its summary and the
+ * platform mechanism that realises it, the deterministic evidence that produced it, and the whole
+ * 1–5 ladder with the current rung highlighted. Read-only: the ladder is a classification of the
+ * served posture, so there is no control here.
+ */
+export function ApprovalLevelPanel({ result }: { result: ApprovalLevelResult }) {
+  const style = approvalLevelStyle(result.key);
+  return (
+    <div className="space-y-4">
+      <div className={`rounded-xl p-4 ring-1 ring-inset ${style.pill}`}>
+        <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide opacity-80">
+          <SlidersHorizontal className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+          Approval level
+        </p>
+        <p className="mt-2 text-2xl font-bold">
+          Level {result.level} · {result.label}
+        </p>
+        <p className="mt-0.5 text-[13px] opacity-90">{result.summary}</p>
+        <p className="mt-2 border-t border-current/10 pt-2 text-[11px] opacity-80">
+          {result.mechanism}
+        </p>
+      </div>
+
+      <div>
+        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+          Why this level
+        </p>
+        <ul className="space-y-1 text-xs text-slate-400">
+          {result.evidence.map((line) => (
+            <li key={line} className="flex gap-2">
+              <span className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-slate-600" aria-hidden />
+              <span>{line}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div>
+        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+          The ladder
+        </p>
+        <ol className="space-y-1.5">
+          {AI_APPROVAL_LEVELS.map((def) => {
+            const active = def.level === result.level;
+            const rung = approvalLevelStyle(def.key);
+            return (
+              <li
+                key={def.key}
+                className={`flex items-start gap-2.5 rounded-lg border px-3 py-2 ${
+                  active
+                    ? "border-slate-600 bg-slate-800/60"
+                    : "border-slate-800 bg-slate-900/40"
+                }`}
+              >
+                <span
+                  className={`mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                    active ? rung.pill : "bg-slate-800 text-slate-500 ring-1 ring-inset ring-slate-700"
+                  }`}
+                >
+                  {def.level}
+                </span>
+                <div className="min-w-0">
+                  <p className={`text-xs font-semibold ${active ? "text-white" : "text-slate-400"}`}>
+                    {def.label}
+                  </p>
+                  <p className="text-[11px] leading-relaxed text-slate-500">{def.summary}</p>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+    </div>
   );
 }

@@ -8,7 +8,10 @@ import {
   Timer,
   Users,
 } from "lucide-react";
-import { listAiEmployees } from "@/server/services/ai-employees";
+import {
+  listAiEmployees,
+  resolveApprovalLevelsByEmployeeId,
+} from "@/server/services/ai-employees";
 import {
   getAiWorkforceStats,
   statsForEmployee,
@@ -32,7 +35,7 @@ import { getBoardroomCards } from "@/server/services/hq-task-pipeline";
 import { deriveEmployeeCards } from "@/lib/hq/boardroom-cards";
 import { statusStyle, accentClasses } from "./_styles";
 import { EmployeeIcon } from "./_icon";
-import { BoardroomCardTrio, PipelineStagePill } from "./_cards";
+import { BoardroomCardTrio, PipelineStagePill, ApprovalLevelBadge } from "./_cards";
 
 /**
  * AI Boardroom — roster grid (CEO Directive 001, Phase 1).
@@ -69,6 +72,9 @@ export default async function AiBoardroomPage({
     getAiWorkforceStats(),
     getBoardroomCards(now),
   ]);
+  // The explicit 1–5 approval level per employee, derived from the served posture the Capability
+  // Registry resolves (deterministic classification — no new authority; see approval-levels.ts).
+  const approvalLevels = await resolveApprovalLevelsByEmployeeId(employees);
 
   const q = (sp.q ?? "").trim().toLowerCase();
   const dept = (sp.dept ?? "").trim();
@@ -241,6 +247,7 @@ export default async function AiBoardroomPage({
             {filtered.map((e) => {
               const accent = accentClasses(e.accent);
               const stats = statsForEmployee(workforce, e.id);
+              const level = approvalLevels.get(e.id);
               const cards =
                 boardroomCards.byEmployee.get(e.id) ?? deriveEmployeeCards([], now);
               return (
@@ -265,7 +272,10 @@ export default async function AiBoardroomPage({
                           </p>
                         </div>
                       </div>
-                      <StatusPill status={e.status} />
+                      <div className="flex shrink-0 flex-col items-end gap-1.5">
+                        <StatusPill status={e.status} />
+                        {level ? <ApprovalLevelBadge result={level} /> : null}
+                      </div>
                     </div>
 
                     <p className="mt-3 line-clamp-2 text-xs leading-relaxed text-slate-400">

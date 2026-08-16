@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Lock, ShieldOff, Plus } from "lucide-react";
-import { loadAiEmployeeBySlug } from "@/server/services/ai-employees";
+import {
+  loadAiEmployeeBySlug,
+  resolveEmployeeApprovalLevel,
+} from "@/server/services/ai-employees";
 import {
   AI_EMPLOYEE_STATUSES,
   STATUS_LABELS,
@@ -21,7 +24,12 @@ import { computeEmployeeStats, formatRate } from "@/lib/ai-employees/stats";
 import { getBoardroomCardsForEmployee } from "@/server/services/hq-task-pipeline";
 import { statusStyle, taskStatusPill, accentClasses } from "../_styles";
 import { EmployeeIcon } from "../_icon";
-import { BoardroomCardPanel, PipelineStageStrip } from "../_cards";
+import {
+  BoardroomCardPanel,
+  PipelineStageStrip,
+  ApprovalLevelBadge,
+  ApprovalLevelPanel,
+} from "../_cards";
 import {
   updateAiEmployeeConfig,
   addAiEmployeeTask,
@@ -81,12 +89,14 @@ export default async function AiEmployeeDetailPage({
   // a permission-aware slice this employee may READ; both are best-effort and degrade to a safe
   // default rather than breaking the profile.
   const now = new Date();
-  const [served, memoryFeed, memoryTypes, boardroomCards] = await Promise.all([
-    resolveServedCapabilityView(e),
-    getEmployeeMemoryFeed({ id: e.id, department: e.department }),
-    listMemoryTypes(),
-    getBoardroomCardsForEmployee(e.id, now),
-  ]);
+  const [served, approvalLevel, memoryFeed, memoryTypes, boardroomCards] =
+    await Promise.all([
+      resolveServedCapabilityView(e),
+      resolveEmployeeApprovalLevel(e),
+      getEmployeeMemoryFeed({ id: e.id, department: e.department }),
+      listMemoryTypes(),
+      getBoardroomCardsForEmployee(e.id, now),
+    ]);
   // The complete served token set seeds the registry-native authoring editor (one token/line).
   const capabilityTokens = [...served.tokens];
   const memoryTypeMap = buildTypeMap(memoryTypes);
@@ -146,6 +156,7 @@ export default async function AiEmployeeDetailPage({
                   </span>
                   <Chip>{departmentLabel(e.department)}</Chip>
                   <Chip>{memoryScopeLabel(e.memory_scope)} memory</Chip>
+                  <ApprovalLevelBadge result={approvalLevel} />
                 </div>
               </div>
             </div>
@@ -266,6 +277,14 @@ export default async function AiEmployeeDetailPage({
               </dd>
             </div>
           </dl>
+        </Section>
+
+        {/* Approval level — the explicit 1–5 ladder, derived from the served posture */}
+        <Section
+          title="Approval level"
+          subtitle="The explicit 1–5 autonomy rung, derived deterministically from the posture the Capability Registry serves. A classification of current authority — it grants nothing; execution stays locked."
+        >
+          <ApprovalLevelPanel result={approvalLevel} />
         </Section>
 
         {/* Tools + permissions */}
