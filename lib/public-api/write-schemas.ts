@@ -230,28 +230,3 @@ export const createQuoteSchema = z
   .strict();
 
 export type CreateQuoteInput = z.infer<typeof createQuoteSchema>;
-
-// ---------------------------------------------------------------------------
-// Invoices (create from an accepted quote — the ONLY invoice-creation shape)
-// ---------------------------------------------------------------------------
-
-/**
- * POST /api/v1/invoices. Deliberately NOT a free-form invoice builder: the app
- * itself only ever generates an invoice FROM an accepted quote (the quote is the
- * costed, line-itemed, HMRC-numbered source of truth), so the public API mirrors
- * exactly that path. The client supplies ONLY the quote to bill plus two
- * document fields; the money (amount/vat_total), the customer anchor, the job
- * link and the line-item snapshot all come from the quote SERVER-SIDE, never the
- * body. `.strict()` refuses `amount`, `vat_total`, `total`, `number`, `status`,
- * `org_id`, `customer_id` and every other column — a client can never set a
- * price, force a status, or point the invoice at a foreign tenant.
- */
-export const createInvoiceSchema = z
-  .object({
-    quote_id: z.string().uuid("Pick a quote to invoice"),
-    due_date: optionalDate,
-    notes: optionalText(5000),
-  })
-  .strict();
-
-export type CreateInvoiceInput = z.infer<typeof createInvoiceSchema>;

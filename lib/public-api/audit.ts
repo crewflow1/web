@@ -9,7 +9,7 @@ import type { ResolvedApiKey } from "@/lib/api-auth/resolve";
  * audit" claim without meeting it: the sole per-key telemetry was a coarse,
  * once-a-minute debounced last_used_at touch on api_keys. This module is the
  * real audit trail — one row in `api_request_log` (migration
- * 20261164000000) per ADMITTED v1 request, written from the guard through the
+ * 20261168000000) per ADMITTED v1 request, written from the guard through the
  * service-role admin client (RLS admin-only read, no tenant write).
  *
  * METADATA ONLY — a HARD boundary. The row carries the HTTP method, the request

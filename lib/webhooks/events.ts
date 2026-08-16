@@ -15,7 +15,7 @@
  * (job / customer / quote / invoice) with an org_id — AND each has a real spine
  * producer. The two BILLING verbs (invoice.created, invoice.paid) landed in
  * MP R4: webhook_resolve_org already had an `invoice` branch, and migration
- * 20261164000000 completed their producer edges in hq_emit_from_activity (both
+ * 20261168000000 completed their producer edges in hq_emit_from_activity (both
  * activity actions — the invoices INSERT trigger's `invoice.created` and the
  * status-change trigger's `invoice.paid` — already flow through
  * _record_activity). The remaining billing verbs and support/org.* are still

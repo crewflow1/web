@@ -1,12 +1,11 @@
 /**
- * Public API v1 — the leads OUTPUT contract (read + write surfaces).
+ * Public API v1 — the leads OUTPUT contract (write surface only).
  *
- * Used by BOTH GET /api/v1/leads (list, `read:leads`) and the readback of POST
- * /api/v1/leads (`write:leads`). One allowlist for both, so a lead can never
- * leak more when listed than when created. It follows the same discipline as
- * every other public DTO (lib/public-api/jobs.ts): an EXPLICIT, curated field
- * list — never a spread of a raw `leads` row — and it stays PII-free: the read
- * endpoint deliberately exposes NO contact name/email/phone.
+ * There is no leads READ endpoint (and no `read:leads` scope); this DTO exists
+ * solely to project the row a successful POST /api/v1/leads just created back to
+ * its author. It follows the same allowlist discipline as every other public
+ * DTO (lib/public-api/jobs.ts): an EXPLICIT, curated field list, never a spread
+ * of a raw `leads` row.
  *
  * DELIBERATELY EXCLUDED, and why (the leak surface):
  *   - contact_name / contact_email / contact_phone → contact PII. The caller
