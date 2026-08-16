@@ -7,6 +7,11 @@ import {
   type AiEmployeeTask,
   type AiEmployeeMemoryEntry,
 } from "@/lib/ai-employees/model";
+import {
+  deriveApprovalLevel,
+  type ApprovalLevelResult,
+} from "@/lib/ai-employees/approval-levels";
+import { resolveServedAuthority } from "@/server/sdk/registry-parity";
 
 /**
  * CrewFlow HQ — AI Employee Framework data access.
@@ -80,6 +85,38 @@ export async function listAiEmployees(): Promise<AiEmployee[]> {
     return [];
   }
   return (data ?? []) as unknown as AiEmployee[];
+}
+
+/**
+ * Derive an employee's explicit 1–5 approval level from the authority the Capability Registry
+ * SERVES for it (Directive #015 / D-05, via {@link resolveServedAuthority}, with the default-deny
+ * floor as the automatic fail-safe). Pure CLASSIFICATION of the served posture — it reads existing
+ * state and grants nothing. Non-throwing: {@link resolveServedAuthority} already degrades to the
+ * floor, and {@link deriveApprovalLevel} is total, so this always returns a level.
+ */
+export async function resolveEmployeeApprovalLevel(employee: {
+  slug: string;
+  department?: string | null;
+}): Promise<ApprovalLevelResult> {
+  const served = await resolveServedAuthority(employee);
+  return deriveApprovalLevel({
+    canExecute: served.posture.canExecute,
+    requiresApproval: served.posture.requiresApproval,
+    tokens: served.capabilities.tokens,
+    source: served.source,
+  });
+}
+
+/** Resolve approval levels for a roster, keyed by employee id — one served-authority read each. */
+export async function resolveApprovalLevelsByEmployeeId(
+  employees: ReadonlyArray<{ id: string; slug: string; department?: string | null }>,
+): Promise<Map<string, ApprovalLevelResult>> {
+  const entries = await Promise.all(
+    employees.map(
+      async (e) => [e.id, await resolveEmployeeApprovalLevel(e)] as const,
+    ),
+  );
+  return new Map(entries);
 }
 
 export type AiEmployeeDetail = {
