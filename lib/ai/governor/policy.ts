@@ -38,6 +38,85 @@ import { formatDayKeyUK } from "@/lib/time/format";
  */
 export const AI_MONTHLY_CEILING_PENCE = 10_000;
 
+/**
+ * The ABSOLUTE upper bound a per-org override may raise the ceiling to, in
+ * integer pence. £500 — the whole monthly subscription.
+ *
+ * WHY A SEPARATE, HIGHER NUMBER EXISTS AT ALL. The moment a per-org override can
+ * change the ceiling, `AI_MONTHLY_CEILING_PENCE` stops being the hard limit it
+ * was described as and becomes merely the DEFAULT. Something must still be the
+ * hard limit, or an override turns the safety cap into a suggestion — the exact
+ * property this whole lane exists to prevent. So the override is bounded: it may
+ * move the effective ceiling anywhere in `[0, AI_MONTHLY_CEILING_HARD_MAX_PENCE]`
+ * and no further. An org can be trusted with more inference than the default, or
+ * throttled below it, but AI can never cost more than the entire subscription —
+ * at which point the unit economics are inverted and stopping is correct.
+ *
+ * £500 rather than "unbounded" is the point: raising the cap is a bounded,
+ * deliberate act, and the bound is enforced in TWO places that cannot disagree —
+ * here (the editor rejects a larger number, and `effectiveCeilingPence` clamps)
+ * and in SQL (`ai_reserve_invocation` re-clamps under its lock, so a row written
+ * around the application can never widen the gate). Moving THIS number is the
+ * reviewed-diff decision that moving the old constant used to be.
+ */
+export const AI_MONTHLY_CEILING_HARD_MAX_PENCE = 50_000;
+
+/**
+ * The EFFECTIVE monthly ceiling for an org: its override if one is set, else the
+ * default — clamped to `[0, hardMax]` so no override can widen the gate past the
+ * absolute safety bound.
+ *
+ * `override ?? default`, exactly as the spec requires, and then the clamp. The
+ * order matters: a null/absent/garbage override falls back to the DEFAULT (never
+ * to zero and never to the hard max), so a missing or unreadable override is the
+ * standard £100 — the conservative reading, and the one that never SILENTLY
+ * RAISES. A `0` override is honoured as "no AI at all" (the same failure-safe
+ * reading `evaluateBudget` takes of a non-positive ceiling), which is a
+ * deliberate, auditable choice, not the absence of one.
+ *
+ * PURE. This is the single definition of the resolution rule; the SQL reserve
+ * function mirrors it under its advisory lock (where it is authoritative against
+ * concurrency), and the security suite pins the two against each other. A caller
+ * that needs the number for DISPLAY reads it through here; the ENFORCER is the
+ * SQL, because only the SQL can resolve-and-reserve atomically.
+ */
+export function effectiveCeilingPence(
+  overridePence: number | null | undefined,
+  defaultPence: number = AI_MONTHLY_CEILING_PENCE,
+  hardMaxPence: number = AI_MONTHLY_CEILING_HARD_MAX_PENCE,
+): number {
+  const fallback =
+    Number.isFinite(defaultPence) && defaultPence >= 0 ? Math.round(defaultPence) : 0;
+  const base =
+    typeof overridePence === "number" && Number.isFinite(overridePence) && overridePence >= 0
+      ? Math.round(overridePence)
+      : fallback;
+  const hardMax =
+    Number.isFinite(hardMaxPence) && hardMaxPence >= 0 ? Math.round(hardMaxPence) : fallback;
+  return Math.max(0, Math.min(base, hardMax));
+}
+
+/**
+ * Is a proposed ceiling/limit a value the controls will accept — a finite,
+ * non-negative integer no greater than the hard safety max?
+ *
+ * The editor's own gate, kept beside the number it enforces so the two never
+ * drift. `0` is valid (it means "no AI"); anything above the hard max, negative,
+ * fractional or non-finite is not. The SQL CHECK constraints restate the same
+ * bounds, so a value that slips past this is refused again at the row.
+ */
+export function isAcceptableLimitPence(
+  pence: number,
+  hardMaxPence: number = AI_MONTHLY_CEILING_HARD_MAX_PENCE,
+): boolean {
+  return (
+    Number.isInteger(pence) &&
+    pence >= 0 &&
+    Number.isFinite(hardMaxPence) &&
+    pence <= Math.round(hardMaxPence)
+  );
+}
+
 /** Fraction of the ceiling at which the first warning fires. */
 export const BUDGET_WARN_50_FRACTION = 0.5;
 /** Fraction of the ceiling at which the urgent warning fires. */

@@ -105,6 +105,8 @@ import "server-only";
 
 import * as Sentry from "@sentry/nextjs";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { limitSubjectUserId } from "./governor/attribution";
+import { resolveEffectiveCeiling } from "./governor/limits";
 import {
   featureDefinition,
   reservationEnvelopeOf,
@@ -140,16 +142,19 @@ import {
 export type { BudgetStatus, MonthKey } from "./governor/policy";
 export {
   AI_MONTHLY_CEILING_PENCE,
+  AI_MONTHLY_CEILING_HARD_MAX_PENCE,
   FAILURE_FLOOR_PENCE,
   MIN_RESERVATION_PENCE,
   RESERVATION_TTL_MS,
   budgetPercent,
   budgetPermits,
   detectSpike,
+  effectiveCeilingPence,
   estimateCostPence,
   evaluateBudget,
   formatPence,
   invocationHash,
+  isAcceptableLimitPence,
   reservationClaimPence,
   settlementCostPence,
   trailingAverage,
@@ -166,7 +171,7 @@ export {
   isInferenceTierActivated,
   isTierActivated,
 } from "./governor/readiness";
-export { hqBudgetOrgId } from "./governor/attribution";
+export { hqBudgetOrgId, limitSubjectUserId } from "./governor/attribution";
 
 const LEDGER = "ai_invocations";
 const RESERVE_FN = "ai_reserve_invocation";
@@ -249,9 +254,16 @@ export type BudgetSnapshot = {
  */
 export async function checkBudget(orgId: string, month?: MonthKey): Promise<BudgetSnapshot> {
   const monthKey = month ?? ukMonthKeyOf(new Date());
-  const ceilingPence = AI_MONTHLY_CEILING_PENCE;
 
-  const [spent, reserved] = await Promise.all([
+  // The EFFECTIVE ceiling — the org's override if set, else the default, clamped
+  // to the hard safety max. Advisory here: resolveEffectiveCeiling FALLS BACK to
+  // the default on a read failure (it never silently raises), so a blip on the
+  // override read cannot manufacture headroom. The AUTHORITATIVE resolution is
+  // in `ai_reserve_invocation`, under its lock, atomic with the reservation — a
+  // read here can only ever be advisory because it could be stale by the time a
+  // call is admitted.
+  const [ceilingPence, spent, reserved] = await Promise.all([
+    resolveEffectiveCeiling(orgId),
     readMonthSpend(orgId, monthKey),
     readMonthReserved(orgId, monthKey),
   ]);
@@ -471,6 +483,15 @@ export type DuplicateReason =
 export type BlockReason =
   /** The org has no headroom left this month for a call of this size. */
   | "ceiling"
+  /**
+   * The ACTING EMPLOYEE has hit their own per-employee monthly limit, even
+   * though the org as a whole still has headroom. Enforced FAIL-CLOSED by
+   * `ai_reserve_invocation` on top of the org ceiling — a call must fit under
+   * BOTH. Operationally identical to `ceiling` for the caller (both degrade the
+   * same way); kept distinct so the HQ view and the logs can say WHICH budget
+   * refused. See supabase/migrations/20261147000001.
+   */
+  | "employee_limit"
   /** The reservation itself could not be taken. Fails CLOSED — see `reserveBudget`. */
   | "reservation_unavailable"
   /**
@@ -599,7 +620,16 @@ export async function reserveBudget(input: {
       committedPence,
       reservedPence,
       ceilingPence: num(row.ceiling_pence) || ceilingPence,
-      reason: outcome === "blocked" ? "ceiling" : "reservation_unavailable",
+      // A genuine `blocked` carries WHICH budget refused. `employee_limit` is
+      // the per-employee cap; everything else (including an unrecognised
+      // outcome) is treated as the org ceiling or an unavailable reservation —
+      // both fail-closed. A renamed SQL outcome never becomes "go ahead".
+      reason:
+        outcome === "blocked"
+          ? row.block_reason === "employee_limit"
+            ? "employee_limit"
+            : "ceiling"
+          : "reservation_unavailable",
     };
   } catch (e) {
     console.error("[ai/governor] RESERVATION THREW — refusing the call", e);
@@ -872,9 +902,14 @@ export async function invokeWithGovernor<T>(
   const binding = resolveModel(taskClass);
   const claimPence = reservationClaimPence(binding, reservationEnvelopeOf(binding));
 
+  // The acting employee for the per-employee limit — the same user id that is
+  // attributed in the ledger, normalised so a blank becomes a true null (a
+  // system / HQ job with no employee to limit; see limitSubjectUserId).
+  const employeeId = limitSubjectUserId(input.userId);
+
   const reservation = await reserveBudget({
     orgId: input.orgId,
-    userId: input.userId ?? null,
+    userId: employeeId,
     feature,
     taskClass,
     claimPence,

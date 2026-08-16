@@ -5,9 +5,30 @@ import {
   type AiCostOrgRow,
   type AiCostTrend,
 } from "@/server/services/ai-cost-snapshot";
+import {
+  buildAiBudgetControls,
+  type AiBudgetControls,
+  type EmployeeLimitControlRow,
+  type OrgCeilingControlRow,
+} from "@/server/services/ai-budget-controls";
 import { formatPence } from "@/lib/ai/governor";
 import { AI_FEATURE_KEYS, AI_FEATURES, AI_TIERS, TIER_MODEL } from "@/lib/ai/governor/registry";
 import type { BudgetStatus } from "@/lib/ai/governor/policy";
+import {
+  clearEmployeeLimitAction,
+  clearOrgCeilingAction,
+  setEmployeeLimitAction,
+  setOrgCeilingAction,
+} from "./actions";
+
+type SP = Promise<{ saved?: string; error?: string }>;
+
+const SAVED_LABEL: Record<string, string> = {
+  ceiling_set: "Org ceiling saved.",
+  ceiling_cleared: "Org ceiling override cleared — back to the default.",
+  limit_set: "Employee limit saved.",
+  limit_cleared: "Employee limit cleared.",
+};
 
 /**
  * /admin/ai-costs — HQ AI spend governance.
@@ -44,11 +65,15 @@ const STATUS_LABEL: Record<BudgetStatus, string> = {
   blocked: "blocked",
 };
 
-export default async function AiCostsPage() {
+export default async function AiCostsPage({ searchParams }: { searchParams: SP }) {
   await requireHqPage();
+  const sp = await searchParams;
+  const savedMsg = sp.saved ? (SAVED_LABEL[sp.saved] ?? null) : null;
+  const errorMsg = (sp.error ?? "").trim() || null;
 
   const snap = await buildAiCostSnapshot();
   const trend = await buildAiCostTrend();
+  const controls = await buildAiBudgetControls();
   const { readiness } = snap;
 
   return (
@@ -56,11 +81,29 @@ export default async function AiCostsPage() {
       <header className="space-y-1">
         <h1 className="text-2xl font-bold text-slate-900">AI costs</h1>
         <p className="text-sm text-slate-600">
-          Budget month {snap.month} (Europe/London) · hard ceiling{" "}
-          {formatPence(snap.ceilingPence)} per org per month · as of{" "}
+          Budget month {snap.month} (Europe/London) · default ceiling{" "}
+          {formatPence(snap.ceilingPence)} per org per month · hard max{" "}
+          {formatPence(controls.hardMaxPence)} · as of{" "}
           {new Date(snap.generatedAt).toLocaleString("en-GB")}
         </p>
       </header>
+
+      {savedMsg ? (
+        <p
+          className="rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm font-medium text-emerald-900"
+          role="status"
+        >
+          {savedMsg}
+        </p>
+      ) : null}
+      {errorMsg ? (
+        <p
+          className="rounded-md border border-red-300 bg-red-50 p-3 text-sm font-medium text-red-900"
+          role="alert"
+        >
+          {errorMsg}
+        </p>
+      ) : null}
 
       {/* 1. Activation — the honest headline, first. */}
       <section
@@ -214,6 +257,7 @@ export default async function AiCostsPage() {
                   <th className="px-3 py-2">Organisation</th>
                   <th className="px-3 py-2 text-right">Committed</th>
                   <th className="px-3 py-2 text-right">In flight</th>
+                  <th className="px-3 py-2 text-right">Ceiling</th>
                   <th className="px-3 py-2 text-right">% of ceiling</th>
                   <th className="px-3 py-2 text-right">Calls</th>
                   <th className="px-3 py-2 text-right">Fails</th>
@@ -230,6 +274,9 @@ export default async function AiCostsPage() {
           </div>
         )}
       </section>
+
+      {/* 3b. THE EDITABLE CONTROLS. */}
+      <BudgetControlsSection controls={controls} />
 
       {/* 4. By feature. */}
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -429,6 +476,250 @@ function TrendSection({ trend, activated }: { trend: AiCostTrend; activated: boo
   );
 }
 
+/**
+ * The editable controls. Two editors, both plain server-action forms (no client
+ * JS, consistent with the rest of HQ): the per-org ceiling OVERRIDE, and the
+ * per-employee LIMIT. Enforcement lives in ai_reserve_invocation; these only set
+ * the numbers it reads. Every write is audited (ai_budget_control_audit) and
+ * clamped to the hard safety max ({hardMax}) by the RPC, so a raised ceiling can
+ * never exceed the absolute cap and never lands without a trail.
+ */
+function BudgetControlsSection({ controls }: { controls: AiBudgetControls }) {
+  const maxPounds = (controls.hardMaxPence / 100).toFixed(0);
+  return (
+    <section className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-5 shadow-sm">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 className="text-base font-semibold text-slate-900">Budget controls</h2>
+        <p className="text-[11px] text-slate-500">
+          Default {formatPence(controls.defaultCeilingPence)} · hard max{" "}
+          {formatPence(controls.hardMaxPence)} · changes are audited &amp; fail-closed
+        </p>
+      </header>
+      <p className="mt-2 max-w-3xl text-xs text-slate-600">
+        An override replaces the default ceiling for one org; clearing it returns the org to the
+        default. A per-employee limit caps ONE person&rsquo;s monthly AI spend on top of the org
+        ceiling — a call must fit under both. Both are bounded to £{maxPounds} and enforced by the
+        atomic reservation. Copy org / employee ids from the tables above.
+      </p>
+
+      {/* ── Per-org ceiling override ── */}
+      <div className="mt-5">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+          Per-org ceiling override
+        </h3>
+
+        <form
+          action={setOrgCeilingAction}
+          className="mt-2 flex flex-wrap items-end gap-2 rounded-md border border-slate-200 bg-white p-3"
+        >
+          <label className="flex flex-col text-[11px] text-slate-600">
+            Organisation id
+            <input
+              name="org_id"
+              required
+              placeholder="uuid"
+              className="mt-0.5 w-72 rounded border border-slate-300 px-2 py-1 font-mono text-xs"
+            />
+          </label>
+          <label className="flex flex-col text-[11px] text-slate-600">
+            Ceiling (£)
+            <input
+              name="pounds"
+              required
+              inputMode="decimal"
+              placeholder={maxPounds}
+              className="mt-0.5 w-24 rounded border border-slate-300 px-2 py-1 text-xs"
+            />
+          </label>
+          <label className="flex flex-col text-[11px] text-slate-600">
+            Note (optional)
+            <input
+              name="note"
+              maxLength={500}
+              placeholder="why this org is off the default"
+              className="mt-0.5 w-64 rounded border border-slate-300 px-2 py-1 text-xs"
+            />
+          </label>
+          <button
+            type="submit"
+            className="rounded bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+          >
+            Set ceiling
+          </button>
+        </form>
+
+        {controls.overrides.length === 0 ? (
+          <p className="mt-2 text-xs text-slate-500">
+            No overrides — every org runs at the {formatPence(controls.defaultCeilingPence)} default.
+          </p>
+        ) : (
+          <div className="mt-2 overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-3 py-1.5">Organisation</th>
+                  <th className="px-3 py-1.5 text-right">Ceiling</th>
+                  <th className="px-3 py-1.5">Note</th>
+                  <th className="px-3 py-1.5" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {controls.overrides.map((o) => (
+                  <OverrideRow key={o.orgId} row={o} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── Per-employee limit ── */}
+      <div className="mt-6">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+          Per-employee limit
+        </h3>
+
+        <form
+          action={setEmployeeLimitAction}
+          className="mt-2 flex flex-wrap items-end gap-2 rounded-md border border-slate-200 bg-white p-3"
+        >
+          <label className="flex flex-col text-[11px] text-slate-600">
+            Organisation id
+            <input
+              name="org_id"
+              required
+              placeholder="uuid"
+              className="mt-0.5 w-72 rounded border border-slate-300 px-2 py-1 font-mono text-xs"
+            />
+          </label>
+          <label className="flex flex-col text-[11px] text-slate-600">
+            Employee (user) id
+            <input
+              name="user_id"
+              required
+              placeholder="uuid"
+              className="mt-0.5 w-72 rounded border border-slate-300 px-2 py-1 font-mono text-xs"
+            />
+          </label>
+          <label className="flex flex-col text-[11px] text-slate-600">
+            Limit (£)
+            <input
+              name="pounds"
+              required
+              inputMode="decimal"
+              placeholder="25"
+              className="mt-0.5 w-24 rounded border border-slate-300 px-2 py-1 text-xs"
+            />
+          </label>
+          <label className="flex flex-col text-[11px] text-slate-600">
+            Note (optional)
+            <input
+              name="note"
+              maxLength={500}
+              className="mt-0.5 w-48 rounded border border-slate-300 px-2 py-1 text-xs"
+            />
+          </label>
+          <button
+            type="submit"
+            className="rounded bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+          >
+            Set limit
+          </button>
+        </form>
+
+        {controls.employeeLimits.length === 0 ? (
+          <p className="mt-2 text-xs text-slate-500">
+            No per-employee limits — every employee is bounded only by their org ceiling.
+          </p>
+        ) : (
+          <div className="mt-2 overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-3 py-1.5">Employee</th>
+                  <th className="px-3 py-1.5">Organisation</th>
+                  <th className="px-3 py-1.5 text-right">Used</th>
+                  <th className="px-3 py-1.5 text-right">Limit</th>
+                  <th className="px-3 py-1.5">Note</th>
+                  <th className="px-3 py-1.5" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {controls.employeeLimits.map((l) => (
+                  <EmployeeLimitRow key={l.id} row={l} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function OverrideRow({ row }: { row: OrgCeilingControlRow }) {
+  return (
+    <tr>
+      <td className="px-3 py-1.5">
+        <p className="font-medium text-slate-800">{row.orgName}</p>
+        <p className="font-mono text-[10px] text-slate-500">{row.orgId}</p>
+      </td>
+      <td className="px-3 py-1.5 text-right font-medium text-slate-800">
+        {formatPence(row.ceilingPence)}
+      </td>
+      <td className="px-3 py-1.5 text-xs text-slate-600">{row.note ?? "—"}</td>
+      <td className="px-3 py-1.5 text-right">
+        <form action={clearOrgCeilingAction}>
+          <input type="hidden" name="org_id" value={row.orgId} />
+          <button
+            type="submit"
+            className="rounded border border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
+          >
+            Clear
+          </button>
+        </form>
+      </td>
+    </tr>
+  );
+}
+
+function EmployeeLimitRow({ row }: { row: EmployeeLimitControlRow }) {
+  const over = row.usedPence >= row.limitPence && row.limitPence >= 0;
+  return (
+    <tr className={over ? "bg-red-50/50" : undefined}>
+      <td className="px-3 py-1.5">
+        <p className="font-medium text-slate-800">{row.userName}</p>
+        <p className="font-mono text-[10px] text-slate-500">{row.userId}</p>
+      </td>
+      <td className="px-3 py-1.5">
+        <p className="text-slate-700">{row.orgName}</p>
+        <p className="font-mono text-[10px] text-slate-500">{row.orgId}</p>
+      </td>
+      <td
+        className={`px-3 py-1.5 text-right ${over ? "font-semibold text-red-800" : "text-slate-600"}`}
+      >
+        {formatPence(row.usedPence)}
+      </td>
+      <td className="px-3 py-1.5 text-right font-medium text-slate-800">
+        {formatPence(row.limitPence)}
+      </td>
+      <td className="px-3 py-1.5 text-xs text-slate-600">{row.note ?? "—"}</td>
+      <td className="px-3 py-1.5 text-right">
+        <form action={clearEmployeeLimitAction}>
+          <input type="hidden" name="org_id" value={row.orgId} />
+          <input type="hidden" name="user_id" value={row.userId} />
+          <button
+            type="submit"
+            className="rounded border border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
+          >
+            Clear
+          </button>
+        </form>
+      </td>
+    </tr>
+  );
+}
+
 function OrgRow({ org }: { org: AiCostOrgRow }) {
   return (
     <tr className={org.status === "blocked" ? "bg-red-50/50" : undefined}>
@@ -447,6 +738,17 @@ function OrgRow({ org }: { org: AiCostOrgRow }) {
         {formatPence(org.reservedPence)}
         {org.liveReservations > 0 ? (
           <span className="ml-1 text-[10px] text-amber-700">({org.liveReservations})</span>
+        ) : null}
+      </td>
+      <td className="px-3 py-2 text-right text-slate-600">
+        {formatPence(org.ceilingPence)}
+        {org.hasCeilingOverride ? (
+          <span
+            className="ml-1 inline-block rounded-full border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[9px] font-medium text-indigo-800"
+            title="This org runs at a per-org override, not the default."
+          >
+            override
+          </span>
         ) : null}
       </td>
       <td className="px-3 py-2 text-right text-slate-600">{org.percentOfCeiling}%</td>
