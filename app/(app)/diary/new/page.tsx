@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
-import { listJobOptions } from "../_data";
+import { listJobOptions, suggestDiaryWeather } from "../_data";
 import { DiaryForm } from "../_form";
 import { createDiaryEntry } from "../actions";
 
@@ -26,6 +26,18 @@ export default async function NewDiaryEntryPage({
     ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
     : null;
   const today = new Date().toISOString().slice(0, 10);
+  const entryDate = sp.date ?? today;
+
+  // Automatic diary: when this entry is being opened FOR a job (the link from
+  // the job's diary panel carries ?job=), suggest the day's weather from the
+  // cached readings for that job's site — a default the author can overwrite.
+  // Dark-safe and honest: null on a dark build / no postcode / no reading, and
+  // the field falls back to hand entry (suggestDiaryWeather owns every gate).
+  const weatherSuggestion = await suggestDiaryWeather({
+    orgId: ctx.org.id,
+    jobId: sp.job,
+    date: entryDate,
+  });
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -52,7 +64,18 @@ export default async function NewDiaryEntryPage({
       <DiaryForm
         action={createDiaryEntry}
         jobs={jobs}
-        defaults={{ entry_date: sp.date ?? today, job_id: sp.job ?? "" }}
+        defaults={{
+          entry_date: entryDate,
+          job_id: sp.job ?? "",
+          weather: weatherSuggestion?.text ?? null,
+        }}
+        weatherHint={
+          weatherSuggestion
+            ? {
+                attribution: weatherSuggestion.attribution,
+              }
+            : undefined
+        }
         submitLabel="Save entry"
         cancelHref="/diary"
         offline={{ userId: user.id, orgId: ctx.org.id }}
