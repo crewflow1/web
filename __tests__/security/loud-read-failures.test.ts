@@ -583,7 +583,12 @@ const RATCHET: Array<{
     // hq-customer / hq-health-recompute / hq-health-deep-dive estate reads now bind
     // the fetchAllRows error (thrown, or logged for the best-effort snapshots) and
     // consume `res.data` directly instead of `res.data ?? []`. 7 soft-data retired.
-    softData: 47,
+    // 47 → 48: MP Wave R4 Web Push — lib/notifications/push.ts fetchNotificationsForPush
+    // hydrates the just-claimed push_deliveries batch (.in('id', ids)) and degrades to
+    // `?? []` on a read error. Genuinely best-effort: a miss skips that push batch,
+    // which is retried via push_deliveries.retry_count/scheduled_for — never a silent
+    // blank of a completeness-sensitive tenant view. See docs/loud-read-failures.md.
+    softData: 48,
     // 4 → 5: server/services/hq-outreach.ts `countOutreach` is a head:true count read
     // for the CEO metrics tile, mirroring countResearch/countQualification — an honest
     // zero when nothing has run yet is the correct reassuring answer here.
