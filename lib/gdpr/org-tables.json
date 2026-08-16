@@ -125,6 +125,7 @@
     "notification_preferences",
     "notifications",
     "org_payment_connections",
+    "org_settings",
     "payments",
     "payroll_lines",
     "payroll_runs",
