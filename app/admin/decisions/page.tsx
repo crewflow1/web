@@ -234,6 +234,14 @@ function DecisionCard({ row }: { row: DecisionRow }) {
     >
       <div className="flex flex-wrap items-center gap-2">
         <DecisionStatusPill status={row.status} />
+        {row.source === "deterministic" ? (
+          <span
+            className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-700"
+            title="Opened automatically from a system signal — awaiting a human decision."
+          >
+            Auto-proposed
+          </span>
+        ) : null}
         <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">
           {row.title}
         </h3>

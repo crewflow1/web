@@ -192,6 +192,46 @@ export function isStepReady(step: SagaStep, steps: ReadonlyArray<SagaStep>): boo
 }
 
 // ---------------------------------------------------------------------
+// Approval gating — which ready steps a HUMAN must still release.
+// ---------------------------------------------------------------------
+
+/**
+ * Departments whose work maps to an APPROVAL-GATED action — one that reaches OUTSIDE
+ * the internal build (publishes public content, contacts a customer, deploys to prod,
+ * moves money). The autonomous saga-drain must NEVER dispatch a step in one of these
+ * departments on its own; a super-admin's MANUAL advance is the human approval that
+ * releases it. The internal-build departments (Research, Product, Design, Engineering,
+ * QA) carry no such gate — their work is safe to dispatch deterministically.
+ *
+ * Matched case-insensitively against the step's `department`, so roster casing drift
+ * ("operations" vs "Operations") cannot silently open a gate. A step with NO
+ * department is treated as GATED (fail-safe: an unclassified action waits for a human).
+ */
+export const APPROVAL_GATED_DEPARTMENTS: ReadonlyArray<string> = [
+  "marketing",
+  "sales",
+  "operations",
+  "support",
+  "customer success",
+  "finance",
+];
+
+const APPROVAL_GATED_SET = new Set<string>(APPROVAL_GATED_DEPARTMENTS);
+
+/**
+ * Does advancing this step require a human's approval — i.e. must the autonomous
+ * drain HALT and leave it for the manual advance? PURE and DETERMINISTIC. True when
+ * the step's department maps to an externally-visible / irreversible action, or when
+ * the step has NO department to classify (fail-safe: an unclassified action is never
+ * auto-dispatched). False only for a known internal-build department.
+ */
+export function stepRequiresApproval(step: Pick<SagaStep, "department">): boolean {
+  const dept = step.department?.trim().toLowerCase();
+  if (!dept) return true;
+  return APPROVAL_GATED_SET.has(dept);
+}
+
+// ---------------------------------------------------------------------
 // The status rollup — a saga's status DERIVED from its steps, honestly.
 // ---------------------------------------------------------------------
 

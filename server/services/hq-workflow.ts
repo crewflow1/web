@@ -8,7 +8,9 @@ import type { PipelineStage } from "@/lib/hq/boardroom-cards";
 import {
   deriveSagaStatus,
   isStepReady,
+  isTerminalStep,
   sagaProgress,
+  stepRequiresApproval,
   type SagaStatus,
   type SagaStep,
   type SagaProgress,
@@ -55,6 +57,7 @@ interface Query<T> extends DbList<T> {
   insert(payload: unknown): Query<T>;
   update(payload: unknown): Query<T>;
   eq(column: string, value: unknown): Query<T>;
+  in(column: string, values: ReadonlyArray<unknown>): Query<T>;
   order(column: string, options?: { ascending?: boolean }): Query<T>;
   limit(count: number): Query<T>;
   maybeSingle(): PromiseLike<{ data: T | null; error: { message: string } | null }>;
@@ -158,18 +161,29 @@ function stepStatusForTask(taskStatus: TaskStatus): StepStatus {
 
 /**
  * Department → the Master-Plan PRODUCT pipeline stage its work belongs to. Used to
- * stamp a dispatched task's stage through the sanctioned set_stage RPC. A department
- * with no clear stage correspondence is left unstaged (null), which is valid.
+ * stamp a dispatched task's stage through the sanctioned set_stage RPC, so a saga's
+ * tasks actually TRAVERSE the fifteen-stage lifecycle (each move appends an immutable
+ * hq_ai_task_stage_events row — measurable and auditable). A department with no clear
+ * stage correspondence is left unstaged (null), which is valid. The full-lifecycle
+ * template (product_launch) names one distinct department per stage so this map is a
+ * clean 1:1 across a launch saga.
  */
-const DEPARTMENT_STAGE: Readonly<Record<string, PipelineStage>> = {
+export const DEPARTMENT_STAGE: Readonly<Record<string, PipelineStage>> = {
+  Executive: "idea",
   Research: "research",
   Product: "specification",
+  Architecture: "architecture",
   Design: "design",
   Engineering: "engineering",
   QA: "testing",
+  Documentation: "documentation",
+  Approval: "approval",
   Marketing: "marketing",
   Sales: "sales",
   Operations: "deployment",
+  Monitoring: "monitoring",
+  Review: "review",
+  Improvement: "continuous-improvement",
   Support: "review",
   "Customer Success": "review",
 };
@@ -322,13 +336,55 @@ export async function advanceStep(input: AdvanceStepInput): Promise<SagaResult> 
     return { ok: false, error: "not_ready" };
   }
 
-  // 3. Ensure a linked task exists, created through the Task-Engine authority.
+  // 3+4. Dispatch (or re-sync) the step through the shared core. A MANUAL advance is
+  // the human's own approval, so it is NOT subject to the drain's approval gate — a
+  // super-admin may advance any ready step, gated or not.
+  const dispatched = await dispatchOrSyncStep(admin, input.sagaId, step, input.actor);
+  if (!dispatched.ok) return { ok: false, error: dispatched.error };
+
+  // 5. Recompute + persist the saga status from its (now-updated) steps.
+  const finalSaga = await recomputeSagaStatus(admin, sagaRow);
+  return { ok: true, saga: await assembleSaga(admin, finalSaga) };
+}
+
+// ---------------------------------------------------------------------
+// The shared step-advance core — used by BOTH the manual advance and the drain.
+// ---------------------------------------------------------------------
+
+type DispatchResult =
+  | { ok: true; taskId: string; stepStatus: StepStatus }
+  | { ok: false; error: string };
+
+/**
+ * Dispatch (or re-sync) ONE step, honestly reflecting its task. The load-bearing
+ * primitive shared by `advanceStep` (a human's manual advance) and
+ * `drainReadySagaSteps` (the autonomous cron):
+ *
+ *   • if the step has NO linked task, CREATE one through the Task-Engine authority
+ *     (`enqueueTask` → hq_ai_task_create) with a STABLE dedupe key
+ *     (`saga_step:<id>`), so two overlapping callers can never create two tasks —
+ *     the second is deduped to the first. NEVER a bare hq_ai_tasks insert;
+ *   • stamp the product stage through the sanctioned set_stage RPC when the
+ *     department maps to one;
+ *   • READ the linked task's REAL execution status (loud read) and set the step's
+ *     status from it — no fabricated progress.
+ *
+ * It does NOT recompute the saga status (the caller does, once) and does NOT check
+ * the approval gate (the caller decides whether a step may be dispatched). Audits the
+ * per-step advance so both paths share one immutable provenance record.
+ */
+async function dispatchOrSyncStep(
+  admin: AdminClient,
+  sagaId: string,
+  step: StepRow,
+  actor: Actor,
+): Promise<DispatchResult> {
   let taskId = step.hq_ai_task_id;
   if (!taskId) {
     const enq = await enqueueTask({
       taskType: "saga_step",
       payload: {
-        saga_id: input.sagaId,
+        saga_id: sagaId,
         step_id: step.id,
         ordinal: step.ordinal,
         title: step.title,
@@ -337,10 +393,11 @@ export async function advanceStep(input: AdvanceStepInput): Promise<SagaResult> 
       },
       subjectKind: "saga_step",
       subjectId: step.id,
-      // A stable dedupe key so a double-advance does not create two tasks.
+      // A stable dedupe key so a double-advance (or two overlapping drains) does not
+      // create two tasks.
       dedupeKey: `saga_step:${step.id}`,
       origin: "saga",
-      createdBy: input.actor.id,
+      createdBy: actor.id,
     });
     if (!enq.ok) return { ok: false, error: `task_create_failed:${enq.reason}` };
     taskId = enq.task.id;
@@ -351,7 +408,7 @@ export async function advanceStep(input: AdvanceStepInput): Promise<SagaResult> 
     if (stage) await setTaskStage(taskId, stage);
   }
 
-  // 4. Read the linked task's REAL status — no fabricated progress.
+  // Read the linked task's REAL status — no fabricated progress.
   const taskStatus = await readTaskStatus(admin, taskId);
   if (taskStatus === null) return { ok: false, error: "task_read_failed" };
   const nextStepStatus = stepStatusForTask(taskStatus);
@@ -361,37 +418,157 @@ export async function advanceStep(input: AdvanceStepInput): Promise<SagaResult> 
     .eq("id", step.id)
     .select(STEP_COLUMNS);
   if (updErr) {
-    console.error("[hq-workflow] advanceStep: step update failed", updErr);
+    console.error("[hq-workflow] dispatchOrSyncStep: step update failed", updErr);
     return { ok: false, error: updErr.message };
   }
 
-  // 5. Recompute + persist the saga status from its (now-updated) steps.
-  const refreshed = await readStepRows(admin, input.sagaId);
-  const derived = deriveSagaStatus(refreshed.map(toModelStep));
-  let finalSaga = sagaRow;
-  if (derived !== sagaRow.status) {
-    const { data: updatedSaga, error: sagaUpdErr } = await sagas(admin)
-      .update({ status: derived })
-      .eq("id", input.sagaId)
-      .select(SAGA_COLUMNS)
-      .maybeSingle();
-    if (sagaUpdErr) {
-      console.error("[hq-workflow] advanceStep: saga status update failed", sagaUpdErr);
-    } else if (updatedSaga) {
-      finalSaga = updatedSaga;
-    }
-  }
-
   await recordAdminActivity({
-    actorId: input.actor.id,
-    actorEmail: input.actor.email,
+    actorId: actor.id,
+    actorEmail: actor.email,
     action: "saga.step_advanced",
     targetTable: "hq_saga_steps",
     targetId: step.id,
-    metadata: { saga_id: input.sagaId, task_id: taskId, step_status: nextStepStatus },
+    metadata: { saga_id: sagaId, task_id: taskId, step_status: nextStepStatus },
   });
 
-  return { ok: true, saga: await assembleSaga(admin, finalSaga) };
+  return { ok: true, taskId, stepStatus: nextStepStatus };
+}
+
+/** Recompute a saga's status from its (freshly-read) steps and persist any change. */
+async function recomputeSagaStatus(admin: AdminClient, sagaRow: SagaRow): Promise<SagaRow> {
+  const refreshed = await readStepRows(admin, sagaRow.id);
+  const derived = deriveSagaStatus(refreshed.map(toModelStep));
+  if (derived === sagaRow.status) return sagaRow;
+  const { data: updatedSaga, error } = await sagas(admin)
+    .update({ status: derived })
+    .eq("id", sagaRow.id)
+    .select(SAGA_COLUMNS)
+    .maybeSingle();
+  if (error) {
+    console.error("[hq-workflow] recomputeSagaStatus: saga status update failed", error);
+    return sagaRow;
+  }
+  return updatedSaga ?? sagaRow;
+}
+
+// ---------------------------------------------------------------------
+// 2b. Drain — autonomously advance every READY, UNGATED step across active sagas.
+// ---------------------------------------------------------------------
+
+export type SagaDrainResult = {
+  /** Active sagas scanned this pass. */
+  sagas_scanned: number;
+  /** Steps dispatched (a new task created) this pass. */
+  steps_dispatched: number;
+  /** Already-linked steps whose status was re-synced from their real task. */
+  steps_synced: number;
+  /** READY steps left untouched because they map to an approval-gated action. */
+  held_for_approval: number;
+  /** Per-step failures (logged; the pass continues). */
+  errors: number;
+  durationMs: number;
+};
+
+/**
+ * The AUTONOMOUS saga-drain — the cron authority that replaces the manual-ONLY
+ * advance. It walks the active sagas and, for each:
+ *
+ *   • re-syncs any ALREADY-LINKED, non-terminal step from its real task status, so a
+ *     completed task propagates and unblocks its dependents (progress, not a new
+ *     action);
+ *   • DISPATCHES any step that is ready (its dependency is `done`), undispatched, and
+ *     NOT approval-gated — creating its task through the Task-Engine authority;
+ *   • HALTS at any ready step that maps to an approval-gated action
+ *     (`stepRequiresApproval`) — it is left `pending` for a super-admin's manual
+ *     advance. The autonomous path never dispatches a gated action.
+ *
+ * It runs WITHOUT a super-admin actor (a cron has none) and therefore deliberately
+ * skips `actorGate`; but it can ONLY open internal Task-Engine work — it never
+ * decides, never approves, and takes no irreversible external action (the Task Engine
+ * itself does not execute; apply authority ships dark). Audited as the system actor.
+ *
+ * IDEMPOTENT: dispatch is guarded by the step's stable dedupe key, so an overlapping
+ * tick cannot double-create; a step already dispatched is only re-synced. BOUNDED by
+ * `limit` sagas per pass, ordered stalest-first (a fairness cursor), so a claimed
+ * saga rotates to the back and no tail can starve.
+ */
+export async function drainReadySagaSteps(
+  opts: { limit?: number } = {},
+): Promise<SagaDrainResult> {
+  const startedAt = Date.now();
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const system: Actor = { id: null, email: null };
+  const admin = createAdminClient();
+
+  // Active sagas only (planned/running/blocked), stalest-first — a recency cursor so
+  // a saga touched this pass rotates behind the ones not yet reached.
+  const { data: activeSagas, error: listErr } = await sagas(admin)
+    .select(SAGA_COLUMNS)
+    .in("status", ["planned", "running", "blocked"])
+    .order("updated_at", { ascending: true })
+    .limit(limit);
+  if (listErr) throw readFailure("hq-workflow: active sagas for drain", listErr);
+
+  let stepsDispatched = 0;
+  let stepsSynced = 0;
+  let heldForApproval = 0;
+  let errors = 0;
+  const sagaRows = Array.isArray(activeSagas) ? activeSagas : [];
+
+  for (const sagaRow of sagaRows) {
+    try {
+      const stepRows = await readStepRows(admin, sagaRow.id);
+      const modelSteps = stepRows.map(toModelStep);
+
+      for (const step of stepRows) {
+        // Terminal steps are done with — nothing to advance.
+        if (isTerminalStep(step.status)) continue;
+
+        const linked = step.hq_ai_task_id !== null;
+        if (linked) {
+          // Re-sync a dispatched step's status from its real task (progress
+          // propagation — not a new action, so the approval gate does not apply).
+          const synced = await dispatchOrSyncStep(admin, sagaRow.id, step, system);
+          if (synced.ok) stepsSynced++;
+          else errors++;
+          continue;
+        }
+
+        // Undispatched: only ready steps can move.
+        if (!isStepReady(toModelStep(step), modelSteps)) continue;
+
+        // The gate: a ready step mapping to an approval-gated action WAITS for a
+        // human's manual advance — the autonomous drain never dispatches it.
+        if (stepRequiresApproval(step)) {
+          heldForApproval++;
+          continue;
+        }
+
+        const dispatched = await dispatchOrSyncStep(admin, sagaRow.id, step, system);
+        if (dispatched.ok) stepsDispatched++;
+        else errors++;
+      }
+
+      // Recompute the saga's status once, from its now-updated steps.
+      await recomputeSagaStatus(admin, sagaRow);
+    } catch (e) {
+      console.error(
+        "[hq-workflow] drainReadySagaSteps: saga failed",
+        sagaRow.id,
+        e instanceof Error ? e.message : String(e),
+      );
+      errors++;
+    }
+  }
+
+  return {
+    sagas_scanned: sagaRows.length,
+    steps_dispatched: stepsDispatched,
+    steps_synced: stepsSynced,
+    held_for_approval: heldForApproval,
+    errors,
+    durationMs: Date.now() - startedAt,
+  };
 }
 
 /** Read one hq_ai_tasks row's execution status. A READ only — never a mutation. */

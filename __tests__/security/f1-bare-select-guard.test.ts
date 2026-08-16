@@ -419,12 +419,12 @@ const ALLOWLIST: Record<string, string> = {
   //    (listRecent{Outreach,Qualification,Research}Runs) — so `unique` is ≤50 ids,
   //    far below the 1000 cap. Not a cross-tenant estate scan; the estate reads in
   //    these files are the paged pipeline / count reads, not these lookups.
-  "server/services/hq-outreach.ts:757":
-    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentOutreachRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap",
-  "server/services/hq-qualification.ts:830":
-    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentQualificationRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap",
-  "server/services/hq-research.ts:1517":
-    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentResearchRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap",
+  "server/services/hq-outreach.ts:786":
+    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentOutreachRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 757→786 when ctx.memory recall/remember wiring was added to the runner.)",
+  "server/services/hq-qualification.ts:867":
+    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentQualificationRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 830→867 when ctx.memory recall/remember wiring was added to the runner.)",
+  "server/services/hq-research.ts:1555":
+    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentResearchRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 1517→1555 when ctx.memory recall/remember wiring was added to the runner.)",
 };
 
 function walk(dir: string, out: string[]): void {
@@ -1219,6 +1219,7 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   ai_reply_audits: "RECENT-N: .order.limit(REPLY_WINDOW) — HQ QA verdict window display",
   ai_reply_lifecycle: "PER-PARENT/RECENT-N: .eq('audit_id') per audit or a .limit(500) deliveries board display",
   hq_ai_tasks: "RECENT-N: .order.limit(TASK_WINDOW) reliability window / per-employee — HQ display, not a complete-set count",
+  cron_runs: "RECENT-N: .order('started_at' desc).limit(N) recent cron-run reliability window (hq-monitoring-runner incident sweep) — an HQ ops health display over the most recent runs, framed as a recent window and never a complete-set count; the table grows one row per cron run so a complete read is neither useful nor bounded.",
   hq_ai_schedules: "CLOSED/RECENT-N: the cadence-schedule registry — .order or .limit(Math.min(limit,1000)) due-run picker",
   receptionist_conversation_outcomes: "RECENT-N: .order.limit(OUTCOME_WINDOW) — HQ QA window display",
   impersonation_sessions: "RECENT-N: .order.limit(Math.min(limit,1000)) audit list (caller passes 100) — admin display",

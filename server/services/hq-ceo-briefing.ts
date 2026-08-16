@@ -2,7 +2,12 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCeoDashboard } from "@/server/services/hq-ceo";
-import { composeCeoBriefing, type CeoBriefing } from "@/lib/hq/ceo-briefing";
+import {
+  composeCeoBriefing,
+  type CeoBriefing,
+  type CeoBriefingCompetitorIntel,
+} from "@/lib/hq/ceo-briefing";
+import { loadCompetitorIntelForBriefing } from "@/server/services/hq-competitor-intel";
 import type { CeoBoard } from "@/lib/hq/ceo";
 
 /**
@@ -81,6 +86,8 @@ export interface CeoBriefingDeps {
   readonly now?: Date;
   /** Load the CEO board to compose from (defaults to the service-role aggregator). */
   readonly loadBoard?: () => Promise<CeoBoard>;
+  /** Load the competitor-intel snapshot (defaults to the service-role note store). */
+  readonly loadCompetitors?: () => Promise<CeoBriefingCompetitorIntel>;
   /** Persist the composed briefing (defaults to the durable RPC recorder). */
   readonly record?: CeoBriefingRecorder;
 }
@@ -107,11 +114,13 @@ export async function composeAndRecordCeoBriefing(
   const now = deps.now ?? new Date();
   const briefingDate = now.toISOString().slice(0, 10);
   const loadBoard = deps.loadBoard ?? (async () => (await getCeoDashboard()).board);
+  const loadCompetitors = deps.loadCompetitors ?? (() => loadCompetitorIntelForBriefing());
   const record = deps.record ?? durableCeoBriefingRecorder;
 
   try {
     const board = await loadBoard();
-    const briefing = composeCeoBriefing(board, now);
+    const competitors = await loadCompetitors();
+    const briefing = composeCeoBriefing(board, now, competitors);
     const correlationId = randomUUID();
     const result = await record({ briefingDate, briefing, correlationId });
     if (!result.ok) return { ok: false, briefingDate, error: result.error };

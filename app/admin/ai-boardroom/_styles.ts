@@ -3,6 +3,7 @@ import type {
   TaskStatus,
   Accent,
 } from "@/lib/ai-employees/model";
+import type { ApprovalLevelKey } from "@/lib/ai-employees/approval-levels";
 
 /**
  * AI Boardroom — dark-theme presentation classes.
@@ -142,4 +143,41 @@ export const ACCENT_CLASSES: Record<Accent, AccentClasses> = {
 
 export function accentClasses(accent: string): AccentClasses {
   return ACCENT_CLASSES[(accent as Accent)] ?? ACCENT_CLASSES.slate;
+}
+
+// ---------------------------------------------------------------------
+// Approval-level ladder — badge classes per rung (1 Observe → 5 Autonomous).
+// The pure data + labels live in lib/ai-employees/approval-levels.ts; the
+// Tailwind class strings live here so the JIT scanner generates them. Colour
+// climbs with autonomy — neutral at Observe, warm/alert at Autonomous — so the
+// rung reads at a glance without relying on the number alone.
+// ---------------------------------------------------------------------
+
+export type ApprovalLevelStyle = { dot: string; pill: string };
+
+export const APPROVAL_LEVEL_STYLE: Record<ApprovalLevelKey, ApprovalLevelStyle> = {
+  observe: {
+    dot: "bg-slate-400",
+    pill: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
+  },
+  recommend: {
+    dot: "bg-sky-400",
+    pill: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
+  },
+  draft: {
+    dot: "bg-indigo-400",
+    pill: "bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30",
+  },
+  execute_with_approval: {
+    dot: "bg-amber-400",
+    pill: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
+  },
+  autonomous: {
+    dot: "bg-red-400",
+    pill: "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30",
+  },
+};
+
+export function approvalLevelStyle(key: ApprovalLevelKey): ApprovalLevelStyle {
+  return APPROVAL_LEVEL_STYLE[key] ?? APPROVAL_LEVEL_STYLE.observe;
 }

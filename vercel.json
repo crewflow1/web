@@ -54,6 +54,10 @@
       "schedule": "0 * * * *"
     },
     {
+      "path": "/api/cron/hq-runners-tick",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/cron/research-drain",
       "schedule": "*/5 * * * *"
     },
@@ -136,6 +140,14 @@
     {
       "path": "/api/cron/weather-fetch",
       "schedule": "40 */6 * * *"
+    },
+    {
+      "path": "/api/cron/saga-drain",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/hq-decision-autopropose",
+      "schedule": "15 3 * * *"
     }
   ]
 }

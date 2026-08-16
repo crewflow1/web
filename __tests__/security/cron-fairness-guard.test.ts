@@ -142,6 +142,12 @@ const ALLOWLIST: Record<string, string> = {
     "LIMIT-bounded (≤1000) and ordered by next_run_at ASC (recency cursor); each fired cadence advances next_run_at via an optimistic CAS claim, rotating it to the back.",
   "hq-ceo-briefing":
     "Composes and records exactly ONE deterministic CEO briefing per tick from a single in-memory board aggregate plus one idempotent per-day RPC insert (on conflict (briefing_date) do nothing). No persistent external candidate set, no per-item loop, and no per-item network I/O — a bounded single-pass job that finishes in one invocation, like health-recompute.",
+  "hq-runners-tick":
+    "Per deterministic roster runner (analytics/monitoring/notification): one idempotent per-period enqueue (dedupeKey collapses a re-tick) then a claim-N-and-exit drain off the atomic FOR UPDATE SKIP LOCKED task lease, bounded by `limit` (default 2 each); a claimed task takes a lease so overlapping passes never re-serve it. Each handler is a single internal DB aggregation (no external per-item I/O, no model call). Same lease-claim class as research-drain/outreach-drain/qualification-drain.",
+  "hq-decision-autopropose":
+    "Builds ONE in-memory alerts snapshot, maps its CRITICAL signals to draft decision proposals, and opens each via a light idempotent insert (guarded by a partial-unique source_signal_key index — a repeated signal is a no-op). No persistent external candidate set, no per-item network I/O — a bounded single-pass job that finishes in one invocation, like alerts-poll and health-recompute.",
+  "saga-drain":
+    "LIMIT-bounded (≤200) reads of ACTIVE sagas ordered by updated_at ASC (a recency cursor — a saga touched this pass rotates to the back); each step dispatch is exactly-once via the Task-Engine's stable dedupe key (saga_step:<id>), so a dispatched step leaves the undispatched candidate set (self-draining). Per-step work is an internal DB claim + enqueue, not a paginated external feed.",
   "inspections-due":
     "LIMIT-bounded (BATCH) and ordered by next_due ASC (recency cursor); the INSERT-is-the-claim idempotency makes a generated cycle self-excluding.",
   "invoice-reminders":

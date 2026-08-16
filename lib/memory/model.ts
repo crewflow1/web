@@ -509,6 +509,59 @@ export type WriteDecision = {
  */
 export const SHARED_WRITE_SCOPE = "memory.write.shared";
 
+// ---------------------------------------------------------------------
+// The capability floor for using the memory facet AT ALL (the runner
+// wiring gate — CEO Directive: shared-memory into the live runners).
+//
+// SHARED_WRITE_SCOPE (above) governs a NARROW question: may an already
+// memory-capable employee commit SHARED company knowledge without an
+// approval checkpoint. These tokens govern the COARSER, prior question a
+// deterministic runner must answer before it ever touches `ctx.memory`:
+// is this employee granted the memory facet at all? They mirror the
+// existing employee grant vocabulary exactly (the resolved capability set
+// is `tools_allowed ∪ permissions.scopes` — see the capability registry
+// backfill), so no new token is minted here:
+//   • "memory"        — the coarse scope an employee's grant carries when it
+//                       may read AND write memory (research-ai, outreach-ai);
+//   • "recall_memory" — the fine tool token for the read side (outreach-ai);
+//   • "write_memory"  — the fine tool token for the write side (research-ai,
+//                       outreach-ai).
+// An employee whose grant carries NONE of these (e.g. lead-qualification,
+// scopes `read`/`score`/`qualify`) is deny-by-default: the runner skips
+// memory entirely rather than leaning on the SQL gate to refuse it — the
+// default-deny floor honoured one layer earlier, and one fewer round-trip.
+// ---------------------------------------------------------------------
+
+/** The coarse capability token granting an employee use of the memory facet. */
+export const MEMORY_CAPABILITY = "memory";
+/** The fine tool token for the recall (read) side of the memory facet. */
+export const MEMORY_RECALL_CAPABILITY = "recall_memory";
+/** The fine tool token for the remember (write) side of the memory facet. */
+export const MEMORY_WRITE_CAPABILITY = "write_memory";
+
+/** Which side of the facet a capability check is for. */
+export type MemoryCapabilityMode = "recall" | "remember";
+
+/**
+ * Does this employee's resolved capability set permit it to use the memory
+ * facet for `mode`? Pure: keyed purely on the token set (the resolved
+ * `tools_allowed ∪ scopes` union), so it is the TypeScript twin of the runner
+ * gate — the coarse `memory` token grants both sides, and the fine
+ * `recall_memory` / `write_memory` tokens grant their own side. This is a
+ * FLOOR the runner checks BEFORE calling `ctx.memory`; the SQL primitives
+ * (`hq_memory_recall` / `hq_memory_write`) remain the authoritative,
+ * defence-in-depth boundary regardless of what this returns.
+ */
+export function employeeCanUseMemory(
+  tokens: ReadonlyArray<string>,
+  mode: MemoryCapabilityMode,
+): boolean {
+  if (tokens.includes(MEMORY_CAPABILITY)) return true;
+  return mode === "recall"
+    ? tokens.includes(MEMORY_RECALL_CAPABILITY)
+    : tokens.includes(MEMORY_WRITE_CAPABILITY);
+}
+
 /**
  * Resolve the §6 write decision for one proposed memory write. Pure: no DB,
  * no I/O. The SQL primitive re-derives the same decision as the atomic gate.
