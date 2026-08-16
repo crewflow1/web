@@ -286,6 +286,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: jobs name lookup CHUNKED .in('id', idsChunk) where each chunk is ≤JOB_IN_CHUNK=500 unique PKs — jobs.id is unique so a chunk yields ≤500 rows. (C66: the reports register above is now fully PAGED, so jobIds can exceed 500; the lookup is chunked to stay below the cap, and the line moved 99→111.)",
   "app/(app)/snags/page.tsx:134":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the snags register (.limit(500)) — ≤500 unique PKs",
+  "app/(app)/blueprints/page.tsx:68":
+    "bounded: jobs name lookup CHUNKED .in('id', idsChunk) where each chunk is ≤JOB_IN_CHUNK=500 unique PKs — jobs.id is unique so a chunk yields ≤500 rows. The blueprints register above is fully PAGED (listBlueprintsForOrg → fetchAllRows), so the job-id set can exceed 500; the lookup is chunked to stay below the cap. Same class as site-reports/page.tsx:111.",
   "app/(app)/toolbox/page.tsx:89":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the toolbox register (.limit(500)) — ≤500 unique PKs",
   "app/(app)/jobs/page.tsx:134":

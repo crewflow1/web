@@ -511,7 +511,13 @@ const RATCHET: Array<{
     // composed by buildReportDocument, whose every underlying read is loud
     // (readFailure) + F-1-paged; only the decorative header degrades, never a
     // figure. See docs/loud-read-failures.md (C ledger).
-    discard: 39,
+    // 39 → 37 (MP site-timeline): server/services/job-site-hub.ts's paged helpers
+    // (pagedByJob / pagedByIds) previously discarded fetchAllRows' `error`; they
+    // now bind it and throw readFailure(...) so the LOUD /jobs/[id]/timeline route
+    // surfaces a failed read instead of an empty feed. The best-effort job-page
+    // panels keep their try/catch, so they still degrade gracefully — two silent
+    // discards retired.
+    discard: 37,
     // 61 → 62: server/services/hq-support-snapshot.ts `listSupportTicketRowsForHq`
     // is the lean, message-free board reader (HQ Support AI) — it degrades to `[]`
     // exactly like its sibling `listSupportTicketsForHq` in the same file, and the

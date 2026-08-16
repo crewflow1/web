@@ -499,3 +499,201 @@ describe("groupSiteTimelineByDay", () => {
     expect(e!.day).toBe("2026-07-20");
   });
 });
+
+describe("composeSiteTimeline — delays, reports & drawings (MP site-timeline wave)", () => {
+  it("maps a delay event, dated by the day the stoppage started", () => {
+    const [e] = composeSiteTimeline(
+      base({
+        delays: [
+          {
+            id: "dl1",
+            category: "weather",
+            status: "recorded",
+            started_on: "2026-07-15",
+            ended_on: "2026-07-17",
+            working_days_lost: 2,
+            description: "Site flooded after heavy rain",
+          },
+        ],
+      }),
+    );
+    expect(e!.kind).toBe("delay");
+    expect(e!.key).toBe("delay:dl1");
+    expect(e!.at).toBe("2026-07-15T00:00:00.000Z");
+    expect(e!.dateOnly).toBe(true);
+    // Category + status reuse the EOT vocabulary, never a forked string.
+    expect(e!.title).toBe("Delay — Weather");
+    expect(e!.status).toBe("Recorded");
+    expect(e!.detail).toContain("Site flooded after heavy rain");
+    expect(e!.detail).toContain("2 working days lost");
+    expect(e!.href).toBe("/delays/dl1");
+  });
+
+  it("marks an unfinished delay as Ongoing and singularises one day lost", () => {
+    const [e] = composeSiteTimeline(
+      base({
+        delays: [
+          {
+            id: "dl2",
+            category: "other",
+            status: "draft",
+            started_on: "2026-07-16",
+            ended_on: null,
+            working_days_lost: 1,
+            description: null,
+          },
+        ],
+      }),
+    );
+    expect(e!.detail).toContain("1 working day lost");
+    expect(e!.detail).toContain("Ongoing");
+    expect(e!.status).toBe("Draft");
+  });
+
+  it("maps a site report, dated by ISSUE with a draft falling back to created", () => {
+    const out = composeSiteTimeline(
+      base({
+        reports: [
+          {
+            id: "r1",
+            title: "July progress",
+            report_number: "SR-014",
+            status: "issued",
+            revision: 2,
+            period_start: "2026-07-01",
+            period_end: "2026-07-14",
+            issued_at: "2026-07-14T09:00:00.000Z",
+            created_at: "2026-07-13T08:00:00.000Z",
+          },
+          {
+            id: "r2",
+            title: "Draft only",
+            report_number: null,
+            status: "draft",
+            revision: 1,
+            period_start: "2026-07-01",
+            period_end: "2026-07-07",
+            issued_at: null,
+            created_at: "2026-07-10T08:00:00.000Z",
+          },
+        ],
+      }),
+    );
+    const issued = out.find((e) => e.sourceId === "r1")!;
+    const draft = out.find((e) => e.sourceId === "r2")!;
+    expect(issued.kind).toBe("report");
+    expect(issued.at).toBe("2026-07-14T09:00:00.000Z"); // issued_at wins
+    expect(issued.title).toBe("July progress (rev 2)");
+    expect(issued.status).toBe("Issued");
+    expect(issued.detail).toContain("SR-014");
+    expect(issued.href).toBe("/site-reports/r1");
+    expect(draft.at).toBe("2026-07-10T08:00:00.000Z"); // falls back to created_at
+    expect(draft.title).toBe("Draft only"); // rev 1 → no suffix
+    expect(draft.status).toBe("Draft");
+  });
+
+  it("maps a drawing revision, dated by revision_date then upload, linking to the job register", () => {
+    const dated = composeSiteTimeline(
+      base({
+        drawings: [
+          {
+            id: "v1",
+            blueprint_id: "b1",
+            drawing_number: "A-101",
+            drawing_title: "Ground floor plan",
+            drawing_status: "for_construction",
+            revision: "C",
+            revision_date: "2026-07-12",
+            uploaded_at: "2026-07-13T10:00:00.000Z",
+          },
+        ],
+      }),
+    );
+    const e = dated[0]!;
+    expect(e.kind).toBe("drawing");
+    expect(e.key).toBe("drawing:v1");
+    expect(e.at).toBe("2026-07-12T00:00:00.000Z"); // revision_date wins
+    expect(e.title).toBe("A-101 — Ground floor plan");
+    expect(e.detail).toContain("Rev C");
+    expect(e.detail).toContain("For construction");
+    expect(e.href).toBe(`/jobs/${JOB}/blueprints`);
+
+    const undated = composeSiteTimeline(
+      base({
+        drawings: [
+          {
+            id: "v2",
+            blueprint_id: "b1",
+            drawing_number: "A-101",
+            drawing_title: "Ground floor plan",
+            drawing_status: null,
+            revision: "D",
+            revision_date: null,
+            uploaded_at: "2026-07-20T11:00:00.000Z",
+          },
+        ],
+      }),
+    );
+    expect(undated[0]!.at).toBe("2026-07-20T11:00:00.000Z"); // falls back to uploaded_at
+  });
+
+  it("orders every kind into one deterministic feed regardless of input order", () => {
+    const input = base({
+      diary: [
+        { id: "d1", entry_date: "2026-07-18", work_summary: "x", weather: null, labour_count: null },
+      ],
+      delays: [
+        {
+          id: "dl1",
+          category: "weather",
+          status: "recorded",
+          started_on: "2026-07-18",
+          ended_on: null,
+          working_days_lost: null,
+          description: null,
+        },
+      ],
+      reports: [
+        {
+          id: "r1",
+          title: "Report",
+          report_number: null,
+          status: "issued",
+          revision: 1,
+          period_start: "2026-07-01",
+          period_end: "2026-07-14",
+          issued_at: "2026-07-19T09:00:00.000Z",
+          created_at: "2026-07-19T08:00:00.000Z",
+        },
+      ],
+      drawings: [
+        {
+          id: "v1",
+          blueprint_id: "b1",
+          drawing_number: "A-101",
+          drawing_title: "Plan",
+          drawing_status: null,
+          revision: "A",
+          revision_date: "2026-07-20",
+          uploaded_at: "2026-07-20T00:00:00.000Z",
+        },
+      ],
+    });
+    const out = composeSiteTimeline(input);
+    // Newest instant first: drawing (20 Jul) → report (19 Jul) → 18 Jul pair.
+    // On the shared 18 Jul midnight, KIND_RANK puts diary before delay.
+    expect(out.map((e) => e.key)).toEqual([
+      "drawing:v1",
+      "report:r1",
+      "diary:d1",
+      "delay:dl1",
+    ]);
+  });
+
+  it("exposes the three new kinds with badge metadata", () => {
+    for (const kind of ["delay", "report", "drawing"] as const) {
+      expect(SITE_EVENT_KINDS).toContain(kind);
+      expect(SITE_EVENT_KIND_META[kind].label.length).toBeGreaterThan(0);
+    }
+  });
+});
