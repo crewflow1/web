@@ -41,6 +41,8 @@ import {
   formSuccess,
 } from "@/lib/forms/state";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
+import { pullFromAccountingProvider } from "@/server/services/accounting-import";
+import type { AccountingProvider } from "@/lib/integrations/accounting/adapters";
 
 const uuid = z.string().uuid();
 
@@ -351,6 +353,154 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
   revalidatePath("/imports");
   redirect(
     `/imports/${importId}?saved=uploaded${dupesChecked ? "" : "&warn=duplicates_unchecked"}`,
+  );
+}
+
+/**
+ * Step 2 (alternative to file upload): pull directly from a connected accounting
+ * provider (Xero / QuickBooks) into THIS import session.
+ *
+ * This is the direct-API connector. It reuses the EXISTING import pipeline
+ * end-to-end: the provider's contacts (and optionally invoices) are normalised
+ * into the same `mapped` shape a parsed spreadsheet row produces, staged as
+ * `import_rows`, run through the same duplicate detection, and left in `detected`
+ * for the operator to preview → dedupe → commit. Nothing is written to a live
+ * business table here.
+ *
+ * DARK — REFUSE BEFORE FETCH. `pullFromAccountingProvider` checks the adapter's
+ * two-switch gate (feature flag + OAuth client credentials) BEFORE any token read
+ * or network call and returns `skipped_dark` when the provider is not connected —
+ * which is ALWAYS today. So this action, dark, stages nothing and never contacts a
+ * provider.
+ *
+ * ORG-PINNED. The session read is pinned to the active org (same posture as
+ * uploadImportFiles), and the pull resolves the token for the active org only, so
+ * it can only ever read the org's OWN connected book.
+ */
+export async function importFromConnector(importId: string, formData: FormData) {
+  const { ctx } = await requireOrgContext();
+  if (!isAdmin(ctx.membership.role)) redirect(`/imports/${importId}?error=forbidden`);
+  if (!uuid.safeParse(importId).success) redirect("/imports?error=bad_id");
+
+  const providerRaw = String(formData.get("provider") ?? "").trim();
+  const provider: AccountingProvider | null =
+    providerRaw === "xero" || providerRaw === "quickbooks" ? providerRaw : null;
+  if (!provider) redirect(`/imports/${importId}?error=bad_provider`);
+  const includeInvoices = String(formData.get("include_invoices") ?? "") === "1";
+
+  const supabase = await createClient();
+
+  // ACTIVE-org pin — same guard as uploadImportFiles: the `imports: admin all`
+  // policy is satisfied by a dual-org admin for BOTH orgs, so the session read
+  // must pin the active org before anything downstream stamps ctx.org.id.
+  const { data: importRow, error: importRowError } = await supabase
+    .from("imports")
+    .select("id, status")
+    .eq("id", importId)
+    .eq("org_id", ctx.org.id)
+    .maybeSingle();
+  if (importRowError) throw readFailure("imports: connector guard", importRowError);
+  if (!importRow) redirect("/imports?error=not_found");
+  if (importRow.status === "committed") {
+    redirect(`/imports/${importId}?error=already_committed`);
+  }
+
+  // Pull + normalise. Dark ⇒ skipped_dark (no network); the adapter refuses first.
+  const pull = await pullFromAccountingProvider(ctx.org.id, provider, {
+    includeInvoices,
+  });
+  if (pull.status === "skipped_dark") {
+    redirect(`/imports/${importId}?error=connector_unavailable`);
+  }
+  if (pull.status === "error") {
+    console.error("[imports] connector pull failed", { provider, message: pull.message });
+    redirect(`/imports/${importId}?error=connector_failed`);
+  }
+  if (pull.rows.length === 0) {
+    redirect(`/imports/${importId}?error=connector_empty`);
+  }
+
+  // One synthetic import_files row represents the connector pull so the wizard's
+  // "attached files" view and the row FK are satisfied without a storage upload —
+  // connector rows are never re-downloaded, so the storage_path is a sentinel.
+  const label = provider === "xero" ? "Xero (direct API sync)" : "QuickBooks (direct API sync)";
+  const { data: fileRow, error: fErr } = await supabase
+    .from("import_files")
+    .insert({
+      org_id: ctx.org.id,
+      import_id: importId,
+      filename: label,
+      storage_path: `connector:${provider}:${importId}:${Date.now()}`,
+      mime_type: null,
+      size_bytes: 0,
+      row_count: pull.rows.length,
+    })
+    .select("id")
+    .single();
+  if (fErr || !fileRow) {
+    console.error("[imports] connector file row failed", fErr);
+    redirect(`/imports/${importId}?error=file_record_failed`);
+  }
+
+  type ImportRowInsert = {
+    org_id: string;
+    import_id: string;
+    file_id: string;
+    source_row_number: number;
+    raw: Json;
+    entity_type: string;
+    confidence: number;
+    mapped: Json;
+    status: string;
+    error_message: string | null;
+  };
+  const inserts: ImportRowInsert[] = pull.rows.map((r, i) => ({
+    org_id: ctx.org.id,
+    import_id: importId,
+    file_id: fileRow.id,
+    source_row_number: i + 1,
+    // raw preserves the mapped payload plus the provider provenance ref, so a
+    // committed row's origin is traceable without a schema change.
+    raw: { ...r.mapped, _source: r.source_ref } as unknown as Json,
+    entity_type: r.entity_type,
+    confidence: r.confidence,
+    mapped: r.mapped as unknown as Json,
+    // Same review gate as the file path: an incomplete row (below the threshold)
+    // parks as needs_review rather than silently failing at commit.
+    status: r.confidence < REVIEW_THRESHOLD ? "needs_review" : "pending",
+    error_message: r.warnings.length > 0 ? r.warnings.join("; ") : null,
+  }));
+
+  // Chunked insert (matches the file path); a bulk failure falls back per-row so
+  // one bad row never strands the whole pull.
+  const CHUNK = 500;
+  for (let i = 0; i < inserts.length; i += CHUNK) {
+    const slice = inserts.slice(i, i + CHUNK);
+    const { error: rowErr } = await supabase.from("import_rows").insert(slice);
+    if (!rowErr) continue;
+    console.error("[imports] connector bulk insert failed, per-row fallback", rowErr);
+    for (const single of slice) {
+      const { error: oneErr } = await supabase.from("import_rows").insert(single);
+      if (oneErr) {
+        console.error("[imports] connector single insert failed", oneErr, single.source_row_number);
+      }
+    }
+  }
+
+  // Same duplicate detection the file path runs, against this org's existing rows.
+  const dupesChecked = await annotateDuplicates(importId, ctx.org.id);
+
+  await supabase
+    .from("imports")
+    .update({ status: "detected" })
+    .eq("id", importId)
+    .eq("org_id", ctx.org.id);
+
+  revalidatePath(`/imports/${importId}`);
+  revalidatePath("/imports");
+  redirect(
+    `/imports/${importId}?saved=connector_synced&provider=${provider}` +
+      `${dupesChecked ? "" : "&warn=duplicates_unchecked"}`,
   );
 }
 

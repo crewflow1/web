@@ -9,12 +9,19 @@ import {
   type CustomerFormInput,
 } from "@/lib/customers/schema";
 import { generateCustomerPortalToken } from "@/lib/customers/portal-token";
+import { sendCustomerStatementEmail } from "@/lib/email/send-statement";
 import {
   type FormState,
   formError,
   formSuccess,
   validateFormData,
 } from "@/lib/forms/state";
+
+/** Trim + validate a YYYY-MM-DD statement bound; anything else is open-ended. */
+function statementBound(v: FormDataEntryValue | null): string | null {
+  const t = typeof v === "string" ? v.trim() : "";
+  return /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : null;
+}
 
 /**
  * Customer CRUD server actions.
@@ -174,6 +181,49 @@ export async function rotateCustomerPortalToken(id: string) {
   }
   revalidatePath(`/customers/${id}`);
   redirect(`/customers/${id}?saved=portal_link`);
+}
+
+/**
+ * Email a customer their statement of account (PDF attachment).
+ *
+ * Button-only action (redirect + querystring, no useActionState — the
+ * force-dynamic [id] route's known hang pattern). Active-org scope is enforced
+ * by sendCustomerStatementEmail via loadCustomerStatement's org pin, so a
+ * foreign customer id is indistinguishable from a missing one. DARK-SAFE: with
+ * no RESEND_API_KEY the caller is told to configure email rather than silently
+ * "succeeding".
+ */
+export async function sendCustomerStatement(id: string, formData: FormData) {
+  const { ctx } = await requireOrgContext();
+  const supabase = await createClient();
+
+  const from = statementBound(formData.get("from"));
+  const to = statementBound(formData.get("to"));
+  const rawMessage = formData.get("message");
+  const message =
+    typeof rawMessage === "string" && rawMessage.trim() !== ""
+      ? rawMessage.trim().slice(0, 2000)
+      : undefined;
+
+  const result = await sendCustomerStatementEmail(supabase, ctx.org.id, id, {
+    range: { from, to },
+    message,
+  });
+
+  if (result.sent) {
+    revalidatePath(`/customers/${id}`);
+    redirect(`/customers/${id}?saved=statement_sent`);
+  }
+
+  const reason =
+    result.reason === "no_resend_key"
+      ? "statement_email_unconfigured"
+      : result.reason === "no_recipient"
+        ? "statement_no_recipient"
+        : result.reason === "not_found"
+          ? "not_allowed"
+          : "statement_send_failed";
+  redirect(`/customers/${id}?error=${reason}`);
 }
 
 export async function deleteCustomer(id: string) {

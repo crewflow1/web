@@ -200,7 +200,7 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // truncation would drop rows a picker/aggregation must see — those were PAGED.
 
   // Detail-page display lists (recent-N, read-only, no write-back).
-  "app/(app)/assets/[id]/page.tsx:226":
+  "app/(app)/assets/[id]/page.tsx:232":
     "bounded: recent-200 jobs referencing this asset — detail-page display list, not a write-back picker",
   "app/(app)/delays/_data.ts:111":
     "bounded: recent-200 jobs sample for the delays report display",
@@ -289,8 +289,9 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   "app/(app)/purchase-orders/_receiving-data.ts:60":
     "bounded: every goods-received note for ONE purchase order (.eq('purchase_order_id')) — a PO has a handful of deliveries, top-200",
 
-  // Per-request id-set lookup.
-  "server/services/stock.ts:233":
+  // Per-request id-set lookup. (Line shifted +1 by the additive `barcode` column
+  // on StockItemRow / STOCK_ITEM_COLUMNS, 20261144000000.)
+  "server/services/stock.ts:234":
     "bounded: receipt movements for a specific GRN's line-id set (.in('grn_line_id', grnLineIds)) — request-sized lookup; the balance-fold read (listStockMovements) is separately paged via fetchAllRows",
 
   // ── .from(as never) CAST-FORM WAVE — genuinely-bounded recency / per-scope

@@ -166,6 +166,18 @@ function buildFkGraph(): Map<string, FkEdge[]> {
  */
 const REVIEWED_AMBIGUOUS_PAIRS = [
   "admin_alert_state → users",
+  // AI budget control audit (20261147000000): target_user_id (the employee a
+  // limit applied to) + changed_by (the super-admin who made the change) both →
+  // users. Reviewed 2026-08-16: server/services/ai-budget-controls.ts resolves
+  // names via a separate namesFor("users", ...) lookup keyed on id, never a
+  // users(...) embed, so no read is ambiguous. Two FKs is inherent — who was
+  // limited vs who changed it — and a future embed must FK-hint (test 2 enforces).
+  "ai_budget_control_audit → users",
+  // AI per-employee limits (20261147000000): user_id (the employee capped) +
+  // set_by (the super-admin who set it) both → users. Reviewed 2026-08-16:
+  // ai-budget-controls.ts resolves the employee's name via the same separate
+  // users lookup, never an embed, so no read is ambiguous.
+  "ai_employee_budget_limits → users",
   // AI quote drafts (20261068): created_by + applied_by + discarded_by all → users.
   // Reviewed 2026-07-29: server/services/ai-quote-writer.ts is the only reader and
   // it selects scalar columns only ("id, status", "id, content, degraded,
@@ -177,6 +189,13 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   "ai_quote_drafts → users",
   "asset_assignments → assets",
   "asset_assignments → users",
+  // Depreciation settings (P3W2, 20261145000000): created_by + updated_by both
+  // → users. Reviewed 2026-08-16: the only reader is app/(app)/assets/[id]/
+  // page.tsx, which selects scalar policy columns only ("method, cost,
+  // salvage_value, start_date, useful_life_months, annual_rate_pct") — there is
+  // no users(...) embed. Two FKs are inherent to the audit trail (who set the
+  // policy vs who last changed it). Any future embed must name its FK constraint.
+  "asset_depreciation_settings → users",
   "asset_fuel_logs → users",
   "asset_inspection_overrides → users",
   "asset_inspection_templates → users",
@@ -319,6 +338,10 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   "site_visitors → users",
   "snags → users",
   "staff_secrets → users",
+  // stocktake_sessions: opened_by + posted_by + cancelled_by all → users. The
+  // stocktake service resolves actor names by explicit reads, never a users(...)
+  // embed, so no query on this table is ambiguous (asserted in stocktake.test.ts).
+  "stocktake_sessions → users",
   "supplier_payments → users",
   "support_tickets → users",
 ] as const;

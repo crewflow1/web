@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { generateApiKey } from "@/lib/api-auth/keygen";
 import { validateScopes } from "@/lib/api-auth/scopes";
+import { orgHasEntitlement } from "@/server/services/entitlements";
 import {
   type FormState,
   formError,
@@ -83,6 +84,15 @@ export async function createApiKey(
   const { user, ctx } = await requireOrgContext();
   if (!isAdminRole(ctx.membership.role)) {
     return formError("Only owners and admins can create API keys.");
+  }
+
+  // Plan entitlement gate (self-serve billing) — EXAMPLE WIRING. While the
+  // billing feature is dark, orgHasEntitlement() always returns true, so this
+  // is inert in production; once billing is live, 'api_access' is a Pro+ feature.
+  if (!(await orgHasEntitlement(ctx.org.id, "api_access"))) {
+    return formError(
+      "API access isn't included on your current plan. Upgrade in Settings → Billing.",
+    );
   }
 
   const result = validateFormData(formData, createSchema);

@@ -122,9 +122,14 @@ describe("Sprint A item 5 — read-only billing/trial section in Settings", () =
     expect(SETTINGS).toMatch(/Trial ends/);
   });
 
-  it("links to hello@crewflow.uk for plan change", () => {
-    expect(SETTINGS).toMatch(/mailto:hello@crewflow\.uk/);
-    expect(SETTINGS).toMatch(/Email us to change plan/);
+  it("links to the billing page for plan management; mailto fallback lives there (P3W2)", () => {
+    // P3W2 self-serve billing moved the plan-change surface to /settings/billing.
+    // Settings links to it; the dark-mode "email us" fallback now lives on the
+    // billing page (shown while self-serve billing is not yet enabled).
+    expect(SETTINGS).toMatch(/href="\/settings\/billing"/);
+    const BILLING = read("app/(app)/settings/billing/page.tsx");
+    expect(BILLING).toMatch(/mailto:hello@crewflow\.uk/);
+    expect(BILLING).toMatch(/Email us to change plan/);
   });
 });
 

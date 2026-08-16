@@ -382,10 +382,10 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE org's members (.eq('org_id')) — the assessor picker (listAssessors); an org's headcount is tens/low-hundreds, never near 1000",
   "app/(app)/health-safety/_signoff-data.ts:137":
     "bounded: name lookup .in('user_id', ids) where ids is a de-duped Set of sign-off user_ids from a bounded parent set — ≤ parent rows, never near 1000",
-  "app/(app)/settings/page.tsx:74":
+  "app/(app)/settings/page.tsx:76":
     "bounded: ONE org's members (.eq('org_id')) — the settings team panel; bounded by the org's headcount, never near 1000",
-  "app/(app)/staff/leave/page.tsx:96":
-    "bounded: ONE org's members (.eq('org_id')) — the leave-page name lookup; bounded by the org's headcount",
+  "app/(app)/staff/leave/page.tsx:97":
+    "bounded: ONE org's members (.eq('org_id')) — the leave-page name lookup; bounded by the org's headcount (line moved 96→97 when the getHolidayBalanceForUser import was added for the holiday-balance card)",
   "app/(app)/staff/page.tsx:56":
     "bounded: ONE org's members (.eq('org_id')) — the staff register; bounded by the org's headcount",
   "app/(app)/staff/rota/page.tsx:112":
@@ -691,8 +691,8 @@ const RPC_ALLOWLIST: Record<string, string> = {
   // tens of rows at most, structurally incapable of crossing 1000. The per-ORG
   // sibling rollups (grouped by org_id, unbounded) ARE paged; this one is not,
   // and correctly so.
-  "server/services/ai-cost-snapshot.ts:475":
-    "bounded: ai_invocations_month_by_feature groups by the CLOSED feature registry (tens of rows), never near the 1000 cap",
+  "server/services/ai-cost-snapshot.ts:493":
+    "bounded: ai_invocations_month_by_feature groups by the CLOSED feature registry (tens of rows), never near the 1000 cap. (Moved 475→493 when per-org effective-ceiling overrides were threaded into buildAiCostSnapshot in 20261147000000.)",
 };
 
 // `.range(` / `fetchAllRows` anywhere around the call = it IS paged (the fix).
@@ -1126,12 +1126,18 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   job_programme_baselines: "PAGED: fetchAllRows (intelligence + job-progress baselines)",
   job_progress_observations: "PAGED: fetchAllRows (job-progress observations)",
   site_diary_entries: "PAGED: fetchAllRows (EOT pack diary; .in(ids) paged)",
+  stocktake_sessions:
+    "PAGED: fetchAllRows (server/services/stocktake.ts listStocktakeSessions — the org's counts, .eq(org_id) paged via .range on a stable (opened_at desc, id desc) order; loadStocktakeSession is .maybeSingle()).",
+  stocktake_lines:
+    "PAGED: fetchAllRows (server/services/stocktake.ts listStocktakeLines — one session's lines, completeness-sensitive because the variance summary sums them, .eq(org_id).eq(session_id) paged via .range on a unique id order).",
   notification_email_queue:
     "PAGED/SINGLE: the CIS dedupe read is fetchAllRows-paged; the queue-drain read is a bounded worker .limit(DRAIN_BATCH<1000)",
   notification_preferences:
     "PER-USER-CONFIG/PAGED: getPreferencesForUser is .eq('org_id').eq('user_id') — ONE user's per-category preference rows (≤ the fixed category count, ~11); the sender-honoring bulk read (getPreferencesForUserKeys) and the digest-cron eligibility scan are both fetchAllRows-paged. No cross-tenant/aggregate set-read.",
   notification_digest_cursors:
     "PAGED: fetchCursors is the only set-read and is fetchAllRows-paged (bulk digest cursor read); the per-cadence cursor advance is an upsert write, not a read. Service-role only.",
+  pension_enrolments:
+    "PER-EMPLOYEE-CONFIG/PAGED: both set-reads in server/services/pension-enrolment.ts are .eq('org_id') and fetchAllRows-paged via .range on a stable id order — getPensionEnrolmentsForOrg (the payroll employer-cost map, one row per employee) and getOptOutRegisterForOrg (.eq('status','opted_out')). Bounded by org headcount, never summed cross-tenant; getPensionEnrolment is .maybeSingle(). The write path is an upsert.",
 
   // ---- PER-PARENT (bounded by ONE parent row) ----
   blueprint_markup: "PER-PARENT: .eq('blueprint_version_id') — one drawing version's markup shapes",
@@ -1234,6 +1240,8 @@ const COVERAGE_REVIEWED: Record<string, string> = {
     "PER-PARENT/BATCH: per-asset service schedules (.eq('asset_id')) display + a cross-org generator scan capped at .limit(BATCH=50); the rest are writes/CAS advances.",
   asset_maintenance_cases:
     "PER-PARENT/SINGLE: per-asset maintenance cases (.eq('asset_id')) display + .maybeSingle() case lookups; bounded by one asset (the upsert claim returns only the won row).",
+  asset_calibration_certificates:
+    "PER-PARENT/PAGED: the asset-detail read is per-parent (.eq('asset_id') — one asset's calibration certificates); the org-wide register (app/(app)/assets/calibration/page.tsx) is ALWAYS paged via fetchAllRows on a stable (calibration_date desc, id asc) order, so the estate scan never truncates at the cap.",
   asset_qr_identities:
     "PER-PARENT/SINGLE: per-asset QR lifecycle — a .limit(15) history display + .maybeSingle() active-token / scan-resolve lookups; bounded by one asset.",
   automation_runs:

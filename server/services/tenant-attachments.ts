@@ -76,6 +76,9 @@ export const ATTACHMENT_TARGET_TABLES = [
   // pins wave, 20261122000001) — the photo of the thing the pin flags, no
   // longer only reachable through a linked snag.
   "blueprint_pins",
+  // calibration certificate register: the external lab's certificate PDF, held
+  // against the structured cert record (P3W2, 20261145000001).
+  "asset_calibration_certificates",
 ] as const;
 export type AttachmentTargetTable = (typeof ATTACHMENT_TARGET_TABLES)[number];
 

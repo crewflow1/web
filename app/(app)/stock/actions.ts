@@ -110,6 +110,7 @@ function itemColumns(d: ReturnType<typeof stockItemFormSchema.parse>) {
     name: d.name,
     description: d.description ?? null,
     sku: d.sku ?? null,
+    barcode: d.barcode ?? null,
     unit: d.unit,
     preferred_supplier_id: d.preferred_supplier_id ?? null,
     supplier_reference: d.supplier_reference ?? null,

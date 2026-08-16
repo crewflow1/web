@@ -6,12 +6,19 @@ import {
   updateStaffProfile,
   updateStaffRole,
   removeStaff,
+  upsertHolidayEntitlementAction,
+  upsertPensionEnrolmentAction,
 } from "../actions";
 import { STAFF_ROLES } from "@/lib/staff/schema";
 import { StaffProfileForm } from "./_profile-form";
+import { HolidayEntitlementForm } from "./_holiday-form";
+import { PensionEnrolmentForm } from "./_pension-form";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { getHolidayBalanceForUser } from "@/server/services/holiday-balance";
+import { getPensionEnrolment } from "@/server/services/pension-enrolment";
+import { DEFAULT_HOLIDAY_ENTITLEMENT } from "@/lib/staff/holiday";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -68,6 +75,47 @@ export default async function StaffDetailPage({
       relationship?: string | null;
     } | null;
   } | null;
+
+  // Holiday balance (derived) + entitlement config, and pension enrolment.
+  // Reads are org-pinned inside the services; RLS admits admins across the org.
+  const holiday = await getHolidayBalanceForUser(ctx.org.id, id);
+  const enrolment = isAdmin ? await getPensionEnrolment(ctx.org.id, id) : null;
+
+  const holidayDefaults = {
+    annual_allowance_days: String(
+      holiday?.config.annual_allowance_days ??
+        DEFAULT_HOLIDAY_ENTITLEMENT.annual_allowance_days,
+    ),
+    accrual_method:
+      holiday?.config.accrual_method ??
+      DEFAULT_HOLIDAY_ENTITLEMENT.accrual_method,
+    carry_over_max_days: String(
+      holiday?.config.carry_over_max_days ??
+        DEFAULT_HOLIDAY_ENTITLEMENT.carry_over_max_days,
+    ),
+    leave_year_start_month: String(
+      holiday?.config.leave_year_start_month ??
+        DEFAULT_HOLIDAY_ENTITLEMENT.leave_year_start_month,
+    ),
+    leave_year_start_day: String(
+      holiday?.config.leave_year_start_day ??
+        DEFAULT_HOLIDAY_ENTITLEMENT.leave_year_start_day,
+    ),
+  };
+  const pctToStr = (n: number | null | undefined): string =>
+    n == null ? "" : String(Math.round(n * 1000) / 10);
+  const pensionDefaults = {
+    status: enrolment?.status ?? "not_enrolled",
+    employee_contribution_percent:
+      pctToStr(enrolment?.employee_contribution_rate) || "5",
+    employer_contribution_percent:
+      pctToStr(enrolment?.employer_contribution_rate) || "3",
+    scheme_name: enrolment?.scheme_name ?? "",
+    assessment_date: enrolment?.assessment_date ?? "",
+    enrolment_date: enrolment?.enrolment_date ?? "",
+    opt_out_date: enrolment?.opt_out_date ?? "",
+    postponement_end_date: enrolment?.postponement_end_date ?? "",
+  };
 
   const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
 
@@ -136,6 +184,76 @@ export default async function StaffDetailPage({
         </p>
       </section>
 
+      {/* Holiday entitlement + derived balance */}
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-base font-semibold text-slate-900">
+          Holiday entitlement
+        </h2>
+        {holiday ? (
+          <>
+            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <BalanceStat
+                label="Remaining"
+                value={`${holiday.balance.remaining_days} d`}
+                emphasis
+              />
+              <BalanceStat
+                label="Allowance"
+                value={`${holiday.balance.allowance_days} d`}
+              />
+              <BalanceStat
+                label="Accrued"
+                value={`${holiday.balance.accrued_days} d`}
+              />
+              <BalanceStat
+                label="Taken"
+                value={`${holiday.balance.taken_days} d`}
+              />
+              <BalanceStat
+                label="Booked (pending)"
+                value={`${holiday.balance.booked_days} d`}
+              />
+              <BalanceStat
+                label="Carried over"
+                value={`${holiday.balance.carried_over_days} d`}
+              />
+            </div>
+            <p className="mt-2 text-xs text-slate-500">
+              Leave year {holiday.balance.leave_year_start} →{" "}
+              {holiday.balance.leave_year_end}. Days are working days (Mon–Fri).
+            </p>
+          </>
+        ) : (
+          <p className="mt-2 text-sm text-slate-600">
+            No holiday entitlement configured yet
+            {isAdmin ? " — set one below." : "."}
+          </p>
+        )}
+        {isAdmin ? (
+          <HolidayEntitlementForm
+            action={upsertHolidayEntitlementAction.bind(null, id)}
+            defaults={holidayDefaults}
+          />
+        ) : null}
+      </section>
+
+      {/* Pension auto-enrolment (admin only) */}
+      {isAdmin ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">
+            Pension auto-enrolment
+          </h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Feeds the payroll employer-cost <strong>estimate</strong>. Filing to
+            your pension provider / HMRC is external.
+          </p>
+          <PensionEnrolmentForm
+            action={upsertPensionEnrolmentAction.bind(null, id)}
+            defaults={pensionDefaults}
+          />
+        </section>
+      ) : null}
+
       {/* Role + remove (admin only) */}
       {isAdmin ? (
         <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -189,6 +307,33 @@ export default async function StaffDetailPage({
           </ConfirmForm>
         </section>
       ) : null}
+    </div>
+  );
+}
+
+function BalanceStat({
+  label,
+  value,
+  emphasis,
+}: {
+  label: string;
+  value: string;
+  emphasis?: boolean;
+}) {
+  return (
+    <div className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+        {label}
+      </div>
+      <div
+        className={
+          emphasis
+            ? "mt-1 text-xl font-bold text-slate-900"
+            : "mt-1 text-base font-semibold text-slate-800"
+        }
+      >
+        {value}
+      </div>
     </div>
   );
 }

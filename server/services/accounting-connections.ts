@@ -381,6 +381,73 @@ function tokenExpiring(expiresAt: string | null, skewMs = 60_000): boolean {
   return Number.isFinite(t) ? t - Date.now() <= skewMs : false;
 }
 
+/**
+ * The per-org provider access an adapter call needs: a DECRYPTED access token, the
+ * provider handle (Xero tenant id / QBO realm id), and the shared reactive-401
+ * `refresh` callback. Resolved for the ACTIVE org only, service-role (the token
+ * columns are stripped from the caller-JWT surface). This is the SINGLE token-seam
+ * both the push (`syncToProvider`) and the pull (accounting-import) paths resolve
+ * their credentials through — it never re-selects a token column (it reuses
+ * `readConnectionSecrets`, the one service-role token read), so the "exactly one
+ * token select" boundary is preserved.
+ */
+export type ProviderAccess = {
+  accessToken: string;
+  tenantId: string | null;
+  realmId: string | null;
+  refresh: () => Promise<string | null>;
+};
+
+export type ResolveAccessResult =
+  | { ok: true; access: ProviderAccess }
+  | { ok: false; reason: "not_connected" | "unreadable"; message: string };
+
+/**
+ * Resolve one org's provider access, proactively refreshing a near-expiry token.
+ * Returns `not_connected` when the connection is absent / not `connected` / has no
+ * token, and `unreadable` when the stored token fails to decrypt (tamper / wrong
+ * key) — both loud, never a silent empty result. Org-pinned via readConnectionSecrets.
+ */
+export async function resolveProviderAccess(
+  orgId: string,
+  provider: AccountingProvider,
+): Promise<ResolveAccessResult> {
+  const secrets = await readConnectionSecrets(orgId, provider);
+  if (!secrets || secrets.status !== "connected" || !secrets.access_token) {
+    return {
+      ok: false,
+      reason: "not_connected",
+      message: `${provider} is not connected for this org.`,
+    };
+  }
+  let accessToken: string;
+  try {
+    accessToken = decryptToken(secrets.access_token);
+  } catch {
+    return {
+      ok: false,
+      reason: "unreadable",
+      message: `${provider} stored token is unreadable; reconnect the account.`,
+    };
+  }
+  const refresh = () => refreshAndPersist(orgId, provider);
+  // Proactively refresh a token that is expired or within the skew window so the
+  // first call does not have to fail before refreshing.
+  if (tokenExpiring(secrets.token_expires_at)) {
+    const fresh = await refresh();
+    if (fresh) accessToken = fresh;
+  }
+  return {
+    ok: true,
+    access: {
+      accessToken,
+      tenantId: secrets.external_tenant_id,
+      realmId: secrets.realm_id,
+      refresh,
+    },
+  };
+}
+
 /** Best-effort service-role stamp of last_sync_at / last_error after a push. Org-pinned. */
 async function stampSyncOutcome(
   orgId: string,

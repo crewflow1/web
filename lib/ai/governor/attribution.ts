@@ -58,3 +58,38 @@ export function hqBudgetOrgId(): string | null {
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : null;
 }
+
+/**
+ * The EMPLOYEE a governed call is attributed to for PER-EMPLOYEE LIMIT purposes,
+ * or `null` when there is no attributable human.
+ *
+ * WHY THIS EXISTS, AND WHY IT IS SO SMALL.
+ * The per-employee limit (ai_employee_budget_limits, enforced fail-closed in
+ * ai_reserve_invocation) is keyed on the ACTING USER — the same `user_id` the
+ * ledger and the reservation already carry. So "threading the employee dimension
+ * through" is mostly a matter of NOT losing the user id that already flows
+ * through `invokeWithGovernor`, and of stating the ONE rule that decides when a
+ * call has no employee at all:
+ *
+ *   A SYSTEM / HQ JOB HAS NO EMPLOYEE. A webhook turn, a cron sweep, and HQ's
+ *   own AI (billed to hqBudgetOrgId) run with `user_id = null` — there is no
+ *   person whose personal monthly budget the call should count against. Such
+ *   calls are governed by the ORG CEILING ALONE; the reserve function skips the
+ *   employee gate when the user id is null, and this function makes that policy
+ *   explicit and testable rather than an implicit consequence of a null.
+ *
+ * It is NOT a place to invent a synthetic "AI employee" subject. An AI employee
+ * is identified by its FEATURE KEY (which the ledger already records), and the
+ * per-feature cost rollup on /admin/ai-costs is where that spend is attributed.
+ * Folding a feature into the per-employee-limit dimension would conflate "a
+ * human's personal cap" with "a capability's spend" — two different controls —
+ * so this deliberately returns null for a null user rather than manufacturing an
+ * identity the limit table has no row for.
+ *
+ * Pure, total, never throws — the same contract as `hqBudgetOrgId`.
+ */
+export function limitSubjectUserId(userId: string | null | undefined): string | null {
+  if (typeof userId !== "string") return null;
+  const trimmed = userId.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
