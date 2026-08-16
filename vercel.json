@@ -140,6 +140,14 @@
     {
       "path": "/api/cron/weather-fetch",
       "schedule": "40 */6 * * *"
+    },
+    {
+      "path": "/api/cron/saga-drain",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/hq-decision-autopropose",
+      "schedule": "15 3 * * *"
     }
   ]
 }

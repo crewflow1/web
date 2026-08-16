@@ -75,7 +75,7 @@ export const TERMINAL_DECISION_STATUSES = [
 const ROW_COLUMNS =
   "id, title, problem, business_impact, revenue_impact, demand, engineering_cost, risk, " +
   "timeline, ai_debate, recommendation, status, decided_by, decided_at, delegate_to, " +
-  "delay_until, decision_reason, created_by, created_at, updated_at";
+  "delay_until, decision_reason, source, source_signal_key, created_by, created_at, updated_at";
 
 const EVENT_COLUMNS =
   "id, decision_id, event_type, from_status, to_status, actor_id, actor_email, reason, " +
@@ -102,6 +102,10 @@ export type DecisionRow = {
   delegate_to: string | null;
   delay_until: string | null;
   decision_reason: string | null;
+  /** Who/what raised the proposal: 'human' (a super-admin) or 'deterministic' (the auto-proposer). */
+  source: "human" | "deterministic";
+  /** The originating signal's stable key for a deterministic proposal; null for human-authored. */
+  source_signal_key: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -210,6 +214,108 @@ export async function createDecision(input: CreateDecisionInput): Promise<Decisi
     metadata: { title },
   });
   return { ok: true, decision: data };
+}
+
+// ---------------------------------------------------------------------
+// 1b. Auto-proposal — the SYSTEM path that OPENS a deterministic proposal.
+// ---------------------------------------------------------------------
+
+/** A draft proposal the deterministic auto-proposer produces from a real signal. */
+export type AutoProposalInput = {
+  title: string;
+  problem: string;
+  revenueImpact: string;
+  risk: string;
+  demand: string | null;
+  recommendation: string;
+  /** The originating signal's stable key — the idempotency axis. */
+  sourceSignalKey: string;
+};
+
+export type OpenProposalOutcome = "created" | "exists" | "error";
+
+/** Recognise a Postgres unique-violation from its message (23505 / duplicate key). */
+function isUniqueViolation(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("duplicate key") || m.includes("23505") || m.includes("unique constraint")
+  );
+}
+
+/**
+ * Open a DRAFT proposal from a deterministic signal — the SYSTEM path (a cron has no
+ * super-admin), so it is NOT deciderGate-gated. It is nonetheless structurally
+ * incapable of deciding: it only ever INSERTS a row born `proposed`, stamped
+ * `source = 'deterministic'`, with NO decider — the DB guard forbids a decision being
+ * born terminal anyway. approve/reject/delay/delegate stay a human's act via `decide`.
+ *
+ * IDEMPOTENT: one auto-proposal per signal, ever. It first reads for an existing row
+ * with this signal key (any status); if none, it inserts. A racing insert that loses
+ * the partial-unique race surfaces as a unique-violation, treated as `exists` — never
+ * an error. Keeping this here (not in the caller) preserves the invariant that
+ * hq_decisions is touched by exactly ONE module.
+ */
+export async function openDeterministicProposal(
+  input: AutoProposalInput,
+): Promise<OpenProposalOutcome> {
+  const signalKey = (input.sourceSignalKey ?? "").trim();
+  if (!signalKey) return "error";
+  const title = (input.title ?? "").trim();
+  if (!title) return "error";
+
+  const admin = createAdminClient();
+
+  const existing = await decisions<{ id: string }>(admin)
+    .select("id")
+    .eq("source_signal_key", signalKey)
+    .maybeSingle();
+  if (existing.error) {
+    console.error("[hq-decisions] openDeterministicProposal existence check failed", {
+      signalKey,
+      error: existing.error.message,
+    });
+    return "error";
+  }
+  if (existing.data) return "exists";
+
+  const { data, error } = await decisions<DecisionRow>(admin)
+    .insert({
+      title,
+      problem: input.problem,
+      revenue_impact: input.revenueImpact,
+      risk: input.risk,
+      demand: input.demand,
+      recommendation: input.recommendation,
+      // Born proposed — never a terminal state. The DB guard enforces this too.
+      status: "proposed",
+      source: "deterministic",
+      source_signal_key: signalKey,
+      // System-raised: no human created_by.
+      created_by: null,
+    })
+    .select(ROW_COLUMNS)
+    .maybeSingle();
+
+  if (error) {
+    // A concurrent run won the unique race — idempotent, not an error.
+    if (isUniqueViolation(error.message)) return "exists";
+    console.error("[hq-decisions] openDeterministicProposal insert failed", {
+      signalKey,
+      error: error.message,
+    });
+    return "error";
+  }
+  if (!data) return "error";
+
+  await recordAdminActivity({
+    actorId: null,
+    actorEmail: null,
+    action: "decision.auto_proposed",
+    targetTable: "hq_decisions",
+    targetId: data.id,
+    metadata: { source: "deterministic", signal_key: signalKey, title },
+  });
+  return "created";
 }
 
 // ---------------------------------------------------------------------
