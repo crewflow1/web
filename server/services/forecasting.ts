@@ -32,6 +32,12 @@ import {
   computeCommercialRiskBoard,
   type CommercialRiskBoard,
 } from "@/lib/intelligence/commercial-risk";
+import {
+  computeCustomerLtvForecast,
+  type CustomerLtvForecast,
+  type LtvForecastInvoice,
+  type LtvForecastActivity,
+} from "@/lib/health/customer-ltv-forecast";
 import type { CompanySignalsView } from "@/server/services/intelligence";
 
 /**
@@ -418,6 +424,71 @@ async function gatherLabourForecast(
 }
 
 // ---------------------------------------------------------------------------
+// Group: customer LTV forecast (forward projection + churn signal)
+// ---------------------------------------------------------------------------
+
+/**
+ * Forward customer value + churn signal. Reads the SAME dated invoice history the
+ * facts LTV uses PLUS the customer's jobs (recency only), and hands them to the
+ * pure projection lib. A deliberate ESTIMATE — the pure module labels itself so,
+ * withholds a projection where history is too thin, and never blends a score.
+ * `sent_at`/`created_at` are what turn each issued invoice into a dated order.
+ */
+export async function gatherCustomerLtvForecast(
+  db: ForecastingClient,
+  orgId: string,
+  todayKey: string,
+): Promise<CustomerLtvForecast> {
+  const [invoices, customers, jobs] = await Promise.all([
+    allRows("forecasting: LTV forecast invoices", (from, to) =>
+      db
+        .from("invoices")
+        .select("id, status, amount, customer_id, job_id, sent_at, created_at")
+        .eq("org_id", orgId)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    allRows("forecasting: LTV forecast customers", (from, to) =>
+      db
+        .from("customers")
+        .select("id, name")
+        .eq("org_id", orgId)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    allRows("forecasting: LTV forecast jobs", (from, to) =>
+      db
+        .from("jobs")
+        .select("id, customer_id, created_at")
+        .eq("org_id", orgId)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+  ]);
+
+  return computeCustomerLtvForecast({
+    // An issued invoice is dated by when it was sent; a legacy row with no
+    // sent_at falls back to created_at (never guessed onto today).
+    invoices: invoices.map((i) => ({
+      status: String(i.status ?? ""),
+      amount: i.amount as number | string | null,
+      customer_id: sv(i.customer_id),
+      job_id: sv(i.job_id),
+      issuedAt: sv(i.sent_at) ?? sv(i.created_at),
+    })) as LtvForecastInvoice[],
+    activity: jobs.map((j) => ({
+      customerId: sv(j.customer_id),
+      at: sv(j.created_at),
+    })) as LtvForecastActivity[],
+    naming: {
+      customerName: new Map(customers.map((c) => [String(c.id), String(c.name ?? "")])),
+      jobCustomer: new Map(jobs.map((j) => [String(j.id), sv(j.customer_id)])),
+    },
+    todayKey,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // The assembled view
 // ---------------------------------------------------------------------------
 
@@ -431,6 +502,8 @@ export interface ForecastsView {
   cashVisible: boolean;
   cashTimeline: ForecastGroup<CashTimeline>;
   labour: ForecastGroup<LabourForecast>;
+  /** Forward customer value + churn signal — a labelled ESTIMATE, its own loud group. */
+  customerForecast: ForecastGroup<CustomerLtvForecast>;
   delayRisk: ForecastGroup<DelayRiskBoard>;
   /** Pure over already-loaded signals; bands each factor `insufficient` when its
    *  input is absent, so it is always present rather than a read group. */
@@ -465,13 +538,16 @@ export async function loadForecasts(
   const todayKey = formatDayKeyUK(now);
   const cashVisible = cashOutVisibleToRole(role);
 
-  const [cashTimeline, labour] = await Promise.all([
+  const [cashTimeline, labour, customerForecast] = await Promise.all([
     // The cash timeline needs the outflow side to be honest; a role that can't
     // see VAT/CIS/payables gets no timeline rather than an understated one.
     cashVisible
       ? group("forecasting: cash timeline", () => gatherCashTimeline(db, orgId, now, todayKey))
       : Promise.resolve({ data: null, failed: true } as ForecastGroup<CashTimeline>),
     group("forecasting: labour", () => gatherLabourForecast(db, orgId, todayKey)),
+    group("forecasting: customer LTV forecast", () =>
+      gatherCustomerLtvForecast(db, orgId, todayKey),
+    ),
   ]);
 
   // Delay risk composes the programme + progress rollups from the signals view.
@@ -503,6 +579,7 @@ export async function loadForecasts(
     cashVisible,
     cashTimeline,
     labour,
+    customerForecast,
     delayRisk,
     commercialRisk,
   };
