@@ -1,8 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
-import { employerCostsForStoredLine, payrollCsv } from "@/lib/payroll/compute";
+import {
+  employerCostsForStoredLineWithPension,
+  payrollCsv,
+} from "@/lib/payroll/compute";
 import { fetchNiNumbersForOrg } from "@/lib/staff/secrets";
+import { getPensionEnrolmentsForOrg } from "@/server/services/pension-enrolment";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import * as Sentry from "@sentry/nextjs";
@@ -73,6 +77,10 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   if (!run) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   const cycle = run.cycle === "weekly" ? "weekly" : "monthly";
+  // Tracked pension enrolments — where present, the employer pension estimate
+  // uses the employee's real status + scheme rate; otherwise the statutory 3%.
+  // Empty map ⇒ output identical to the statutory-only path.
+  const pensionByUser = await getPensionEnrolmentsForOrg(ctx.org.id);
   const csv = payrollCsv(
     (lines ?? []).map((l) => ({
       full_name: l.user?.full_name ?? "—",
@@ -84,8 +92,14 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
       ni_estimate: Number(l.ni_estimate ?? 0),
       net_pay: Number(l.net_pay ?? 0),
       // Employer NI + pension, DERIVED from the stored gross at the rates in force
-      // for this run's own period (never today's), through the one shared helper.
-      ...employerCostsForStoredLine(l.gross_pay, cycle, run.period_start),
+      // for this run's own period (never today's), through the one shared helper,
+      // honouring the employee's tracked pension enrolment where one exists.
+      ...employerCostsForStoredLineWithPension(
+        l.gross_pay,
+        cycle,
+        run.period_start,
+        pensionByUser.get(l.user_id),
+      ),
     })),
     { period_start: run.period_start, period_end: run.period_end, cycle: run.cycle },
   );

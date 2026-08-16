@@ -236,6 +236,47 @@ export type EmployerCostEstimate = {
 };
 
 /**
+ * Per-employee auto-enrolment state, as tracked in `pension_enrolments` — the
+ * subset the employer-cost estimate needs.
+ */
+export type PensionEnrolmentInput = {
+  status: "not_enrolled" | "enrolled" | "opted_out" | "postponed";
+  /** Employer contribution as a FRACTION of qualifying earnings (e.g. 0.03). */
+  employer_contribution_rate: number;
+};
+
+/**
+ * Employer pension for an employee whose auto-enrolment state is TRACKED.
+ *
+ * With the person's real status and their scheme's employer rate we price the
+ * contribution precisely instead of assuming the statutory 3% for everyone:
+ *   - not_enrolled / opted_out / postponed → £0 (no employer contribution due)
+ *   - enrolled → employer_contribution_rate × qualifying earnings
+ *
+ * An ENROLLED jobholder is charged even below the automatic-enrolment earnings
+ * trigger: an opted-in worker below the trigger must still receive employer
+ * contributions. That is the single NOT_MODELLED omission that UNDERSTATES cost
+ * in the untracked (blanket-3%) path; tracking the enrolment closes it.
+ *
+ * The qualifying-earnings band comes from the dated rate table (`./rates`), so
+ * there is no rate literal here — the only per-employee input is the scheme
+ * rate, which is data, not a rule.
+ */
+export function annualEmployerPensionForEnrolment(
+  annualGross: number,
+  rates: EmployerPensionRates,
+  enrolment: PensionEnrolmentInput,
+): number {
+  if (enrolment.status !== "enrolled") return 0;
+  const rate = Math.max(0, enrolment.employer_contribution_rate);
+  const qualifying =
+    Math.min(annualGross, rates.qualifying_earnings_upper_annual) -
+    rates.qualifying_earnings_lower_annual;
+  if (qualifying <= 0) return 0;
+  return qualifying * rate;
+}
+
+/**
  * Employer costs for a payroll line that is ALREADY STORED.
  *
  * `payroll_lines` persists `gross_pay`, and its parent run persists `cycle` and
@@ -266,6 +307,47 @@ export function employerCostsForStoredLine(
   const employerPension = round2(
     annualEmployerPension(annualised, resolved.rates.employer_pension) / periods,
   );
+  return {
+    employer_ni_estimate: employerNi,
+    employer_pension_estimate: employerPension,
+    employment_cost_estimate: round2(gross + employerNi + employerPension),
+    employer_rates_tax_year: resolved.applied_tax_year,
+    employer_rates_extrapolated: resolved.extrapolated,
+  };
+}
+
+/**
+ * Employer costs for a stored line, honouring the employee's TRACKED pension
+ * enrolment where one exists.
+ *
+ * IDENTICAL to `employerCostsForStoredLine` when `enrolment` is undefined — the
+ * statutory-minimum estimate — so every existing, untracked line is unchanged
+ * to the penny. When an enrolment row IS supplied the pension figure uses the
+ * person's real status and scheme rate; employer NI is unaffected (NI does not
+ * depend on pension state). Still an ESTIMATE — filing to a provider/HMRC is
+ * external and out of scope.
+ */
+export function employerCostsForStoredLineWithPension(
+  grossPay: number | string | null | undefined,
+  cycle: "weekly" | "monthly",
+  periodStartIso: string,
+  enrolment?: PensionEnrolmentInput,
+): EmployerCostEstimate {
+  const gross = round2(Math.max(0, Number(grossPay ?? 0) || 0));
+  const periods = periodsPerYear(cycle);
+  const annualised = gross * periods;
+  const resolved = resolveEmploymentCostRates(periodStartIso);
+  const employerNi = round2(
+    annualEmployerNi(annualised, resolved.rates.employer_ni) / periods,
+  );
+  const annualPension = enrolment
+    ? annualEmployerPensionForEnrolment(
+        annualised,
+        resolved.rates.employer_pension,
+        enrolment,
+      )
+    : annualEmployerPension(annualised, resolved.rates.employer_pension);
+  const employerPension = round2(annualPension / periods);
   return {
     employer_ni_estimate: employerNi,
     employer_pension_estimate: employerPension,

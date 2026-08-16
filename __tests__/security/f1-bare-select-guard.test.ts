@@ -384,8 +384,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: name lookup .in('user_id', ids) where ids is a de-duped Set of sign-off user_ids from a bounded parent set — ≤ parent rows, never near 1000",
   "app/(app)/settings/page.tsx:74":
     "bounded: ONE org's members (.eq('org_id')) — the settings team panel; bounded by the org's headcount, never near 1000",
-  "app/(app)/staff/leave/page.tsx:96":
-    "bounded: ONE org's members (.eq('org_id')) — the leave-page name lookup; bounded by the org's headcount",
+  "app/(app)/staff/leave/page.tsx:97":
+    "bounded: ONE org's members (.eq('org_id')) — the leave-page name lookup; bounded by the org's headcount (line moved 96→97 when the getHolidayBalanceForUser import was added for the holiday-balance card)",
   "app/(app)/staff/page.tsx:56":
     "bounded: ONE org's members (.eq('org_id')) — the staff register; bounded by the org's headcount",
   "app/(app)/staff/rota/page.tsx:112":
@@ -1132,6 +1132,8 @@ const COVERAGE_REVIEWED: Record<string, string> = {
     "PER-USER-CONFIG/PAGED: getPreferencesForUser is .eq('org_id').eq('user_id') — ONE user's per-category preference rows (≤ the fixed category count, ~11); the sender-honoring bulk read (getPreferencesForUserKeys) and the digest-cron eligibility scan are both fetchAllRows-paged. No cross-tenant/aggregate set-read.",
   notification_digest_cursors:
     "PAGED: fetchCursors is the only set-read and is fetchAllRows-paged (bulk digest cursor read); the per-cadence cursor advance is an upsert write, not a read. Service-role only.",
+  pension_enrolments:
+    "PER-EMPLOYEE-CONFIG/PAGED: both set-reads in server/services/pension-enrolment.ts are .eq('org_id') and fetchAllRows-paged via .range on a stable id order — getPensionEnrolmentsForOrg (the payroll employer-cost map, one row per employee) and getOptOutRegisterForOrg (.eq('status','opted_out')). Bounded by org headcount, never summed cross-tenant; getPensionEnrolment is .maybeSingle(). The write path is an upsert.",
 
   // ---- PER-PARENT (bounded by ONE parent row) ----
   blueprint_markup: "PER-PARENT: .eq('blueprint_version_id') — one drawing version's markup shapes",
