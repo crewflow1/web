@@ -80,9 +80,13 @@ begin
   return v_invoice;
 end $$;
 
-revoke all on function public._generate_stage_invoice_row(uuid, date) from public;
--- Intentionally NOT granted to authenticated/anon/service_role: internal only,
--- reached solely via the two definer callers below (they execute it as the owner).
+-- Supabase ALTER DEFAULT PRIVILEGES grants EXECUTE on new public functions to
+-- anon + authenticated directly (not via PUBLIC), so revoking from PUBLIC alone
+-- leaves this raw, unguarded (no current_org_ids/is_org_admin) secdef invoice-
+-- creation core reachable by any authenticated caller — a cross-tenant write
+-- primitive. Revoke from all three roles: internal only, reached solely via the
+-- two definer callers below (they execute it as the owner).
+revoke all on function public._generate_stage_invoice_row(uuid, date) from public, anon, authenticated;
 
 -- ── public RPC: identity checks preserved EXACTLY, body delegated ─────────────
 -- Same signature, same guards, same behaviour as 20261039000000 — the manual
@@ -176,5 +180,8 @@ begin
   return jsonb_build_object('status', 'created', 'count', v_count, 'invoices', v_created);
 end $$;
 
-revoke all on function public.automation_invoice_job_completion(uuid, uuid) from public;
+-- Revoke from anon + authenticated too (Supabase default-grants them EXECUTE at
+-- CREATE time): this is service-role only — the automation dispatcher runs as
+-- service_role. A tenant caller must never reach it directly.
+revoke all on function public.automation_invoice_job_completion(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.automation_invoice_job_completion(uuid, uuid) to service_role;
