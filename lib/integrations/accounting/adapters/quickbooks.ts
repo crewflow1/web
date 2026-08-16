@@ -4,11 +4,16 @@ import { createHash } from "node:crypto";
 import { isProviderConnectable } from "../oauth";
 import type {
   AccountingAdapter,
+  AccountingImportAdapter,
+  AccountingPullInput,
+  AccountingPullResult,
   AccountingPushInput,
   AccountingPushResult,
+  PulledContact,
+  PulledInvoice,
   SkippedInvoice,
 } from "./types";
-import { isPermanentRowRejection, unavailable } from "./types";
+import { isPermanentRowRejection, pullUnavailable, unavailable } from "./types";
 import {
   buildQboInvoiceBody,
   buildQboPaymentBody,
@@ -17,6 +22,7 @@ import {
 import {
   assertKnownVatRate,
   effectiveVatRate,
+  money2,
   UnknownVatRateError,
   type CanonicalAccountingRow,
 } from "../canonical";
@@ -127,11 +133,131 @@ type JsonResult = {
   networkError?: string;
 };
 
-export class QuickBooksAdapter implements AccountingAdapter {
+/** QBO caps a query at 1000 rows; page with STARTPOSITION/MAXRESULTS. */
+const QBO_PAGE_SIZE = 100;
+const QBO_MAX_PAGES = 1000;
+
+export class QuickBooksAdapter implements AccountingAdapter, AccountingImportAdapter {
   readonly provider = "quickbooks" as const;
 
   isAvailable(): boolean {
     return isProviderConnectable(this.provider);
+  }
+
+  // ── IMPORT (PULL) ──────────────────────────────────────────────────────────
+
+  /**
+   * Pull every Customer from the connected QBO company, F-1 paginated via the
+   * query API (STARTPOSITION/MAXRESULTS). DARK GUARD FIRST — no credentials /
+   * flag off ⇒ `unavailable`, no network.
+   */
+  async pullContacts(
+    input: AccountingPullInput,
+  ): Promise<AccountingPullResult<PulledContact>> {
+    return this.pullPaged<PulledContact>(input, "Customer", (json) => {
+      const list = qboEntities(json, "Customer");
+      return list.map((c) => {
+        const obj = c as QboCustomer;
+        return {
+          sourceId: str(obj.Id),
+          name: str(obj.DisplayName ?? obj.CompanyName),
+          email: nonEmpty(obj.PrimaryEmailAddr?.Address),
+          phone: nonEmpty(obj.PrimaryPhone?.FreeFormNumber),
+          addressLine1: nonEmpty(obj.BillAddr?.Line1),
+          city: nonEmpty(obj.BillAddr?.City),
+          postcode: nonEmpty(obj.BillAddr?.PostalCode),
+        };
+      });
+    });
+  }
+
+  /**
+   * Pull every Invoice from the connected QBO company, F-1 paginated. QBO Invoice
+   * is always a sale (the AR document), so no type filter is needed. DARK GUARD
+   * FIRST — no credentials / flag off ⇒ `unavailable`, no network.
+   */
+  async pullInvoices(
+    input: AccountingPullInput,
+  ): Promise<AccountingPullResult<PulledInvoice>> {
+    return this.pullPaged<PulledInvoice>(input, "Invoice", (json) => {
+      const list = qboEntities(json, "Invoice");
+      return list.map((c) => {
+        const obj = c as QboInvoice;
+        const gross = num(obj.TotalAmt);
+        const vat = num(obj.TxnTaxDetail?.TotalTax);
+        // QBO TotalAmt is tax-INCLUSIVE; net is the remainder.
+        const net = Math.max(0, gross - vat);
+        return {
+          sourceId: str(obj.Id),
+          number: str(obj.DocNumber),
+          customerName: str(obj.CustomerRef?.name),
+          net: money2(net),
+          vat: money2(vat),
+          gross: money2(gross),
+          status: mapQboInvoiceStatus(gross, num(obj.Balance)),
+          date: qboDate(obj.TxnDate),
+        };
+      });
+    });
+  }
+
+  /**
+   * The shared paged pull. Walks the query API with STARTPOSITION/MAXRESULTS
+   * until a short (or empty) page, reusing `authedJson` — so the 401→refresh→retry
+   * path and the single `fetch` in `raw` (both strictly after the dark guard) are
+   * shared with the push path. Any transport failure aborts the whole pull with
+   * an `error` — never a silent partial.
+   */
+  private async pullPaged<T>(
+    input: AccountingPullInput,
+    entity: "Customer" | "Invoice",
+    mapPage: (json: unknown) => T[],
+  ): Promise<AccountingPullResult<T>> {
+    if (!this.isAvailable()) {
+      return pullUnavailable<T>(
+        this.provider,
+        "QuickBooks is not connected. Add the QuickBooks OAuth credentials and " +
+          "enable FEATURE_ACCOUNTING_CONNECT to enable the import sync; CSV import works today.",
+      );
+    }
+    if (!input.realmId) {
+      return {
+        ok: false,
+        provider: this.provider,
+        reason: "error",
+        message: "QuickBooks import has no realm id; reconnect the QuickBooks account.",
+      };
+    }
+    const realmId = input.realmId;
+    const ctx: AuthCtx = {
+      token: input.accessToken,
+      refreshed: false,
+      refresh: input.refresh,
+    };
+    const items: T[] = [];
+
+    for (let page = 0; page < QBO_MAX_PAGES; page++) {
+      const startPosition = page * QBO_PAGE_SIZE + 1;
+      const query = `select * from ${entity} startposition ${startPosition} maxresults ${QBO_PAGE_SIZE}`;
+      const res = await this.authedJson(
+        ctx,
+        "GET",
+        `/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`,
+      );
+      if (!res.ok) {
+        return {
+          ok: false,
+          provider: this.provider,
+          reason: "error",
+          message: this.reason(`${entity.toLowerCase()} pull`, res),
+        };
+      }
+      const pageItems = mapPage(res.json);
+      for (const it of pageItems) items.push(it);
+      if (pageItems.length < QBO_PAGE_SIZE) break;
+    }
+
+    return { ok: true, provider: this.provider, items };
   }
 
   async pushInvoices(input: AccountingPushInput): Promise<AccountingPushResult> {
@@ -600,4 +726,55 @@ function entityId(json: unknown, entity: string): string | null {
   const obj = (json as Record<string, unknown> | null)?.[entity];
   const id = (obj as { Id?: unknown } | undefined)?.Id;
   return typeof id === "string" ? id : null;
+}
+
+// ── pure JSON shape helpers (QBO pull: Customer / Invoice query responses) ────
+
+type QboCustomer = {
+  Id?: string;
+  DisplayName?: string;
+  CompanyName?: string;
+  PrimaryEmailAddr?: { Address?: string };
+  PrimaryPhone?: { FreeFormNumber?: string };
+  BillAddr?: { Line1?: string; City?: string; PostalCode?: string };
+};
+type QboInvoice = {
+  Id?: string;
+  DocNumber?: string;
+  CustomerRef?: { name?: string; value?: string };
+  TotalAmt?: number | string;
+  Balance?: number | string;
+  TxnTaxDetail?: { TotalTax?: number | string };
+  TxnDate?: string;
+};
+
+/** Every entity of a kind in a QBO query response's QueryResponse[Entity]. */
+function qboEntities(json: unknown, entity: string): unknown[] {
+  const qr = (json as { QueryResponse?: Record<string, unknown> } | null)?.QueryResponse;
+  const list = qr?.[entity];
+  return Array.isArray(list) ? list : [];
+}
+
+function str(v: unknown): string {
+  return typeof v === "string" ? v : v == null ? "" : String(v);
+}
+function nonEmpty(v: unknown): string | null {
+  const s = str(v).trim();
+  return s.length > 0 ? s : null;
+}
+function num(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+/** A QBO `TxnDate` (already `YYYY-MM-DD`) → the calendar day, or null. */
+function qboDate(value: string | undefined): string | null {
+  if (!value) return null;
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(value);
+  return m ? m[1]! : null;
+}
+/** Derive a CrewFlow-writable status from a QBO invoice's gross + balance. */
+function mapQboInvoiceStatus(gross: number, balance: number): string {
+  if (gross > 0 && balance <= 0) return "paid";
+  if (balance > 0 && balance < gross) return "partially_paid";
+  return "sent";
 }

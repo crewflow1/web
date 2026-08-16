@@ -5,6 +5,7 @@ import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   uploadImportFiles,
+  importFromConnector,
   commitImport,
   rollbackImport,
   ignoreDuplicateRow,
@@ -12,6 +13,7 @@ import {
   sendStaffInvitesFromImport,
   overrideSheetEntity,
 } from "../actions";
+import { getAccountingReadiness } from "@/lib/integrations/accounting/adapters";
 
 /**
  * The import wizard. Five steps in one page; the displayed UI is driven
@@ -117,12 +119,26 @@ export default async function ImportWizardPage({
     v.avgConfidence = v.count > 0 ? Math.round(v.avgConfidence / v.count) : 0;
   }
 
+  // Direct-API connector readiness. DARK today (accounting connect flag + OAuth
+  // client credentials both absent), so these are false and the connector-sync
+  // panel below does not render — the guided file-export flow is the live path.
+  const accounting = getAccountingReadiness();
+  const connectors: Array<{ provider: "xero" | "quickbooks"; label: string }> = [];
+  if (accounting.xero) connectors.push({ provider: "xero", label: "Xero" });
+  if (accounting.quickbooks) connectors.push({ provider: "quickbooks", label: "QuickBooks" });
+
   const errorMessage = sp.error
     ? sp.error === "pick_entity_type"
       ? "Pick an entity type before confirming this row."
       : sp.error === "not_reviewable"
         ? "This import can no longer be re-classified — it's already been committed or rolled back."
-        : decodeURIComponent(sp.error)
+        : sp.error === "connector_unavailable"
+          ? "That accounting connection isn't set up, so there was nothing to sync."
+          : sp.error === "connector_failed"
+            ? "The direct sync couldn't reach your accounting software. Try again shortly."
+            : sp.error === "connector_empty"
+              ? "The connected account returned no records to import."
+              : decodeURIComponent(sp.error)
     : null;
   // Rows we couldn't classify confidently — surfaced for the operator to
   // confirm / re-classify / skip. Never silently dropped from the import.
@@ -144,7 +160,9 @@ export default async function ImportWizardPage({
                   ? "Row skipped — it won't be imported."
                   : sp.saved === "reclassified"
                     ? `Re-classified ${sp.count ?? 0} row${sp.count === "1" ? "" : "s"} — review and commit.`
-                    : null
+                    : sp.saved === "connector_synced"
+                      ? "Synced from your accounting software. Review what we pulled, then commit."
+                      : null
     : null;
 
   return (
@@ -258,6 +276,42 @@ export default async function ImportWizardPage({
                   </li>
                 ))}
               </ul>
+            </div>
+          ) : null}
+
+          {/* Direct-API sync — only rendered for a CONNECTED provider. DARK today
+              (no accounting OAuth credentials), so this block does not appear and
+              the file-export flow above is the only path. */}
+          {connectors.length > 0 ? (
+            <div className="mt-6 border-t border-slate-200 pt-4">
+              <h3 className="text-sm font-semibold text-slate-900">
+                Or sync directly from your accounting software
+              </h3>
+              <p className="mt-1 text-xs text-slate-500">
+                Pull your customers (and optionally invoices) straight in — no file
+                export needed. Every row is still reviewable before commit.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-3">
+                {connectors.map((c) => (
+                  <form
+                    key={c.provider}
+                    action={importFromConnector.bind(null, imp.id)}
+                    className="flex items-center gap-2"
+                  >
+                    <input type="hidden" name="provider" value={c.provider} />
+                    <label className="flex items-center gap-1 text-xs text-slate-600">
+                      <input type="checkbox" name="include_invoices" value="1" />
+                      incl. invoices
+                    </label>
+                    <button
+                      type="submit"
+                      className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                    >
+                      Sync from {c.label}
+                    </button>
+                  </form>
+                ))}
+              </div>
             </div>
           ) : null}
         </section>
