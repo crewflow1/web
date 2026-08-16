@@ -75,9 +75,10 @@ async function maybeGenerateChatReply(input: {
   // PER-TIER OWN-CLASS GATE (mirrors server/services/ai-question.ts). The text
   // door opens on ANY generative tier, so a partial binding + a vendor key would
   // otherwise hand this `drafting` surface a live provider the governor would
-  // then run ungoverned. Gate on this call's own tier before resolving one —
-  // and while dark (today) this is the line that guarantees no model is called.
-  if (!isTierActivated("drafting")) return null;
+  // then run ungoverned. Gate on this call's own tier — `drafting` maps to the
+  // `mid` tier (lib/ai/governor/registry TASK_CLASS_TIER) — before resolving a
+  // provider. While dark (today) this is the line that guarantees no model call.
+  if (!isTierActivated("mid")) return null;
 
   const provider = getTextProvider();
   if (!provider) return null;
