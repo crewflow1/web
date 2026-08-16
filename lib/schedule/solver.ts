@@ -68,17 +68,23 @@ import {
  *    staffing, returns an empty plan with a stated reason — never an invented
  *    one.
  *
- * ── THERE IS NO SKILLS OR COMPETENCY MODEL IN THIS PRODUCT ───────────────────
+ * ── SKILL MATCH IS OPTIONAL, EVIDENCED, AND NEVER A PROXY ────────────────────
  *
- * Checked, not assumed (and identical to the note lib/schedule/recommendations.ts
- * carries): `public.users` describes WHO a person is — name, email, phone, pay,
- * start date — and NOTHING about what they can DO. No skills table, no trade, no
- * certification, and no requirement side on `jobs` to match one against. So skill
- * is NOT scored and no proxy for it is invented; `memberships.role` is an
- * AUTHORISATION role (owner/admin/staff), not a competency, and it too is never
- * scored. This solver answers WHO IS FREE and, among the free, who is the LEAST
- * DISRUPTIVE and NEAREST choice — never "who is best". Guessing competence from
- * job history would produce confident, unfalsifiable nonsense.
+ * The competency gap this module documented for a long time is now closed by
+ * REAL data, not a guess: `public.staff_qualifications` records the cards and
+ * tickets a person actually holds (with expiry), and `jobs.required_qualifications`
+ * records what a job needs. When BOTH sides carry data the solver prefers a
+ * member who holds a required, in-date qualification (`SOLVER_SCORE.perHeldRequiredQual`,
+ * capped) — a soft, positive-only term: a member who lacks the ticket is NOT
+ * gated out, so the manager keeps the final call. Expired qualifications are
+ * filtered out by the read layer and never count.
+ *
+ * What is STILL never done: no competence is INVENTED. `memberships.role` is an
+ * AUTHORISATION role (owner/admin/staff), not a skill, and is never scored; job
+ * history is never mined for implied ability. Where a job sets no requirement,
+ * or the org records no qualifications, the skill term simply does not fire and
+ * the plan is byte-identical to the free-and-nearest ranking — so the feature is
+ * backward-compatible by construction and honest about the limits of its data.
  *
  * ── LOCATION IS SCORED ONLY WHERE IT IS A REAL FACT ──────────────────────────
  *
@@ -107,6 +113,22 @@ import {
 export const SOLVER_SCORE = {
   /** Base — an eligible person placed on a job that needed one. */
   assign: 1000,
+  /**
+   * Per REQUIRED qualification the member currently holds (non-expired), when
+   * the job declares any in `jobs.required_qualifications`. A SOFT, positive-only
+   * factor: a member who lacks the ticket is NOT gated out (the requirement is a
+   * preference the manager can override on site), they simply earn nothing here,
+   * so a holder outranks a non-holder all else equal. When a job declares no
+   * requirement the factor never fires and the plan is byte-identical to before
+   * this term existed. See `skillMatchCap`.
+   */
+  perHeldRequiredQual: 45,
+  /**
+   * Ceiling on the skill-match term, so a job requiring many tickets cannot let
+   * competence dwarf every free/fair signal — it prefers the qualified person,
+   * it does not override the hard availability gate or the fairness spread.
+   */
+  skillMatchCap: 135,
   /** `jobs.assigned_to` already names them: the generator restores the plan. */
   namedAssignee: 40,
   /** They already hold another shift on THIS job in the window: they know it. */
@@ -133,6 +155,7 @@ export const SOLVER_SCORE = {
 export type SolverFactorCode =
   | "eligible_and_free"
   | "no_leave_booked"
+  | "skill_match"
   | "named_assignee"
   | "knows_the_job"
   | "same_area_that_day"
@@ -168,6 +191,10 @@ export const SOLVER_CRITERIA: ReadonlyArray<{ label: string; detail: string }> =
       "Required, not scored. No shift of theirs overlaps it, no approved leave covers it, and nothing this plan already gave them overlaps it either.",
   },
   {
+    label: "Holds the qualifications the job requires",
+    detail: `+${SOLVER_SCORE.perHeldRequiredQual} per required qualification the person currently holds (not expired), up to +${SOLVER_SCORE.skillMatchCap}. Only applies when the job lists required qualifications; a person who lacks one is not excluded, they just do not earn this — so the qualified person is preferred, never the only option.`,
+  },
+  {
     label: "The person the job already names",
     detail: `+${SOLVER_SCORE.namedAssignee} when the job's assignee is this person — restoring a plan already made.`,
   },
@@ -195,12 +222,15 @@ export const SOLVER_CRITERIA: ReadonlyArray<{ label: string; detail: string }> =
 ];
 
 /**
- * Skill is NOT among the criteria; the surface must say so rather than let a
- * manager assume the ranking knows something it does not. Shared verbatim with
- * recommendations.ts's note in intent.
+ * The competency note the surface prints so a manager reads the ranking
+ * honestly. Skill match is OPTIONAL and only as good as the data: it fires only
+ * where a job declares required qualifications AND the org records who holds
+ * them, it prefers (never forces) the qualified person, and it ignores expired
+ * certificates. Absent that data the generator still answers who is free and who
+ * is nearest, not who is best — it never invents competence it cannot evidence.
  */
-export const SOLVER_NO_SKILLS_NOTE =
-  "This generator answers who is free and who is nearest, not who is best: CrewFlow stores no skills, trades or certifications against a person, so competence is not — and cannot honestly be — part of the order.";
+export const SOLVER_SKILLS_NOTE =
+  "Skill match is applied only where a job lists required qualifications and the org records who holds them: a person holding a required, in-date qualification is preferred, but nobody is excluded for lacking one, and expired qualifications never count. Where a job sets no requirement, the generator ranks purely on who is free, nearest and fairly loaded — not on who is 'best'.";
 
 // ── Inputs ───────────────────────────────────────────────────────────────────
 
@@ -220,6 +250,27 @@ export interface RotaPlanInput extends ScheduleConflictInput {
    * postcode is absent from the map, never guessed.
    */
   jobDistricts?: ReadonlyMap<string, string | null>;
+  /**
+   * job_id → the qualification TYPES the job requires (jobs.required_qualifications).
+   * Optional and additive: a job absent from the map, or mapped to an empty
+   * list, imposes no requirement and the skill-match term never fires for it.
+   */
+  jobRequiredQualifications?: ReadonlyMap<string, readonly string[]>;
+  /**
+   * user_id → the qualifications that member CURRENTLY holds. The caller MUST
+   * pre-filter to non-expired records (the read layer does), so the solver never
+   * credits a lapsed ticket. Optional: absent it, no member matches any
+   * requirement and the term is inert.
+   */
+  memberQualifications?: ReadonlyMap<string, readonly MemberQualification[]>;
+}
+
+/** One qualification a member holds, as the solver reads it (already non-expired). */
+export interface MemberQualification {
+  /** `staff_qualifications.id` — cited as evidence for a positive match. */
+  id: string;
+  /** `staff_qualifications.qualification_type`. */
+  qualificationType: string;
 }
 
 // ── Outputs ──────────────────────────────────────────────────────────────────
@@ -542,6 +593,78 @@ function alreadyInAreaThatDay(
   return { hit: evidence.length > 0, evidence };
 }
 
+// ── Skill match, from records only ───────────────────────────────────────────
+
+/** The resolved skill picture for ONE member against ONE job's requirement. */
+interface SkillMatch {
+  /** The job's required qualification types, de-duplicated, in a stable order. */
+  required: string[];
+  /** The required types this member holds (non-expired), stable order. */
+  held: string[];
+  /** `staff_qualifications.id`s evidencing the held required types. */
+  evidence: string[];
+}
+
+/**
+ * Resolve which of a job's required qualifications a member holds, from the
+ * pre-filtered (non-expired) records the caller supplied. Returns null when the
+ * job imposes no requirement, so the factor is omitted entirely and the score is
+ * unchanged — the backward-compatible path. Pure and order-stable: required
+ * types keep their first-seen order, and evidence ids are sorted so two runs
+ * over the same rows emit identical bytes.
+ */
+function computeSkillMatch(
+  requiredTypes: readonly string[] | undefined,
+  memberQuals: readonly MemberQualification[] | undefined,
+): SkillMatch | null {
+  const required: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of requiredTypes ?? []) {
+    const t = (raw ?? "").trim();
+    if (t !== "" && !seen.has(t)) {
+      seen.add(t);
+      required.push(t);
+    }
+  }
+  if (required.length === 0) return null;
+
+  const requiredSet = new Set(required);
+  const heldSet = new Set<string>();
+  const evidence: string[] = [];
+  for (const q of memberQuals ?? []) {
+    const t = (q.qualificationType ?? "").trim();
+    if (requiredSet.has(t)) {
+      heldSet.add(t);
+      evidence.push(q.id);
+    }
+  }
+  const held = required.filter((t) => heldSet.has(t));
+  return { required, held, evidence: evidence.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)) };
+}
+
+/** Build the shown skill-match factor from a resolved `SkillMatch`. */
+function skillFactor(skill: SkillMatch): SolverFactor {
+  const reqLabel = skill.required.join(", ");
+  if (skill.held.length === 0) {
+    return {
+      code: "skill_match",
+      text: `holds none of the ${skill.required.length} required ${
+        skill.required.length === 1 ? "qualification" : "qualifications"
+      } (${reqLabel})`,
+      evidence: [],
+      delta: 0,
+    };
+  }
+  return {
+    code: "skill_match",
+    text: `holds ${skill.held.length} of ${skill.required.length} required ${
+      skill.required.length === 1 ? "qualification" : "qualifications"
+    }: ${skill.held.join(", ")}`,
+    evidence: skill.evidence,
+    delta: Math.min(SOLVER_SCORE.skillMatchCap, skill.held.length * SOLVER_SCORE.perHeldRequiredQual),
+  };
+}
+
 // ── Build one assignment, factor by factor ───────────────────────────────────
 
 function buildAssignment(
@@ -553,6 +676,7 @@ function buildAssignment(
     namedAssigneeId: string | null;
     priorAssignmentsThisRun: number;
     area: { hit: boolean; evidence: string[] };
+    skill: SkillMatch | null;
   },
   candidateCount: number,
 ): RotaAssignment {
@@ -570,6 +694,15 @@ function buildAssignment(
       delta: 0,
     },
   ];
+
+  // SKILL MATCH — present only when the job declares required qualifications. A
+  // holder earns a capped positive delta and cites the record ids; a non-holder
+  // gets a zero-delta factor that STILL states the requirement, so the surface
+  // never hides that a chosen person lacks a ticket. Absent a requirement the
+  // factor is omitted entirely and the score is unchanged.
+  if (context.skill) {
+    factors.push(skillFactor(context.skill));
+  }
 
   if (context.namedAssigneeId && context.namedAssigneeId === member.userId) {
     factors.push({
@@ -754,6 +887,12 @@ export function generateRota(input: RotaPlanInput): RotaPlan {
   const districtOfJob = (jobId: string | null): string | null =>
     jobId ? jobDistricts.get(jobId) ?? null : null;
 
+  // Skill-match inputs (both optional; absent ⇒ the term is inert everywhere).
+  const requiredQualsByJob =
+    input.jobRequiredQualifications ?? new Map<string, readonly string[]>();
+  const qualsByUser =
+    input.memberQualifications ?? new Map<string, readonly MemberQualification[]>();
+
   const needs = deriveNeeds(input, jobById);
 
   const notes: string[] = [
@@ -880,13 +1019,17 @@ export function generateRota(input: RotaPlanInput): RotaPlan {
         index,
         districtOfJob,
       );
+      const skill = computeSkillMatch(
+        requiredQualsByJob.get(need.jobId),
+        qualsByUser.get(member.userId),
+      );
       feasible.push({
         assignment: buildAssignment(
           member,
           need,
           slot,
           avail,
-          { namedAssigneeId, priorAssignmentsThisRun: prior, area },
+          { namedAssigneeId, priorAssignmentsThisRun: prior, area, skill },
           candidateCount,
         ),
         prior,

@@ -19,6 +19,7 @@ import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { env } from "@/lib/env";
 import { MapActions } from "@/components/maps/MapActions";
 import { formatAddressLines, hasAddress } from "@/lib/address";
+import { loadBusinessOptions, loadChildCustomers } from "@/lib/customers/companies";
 
 /**
  * Customer edit page.
@@ -42,7 +43,7 @@ export default async function EditCustomerPage({
   const { data: customer, error: customerError } = await supabase
     .from("customers")
     .select(
-      "id, name, email, phone, notes, portal_token, created_at, address_line1, address_line2, city, county, postcode, country",
+      "id, name, email, phone, notes, portal_token, created_at, customer_type, company_number, vat_number, parent_customer_id, address_line1, address_line2, city, county, postcode, country",
     )
     .eq("id", id)
     // ACTIVE-org pin. RLS admits every org the viewer belongs to, so org B's
@@ -55,6 +56,26 @@ export default async function EditCustomerPage({
 
   if (customerError) throw readFailure("customer detail: customer", customerError);
   if (!customer) notFound();
+
+  // B2B roll-up + firmographics. Business customers offered as parent options
+  // (excluding self); direct children (sites/contacts) rolled up under this
+  // record; and the parent's name when this record itself rolls up. All loud +
+  // active-org pinned inside the loaders.
+  const [parentOptions, childCustomers] = await Promise.all([
+    loadBusinessOptions(supabase, ctx.org.id, customer.id),
+    loadChildCustomers(supabase, ctx.org.id, customer.id),
+  ]);
+  let parentCustomer: { id: string; name: string } | null = null;
+  if (customer.parent_customer_id) {
+    const { data: parent, error: parentError } = await supabase
+      .from("customers")
+      .select("id, name")
+      .eq("id", customer.parent_customer_id)
+      .eq("org_id", ctx.org.id)
+      .maybeSingle();
+    if (parentError) throw readFailure("customer detail: parent", parentError);
+    parentCustomer = parent;
+  }
 
   // Wave 6 — rollups. PAGED (F-1): these are per-customer histories with no cap,
   // rendered in full. A long-running commercial customer can carry more than the
@@ -220,12 +241,34 @@ export default async function EditCustomerPage({
           >
             ← Customers
           </Link>
-          <h1 className="text-2xl font-bold text-slate-900">{customer.name}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-bold text-slate-900">{customer.name}</h1>
+            {customer.customer_type === "business" ? (
+              <span className="inline-flex items-center rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-semibold text-indigo-800">
+                Business
+              </span>
+            ) : (
+              <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700">
+                Individual
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-sm text-slate-600">
             Customer since {customer.created_at.slice(0, 10)}
             {customer.email ? ` · ${customer.email}` : ""}
             {customer.phone ? ` · ${customer.phone}` : ""}
           </p>
+          {parentCustomer ? (
+            <p className="mt-1 text-sm text-slate-600">
+              Part of{" "}
+              <Link
+                href={`/customers/${parentCustomer.id}`}
+                className="font-medium text-slate-900 hover:underline"
+              >
+                {parentCustomer.name}
+              </Link>
+            </p>
+          ) : null}
         </div>
       </header>
 
@@ -241,6 +284,71 @@ export default async function EditCustomerPage({
           emphasis={outstanding > 0}
         />
       </section>
+
+      {/* Business details — shown for business customers with firmographics on
+          file. Individuals / businesses with nothing filled in render nothing. */}
+      {customer.customer_type === "business" &&
+      (customer.company_number || customer.vat_number) ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">
+            Business details
+          </h2>
+          <dl className="mt-2 grid grid-cols-2 gap-3 text-sm">
+            {customer.company_number ? (
+              <div>
+                <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Company number
+                </dt>
+                <dd className="mt-0.5 text-slate-900">
+                  {customer.company_number}
+                </dd>
+              </div>
+            ) : null}
+            {customer.vat_number ? (
+              <div>
+                <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  VAT number
+                </dt>
+                <dd className="mt-0.5 text-slate-900">{customer.vat_number}</dd>
+              </div>
+            ) : null}
+          </dl>
+        </section>
+      ) : null}
+
+      {/* Rolled-up sites/contacts — the child customers under this business. */}
+      {childCustomers.length > 0 ? (
+        <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <header className="border-b border-slate-200 px-6 py-3">
+            <h2 className="text-base font-semibold text-slate-900">
+              Sites &amp; contacts
+            </h2>
+            <p className="text-xs text-slate-500">
+              {childCustomers.length} customer
+              {childCustomers.length === 1 ? "" : "s"} rolled up under this
+              business.
+            </p>
+          </header>
+          <ul className="divide-y divide-slate-100">
+            {childCustomers.map((child) => (
+              <li
+                key={child.id}
+                className="flex items-center justify-between gap-3 px-6 py-2 text-sm"
+              >
+                <Link
+                  href={`/customers/${child.id}`}
+                  className="min-w-0 flex-1 truncate font-medium text-slate-900 hover:underline"
+                >
+                  {child.name}
+                </Link>
+                <span aria-hidden className="shrink-0 text-slate-400">
+                  ›
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {/* Quotes — "View all" link scopes the /quotes list to this customer */}
       <SummaryCard
@@ -398,11 +506,17 @@ export default async function EditCustomerPage({
         action={updateAction}
         submitLabel="Save changes"
         cancelHref="/customers"
+        parentOptions={parentOptions}
         defaults={{
           name: customer.name,
           email: customer.email ?? "",
           phone: customer.phone ?? "",
           notes: customer.notes ?? "",
+          customer_type:
+            customer.customer_type === "business" ? "business" : "individual",
+          company_number: customer.company_number ?? "",
+          vat_number: customer.vat_number ?? "",
+          parent_customer_id: customer.parent_customer_id ?? "",
           address_line1: customer.address_line1 ?? "",
           address_line2: customer.address_line2 ?? "",
           city: customer.city ?? "",

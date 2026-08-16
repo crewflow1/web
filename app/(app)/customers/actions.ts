@@ -24,6 +24,45 @@ function statementBound(v: FormDataEntryValue | null): string | null {
 }
 
 /**
+ * Resolve the OPTIONAL parent-business link for a customer write.
+ *
+ * The composite FK (parent_customer_id, org_id) → customers(id, org_id) already
+ * makes a cross-org parent unrepresentable at the DB level. This adds a friendly
+ * fail-closed check at the write boundary: we confirm the parent exists in the
+ * ACTIVE org (RLS admits every org the caller belongs to, so we pin org_id) and
+ * that it is not the record editing itself. On any miss we return an error the
+ * form can show, rather than letting the insert fail with a raw FK violation.
+ *
+ * Returns { id } with the validated parent id (or null to clear the link), or
+ * { error } with a user-facing message.
+ */
+async function resolveParentCustomer(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+  rawParentId: string | undefined,
+  selfId: string | null,
+): Promise<{ id: string | null } | { error: string }> {
+  if (!rawParentId) return { id: null };
+  if (selfId && rawParentId === selfId) {
+    return { error: "A customer can't be its own parent business." };
+  }
+  const { data, error } = await supabase
+    .from("customers")
+    .select("id")
+    .eq("id", rawParentId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (error) {
+    console.error("[customers] parent lookup failed", error);
+    return { error: "Couldn't verify the parent business. Try again." };
+  }
+  if (!data) {
+    return { error: "That parent business isn't in your customer list." };
+  }
+  return { id: data.id };
+}
+
+/**
  * Customer CRUD server actions.
  *
  * All actions run under the user's JWT (lib/supabase/server) and are
@@ -54,6 +93,14 @@ export async function createCustomer(
   if (!result.ok) return result.state;
 
   const supabase = await createClient();
+  const parent = await resolveParentCustomer(
+    supabase,
+    ctx.org.id,
+    result.data.parent_customer_id,
+    null,
+  );
+  if ("error" in parent) return formError(parent.error, result.data);
+
   const { data, error } = await supabase
     .from("customers")
     .insert({
@@ -62,6 +109,10 @@ export async function createCustomer(
       email: result.data.email ?? null,
       phone: result.data.phone ?? null,
       notes: result.data.notes ?? null,
+      customer_type: result.data.customer_type,
+      company_number: result.data.company_number ?? null,
+      vat_number: result.data.vat_number ?? null,
+      parent_customer_id: parent.id,
       address_line1: result.data.address_line1 ?? null,
       address_line2: result.data.address_line2 ?? null,
       city: result.data.city ?? null,
@@ -97,6 +148,14 @@ export async function updateCustomer(
   if (!result.ok) return result.state;
 
   const supabase = await createClient();
+  const parent = await resolveParentCustomer(
+    supabase,
+    ctx.org.id,
+    result.data.parent_customer_id,
+    id,
+  );
+  if ("error" in parent) return formError(parent.error, result.data);
+
   const { error, count } = await supabase
     .from("customers")
     .update(
@@ -105,6 +164,10 @@ export async function updateCustomer(
         email: result.data.email ?? null,
         phone: result.data.phone ?? null,
         notes: result.data.notes ?? null,
+        customer_type: result.data.customer_type,
+        company_number: result.data.company_number ?? null,
+        vat_number: result.data.vat_number ?? null,
+        parent_customer_id: parent.id,
         address_line1: result.data.address_line1 ?? null,
         address_line2: result.data.address_line2 ?? null,
         city: result.data.city ?? null,

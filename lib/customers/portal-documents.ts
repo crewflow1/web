@@ -5,14 +5,24 @@
  * progress reports) into ONE typed, date-sorted library. Deliberately limited
  * to document types that ALREADY carry an explicit customer-visibility gate
  * upstream (quotes cleared the approval gate; invoices are customer-anchored;
- * reports are published + non-withdrawn) — arbitrary job attachments are NOT
- * included because `tenant_attachments` has no portal-visibility flag, and the
- * portal rule is that internal docs must never appear merely by sharing a job.
+ * reports are published + non-withdrawn).
+ *
+ * ATTACHMENTS — a job/quote attachment reaches this library ONLY when a staff
+ * member has explicitly set `tenant_attachments.portal_visible = true` on it AND
+ * it resolves to an entity the customer owns (the caller enforces both — see
+ * app/customer-portal/_attachments.ts). The flag defaults FALSE, so nothing is
+ * shared merely by attaching it to a job. Without an explicit flag the portal
+ * rule still holds: internal docs never appear just because a job is shared.
  *
  * Pure — the caller passes already-scoped rows; no clocks, no IO.
  */
 
-export type PortalDocType = "quote" | "invoice" | "report" | "certificate";
+export type PortalDocType =
+  | "quote"
+  | "invoice"
+  | "report"
+  | "certificate"
+  | "attachment";
 
 export type PortalDocument = {
   type: PortalDocType;
@@ -31,6 +41,7 @@ export const PORTAL_DOC_TYPE_LABELS: Record<PortalDocType, string> = {
   invoice: "Invoice",
   report: "Report",
   certificate: "Certificate",
+  attachment: "Attachment",
 };
 
 export type LibQuote = {
@@ -64,6 +75,22 @@ export type LibCertificate = {
   issued_at: string | null;
   portal_published_at: string | null;
 };
+/** A portal-visible attachment, already scoped to the customer by the caller. */
+export type LibAttachment = {
+  id: string;
+  filename: string | null;
+  /** The kind of record it hangs off (job / quote / invoice …), for the subtitle. */
+  target_table: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  created_at: string | null;
+};
+
+const ATTACHMENT_SOURCE_LABELS: Record<string, string> = {
+  jobs: "Job attachment",
+  quotes: "Quote attachment",
+  invoices: "Invoice attachment",
+};
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -81,6 +108,7 @@ export function buildDocumentLibrary(input: {
   invoices: LibInvoice[];
   reports: LibReport[];
   certificates?: LibCertificate[];
+  attachments?: LibAttachment[];
 }): PortalDocument[] {
   const { token } = input;
   const docs: PortalDocument[] = [];
@@ -131,6 +159,30 @@ export function buildDocumentLibrary(input: {
     });
   }
 
+  // Attachments a staff member explicitly flagged portal-visible (the caller
+  // has already verified org + customer ownership). The file is served through
+  // a dedicated, ownership-re-checking download route — never a raw path.
+  for (const att of input.attachments ?? []) {
+    const source = att.target_table
+      ? (ATTACHMENT_SOURCE_LABELS[att.target_table] ?? "Attachment")
+      : "Attachment";
+    const size = att.size_bytes ? ` · ${formatBytes(att.size_bytes)}` : "";
+    docs.push({
+      type: "attachment",
+      date: isoDate(att.created_at),
+      title: att.filename ?? "File",
+      sub: `${source}${size}`,
+      viewHref: null,
+      pdfHref: `/customer-portal/${token}/documents/attachments/${att.id}`,
+    });
+  }
+
   // Newest first; stable tie-break by title.
   return docs.sort((a, b) => (a.date !== b.date ? (a.date < b.date ? 1 : -1) : a.title.localeCompare(b.title)));
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }

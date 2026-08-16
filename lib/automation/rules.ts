@@ -121,6 +121,19 @@ export const AUTOMATION_RULES: ReadonlyArray<AutomationRule> = [
     enabled: false,
     actions: ["create_invoice_draft"],
   },
+  {
+    id: "job_completed_autoinvoice",
+    label: "Job completed → auto-draft final invoice",
+    description:
+      "When a job is completed, generate a DRAFT invoice for the remaining " +
+      "stages of its billing plan (never sent — a human reviews and sends). " +
+      "Idempotent, and if there's no billing plan it falls back to the " +
+      "'suggest an invoice' notification. Off by default — enable per org in " +
+      "Settings → Automations.",
+    trigger: "job.completed",
+    enabled: false,
+    actions: ["generate_completion_invoice"],
+  },
 ];
 
 /** Find rules whose trigger matches `type`. */

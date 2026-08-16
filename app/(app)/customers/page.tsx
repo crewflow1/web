@@ -28,7 +28,17 @@ import {
  * Renders a card list on mobile (<sm:) and a table on tablet/desktop.
  */
 
-type SP = Promise<{ page?: string; q?: string }>;
+type SP = Promise<{ page?: string; q?: string; type?: string }>;
+
+/** The only two type filters the list honours; anything else = no filter. */
+const CUSTOMER_TYPE_FILTERS = ["individual", "business"] as const;
+type CustomerTypeFilter = (typeof CUSTOMER_TYPE_FILTERS)[number];
+
+function parseTypeFilter(raw: string | undefined): CustomerTypeFilter | null {
+  return CUSTOMER_TYPE_FILTERS.includes(raw as CustomerTypeFilter)
+    ? (raw as CustomerTypeFilter)
+    : null;
+}
 
 export default async function CustomersPage({
   searchParams,
@@ -40,6 +50,7 @@ export default async function CustomersPage({
   const page = parsePage(sp.page);
   const offset = offsetForPage(page);
   const term = (sp.q ?? "").trim();
+  const typeFilter = parseTypeFilter(sp.type);
 
   const supabase = await createClient();
   let query = supabase
@@ -49,7 +60,7 @@ export default async function CustomersPage({
       // to "United Kingdom" on every row, so including it would just append
       // ", United Kingdom" to every one-line address. Search still spans the
       // street/town/postcode columns (CUSTOMER_SEARCH_COLUMNS) regardless.
-      "id, name, email, phone, address_line1, address_line2, city, county, postcode, created_at",
+      "id, name, email, phone, customer_type, address_line1, address_line2, city, county, postcode, created_at",
       { count: "exact" },
     )
     // ACTIVE-org pin. RLS's `current_org_ids()` admits EVERY org the viewer
@@ -62,6 +73,11 @@ export default async function CustomersPage({
     // or skipping rows across page boundaries. id is unique, so paging is exact.
     .order("created_at", { ascending: false })
     .order("id", { ascending: false });
+
+  if (typeFilter) {
+    // Applied BEFORE .range() so the exact count reflects the filtered set.
+    query = query.eq("customer_type", typeFilter);
+  }
 
   const orFilter = customerSearchOr(term);
   if (orFilter) {
@@ -82,8 +98,11 @@ export default async function CustomersPage({
   const totalCount = count ?? 0;
   const { totalPages, from, to } = pageWindow(totalCount, offset, rows.length);
 
-  // Preserve the active search across pagination links.
-  const baseQuery: Record<string, string> = term ? { q: term } : {};
+  // Preserve the active search + type filter across pagination links.
+  const baseQuery: Record<string, string> = {
+    ...(term ? { q: term } : {}),
+    ...(typeFilter ? { type: typeFilter } : {}),
+  };
 
   return (
     <div className="space-y-6">
@@ -93,7 +112,11 @@ export default async function CustomersPage({
           <p className="mt-1 text-sm text-slate-600">
             {term
               ? `${totalCount} matching “${term}”`
-              : `${totalCount} ${totalCount === 1 ? "customer" : "customers"}`}
+              : typeFilter === "business"
+                ? `${totalCount} ${totalCount === 1 ? "business" : "businesses"}`
+                : typeFilter === "individual"
+                  ? `${totalCount} individual${totalCount === 1 ? "" : "s"}`
+                  : `${totalCount} ${totalCount === 1 ? "customer" : "customers"}`}
           </p>
         </div>
         <Link
@@ -125,13 +148,31 @@ export default async function CustomersPage({
             className="mt-1 w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm"
           />
         </div>
+        <div>
+          <label
+            htmlFor="customer-type"
+            className="block text-xs font-medium text-slate-700"
+          >
+            Type
+          </label>
+          <select
+            id="customer-type"
+            name="type"
+            defaultValue={typeFilter ?? ""}
+            className="mt-1 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
+          >
+            <option value="">All types</option>
+            <option value="individual">Individuals</option>
+            <option value="business">Businesses</option>
+          </select>
+        </div>
         <button
           type="submit"
           className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white"
         >
           Search
         </button>
-        {term ? (
+        {term || typeFilter ? (
           <Link
             href="/customers"
             className="text-sm font-medium text-slate-600 hover:text-slate-900"
@@ -179,8 +220,13 @@ export default async function CustomersPage({
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-base font-semibold text-slate-900">
-                        {c.name}
+                      <p className="flex items-center gap-2 truncate text-base font-semibold text-slate-900">
+                        <span className="truncate">{c.name}</span>
+                        {c.customer_type === "business" ? (
+                          <span className="shrink-0 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-800">
+                            Business
+                          </span>
+                        ) : null}
                       </p>
                       {formatAddressOneLine(customerToAddress(c)) ? (
                         <p className="mt-0.5 truncate text-xs text-slate-600">
@@ -226,7 +272,14 @@ export default async function CustomersPage({
                 {rows.map((c) => (
                   <tr key={c.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3 font-medium text-slate-900">
-                      {c.name}
+                      <span className="inline-flex items-center gap-2">
+                        {c.name}
+                        {c.customer_type === "business" ? (
+                          <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-800">
+                            Business
+                          </span>
+                        ) : null}
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-slate-600">
                       {formatAddressOneLine(customerToAddress(c)) || "—"}

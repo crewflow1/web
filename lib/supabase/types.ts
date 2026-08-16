@@ -353,58 +353,70 @@ export type Database = {
           address_line1: string | null
           address_line2: string | null
           city: string | null
+          company_number: string | null
           country: string
           county: string | null
           created_at: string
+          customer_type: string
           email: string | null
           id: string
           name: string
           notes: string | null
           org_id: string
+          parent_customer_id: string | null
           phone: string | null
           portal_token: string | null
           portal_token_expires_at: string | null
           portal_token_last_used_at: string | null
           postcode: string | null
           updated_at: string
+          vat_number: string | null
         }
         Insert: {
           address_line1?: string | null
           address_line2?: string | null
           city?: string | null
+          company_number?: string | null
           country?: string
           county?: string | null
           created_at?: string
+          customer_type?: string
           email?: string | null
           id?: string
           name: string
           notes?: string | null
           org_id: string
+          parent_customer_id?: string | null
           phone?: string | null
           portal_token?: string | null
           portal_token_expires_at?: string | null
           portal_token_last_used_at?: string | null
           postcode?: string | null
           updated_at?: string
+          vat_number?: string | null
         }
         Update: {
           address_line1?: string | null
           address_line2?: string | null
           city?: string | null
+          company_number?: string | null
           country?: string
           county?: string | null
           created_at?: string
+          customer_type?: string
           email?: string | null
           id?: string
           name?: string
           notes?: string | null
           org_id?: string
+          parent_customer_id?: string | null
           phone?: string | null
           portal_token?: string | null
           portal_token_expires_at?: string | null
           portal_token_last_used_at?: string | null
           postcode?: string | null
           updated_at?: string
+          vat_number?: string | null
         }
         Relationships: [
           {
@@ -413,6 +425,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "organizations"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "customers_parent_org_fkey"
+            columns: ["parent_customer_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id", "org_id"]
           },
         ]
       }
@@ -1157,6 +1176,7 @@ export type Database = {
           org_id: string
           photos: string[]
           recurring: Json | null
+          required_qualifications: string[]
           scheduled_date: string | null
           scheduled_end_date: string | null
           site_address_line1: string | null
@@ -1178,6 +1198,7 @@ export type Database = {
           org_id: string
           photos?: string[]
           recurring?: Json | null
+          required_qualifications?: string[]
           scheduled_date?: string | null
           scheduled_end_date?: string | null
           site_address_line1?: string | null
@@ -1199,6 +1220,7 @@ export type Database = {
           org_id?: string
           photos?: string[]
           recurring?: Json | null
+          required_qualifications?: string[]
           scheduled_date?: string | null
           scheduled_end_date?: string | null
           site_address_line1?: string | null
@@ -1904,6 +1926,66 @@ export type Database = {
           },
         ]
       }
+      quote_versions: {
+        Row: {
+          captured_at: string
+          captured_reason: string
+          currency: string
+          id: string
+          line_items: Json
+          org_id: string
+          quote_id: string
+          status: string
+          subtotal: number
+          total: number
+          vat_total: number
+          version_number: number
+        }
+        Insert: {
+          captured_at?: string
+          captured_reason: string
+          currency: string
+          id?: string
+          line_items?: Json
+          org_id: string
+          quote_id: string
+          status: string
+          subtotal: number
+          total: number
+          vat_total: number
+          version_number: number
+        }
+        Update: {
+          captured_at?: string
+          captured_reason?: string
+          currency?: string
+          id?: string
+          line_items?: Json
+          org_id?: string
+          quote_id?: string
+          status?: string
+          subtotal?: number
+          total?: number
+          vat_total?: number
+          version_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quote_versions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quote_versions_quote_org_fkey"
+            columns: ["quote_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
+            referencedColumns: ["id", "org_id"]
+          },
+        ]
+      }
       quotes: {
         Row: {
           accept_signature: Json | null
@@ -2195,6 +2277,79 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "service_catalog_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      staff_qualifications: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          document_bucket: string | null
+          document_path: string | null
+          expires_on: string | null
+          id: string
+          issued_on: string | null
+          notes: string | null
+          org_id: string
+          qualification_type: string
+          reference_no: string | null
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          document_bucket?: string | null
+          document_path?: string | null
+          expires_on?: string | null
+          id?: string
+          issued_on?: string | null
+          notes?: string | null
+          org_id: string
+          qualification_type: string
+          reference_no?: string | null
+          title: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          document_bucket?: string | null
+          document_path?: string | null
+          expires_on?: string | null
+          id?: string
+          issued_on?: string | null
+          notes?: string | null
+          org_id?: string
+          qualification_type?: string
+          reference_no?: string | null
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "staff_qualifications_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "staff_qualifications_member_org_fkey"
+            columns: ["org_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "memberships"
+            referencedColumns: ["org_id", "user_id"]
+          },
+          {
+            foreignKeyName: "staff_qualifications_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"

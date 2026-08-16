@@ -40,6 +40,12 @@ const ALLOWLIST: Record<string, string> = {
     "Customer-portal surface: scope is the PORTAL TOKEN's org (orgId resolved from the " +
     "token, not an active_org cookie); it already filters .eq(\"org_id\", orgId) for that " +
     "token-derived org. Not an active-org-cookie code path.",
+  "app/customer-portal/[token]/documents/attachments/[id]/route.ts":
+    "Customer-portal surface: scope is the PORTAL TOKEN's org, not an active_org cookie. " +
+    "The storage_path is taken from verifyPortalAttachment (app/customer-portal/_attachments.ts), " +
+    "which pins .eq(\"org_id\", orgId) AND re-checks the attachment is portal_visible=true AND " +
+    "owned by the token-resolved customer (.eq(\"customer_id\", customerId)) before returning any " +
+    "path. Same class as _photos.ts — the org pin lives on the feeding read in the helper.",
   "server/services/signature-capture.ts":
     "signatureImageUrl performs NO row read — it takes an explicit orgId argument and " +
     "REFUSES to mint unless storagePathBelongsToOrg(path, orgId) (the object's org-first " +

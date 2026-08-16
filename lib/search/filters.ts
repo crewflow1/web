@@ -55,6 +55,33 @@ export const LEAD_SEARCH_COLUMNS = [
   "contact_email",
 ] as const;
 
+/** Job-document own columns: the document title + its free-text external
+ * reference (e.g. an EICR certificate number). Documents also surface via the
+ * matched-job id chain (job_documents.job_id is NOT NULL). */
+export const JOB_DOCUMENT_SEARCH_COLUMNS = ["title", "external_reference"] as const;
+
+/** Snag own columns: what/where/which-trade, plus the free-text description.
+ * Snags also surface via the matched-job id chain (job_id is nullable). */
+export const SNAG_SEARCH_COLUMNS = [
+  "title",
+  "description",
+  "location",
+  "trade",
+] as const;
+
+/** Purchase-order own columns: the PO number, the supplier's own reference, and
+ * the free-text notes. POs also surface via the matched-job id chain. */
+export const PURCHASE_ORDER_SEARCH_COLUMNS = [
+  "number",
+  "supplier_reference",
+  "notes",
+] as const;
+
+/** Site-report own columns: the report number + title. Reports also surface via
+ * the matched-job id chain AND the matched-customer id chain (site_reports carry
+ * both job_id and customer_id). */
+export const SITE_REPORT_SEARCH_COLUMNS = ["title", "report_number"] as const;
+
 /**
  * Build the `col.ilike.%term%,col2.ilike.%term%,…` body of a PostgREST `.or()`
  * from a free-text term across `columns`.

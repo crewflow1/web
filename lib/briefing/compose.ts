@@ -27,6 +27,18 @@ export interface BriefingInput {
   toolboxAwaitingAck: number;
   /** Compliance documents approaching expiry. */
   complianceExpiring: { count: number; soonestDays: number | null };
+  /**
+   * Staff qualifications / certifications (CSCS, SMSTS, first aid, …) that have
+   * already lapsed or are approaching expiry (server/services/staff-qualifications.ts
+   * → loadStaffQualificationSignal). A lapsed ticket on a working crew member is
+   * a live compliance exposure, so `expired` is a SAFETY line; `expiring` warns
+   * ahead of the lapse. Counts only — detection surfaces the number and links to
+   * /staff, a human renews the card.
+   */
+  staffQualifications: {
+    expired: number;
+    expiring: { count: number; soonestDays: number | null };
+  };
   /** High-value leads in an open stage that have aged without a decision. */
   coldLeads: { count: number; totalValue: number };
   /** Construction retention now due for release. */
@@ -322,6 +334,25 @@ export function composeBriefing(input: BriefingInput): BriefingItem[] {
       "/compliance", { count: n, urgencyDays: soon },
     );
   }
+  if (input.staffQualifications.expired > 0) {
+    const n = input.staffQualifications.expired;
+    add(
+      "staff_quals_expired", "safety", "high",
+      `${n} staff ${plural(n, "qualification")} expired`,
+      `${n} staff ${plural(n, "qualification")} (e.g. CSCS, SMSTS, first aid) ${n === 1 ? "has" : "have"} lapsed. Renew before rostering that person on affected work.`,
+      "/staff", { count: n, urgencyDays: 0 },
+    );
+  }
+  if (input.staffQualifications.expiring.count > 0) {
+    const n = input.staffQualifications.expiring.count;
+    const soon = input.staffQualifications.expiring.soonestDays;
+    add(
+      "staff_quals_expiring", "safety", soon != null && soon <= 7 ? "high" : "medium",
+      `${n} staff ${plural(n, "qualification")} expiring`,
+      `${n} staff ${plural(n, "qualification")} nearing expiry${soon != null ? `, the soonest in ${soon} ${plural(soon, "day")}` : ""}. Book the renewal.`,
+      "/staff", { count: n, urgencyDays: soon },
+    );
+  }
   if (input.toolboxAwaitingAck > 0) {
     const n = input.toolboxAwaitingAck;
     add(
@@ -609,6 +640,8 @@ export const BRIEFING_ITEM_KEYS = [
   "permits_expiring",
   "rams_review_overdue",
   "compliance_expiring",
+  "staff_quals_expired",
+  "staff_quals_expiring",
   "toolbox_awaiting_ack",
   "fleet_legal_breach",
   "fleet_compliance_overdue",

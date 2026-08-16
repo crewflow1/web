@@ -4,7 +4,7 @@ import { buildRotaPlan } from "@/server/services/schedule-integrity";
 import { SCHEDULE_WINDOW_DAYS } from "@/lib/schedule/window";
 import {
   SOLVER_CRITERIA,
-  SOLVER_NO_SKILLS_NOTE,
+  SOLVER_SKILLS_NOTE,
   type RotaAssignment,
   type SolverFactor,
   type UnfilledJob,
@@ -250,7 +250,7 @@ export default async function GenerateRotaPage() {
                 ))}
               </ul>
               <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-900">
-                {SOLVER_NO_SKILLS_NOTE}
+                {SOLVER_SKILLS_NOTE}
               </p>
             </details>
           </section>

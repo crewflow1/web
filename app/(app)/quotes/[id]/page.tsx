@@ -37,6 +37,12 @@ import {
 } from "@/lib/pricing/queries";
 import { saveQuoteAsTemplate } from "@/app/(app)/price-book/actions";
 import { SaveAsTemplatePanel } from "./_save-template-panel";
+import { VersionHistoryPanel } from "./_version-history";
+import {
+  normalizeSnapshotLines,
+  versionLabel,
+  type QuoteVersionSnapshot,
+} from "@/lib/quotes/version-diff";
 
 /**
  * Quote edit + lifecycle actions page.
@@ -167,13 +173,14 @@ export default async function EditQuotePage({
     unit: string | null;
     unit_price: number | string | null;
     vat_rate: number | string | null;
+    line_total: number | string | null;
     sort_order: number | null;
   };
   const { data: rawItems, error: itemsError } = await fetchAllRows<RawLineRow>(
     (from, to) =>
       supabase
         .from("quote_line_items")
-        .select("description, qty, unit, unit_price, vat_rate, sort_order")
+        .select("description, qty, unit, unit_price, vat_rate, line_total, sort_order")
         .eq("quote_id", id)
         .order("sort_order", { ascending: true })
         .order("id", { ascending: true })
@@ -191,6 +198,54 @@ export default async function EditQuotePage({
     unit_price: Number(li.unit_price ?? 0),
     vat_rate: Number(li.vat_rate ?? 20),
   }));
+
+  // Version history (append-only quote_versions chain). Org-pinned like every
+  // other read on this page: RLS admits every org the viewer belongs to, so the
+  // active-org filter is what keeps another org's captured figures off the page.
+  const { data: versionRows, error: versionsError } = await supabase
+    .from("quote_versions")
+    .select(
+      "version_number, captured_reason, status, currency, subtotal, vat_total, total, line_items, captured_at",
+    )
+    .eq("quote_id", id)
+    .eq("org_id", ctx.org.id)
+    .order("version_number", { ascending: false });
+  if (versionsError) throw readFailure("quote detail: versions", versionsError);
+
+  const quoteVersions: QuoteVersionSnapshot[] = (versionRows ?? []).map((r) => ({
+    version_number: r.version_number,
+    captured_reason: r.captured_reason,
+    status: r.status,
+    currency: r.currency,
+    subtotal: Number(r.subtotal),
+    vat_total: Number(r.vat_total),
+    total: Number(r.total),
+    line_items: normalizeSnapshotLines(r.line_items),
+    captured_at: r.captured_at,
+    label: versionLabel(r.version_number, r.captured_reason),
+  }));
+
+  // The current live quote, expressed as a snapshot so it can be one end of a diff.
+  const currentSnapshot: QuoteVersionSnapshot = {
+    version_number: null,
+    captured_reason: null,
+    status: quote.status,
+    currency: quote.currency,
+    subtotal: Number(quote.subtotal),
+    vat_total: Number(quote.vat_total),
+    total: Number(quote.total),
+    line_items: (rawItems ?? []).map((li) => ({
+      description: li.description,
+      qty: Number(li.qty ?? 0),
+      unit: li.unit ?? "",
+      unit_price: Number(li.unit_price ?? 0),
+      vat_rate: Number(li.vat_rate ?? 0),
+      line_total: Number(li.line_total ?? 0),
+      sort_order: Number(li.sort_order ?? 0),
+    })),
+    captured_at: null,
+    label: "Current (live)",
+  };
 
   type SignatureRow = {
     id: string;
@@ -695,6 +750,8 @@ export default async function EditQuotePage({
           </ul>
         </section>
       ) : null}
+
+      <VersionHistoryPanel versions={quoteVersions} current={currentSnapshot} />
 
       <AttachmentsPanel targetTable="quotes" targetId={id} />
 

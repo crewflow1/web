@@ -57,6 +57,10 @@ export const AUTOMATION_ACTION_TYPES = [
   "create_notification",
   "send_email_queue",
   "create_invoice_draft",
+  // Job-completion only: generate DRAFT invoices for the remaining stages of a
+  // completed job's active billing plan, reusing the guarded stage-invoice
+  // authority. Never sends. NOT offered to custom rules (see action-registry).
+  "generate_completion_invoice",
   "create_alert",
   "add_internal_note",
   "update_status",

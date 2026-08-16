@@ -8,17 +8,28 @@ import {
   removeStaff,
   upsertHolidayEntitlementAction,
   upsertPensionEnrolmentAction,
+  addStaffQualification,
+  deleteStaffQualification,
 } from "../actions";
 import { STAFF_ROLES } from "@/lib/staff/schema";
 import { StaffProfileForm } from "./_profile-form";
 import { HolidayEntitlementForm } from "./_holiday-form";
 import { PensionEnrolmentForm } from "./_pension-form";
+import { AddQualificationForm } from "./_qualifications";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { getHolidayBalanceForUser } from "@/server/services/holiday-balance";
 import { getPensionEnrolment } from "@/server/services/pension-enrolment";
 import { DEFAULT_HOLIDAY_ENTITLEMENT } from "@/lib/staff/holiday";
+import { listStaffQualifications } from "@/server/services/staff-qualifications";
+import { getStaffPerformance } from "@/server/services/staff-performance";
+import {
+  qualificationExpiryStatus,
+  qualificationTypeLabel,
+  daysUntil,
+  type QualificationExpiryStatus,
+} from "@/lib/staff/qualifications";
 
 const GBP = new Intl.NumberFormat("en-GB", {
   style: "currency",
@@ -80,6 +91,14 @@ export default async function StaffDetailPage({
   // Reads are org-pinned inside the services; RLS admits admins across the org.
   const holiday = await getHolidayBalanceForUser(ctx.org.id, id);
   const enrolment = isAdmin ? await getPensionEnrolment(ctx.org.id, id) : null;
+
+  // Competency + performance (loud reads: a failure throws to the error
+  // boundary, never a false-empty scorecard). Any org member may read both.
+  const [qualifications, performance] = await Promise.all([
+    listStaffQualifications(ctx.org.id, id),
+    getStaffPerformance(ctx.org.id, id),
+  ]);
+  const todayIso = new Date().toISOString().slice(0, 10);
 
   const holidayDefaults = {
     annual_allowance_days: String(
@@ -182,6 +201,131 @@ export default async function StaffDetailPage({
           Weekly pay is computed from rota hours × hourly pay once rota
           entries exist for this user (Mon–Sun).
         </p>
+      </section>
+
+      {/* Performance (read-model, derived from existing ledgers) */}
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-base font-semibold text-slate-900">Performance</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Derived from this person&rsquo;s own records — jobs assigned to them,
+          non-conformance reports they are responsible for, and clocked vs
+          rostered hours over the last {performance.utilisation.windowDays} days.
+          Not a rating.
+        </p>
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <BalanceStat
+            label="Jobs assigned"
+            value={String(performance.jobs.assigned)}
+          />
+          <BalanceStat
+            label="Completed"
+            value={String(performance.jobs.completed)}
+          />
+          <BalanceStat
+            label="On-time"
+            value={
+              performance.jobs.onTimeRate != null
+                ? `${performance.jobs.onTimeRate}%`
+                : "—"
+            }
+            emphasis
+          />
+          <BalanceStat
+            label="Open NCRs"
+            value={`${performance.quality.responsibleOpen} / ${performance.quality.responsibleTotal}`}
+          />
+          <BalanceStat
+            label="Hours recorded"
+            value={`${performance.utilisation.coverage.recorded} h`}
+          />
+          <BalanceStat
+            label="Coverage"
+            value={
+              performance.utilisation.coverage.pct != null
+                ? `${performance.utilisation.coverage.pct}%`
+                : "—"
+            }
+          />
+        </div>
+        <p className="mt-2 text-xs text-slate-500">
+          {performance.jobs.onTimeRate != null
+            ? `On-time is ${performance.jobs.onTime} of ${performance.jobs.measurable} completed jobs that had both a target and a completion date.`
+            : `On-time % needs at least a few completed jobs with both a target and a completion date (${performance.jobs.measurable} so far).`}
+          {performance.jobs.notMeasurable > 0
+            ? ` ${performance.jobs.notMeasurable} completed ${
+                performance.jobs.notMeasurable === 1 ? "job is" : "jobs are"
+              } not measurable (missing a target or completion date).`
+            : ""}
+          {performance.utilisation.coverage.pct == null
+            ? " Coverage % needs at least a full day of rostered hours in the window."
+            : ""}
+        </p>
+      </section>
+
+      {/* Qualifications / certifications */}
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-base font-semibold text-slate-900">
+          Qualifications &amp; certifications
+        </h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Cards, tickets and certificates held by this person. Expiring or lapsed
+          items surface in the daily briefing, and the rota generator prefers
+          people who hold a job&rsquo;s required qualifications.
+        </p>
+        {qualifications.length === 0 ? (
+          <p className="mt-3 text-sm text-slate-600">
+            No qualifications recorded yet{isAdmin ? " — add one below." : "."}
+          </p>
+        ) : (
+          <ul className="mt-3 divide-y divide-slate-100">
+            {qualifications.map((q) => {
+              const status = qualificationExpiryStatus(q.expires_on, todayIso);
+              return (
+                <li
+                  key={q.id}
+                  className="flex flex-wrap items-start justify-between gap-2 py-3"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium text-slate-900">
+                        {q.title}
+                      </span>
+                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600">
+                        {qualificationTypeLabel(q.qualification_type)}
+                      </span>
+                      <ExpiryBadge status={status} expiresOn={q.expires_on} today={todayIso} />
+                    </div>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      {q.reference_no ? `Ref ${q.reference_no} · ` : ""}
+                      {q.issued_on ? `Issued ${q.issued_on}` : "No issue date"}
+                      {q.expires_on ? ` · Expires ${q.expires_on}` : " · No expiry"}
+                    </p>
+                    {q.notes ? (
+                      <p className="mt-1 text-xs text-slate-600">{q.notes}</p>
+                    ) : null}
+                  </div>
+                  {isAdmin ? (
+                    <ConfirmForm
+                      action={deleteStaffQualification.bind(null, id)}
+                      confirm={`Delete "${q.title}"? This cannot be undone.`}
+                    >
+                      <input type="hidden" name="qualification_id" value={q.id} />
+                      <button
+                        type="submit"
+                        className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                      >
+                        Delete
+                      </button>
+                    </ConfirmForm>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {isAdmin ? (
+          <AddQualificationForm action={addStaffQualification.bind(null, id)} />
+        ) : null}
       </section>
 
       {/* Holiday entitlement + derived balance */}
@@ -308,6 +452,31 @@ export default async function StaffDetailPage({
         </section>
       ) : null}
     </div>
+  );
+}
+
+function ExpiryBadge({
+  status,
+  expiresOn,
+  today,
+}: {
+  status: QualificationExpiryStatus;
+  expiresOn: string | null;
+  today: string;
+}) {
+  if (status === "no_expiry" || status === "valid") return null;
+  const days = expiresOn ? daysUntil(expiresOn, today) : null;
+  if (status === "expired") {
+    return (
+      <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-700">
+        Expired{days != null ? ` ${Math.abs(days)}d ago` : ""}
+      </span>
+    );
+  }
+  return (
+    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800">
+      Expiring{days != null ? ` in ${days}d` : " soon"}
+    </span>
   );
 }
 
