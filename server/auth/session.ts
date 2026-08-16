@@ -3,7 +3,7 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
-import { readFailure } from "@/lib/supabase/read-failure";
+import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { PATHNAME_HEADER } from "@/lib/supabase/middleware";
 import {
@@ -284,14 +284,23 @@ async function enforceMfaPolicy(user: User, ctx: OrgContext): Promise<void> {
   if (isSuperAdminEmail(user.email)) return; // HQ staff exempt (see caller)
 
   // Resolve AAL. Fail-closed: any error → treat as unknown (→ enrol), never
-  // as a pass.
+  // as a pass. The error is BOUND and REPORTED (not discarded): a privileged
+  // member being bounced to enrolment because the AAL read genuinely errored
+  // (vs. having no factor) is an operational signal we must not swallow — but we
+  // still degrade to fail-closed rather than throw, so the member lands on the
+  // enrol surface instead of a generic error boundary.
   let aal: AalPair | null = null;
   try {
     const supabase = await createClient();
-    const { data } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-    aal = data
-      ? { currentLevel: data.currentLevel, nextLevel: data.nextLevel }
-      : null;
+    const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (error) {
+      reportReadFailure("session: MFA assurance level", error);
+      aal = null;
+    } else {
+      aal = data
+        ? { currentLevel: data.currentLevel, nextLevel: data.nextLevel }
+        : null;
+    }
   } catch {
     aal = null;
   }
