@@ -19,22 +19,29 @@
  */
 
 // ---------------------------------------------------------------------
-// The eleven Master-Plan product stages, in pipeline order. Kept beside the
+// The fifteen Master-Plan product stages, in pipeline order. Kept beside the
 // derivations so the "furthest-along" summary and the migration CHECK share one
-// canonical order.
+// canonical order. Widened from the shipped eleven by migration 20261161000000,
+// which adds `architecture`, `approval`, `monitoring` and `continuous-improvement`
+// (marketing + sales are KEPT — both drive live workflow data). SQL↔TS lock-step is
+// pinned by the enum-mirror invariant test.
 // ---------------------------------------------------------------------
 export const PIPELINE_STAGES = [
   "idea",
   "research",
   "specification",
+  "architecture",
   "design",
   "engineering",
   "testing",
   "documentation",
+  "approval",
   "marketing",
   "sales",
   "deployment",
+  "monitoring",
   "review",
+  "continuous-improvement",
 ] as const;
 
 export type PipelineStage = (typeof PIPELINE_STAGES)[number];
@@ -43,14 +50,18 @@ export const PIPELINE_STAGE_LABELS: Record<PipelineStage, string> = {
   idea: "Idea",
   research: "Research",
   specification: "Specification",
+  architecture: "Architecture",
   design: "Design",
   engineering: "Engineering",
   testing: "Testing",
   documentation: "Documentation",
+  approval: "Approval",
   marketing: "Marketing",
   sales: "Sales",
   deployment: "Deployment",
+  monitoring: "Monitoring",
   review: "Review",
+  "continuous-improvement": "Continuous improvement",
 };
 
 const STAGE_INDEX: Record<string, number> = Object.fromEntries(

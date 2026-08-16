@@ -107,6 +107,7 @@ describe("composeAndRecordCeoBriefing — records once, best-effort, determinist
     const summary = await composeAndRecordCeoBriefing({
       now: NOW,
       loadBoard: async () => board,
+      loadCompetitors: async () => ({ total: 0, notes: [] }),
       record,
     });
     expect(summary).toEqual({
@@ -128,6 +129,7 @@ describe("composeAndRecordCeoBriefing — records once, best-effort, determinist
     const summary = await composeAndRecordCeoBriefing({
       now: NOW,
       loadBoard: async () => board,
+      loadCompetitors: async () => ({ total: 0, notes: [] }),
       record: async () => ({ ok: false, error: "store_down" }),
     });
     expect(summary).toEqual({ ok: false, briefingDate: "2026-08-14", error: "store_down" });

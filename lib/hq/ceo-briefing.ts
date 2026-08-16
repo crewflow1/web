@@ -25,6 +25,35 @@ import type { ExecCard, ExecFormat } from "@/lib/hq/executive";
  * recorded narrative can always be re-derived from the recorded `signals` snapshot.
  */
 
+/**
+ * One operator-authored competitor observation, projected for the briefing. JSON-safe
+ * and honest — every field is copied verbatim from the intel store (hq_competitor_notes),
+ * NEVER inferred or generated.
+ */
+export interface CeoBriefingCompetitor {
+  readonly name: string;
+  readonly headline: string;
+  /** Intel facet (positioning/pricing/…), or null when uncategorised. */
+  readonly category: string | null;
+  /** Reuses the memory importance vocabulary (low/normal/high/critical). */
+  readonly importance: string;
+  /** ISO date the note was captured. */
+  readonly capturedAt: string;
+}
+
+/**
+ * The competitor-intelligence snapshot the briefing narrates. `notes` are the most
+ * recent active notes (bounded), `total` is the full count of active notes so the
+ * narrative can honestly say "showing N of M". Empty ⇒ the section reports an honest
+ * "insufficient" rather than conjuring an all-clear.
+ */
+export interface CeoBriefingCompetitorIntel {
+  readonly notes: ReadonlyArray<CeoBriefingCompetitor>;
+  readonly total: number;
+}
+
+const EMPTY_COMPETITOR_INTEL: CeoBriefingCompetitorIntel = { notes: [], total: 0 };
+
 /** A compact, JSON-safe snapshot of the board the briefing was composed from — the honesty record. */
 export interface CeoBriefingSignals {
   readonly vitals: ReadonlyArray<{
@@ -42,6 +71,8 @@ export interface CeoBriefingSignals {
     readonly healthTone: DeptHealthTone;
     readonly healthLabel: string;
   }>;
+  /** The competitor-intelligence snapshot the briefing was composed from. */
+  readonly competitors: CeoBriefingCompetitorIntel;
 }
 
 /** The composed briefing — exactly what the store records. */
@@ -93,7 +124,7 @@ const TONE_HEADING: Record<DeptHealthTone, string> = {
   healthy: "Healthy",
 };
 
-function toSignals(board: CeoBoard): CeoBriefingSignals {
+function toSignals(board: CeoBoard, competitors: CeoBriefingCompetitorIntel): CeoBriefingSignals {
   return {
     vitals: board.vitals.map((v: ExecCard) => ({
       key: v.key,
@@ -110,6 +141,16 @@ function toSignals(board: CeoBoard): CeoBriefingSignals {
       healthTone: d.health.tone,
       healthLabel: d.health.label,
     })),
+    competitors: {
+      total: competitors.total,
+      notes: competitors.notes.map((c) => ({
+        name: c.name,
+        headline: c.headline,
+        category: c.category,
+        importance: c.importance,
+        capturedAt: c.capturedAt,
+      })),
+    },
   };
 }
 
@@ -119,8 +160,12 @@ function toSignals(board: CeoBoard): CeoBriefingSignals {
  * count of departments needing attention; the narrative lists every vital, then every department
  * grouped by honest health tone. Makes no model call.
  */
-export function composeCeoBriefing(board: CeoBoard, now: Date): CeoBriefing {
-  const signals = toSignals(board);
+export function composeCeoBriefing(
+  board: CeoBoard,
+  now: Date,
+  competitors: CeoBriefingCompetitorIntel = EMPTY_COMPETITOR_INTEL,
+): CeoBriefing {
+  const signals = toSignals(board, competitors);
   const dateLabel = now.toISOString().slice(0, 10);
 
   const primary =
@@ -138,6 +183,12 @@ export function composeCeoBriefing(board: CeoBoard, now: Date): CeoBriefing {
   );
   if (unavailable.length > 0) {
     headParts.push(`${unavailable.length} signal${unavailable.length === 1 ? "" : "s"} unavailable`);
+  }
+  // Only surfaced when intel exists — an empty store leaves the headline unchanged.
+  if (competitors.total > 0) {
+    headParts.push(
+      `${competitors.total} competitor note${competitors.total === 1 ? "" : "s"} tracked`,
+    );
   }
   const headline = `CEO briefing ${dateLabel} — ${headParts.join("; ")}.`;
 
@@ -164,6 +215,22 @@ export function composeCeoBriefing(board: CeoBoard, now: Date): CeoBriefing {
       if (inTone.length === 0) continue;
       const names = inTone.map((d) => d.title).join(", ");
       lines.push(`  - ${TONE_HEADING[tone]}: ${names}.`);
+    }
+  }
+
+  // ── Competitor intelligence — the operator-authored intel store, narrated honestly.
+  lines.push("");
+  lines.push("Competitor intelligence:");
+  if (competitors.total === 0 || competitors.notes.length === 0) {
+    lines.push("  - Insufficient — no competitor intelligence has been recorded.");
+  } else {
+    if (competitors.total > competitors.notes.length) {
+      lines.push(`  - Showing ${competitors.notes.length} of ${competitors.total} active notes.`);
+    }
+    for (const c of competitors.notes) {
+      const facet = c.category ? ` [${c.category}]` : "";
+      const importance = c.importance && c.importance !== "normal" ? ` (${c.importance})` : "";
+      lines.push(`  - ${c.name}: ${c.headline}${facet}${importance} — ${c.capturedAt}`);
     }
   }
 

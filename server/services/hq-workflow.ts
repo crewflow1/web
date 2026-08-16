@@ -158,18 +158,29 @@ function stepStatusForTask(taskStatus: TaskStatus): StepStatus {
 
 /**
  * Department → the Master-Plan PRODUCT pipeline stage its work belongs to. Used to
- * stamp a dispatched task's stage through the sanctioned set_stage RPC. A department
- * with no clear stage correspondence is left unstaged (null), which is valid.
+ * stamp a dispatched task's stage through the sanctioned set_stage RPC, so a saga's
+ * tasks actually TRAVERSE the fifteen-stage lifecycle (each move appends an immutable
+ * hq_ai_task_stage_events row — measurable and auditable). A department with no clear
+ * stage correspondence is left unstaged (null), which is valid. The full-lifecycle
+ * template (product_launch) names one distinct department per stage so this map is a
+ * clean 1:1 across a launch saga.
  */
-const DEPARTMENT_STAGE: Readonly<Record<string, PipelineStage>> = {
+export const DEPARTMENT_STAGE: Readonly<Record<string, PipelineStage>> = {
+  Executive: "idea",
   Research: "research",
   Product: "specification",
+  Architecture: "architecture",
   Design: "design",
   Engineering: "engineering",
   QA: "testing",
+  Documentation: "documentation",
+  Approval: "approval",
   Marketing: "marketing",
   Sales: "sales",
   Operations: "deployment",
+  Monitoring: "monitoring",
+  Review: "review",
+  Improvement: "continuous-improvement",
   Support: "review",
   "Customer Success": "review",
 };
