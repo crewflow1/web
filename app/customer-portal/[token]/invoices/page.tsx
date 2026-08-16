@@ -304,6 +304,25 @@ export default async function PortalInvoicesPage({
           ) : null}
         </section>
       ) : null}
+      <section
+        aria-label="Statement of account"
+        className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4"
+      >
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-900">Statement of account</p>
+          <p className="text-xs text-slate-500">
+            A single PDF listing every invoice and payment with your running balance.
+          </p>
+        </div>
+        <a
+          href={`/customer-portal/${token}/statement/pdf`}
+          target="_blank"
+          rel="noopener"
+          className="shrink-0 rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-slate-800"
+        >
+          Download statement
+        </a>
+      </section>
       {schedule.hasSchedule ? (
         <section aria-labelledby="schedule-heading" className="rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-100 p-4">

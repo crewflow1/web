@@ -5,9 +5,15 @@ import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { loadCustomerFinancials } from "@/lib/customers/financials";
 import { requireOrgContext } from "@/server/auth/session";
-import { updateCustomer, deleteCustomer, rotateCustomerPortalToken } from "../actions";
+import {
+  updateCustomer,
+  deleteCustomer,
+  rotateCustomerPortalToken,
+  sendCustomerStatement,
+} from "../actions";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { CustomerForm } from "../_form";
+import { StatementPanel } from "./_statement-panel";
 import { ShareLinkPanel } from "@/app/_components/share-link-panel";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { env } from "@/lib/env";
@@ -173,14 +179,22 @@ export default async function EditCustomerPage({
           ? "Couldn't generate the portal link. Try again."
           : error === "not_allowed"
             ? "You don't have permission for that action."
-            : decodeURIComponent(error)
+            : error === "statement_email_unconfigured"
+              ? "Email isn't configured on this environment yet (RESEND_API_KEY). The statement PDF is still available to download and send manually."
+              : error === "statement_no_recipient"
+                ? "This customer has no email on file. Add one above, then send their statement."
+                : error === "statement_send_failed"
+                  ? "Couldn't send the statement just now. Try again."
+                  : decodeURIComponent(error)
     : null;
 
   const portalSaved = saved === "portal_link";
+  const statementSent = saved === "statement_sent";
 
   // Bind id into action so the form submission knows which customer.
   const updateAction = updateCustomer.bind(null, customer.id);
   const deleteAction = deleteCustomer.bind(null, customer.id);
+  const sendStatementAction = sendCustomerStatement.bind(null, customer.id);
 
   const GBP = new Intl.NumberFormat("en-GB", {
     style: "currency",
@@ -289,6 +303,21 @@ export default async function EditCustomerPage({
             right: p.paid_at.slice(0, 10),
             href: `/invoices/${p.invoice_id}`,
           }))}
+      />
+
+      {/* Statement of account */}
+      {statementSent ? (
+        <div
+          role="status"
+          className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700"
+        >
+          Statement emailed to the customer.
+        </div>
+      ) : null}
+      <StatementPanel
+        pdfHref={`/api/customers/${customer.id}/statement/pdf`}
+        sendAction={sendStatementAction}
+        customerEmail={customer.email}
       />
 
       {/* Timeline */}
