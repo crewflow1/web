@@ -31,6 +31,7 @@ type TabId =
   | "servicing"
   | "documents"
   | "messages"
+  | "chat"
   | "requests"
   | "files"
   | "contacts"
@@ -70,6 +71,7 @@ export function PortalShell({
     { id: "servicing", href: `${base}/servicing`, label: "Servicing" },
     { id: "documents", href: `${base}/documents`, label: "Documents" },
     { id: "messages", href: `${base}/messages`, label: "Messages" },
+    { id: "chat", href: `${base}/chat`, label: "Chat" },
     { id: "requests", href: `${base}/requests`, label: "Requests" },
     { id: "files", href: `${base}/files`, label: "Files" },
     { id: "contacts", href: `${base}/contacts`, label: "Contacts" },
