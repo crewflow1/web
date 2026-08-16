@@ -18,8 +18,10 @@ const ADMIN_LINKS = [
   // Renamed from "Get paid" when /cash gained the money-OUT side and a net
   // position: the page now answers "where do we stand", not just "who owes us".
   { href: "/cash", label: "Cash position" },
+  // One inbox: the /inbox area now carries a tab bar (enquiries · conversations
+  // · review queue · delivery audit), so the sidebar needs a single entry rather
+  // than one per surface.
   { href: "/inbox", label: "Inbox" },
-  { href: "/inbox/conversations", label: "Conversations" },
   { href: "/leads", label: "Leads" },
   { href: "/jobs", label: "Jobs" },
   { href: "/snags", label: "Snagging" },

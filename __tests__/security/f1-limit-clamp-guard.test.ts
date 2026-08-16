@@ -169,7 +169,7 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // digest pass. A single digest email deliberately must not enumerate thousands
   // of notifications; 200 is the display bound. (Sibling class to the queue-drain
   // worker's bounded .limit(DRAIN_BATCH_SIZE).)
-  "server/services/notification-preferences-service.ts:383":
+  "server/services/notification-preferences-service.ts:392":
     "bounded batch: ONE user's digest-eligible notifications (.eq('org_id') for that user, category-filtered) capped at 200 and ordered created_at ASC; the digest cursor advances only to the last INCLUDED row, so overflow rolls to the next pass rather than being dropped — a self-draining per-pass batch, not a completeness read.",
   // countPostedReceipts: REMOVED (C66). The PO register above it is now fully
   // PAGED, so purchaseOrderIds can exceed the cap and the old bounded reason

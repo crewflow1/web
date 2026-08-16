@@ -117,6 +117,21 @@ const envSchema = z.object({
   RESEND_FROM_EMAIL: z.string().default("CrewFlow <hello@crewflow.uk>"),
   RESEND_REPLY_TO: z.string().default("hello@crewflow.uk"),
 
+  // -- Web Push (PWA) — VAPID keys (MP Wave R4, DARK until set) -----------
+  // Standards-based Web Push (RFC 8291/8188/8292) with NO native shell and NO
+  // third-party dependency (lib/notifications/webpush.ts is the encoder). The
+  // channel is DARK unless BOTH keys are set: with either absent,
+  // getVapidKeys() returns null, so nothing is enqueued and nothing is sent
+  // (refuse-before-send). Generate with `npx web-push generate-vapid-keys`
+  // (base64url: public = 65-byte uncompressed P-256 point; private = 32-byte
+  // scalar). Only the PUBLIC key is ever exposed to the browser (via a server
+  // action) to call pushManager.subscribe; the private key stays server-side.
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  // RFC 8292 sender identity (`mailto:` or `https:` URI). Optional — defaults to
+  // mailto:hello@crewflow.uk when keys are set but this is omitted.
+  VAPID_SUBJECT: z.string().optional(),
+
   // -- Inbound email (P2 Comms — DARK, two-switch gated) ------------------
   // The shared secret that keys the HMAC-SHA256 signature on the inbound-email
   // webhook (app/api/webhooks/email). It is the provider-agnostic auth boundary:
@@ -126,6 +141,14 @@ const envSchema = z.object({
   // when it is absent — so with no secret the webhook rejects everything (dark),
   // exactly like WHATSAPP_APP_SECRET on the Meta webhook. Absent in prod/CI/dev.
   INBOUND_EMAIL_WEBHOOK_SECRET: z.string().optional(),
+
+  // -- Resend delivery events (MP Wave R4 — DARK, two-switch gated) --------
+  // The endpoint signing secret (whsec_<base64>) for the Resend delivery-events
+  // webhook (app/api/webhooks/resend). Resend signs each webhook with the SVIX
+  // scheme; verifyResendSignature reads this secret at call time and fails CLOSED
+  // when it is absent, so with no secret the webhook rejects everything (dark).
+  // Absent in prod/CI/dev until the Resend endpoint is configured.
+  RESEND_WEBHOOK_SECRET: z.string().optional(),
 
   // -- Communication Layer provider (Directive 010 Phase 4) ---------------
   // Names the active outbound email provider for the Communication Layer.
@@ -309,6 +332,13 @@ const envSchema = z.object({
   // canRunReceptionistChannel(email) is false and transportChannelForInbound(email)
   // is null, so a mailed enquiry is ingested (lead + notification) but never replied.
   NEXT_PUBLIC_FEATURE_INBOUND_EMAIL: z.enum(["true", "false"]).default("false"),
+  // MP Wave R4 — Resend delivery-EVENTS ingestion (open/click/bounce audit).
+  // DEFAULTS OFF. While off the resend webhook (app/api/webhooks/resend) 404s
+  // before any work and no comm_events row is ever written. The SECOND switch is
+  // the signing secret (RESEND_WEBHOOK_SECRET): isResendEventsLive() requires
+  // BOTH the flag AND the secret, and the route refuses (404) before reading the
+  // body when either is absent. Both unset in prod, CI and dev.
+  NEXT_PUBLIC_FEATURE_RESEND_EVENTS: z.enum(["true", "false"]).default("false"),
   // Wave 8 — inbound VOICE telephony. DEFAULTS OFF. While off the voice webhooks
   // (twilio/voice, twilio/voice/status, vapi) 503 before any work, the org↔number
   // routing/calls/call_events tables carry no rows the substrate populates, and the

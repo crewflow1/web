@@ -28,7 +28,7 @@ import {
  */
 
 const PREF_COLS =
-  "org_id, user_id, category, in_app_enabled, email_enabled, email_cadence";
+  "org_id, user_id, category, in_app_enabled, email_enabled, email_cadence, push_enabled, sms_enabled";
 
 function coercePref(raw: unknown): NotificationPreference {
   const r = raw as Record<string, unknown>;
@@ -42,6 +42,11 @@ function coercePref(raw: unknown): NotificationPreference {
     email_cadence: (["immediate", "daily", "weekly"].includes(cadence)
       ? cadence
       : "immediate") as NotificationCadence,
+    // New channels: push defaults ON (opt-down), sms defaults OFF (opt-in) —
+    // matching the DB column defaults so a legacy row read before the migration
+    // (or a partial select) resolves to the intended defaults.
+    push_enabled: (r.push_enabled as boolean) ?? true,
+    sms_enabled: (r.sms_enabled as boolean) ?? false,
   };
 }
 
@@ -76,6 +81,8 @@ export type PreferenceInput = {
   in_app_enabled: boolean;
   email_enabled: boolean;
   email_cadence: NotificationCadence;
+  push_enabled: boolean;
+  sms_enabled: boolean;
 };
 
 /**
@@ -98,6 +105,8 @@ export async function upsertPreferencesForUser(
     in_app_enabled: i.in_app_enabled,
     email_enabled: i.email_enabled,
     email_cadence: i.email_cadence,
+    push_enabled: i.push_enabled,
+    sms_enabled: i.sms_enabled,
   }));
   const { error } = await supabase
     .from("notification_preferences" as never)

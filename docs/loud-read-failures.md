@@ -346,3 +346,22 @@ decorative name enrichment degrades.
     comment AUTHOR names with `.in(authorIds)` on `users`; a failed lookup shows
     the author as "Member" — it never drops a comment.
   Per the UP rule, baseline raised in the same commit with this reason.
+
+## Baseline raise — 2026-08-16: MP R4 portal completion (customer files signed URLs)
+
+The general "send us a file" surface and its staff inbox mint short-lived (60s)
+signed URLs to open a file in the private `portal-uploads` bucket. In each, the
+DB/list read is LOUD (binds `error`, throws `readFailure`, F-1 paged); only the
+storage `createSignedUrl` call deliberately drops `error` — a transient storage
+hiccup hides ONE download link, never blanks the list. This is the same
+best-effort shape as the pre-existing `getPaymentProofSignedUrl`.
+
+- **app outside (app) discard 13 → 14** (UP — best-effort, ledgered):
+  - `app/customer-portal/_customer-files.ts` `customerFileSignedUrl` — the
+    ownership lookup binds + throws `readFailure`; the storage `createSignedUrl`
+    is the one soft read (→ null URL → the customer's "View" link is hidden).
+- **server + lib + components discard 37 → 38** (UP — best-effort, ledgered):
+  - `lib/customers/portal-file-inbox.ts` `listStaffCustomerFiles` — the list read
+    binds + throws `readFailure`; the per-file storage `createSignedUrl` is the
+    one soft read (→ null URL → that file's "Open" link is hidden on the inbox).
+Per the UP rule, baseline raised in the same commit with this reason.

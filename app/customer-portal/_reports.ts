@@ -4,6 +4,10 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { isPortalVisible } from "@/lib/site-reports/portal";
 import type { ReportSnapshot } from "@/lib/site-reports/schema";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import {
+  hasOutstandingClientDecision,
+  type PortalActionReport,
+} from "@/lib/customers/portal-actions";
 
 /**
  * Customer-portal reads for Site Reports.
@@ -155,4 +159,85 @@ export async function loadPortalReport(
     return null;
   }
   return data;
+}
+
+type DecisionRow = {
+  id: string;
+  title: string;
+  status: string;
+  snapshot: ReportSnapshot | null;
+  portal_published_at: string | null;
+};
+type DecisionOrderChain = {
+  order: (k: string, o: { ascending: boolean }) => DecisionOrderChain;
+  range: (
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: DecisionRow[] | null; error: SupabaseReadError | null }>;
+};
+type DecisionListChain = {
+  select: (c: string) => {
+    eq: (k: string, v: unknown) => {
+      eq: (k: string, v: unknown) => {
+        eq: (k: string, v: unknown) => {
+          not: (k: string, op: string, v: unknown) => {
+            is: (k: string, v: unknown) => DecisionOrderChain;
+          };
+        };
+      };
+    };
+  };
+};
+
+/**
+ * Published reports THIS customer still needs to act on — the source for the
+ * overview action centre's `report_decision` items (buildPortalActionItems).
+ *
+ * "Needs a decision" = a CURRENT (status='issued', not superseded), published,
+ * not-withdrawn report whose FROZEN snapshot carries non-empty `client_decisions`
+ * text. Superseded reports are excluded: a newer revision has replaced their
+ * asks, so surfacing them would nag the customer about stale decisions.
+ *
+ * Scoping is identical to listPortalReports — every row filtered by BOTH
+ * customer_id AND org_id (the token-resolved identity) AND the portal-visibility
+ * rule, with isPortalVisible re-applied in code as defence-in-depth. Only the
+ * frozen snapshot's decision text is read; no live source records, no other
+ * customer's reports. Returns PortalActionReport[] ready to hand straight to
+ * buildPortalActionItems.
+ *
+ * F-1: pages the FULL matching set (fetchAllRows over a stable UNIQUE order) so a
+ * customer with a long report history can never have an outstanding decision
+ * silently truncated out of "Needs your attention".
+ */
+export async function listPortalReportsNeedingDecision(
+  customerId: string,
+  orgId: string,
+): Promise<PortalActionReport[]> {
+  const admin = createAdminClient();
+  const { data, error } = await fetchAllRows<DecisionRow>(
+    (from, to) =>
+      (admin.from("site_reports" as never) as unknown as DecisionListChain)
+        .select("id, title, status, snapshot, portal_published_at")
+        .eq("customer_id", customerId)
+        .eq("org_id", orgId)
+        .eq("status", "issued")
+        .not("portal_published_at", "is", null)
+        .is("portal_withdrawn_at", null)
+        .order("portal_published_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+  );
+  if (error) throw readFailure("portal reports: decisions", error);
+  return (data ?? [])
+    .filter((r) =>
+      // Defence-in-depth over the SQL filter — never trust it alone on a
+      // customer surface.
+      isPortalVisible({
+        status: r.status,
+        portal_published_at: r.portal_published_at,
+        portal_withdrawn_at: null,
+      }),
+    )
+    .filter((r) => hasOutstandingClientDecision(r.snapshot?.content?.client_decisions))
+    .map((r) => ({ id: r.id, title: r.title, decisions_outstanding: true }));
 }

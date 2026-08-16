@@ -4,6 +4,7 @@ import { listInboxConversations } from "@/server/services/inbox-conversations";
 import { INBOX_CHANNEL_LABELS, type InboxChannel } from "@/lib/inbox/channels";
 import { contactLabel, type ConversationSummary } from "@/lib/inbox/thread";
 import { EmptyState } from "../../_components/empty-state";
+import { InboxTabs } from "../_components/inbox-tabs";
 
 /**
  * /inbox/conversations — the UNIFIED communications inbox.
@@ -48,6 +49,7 @@ export default async function ConversationsPage({ searchParams }: { searchParams
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
+      <InboxTabs active="conversations" />
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Conversations</h1>

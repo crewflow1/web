@@ -564,6 +564,35 @@ export function notifyOnPaymentProofUploaded(input: {
   });
 }
 
+export function notifyOnCustomerFileUploaded(input: {
+  org_id: string;
+  upload_id: string;
+  customer_id: string;
+  customer_name: string;
+  filename: string;
+  customer_note?: string | null;
+}): NotificationCreate {
+  return customerOrgWide(input.org_id, "portal.file_uploaded", {
+    category: "support",
+    priority: "medium",
+    title: `${input.customer_name} sent you a file`,
+    body: shortenBody(
+      `${input.filename} — open their profile to review it.${
+        input.customer_note ? ` Their note: ${input.customer_note}` : ""
+      }`,
+    ),
+    // The staff file inbox lives on the customer detail page.
+    action_url: `/customers/${input.customer_id}`,
+    source_module: "customers",
+    source_id: input.upload_id,
+    metadata: {
+      customer_id: input.customer_id,
+      upload_id: input.upload_id,
+      filename: input.filename,
+    },
+  });
+}
+
 // Stable list of event helper names — used by tests to ensure
 // nothing was renamed silently.
 export const EVENT_HELPERS = [
@@ -585,4 +614,5 @@ export const EVENT_HELPERS = [
   "notifyOnCustomerSignup",
   "notifyOnUrgentHqAlert",
   "notifyOnPaymentProofUploaded",
+  "notifyOnCustomerFileUploaded",
 ] as const;

@@ -58,6 +58,58 @@ self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "SKIP_WAITING") self.skipWaiting();
 });
 
+// ---------------------------------------------------------------------
+// Web Push (RFC 8291). Payloads are encrypted end-to-end by the server
+// (lib/notifications/push.ts) and delivered here decrypted by the browser.
+// We only ever render fields the user has ALREADY been shown in-app (title,
+// body) and deep-link to a same-origin RELATIVE path the server validated.
+// ---------------------------------------------------------------------
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = {};
+  }
+  const title = typeof data.title === "string" && data.title ? data.title : "CrewFlow";
+  const url =
+    typeof data.url === "string" && data.url.startsWith("/") && !data.url.startsWith("//")
+      ? data.url
+      : "/notifications";
+  const options = {
+    body: typeof data.body === "string" ? data.body : "",
+    tag: typeof data.tag === "string" ? data.tag : undefined,
+    icon: "/icons/icon-192.png",
+    badge: "/icons/icon-192.png",
+    data: { url },
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target =
+    event.notification.data && typeof event.notification.data.url === "string"
+      ? event.notification.data.url
+      : "/notifications";
+  event.waitUntil(
+    (async () => {
+      const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      // Focus an existing same-origin tab and navigate it, else open a new one.
+      for (const client of all) {
+        if (new URL(client.url).origin === self.location.origin && "focus" in client) {
+          await client.focus();
+          if ("navigate" in client) {
+            try { await client.navigate(target); } catch { /* cross-doc nav guard */ }
+          }
+          return;
+        }
+      }
+      if (self.clients.openWindow) await self.clients.openWindow(target);
+    })(),
+  );
+});
+
 function sameOrigin(url) {
   try { return new URL(url).origin === self.location.origin; } catch { return false; }
 }
