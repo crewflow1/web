@@ -27,6 +27,7 @@ export default async function AutomationsPage() {
   const health = await readAutomationHealth();
   const totalRuns = health.reduce((acc, h) => acc + h.runs_7d, 0);
   const totalFails = health.reduce((acc, h) => acc + h.failures_7d, 0);
+  const totalDead = health.reduce((acc, h) => acc + h.dead_letters_7d, 0);
 
   return (
     <div className="space-y-6">
@@ -42,13 +43,18 @@ export default async function AutomationsPage() {
         </p>
       </header>
 
-      <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <section className="grid grid-cols-1 gap-3 sm:grid-cols-4">
         <Kpi label="Rules enabled" value={health.filter((h) => h.rule.enabled).length} />
         <Kpi label="Runs (7d)" value={totalRuns} />
         <Kpi
           label="Failures (7d)"
           value={totalFails}
           tone={totalFails > 0 ? "amber" : undefined}
+        />
+        <Kpi
+          label="Dead-lettered (7d)"
+          value={totalDead}
+          tone={totalDead > 0 ? "amber" : undefined}
         />
       </section>
 
@@ -73,6 +79,7 @@ export default async function AutomationsPage() {
                 <th className="px-3 py-2">Last run</th>
                 <th className="px-3 py-2 text-right">Runs (7d)</th>
                 <th className="px-3 py-2 text-right">Fails (7d)</th>
+                <th className="px-3 py-2 text-right">Dead (7d)</th>
                 <th className="px-3 py-2">Status</th>
               </tr>
             </thead>
@@ -112,6 +119,15 @@ export default async function AutomationsPage() {
                     {h.failures_7d > 0 ? (
                       <span className="font-semibold text-red-700">
                         {h.failures_7d}
+                      </span>
+                    ) : (
+                      <span className="text-slate-500">0</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right text-xs">
+                    {h.dead_letters_7d > 0 ? (
+                      <span className="font-semibold text-red-700">
+                        {h.dead_letters_7d}
                       </span>
                     ) : (
                       <span className="text-slate-500">0</span>

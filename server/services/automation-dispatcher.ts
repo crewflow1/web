@@ -173,6 +173,9 @@ export async function dispatchAutomation(
       ruleError,
       Date.now() - startedAt,
     );
+    if (status === "failed") {
+      await maybeDeadLetter(admin, event, rule.id, rule.label, correlationId, ruleError);
+    }
     out.push({ rule_id: rule.id, status, error: ruleError ?? undefined });
   }
 
@@ -284,6 +287,9 @@ async function dispatchCustomRules(
       ruleError,
       Date.now() - startedAt,
     );
+    if (status === "failed") {
+      await maybeDeadLetter(admin, event, ruleId, ruleRef.label, correlationId, ruleError);
+    }
     out.push({ rule_id: ruleId, status, error: ruleError ?? undefined });
   }
 }
@@ -615,6 +621,110 @@ async function recordTerminalSkip(
       correlation_id: correlationId,
       reason,
       message: res.error.message,
+    });
+  }
+}
+
+/**
+ * Dead-letter threshold: once the SAME (rule_id, correlation_id) has failed this
+ * many dispatches, raise a one-shot HQ alert. A single failure is routine (a
+ * transient DB blip that the next re-fire reclaims + fixes); repeated failure of
+ * the same occurrence means the rule is genuinely stuck and a human should look.
+ */
+export const AUTOMATION_DEAD_LETTER_THRESHOLD = 3;
+
+/**
+ * After a run is recorded FAILED, register the failure and — if this occurrence
+ * has now failed too many times — surface it as an HQ dead-letter alert.
+ *
+ * The counting + the at-most-once alert decision are made ATOMICALLY in the DB
+ * (automation_register_failure, migration 20261171000000): `attempts` is
+ * incremented under a row lock and `dead_lettered_at` is flipped NULL→now() under
+ * a guard, so concurrent re-fires can neither lose an increment nor double-alert.
+ * This function only turns the DB's `should_alert` verdict into a notification.
+ *
+ * ORG-PINNED: the alert carries the failing rule's own org_id. BEST-EFFORT: any
+ * failure here is logged and swallowed — a dead-letter surfacing problem must
+ * never derail the dispatch or mask the original action error (already persisted
+ * on the run row). NOT a producer: it emits a notification, never a new event, so
+ * there is no dispatch recursion.
+ */
+async function maybeDeadLetter(
+  admin: ReturnType<typeof createAdminClient>,
+  event: AutomationEvent,
+  ruleId: string,
+  ruleLabel: string,
+  correlationId: string,
+  errorMessage: string | null,
+): Promise<void> {
+  try {
+    const res = await (
+      admin as unknown as {
+        rpc: (
+          fn: string,
+          args: Record<string, unknown>,
+        ) => Promise<{
+          data:
+            | Array<{
+                attempts: number;
+                should_alert: boolean;
+                org_id: string;
+                event_type: string;
+              }>
+            | null;
+          error: { message: string } | null;
+        }>;
+      }
+    ).rpc("automation_register_failure", {
+      p_rule_id: ruleId,
+      p_correlation_id: correlationId,
+      p_threshold: AUTOMATION_DEAD_LETTER_THRESHOLD,
+    });
+    if (res.error) {
+      console.error("[automation] dead-letter register failed", {
+        rule: ruleId,
+        correlation_id: correlationId,
+        message: res.error.message,
+      });
+      return;
+    }
+    const row = res.data?.[0];
+    if (!row || !row.should_alert) return;
+
+    // One-shot HQ alert — the DB guarantees should_alert is true at most once per
+    // occurrence, so re-fires past the threshold do NOT re-notify. In-app only
+    // (no email directive): this is an internal HQ health signal.
+    await emitNotifications([
+      {
+        org_id: event.org_id,
+        user_id: null,
+        audience: "hq",
+        type: "automation.dead_letter",
+        category: "alert",
+        priority: "urgent",
+        title: `Automation rule keeps failing: ${ruleLabel}`,
+        body:
+          `Rule "${ruleId}" has failed ${row.attempts} times on ` +
+          `${event.type} (${correlationId}). Latest error: ` +
+          `${errorMessage ?? "unknown"}.`,
+        action_url: "/admin/automations",
+        source_module: "automation",
+        source_id: event.source_id,
+        metadata: {
+          rule_id: ruleId,
+          correlation_id: correlationId,
+          attempts: row.attempts,
+          event_type: event.type,
+          error: errorMessage ?? null,
+          kind: "dead_letter",
+        },
+      },
+    ]);
+  } catch (e) {
+    console.error("[automation] dead-letter alert threw", {
+      rule: ruleId,
+      correlation_id: correlationId,
+      error: e instanceof Error ? e.message : String(e),
     });
   }
 }
@@ -1304,6 +1414,9 @@ export type AutomationRuleHealth = {
   rule: AutomationRule;
   runs_7d: number;
   failures_7d: number;
+  /** Runs dead-lettered in the window (crossed the repeated-failure threshold and
+   *  raised an HQ alert). The pull-side counterpart to the push-side alert. */
+  dead_letters_7d: number;
   last_run_at: string | null;
   last_status: "ok" | "failed" | "skipped" | null;
 };
@@ -1320,6 +1433,7 @@ export async function readAutomationHealth(): Promise<
     rule_id: string;
     status: "ok" | "failed" | "skipped";
     created_at: string;
+    dead_lettered_at: string | null;
   };
 
   // F-1: this is a cross-org 7-day health rollup. A single read is clamped to
@@ -1349,7 +1463,7 @@ export async function readAutomationHealth(): Promise<
           };
         }
       )
-        .select("id, rule_id, status, created_at")
+        .select("id, rule_id, status, created_at, dead_lettered_at")
         .gte("created_at", sevenDaysAgo)
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
@@ -1366,6 +1480,7 @@ export async function readAutomationHealth(): Promise<
       rule,
       runs_7d: ruleRows.length,
       failures_7d: ruleRows.filter((r) => r.status === "failed").length,
+      dead_letters_7d: ruleRows.filter((r) => r.dead_lettered_at != null).length,
       last_run_at: latest?.created_at ?? null,
       last_status: latest?.status ?? null,
     };
