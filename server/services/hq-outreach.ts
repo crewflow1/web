@@ -47,6 +47,8 @@ import {
   recordTimelineEvent,
 } from "@/server/services/hq-sales";
 import { assembleDraftContext, generateDraft } from "@/server/services/hq-drafts";
+import { employeeCanUseMemory } from "@/lib/memory/model";
+import { rememberForTask } from "@/server/services/hq-runner-memory";
 import type { DraftProvenance, DraftStatus } from "@/lib/drafts/model";
 import { enqueueTask } from "@/server/services/hq-tasks";
 import {
@@ -348,12 +350,18 @@ const outreachTaskHandler: TaskHandler = async (ctx: RunContext) => {
     await setStep("context", "active", "Gathering research, qualification and memory context…");
     const researchTaskId = readPayloadString(ctx.task.payload, "research_task_id");
     const qualificationTaskId = readPayloadString(ctx.task.payload, "qualification_task_id");
+    // RECALL (before acting): route the draft's Shared-Memory recall through the
+    // run's OWN bound facet so its recalled ids land in the task's evidence[],
+    // and gate it on the employee's recall capability (outreach-ai holds it).
+    // `null` tells the Draft Engine to skip memory when the gate is closed.
+    const canRecall = employeeCanUseMemory(ctx.capabilities.tokens, "recall");
     const context = await assembleDraftContext({
       employeeId,
       subject: { name: company.name, label: OUTREACH_SUBJECT_TYPE },
       researchTaskId,
       qualificationTaskId,
       currentTaskId: taskId,
+      memory: canRecall ? ctx.memory : null,
     });
     const sourceBits = [
       context.research ? "research" : null,
@@ -432,6 +440,27 @@ const outreachTaskHandler: TaskHandler = async (ctx: RunContext) => {
         draft.status === "fallback" ? "deterministic" : draft.provenance
       } draft awaiting human review.`,
       metadata: { task_id: taskId, draft_id: draft.id, provenance: draft.provenance },
+    });
+
+    // ---- REMEMBER (after acting) -----------------------------------
+    // Record this run's real outcome as Outreach AI's own lived experience
+    // (episodic ⇒ owned ⇒ committed autonomously by the §6 gate). It stores the
+    // draft's HEADLINE only — the immutable body lives in hq_drafts; nothing is
+    // transmitted and nothing is fabricated. Capability-gated (outreach-ai holds
+    // the write token); degrades to nothing on failure.
+    await rememberForTask(ctx, {
+      class: "episodic",
+      type: "outreach_draft",
+      title: `Drafted outreach for ${company.name}`,
+      summary: draft.content?.subject ?? `Outreach draft for ${company.name}.`,
+      body: [
+        `Company: ${company.name}`,
+        `Subject: ${draft.content?.subject ?? "(none)"}`,
+        `Provenance: ${draft.status === "fallback" ? "deterministic" : draft.provenance}`,
+        `Draft id: ${draft.id}`,
+        `Status: awaiting human review`,
+      ].join("\n"),
+      salience: 55,
     });
 
     // Hand the terminal result back; the runner completes the task with it.

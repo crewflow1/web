@@ -61,6 +61,7 @@ import {
   recordTimelineEvent,
   setCompanyStatus,
 } from "@/server/services/hq-sales";
+import { recallForTask, rememberForTask } from "@/server/services/hq-runner-memory";
 import { enqueueTask } from "@/server/services/hq-tasks";
 import {
   drainTaskType,
@@ -309,6 +310,18 @@ const qualificationTaskHandler: TaskHandler = async (ctx: RunContext) => {
     // ---- STEP: Lead loaded ------------------------------------------
     await setStep("load", "done", `Loaded ${company.name} (status: ${company.status})`);
 
+    // ---- RECALL (before acting) -------------------------------------
+    // Ground the verdict in any prior knowledge about this company; the runner
+    // drains the recalled ids into evidence[]. Capability-gated: today
+    // lead-qualification is NOT granted the memory facet (its scopes are
+    // read/score/qualify — no `memory` token), so this is a deliberate no-op
+    // that honours the default-deny floor. If a memory grant is ever added, the
+    // recall lights up with no further code change.
+    await recallForTask(ctx, {
+      query: company.name,
+      subject: { kind: "organisation", id: companyId, label: company.name },
+    });
+
     // ---- PHASE: Assessing -------------------------------------------
     await setPhase("assessing");
 
@@ -441,6 +454,30 @@ const qualificationTaskHandler: TaskHandler = async (ctx: RunContext) => {
       transitioned,
     };
     result.summary = summary;
+
+    // ---- REMEMBER (after acting) -----------------------------------
+    // Record the real verdict as this employee's own lived experience (episodic
+    // ⇒ owned ⇒ committed autonomously by the §6 gate). Capability-gated like
+    // the recall above: a deliberate no-op until lead-qualification is granted
+    // the memory facet. No fabrication — the fields are the verdict this run
+    // actually produced.
+    await rememberForTask(ctx, {
+      class: "episodic",
+      type: "qualification_decision",
+      title: `Qualified ${company.name}: ${decisionLabel(verdict.decision)}`,
+      summary: verdict.summary,
+      body: [
+        `Company: ${company.name}`,
+        `Decision: ${decisionLabel(verdict.decision)}`,
+        `Confidence: ${verdict.confidence}%`,
+        `Criteria evidenced: ${known}/${verdict.criteria.length}`,
+        verdict.recommendedStatus
+          ? `Recommended status: ${verdict.recommendedStatus}${transitioned ? " (applied)" : ""}`
+          : `Held at 'new' for human review`,
+      ].join("\n"),
+      salience: 55,
+    });
+
     result.phase = "completed";
     result.finishedAt = new Date().toISOString();
     result.steps = applyStep(result.steps, "completed", "done", "Qualification complete");

@@ -87,6 +87,7 @@ import {
   recordTimelineEvent,
 } from "@/server/services/hq-sales";
 import { normaliseUrl } from "@/lib/research/extract";
+import { recallForTask, rememberForTask } from "@/server/services/hq-runner-memory";
 import { enqueueTask, type TaskRow } from "@/server/services/hq-tasks";
 import {
   drainTaskType,
@@ -393,6 +394,16 @@ const researchTaskHandler: TaskHandler = async (ctx: RunContext) => {
       metadata: { task_id: taskId },
     });
 
+    // ---- RECALL (before acting) -------------------------------------
+    // Ground the run in what HQ already knows about this company, and let the
+    // runner drain the recalled ids into the result's evidence[] for free. Gated
+    // on the employee's memory capability (research-ai holds it); lexical +
+    // structural only, and it degrades to nothing on any failure.
+    await recallForTask(ctx, {
+      query: company.name,
+      subject: { kind: "organisation", id: companyId, label: company.name },
+    });
+
     // ---- PHASE: Researching -----------------------------------------
     await setPhase("researching");
 
@@ -500,6 +511,33 @@ const researchTaskHandler: TaskHandler = async (ctx: RunContext) => {
     } else {
       await setStep("memory", "skipped", "No report to store");
     }
+
+    // ---- REMEMBER (after acting) -----------------------------------
+    // Record THIS run's real outcome as Research AI's own lived experience
+    // (episodic ⇒ owned ⇒ the §6 gate commits it autonomously). This is the
+    // employee's experience of the run, distinct from the shared report the
+    // step above promotes; it is recalled next time this company is worked. No
+    // fabrication — every field below is a real figure this run produced.
+    await rememberForTask(ctx, {
+      class: "episodic",
+      type: "research_outcome",
+      title: `Researched ${company.name}`,
+      summary:
+        score.overall == null
+          ? `Research completed for ${company.name}; score unknown (insufficient signal).`
+          : `Research completed for ${company.name}: ${score.overall}/100 (${score.bandLabel}).`,
+      body: [
+        `Company: ${company.name}`,
+        score.overall == null
+          ? `Buying score: unknown`
+          : `Buying score: ${score.overall}/100 (${score.bandLabel}, ${score.confidence}% confidence)`,
+        `Decision makers identified: ${decisionMakers.length}`,
+        `Technologies detected: ${detectedTech.length}`,
+        `Pain points: ${intelligence.painPoints.length}`,
+        `Provenance: ${provenance}`,
+      ].join("\n"),
+      salience: 60,
+    });
 
     // ---- PHASE: Completed -------------------------------------------
     const summary: ResearchRunSummary = {

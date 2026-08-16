@@ -419,12 +419,12 @@ const ALLOWLIST: Record<string, string> = {
   //    (listRecent{Outreach,Qualification,Research}Runs) — so `unique` is ≤50 ids,
   //    far below the 1000 cap. Not a cross-tenant estate scan; the estate reads in
   //    these files are the paged pipeline / count reads, not these lookups.
-  "server/services/hq-outreach.ts:757":
-    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentOutreachRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap",
-  "server/services/hq-qualification.ts:830":
-    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentQualificationRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap",
-  "server/services/hq-research.ts:1517":
-    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentResearchRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap",
+  "server/services/hq-outreach.ts:786":
+    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentOutreachRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 757→786 when ctx.memory recall/remember wiring was added to the runner.)",
+  "server/services/hq-qualification.ts:867":
+    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentQualificationRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 830→867 when ctx.memory recall/remember wiring was added to the runner.)",
+  "server/services/hq-research.ts:1555":
+    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentResearchRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 1517→1555 when ctx.memory recall/remember wiring was added to the runner.)",
 };
 
 function walk(dir: string, out: string[]): void {
