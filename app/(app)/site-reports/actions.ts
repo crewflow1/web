@@ -28,6 +28,7 @@ import {
   parsePhotoSelection,
   type VerifiablePhotoAttachment,
 } from "@/lib/site-reports/photo-selection";
+import { sendReportPublishedNotificationEmail } from "@/lib/email/send-report-published";
 
 /**
  * Site Reports lifecycle actions.
@@ -653,6 +654,31 @@ export async function publishToPortal(id: string): Promise<void> {
     targetId: id,
     metadata: { report_number: report.report_number },
   });
+
+  // Tell the customer their report is live. Publication is otherwise silent —
+  // the customer has no login and no in-app feed. Best-effort by construction:
+  // the send module never throws out (it returns a structured result and its own
+  // reads are the only throw surface, wrapped here), so a mail failure can NEVER
+  // roll back or invalidate a publish that has already been persisted + audited.
+  // Recipient/org/token are all derived from the report's OWN customer, org-pinned
+  // — never a caller-supplied address — and the email carries a scoped link only,
+  // never the report body (see lib/email/send-report-published.ts + its template).
+  // Placed AFTER the durable audit log and BEFORE the redirect (redirect throws).
+  try {
+    if (report.customer_id) {
+      await sendReportPublishedNotificationEmail({
+        orgId: ctx.org.id,
+        customerId: report.customer_id,
+        reportId: id,
+        reportNumber: report.report_number,
+      });
+    }
+  } catch (e) {
+    console.error(
+      "[site-reports] portal publish email failed (non-fatal)",
+      e instanceof Error ? e.message : String(e),
+    );
+  }
 
   revalidatePath(`/site-reports/${id}`);
   revalidatePath("/site-reports");

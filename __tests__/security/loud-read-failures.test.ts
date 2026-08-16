@@ -467,7 +467,14 @@ const RATCHET: Array<{
     // org→{} → BLANK letterhead + no logo on a live contractual PDF). Both now
     // bind `error` and fail loud (throw readFailure / 500), so the reads leave
     // the ledger. 2 discards retired.
-    discard: 13,
+    // 13 → 14 (MP R4 portal completion): app/customer-portal/_customer-files.ts
+    // ::customerFileSignedUrl mints a short-lived signed URL for a customer's OWN
+    // uploaded file. Its ownership lookup is LOUD (binds `error`, throws
+    // readFailure), so only the storage `createSignedUrl` call deliberately drops
+    // `error` — a transient storage hiccup hides ONE "View" link, never blanks
+    // the file list (listCustomerFiles is loud + F-1 paged). Identical best-effort
+    // shape to getPaymentProofSignedUrl. See docs/loud-read-failures.md (C ledger).
+    discard: 14,
     softData: 10,
     countOnly: 0,
   },
@@ -517,7 +524,14 @@ const RATCHET: Array<{
     // surfaces a failed read instead of an empty feed. The best-effort job-page
     // panels keep their try/catch, so they still degrade gracefully — two silent
     // discards retired.
-    discard: 37,
+    // 37 → 38 (MP R4 portal completion): lib/customers/portal-file-inbox.ts
+    // ::listStaffCustomerFiles mints a short-lived signed URL per customer file
+    // for the staff inbox. The list read itself is LOUD (binds `error`, throws
+    // readFailure) + F-1 paged; only the per-file storage `createSignedUrl` drops
+    // `error` — a transient storage hiccup hides ONE "Open" link, never blanks the
+    // inbox. Same best-effort shape as getPaymentProofSignedUrl. See
+    // docs/loud-read-failures.md (C ledger).
+    discard: 38,
     // 61 → 62: server/services/hq-support-snapshot.ts `listSupportTicketRowsForHq`
     // is the lean, message-free board reader (HQ Support AI) — it degrades to `[]`
     // exactly like its sibling `listSupportTicketsForHq` in the same file, and the

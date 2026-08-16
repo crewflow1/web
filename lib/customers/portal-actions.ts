@@ -74,6 +74,19 @@ export function money(v: number | string | null): string {
   return GBP.format(Number(v ?? 0));
 }
 
+/**
+ * A published report "needs a decision" iff its frozen snapshot carries
+ * non-empty `client_decisions` commentary — the field staff use to record
+ * "choices we need from you". Pure + trimmed so whitespace-only text (a common
+ * artefact of an empty rich-text control) never raises a false action item.
+ * This is the single authority the overview action centre and its test share.
+ */
+export function hasOutstandingClientDecision(
+  clientDecisions: string | null | undefined,
+): boolean {
+  return typeof clientDecisions === "string" && clientDecisions.trim().length > 0;
+}
+
 /** Net amount still owed on ONE invoice — the C53 primitive, never gross total. */
 function remainingOf(inv: PortalActionInvoice): number {
   return invoiceRemaining({ total: inv.total, paid: inv.paid ?? 0 });

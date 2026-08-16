@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { listStaffCustomerFiles } from "@/lib/customers/portal-file-inbox";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { loadCustomerFinancials } from "@/lib/customers/financials";
@@ -148,6 +149,12 @@ export default async function EditCustomerPage({
     outstanding,
     lifetimeRevenue,
   } = await loadCustomerFinancials(supabase, id);
+
+  // Files this customer sent through their portal ("send us a file"). Read on
+  // the admin client (portal_uploads is service-role only) scoped by the ACTIVE
+  // org + this customer + kind — the same isolation boundary the payment-proof
+  // reader uses. Each carries a short-lived signed URL for staff to open it.
+  const customerFiles = await listStaffCustomerFiles(ctx.org.id, customer.id);
 
   // Timeline — merge quotes / invoices / jobs / payments / leads.
   type TimelineEntry = {
@@ -565,6 +572,54 @@ export default async function EditCustomerPage({
               Generate portal link
             </button>
           </form>
+        )}
+      </section>
+
+      {/* Files the customer sent through the portal ("send us a file"). */}
+      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+        <header className="border-b border-slate-200 px-6 py-3">
+          <h2 className="text-base font-semibold text-slate-900">
+            Files from this customer
+          </h2>
+          <p className="text-xs text-slate-500">
+            Documents and photos {customer.name} sent through their portal.
+          </p>
+        </header>
+        {customerFiles.length === 0 ? (
+          <p className="p-6 text-sm text-slate-500">
+            No files sent yet. When they use &ldquo;Send us a file&rdquo; in their
+            portal, it&apos;ll appear here.
+          </p>
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {customerFiles.map((f) => (
+              <li
+                key={f.id}
+                className="flex items-center justify-between gap-3 px-6 py-3 text-sm"
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-medium text-slate-900">{f.filename}</p>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {f.uploaded_at.slice(0, 10)}
+                    {f.size_bytes ? ` · ${Math.max(1, Math.round(f.size_bytes / 1024))} KB` : ""}
+                  </p>
+                  {f.notes ? (
+                    <p className="mt-1 text-xs text-slate-600">{f.notes}</p>
+                  ) : null}
+                </div>
+                {f.url ? (
+                  <a
+                    href={f.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Open
+                  </a>
+                ) : null}
+              </li>
+            ))}
+          </ul>
         )}
       </section>
 

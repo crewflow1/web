@@ -21,6 +21,7 @@ import type { PortalCustomer, PortalOrg } from "../_helpers";
 
 type TabId =
   | "overview"
+  | "activity"
   | "quotes"
   | "invoices"
   | "jobs"
@@ -31,6 +32,7 @@ type TabId =
   | "documents"
   | "messages"
   | "requests"
+  | "files"
   | "contacts"
   | "profile";
 
@@ -58,6 +60,7 @@ export function PortalShell({
   const base = `/customer-portal/${token}`;
   const tabs: Array<{ id: TabId; href: string; label: string }> = [
     { id: "overview", href: base, label: "Overview" },
+    { id: "activity", href: `${base}/activity`, label: "Activity" },
     { id: "quotes", href: `${base}/quotes`, label: "Quotes" },
     { id: "invoices", href: `${base}/invoices`, label: "Invoices" },
     { id: "jobs", href: `${base}/jobs`, label: "Jobs" },
@@ -68,6 +71,7 @@ export function PortalShell({
     { id: "documents", href: `${base}/documents`, label: "Documents" },
     { id: "messages", href: `${base}/messages`, label: "Messages" },
     { id: "requests", href: `${base}/requests`, label: "Requests" },
+    { id: "files", href: `${base}/files`, label: "Files" },
     { id: "contacts", href: `${base}/contacts`, label: "Contacts" },
     { id: "profile", href: `${base}/profile`, label: "Profile" },
   ];
