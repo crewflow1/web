@@ -84,9 +84,10 @@ export interface TaskRow {
   origin: string;
   created_by: string | null;
   /**
-   * The Master-Plan PRODUCT pipeline stage (idea…review) — orthogonal to `status`
-   * (the EXECUTION lifecycle). Nullable: a task may be unstaged. Added by migration
-   * 20261094000000; moved only via `setTaskStage` (the hq_ai_task_set_stage RPC).
+   * The Master-Plan PRODUCT pipeline stage (idea…continuous-improvement) — orthogonal
+   * to `status` (the EXECUTION lifecycle). Nullable: a task may be unstaged. Added by
+   * migration 20261094000000, widened to the full fifteen-stage set by 20261161000000;
+   * moved only via `setTaskStage` (the hq_ai_task_set_stage RPC).
    */
   pipeline_stage: string | null;
   created_at: string;
@@ -132,23 +133,32 @@ export type CancelResult =
 /** `reapTasks` — how many expired-lease tasks were recovered. */
 export type ReapResult = { ok: true; reaped: number } | TaskRpcError;
 
-/** The eleven Master-Plan product pipeline stages (see migration 20261094000000). */
+/**
+ * The fifteen Master-Plan product pipeline stages (see migrations 20261094000000 +
+ * 20261161000000, which widened the enum with `architecture`, `approval`, `monitoring`
+ * and `continuous-improvement`). Mirrors PIPELINE_STAGES in lib/hq/boardroom-cards.ts;
+ * SQL↔TS lock-step is pinned by the enum-mirror invariant test.
+ */
 export type PipelineStage =
   | "idea"
   | "research"
   | "specification"
+  | "architecture"
   | "design"
   | "engineering"
   | "testing"
   | "documentation"
+  | "approval"
   | "marketing"
   | "sales"
   | "deployment"
-  | "review";
+  | "monitoring"
+  | "review"
+  | "continuous-improvement";
 
 /**
  * `setTaskStage` — the stage moved (`task`), or the move was refused: `invalid_stage`
- * (not one of the eleven) or `not_updatable` (no such task, or it is terminal/frozen).
+ * (not one of the fifteen) or `not_updatable` (no such task, or it is terminal/frozen).
  */
 export type SetStageResult =
   | { ok: true; task: TaskRow }
