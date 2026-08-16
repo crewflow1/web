@@ -59,6 +59,8 @@ export async function saveNotificationPreferences(
     const cadenceValue = parseCadence(formData.get(`email_${category}`));
     const emailEnabled = cadenceValue !== "off";
     const inAppEnabled = formData.get(`inapp_${category}`) === "on";
+    const pushEnabled = formData.get(`push_${category}`) === "on";
+    const smsEnabled = formData.get(`sms_${category}`) === "on";
 
     inputs.push({
       category: category as NotificationCategory,
@@ -67,6 +69,8 @@ export async function saveNotificationPreferences(
       email_cadence: emailEnabled
         ? (cadenceValue as NotificationCadence)
         : "immediate",
+      push_enabled: pushEnabled,
+      sms_enabled: smsEnabled,
     });
   }
 

@@ -158,6 +158,8 @@ const ALLOWLIST: Record<string, string> = {
     "Bounded by p_limit RPCs and its OWN wall-clock deadline (Date.now() + maxRunMs); sweeps are terminal/idempotent, so processed rows leave the candidate set.",
   "notifications-drain":
     "LIMIT-bounded (DRAIN_BATCH_SIZE=50); a sent row leaves the queue and a failed row reschedules via backoff (scheduled_for moves forward = recency rotation) — self-draining.",
+  "push-drain":
+    "LIMIT-bounded (PUSH_DRAIN_BATCH_SIZE=50) drain of push_deliveries ordered by scheduled_for ASC; a settled row (sent/skipped) leaves the status='queued' candidate set and a transient failure reschedules via backoff (scheduled_for moves forward = recency rotation) — self-draining, exactly like notifications-drain. Dark-safe: with no VAPID it marks the batch skipped and sends nothing.",
   "notifications-digest":
     "Network-free per user (only DB reads + queue inserts into notification_email_queue, drained separately by notifications-drain — nothing goes on any wire here) and self-draining: each user is processed STALEST-cursor-first (MAX_USERS_PER_PASS bound), and advancing that user's per-cadence digest cursor removes those notifications from the next pass, so a stable order cannot re-service the same head.",
   "outreach-drain":

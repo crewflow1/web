@@ -34,6 +34,10 @@
       "schedule": "0 7 * * *"
     },
     {
+      "path": "/api/cron/push-drain",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/alerts-poll",
       "schedule": "0 3 * * *"
     },

@@ -117,6 +117,21 @@ const envSchema = z.object({
   RESEND_FROM_EMAIL: z.string().default("CrewFlow <hello@crewflow.uk>"),
   RESEND_REPLY_TO: z.string().default("hello@crewflow.uk"),
 
+  // -- Web Push (PWA) — VAPID keys (MP Wave R4, DARK until set) -----------
+  // Standards-based Web Push (RFC 8291/8188/8292) with NO native shell and NO
+  // third-party dependency (lib/notifications/webpush.ts is the encoder). The
+  // channel is DARK unless BOTH keys are set: with either absent,
+  // getVapidKeys() returns null, so nothing is enqueued and nothing is sent
+  // (refuse-before-send). Generate with `npx web-push generate-vapid-keys`
+  // (base64url: public = 65-byte uncompressed P-256 point; private = 32-byte
+  // scalar). Only the PUBLIC key is ever exposed to the browser (via a server
+  // action) to call pushManager.subscribe; the private key stays server-side.
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  // RFC 8292 sender identity (`mailto:` or `https:` URI). Optional — defaults to
+  // mailto:hello@crewflow.uk when keys are set but this is omitted.
+  VAPID_SUBJECT: z.string().optional(),
+
   // -- Inbound email (P2 Comms — DARK, two-switch gated) ------------------
   // The shared secret that keys the HMAC-SHA256 signature on the inbound-email
   // webhook (app/api/webhooks/email). It is the provider-agnostic auth boundary:
