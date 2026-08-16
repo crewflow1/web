@@ -10,6 +10,10 @@ import {
   CUSTOMER_SEARCH_COLUMNS,
   JOB_SEARCH_COLUMNS,
   LEAD_SEARCH_COLUMNS,
+  JOB_DOCUMENT_SEARCH_COLUMNS,
+  SNAG_SEARCH_COLUMNS,
+  PURCHASE_ORDER_SEARCH_COLUMNS,
+  SITE_REPORT_SEARCH_COLUMNS,
 } from "@/lib/search/filters";
 import {
   resolveJobAddress,
@@ -46,6 +50,21 @@ export const runtime = "nodejs";
  *   - RAMS + permits-to-work: reference number + title (unchanged; non-address,
  *     and both tables post-date the generated types so they go through a loose
  *     cast — still the RLS-scoped tenant client, never service-role).
+ *   - job_documents: title + external reference, PLUS any document on a matched
+ *     job (document → job → customer/address). RLS is the visibility boundary —
+ *     a non-admin only ever sees `staff`-visibility docs, an admin also sees
+ *     `private` ones, exactly as on the job page (the same tenant client).
+ *   - snags: title / description / location / trade, PLUS snags on a matched job.
+ *   - purchase_orders: number / supplier reference / notes, PLUS POs on a matched
+ *     job (a PO reachable through the job's customer address).
+ *   - site_reports: title / report number, PLUS reports on a matched job OR a
+ *     matched customer (site_reports carry both job_id and customer_id).
+ *
+ * PHOTOS — deliberately NOT searched. Photos are opaque binary attachments in
+ * `tenant_attachments` (polymorphic (target_table, target_id), no title/caption
+ * text column) reached only through a snapshot on their parent entity; there is
+ * no stable free-text field to ILIKE and no per-photo detail route to link to.
+ * A photo surfaces through its parent (the job, snag or site report) instead.
  *
  * All entity filtering is pushed into SQL (RLS-scoped via the user JWT) and the
  * free-text term is neutralised by the shared sanitizer before it reaches any
@@ -53,12 +72,26 @@ export const runtime = "nodejs";
  *
  * Query waves exist only because of the id chaining: wave 1 is everything
  * independent (customers, staff, RAMS, permits) fired in parallel, wave 2 is
- * the entities keyed off matched customer ids, wave 3 is invoices keyed off
- * matched job/quote ids. Three round trips, each maximally parallel.
+ * the entities keyed off matched customer ids (jobs, quotes, leads), wave 3 is
+ * everything keyed off matched job/quote/customer ids (invoices, job documents,
+ * snags, purchase orders, site reports) fired in parallel. Three round trips,
+ * each maximally parallel.
  */
 
 type Hit = {
-  type: "customer" | "job" | "quote" | "invoice" | "lead" | "staff" | "risk_assessment" | "permit";
+  type:
+    | "customer"
+    | "job"
+    | "quote"
+    | "invoice"
+    | "lead"
+    | "staff"
+    | "risk_assessment"
+    | "permit"
+    | "job_document"
+    | "snag"
+    | "purchase_order"
+    | "site_report";
   id: string;
   title: string;
   subtitle: string | null;
@@ -273,40 +306,130 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // ── Wave 3: invoices — by number OR belonging to a matched job/quote, so an
-  //    invoice is reachable through the customer's address (invoice has no
-  //    customer_id; chain is invoice → job/quote → customer).
+  // ── Wave 3 (parallel): everything keyed off the ids matched above, PLUS each
+  //    entity's own searchable columns. All are RLS-scoped tenant reads,
+  //    org-pinned to the ACTIVE org and bounded to PER_TYPE rows.
+  //      - invoices        → by number OR on a matched job/quote (invoice has no
+  //                          customer_id; chain is invoice → job/quote → customer).
+  //      - job_documents   → title/external ref OR on a matched job.
+  //      - snags           → title/description/location/trade OR on a matched job.
+  //      - purchase_orders → number/supplier ref/notes OR on a matched job.
+  //      - site_reports    → title/report number OR on a matched job OR customer.
+  //    The last four post-date the generated Supabase types, so they go through
+  //    the same `loose` cast the RAMS/permits reads use — still the RLS-scoped
+  //    tenant client, never service-role.
+  const jobIdBranch = inIdsBranch(
+    "job_id",
+    jobs.map((j) => j.id),
+  );
   const invoiceOr = combineOr(
     `number.ilike.${like}`,
-    inIdsBranch(
-      "job_id",
-      jobs.map((j) => j.id),
-    ),
+    jobIdBranch,
     inIdsBranch(
       "quote_id",
       quotes.map((qt) => qt.id),
     ),
   );
-  if (invoiceOr) {
-    const { data: invoiceRows, error: invoiceError } = await supabase
+  const jobDocOr = combineOr(ilikeOrFilter(q, JOB_DOCUMENT_SEARCH_COLUMNS), jobIdBranch);
+  const snagOr = combineOr(ilikeOrFilter(q, SNAG_SEARCH_COLUMNS), jobIdBranch);
+  const poOr = combineOr(ilikeOrFilter(q, PURCHASE_ORDER_SEARCH_COLUMNS), jobIdBranch);
+  const siteReportOr = combineOr(
+    ilikeOrFilter(q, SITE_REPORT_SEARCH_COLUMNS),
+    jobIdBranch,
+    custIdBranch,
+  );
+  // Every branch above carries at least its own-column ILIKE (present for a 2+
+  // char term), so none is null; the `?? ""` narrows the type without ever
+  // being reached.
+  const [invoicesRes, jobDocsRes, snagsRes, posRes, siteReportsRes] = await Promise.all([
+    supabase
       .from("invoices")
       .select("id, number, status, total")
       .eq("org_id", ctx.org.id)
-      .or(invoiceOr)
-      .limit(PER_TYPE);
-    if (invoiceError) {
-      console.error("[search] invoices read failed", invoiceError);
-      return NextResponse.json({ error: "query_failed" }, { status: 500 });
-    }
-    for (const inv of invoiceRows ?? []) {
-      hits.push({
-        type: "invoice",
-        id: inv.id,
-        title: inv.number,
-        subtitle: `${inv.status} · £${Number(inv.total ?? 0).toFixed(2)}`,
-        href: `/invoices/${inv.id}`,
-      });
-    }
+      .or(invoiceOr ?? "")
+      .limit(PER_TYPE),
+    loose
+      .from("job_documents")
+      .select("id, job_id, title, doc_type, status")
+      .eq("org_id", ctx.org.id)
+      .or(jobDocOr ?? "")
+      .limit(PER_TYPE),
+    loose
+      .from("snags")
+      .select("id, title, status, priority, job_id")
+      .eq("org_id", ctx.org.id)
+      .or(snagOr ?? "")
+      .limit(PER_TYPE),
+    loose
+      .from("purchase_orders")
+      .select("id, number, status, supplier_reference")
+      .eq("org_id", ctx.org.id)
+      .or(poOr ?? "")
+      .limit(PER_TYPE),
+    loose
+      .from("site_reports")
+      .select("id, title, report_number, status")
+      .eq("org_id", ctx.org.id)
+      .or(siteReportOr ?? "")
+      .limit(PER_TYPE),
+  ]);
+
+  const wave3Error =
+    invoicesRes.error ??
+    jobDocsRes.error ??
+    snagsRes.error ??
+    posRes.error ??
+    siteReportsRes.error;
+  if (wave3Error) {
+    console.error("[search] wave 3 read failed", wave3Error);
+    return NextResponse.json({ error: "query_failed" }, { status: 500 });
+  }
+
+  for (const inv of invoicesRes.data ?? []) {
+    hits.push({
+      type: "invoice",
+      id: inv.id,
+      title: inv.number,
+      subtitle: `${inv.status} · £${Number(inv.total ?? 0).toFixed(2)}`,
+      href: `/invoices/${inv.id}`,
+    });
+  }
+  for (const d of jobDocsRes.data ?? []) {
+    hits.push({
+      type: "job_document",
+      id: String(d.id),
+      title: d.title ?? "Document",
+      subtitle: `Document${d.doc_type ? ` · ${d.doc_type}` : ""}${d.status ? ` · ${d.status}` : ""}`,
+      // Documents have no standalone route — they live on their job.
+      href: d.job_id ? `/jobs/${d.job_id}` : "/documents",
+    });
+  }
+  for (const s of snagsRes.data ?? []) {
+    hits.push({
+      type: "snag",
+      id: String(s.id),
+      title: s.title ?? "Snag",
+      subtitle: `Snag${s.status ? ` · ${s.status}` : ""}${s.priority ? ` · ${s.priority}` : ""}`,
+      href: `/snags/${s.id}`,
+    });
+  }
+  for (const po of posRes.data ?? []) {
+    hits.push({
+      type: "purchase_order",
+      id: String(po.id),
+      title: po.number ?? "Purchase order",
+      subtitle: `PO · ${po.status ?? ""}${po.supplier_reference ? ` · ${po.supplier_reference}` : ""}`.trim(),
+      href: `/purchase-orders/${po.id}`,
+    });
+  }
+  for (const sr of siteReportsRes.data ?? []) {
+    hits.push({
+      type: "site_report",
+      id: String(sr.id),
+      title: sr.title ?? "Site report",
+      subtitle: `Report${sr.report_number ? ` · ${sr.report_number}` : ""}${sr.status ? ` · ${sr.status}` : ""}`,
+      href: `/site-reports/${sr.id}`,
+    });
   }
 
   // ── Staff (unchanged): bounded membership fetch + in-memory name/email match.

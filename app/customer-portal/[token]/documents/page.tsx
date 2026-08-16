@@ -5,6 +5,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { loadCustomerByPortalToken } from "../../_helpers";
 import { listPortalReports } from "@/app/customer-portal/_reports";
 import { listPortalCertificates } from "@/app/customer-portal/_certificates";
+import { listPortalAttachments } from "@/app/customer-portal/_attachments";
 import { PortalShell } from "../_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
 import {
@@ -22,6 +23,7 @@ const TYPE_STYLES: Record<PortalDocType, string> = {
   invoice: "bg-emerald-100 text-emerald-800",
   report: "bg-purple-100 text-purple-700",
   certificate: "bg-amber-100 text-amber-800",
+  attachment: "bg-slate-100 text-slate-700",
 };
 
 /**
@@ -89,6 +91,9 @@ export default async function PortalDocumentsPage({
 
   const reports = await listPortalReports(customer.id, customer.org_id);
   const certRows = await listPortalCertificates(customer.id, customer.org_id);
+  // Attachments a staff member explicitly flagged portal-visible AND that resolve
+  // to a quote/invoice/job this customer owns (both enforced in the helper).
+  const attachments = await listPortalAttachments(customer.id, customer.org_id);
 
   const documents = buildDocumentLibrary({
     token,
@@ -102,9 +107,10 @@ export default async function PortalDocumentsPage({
       issued_at: c.issued_at,
       portal_published_at: c.portal_published_at,
     })),
+    attachments,
   });
 
-  const filter = (["quote", "invoice", "report", "certificate"] as const).includes(sp.type as PortalDocType)
+  const filter = (["quote", "invoice", "report", "certificate", "attachment"] as const).includes(sp.type as PortalDocType)
     ? (sp.type as PortalDocType)
     : null;
   const shown = filter ? documents.filter((d) => d.type === filter) : documents;
@@ -115,7 +121,10 @@ export default async function PortalDocumentsPage({
         <h2 className="text-base font-semibold text-slate-900">Documents</h2>
         <div className="flex items-center gap-3">
           <span className="text-xs text-slate-500">{documents.length} total</span>
-          {shown.length > 0 ? (
+          {/* The bulk ZIP is PDF-backed documents only; attachments are opaque
+              files downloaded individually, so hide the button when they're the
+              active filter. */}
+          {shown.length > 0 && filter !== "attachment" ? (
             <a
               href={
                 filter
@@ -134,7 +143,7 @@ export default async function PortalDocumentsPage({
 
       <nav aria-label="Filter documents" className="flex flex-wrap gap-2 text-xs">
         <FilterLink token={token} current={filter} value={null} label="All" />
-        {(["quote", "invoice", "report"] as const).map((t) => (
+        {(["quote", "invoice", "report", "attachment"] as const).map((t) => (
           <FilterLink key={t} token={token} current={filter} value={t} label={`${PORTAL_DOC_TYPE_LABELS[t]}s`} />
         ))}
       </nav>
