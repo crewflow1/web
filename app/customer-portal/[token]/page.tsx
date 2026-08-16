@@ -7,6 +7,7 @@ import { PortalShell } from "./_shell";
 import { InvalidLinkPage } from "@/app/_components/invalid-link";
 import { buildPortalActionItems, type PortalActionItem } from "@/lib/customers/portal-actions";
 import { computePortalPayments } from "@/lib/customers/portal-payments";
+import { listPortalReportsNeedingDecision } from "../_reports";
 
 /**
  * Customer portal overview.
@@ -204,11 +205,21 @@ export default async function PortalOverviewPage({
   const recentQuote = allQuotes[0];
   const recentInvoice = invoices[0];
 
+  // Report decisions the customer still owes us — current, published reports
+  // whose frozen snapshot lists `client_decisions`. Loaded through the ONE
+  // portal reports authority (customer_id + org_id + visibility scoped), so the
+  // action centre can nudge the customer to open the report and respond. One
+  // bounded, customer-scoped read — not the N+1 the old "kept out here" comment
+  // feared (each report's decision text rides on its own snapshot row).
+  const reportDecisions = await listPortalReportsNeedingDecision(
+    customer.id,
+    customer.org_id,
+  );
+
   // Action centre — precise, financially-labelled things that need this
   // customer's attention, deep-linking to the existing single-authority
-  // surfaces (/q/<token> for quote decisions; the invoice tab otherwise).
-  // Report decisions are surfaced in the document-library slice, which already
-  // reads report content — kept out here to avoid an N+1 on the overview.
+  // surfaces (/q/<token> for quote decisions; the portal invoice/report pages
+  // otherwise).
   const today = new Date().toISOString().slice(0, 10);
   const actionItems = buildPortalActionItems({
     token,
@@ -219,7 +230,7 @@ export default async function PortalOverviewPage({
     // never contradict the tile on the same page — the C53 same-page rule, now
     // enforced on a customer surface.
     invoices: invoices.map((i) => ({ ...i, paid: paidByInvoice.get(i.id) ?? 0 })),
-    reports: [],
+    reports: reportDecisions,
   });
 
   return (
