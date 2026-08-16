@@ -10,13 +10,16 @@ import { runWeatherFetch } from "@/server/services/weather-fetch";
  *   GET /api/cron/weather-fetch
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * DELIBERATELY NOT SCHEDULED. This route is ABSENT from vercel.json, and that
- * absence is part of the design: scheduling it is an ACTIVATION step (after
- * the commercial provider decision and the credential), not an engineering
- * one. The route existing unscheduled means activation day is "add one crons
- * entry" rather than "write and review a pipeline under time pressure" — the
- * same posture as the unscheduled purge function in migration 20261074. The
- * security suite pins vercel.json's silence about this path.
+ * SCHEDULED, BUT STILL DARK. This route IS registered in vercel.json, every six
+ * hours at 40 minutes past — 20 minutes after weather-watch-sync (which runs at
+ * 20 past) reconciles the watched districts, so a tick fetches the freshly
+ * reconciled set. Scheduling is now decoupled from activation: the tick fires
+ * on that cadence, but with no provider bound — every environment today — each
+ * tick short-circuits to a 204 no-op below, touching NOTHING (see readiness).
+ * Wiring the cron in advance means activation day is a pure config flip (set the
+ * provider selection + credential), not "write and review a pipeline under time
+ * pressure". The security suite pins BOTH halves: the schedule's presence AND
+ * the fact that a scheduled-but-dark tick reads and writes nothing.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * DARK ⇒ 204 NO-OP WITH ZERO DATABASE ACCESS. The readiness gate sits BEFORE
