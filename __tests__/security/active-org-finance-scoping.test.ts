@@ -170,7 +170,9 @@ describe("money route handlers — by-id writes are pinned to the active org", (
     // still surface the guard's 409 with its recovery path.
     const F = fn(src("app/api/finances/[id]/route.ts"), "PATCH");
     expect(F).toMatch(/financeWriteRefusal\(error\.code, error\.message\)/);
-    expect(F).toMatch(/status: refusal\.status/);
+    // Refusal is surfaced through the unified responder, preserving the guard's
+    // own status + message: respond.error(refusal.status, refusal.error).
+    expect(F).toMatch(/respond\.error\(refusal\.status, refusal\.error\)/);
     // The predicate is applied on the query; the refusal mapping happens after
     // it, on the resulting error — so the guard can still fire for in-org rows.
     const scope = F.indexOf('.eq("org_id", ctx.org.id)');

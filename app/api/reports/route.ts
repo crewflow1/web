@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import * as respond from "@/lib/api/respond";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   jobsPerWeek,
@@ -28,7 +28,7 @@ export async function GET() {
         vatPerQuarter(ctx.org.id, 4),
         topCustomersByRevenue(ctx.org.id, 10),
       ]);
-    return NextResponse.json({
+    return respond.json({
       ok: true,
       jobs_per_week,
       revenue_per_month,
@@ -37,9 +37,6 @@ export async function GET() {
     });
   } catch (e) {
     console.error("[reports] unhandled", e);
-    return NextResponse.json(
-      { ok: false, error: "Reports temporarily unavailable" },
-      { status: 500 },
-    );
+    return respond.error(500, "Reports temporarily unavailable");
   }
 }

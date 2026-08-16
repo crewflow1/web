@@ -243,22 +243,22 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // customer/job/quote ids are chained into dependent `.in()` reads, themselves
   // bounded by that cap). NONE is fed into a count/sum/completeness surface — a
   // dropped hit past the cap is by-design "refine your query", not a wrong number.
-  "app/api/search/route.ts:186":
+  "app/api/search/route.ts:187":
     "bounded: search customers — .limit(CHAIN_LIMIT=50) DISPLAY hits, org-pinned; ids chained into ≤50 .in() lookups, NOT counted/summed",
-  "app/api/search/route.ts:241":
+  "app/api/search/route.ts:242":
     "bounded: search jobs — .limit(CHAIN_LIMIT=50) DISPLAY hits, org-pinned; ids chained into ≤50 .in() lookups, NOT counted/summed",
-  "app/api/search/route.ts:250":
+  "app/api/search/route.ts:251":
     "bounded: search quotes — .limit(CHAIN_LIMIT=50) DISPLAY hits, org-pinned; ids chained into ≤50 .in() lookups, NOT counted/summed",
-  "app/api/search/route.ts:256":
+  "app/api/search/route.ts:257":
     "bounded: search leads — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
-  "app/api/search/route.ts:346":
+  "app/api/search/route.ts:347":
     "bounded: search invoices — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
   // Documents-search wave (new entities in the command palette). Each is an
   // org-pinned (.eq('org_id', ctx.org.id)) top-N DISPLAY hit list capped at
   // PER_TYPE=8, mapped straight into `hits` for display — never counted/summed.
-  "app/api/search/route.ts:364":
+  "app/api/search/route.ts:365":
     "bounded: search purchase_orders — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
-  "app/api/search/route.ts:370":
+  "app/api/search/route.ts:371":
     "bounded: search site_reports — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
   // /documents home — the HIGH-VALUE jobs read is a CHUNKED name lookup:
   // `.in('id', idsChunk)` where each chunk is ≤JOB_IN_CHUNK=500 unique job ids
@@ -328,7 +328,7 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   //    bounded DISPLAY sample, not a completeness/count/ZIP contributor (those —
   //    listPortalReports/listPortalCertificates and createPayrollRun's members
   //    read — were PAGED, not capped).
-  "app/api/search/route.ts:194":
+  "app/api/search/route.ts:195":
     "bounded: search members — .limit(40) command-palette DISPLAY hits, org-pinned (.eq('org_id')); a top-N result list, NOT fed to any count/sum. Same class as the other /api/search reads.",
   "app/customer-portal/_photos.ts:107":
     "bounded: recent-50 published reports for the portal PHOTO GALLERY (.eq('customer_id').eq('org_id')...order('portal_published_at' desc).limit(50)), further capped at MAX_PORTAL_PHOTOS extracted photos — a display gallery, NOT the documents-library count/ZIP (those use listPortalReports, now PAGED)",

@@ -1,4 +1,5 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { type NextRequest } from "next/server";
+import * as respond from "@/lib/api/respond";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import {
@@ -33,10 +34,7 @@ export async function GET(request: NextRequest) {
   const from = url.searchParams.get("from") ?? "";
   const to = url.searchParams.get("to") ?? "";
   if (!DATE_RE.test(from) || !DATE_RE.test(to) || from > to) {
-    return NextResponse.json(
-      { error: "from/to must be YYYY-MM-DD and from <= to" },
-      { status: 400 },
-    );
+    return respond.error(400, "from/to must be YYYY-MM-DD and from <= to");
   }
 
   const supabase = await createClient();
@@ -63,7 +61,7 @@ export async function GET(request: NextRequest) {
   });
   if (error) {
     console.error("[schedule] list failed", error);
-    return NextResponse.json({ error: "Failed to load schedule" }, { status: 500 });
+    return respond.error(500, "Failed to load schedule");
   }
 
   const out: CalendarJob[] = [];
@@ -115,5 +113,5 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ data: out });
+  return respond.json({ data: out });
 }

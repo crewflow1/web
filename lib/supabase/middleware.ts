@@ -2,6 +2,12 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import type { User } from "@supabase/supabase-js";
 import type { Database } from "./types";
+import { REQUEST_ID_HEADER } from "@/lib/api/request-id";
+
+/** Forwarded so server code (requireOrgContext) can read the resolved path
+ * without re-parsing — used to allow-list the MFA enrol/challenge destinations
+ * so enforcement never loops. */
+export const PATHNAME_HEADER = "x-pathname";
 
 type CookieToSet = { name: string; value: string; options?: CookieOptions };
 
@@ -23,7 +29,7 @@ type CookieToSet = { name: string; value: string; options?: CookieOptions };
  * anon key fails loudly here instead of every request silently shipping
  * a Supabase client with an undefined apikey.
  */
-export async function updateSession(request: NextRequest) {
+export async function updateSession(request: NextRequest, requestId?: string) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -34,7 +40,23 @@ export async function updateSession(request: NextRequest) {
     throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY");
   }
 
-  let supabaseResponse = NextResponse.next({ request });
+  // Forward the correlation id + resolved pathname onto the REQUEST so route
+  // handlers / RSC / server code (lib/api/respond.ts, requireOrgContext) can
+  // read them. A fresh Headers copy is the documented way to mutate forwarded
+  // request headers from middleware.
+  const requestHeaders = new Headers(request.headers);
+  if (requestId) requestHeaders.set(REQUEST_ID_HEADER, requestId);
+  requestHeaders.set(PATHNAME_HEADER, request.nextUrl.pathname);
+  const nextInit = { request: { headers: requestHeaders } };
+
+  // Stamp the correlation id on any response we hand back (passthrough OR
+  // redirect) so the client + logs always see it.
+  const stamp = <T extends NextResponse>(res: T): T => {
+    if (requestId) res.headers.set(REQUEST_ID_HEADER, requestId);
+    return res;
+  };
+
+  let supabaseResponse = NextResponse.next(nextInit);
 
   const supabase = createServerClient<Database>(supabaseUrl, supabaseAnonKey, {
     cookies: {
@@ -45,7 +67,7 @@ export async function updateSession(request: NextRequest) {
         cookiesToSet.forEach(({ name, value }) =>
           request.cookies.set(name, value),
         );
-        supabaseResponse = NextResponse.next({ request });
+        supabaseResponse = NextResponse.next(nextInit);
         cookiesToSet.forEach(({ name, value, options }) =>
           supabaseResponse.cookies.set(name, value, options),
         );
@@ -143,7 +165,7 @@ export async function updateSession(request: NextRequest) {
     supabaseResponse.cookies.getAll().forEach((cookie) => {
       response.cookies.set(cookie);
     });
-    return response;
+    return stamp(response);
   };
 
   // Logged in but visiting auth pages → send them in. Super-admins land
@@ -174,5 +196,5 @@ export async function updateSession(request: NextRequest) {
     return redirectTo(url);
   }
 
-  return supabaseResponse;
+  return stamp(supabaseResponse);
 }

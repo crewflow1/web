@@ -571,6 +571,21 @@ const envSchema = z.object({
   // "true" once manual linking is enabled so the button never dead-ends.
   NEXT_PUBLIC_FEATURE_ACCOUNT_LINKING: z.enum(["true", "false"]).default("false"),
 
+  // -- Auth: enforceable per-org MFA (BUILT, gated, default OFF) ----------
+  // SERVER-ONLY (deliberately NOT NEXT_PUBLIC): the BUILD gate for MFA
+  // ENFORCEMENT. DEFAULTS OFF. The per-org opt-in flag
+  // (organizations.require_mfa, migration 20261170000000) plus the fail-closed
+  // aal2 gate in server/auth/session.ts#requireOrgContext are fully BUILT and
+  // tested behind this flag, but enforcement cannot engage unless BOTH switches
+  // are on: this deployment gate AND a given org's require_mfa. While this is
+  // off — the default — the session/middleware path is completely inert (no AAL
+  // read, no aal2 requirement), so no org can be gated no matter what it sets.
+  // Enabling org-required MFA org-wide is a customer/ops decision (it bounces
+  // every owner/admin with no factor into enrolment), so the deployment must
+  // opt in here before any org flag can take effect. Server-only so the gate
+  // never leaks into a client bundle.
+  FEATURE_MFA_ENFORCEMENT: z.enum(["true", "false"]).default("false"),
+
   // -- Public API jobs read surface (Train K / Mission 9) ----------------
   // SERVER-ONLY (deliberately NOT NEXT_PUBLIC): whether the public read API
   // /api/v1/jobs is EXPOSED. DEFAULTS OFF — the routes ship dark. Exposing

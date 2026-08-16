@@ -1,4 +1,5 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { type NextRequest } from "next/server";
+import * as respond from "@/lib/api/respond";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
@@ -29,14 +30,11 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return respond.error(400, "Invalid JSON body");
   }
   const parsed = updateFinanceSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", issues: parsed.error.flatten() },
-      { status: 400 },
-    );
+    return respond.error(400, "Invalid input", { extra: { issues: parsed.error.flatten() } });
   }
 
   const patch: FinanceUpdate = {};
@@ -47,7 +45,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
   if (parsed.data.job_id !== undefined) patch.job_id = parsed.data.job_id ?? null;
 
   if (Object.keys(patch).length === 0) {
-    return NextResponse.json({ error: "No fields to update" }, { status: 400 });
+    return respond.error(400, "No fields to update");
   }
 
   const supabase = await createClient();
@@ -71,15 +69,15 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
     // bill has been part-paid under CIS, so its value is frozen (20261053000000).
     const refusal = financeWriteRefusal(error.code, error.message);
     if (refusal) {
-      return NextResponse.json({ error: refusal.error }, { status: refusal.status });
+      return respond.error(refusal.status, refusal.error);
     }
     console.error("[finances] update failed", error);
-    return NextResponse.json({ error: "Failed to update" }, { status: 500 });
+    return respond.error(500, "Failed to update");
   }
   if (count === 0) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return respond.error(404, "Not found");
   }
-  return NextResponse.json({ ok: true });
+  return respond.json({ ok: true });
 }
 
 export async function DELETE(_request: NextRequest, { params }: Ctx) {
@@ -108,11 +106,11 @@ export async function DELETE(_request: NextRequest, { params }: Ctx) {
 
   if (error) {
     console.error("[finances] delete failed", error);
-    return NextResponse.json({ error: "Failed to delete" }, { status: 500 });
+    return respond.error(500, "Failed to delete");
   }
   if (count === 0) {
     // RLS blocked or row didn't exist.
-    return NextResponse.json({ error: "Not found or not allowed" }, { status: 404 });
+    return respond.error(404, "Not found or not allowed");
   }
 
   // Best-effort storage cleanup. RLS on the receipts bucket already grants
@@ -128,5 +126,5 @@ export async function DELETE(_request: NextRequest, { params }: Ctx) {
     }
   }
 
-  return NextResponse.json({ ok: true });
+  return respond.json({ ok: true });
 }

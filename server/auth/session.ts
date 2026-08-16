@@ -1,10 +1,16 @@
 import "server-only";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
-import { readFailure } from "@/lib/supabase/read-failure";
+import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { PATHNAME_HEADER } from "@/lib/supabase/middleware";
+import {
+  mfaGateDecision,
+  mfaEnforcementBuildEnabled,
+  type AalPair,
+} from "@/lib/auth/mfa-policy";
 
 export type OrgStatus =
   | "pending"
@@ -28,6 +34,10 @@ export type OrgContext = {
     trial_ends_at: string | null;
     created_at: string;
     onboarding_state: Record<string, unknown>;
+    /** Per-org MFA enforcement flag (migration 20261170000000). Default false.
+     * When true AND the FEATURE_MFA_ENFORCEMENT build gate is on, owner/admin
+     * members are gated to aal2 in requireOrgContext. */
+    require_mfa: boolean;
   };
 };
 
@@ -123,7 +133,7 @@ export async function getOrgForUser(
   const { data: org, error: orgErr } = await supabase
     .from("organizations")
     .select(
-      "id, name, slug, onboarding_state, status, plan, trial_ends_at, created_at" as never,
+      "id, name, slug, onboarding_state, status, plan, trial_ends_at, created_at, require_mfa" as never,
     )
     .eq("id", preferred.org_id)
     .single();
@@ -139,6 +149,7 @@ export async function getOrgForUser(
     plan: string | null;
     trial_ends_at: string | null;
     created_at: string;
+    require_mfa: boolean | null;
   };
 
   return {
@@ -155,6 +166,9 @@ export async function getOrgForUser(
       plan: row.plan ?? "trial",
       trial_ends_at: row.trial_ends_at,
       created_at: row.created_at,
+      // Default OFF — a null (pre-migration / backfill miss) must never turn
+      // enforcement ON and lock out an org that never opted in.
+      require_mfa: row.require_mfa ?? false,
     },
   };
 }
@@ -233,7 +247,90 @@ export async function requireOrgContext(): Promise<{
   if (!orgHasActiveAccess(ctx.org.status)) {
     redirect("/access-pending");
   }
+
+  // ── Enforceable per-org MFA (BUILT, default OFF) ─────────────────────────
+  // DOUBLY gated: enforcement engages only when BOTH the deployment build gate
+  // (FEATURE_MFA_ENFORCEMENT) AND the org's opt-in flag (require_mfa) are on —
+  // otherwise enforceMfaPolicy returns immediately and this path is inert (no
+  // AAL read, no aal2 requirement). When both are on we gate the org's
+  // PRIVILEGED members (owner/admin) to an aal2 session. This is the single
+  // chokepoint every (app) surface funnels through, so it is the correct place
+  // to enforce (see the enforcement note in
+  // app/(app)/settings/security/actions.ts). The decision is pure + fail-closed
+  // (lib/auth/mfa-policy.ts): if we cannot positively confirm aal2 for a
+  // privileged member, we never let them in.
+  //
+  // Super-admins are exempt: they are bounced to /admin above unless actively
+  // impersonating, and forcing a TENANT org's MFA policy onto HQ staff (who
+  // hold a synthetic owner context during impersonation) is not the intent.
+  await enforceMfaPolicy(user, ctx);
+
   return { user, ctx };
+}
+
+/**
+ * The enrol/challenge destinations MUST stay reachable at aal1, or a gated
+ * privileged member could never satisfy the policy — an enforcement loop. The
+ * challenge page (/login/mfa) lives in the (auth) group and is not gated by
+ * requireOrgContext; the enrol surface (/settings/security) IS under (app), so
+ * it is allow-listed here explicitly.
+ */
+const MFA_GATE_ALLOWED_PREFIXES = ["/settings/security", "/login/mfa"] as const;
+
+async function enforceMfaPolicy(user: User, ctx: OrgContext): Promise<void> {
+  // BUILD/FEATURE GATE (default OFF, env FEATURE_MFA_ENFORCEMENT). This is the
+  // FIRST guard: while it is off — the default for every deployment — the whole
+  // enforcement layer is inert, so the default session path performs no AAL read
+  // and imposes no aal2 requirement. Enforcement needs BOTH this deployment gate
+  // AND a given org's require_mfa flag before it can engage.
+  if (!mfaEnforcementBuildEnabled()) return;
+  if (!ctx.org.require_mfa) return; // per-org opt-in — default-off fast path
+  if (isSuperAdminEmail(user.email)) return; // HQ staff exempt (see caller)
+
+  // Resolve AAL. Fail-closed: any error → treat as unknown (→ enrol), never
+  // as a pass. The error is BOUND and REPORTED (not discarded): a privileged
+  // member being bounced to enrolment because the AAL read genuinely errored
+  // (vs. having no factor) is an operational signal we must not swallow — but we
+  // still degrade to fail-closed rather than throw, so the member lands on the
+  // enrol surface instead of a generic error boundary.
+  let aal: AalPair | null = null;
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (error) {
+      reportReadFailure("session: MFA assurance level", error);
+      aal = null;
+    } else {
+      aal = data
+        ? { currentLevel: data.currentLevel, nextLevel: data.nextLevel }
+        : null;
+    }
+  } catch {
+    aal = null;
+  }
+
+  const decision = mfaGateDecision({
+    requireMfa: ctx.org.require_mfa,
+    role: ctx.membership.role,
+    aal,
+  });
+  if (decision === "allow") return;
+
+  // Don't redirect a request that is already ON an allow-listed destination —
+  // that is exactly where we want a not-yet-satisfied user to be.
+  let pathname = "";
+  try {
+    pathname = (await headers()).get(PATHNAME_HEADER) ?? "";
+  } catch {
+    pathname = "";
+  }
+  const onAllowedSurface = MFA_GATE_ALLOWED_PREFIXES.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`),
+  );
+  if (onAllowedSurface) return;
+
+  if (decision === "challenge") redirect("/login/mfa");
+  redirect("/settings/security?mfa=required");
 }
 
 /**
@@ -255,7 +352,7 @@ async function loadOrgContextForImpersonation(
   const { data: org, error } = await supabase
     .from("organizations")
     .select(
-      "id, name, slug, onboarding_state, status, plan, trial_ends_at, created_at" as never,
+      "id, name, slug, onboarding_state, status, plan, trial_ends_at, created_at, require_mfa" as never,
     )
     .eq("id", orgId)
     .maybeSingle();
@@ -270,6 +367,7 @@ async function loadOrgContextForImpersonation(
     plan: string | null;
     trial_ends_at: string | null;
     created_at: string;
+    require_mfa: boolean | null;
   };
   return {
     // The HQ user is rendered with role='owner' so the workspace
@@ -291,6 +389,7 @@ async function loadOrgContextForImpersonation(
       plan: row.plan ?? "trial",
       trial_ends_at: row.trial_ends_at,
       created_at: row.created_at,
+      require_mfa: row.require_mfa ?? false,
     },
   };
 }

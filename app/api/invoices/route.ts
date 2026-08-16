@@ -1,4 +1,5 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { type NextRequest } from "next/server";
+import * as respond from "@/lib/api/respond";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { createInvoiceSchema, INVOICE_STATUSES } from "@/lib/invoices/schema";
@@ -51,9 +52,9 @@ export async function GET(request: NextRequest) {
   const { data, error, count } = await q;
   if (error) {
     console.error("[invoices] list failed", error);
-    return NextResponse.json({ error: "Failed to load invoices" }, { status: 500 });
+    return respond.error(500, "Failed to load invoices");
   }
-  return NextResponse.json({ data: data ?? [], count: count ?? 0, limit, offset });
+  return respond.json({ data: data ?? [], count: count ?? 0, limit, offset });
 }
 
 export async function POST(request: NextRequest) {
@@ -63,14 +64,11 @@ export async function POST(request: NextRequest) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return respond.error(400, "Invalid JSON body");
   }
   const parsed = createInvoiceSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", issues: parsed.error.flatten() },
-      { status: 400 },
-    );
+    return respond.error(400, "Invalid input", { extra: { issues: parsed.error.flatten() } });
   }
 
   const supabase = await createClient();
@@ -84,20 +82,17 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
   if (qErr) {
     console.error("[invoices] quote lookup failed", qErr);
-    return NextResponse.json({ error: "Failed to load quote" }, { status: 500 });
+    return respond.error(500, "Failed to load quote");
   }
   if (!quote) {
-    return NextResponse.json({ error: "Quote not found" }, { status: 404 });
+    return respond.error(404, "Quote not found");
   }
   // Only accepted quotes are billable. The UI already scopes its dropdown to
   // accepted, but a stale dropdown or a direct POST must not be able to bill a
   // draft/sent/declined quote the customer never accepted. The auto-invoice
   // path (quotes/actions.ts) inserts directly and is unaffected by this gate.
   if (quote.status !== "accepted") {
-    return NextResponse.json(
-      { error: "Only accepted quotes can be invoiced." },
-      { status: 409 },
-    );
+    return respond.error(409, "Only accepted quotes can be invoiced.");
   }
 
   // Allocate the next per-org invoice number via the SECURITY DEFINER RPC.
@@ -107,10 +102,7 @@ export async function POST(request: NextRequest) {
   );
   if (numErr || !numberRpc) {
     console.error("[invoices] number allocation failed", numErr);
-    return NextResponse.json(
-      { error: "Failed to allocate invoice number" },
-      { status: 500 },
-    );
+    return respond.error(500, "Failed to allocate invoice number");
   }
 
   const { data: inserted, error: insErr } = await supabase
@@ -138,8 +130,8 @@ export async function POST(request: NextRequest) {
 
   if (insErr || !inserted) {
     console.error("[invoices] insert failed", insErr);
-    return NextResponse.json({ error: "Failed to create invoice" }, { status: 500 });
+    return respond.error(500, "Failed to create invoice");
   }
 
-  return NextResponse.json(inserted, { status: 201 });
+  return respond.json(inserted, { status: 201 });
 }
