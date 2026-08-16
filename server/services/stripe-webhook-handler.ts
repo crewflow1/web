@@ -15,6 +15,39 @@ import {
   type CheckoutSessionMetadata,
 } from "@/lib/stripe/events";
 import { onDemoStripePaymentConfirmed } from "@/server/services/demo-lifecycle";
+import {
+  wireSelfServeBillingDeps,
+  syncOrgSubscriptionFromStripe,
+} from "@/server/services/self-serve-billing";
+import type { StripeSubscriptionShape } from "@/lib/billing/subscription-state";
+
+/**
+ * Best-effort projection of a Stripe subscription onto the org_subscriptions
+ * table (P3W2 self-serve billing). ADDITIVE to the existing organizations-table
+ * sync: it never throws (a projection failure must not fail the webhook — the
+ * organizations update above is the authoritative access-control path), and it
+ * writes the same row on redelivery (idempotent upsert keyed on org_id). Inert
+ * while self-serve billing is dark? No — the projection is written whenever
+ * Stripe sends the event, so activation has an accurate history to read; but no
+ * Stripe subscription events exist until the feature is used, so it stays empty.
+ */
+async function projectOrgSubscription(
+  orgId: string,
+  sub: Stripe.Subscription,
+): Promise<void> {
+  try {
+    await syncOrgSubscriptionFromStripe(wireSelfServeBillingDeps(), {
+      orgId,
+      subscription: sub as unknown as StripeSubscriptionShape,
+    });
+  } catch (e) {
+    console.error("[stripe-webhook] org_subscriptions projection failed", {
+      org_id: orgId,
+      subscription_id: sub.id,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
 
 /**
  * CrewFlow — Stripe webhook event processor.
@@ -443,6 +476,9 @@ async function handleSubscriptionUpsert(
     },
   });
 
+  // P3W2: mirror onto the org_subscriptions projection (best-effort, additive).
+  await projectOrgSubscription(orgId, sub);
+
   await recomputeHealthForOrg(orgId, "payment_change", null);
   return [`subscription_synced:${sub.status}`];
 }
@@ -466,6 +502,10 @@ async function handleSubscriptionDeleted(
     targetId: orgId,
     metadata: { stripe_subscription_id: sub.id, status: sub.status },
   });
+
+  // P3W2: mirror the terminal status onto the org_subscriptions projection
+  // (best-effort, additive) so the tenant billing surface reflects the cancel.
+  await projectOrgSubscription(orgId, sub);
 
   // Loud HQ notification — urgent decision needed.
   await emitNotifications(

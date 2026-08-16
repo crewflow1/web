@@ -331,8 +331,8 @@ export default async function SettingsPage() {
           </span>
         </div>
         <p className="mt-1 text-sm text-slate-600">
-          Read-only for now. We&apos;ll add self-serve billing in a later
-          release — for now, email us to change plan or extend a trial.
+          Your plan and its features. Manage billing, upgrade or downgrade from
+          the billing page.
         </p>
 
         <dl className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -367,14 +367,14 @@ export default async function SettingsPage() {
         </dl>
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <a
-            href={`mailto:hello@crewflow.uk?subject=${encodeURIComponent(`Plan change — ${ctx.org.name}`)}`}
+          <Link
+            href="/settings/billing"
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
           >
-            Email us to change plan
-          </a>
+            Manage plan &amp; billing
+          </Link>
           <p className="text-xs text-slate-500">
-            Self-serve upgrade / downgrade lands in a future release.
+            View your plan, features and invoices.
           </p>
         </div>
       </section>

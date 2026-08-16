@@ -361,6 +361,20 @@ const envSchema = z.object({
   // by (and untouching of) the SaaS-billing Stripe integration.
   NEXT_PUBLIC_FEATURE_PORTAL_PAYMENTS: z.enum(["true", "false"]).default("false"),
 
+  // Self-serve tenant billing / plan management (20261148). DEFAULTS OFF. Switch
+  // 1 of two: while off the /settings/billing plan-change + billing-portal server
+  // actions REFUSE-before-fetch (no Stripe call), the entitlement gate defaults to
+  // ALLOW (so wiring a check into existing code is inert), and the settings surface
+  // keeps the read-only "email us to change plan" copy. The SECOND switch is the
+  // SaaS Stripe key (STRIPE_SECRET_KEY, the SAME key that powers the demo checkout):
+  // the flag alone opens no door — isSelfServeBillingConfigured() requires BOTH the
+  // flag AND the key. Even both together only enable the MECHANISM; the actual plan
+  // PRICES are CEO config in Stripe (resolved by lookup_key). Reuses the SaaS Stripe
+  // integration + /api/webhooks/stripe; SEPARATE from the demo checkout and from
+  // P2 portal invoice payments (STRIPE_CONNECT_SECRET_KEY). Never flip to "true"
+  // before the plan prices exist in Stripe.
+  NEXT_PUBLIC_FEATURE_SELF_SERVE_BILLING: z.enum(["true", "false"]).default("false"),
+
   // Builders' merchant connect surface (20261124). DEFAULTS OFF. Switch 1 of two:
   // while off, isMerchantConnectable() returns false regardless of credentials and
   // the settings panel renders "not configured". The SECOND switch is per-merchant
