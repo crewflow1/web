@@ -5,6 +5,7 @@ import {
   AI_MONTHLY_CEILING_PENCE,
   budgetPercent,
   detectSpike,
+  effectiveCeilingPence,
   evaluateBudget,
   trailingAverage,
   ukMonthKeyOf,
@@ -12,6 +13,7 @@ import {
   type BudgetStatus,
   type MonthKey,
 } from "@/lib/ai/governor";
+import { readAllOrgCeilingOverrides } from "@/lib/ai/governor/limits";
 import { SPIKE_BASELINE_MONTHS, trailingMonths } from "@/lib/ai/governor/policy";
 import { featureDefinition } from "@/lib/ai/governor/registry";
 import { getAiGovernorReadiness, type AiGovernorReadiness } from "@/lib/ai/governor/readiness";
@@ -57,6 +59,14 @@ export type AiCostOrgRow = {
   expiredReservations: number;
   invocations: number;
   failures: number;
+  /**
+   * The EFFECTIVE ceiling this org runs at — its override if one is set, else
+   * the default. `status` and `percentOfCeiling` are computed against THIS, not
+   * the constant, so an org on a raised or lowered ceiling reads correctly.
+   */
+  ceilingPence: number;
+  /** True when this org has a per-org ceiling override (so it is off the default). */
+  hasCeilingOverride: boolean;
   status: BudgetStatus;
   percentOfCeiling: number;
   /** Mean monthly spend over the preceding months — the spike baseline. */
@@ -257,6 +267,9 @@ export async function buildAiCostSnapshot(month?: MonthKey): Promise<AiCostSnaps
   const history = await Promise.all(
     trailingMonths(monthKey, SPIKE_BASELINE_MONTHS).map((m) => orgTotalsFor(m)),
   );
+  // Per-org ceiling overrides. Empty on a read failure — every org then reads at
+  // the default, the conservative never-silently-raise posture (see limits.ts).
+  const overrides = await readAllOrgCeilingOverrides();
 
   // THE UNION, not just the ledger's keys. An org with calls in flight and no
   // settled spend yet has no `ai_invocations` row — and it is precisely the org
@@ -276,6 +289,9 @@ export async function buildAiCostSnapshot(month?: MonthKey): Promise<AiCostSnaps
       // Headroom is committed AND claimed — the honest answer to "can this org
       // make another call", which is what the status pill is read as meaning.
       const committedAndClaimed = spentPence + reservedPence;
+      // The EFFECTIVE ceiling: override ?? default, clamped. Status and % are
+      // computed against it, so an org off the default reads correctly.
+      const orgCeiling = effectiveCeilingPence(overrides.get(orgId) ?? null);
       return {
         orgId,
         orgName: names.get(orgId) ?? orgId,
@@ -286,8 +302,10 @@ export async function buildAiCostSnapshot(month?: MonthKey): Promise<AiCostSnaps
         expiredReservations: num(res.expired_count),
         invocations: num(row.invocations),
         failures: num(row.failures),
-        status: evaluateBudget(committedAndClaimed, AI_MONTHLY_CEILING_PENCE),
-        percentOfCeiling: budgetPercent(committedAndClaimed, AI_MONTHLY_CEILING_PENCE),
+        ceilingPence: orgCeiling,
+        hasCeilingOverride: overrides.has(orgId),
+        status: evaluateBudget(committedAndClaimed, orgCeiling),
+        percentOfCeiling: budgetPercent(committedAndClaimed, orgCeiling),
         trailingAveragePence: avg,
         spiking: detectSpike(spentPence, avg),
       };

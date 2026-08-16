@@ -691,8 +691,8 @@ const RPC_ALLOWLIST: Record<string, string> = {
   // tens of rows at most, structurally incapable of crossing 1000. The per-ORG
   // sibling rollups (grouped by org_id, unbounded) ARE paged; this one is not,
   // and correctly so.
-  "server/services/ai-cost-snapshot.ts:475":
-    "bounded: ai_invocations_month_by_feature groups by the CLOSED feature registry (tens of rows), never near the 1000 cap",
+  "server/services/ai-cost-snapshot.ts:493":
+    "bounded: ai_invocations_month_by_feature groups by the CLOSED feature registry (tens of rows), never near the 1000 cap. (Moved 475→493 when per-org effective-ceiling overrides were threaded into buildAiCostSnapshot in 20261147000000.)",
 };
 
 // `.range(` / `fetchAllRows` anywhere around the call = it IS paged (the fix).

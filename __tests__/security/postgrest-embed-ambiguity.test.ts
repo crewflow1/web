@@ -166,6 +166,18 @@ function buildFkGraph(): Map<string, FkEdge[]> {
  */
 const REVIEWED_AMBIGUOUS_PAIRS = [
   "admin_alert_state → users",
+  // AI budget control audit (20261147000000): target_user_id (the employee a
+  // limit applied to) + changed_by (the super-admin who made the change) both →
+  // users. Reviewed 2026-08-16: server/services/ai-budget-controls.ts resolves
+  // names via a separate namesFor("users", ...) lookup keyed on id, never a
+  // users(...) embed, so no read is ambiguous. Two FKs is inherent — who was
+  // limited vs who changed it — and a future embed must FK-hint (test 2 enforces).
+  "ai_budget_control_audit → users",
+  // AI per-employee limits (20261147000000): user_id (the employee capped) +
+  // set_by (the super-admin who set it) both → users. Reviewed 2026-08-16:
+  // ai-budget-controls.ts resolves the employee's name via the same separate
+  // users lookup, never an embed, so no read is ambiguous.
+  "ai_employee_budget_limits → users",
   // AI quote drafts (20261068): created_by + applied_by + discarded_by all → users.
   // Reviewed 2026-07-29: server/services/ai-quote-writer.ts is the only reader and
   // it selects scalar columns only ("id, status", "id, content, degraded,
