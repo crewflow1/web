@@ -177,6 +177,13 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   "ai_quote_drafts → users",
   "asset_assignments → assets",
   "asset_assignments → users",
+  // Depreciation settings (P3W2, 20261145000000): created_by + updated_by both
+  // → users. Reviewed 2026-08-16: the only reader is app/(app)/assets/[id]/
+  // page.tsx, which selects scalar policy columns only ("method, cost,
+  // salvage_value, start_date, useful_life_months, annual_rate_pct") — there is
+  // no users(...) embed. Two FKs are inherent to the audit trail (who set the
+  // policy vs who last changed it). Any future embed must name its FK constraint.
+  "asset_depreciation_settings → users",
   "asset_fuel_logs → users",
   "asset_inspection_overrides → users",
   "asset_inspection_templates → users",
