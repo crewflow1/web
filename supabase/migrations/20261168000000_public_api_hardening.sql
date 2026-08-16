@@ -42,7 +42,14 @@ create table if not exists public.api_request_log (
   -- The key that authenticated the request, and its org. Both pinned by the
   -- guard from the RESOLVED key (never from client input). ON DELETE CASCADE:
   -- a request row is telemetry about a key, so it dies with the key.
-  key_id      uuid not null references public.api_keys(id) on delete cascade,
+  --
+  -- key_id is a COMPOSITE FK — (key_id, org_id) -> api_keys(id, org_id), the
+  -- quotes/jobs/leads cross-tenant pattern — against api_keys_id_org_key. This
+  -- makes "the logging key lives in the SAME org as this log row" a database
+  -- invariant no writer (service-role included) can bypass, so a request can
+  -- never be attributed to a key belonging to another tenant. It is defined at
+  -- table level (below) because a column-level FK cannot span two columns.
+  key_id      uuid not null,
   org_id      uuid not null references public.organizations(id) on delete cascade,
 
   -- Request METADATA ONLY. No body, no headers, no query string — nothing that
@@ -59,7 +66,15 @@ create table if not exists public.api_request_log (
   route       text not null check (btrim(route) <> '' and route !~ '\?' and length(route) <= 300),
   status      smallint not null check (status between 100 and 599),
 
-  created_at  timestamp with time zone not null default now()
+  created_at  timestamp with time zone not null default now(),
+
+  -- COMPOSITE cross-tenant FK (the quotes/jobs/leads pattern): the referenced
+  -- api_key must be in the SAME org as this log row. ON DELETE CASCADE so a
+  -- request row never outlives the key it belongs to. Targets the
+  -- api_keys_id_org_key unique (id, org_id) from migration 20261086000000.
+  constraint api_request_log_key_id_fkey
+    foreign key (key_id, org_id)
+    references public.api_keys (id, org_id) on delete cascade
 );
 
 comment on table public.api_request_log is
