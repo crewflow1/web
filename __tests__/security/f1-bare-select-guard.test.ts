@@ -1240,6 +1240,8 @@ const COVERAGE_REVIEWED: Record<string, string> = {
     "PER-PARENT/BATCH: per-asset service schedules (.eq('asset_id')) display + a cross-org generator scan capped at .limit(BATCH=50); the rest are writes/CAS advances.",
   asset_maintenance_cases:
     "PER-PARENT/SINGLE: per-asset maintenance cases (.eq('asset_id')) display + .maybeSingle() case lookups; bounded by one asset (the upsert claim returns only the won row).",
+  asset_calibration_certificates:
+    "PER-PARENT/PAGED: the asset-detail read is per-parent (.eq('asset_id') — one asset's calibration certificates); the org-wide register (app/(app)/assets/calibration/page.tsx) is ALWAYS paged via fetchAllRows on a stable (calibration_date desc, id asc) order, so the estate scan never truncates at the cap.",
   asset_qr_identities:
     "PER-PARENT/SINGLE: per-asset QR lifecycle — a .limit(15) history display + .maybeSingle() active-token / scan-resolve lookups; bounded by one asset.",
   automation_runs:

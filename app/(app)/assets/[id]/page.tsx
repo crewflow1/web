@@ -22,6 +22,8 @@ import { SchedulesSection, type ScheduleRow } from "./_schedules";
 import { SafetyBlocksSection } from "./_safety";
 import { MaintenanceSection, type MaintenanceCaseRow } from "./_maintenance";
 import { ServiceSchedulesSection, type ServiceScheduleRow } from "./_service-schedules";
+import { DepreciationSection, type DepreciationSettingsRow } from "./_depreciation";
+import { CalibrationSection, type CalibrationCertRow } from "./_calibration";
 import { AssetTimelineSection, type TimelineEvent } from "./_timeline";
 import { composeAssetTimeline } from "@/lib/assets/timeline";
 import {
@@ -88,6 +90,10 @@ const SAVED_MAP: Record<string, string> = {
   case_reported: "Maintenance case reported.",
   case_updated: "Maintenance case updated.",
   case_costs: "Costs saved.",
+  depreciation: "Depreciation policy saved. Net book value updates automatically.",
+  depreciation_cleared: "Depreciation policy removed.",
+  calibration: "Calibration certificate recorded.",
+  calibration_deleted: "Calibration certificate deleted.",
 };
 const ERROR_MAP: Record<string, string> = {
   bad_status: "Invalid status.",
@@ -444,6 +450,54 @@ export default async function AssetDetailPage({
   if (svcSchedulesError) throw readFailure("asset detail: service schedules", svcSchedulesError);
   const serviceSchedules: ServiceScheduleRow[] = svcSchedulesRaw ?? [];
 
+  // Depreciation policy for this asset (one row per asset; ACTIVE-org pinned —
+  // current_org_ids() is permissive so RLS alone doesn't scope a by-id read).
+  const { data: depreciationRaw, error: depreciationError } = await (
+    supabase.from("asset_depreciation_settings" as never) as unknown as {
+      select: (c: string) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{ data: DepreciationSettingsRow | null; error: SupabaseReadError | null }>;
+          };
+        };
+      };
+    }
+  )
+    .select("method, cost, salvage_value, start_date, useful_life_months, annual_rate_pct")
+    .eq("asset_id", id)
+    .eq("org_id", ctx.org.id)
+    .maybeSingle();
+  if (depreciationError) throw readFailure("asset detail: depreciation settings", depreciationError);
+  const depreciation: DepreciationSettingsRow | null = depreciationRaw ?? null;
+
+  // Calibration certificate register for this asset (newest calibration first).
+  const { data: calibrationRaw, error: calibrationError } = await (
+    supabase.from("asset_calibration_certificates" as never) as unknown as {
+      select: (c: string) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            order: (
+              c: string,
+              o: { ascending: boolean },
+            ) => Promise<{ data: CalibrationCertRow[] | null; error: SupabaseReadError | null }>;
+          };
+        };
+      };
+    }
+  )
+    .select("id, schedule_id, certificate_number, calibrated_by, calibration_date, next_due_date, result, standard, notes")
+    .eq("asset_id", id)
+    .eq("org_id", ctx.org.id)
+    .order("calibration_date", { ascending: false });
+  if (calibrationError) throw readFailure("asset detail: calibration certificates", calibrationError);
+  const calibrationCerts: CalibrationCertRow[] = calibrationRaw ?? [];
+
+  // Calibration schedules a certificate can re-arm (derived from the service
+  // schedules already read — no extra query).
+  const calibrationScheduleOptions = serviceSchedules
+    .filter((s) => s.maintenance_type === "calibration" && s.active)
+    .map((s) => ({ id: s.id, title: s.title, next_due: s.next_due }));
+
   // Unified history: two bounded reads (custody assignments + QR-identity
   // lifecycle) plus events composed from data already loaded above
   // (inspections, overrides, maintenance cases). Both reads are ACTIVE-org
@@ -675,6 +729,23 @@ export default async function AssetDetailPage({
         schedules={serviceSchedules}
         isAdmin={canDelete}
         today={today}
+      />
+
+      <CalibrationSection
+        assetId={asset.id}
+        certs={calibrationCerts}
+        schedules={calibrationScheduleOptions}
+        isAdmin={canDelete}
+        today={today}
+      />
+
+      <DepreciationSection
+        assetId={asset.id}
+        settings={depreciation}
+        isAdmin={canDelete}
+        today={today}
+        defaultCost={asset.purchase_price}
+        defaultStart={asset.purchase_date}
       />
 
       {templatesError ? <PickerNotice what="inspection templates" /> : null}

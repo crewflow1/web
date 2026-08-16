@@ -200,7 +200,7 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // truncation would drop rows a picker/aggregation must see — those were PAGED.
 
   // Detail-page display lists (recent-N, read-only, no write-back).
-  "app/(app)/assets/[id]/page.tsx:226":
+  "app/(app)/assets/[id]/page.tsx:232":
     "bounded: recent-200 jobs referencing this asset — detail-page display list, not a write-back picker",
   "app/(app)/delays/_data.ts:111":
     "bounded: recent-200 jobs sample for the delays report display",

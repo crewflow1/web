@@ -15,6 +15,8 @@
     "ai_reply_transports",
     "api_keys",
     "asset_assignments",
+    "asset_calibration_certificates",
+    "asset_depreciation_settings",
     "asset_fuel_logs",
     "asset_inspection_overrides",
     "asset_inspection_schedules",
@@ -239,6 +241,7 @@
   },
   "_order_keys_comment": "Stable, unique per-row ORDER BY column for the fully-paged DSAR export (server/services/gdpr-export.ts). Every exported table is paged via fetchAllRows, which REQUIRES a stable total ordering so no row is dropped/repeated at a page boundary. The default key is 'id'; the entries below are the ONLY exported tables lacking an 'id' column — each maps to a column that is unique WITHIN an org-pinned read (the non-org_id part of the table's primary key; org_id is constant under the .eq('org_id', orgId) pin). Ordering by a column that does not exist on a table is a hard read error (Postgres 42703) that would abort the whole export, so this map must stay exhaustive — the integration FORWARD drift test orders each table by its key against live Postgres, failing CI if a key is wrong or a new id-less table appears.",
   "order_keys": {
+    "asset_depreciation_settings": "asset_id",
     "asset_maintenance_case_costs": "case_id",
     "cis_bill_details": "finance_id",
     "cis_contractor_profiles": "org_id",
