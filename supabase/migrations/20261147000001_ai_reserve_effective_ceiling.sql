@@ -87,9 +87,9 @@ begin
   -- Mirrors effectiveCeilingPence() in lib/ai/governor/policy.ts; the security
   -- suite pins the two. The clamp is authoritative: no override can widen the
   -- gate past 50000p (£500), and a non-positive effective ceiling means "no AI".
-  select ceiling_pence into v_override
+  select ai_org_budget_ceilings.ceiling_pence into v_override
     from public.ai_org_budget_ceilings
-   where org_id = p_org_id;
+   where ai_org_budget_ceilings.org_id = p_org_id;
 
   v_ceiling := least(coalesce(v_override, p_ceiling_pence), 50000);
 
