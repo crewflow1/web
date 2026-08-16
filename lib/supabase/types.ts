@@ -1923,6 +1923,66 @@ export type Database = {
           },
         ]
       }
+      quote_versions: {
+        Row: {
+          captured_at: string
+          captured_reason: string
+          currency: string
+          id: string
+          line_items: Json
+          org_id: string
+          quote_id: string
+          status: string
+          subtotal: number
+          total: number
+          vat_total: number
+          version_number: number
+        }
+        Insert: {
+          captured_at?: string
+          captured_reason: string
+          currency: string
+          id?: string
+          line_items?: Json
+          org_id: string
+          quote_id: string
+          status: string
+          subtotal: number
+          total: number
+          vat_total: number
+          version_number: number
+        }
+        Update: {
+          captured_at?: string
+          captured_reason?: string
+          currency?: string
+          id?: string
+          line_items?: Json
+          org_id?: string
+          quote_id?: string
+          status?: string
+          subtotal?: number
+          total?: number
+          vat_total?: number
+          version_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quote_versions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quote_versions_quote_org_fkey"
+            columns: ["quote_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
+            referencedColumns: ["id", "org_id"]
+          },
+        ]
+      }
       quotes: {
         Row: {
           accept_signature: Json | null
