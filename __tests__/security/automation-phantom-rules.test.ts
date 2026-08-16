@@ -2,6 +2,11 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { AUTOMATION_RULES } from "@/lib/automation/rules";
+import {
+  EXPOSABLE_AUTOMATION_TRIGGERS,
+  AUTOMATION_TRIGGER_LABELS,
+  AUTOMATION_EVENT_TYPES,
+} from "@/lib/automation/events";
 
 /**
  * Phantom automation rules — the anti-regression drift guard (C29).
@@ -698,4 +703,86 @@ describe("producer coverage — direct per-function producer pins (C57 non-vacui
       });
     });
   }
+});
+
+// ===========================================================================
+// 4. Custom-rule builder trigger catalogue — every EXPOSED verb has a producer
+// ===========================================================================
+
+/**
+ * THE CUSTOM-RULE PHANTOM CLASS (MP R4b). §1 proves every ENABLED BUILT-IN rule
+ * has a producer. But an org also composes CUSTOM rules, and the builder
+ * (app/(app)/settings/automations/CustomRuleBuilder.tsx) offers a trigger
+ * dropdown. If that dropdown offers a verb no producer fires, the user builds a
+ * rule the engine can never run — the same phantom, one layer over.
+ *
+ * The fix mirrors the outbound-webhooks EXPOSABLE_WEBHOOK_EVENTS discipline: a
+ * curated `EXPOSABLE_AUTOMATION_TRIGGERS` list is the ONLY set the builder offers
+ * and the create/update server action accepts. This guard asserts every entry in
+ * it has a REAL literal producer (same sweep §1 uses), so a verb can never be
+ * exposed to custom rules without wiring its producer first.
+ */
+describe("custom-rule trigger catalogue — every exposable verb has a REAL producer", () => {
+  const produced = collectProducedVerbs();
+
+  it("every EXPOSABLE_AUTOMATION_TRIGGERS entry is a real event type", () => {
+    for (const verb of EXPOSABLE_AUTOMATION_TRIGGERS) {
+      expect(
+        (AUTOMATION_EVENT_TYPES as readonly string[]).includes(verb),
+        `${verb} is exposed to custom rules but is not a declared AUTOMATION_EVENT_TYPES verb`,
+      ).toBe(true);
+    }
+  });
+
+  it("every EXPOSABLE_AUTOMATION_TRIGGERS entry has a literal dispatchAutomation producer", () => {
+    for (const verb of EXPOSABLE_AUTOMATION_TRIGGERS) {
+      expect(
+        produced.has(verb),
+        `Trigger "${verb}" is offered in the custom-rule builder ` +
+          `(EXPOSABLE_AUTOMATION_TRIGGERS) but NO code dispatches it — a user could ` +
+          `compose a rule on it that can never fire. Either wire a real ` +
+          `dispatchAutomation({ type: "${verb}", … }) producer with COMPLETE ` +
+          `write-path coverage, or remove it from EXPOSABLE_AUTOMATION_TRIGGERS.`,
+      ).toBe(true);
+    }
+  });
+
+  it("every exposable trigger has a human label (cannot be offered unlabelled)", () => {
+    for (const verb of EXPOSABLE_AUTOMATION_TRIGGERS) {
+      expect(AUTOMATION_TRIGGER_LABELS[verb]?.length ?? 0).toBeGreaterThan(0);
+    }
+  });
+
+  it("the two MP R4b producers (quote.sent, quote.declined) are wired at the quote save-sites", () => {
+    const src = read("app/(app)/quotes/actions.ts");
+    // quote.sent — the sole send transition (sendQuote).
+    expect(src).toMatch(/type: "quote\.sent"/);
+    // quote.declined — BOTH decline paths (operator + public portal token).
+    const declined = [...src.matchAll(/type: "quote\.declined"/g)];
+    expect(
+      declined.length,
+      "quote.declined must be dispatched from BOTH declineQuoteAsOwner and " +
+        "declineQuoteByToken (operator + portal), for complete write-path coverage",
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it("known producer-less verbs stay OUT of the exposable catalogue (honest gate-out)", () => {
+    const GATED = [
+      "quote.created",
+      "job.created",
+      "invoice.created",
+      "support.ticket.replied",
+      "milestone.reached",
+      "account.created",
+      "demo.booked",
+      "demo.approved",
+    ] as const;
+    for (const verb of GATED) {
+      expect(
+        (EXPOSABLE_AUTOMATION_TRIGGERS as readonly string[]).includes(verb),
+        `${verb} has no complete producer and must NOT be exposed to custom rules ` +
+          `until one is wired`,
+      ).toBe(false);
+    }
+  });
 });

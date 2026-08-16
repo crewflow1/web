@@ -5,7 +5,10 @@ import {
   createCustomRuleAction,
   updateCustomRuleAction,
 } from "./actions";
-import { AUTOMATION_EVENT_TYPES } from "@/lib/automation/events";
+import {
+  EXPOSABLE_AUTOMATION_TRIGGERS,
+  AUTOMATION_TRIGGER_LABELS,
+} from "@/lib/automation/events";
 import {
   CONDITION_OPERATORS,
   VALUELESS_OPERATORS,
@@ -70,7 +73,7 @@ function toRows(def: unknown): {
 } {
   const d = (def ?? {}) as Record<string, unknown>;
   const trigger =
-    typeof d.trigger === "string" ? d.trigger : AUTOMATION_EVENT_TYPES[0];
+    typeof d.trigger === "string" ? d.trigger : EXPOSABLE_AUTOMATION_TRIGGERS[0];
   const cond = d.conditions as
     | { combinator?: string; conditions?: unknown[] }
     | null
@@ -209,9 +212,9 @@ export function CustomRuleBuilder({
             onChange={(e) => setTrigger(e.target.value)}
             className={inputCls}
           >
-            {AUTOMATION_EVENT_TYPES.map((t) => (
+            {EXPOSABLE_AUTOMATION_TRIGGERS.map((t) => (
               <option key={t} value={t}>
-                {t}
+                {AUTOMATION_TRIGGER_LABELS[t]}
               </option>
             ))}
           </select>
