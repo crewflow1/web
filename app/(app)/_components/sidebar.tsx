@@ -41,6 +41,10 @@ const ADMIN_LINKS = [
   // connected, and the page says so rather than showing a forecast it has not got.
   { href: "/weather", label: "Weather" },
   { href: "/site-reports", label: "Site reports" },
+  // Org-wide document home: aggregates per-job documents + the universal
+  // attachment store into one searchable list. Sits after Site reports (the
+  // other document-shaped surface) and before the commercial group.
+  { href: "/documents", label: "Documents" },
   { href: "/customers", label: "Customers" },
   { href: "/quotes", label: "Quotes" },
   { href: "/price-book", label: "Price book" },
