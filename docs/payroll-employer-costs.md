@@ -209,6 +209,66 @@ trigger to revisit this decision.
 
 ---
 
+## 7a. Employee-side fidelity (opt-in inputs)
+
+> **Sources retrieved: 16 August 2026.** These figures live in `lib/payroll/rates.ts` and are applied
+> only when the corresponding per-employee input is supplied; with no input the base calculation
+> (standard 1257L, rest-of-UK, no student loan, no employee pension) is reproduced to the penny.
+> They refine the **employee's** deductions/take-home, not employer cost, and every result stays an
+> **estimate** — HMRC Basic PAYE Tools remains the authority before RTI.
+
+### Student-loan repayment thresholds
+
+9% of earnings above the threshold for the income-contingent plans (1/2/4); 6% for the postgraduate
+loan. No upper limit, no banding.
+
+| Plan | 2024-25 threshold | 2025-26 threshold | Rate |
+| --- | --- | --- | --- |
+| Plan 1 | £24,990 | £26,065 | 9% |
+| Plan 2 | £27,295 | £28,470 | 9% |
+| Plan 4 (Scotland-domiciled) | £31,395 | £32,745 | 9% |
+| Postgraduate Loan | £21,000 | £21,000 (frozen) | 6% |
+
+Source: GOV.UK "Repaying your student loan — What you'll pay". **2026-27 thresholds had not been
+published at the retrieval date**, so `rates.ts` carries the 2025-26 figures forward with a loud
+`unconfirmed` comment; the postgraduate threshold is frozen regardless. Update on publication.
+
+### Scottish income tax
+
+Scotland sets its own non-savings-income bands (six vs the rest-of-UK three); the personal allowance
+is UK-wide (£12,570). Applied only when an employee's tax region is Scotland (their code carries an
+`S`). The personal-allowance taper above £100k is **not** modelled, matching the rest-of-UK path.
+
+| Band | 2024-25 (income up to) | 2025-26 (income up to) | Rate |
+| --- | --- | --- | --- |
+| Starter | £14,876 | £15,397 | 19% |
+| Basic | £26,561 | £27,491 | 20% |
+| Intermediate | £43,662 | £43,662 | 21% |
+| Higher | £75,000 | £75,000 | 42% |
+| Advanced | £125,140 | £125,140 | 45% |
+| Top | above | above | 48% |
+
+Source: GOV.UK / Scottish Government "Scottish Income Tax" rates and bands. **2026-27 Scottish Budget
+bands were not confirmed at the retrieval date**, so 2025-26 is carried forward (flagged).
+
+### Employee pension + salary sacrifice
+
+- **Employee pension** (`employeePensionRate`) is modelled as a **relief-at-source** deduction —
+  rate × qualifying earnings, taken from take-home pay, **not** netted off PAYE/NI (the scheme
+  reclaims basic-rate relief into the pot separately). Only **enrolled** employees have a deduction.
+- **Salary sacrifice** (`salarySacrificeAnnual`) is pay given up **before** tax and NI, so it reduces
+  PAYE, employee NI **and** employer NI, and take-home — the sacrificed amount goes to the pension
+  instead. It is apportioned to the period and clamped to the period gross.
+
+## 7b. Employment Allowance — now applied as an "up to" estimate
+
+The allowance (§8 lists it as the largest unmodelled **employer**-cost item) is now surfaced on the
+run page via `employmentAllowanceReliefForRun`: relief = min(run employer NI, annual allowance)
+(**£5,000** for 2024-25, **£10,500** for 2025-26/2026-27). It is still **not silently netted into the
+per-line employer NI**, because it is an **annual, org-level** offset and we track neither eligibility
+nor year-to-date consumption. The page presents it conditionally ("if eligible and not yet used up"),
+so §8's direction-of-error note stands for the raw employer-NI figure.
+
 ## 8. Summary of what is NOT modelled
 
 The authoritative list lives in code as `NOT_MODELLED` in `lib/payroll/rates.ts`, so the UI and this

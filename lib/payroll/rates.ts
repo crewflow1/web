@@ -67,10 +67,61 @@ export type EmployerPensionRates = {
   earnings_trigger_annual: number;
 };
 
+/**
+ * Which income-tax regime an employee's non-savings income is taxed under.
+ *
+ * The UK personal allowance and the whole of NI are UK-wide, but INCOME TAX bands
+ * and rates diverge: Scotland sets its own (six bands vs England/Wales/NI's three).
+ * Which one applies is a per-employee fact (their tax code carries an `S` prefix),
+ * so it is an INPUT, never a rule baked into the calculator.
+ */
+export type TaxRegion = "rest_of_uk" | "scotland";
+
+/**
+ * A UK student-loan repayment plan. Each has its OWN annual threshold and, for the
+ * postgraduate loan, its own rate. A borrower can be on a main plan AND the
+ * postgraduate loan at once in real life; we model a single selected plan per
+ * employee, which is the common case and all the schema could ever carry.
+ */
+export type StudentLoanPlan = "plan_1" | "plan_2" | "plan_4" | "postgraduate";
+
+export type StudentLoanPlanRate = {
+  /** Annual repayment threshold — 9% (or 6% postgrad) is due on earnings ABOVE this. */
+  threshold_annual: number;
+  /** Repayment rate as a fraction of earnings above the threshold. */
+  rate: number;
+};
+
+/** All four plans for one tax year. */
+export type StudentLoanRates = Record<StudentLoanPlan, StudentLoanPlanRate>;
+
+/**
+ * One slice of the Scottish income-tax scale. `upto` is the CUMULATIVE annual
+ * income at which the band ends (not the band width); the last band uses
+ * `Number.POSITIVE_INFINITY`. Rates apply to income ABOVE the personal allowance.
+ */
+export type ScottishBand = {
+  /** Cumulative annual income at the top of this band. Infinity for the top band. */
+  upto: number;
+  /** Marginal rate for income in this band, as a fraction. */
+  rate: number;
+};
+
+export type ScottishIncomeTaxRates = {
+  /** UK-wide personal allowance (Scotland uses the same PA, only the bands differ). */
+  personal_allowance: number;
+  /** Bands from the personal allowance upward, lowest first. */
+  bands: readonly ScottishBand[];
+};
+
 export type EmploymentCostRates = {
   tax_year: TaxYear;
   employer_ni: EmployerNiRates;
   employer_pension: EmployerPensionRates;
+  /** Employee student-loan repayment thresholds/rates by plan. */
+  student_loan: StudentLoanRates;
+  /** Scottish income-tax scale (applied only when an employee's region is Scotland). */
+  scottish_income_tax: ScottishIncomeTaxRates;
 };
 
 /**
@@ -101,6 +152,29 @@ const RATE_TABLES: Readonly<Record<TaxYear, EmploymentCostRates>> = {
       qualifying_earnings_upper_annual: 50_270, // tax year 2024-25
       earnings_trigger_annual: 10_000, // tax year 2024-25
     },
+    // Student-loan repayment thresholds, tax year 2024-25. Rate is 9% for the
+    // income-contingent plans (1/2/4) and 6% for the postgraduate loan, on
+    // earnings above the plan threshold. See docs/payroll-employer-costs.md.
+    student_loan: {
+      plan_1: { threshold_annual: 24_990, rate: 0.09 }, // 2024-25
+      plan_2: { threshold_annual: 27_295, rate: 0.09 }, // 2024-25
+      plan_4: { threshold_annual: 31_395, rate: 0.09 }, // 2024-25 (Scotland-domiciled)
+      postgraduate: { threshold_annual: 21_000, rate: 0.06 }, // 2024-25
+    },
+    // Scottish income-tax scale, tax year 2024-25 (same £12,570 PA as rUK; six
+    // bands where rUK has three). Applied only for employees whose region is
+    // Scotland. See docs/payroll-employer-costs.md.
+    scottish_income_tax: {
+      personal_allowance: 12_570, // 2024-25 (UK-wide PA)
+      bands: [
+        { upto: 14_876, rate: 0.19 }, // starter, 2024-25
+        { upto: 26_561, rate: 0.2 }, // basic, 2024-25
+        { upto: 43_662, rate: 0.21 }, // intermediate, 2024-25
+        { upto: 75_000, rate: 0.42 }, // higher, 2024-25
+        { upto: 125_140, rate: 0.45 }, // advanced, 2024-25
+        { upto: Number.POSITIVE_INFINITY, rate: 0.48 }, // top, 2024-25
+      ],
+    },
   },
 
   // ── Tax year 2025-26 (6 Apr 2025 – 5 Apr 2026) ────────────────────────────
@@ -119,6 +193,27 @@ const RATE_TABLES: Readonly<Record<TaxYear, EmploymentCostRates>> = {
       qualifying_earnings_lower_annual: 6_240, // tax year 2025-26 (frozen)
       qualifying_earnings_upper_annual: 50_270, // tax year 2025-26 (frozen)
       earnings_trigger_annual: 10_000, // tax year 2025-26 (frozen)
+    },
+    // Student-loan repayment thresholds, tax year 2025-26 (all raised from 2024-25;
+    // postgraduate threshold frozen at £21,000). See docs/payroll-employer-costs.md.
+    student_loan: {
+      plan_1: { threshold_annual: 26_065, rate: 0.09 }, // 2025-26
+      plan_2: { threshold_annual: 28_470, rate: 0.09 }, // 2025-26
+      plan_4: { threshold_annual: 32_745, rate: 0.09 }, // 2025-26 (Scotland-domiciled)
+      postgraduate: { threshold_annual: 21_000, rate: 0.06 }, // 2025-26 (frozen)
+    },
+    // Scottish income-tax scale, tax year 2025-26 (starter/basic band tops raised;
+    // rates unchanged from 2024-25). See docs/payroll-employer-costs.md.
+    scottish_income_tax: {
+      personal_allowance: 12_570, // 2025-26 (UK-wide PA)
+      bands: [
+        { upto: 15_397, rate: 0.19 }, // starter, 2025-26
+        { upto: 27_491, rate: 0.2 }, // basic, 2025-26
+        { upto: 43_662, rate: 0.21 }, // intermediate, 2025-26
+        { upto: 75_000, rate: 0.42 }, // higher, 2025-26
+        { upto: 125_140, rate: 0.45 }, // advanced, 2025-26
+        { upto: Number.POSITIVE_INFINITY, rate: 0.48 }, // top, 2025-26
+      ],
     },
   },
 
@@ -142,6 +237,31 @@ const RATE_TABLES: Readonly<Record<TaxYear, EmploymentCostRates>> = {
       qualifying_earnings_lower_annual: 6_240, // tax year 2026-27 (frozen)
       qualifying_earnings_upper_annual: 50_270, // tax year 2026-27 (frozen)
       earnings_trigger_annual: 10_000, // tax year 2026-27 (frozen)
+    },
+    // Student loan, tax year 2026-27. CAUTION: at the source-retrieval date HMRC had
+    // NOT yet published 2026-27 student-loan thresholds, so the 2025-26 figures are
+    // CARRIED FORWARD unchanged (postgraduate is frozen regardless). This is a
+    // deliberate, flagged carry-forward, not a verified figure — update the moment
+    // the 2026-27 thresholds are confirmed. The estimate label covers the gap.
+    student_loan: {
+      plan_1: { threshold_annual: 26_065, rate: 0.09 }, // 2026-27 (carried from 2025-26 — unconfirmed)
+      plan_2: { threshold_annual: 28_470, rate: 0.09 }, // 2026-27 (carried from 2025-26 — unconfirmed)
+      plan_4: { threshold_annual: 32_745, rate: 0.09 }, // 2026-27 (carried from 2025-26 — unconfirmed)
+      postgraduate: { threshold_annual: 21_000, rate: 0.06 }, // 2026-27 (frozen)
+    },
+    // Scottish income tax, tax year 2026-27. CAUTION: the 2026-27 Scottish Budget
+    // bands were not confirmed at the source-retrieval date, so 2025-26 bands are
+    // CARRIED FORWARD. Flagged, not verified — update once the Scottish Budget lands.
+    scottish_income_tax: {
+      personal_allowance: 12_570, // 2026-27 (UK-wide PA, frozen)
+      bands: [
+        { upto: 15_397, rate: 0.19 }, // starter, 2026-27 (carried from 2025-26)
+        { upto: 27_491, rate: 0.2 }, // basic, 2026-27 (carried from 2025-26)
+        { upto: 43_662, rate: 0.21 }, // intermediate, 2026-27 (carried from 2025-26)
+        { upto: 75_000, rate: 0.42 }, // higher, 2026-27 (carried from 2025-26)
+        { upto: 125_140, rate: 0.45 }, // advanced, 2026-27 (carried from 2025-26)
+        { upto: Number.POSITIVE_INFINITY, rate: 0.48 }, // top, 2026-27 (carried from 2025-26)
+      ],
     },
   },
 } as const;

@@ -32,12 +32,24 @@
  * employer pension are costs to the BUSINESS; deducting them from the worker's pay
  * would be both wrong and unlawful. A regression test pins net_pay against this.
  *
- * Caveats this estimator does NOT model: see `NOT_MODELLED` in `./rates` for the
- * employer side (with the direction of each error), plus, on the employee side:
- *   - Scottish income tax bands
- *   - Marriage allowance, blind person's allowance
- *   - Student loan deductions
- *   - Employee pension contributions / salary sacrifice
+ * ── EMPLOYEE-SIDE FIDELITY (opt-in, backward compatible) ────────────────────
+ * The base per-line figures above assume a standard 1257L code, rest-of-UK bands,
+ * no student loan, no employee pension, no salary sacrifice — which is what every
+ * existing stored line was computed with. `computeEmployeeDeductionsForStoredLine`
+ * layers the following on top WHEN (and only when) the corresponding input is
+ * supplied, so an absent input reproduces the base figures to the penny:
+ *   - Scottish income tax bands (by a per-employee tax-region flag)
+ *   - Student loan deductions (Plan 1 / 2 / 4 / postgraduate)
+ *   - Employee pension contribution (relief-at-source estimate)
+ *   - Salary sacrifice (reduces the tax + NI base, and so employer NI too)
+ *
+ * Still NOT modelled on the employee side: marriage allowance, blind person's
+ * allowance, the personal-allowance taper above £100k (also unmodelled in the base
+ * rest-of-UK path), and the K-code / week-1-month-1 mechanics of a real RTI engine.
+ *
+ * Org-level EMPLOYMENT ALLOWANCE relief is provided by
+ * `employmentAllowanceReliefForRun` — an annual offset against the org's employer NI
+ * bill, presented as an "up to" estimate because YTD consumption is not tracked.
  *
  * Every result carries a `note` flag pushing owners to confirm with their
  * accountant or HMRC's official calculator.
@@ -50,6 +62,10 @@ import {
   resolveEmploymentCostRates,
   type EmployerNiRates,
   type EmployerPensionRates,
+  type ScottishIncomeTaxRates,
+  type StudentLoanPlan,
+  type StudentLoanRates,
+  type TaxRegion,
   type TaxYear,
 } from "./rates";
 
@@ -100,6 +116,52 @@ export function annualEmployeeNi(annualGross: number): number {
     ni += (annualGross - NI_UPPER_LIMIT) * NI_UPPER_RATE;
   }
   return ni;
+}
+
+/**
+ * Scottish income tax on an annual gross.
+ *
+ * Same shape as {@link annualIncomeTax} but banded on the Scottish scale (six bands
+ * vs three). The personal allowance is UK-wide, so a Scottish taxpayer on a low wage
+ * pays the SAME as a rest-of-UK one up to the starter band, then diverges. Applied
+ * only when an employee's tax region is Scotland; the region is an INPUT (their tax
+ * code carries an `S`), never inferred.
+ *
+ * Like the rest-of-UK path, the personal-allowance taper above £100k is NOT modelled
+ * — deliberately, to stay consistent with `annualIncomeTax`.
+ */
+export function annualScottishIncomeTax(
+  annualGross: number,
+  rates: ScottishIncomeTaxRates,
+): number {
+  if (annualGross <= rates.personal_allowance) return 0;
+  let tax = 0;
+  let lower = rates.personal_allowance;
+  for (const band of rates.bands) {
+    if (annualGross <= lower) break;
+    const upper = Math.min(annualGross, band.upto);
+    if (upper > lower) tax += (upper - lower) * band.rate;
+    lower = band.upto;
+  }
+  return tax;
+}
+
+/**
+ * Student-loan repayment on an annual gross for a given plan.
+ *
+ * A flat percentage (9% for Plans 1/2/4, 6% for the postgraduate loan) of earnings
+ * ABOVE the plan's annual threshold — there is no upper limit and no banding. The
+ * base is earnings, so salary sacrifice reduces it (the caller passes the
+ * post-sacrifice gross); relief-at-source pension does not.
+ */
+export function annualStudentLoan(
+  annualGross: number,
+  plan: StudentLoanPlan,
+  rates: StudentLoanRates,
+): number {
+  const p = rates[plan];
+  if (!p || annualGross <= p.threshold_annual) return 0;
+  return (annualGross - p.threshold_annual) * p.rate;
 }
 
 /**
@@ -354,6 +416,235 @@ export function employerCostsForStoredLineWithPension(
     employment_cost_estimate: round2(gross + employerNi + employerPension),
     employer_rates_tax_year: resolved.applied_tax_year,
     employer_rates_extrapolated: resolved.extrapolated,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Employee-side fidelity — Scottish bands, student loan, pension, sacrifice
+// ---------------------------------------------------------------------------
+
+/**
+ * The per-employee facts that refine an employee's deductions beyond the standard
+ * 1257L / rest-of-UK / no-student-loan / no-pension base. Every field is OPTIONAL:
+ * an absent field means "not applicable", and an entirely empty object reproduces
+ * the base per-line figures exactly (see {@link computeEmployeeDeductionsForStoredLine}).
+ */
+export type EmployeeDeductionsInput = {
+  /** Tax region. Absent ⇒ rest of UK (unchanged from the base calculation). */
+  taxRegion?: TaxRegion;
+  /** Student-loan plan. Absent ⇒ no student-loan deduction. */
+  studentLoanPlan?: StudentLoanPlan;
+  /**
+   * Employee pension contribution rate as a FRACTION of qualifying earnings, e.g.
+   * 0.05 for the statutory-minimum 5%. Modelled as a RELIEF-AT-SOURCE deduction:
+   * taken from take-home pay, and NOT netted off taxable/NIable pay (the scheme
+   * reclaims basic-rate relief into the pot separately). Absent/0 ⇒ no deduction.
+   * For a NET-PAY-ARRANGEMENT or salary-sacrifice scheme, use `salarySacrificeAnnual`
+   * instead, which reduces the tax/NI base.
+   */
+  employeePensionRate?: number;
+  /**
+   * Annual salary-sacrifice amount (£). Sacrificed pay is outside income tax AND NI,
+   * so it reduces PAYE, employee NI, employer NI and take-home alike. Given as an
+   * annual figure and apportioned to the period; clamped to the period gross.
+   * Absent/0 ⇒ no sacrifice.
+   */
+  salarySacrificeAnnual?: number;
+};
+
+export type EmployeeDeductionsEstimate = {
+  gross_pay: number;
+  /** Salary sacrificed this period (already removed from the tax/NI base below). */
+  salary_sacrifice: number;
+  /** Pay subject to tax/NI this period — gross minus salary sacrifice. */
+  taxable_pay: number;
+  /** PAYE for the period, recomputed with the region + salary sacrifice applied. */
+  paye_estimate: number;
+  /** Employee NI for the period, recomputed with salary sacrifice applied. */
+  ni_estimate: number;
+  /** Student-loan repayment for the period (0 when no plan supplied). */
+  student_loan_estimate: number;
+  /** Employee pension contribution for the period (0 when no rate supplied). */
+  employee_pension_estimate: number;
+  /**
+   * Take-home pay after ALL employee deductions:
+   * gross − salary sacrifice − PAYE − employee NI − student loan − employee pension.
+   */
+  net_pay: number;
+  /** The region actually applied (defaults to rest_of_uk). */
+  tax_region: TaxRegion;
+  /** The student-loan plan applied, or null. */
+  student_loan_plan: StudentLoanPlan | null;
+  /** The tax year whose published table produced these figures. */
+  rates_tax_year: TaxYear;
+  /** True when the period's tax year had no published table and rates were projected. */
+  rates_extrapolated: boolean;
+};
+
+/**
+ * Employee deductions for a payroll line that is ALREADY STORED, refined by the
+ * employee's per-employee facts.
+ *
+ * The companion to {@link employerCostsForStoredLine} on the EMPLOYEE side: a pure
+ * derivation from the stored `gross_pay` + the run's `cycle`/`period_start`, so it
+ * is the single place every read site goes through and no second figure is persisted.
+ *
+ * BACKWARD COMPATIBLE BY CONSTRUCTION: with an empty `inputs` the region is
+ * rest-of-UK, there is no student loan, no pension and no sacrifice, so `paye_estimate`,
+ * `ni_estimate` and `net_pay` equal exactly what `computePayrollLine` stored. A
+ * regression test pins this.
+ *
+ * `periodStartIso` MUST be the run's own `period_start` — never today — so a finalised
+ * run stays priced at the rates in force when it ran.
+ */
+export function computeEmployeeDeductionsForStoredLine(
+  grossPay: number | string | null | undefined,
+  cycle: "weekly" | "monthly",
+  periodStartIso: string,
+  inputs: EmployeeDeductionsInput = {},
+): EmployeeDeductionsEstimate {
+  const gross = round2(Math.max(0, Number(grossPay ?? 0) || 0));
+  const periods = periodsPerYear(cycle);
+  const resolved = resolveEmploymentCostRates(periodStartIso);
+
+  const region: TaxRegion = inputs.taxRegion ?? "rest_of_uk";
+  const plan = inputs.studentLoanPlan ?? null;
+
+  // Salary sacrifice: annual → period, clamped to [0, gross]. Sacrificed pay leaves
+  // the tax/NI base entirely.
+  const sacrificeAnnual = Math.max(0, Number(inputs.salarySacrificeAnnual ?? 0) || 0);
+  const sacrificePeriod = round2(Math.min(gross, sacrificeAnnual / periods));
+  const taxablePeriod = round2(Math.max(0, gross - sacrificePeriod));
+  const annualBase = taxablePeriod * periods;
+
+  const annualTax =
+    region === "scotland"
+      ? annualScottishIncomeTax(annualBase, resolved.rates.scottish_income_tax)
+      : annualIncomeTax(annualBase);
+  const payeEstimate = round2(annualTax / periods);
+  const niEstimate = round2(annualEmployeeNi(annualBase) / periods);
+
+  const studentLoan = plan
+    ? round2(annualStudentLoan(annualBase, plan, resolved.rates.student_loan) / periods)
+    : 0;
+
+  // Employee pension (relief at source): rate × qualifying earnings, from take-home.
+  const pensionRate = Math.max(0, Number(inputs.employeePensionRate ?? 0) || 0);
+  let employeePension = 0;
+  if (pensionRate > 0) {
+    const pr = resolved.rates.employer_pension;
+    const qualifying =
+      Math.min(annualBase, pr.qualifying_earnings_upper_annual) -
+      pr.qualifying_earnings_lower_annual;
+    if (qualifying > 0) employeePension = round2((qualifying * pensionRate) / periods);
+  }
+
+  const netPay = round2(
+    gross - sacrificePeriod - payeEstimate - niEstimate - studentLoan - employeePension,
+  );
+
+  return {
+    gross_pay: gross,
+    salary_sacrifice: sacrificePeriod,
+    taxable_pay: taxablePeriod,
+    paye_estimate: payeEstimate,
+    ni_estimate: niEstimate,
+    student_loan_estimate: studentLoan,
+    employee_pension_estimate: employeePension,
+    net_pay: netPay,
+    tax_region: region,
+    student_loan_plan: plan,
+    rates_tax_year: resolved.applied_tax_year,
+    rates_extrapolated: resolved.extrapolated,
+  };
+}
+
+/**
+ * A stored `payroll_tax_profiles` row (or the subset we read), as it comes back from
+ * the DB — text/numeric fields possibly string-encoded.
+ */
+export type StoredPayrollTaxProfile = {
+  tax_region?: string | null;
+  student_loan_plan?: string | null;
+  salary_sacrifice_annual_pence?: number | string | null;
+};
+
+/**
+ * Translate a stored per-employee tax profile into calculator inputs.
+ *
+ * The single mapping point from persisted config → {@link EmployeeDeductionsInput}, so
+ * the page and the tests apply exactly the same rules. Defaults collapse to an EMPTY
+ * input (rest-of-UK, no plan, no sacrifice) so an absent/defaulted profile reproduces
+ * the base figures — the whole point of the backward-compatibility guarantee. Salary
+ * sacrifice is stored as annual PENCE and converted to the £ amount the calculator
+ * expects.
+ */
+export function employeeInputFromStoredProfile(
+  profile: StoredPayrollTaxProfile | null | undefined,
+): EmployeeDeductionsInput {
+  if (!profile) return {};
+  const input: EmployeeDeductionsInput = {};
+  if (profile.tax_region === "scotland") input.taxRegion = "scotland";
+  const plan = profile.student_loan_plan;
+  if (
+    plan === "plan_1" ||
+    plan === "plan_2" ||
+    plan === "plan_4" ||
+    plan === "postgraduate"
+  ) {
+    input.studentLoanPlan = plan;
+  }
+  const pence = Math.max(0, Number(profile.salary_sacrifice_annual_pence ?? 0) || 0);
+  if (pence > 0) input.salarySacrificeAnnual = pence / 100;
+  return input;
+}
+
+// ---------------------------------------------------------------------------
+// Employment Allowance — org-level employer-NI offset
+// ---------------------------------------------------------------------------
+
+export type EmploymentAllowanceRelief = {
+  /** Employer NI for the run BEFORE any allowance. */
+  employer_ni_before: number;
+  /** The published annual Employment Allowance cap for the period's tax year. */
+  allowance_annual: number;
+  /**
+   * Relief available against THIS run — min(employer NI this run, annual cap). An
+   * "up to" figure: the allowance is an ANNUAL org-level offset and we do not track
+   * year-to-date consumption, so a later run in the same year may find it exhausted.
+   */
+  relief_this_run: number;
+  /** Employer NI for the run AFTER the (up-to) relief. */
+  employer_ni_after: number;
+  rates_tax_year: TaxYear;
+  rates_extrapolated: boolean;
+};
+
+/**
+ * Employment Allowance relief against a run's employer NI.
+ *
+ * The allowance is an ORG-LEVEL annual offset (up to £10,500 for 2025-26/2026-27)
+ * available to eligible employers against their secondary Class 1 NI bill. It cannot
+ * be apportioned to a single line, and we do not hold the org's YTD employer-NI
+ * consumption, so this returns an "up to" estimate for the run: it caps relief at the
+ * lesser of the run's employer NI and the annual allowance. The UI presents it
+ * conditionally ("if your org is eligible and the allowance is not yet used up").
+ */
+export function employmentAllowanceReliefForRun(
+  runEmployerNi: number,
+  periodStartIso: string,
+): EmploymentAllowanceRelief {
+  const before = round2(Math.max(0, runEmployerNi));
+  const resolved = resolveEmploymentCostRates(periodStartIso);
+  const cap = resolved.rates.employer_ni.employment_allowance_annual;
+  const relief = round2(Math.min(before, cap));
+  return {
+    employer_ni_before: before,
+    allowance_annual: cap,
+    relief_this_run: relief,
+    employer_ni_after: round2(before - relief),
+    rates_tax_year: resolved.applied_tax_year,
+    rates_extrapolated: resolved.extrapolated,
   };
 }
 

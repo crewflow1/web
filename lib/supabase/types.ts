@@ -1830,6 +1830,54 @@ export type Database = {
           },
         ]
       }
+      payroll_tax_profiles: {
+        Row: {
+          created_at: string
+          id: string
+          org_id: string
+          salary_sacrifice_annual_pence: number
+          student_loan_plan: string
+          tax_region: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          org_id: string
+          salary_sacrifice_annual_pence?: number
+          student_loan_plan?: string
+          tax_region?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          org_id?: string
+          salary_sacrifice_annual_pence?: number
+          student_loan_plan?: string
+          tax_region?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payroll_tax_profiles_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payroll_tax_profiles_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       properties: {
         Row: {
           address: Json
