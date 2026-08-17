@@ -44,9 +44,17 @@ as $$
 begin
   return query
   with ranked as (
-    -- Per-org recency rank over the due, non-disabled set. No row lock here —
-    -- window functions and FOR UPDATE cannot share a query level, so the lock is
-    -- taken in `due` below against the base table.
+    -- Per-org recency rank over the claimable, non-disabled set. No row lock
+    -- here — window functions and FOR UPDATE cannot share a query level, so the
+    -- lock is taken in `due` below against the base table.
+    --
+    -- The claimable set is the SAME two-path set migration 20261115000000
+    -- established, preserved verbatim so the stranded-'delivering' reclaim is not
+    -- lost:
+    --   (a) Normal: a pending delivery whose backoff has elapsed.
+    --   (b) Reclaim: a 'delivering' row abandoned by a pass that crashed /
+    --       redeployed / timed out mid-flight — lease measured from updated_at
+    --       (stamped at claim time). Without this, such rows strand forever.
     select d.id,
            d.next_attempt_at,
            row_number() over (
@@ -55,8 +63,11 @@ begin
            ) as org_rank
       from public.webhook_deliveries d
       join public.webhook_endpoints e on e.id = d.endpoint_id
-     where d.state = 'pending'
-       and d.next_attempt_at <= now()
+     where (
+             (d.state = 'pending' and d.next_attempt_at <= now())
+             or (d.state = 'delivering'
+                 and d.updated_at < now() - interval '5 minutes')
+           )
        and e.status <> 'disabled_by_failures'
   ),
   due as (
