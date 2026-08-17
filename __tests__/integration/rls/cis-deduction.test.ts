@@ -656,6 +656,121 @@ describeIntegration("H2-CIS M3 deduction engine (real Postgres)", () => {
   });
 
   // ═════════════════════════════════════════════════════════════════════════
+  // 3b. STALE VERIFICATION (20261175000000)
+  //   A verification is valid THROUGH its expiry date; a payment dated strictly
+  //   after it must be refused — the old rate has no authority and posting it
+  //   would under-deduct if HMRC has moved the subcontractor to the higher rate.
+  // ═════════════════════════════════════════════════════════════════════════
+
+  it("REFUSES a payment dated after the subcontractor's verification expired", async () => {
+    const sub = await mkSupplier(orgA, "Lapsed");
+    // Verified in 2020, explicit expiry 2022-04-05 — long stale.
+    const ins = await svc().from("cis_subcontractors").insert({
+      org_id: orgA, supplier_id: sub, legal_name: "Lapsed Ltd", utr: "1234567890",
+      cis_status: "standard_20", verified_at: "2020-01-01",
+      verification_expires_at: "2022-04-05", verification_reference: "V1234567890",
+    });
+    expect(ins.error, ins.error?.message).toBeNull();
+    const bill = await mkBill(orgA, sub, 1_000, 0);
+
+    const r = await post(asAdmin(), orgA, sub, [{ finance_id: bill, amount: 1_000 }], {
+      paidAt: "2026-07-01",
+    });
+    expect(r.error?.message ?? "").toMatch(/verification for supplier .* expired/i);
+    // Nothing was written — no payment, no allocation, no snapshot.
+    const pays = await svc().from("supplier_payments").select("id").eq("supplier_id", sub);
+    expect((pays.data ?? []).length).toBe(0);
+  });
+
+  it("REFUSES when the expiry is only DERIVED (column left null) and the date is past", async () => {
+    const sub = await mkSupplier(orgA, "DerivedStale");
+    // verified 2020-06-01 → tax year 2020/21 → derived expiry 2023-04-05.
+    const ins = await svc().from("cis_subcontractors").insert({
+      org_id: orgA, supplier_id: sub, legal_name: "DerivedStale Ltd", utr: "1234567890",
+      cis_status: "higher_30", verified_at: "2020-06-01", verification_reference: "V1234567890",
+    });
+    expect(ins.error, ins.error?.message).toBeNull();
+    const bill = await mkBill(orgA, sub, 1_000, 0);
+    const r = await post(asAdmin(), orgA, sub, [{ finance_id: bill, amount: 1_000 }], {
+      paidAt: "2026-07-01",
+    });
+    expect(r.error?.message ?? "").toMatch(/verification for supplier .* expired/i);
+  });
+
+  it("POSTS a payment dated ON the expiry date (valid THROUGH it)", async () => {
+    const sub = await mkSupplier(orgA, "OnBoundary");
+    const ins = await svc().from("cis_subcontractors").insert({
+      org_id: orgA, supplier_id: sub, legal_name: "OnBoundary Ltd", utr: "1234567890",
+      cis_status: "standard_20", verified_at: "2023-06-01",
+      verification_expires_at: "2026-04-05", verification_reference: "V1234567890",
+    });
+    expect(ins.error, ins.error?.message).toBeNull();
+    const bill = await mkBill(orgA, sub, 1_000, 0);
+
+    // On the expiry date: still valid.
+    const ok = await post(asAdmin(), orgA, sub, [{ finance_id: bill, amount: 1_000 }], {
+      paidAt: "2026-04-05", ref: `${T}-onboundary`,
+    });
+    expect(ok.error, ok.error?.message).toBeNull();
+    expect(num((await paymentRow(String(ok.data))).cis_withheld)).toBe(200);
+  });
+
+  it("re-verifying with a fresh expiry unblocks a lapsed subcontractor", async () => {
+    const sub = await mkSupplier(orgA, "Renewed");
+    const ins = await svc().from("cis_subcontractors").insert({
+      org_id: orgA, supplier_id: sub, legal_name: "Renewed Ltd", utr: "1234567890",
+      cis_status: "standard_20", verified_at: "2020-01-01",
+      verification_expires_at: "2022-04-05", verification_reference: "V1234567890",
+    });
+    expect(ins.error, ins.error?.message).toBeNull();
+    const bill = await mkBill(orgA, sub, 1_000, 0);
+
+    const stale = await post(asAdmin(), orgA, sub, [{ finance_id: bill, amount: 1_000 }], {
+      paidAt: "2026-07-01",
+    });
+    expect(stale.error?.message ?? "").toMatch(/expired/i);
+
+    // Re-record a fresh verification.
+    const up = await svc().from("cis_subcontractors")
+      .update({ verified_at: "2026-06-01", verification_expires_at: "2029-04-05" })
+      .eq("org_id", orgA).eq("supplier_id", sub);
+    expect(up.error, up.error?.message).toBeNull();
+
+    const ok = await post(asAdmin(), orgA, sub, [{ finance_id: bill, amount: 1_000 }], {
+      paidAt: "2026-07-01", ref: `${T}-renewed`,
+    });
+    expect(ok.error, ok.error?.message).toBeNull();
+    expect(num((await paymentRow(String(ok.data))).cis_withheld)).toBe(200);
+  });
+
+  it("the trigger backstops a direct forged allocation against a stale verification", async () => {
+    // Bypass the RPC entirely, as a service_role/PostgREST writer would.
+    const sub = await mkSupplier(orgA, "DirectStale");
+    const ins = await svc().from("cis_subcontractors").insert({
+      org_id: orgA, supplier_id: sub, legal_name: "DirectStale Ltd", utr: "1234567890",
+      cis_status: "standard_20", verified_at: "2020-01-01",
+      verification_expires_at: "2022-04-05", verification_reference: "V1234567890",
+    });
+    expect(ins.error, ins.error?.message).toBeNull();
+    const bill = await mkBill(orgA, sub, 1_000, 0);
+    const pay = await svc().from("supplier_payments").insert({
+      org_id: orgA, supplier_id: sub, paid_at: "2026-07-02",
+      gross_amount: 1_000, cis_withheld: 200, net_paid: 800,
+    }).select("id").single();
+    expect(pay.error, pay.error?.message).toBeNull();
+
+    const forged = await svc().from("supplier_payment_allocations").insert({
+      org_id: orgA, payment_id: String(pay.data?.id), supplier_id: sub,
+      finance_id: bill, amount: 1_000,
+      cis_rate_applied: 20, cis_bill_net: 1_000, cis_bill_gross: 1_000,
+      cis_bill_materials: 0, cis_bill_citb: 0,
+      cis_basis: 1_000, cis_deduction: 200,
+      cis_vat_treatment: "standard", cis_reverse_charge_vat: 0,
+    });
+    expect(forged.error?.message ?? "").toMatch(/verification for supplier .* expired/i);
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
   // 4. IMMUTABILITY
   // ═════════════════════════════════════════════════════════════════════════
 

@@ -125,6 +125,62 @@ describe("resolveCisRate — the rate is derived, never supplied", () => {
     const r = resolveCisRate({ cis_status: "standard_20", deduction_rate: 30 });
     expect(r.ok).toBe(false);
   });
+
+  // ── STALE VERIFICATION ────────────────────────────────────────────────────
+  // A verification is valid for its tax year plus the two following (verified
+  // 2026-06-01 → good through 2029-04-05). Once lapsed the old rate has NO
+  // authority — refuse rather than under-deduct if HMRC has since moved them up.
+  it("still gives the rate when asOf is omitted (historical read, no freshness judgement)", () => {
+    // Back-compat: existing callers that pass only status+rate are unaffected.
+    const r = resolveCisRate({
+      cis_status: "standard_20",
+      deduction_rate: 20,
+      verified_at: "2000-01-01",
+      verification_expires_at: "2003-04-05",
+    });
+    expect(r).toMatchObject({ ok: true, rate: 20 });
+  });
+
+  it("gives the rate for a payment ON the derived expiry date (valid THROUGH it)", () => {
+    const r = resolveCisRate(
+      { cis_status: "standard_20", deduction_rate: 20, verified_at: "2026-06-01" },
+      "2029-04-05",
+    );
+    expect(r).toMatchObject({ ok: true, rate: 20 });
+  });
+
+  it("REFUSES a payment dated the day AFTER the derived expiry", () => {
+    const r = resolveCisRate(
+      { cis_status: "standard_20", deduction_rate: 20, verified_at: "2026-06-01" },
+      "2029-04-06",
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/expired|re-verify/i);
+  });
+
+  it("honours a stored expiry shorter than the HMRC default", () => {
+    const profile = {
+      cis_status: "higher_30" as const,
+      deduction_rate: 30,
+      verified_at: "2026-06-01",
+      verification_expires_at: "2026-12-31",
+    };
+    expect(resolveCisRate(profile, "2026-12-31")).toMatchObject({ ok: true, rate: 30 });
+    expect(resolveCisRate(profile, "2027-01-01").ok).toBe(false);
+  });
+
+  it("a fresh re-verification unblocks a previously expired subcontractor", () => {
+    const stale = resolveCisRate(
+      { cis_status: "standard_20", deduction_rate: 20, verified_at: "2020-01-01" },
+      "2026-08-17",
+    );
+    expect(stale.ok).toBe(false);
+    const fresh = resolveCisRate(
+      { cis_status: "standard_20", deduction_rate: 20, verified_at: "2026-08-01" },
+      "2026-08-17",
+    );
+    expect(fresh).toMatchObject({ ok: true, rate: 20 });
+  });
 });
 
 // ---------------------------------------------------------------------------
