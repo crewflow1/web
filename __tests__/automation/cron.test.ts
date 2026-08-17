@@ -134,6 +134,44 @@ describe("computeNextRun — determinism + correctness (UTC)", () => {
     ).toBe("2026-08-04T09:00:00.000Z");
   });
 
+  it("parses 'N/step' as N through the field max (single value with step)", () => {
+    // Regression: '15/15' on the minute field means 15,30,45 (15 through the
+    // field max 59, stepping by 15) — NOT just 15. From 10:00 the next matches
+    // in the hour are :15, :30, :45, then :15 of the following hour.
+    expect(
+      computeNextRun("15/15 * * * *", at("2026-08-02T10:00:00.000Z")).toISOString(),
+    ).toBe("2026-08-02T10:15:00.000Z");
+    expect(
+      computeNextRun("15/15 * * * *", at("2026-08-02T10:15:00.000Z")).toISOString(),
+    ).toBe("2026-08-02T10:30:00.000Z");
+    expect(
+      computeNextRun("15/15 * * * *", at("2026-08-02T10:30:00.000Z")).toISOString(),
+    ).toBe("2026-08-02T10:45:00.000Z");
+    expect(
+      computeNextRun("15/15 * * * *", at("2026-08-02T10:45:00.000Z")).toISOString(),
+    ).toBe("2026-08-02T11:15:00.000Z");
+  });
+
+  it("'30/2' minute field yields the even minutes 30..58", () => {
+    const minute = parseCron("30/2 * * * *").minute;
+    const expected = [];
+    for (let m = 30; m <= 58; m += 2) expected.push(m);
+    expect([...minute.values].sort((a, b) => a - b)).toEqual(expected);
+    // isValidCron still accepts it, now parsed correctly.
+    expect(isValidCron("30/2 * * * *")).toBe(true);
+  });
+
+  it("leaves '*/15' and 'a-b/n' step forms unchanged", () => {
+    // '*/15' → 0,15,30,45.
+    expect([...parseCron("*/15 * * * *").minute.values].sort((a, b) => a - b)).toEqual([
+      0, 15, 30, 45,
+    ]);
+    // '10-40/10' → 10,20,30,40 (bounded by the range, not the field max).
+    expect([...parseCron("10-40/10 * * * *").minute.values].sort((a, b) => a - b)).toEqual([
+      10, 20, 30, 40,
+    ]);
+  });
+
   it("treats a stepped day-of-week field as RESTRICTED, not a wildcard", () => {
     // '0 9 * * */2' = every other weekday starting Sunday(0): Sun, Tue, Thu, Sat.
     // From Sun 2 Aug 2026 10:00 the next match is Tue the 4th — NOT Mon the 3rd.
