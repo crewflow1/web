@@ -29,6 +29,7 @@ const PLAN_LABEL: Record<string, string> = {
   plan_1: "Plan 1",
   plan_2: "Plan 2",
   plan_4: "Plan 4 (Scotland)",
+  plan_5: "Plan 5 (post-2023 undergraduate)",
   postgraduate: "Postgraduate loan",
 };
 

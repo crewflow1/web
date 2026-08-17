@@ -13,7 +13,13 @@ import {
   addDaysIso,
   type TimeEntry,
 } from "@/lib/time/compute";
-import { computePayrollLine } from "@/lib/payroll/compute";
+import {
+  computePayrollLine,
+  computeEmployeeDeductionsForStoredLine,
+  employeeInputFromStoredProfile,
+} from "@/lib/payroll/compute";
+import { getPayrollTaxProfile } from "@/server/services/payroll-tax-profile";
+import { getPensionEnrolment } from "@/server/services/pension-enrolment";
 import { formatTimeUK, formatDateUK } from "@/lib/time/format";
 import { clockIn, clockOut, startBreak, endBreak } from "./actions";
 
@@ -181,6 +187,40 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
   // pension are deliberately NOT surfaced here and never touch net pay — they are
   // the employer's cost, not a deduction from this person's wages.
   const expected = computePayrollLine(hoursWeek, hourlyPay, "weekly", weekStartIso);
+  // Refine take-home with THIS worker's own stored tax profile (Scottish bands,
+  // student loan, salary sacrifice) and pension contribution — the same overlay the
+  // admin run detail page shows, so the worker sees the figures their payslip will
+  // carry rather than the standard-code base. Org-pinned reads; no profile ⇒ the
+  // refined figures equal the base to the penny.
+  const [ownTaxProfile, ownPension] = await Promise.all([
+    getPayrollTaxProfile(ctx.org.id, user.id),
+    getPensionEnrolment(ctx.org.id, user.id),
+  ]);
+  const ownPensionRate =
+    ownPension?.status === "enrolled" && ownPension.employee_contribution_rate > 0
+      ? ownPension.employee_contribution_rate
+      : undefined;
+  const refined = computeEmployeeDeductionsForStoredLine(
+    expected.gross_pay,
+    "weekly",
+    weekStartIso,
+    {
+      ...employeeInputFromStoredProfile(ownTaxProfile),
+      employeePensionRate: ownPensionRate,
+    },
+  );
+  // Sub-caption for the take-home tile: PAYE + NI always, plus student loan /
+  // pension when they actually apply, so the number reconciles for the worker.
+  const takeHomeParts = [
+    `PAYE ${GBP.format(refined.paye_estimate)}`,
+    `NI ${GBP.format(refined.ni_estimate)}`,
+  ];
+  if (refined.student_loan_estimate > 0) {
+    takeHomeParts.push(`SL ${GBP.format(refined.student_loan_estimate)}`);
+  }
+  if (refined.employee_pension_estimate > 0) {
+    takeHomeParts.push(`pension ${GBP.format(refined.employee_pension_estimate)}`);
+  }
 
   const errorKey = sp.error ?? "";
   const savedKey = sp.saved ?? "";
@@ -315,8 +355,8 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
         />
         <Tile
           label="Expected take-home"
-          value={GBP.format(expected.net_pay)}
-          sub={`PAYE ${GBP.format(expected.paye_estimate)} · NI ${GBP.format(expected.ni_estimate)}`}
+          value={GBP.format(refined.net_pay)}
+          sub={takeHomeParts.join(" · ")}
         />
       </section>
 

@@ -76,6 +76,23 @@ export async function sendStaffInvite(args: {
   const appUrl = env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "");
   const email = args.email.trim();
 
+  // SECURITY: the invite's AUTHORIZATION anchor (which org, what role, and that
+  // this is genuinely a staff invite) goes in `app_metadata` — the admin-only
+  // metadata bucket. `user_metadata` is writable by the user themselves via
+  // supabase.auth.updateUser({ data }), so anchoring org/role there let a
+  // self-signed-up attacker set invited_org_id=<victim>+invited_role=admin and
+  // join any org as admin (acceptOrgInvite trusted it). Only `app_metadata` is
+  // service-role-only, so the authz fields live there; the purely cosmetic
+  // profile pre-fill (name/phone/pay/etc.) stays in user_metadata where the
+  // worst a tamperer can do is mis-prefill their OWN profile fields.
+  // The ENTIRE invite payload is admin-set, so all of it lives in app_metadata
+  // (service-role-only). Beyond org+role (the privilege-escalation anchor), the
+  // profile pre-fill — notably invited_hourly_pay, which seeds payroll cost —
+  // must not be user-tamperable either. user_metadata keeps only the standard
+  // Supabase-managed display fields (name/avatar from signup/OAuth), which we
+  // do not set here.
+  const appMetadata = { ...args.metadata };
+
   // -------------------------------------------------------------------
   // 1. Create the auth user carrying the invite metadata. No
   //    email_confirm (see file header) — the teammate stays pending
@@ -84,7 +101,7 @@ export async function sendStaffInvite(args: {
   let alreadyExisted = false;
   const { error: createErr } = await admin.auth.admin.createUser({
     email,
-    user_metadata: args.metadata,
+    app_metadata: appMetadata,
   });
 
   if (createErr) {
@@ -101,7 +118,7 @@ export async function sendStaffInvite(args: {
       if (!existing) return { ok: false, reason: msg || "user_lookup_failed" };
       alreadyExisted = true;
       const { error: updErr } = await admin.auth.admin.updateUserById(existing.id, {
-        user_metadata: args.metadata,
+        app_metadata: appMetadata,
       });
       if (updErr) return { ok: false, reason: updErr.message };
     } else {

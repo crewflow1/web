@@ -112,7 +112,12 @@ function parseField(raw: string, index: number): ParsedField {
       hi = Number(b);
     } else {
       lo = Number(rp);
-      hi = lo;
+      // Standard cron semantics for "N/step": a single value with a step means
+      // N through the field maximum, stepping by `step` (e.g. minute "15/15" →
+      // 15,30,45; "30/2" → 30,32,…,58). Without a step it is just the value N.
+      // (A bare "N" or an "a-b" range keep their existing hi; only "N/step"
+      // opens the upper bound to the field max.)
+      hi = stepPart !== undefined ? max : lo;
     }
 
     if (!Number.isInteger(lo) || !Number.isInteger(hi)) {

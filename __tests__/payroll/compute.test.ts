@@ -27,12 +27,16 @@ describe("annualIncomeTax", () => {
     expect(annualIncomeTax(60_000)).toBeCloseTo(11_432, 2);
   });
 
-  it("additional rate (45%) above £125,140", () => {
-    // £150,000: basic £37,700 × 20% = £7,540
-    //          higher £74,870 × 40% = £29,948
-    //          additional £24,860 × 45% = £11,187
-    //          total = £48,675
-    expect(annualIncomeTax(150_000)).toBeCloseTo(48_675, 2);
+  it("additional rate (45%) above £125,140, with the personal allowance fully tapered", () => {
+    // £150,000 is above £125,140, so the personal allowance is fully withdrawn
+    // (PA £0). Taxable income is the whole £150,000:
+    //   basic       £37,700 × 20% = £7,540
+    //   higher      (£125,140 − £37,700) = £87,440 × 40% = £34,976
+    //   additional  (£150,000 − £125,140) = £24,860 × 45% = £11,187
+    //   total = £53,703
+    // (The pre-taper figure was £48,675 — £5,028 lower — because it wrongly left the
+    // £12,570 allowance in place and taxed £12,570 less of the higher-rate band.)
+    expect(annualIncomeTax(150_000)).toBeCloseTo(53_703, 2);
   });
 });
 

@@ -60,7 +60,8 @@ export async function listPendingInvites(
   const seen = new Set<string>();
   const invites: PendingInvite[] = [];
   for (const u of data.users) {
-    const meta = (u.user_metadata ?? {}) as Record<string, unknown>;
+    // Invite anchor lives in admin-only app_metadata (see sendStaffInvite).
+    const meta = (u.app_metadata ?? {}) as Record<string, unknown>;
     // Strict org scoping + only invites we created.
     if (meta.invited_org_id !== orgId) continue;
     if (meta.source !== "staff_invite") continue;

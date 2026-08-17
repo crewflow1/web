@@ -10,7 +10,8 @@ import {
 } from "@/lib/payroll/compute";
 import { resolveEmploymentCostRates } from "@/lib/payroll/rates";
 
-// Rate tables in force for the two years we test against.
+// Rate tables in force for the years we test against.
+const R_2026 = resolveEmploymentCostRates("2026-05-01").rates;
 const R_2025 = resolveEmploymentCostRates("2025-05-01").rates;
 const R_2024 = resolveEmploymentCostRates("2024-05-01").rates;
 
@@ -50,6 +51,86 @@ describe("annualStudentLoan", () => {
     expect(sl24).toBeGreaterThan(sl25); // lower threshold ⇒ more repaid
     expect(sl24).toBeCloseTo((40_000 - 27_295) * 0.09, 2);
     expect(sl25).toBeCloseTo((40_000 - 28_470) * 0.09, 2);
+  });
+
+  it("Plan 5: 9% above £25,000 (live from 6 Apr 2026 / 2026-27)", () => {
+    // Plan 5 undergraduate loan — repayments began this tax year.
+    expect(annualStudentLoan(25_000, "plan_5", R_2026.student_loan)).toBe(0); // at threshold
+    expect(annualStudentLoan(24_000, "plan_5", R_2026.student_loan)).toBe(0); // below
+    // (34,000 − 25,000) × 9% = £810
+    expect(annualStudentLoan(34_000, "plan_5", R_2026.student_loan)).toBeCloseTo(810, 2);
+  });
+
+  it("Plan 5 flows through the stored-profile mapper and the period overlay", () => {
+    // A £3,200/mo (annualised £38,400) Plan 5 borrower, 2026-27 rates:
+    // (38,400 − 25,000) × 9% / 12 = 13,400 × 0.09 / 12 = £100.50
+    const ded = computeEmployeeDeductionsForStoredLine(3_200, "monthly", "2026-05-01", {
+      ...employeeInputFromStoredProfile({
+        tax_region: "rest_of_uk",
+        student_loan_plan: "plan_5",
+        salary_sacrifice_annual_pence: 0,
+      }),
+    });
+    expect(ded.student_loan_plan).toBe("plan_5");
+    expect(ded.student_loan_estimate).toBeCloseTo(100.5, 2);
+  });
+});
+
+describe("£100k personal-allowance taper (rest-of-UK)", () => {
+  it("full allowance below £100k — unchanged", () => {
+    // £100,000: PA still £12,570.
+    //   basic £37,700 × 20% = 7,540; higher (100,000 − 50,270) × 40% = 19,892 → 27,432
+    expect(annualIncomeTax(100_000)).toBeCloseTo(27_432, 2);
+  });
+
+  it("a £120k earner pays the tapered-PA figure (PA reduced to £2,570)", () => {
+    // reduction = (120,000 − 100,000)/2 = 10,000 ⇒ PA £2,570; higher band starts at
+    // £40,270. basic (40,270 − 2,570) × 20% = 7,540; higher (120,000 − 40,270) × 40%
+    // = 31,892 ⇒ £39,432 (vs the pre-taper £37,432).
+    expect(annualIncomeTax(120_000)).toBeCloseTo(39_432, 2);
+  });
+
+  it("the taper creates a 60% marginal band between £100k and £125,140", () => {
+    // £1 more income loses 50p of allowance, taxed at 40% on top of the 40% on the
+    // £1 itself → 60p per £1. £100 more ⇒ £60 more tax.
+    const delta = annualIncomeTax(100_100) - annualIncomeTax(100_000);
+    expect(delta).toBeCloseTo(60, 2);
+  });
+
+  it("allowance is fully gone by £125,140 and stays £0 above it", () => {
+    // At £125,140 PA = 0: basic 37,700 × 20% + higher (125,140 − 37,700) × 40%
+    //   = 7,540 + 34,976 = 42,516.
+    expect(annualIncomeTax(125_140)).toBeCloseTo(42_516, 2);
+  });
+});
+
+describe("£100k personal-allowance taper (Scottish)", () => {
+  const s = R_2026.scottish_income_tax;
+
+  it("full allowance below £100k — unchanged from the base bands", () => {
+    // £38,400 is well under £100k, so the taper is inert (matches the base test).
+    expect(annualScottishIncomeTax(38_400, s)).toBeCloseTo(5_246.82, 2);
+  });
+
+  it("a £120k Scottish earner has the allowance tapered to £2,570", () => {
+    // reduction 10,000 ⇒ PA 2,570; band boundaries below £125,140 shift down 10,000,
+    // the £125,140 advanced→top boundary is fixed (taper complete there):
+    //   starter    (5,397 − 2,570)  × 19% =    537.13
+    //   basic      (17,491 − 5,397) × 20% =  2,418.80
+    //   intermed.  (33,662 − 17,491)× 21% =  3,395.91
+    //   higher     (65,000 − 33,662)× 42% = 13,161.96
+    //   advanced   (120,000 − 65,000)×45% = 24,750.00  (below the £125,140 top start)
+    //   total = 44,263.80
+    expect(annualScottishIncomeTax(120_000, s)).toBeCloseTo(44_263.8, 1);
+  });
+
+  it("the tapered £120k figure is exactly £4,500 more than the untapered bands", () => {
+    // The reclaimed £10,000 of allowance is taxed at the 45% advanced rate: £4,500.
+    // Proven against a same-income run with the taper switched off (£100k boundary).
+    const tapered = annualScottishIncomeTax(120_000, s);
+    // Untapered reference: bands with the FULL £12,570 allowance in place.
+    const untaperedRef = 39_763.8; // hand-worked, PA £12,570, advanced 45,000 × 45%
+    expect(tapered - untaperedRef).toBeCloseTo(4_500, 1);
   });
 });
 

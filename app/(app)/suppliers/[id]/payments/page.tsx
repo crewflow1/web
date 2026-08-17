@@ -173,7 +173,18 @@ export default async function SupplierPaymentsPage({
   // than defaulting to 20% or 30% — guessing files a wrong return, so the page
   // shows the reason instead of a form. Non-CIS suppliers keep the M2 form.
   const rateAuthority = resolveCisRate(
-    cis ? { cis_status: cis.cis_status, deduction_rate: cis.deduction_rate } : null,
+    cis
+      ? {
+          cis_status: cis.cis_status,
+          deduction_rate: cis.deduction_rate,
+          verified_at: cis.verified_at,
+          verification_expires_at: cis.verification_expires_at,
+        }
+      : null,
+    // As of today: a lapsed HMRC verification is refused up front (the form is
+    // replaced by the re-verify reason) rather than posted at a stale rate. The
+    // database gate in 20261175000000 is the backstop.
+    todayIso(),
   );
 
   const livePaymentIds = payments.filter((p) => !p.voided_at).map((p) => p.id);

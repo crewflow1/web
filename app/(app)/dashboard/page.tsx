@@ -43,7 +43,11 @@ import {
   addDaysIso,
   type TimeEntry,
 } from "@/lib/time/compute";
-import { computePayrollLine } from "@/lib/payroll/compute";
+import {
+  computePayrollLine,
+  employerCostsForStoredLine,
+} from "@/lib/payroll/compute";
+import { getPayrollTaxProfilesForOrg } from "@/server/services/payroll-tax-profile";
 import {
   computeVatQuarter,
   endOfQuarterExclusiveIso,
@@ -536,6 +540,14 @@ export default async function DashboardPage() {
     const u = (m as { user?: { hourly_pay: number | null } }).user;
     hourlyByUser.set(uid, Number(u?.hourly_pay ?? 0));
   }
+  // Per-user annual salary sacrifice (£) — outside the employer NI + pension base, so
+  // it lowers the TRUE cost of employment. Empty map ⇒ no sacrifice, figures unchanged.
+  const taxProfiles = await getPayrollTaxProfilesForOrg(ctx.org.id);
+  const sacrificeByUser = new Map<string, number>();
+  for (const [uid, p] of taxProfiles) {
+    const pounds = Number(p.salary_sacrifice_annual_pence ?? 0) / 100;
+    if (pounds > 0) sacrificeByUser.set(uid, pounds);
+  }
 
   // Hours per user per window. Employer NI is BANDED on the person's whole-period
   // earnings, so labour cost has to be summed per worker and not per time entry —
@@ -567,21 +579,23 @@ export default async function DashboardPage() {
   for (const [uid, hours] of hoursByUserThisWeek) {
     const rate = hourlyByUser.get(uid) ?? 0;
     if (rate <= 0) continue;
-    labourCostWeek += computePayrollLine(
-      hours,
-      rate,
+    // Salary sacrifice (if any) reduces the employer NI + pension base — the cost of
+    // employment is priced through the shared, sacrifice-aware helper.
+    labourCostWeek += employerCostsForStoredLine(
+      hours * rate,
       "weekly",
       weekStartIsoDate,
+      sacrificeByUser.get(uid),
     ).employment_cost_estimate;
   }
   for (const [uid, hours] of hoursByUserThisMonth) {
     const rate = hourlyByUser.get(uid) ?? 0;
     if (rate <= 0) continue;
-    labourCostMonth += computePayrollLine(
-      hours,
-      rate,
+    labourCostMonth += employerCostsForStoredLine(
+      hours * rate,
       "monthly",
       monthStart.slice(0, 10),
+      sacrificeByUser.get(uid),
     ).employment_cost_estimate;
   }
   labourCostWeek = Math.round(labourCostWeek * 100) / 100;
@@ -635,6 +649,7 @@ export default async function DashboardPage() {
     hoursForEntries: windowHoursSource(monthStartDate, monthEndDate),
     cycle: "monthly",
     periodStartIso: monthStart.slice(0, 10),
+    sacrificeByUser,
   });
   const profitabilityRows: JobProfitability[] = computeAllJobsProfitability(
     jobs,

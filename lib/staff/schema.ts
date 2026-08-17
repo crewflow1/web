@@ -215,6 +215,7 @@ export const STUDENT_LOAN_PLANS = [
   "plan_1",
   "plan_2",
   "plan_4",
+  "plan_5",
   "postgraduate",
 ] as const;
 export type StudentLoanPlanInput = (typeof STUDENT_LOAN_PLANS)[number];

@@ -6,9 +6,11 @@ import {
   annualEmployerPension,
   computePayrollLine,
   employerCostsForStoredLine,
+  employerCostsForStoredLineWithPension,
   employerOnCostsFromTimeEntries,
   payrollCsv,
 } from "@/lib/payroll/compute";
+import { computePayeMonth } from "@/lib/tax/compute";
 import {
   LATEST_PUBLISHED_TAX_YEAR,
   NOT_MODELLED,
@@ -330,6 +332,91 @@ describe("employerCostsForStoredLine", () => {
     expect(r.employer_ni_estimate).toBe(0);
     expect(r.employer_pension_estimate).toBe(0);
     expect(r.employment_cost_estimate).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Salary sacrifice reduces the EMPLOYER NI + pension base too (fix 6)
+// ---------------------------------------------------------------------------
+
+describe("salary sacrifice lowers employer NI and pension", () => {
+  it("BACKWARD COMPAT: no sacrifice ⇒ byte-identical to the sacrifice-free figures", () => {
+    const base = employerCostsForStoredLine(3_200, "monthly", "2026-06-01");
+    for (const s of [undefined, 0]) {
+      const r = employerCostsForStoredLine(3_200, "monthly", "2026-06-01", s);
+      expect(r.employer_ni_estimate).toBe(base.employer_ni_estimate);
+      expect(r.employer_pension_estimate).toBe(base.employer_pension_estimate);
+      expect(r.employment_cost_estimate).toBe(base.employment_cost_estimate);
+    }
+  });
+
+  it("bands employer NI + pension on gross MINUS sacrifice", () => {
+    // £3,200/mo, £500/mo sacrifice (£6,000/yr) ⇒ base £2,700/mo, annualised £32,400.
+    //   employer NI (32,400 − 5,000) × 15% = 4,110 / 12 = 342.50 (was 417.50)
+    //   pension     (32,400 − 6,240) × 3%  =   784.80 / 12 = 65.40 (was 80.40)
+    const sac = employerCostsForStoredLine(3_200, "monthly", "2026-06-01", 6_000);
+    expect(sac.employer_ni_estimate).toBe(342.5);
+    expect(sac.employer_pension_estimate).toBe(65.4);
+    // Employment cost still counts the FULL gross (the sacrificed £ still costs the
+    // business, redirected to pension) plus the reduced NI + pension.
+    expect(sac.employment_cost_estimate).toBe(3_607.9);
+    const base = employerCostsForStoredLine(3_200, "monthly", "2026-06-01");
+    expect(sac.employer_ni_estimate).toBeLessThan(base.employer_ni_estimate);
+  });
+
+  it("the WithPension variant honours sacrifice on the NI + pension base", () => {
+    const base = employerCostsForStoredLineWithPension(3_200, "monthly", "2026-06-01");
+    const sac = employerCostsForStoredLineWithPension(
+      3_200,
+      "monthly",
+      "2026-06-01",
+      undefined,
+      6_000,
+    );
+    expect(sac.employer_ni_estimate).toBe(342.5);
+    expect(sac.employer_ni_estimate).toBeLessThan(base.employer_ni_estimate);
+  });
+
+  it("employerOnCostsFromTimeEntries applies a per-user sacrifice map", () => {
+    const rates = new Map([["u1", 20]]);
+    const noSac = employerOnCostsFromTimeEntries(
+      [{ job_id: "jobA", user_id: "u1", hours: 160 }],
+      rates,
+      "monthly",
+      "2026-06-01",
+    ).reduce((s, r) => s + r.amount, 0);
+    const withSac = employerOnCostsFromTimeEntries(
+      [{ job_id: "jobA", user_id: "u1", hours: 160 }],
+      rates,
+      "monthly",
+      "2026-06-01",
+      new Map([["u1", 6_000]]),
+    ).reduce((s, r) => s + r.amount, 0);
+    // 160h × £20 = £3,200/mo. No sacrifice: 417.50 + 80.40 = 497.90.
+    expect(noSac).toBeCloseTo(497.9, 2);
+    // With £500/mo sacrifice: 342.50 + 65.40 = 407.90.
+    expect(withSac).toBeCloseTo(407.9, 2);
+    expect(withSac).toBeLessThan(noSac);
+  });
+
+  it("computePayeMonth drops the HMRC liability when a line carries sacrifice", () => {
+    const now = new Date("2026-05-19T00:00:00Z");
+    const line = {
+      paye_estimate: 0,
+      ni_estimate: 0,
+      gross_pay: 3_000,
+      run: { period_start: "2026-05-01", status: "finalised", cycle: "monthly" },
+    } as const;
+    const noSac = computePayeMonth([line], now);
+    const withSac = computePayeMonth(
+      [{ ...line, salary_sacrifice_annual: 6_000 }],
+      now,
+    );
+    // £3,000/mo, no sac: (36,000 − 5,000) × 15% / 12 = 387.50.
+    expect(noSac.employer_ni_estimate).toBe(387.5);
+    // £500/mo sac ⇒ base £2,500/mo, annualised 30,000: (30,000 − 5,000) × 15% / 12 = 312.50.
+    expect(withSac.employer_ni_estimate).toBe(312.5);
+    expect(withSac.estimate).toBeLessThan(noSac.estimate);
   });
 });
 

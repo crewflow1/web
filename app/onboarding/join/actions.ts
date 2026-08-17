@@ -30,31 +30,34 @@ export async function acceptOrgInvite(formData: FormData) {
   }
   const { org_id, full_name } = parsed.data;
 
-  // Sanity-check the metadata against the URL form. Don't trust the form
-  // alone — only let users join orgs they were actually invited to.
-  const meta = (user.user_metadata ?? {}) as {
+  // SECURITY: the invite's org + role come from `app_metadata` — the admin-only
+  // (service-role-only) metadata bucket set by sendStaffInvite. They are
+  // DELIBERATELY NOT read from `user_metadata`: that bucket is writable by the
+  // user themselves via supabase.auth.updateUser({ data }), so anchoring authz
+  // there let a self-signed-up attacker set invited_org_id=<victim-org> +
+  // invited_role=admin on their OWN metadata and join any org as admin. Only
+  // app_metadata is out of the user's reach, so it is the authority here.
+  const authz = (user.app_metadata ?? {}) as {
     invited_org_id?: string;
     invited_role?: string;
   };
-  if (meta.invited_org_id !== org_id) {
+  if (authz.invited_org_id !== org_id) {
     redirect("/onboarding/join?error=invite_mismatch");
   }
-
-  // SECURITY: the membership role is taken from the server-set invite metadata
-  // (user_metadata.invited_role), NEVER the hidden `role` form field. That
-  // field is client-controllable, so trusting it let a staff invitee POST
-  // role=admin and self-promote past the role they were actually invited as —
-  // the invited_org_id check above still passed. Mirror the page's derivation
-  // (app/onboarding/join/page.tsx); owner is never grantable via invite-accept
+  // Role from the admin-only invite anchor, never the client `role` form field
+  // and never user_metadata. Owner is never grantable via invite-accept
   // (bootstrap-only, same rule as inviteStaff in app/(app)/staff/actions.ts).
-  const role = meta.invited_role === "admin" ? "admin" : "staff";
+  const role = authz.invited_role === "admin" ? "admin" : "staff";
 
   const admin = createAdminClient();
 
   // Hydrate the public.users row from the form + the invite metadata.
   // Profile pre-fill only writes columns that are currently null/empty so
   // we never overwrite something the user set themselves.
-  const metaInvitee = (user.user_metadata ?? {}) as {
+  // Profile pre-fill also comes from the admin-only app_metadata (invited_* are
+  // all admin-set at invite time; keeping them out of user_metadata stops an
+  // invitee seeding their own hourly_pay etc.).
+  const metaInvitee = (user.app_metadata ?? {}) as {
     invited_full_name?: string | null;
     invited_employment_type?: string | null;
     invited_hourly_pay?: number | null;
@@ -108,16 +111,19 @@ export async function acceptOrgInvite(formData: FormData) {
     }
   }
 
-  // Clear the invited_* metadata so subsequent logins skip this page.
+  // Clear the invited_* anchor (now in app_metadata) so subsequent logins skip
+  // this page and the one-time invite cannot be replayed.
   await admin.auth.admin.updateUserById(user.id, {
-    user_metadata: {
-      ...(user.user_metadata ?? {}),
+    app_metadata: {
+      ...(user.app_metadata ?? {}),
       invited_org_id: null,
       invited_role: null,
       invited_full_name: null,
+      invited_phone: null,
       invited_employment_type: null,
       invited_hourly_pay: null,
       invited_emergency_contact: null,
+      source: null,
     },
   });
 

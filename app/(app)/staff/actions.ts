@@ -249,7 +249,9 @@ export async function resendStaffInvite(email: string): Promise<InviteStaffResul
   }
 
   const existing = lookup.user;
-  const meta = (existing?.user_metadata ?? {}) as Record<string, unknown>;
+  // The invite anchor lives in admin-only app_metadata (see sendStaffInvite);
+  // reconstruct the resend payload from there, not user_metadata.
+  const meta = (existing?.app_metadata ?? {}) as Record<string, unknown>;
   if (!existing || meta.invited_org_id !== ctx.org.id || meta.source !== "staff_invite") {
     return { ok: false, error: "No pending invite found for that email." };
   }

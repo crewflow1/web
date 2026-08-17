@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { sanitizeSearchTerm } from "@/lib/search/sanitize";
+import { sortHitsByMatch } from "@/lib/search/rank";
 import {
   ilikeOrFilter,
   inIdsBranch,
@@ -470,5 +471,10 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  return respond.json({ hits });
+  // Relevance ranking. The waves above group hits by the round trip that found
+  // them (a SQL-chaining artifact, not a ranking); re-sort the merged set so an
+  // exact/prefix title match on the user's term wins regardless of which wave or
+  // entity type surfaced it, with type priority breaking ties. Array.sort is
+  // stable, so within an equal score+priority the original wave order stands.
+  return respond.json({ hits: sortHitsByMatch(hits, q) });
 }

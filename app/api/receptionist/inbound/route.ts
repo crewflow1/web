@@ -3,6 +3,7 @@ import { isMaintenanceMode } from "@/lib/maintenance";
 import { z } from "zod";
 import { processInboundEnquiry } from "@/server/services/receptionist";
 import { INBOUND_CHANNELS } from "@/lib/receptionist/types";
+import { resolveInboundOrg } from "@/lib/receptionist/inbound-org-resolver";
 import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
 import * as Sentry from "@sentry/nextjs";
 
@@ -17,13 +18,37 @@ import * as Sentry from "@sentry/nextjs";
  * API, Instagram Graph) translate provider-specific payloads to the
  * normalised shape this route accepts.
  *
+ * SECURITY — org attribution (cross-tenant isolation):
+ *   The shared secret is a COARSE gate: every tenant configures the SAME secret,
+ *   so it proves "a channel adapter is calling", never "which org this is for".
+ *   The org is therefore NEVER taken from the request body — it is RESOLVED from
+ *   the `to` destination (the infra identity the sender reached) via the same
+ *   per-channel provisioned-route tables the dedicated webhooks use
+ *   (`phone_numbers` / `whatsapp_number_routes` / `email_inbound_routes`). This
+ *   is the codebase's inbound invariant (see migrations 20261126000000 and
+ *   20260918000000). A body `org_id`, if present, is only cross-checked against
+ *   the resolved org (defense-in-depth) — it can NEVER select the target. A
+ *   destination that resolves to no org is ACK-DROPPED (200, no tenant write) so
+ *   providers don't infinitely retry.
+ *
+ *   Dark-by-data: the per-channel route tables are admin-provisioned and empty
+ *   in prod, so every destination currently ack-drops and no tenant row is
+ *   written until a route is deliberately provisioned. (There is no single
+ *   feature flag governing this multi-channel endpoint — the route tables ARE
+ *   the activation surface — so the shared-secret gate is retained as the coarse
+ *   auth boundary and attribution is data-gated instead.)
+ *
  * Body schema:
- *   { org_id, channel, raw_text?, caller?, dedup_key? }
+ *   { to, channel, org_id?, raw_text?, caller?, dedup_key? }
+ *   `to` is the destination the inbound event reached: the dialed E.164
+ *   (phone/sms), the Meta phone_number_id (whatsapp_msg/whatsapp_call), or the
+ *   inbound email address (email). It is the KEY used to resolve the org.
  *
  * Returns:
  *   200 { ok:true, enquiry_id, lead_id, conversation_id, textback }
+ *   200 { ok:true, dropped:true }   (destination resolves to no org — ack-drop)
  *   401 { ok:false, error:"unauthorized" }
- *   422 { ok:false, error:string }
+ *   422 { ok:false, error:string }  (invalid body, or body org_id ≠ resolved org)
  *   500 { ok:false, error:string }
  *
  * Side effects (always):
@@ -48,7 +73,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const bodySchema = z.object({
-  org_id: z.string().uuid(),
+  // The destination the inbound event reached (dialed E.164 / Meta
+  // phone_number_id / inbound email address). REQUIRED — this is the infra
+  // identity the org is resolved FROM. It is caller-supplied but not trusted for
+  // attribution: it is a key into an admin-provisioned route table.
+  to: z.string().min(1).max(500),
+  // Optional and NEVER used to select the target org. If present it must EQUAL
+  // the org resolved from `to`, or the request is rejected (defense-in-depth).
+  org_id: z.string().uuid().optional().nullable(),
   channel: z.enum(INBOUND_CHANNELS),
   raw_text: z.string().max(20_000).optional().nullable(),
   caller: z.string().max(500).optional().nullable(),
@@ -102,9 +134,38 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  // Attribute the org from the DESTINATION the sender reached — NEVER the
+  // body-claimed org_id. The shared secret only proved a channel adapter is
+  // calling; it says nothing about which tenant. Resolution is a lookup in the
+  // same per-channel provisioned-route tables the dedicated webhooks use.
+  let resolvedOrgId: string | null;
+  try {
+    resolvedOrgId = await resolveInboundOrg(parsed.data.channel, parsed.data.to);
+  } catch (e) {
+    Sentry.captureException(e, { tags: { route: "receptionist/inbound", stage: "resolve" } });
+    console.error("[api/receptionist/inbound] org resolution failed", e);
+    return NextResponse.json({ ok: false, error: "resolution_failed" }, { status: 500 });
+  }
+
+  // Unattributable destination → ack-drop: 200 so the provider does not retry
+  // forever, but NO tenant row is written. Mirrors the sibling webhook handlers.
+  if (!resolvedOrgId) {
+    return NextResponse.json({ ok: true, dropped: true });
+  }
+
+  // Defense-in-depth: a body org_id may only CONFIRM the resolved org, never
+  // select it. A mismatch is a misconfigured adapter or a forged attribution
+  // attempt — reject without writing, rather than silently ignore.
+  if (parsed.data.org_id && parsed.data.org_id !== resolvedOrgId) {
+    return NextResponse.json(
+      { ok: false, error: "org_mismatch" },
+      { status: 422 },
+    );
+  }
+
   try {
     const result = await processInboundEnquiry({
-      org_id: parsed.data.org_id,
+      org_id: resolvedOrgId,
       channel: parsed.data.channel,
       raw_text: parsed.data.raw_text ?? null,
       caller: parsed.data.caller ?? null,

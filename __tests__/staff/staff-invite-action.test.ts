@@ -200,7 +200,7 @@ describe("resendStaffInvite — same error handling as invite", () => {
     id: "u-9",
     email: "jane@x.test",
     email_confirmed_at: null,
-    user_metadata: { invited_org_id: "org-1", source: "staff_invite", invited_role: "staff" },
+    app_metadata: { invited_org_id: "org-1", source: "staff_invite", invited_role: "staff" },
   };
 
   it("resends a pending invite and reports invite_sent (parity success)", async () => {
@@ -244,7 +244,7 @@ describe("resendStaffInvite — same error handling as invite", () => {
             id: "u-9",
             email: "jane@x.test",
             email_confirmed_at: null,
-            user_metadata: { invited_org_id: "some-other-org", source: "staff_invite" },
+            app_metadata: { invited_org_id: "some-other-org", source: "staff_invite" },
           },
         ],
       },
@@ -266,7 +266,7 @@ describe("resendStaffInvite — same error handling as invite", () => {
             id: "u-9",
             email: "jane@x.test",
             email_confirmed_at: "2026-01-01T00:00:00Z",
-            user_metadata: { invited_org_id: "org-1", source: "staff_invite" },
+            app_metadata: { invited_org_id: "org-1", source: "staff_invite" },
           },
         ],
       },

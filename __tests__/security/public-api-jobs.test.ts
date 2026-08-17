@@ -172,6 +172,14 @@ describe("no cross-org oracle on the by-id read", () => {
     const loader = read("lib/jobs/load.ts");
     expect(loader).toMatch(/\.eq\("id", jobId\)\s*\.eq\("org_id", orgId\)/);
   });
+
+  it("validates the id as a UUID BEFORE the load (a malformed id 404s, never 500s)", () => {
+    // A raw non-UUID reaching loadJobForOrg would be `.eq("id", id)` → 22P02 →
+    // readFailure → 500 (a malformed-id oracle). The GET must safeParse first
+    // and 404, exactly like the PATCH handler and the customers by-id route.
+    expect(BYID).toMatch(/const idSchema = z\.string\(\)\.uuid\(\)/);
+    expect(BYID).toMatch(/if \(!idSchema\.safeParse\(id\)\.success\) return notFound\(\)/);
+  });
 });
 
 // ---------------------------------------------------------------------------
