@@ -138,7 +138,7 @@ type QuoteInsertWrite = {
   };
 };
 
-/** Minimal typed surface for the line-item insert (best-effort, org-pinned). */
+/** Minimal typed surface for the line-item insert (org-pinned). */
 type LineItemsInsert = {
   insert: (
     rows: Array<{
@@ -153,6 +153,21 @@ type LineItemsInsert = {
       sort_order: number;
     }>,
   ) => Promise<{ error: { message?: string | null } | null }>;
+};
+
+/** Minimal typed surface for the org-pinned rollback delete of a parent quote. */
+type QuoteDeleteWrite = {
+  delete: () => {
+    eq: (
+      c: string,
+      v: string,
+    ) => {
+      eq: (
+        c: string,
+        v: string,
+      ) => Promise<{ error: { message?: string | null } | null }>;
+    };
+  };
 };
 
 /**
@@ -252,13 +267,30 @@ export async function POST(request: Request): Promise<Response> {
     admin.from("quote_line_items") as unknown as LineItemsInsert
   ).insert(rows);
   if (liErr) {
-    // The parent quote is saved with correct totals; surface loudly that the
-    // line items didn't land rather than fake a clean create.
     console.error("[public-api] quote line items insert failed", liErr.message);
+    // ATOMICITY: the two inserts are not a single transaction, so a line-items
+    // failure would otherwise leave an ORPHAN draft quote that also burns its
+    // quote number. Roll the parent back — delete it (org-pinned on id AND the
+    // key's org, so it can only ever remove the row we just created). Because
+    // next_quote_number derives the next number from max(number) over existing
+    // rows (not a monotonic sequence), removing the orphan also FREES the number
+    // for the next caller — no gap, no burn. Then fail loudly with the original
+    // line-items error, so no half-written quote is ever reported as created.
+    const { error: rbErr } = await (
+      admin.from("quotes") as unknown as QuoteDeleteWrite
+    )
+      .delete()
+      .eq("id", quote.id)
+      .eq("org_id", guard.key.orgId);
+    if (rbErr) {
+      // Extremely rare: the rollback itself failed. Surface it distinctly so
+      // the orphan can be reconciled rather than hidden.
+      console.error("[public-api] quote rollback delete failed", rbErr.message);
+    }
     return writeError(
       500,
-      "line_items_failed",
-      "The quote was created but its line items could not be saved.",
+      "write_failed",
+      "Couldn't create the quote. Please try again.",
     );
   }
 

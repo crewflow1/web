@@ -35,6 +35,8 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const idSchema = z.string().uuid();
+
 const notFound = (): Response =>
   NextResponse.json({ ok: false, error: "not_found" }, { status: 404 });
 
@@ -46,6 +48,11 @@ export async function GET(
   if (!guard.ok) return guard.response;
 
   const { id } = await context.params;
+  // Validate the id BEFORE it reaches the query — a non-UUID would make
+  // `.eq("id", id)` raise Postgres 22P02 (readFailure → 500), leaking a
+  // malformed-id oracle. A clean 404 keeps missing / other-org / malformed all
+  // indistinguishable (mirrors the PATCH handler + the customers by-id route).
+  if (!idSchema.safeParse(id).success) return notFound();
 
   const admin = createAdminClient();
   // Org-pinned by-id load — service-role read scoped to the KEY'S org. null on
@@ -60,8 +67,6 @@ export async function GET(
 
   return NextResponse.json({ data: toPublicJobDto(row) });
 }
-
-const idSchema = z.string().uuid();
 
 /** The exact columns a PATCH may touch — the write allowlist (no org_id/id). */
 const JOB_UPDATE_COLUMNS = [
