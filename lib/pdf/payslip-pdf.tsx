@@ -108,6 +108,15 @@ export type PayslipInput = {
   paye_estimate: number;
   ni_estimate: number;
   net_pay: number;
+  /**
+   * Per-employee profile deductions. OPTIONAL — absent/0 means the deduction does
+   * not apply and its line is hidden, so a standard payslip is unchanged. When a
+   * tax profile applies they are shown so the payslip reconciles:
+   * net = gross − salary sacrifice − PAYE − NI − student loan − employee pension.
+   */
+  salary_sacrifice?: number;
+  student_loan_estimate?: number;
+  employee_pension_estimate?: number;
 };
 
 export function PayslipPdf({ data }: { data: PayslipInput }) {
@@ -163,6 +172,12 @@ export function PayslipPdf({ data }: { data: PayslipInput }) {
             <Text style={styles.rowLabel}>Gross pay</Text>
             <Text style={styles.rowValue}>{GBP.format(data.gross_pay)}</Text>
           </View>
+          {data.salary_sacrifice && data.salary_sacrifice > 0 ? (
+            <View style={styles.row}>
+              <Text style={styles.rowLabel}>Salary sacrifice</Text>
+              <Text style={styles.rowValue}>− {GBP.format(data.salary_sacrifice)}</Text>
+            </View>
+          ) : null}
           <View style={styles.row}>
             <Text style={styles.rowLabel}>PAYE income tax (est)</Text>
             <Text style={styles.rowValue}>− {GBP.format(data.paye_estimate)}</Text>
@@ -171,6 +186,22 @@ export function PayslipPdf({ data }: { data: PayslipInput }) {
             <Text style={styles.rowLabel}>Employee NI (est)</Text>
             <Text style={styles.rowValue}>− {GBP.format(data.ni_estimate)}</Text>
           </View>
+          {data.student_loan_estimate && data.student_loan_estimate > 0 ? (
+            <View style={styles.row}>
+              <Text style={styles.rowLabel}>Student loan (est)</Text>
+              <Text style={styles.rowValue}>
+                − {GBP.format(data.student_loan_estimate)}
+              </Text>
+            </View>
+          ) : null}
+          {data.employee_pension_estimate && data.employee_pension_estimate > 0 ? (
+            <View style={styles.row}>
+              <Text style={styles.rowLabel}>Pension contribution (est)</Text>
+              <Text style={styles.rowValue}>
+                − {GBP.format(data.employee_pension_estimate)}
+              </Text>
+            </View>
+          ) : null}
           <View style={styles.netRow}>
             <Text style={styles.netLabel}>Net pay (take home)</Text>
             <Text style={styles.netValue}>{GBP.format(data.net_pay)}</Text>

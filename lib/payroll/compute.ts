@@ -39,13 +39,16 @@
  * layers the following on top WHEN (and only when) the corresponding input is
  * supplied, so an absent input reproduces the base figures to the penny:
  *   - Scottish income tax bands (by a per-employee tax-region flag)
- *   - Student loan deductions (Plan 1 / 2 / 4 / postgraduate)
+ *   - Student loan deductions (Plan 1 / 2 / 4 / 5 / postgraduate)
  *   - Employee pension contribution (relief-at-source estimate)
  *   - Salary sacrifice (reduces the tax + NI base, and so employer NI too)
  *
+ * The £100k personal-allowance taper IS modelled in BOTH the rest-of-UK and Scottish
+ * income-tax paths (see `taperedPersonalAllowance`), so it applies to the base
+ * per-line figures too, not just the overlay.
+ *
  * Still NOT modelled on the employee side: marriage allowance, blind person's
- * allowance, the personal-allowance taper above £100k (also unmodelled in the base
- * rest-of-UK path), and the K-code / week-1-month-1 mechanics of a real RTI engine.
+ * allowance, and the K-code / week-1-month-1 mechanics of a real RTI engine.
  *
  * Org-level EMPLOYMENT ALLOWANCE relief is provided by
  * `employmentAllowanceReliefForRun` — an annual offset against the org's employer NI
@@ -77,6 +80,24 @@ const BASIC_RATE = 0.20;
 const HIGHER_RATE = 0.40;
 const ADDITIONAL_RATE = 0.45;
 
+/** Income above which the personal allowance starts to taper away. */
+const PERSONAL_ALLOWANCE_TAPER_THRESHOLD = 100_000;
+
+/**
+ * The personal allowance actually available at a given annual income.
+ *
+ * Above £100,000 the allowance is withdrawn by £1 for every £2 of income over the
+ * threshold, reaching £0 at £100,000 + 2 × basePA (i.e. £125,140 for the standard
+ * £12,570 allowance). Below the threshold the full allowance stands, so a sub-£100k
+ * earner is byte-identical to the pre-taper behaviour. Applies to BOTH the
+ * rest-of-UK and Scottish paths — the personal allowance is UK-wide.
+ */
+export function taperedPersonalAllowance(annualGross: number, basePA: number): number {
+  if (annualGross <= PERSONAL_ALLOWANCE_TAPER_THRESHOLD) return basePA;
+  const reduction = (annualGross - PERSONAL_ALLOWANCE_TAPER_THRESHOLD) / 2;
+  return Math.max(0, basePA - reduction);
+}
+
 const NI_PRIMARY_THRESHOLD = 12_570;
 const NI_UPPER_LIMIT = 50_270;
 const NI_MAIN_RATE = 0.08;
@@ -92,13 +113,19 @@ function periodsPerYear(cycle: "weekly" | "monthly"): number {
 }
 
 export function annualIncomeTax(annualGross: number): number {
-  if (annualGross <= PERSONAL_ALLOWANCE) return 0;
+  const pa = taperedPersonalAllowance(annualGross, PERSONAL_ALLOWANCE);
+  if (annualGross <= pa) return 0;
+  // The basic-rate band WIDTH is fixed (£37,700 = 50,270 − 12,570); as the tapered
+  // allowance shrinks, the higher-rate threshold moves DOWN with it, pushing the
+  // reclaimed allowance into the 40% band. The additional-rate threshold stays a
+  // fixed total-income figure (£125,140) — the taper is already complete there.
+  const higherRateThreshold = pa + (HIGHER_RATE_THRESHOLD - PERSONAL_ALLOWANCE);
   let tax = 0;
-  const basicTaxable = Math.min(annualGross, HIGHER_RATE_THRESHOLD) - PERSONAL_ALLOWANCE;
+  const basicTaxable = Math.min(annualGross, higherRateThreshold) - pa;
   tax += basicTaxable * BASIC_RATE;
-  if (annualGross > HIGHER_RATE_THRESHOLD) {
+  if (annualGross > higherRateThreshold) {
     const higherTaxable =
-      Math.min(annualGross, ADDITIONAL_RATE_THRESHOLD) - HIGHER_RATE_THRESHOLD;
+      Math.min(annualGross, ADDITIONAL_RATE_THRESHOLD) - higherRateThreshold;
     tax += higherTaxable * HIGHER_RATE;
   }
   if (annualGross > ADDITIONAL_RATE_THRESHOLD) {
@@ -127,21 +154,33 @@ export function annualEmployeeNi(annualGross: number): number {
  * only when an employee's tax region is Scotland; the region is an INPUT (their tax
  * code carries an `S`), never inferred.
  *
- * Like the rest-of-UK path, the personal-allowance taper above £100k is NOT modelled
- * — deliberately, to stay consistent with `annualIncomeTax`.
+ * Like the rest-of-UK path, the £100k personal-allowance taper IS modelled (the
+ * personal allowance is UK-wide, so a Scottish taxpayer loses it on the same terms).
+ * As the allowance shrinks, the band boundaries below the taper-completion income
+ * move down with it; boundaries at/above that income (the advanced→top £125,140
+ * point and the open top band) are fixed total-income figures and do not shift.
  */
 export function annualScottishIncomeTax(
   annualGross: number,
   rates: ScottishIncomeTaxRates,
 ): number {
-  if (annualGross <= rates.personal_allowance) return 0;
+  const basePA = rates.personal_allowance;
+  const pa = taperedPersonalAllowance(annualGross, basePA);
+  if (annualGross <= pa) return 0;
+  const reduction = basePA - pa;
+  // Income at which the taper completes (PA hits £0). Band boundaries at or above
+  // this are fixed total-income statutory points; those below shift down by the
+  // amount the allowance was reduced.
+  const taperCompletion = PERSONAL_ALLOWANCE_TAPER_THRESHOLD + 2 * basePA;
   let tax = 0;
-  let lower = rates.personal_allowance;
+  let lower = pa;
   for (const band of rates.bands) {
     if (annualGross <= lower) break;
-    const upper = Math.min(annualGross, band.upto);
+    const upto =
+      band.upto >= taperCompletion ? band.upto : band.upto - reduction;
+    const upper = Math.min(annualGross, upto);
     if (upper > lower) tax += (upper - lower) * band.rate;
-    lower = band.upto;
+    lower = upto;
   }
   return tax;
 }
@@ -149,7 +188,7 @@ export function annualScottishIncomeTax(
 /**
  * Student-loan repayment on an annual gross for a given plan.
  *
- * A flat percentage (9% for Plans 1/2/4, 6% for the postgraduate loan) of earnings
+ * A flat percentage (9% for Plans 1/2/4/5, 6% for the postgraduate loan) of earnings
  * ABOVE the plan's annual threshold — there is no upper limit and no banding. The
  * base is earnings, so salary sacrifice reduces it (the caller passes the
  * post-sacrifice gross); relief-at-source pension does not.
@@ -354,14 +393,46 @@ export function annualEmployerPensionForEnrolment(
  * `periodStartIso` MUST be the run's own `period_start`, never today's date — that
  * is what keeps a finalised run priced at the rates in force when it ran.
  */
+/**
+ * The annual pay banded for EMPLOYER NI + pension after removing salary sacrifice.
+ *
+ * Sacrificed pay is outside NI and the pension basis, so it reduces the employer's
+ * base too — not just the employee's. Given as an annual £ figure, apportioned to
+ * the period and clamped to the period gross (matching the employee-side treatment
+ * in {@link computeEmployeeDeductionsForStoredLine}). With no sacrifice this returns
+ * `gross × periods` exactly, so the employer figures are byte-identical.
+ */
+function sacrificedAnnualBase(
+  gross: number,
+  cycle: "weekly" | "monthly",
+  salarySacrificeAnnual?: number,
+): number {
+  const periods = periodsPerYear(cycle);
+  const sacrificeAnnual = Math.max(0, Number(salarySacrificeAnnual ?? 0) || 0);
+  if (sacrificeAnnual <= 0) return gross * periods;
+  const sacrificePeriod = round2(Math.min(gross, sacrificeAnnual / periods));
+  const taxablePeriod = round2(Math.max(0, gross - sacrificePeriod));
+  return taxablePeriod * periods;
+}
+
 export function employerCostsForStoredLine(
   grossPay: number | string | null | undefined,
   cycle: "weekly" | "monthly",
-  periodStartIso: string,
+  /**
+   * The run's OWN `period_start`, selecting the dated rate table. Real callers always
+   * pass it; undefined falls back to the latest table (pure-arithmetic callers only),
+   * matching {@link computePayrollLine}.
+   */
+  periodStartIso?: string,
+  /**
+   * Optional annual salary sacrifice (£). Sacrificed pay is outside employer NI and
+   * the pension basis, so it reduces both. Absent/0 ⇒ figures unchanged.
+   */
+  salarySacrificeAnnual?: number,
 ): EmployerCostEstimate {
   const gross = round2(Math.max(0, Number(grossPay ?? 0) || 0));
   const periods = periodsPerYear(cycle);
-  const annualised = gross * periods;
+  const annualised = sacrificedAnnualBase(gross, cycle, salarySacrificeAnnual);
   const resolved = resolveEmploymentCostRates(periodStartIso);
   const employerNi = round2(
     annualEmployerNi(annualised, resolved.rates.employer_ni) / periods,
@@ -394,10 +465,15 @@ export function employerCostsForStoredLineWithPension(
   cycle: "weekly" | "monthly",
   periodStartIso: string,
   enrolment?: PensionEnrolmentInput,
+  /**
+   * Optional annual salary sacrifice (£). Reduces the employer NI and pension base,
+   * exactly as on {@link employerCostsForStoredLine}. Absent/0 ⇒ figures unchanged.
+   */
+  salarySacrificeAnnual?: number,
 ): EmployerCostEstimate {
   const gross = round2(Math.max(0, Number(grossPay ?? 0) || 0));
   const periods = periodsPerYear(cycle);
-  const annualised = gross * periods;
+  const annualised = sacrificedAnnualBase(gross, cycle, salarySacrificeAnnual);
   const resolved = resolveEmploymentCostRates(periodStartIso);
   const employerNi = round2(
     annualEmployerNi(annualised, resolved.rates.employer_ni) / periods,
@@ -590,6 +666,7 @@ export function employeeInputFromStoredProfile(
     plan === "plan_1" ||
     plan === "plan_2" ||
     plan === "plan_4" ||
+    plan === "plan_5" ||
     plan === "postgraduate"
   ) {
     input.studentLoanPlan = plan;
@@ -699,6 +776,12 @@ export function employerOnCostsFromTimeEntries(
   cycle: "weekly" | "monthly",
   /** The period's own start date, so the correct dated rate table is applied. */
   periodStartIso?: string,
+  /**
+   * Optional per-user annual salary sacrifice (£). Sacrifice reduces the employer NI
+   * and pension base for that worker, so their on-cost drops. Absent map / absent
+   * user ⇒ no sacrifice, figures byte-identical to the pre-sacrifice behaviour.
+   */
+  sacrificeByUser?: Map<string, number>,
 ): LabourOnCostRow[] {
   // Group by worker: employer NI bands on the person, not on the job.
   const byUser = new Map<string, { jobHours: Map<string, number>; unattributed: number }>();
@@ -727,8 +810,19 @@ export function employerOnCostsFromTimeEntries(
       jobHourValues.reduce((a, b) => a + b, 0) + bucket.unattributed;
     if (totalHours <= 0) continue;
 
-    const line = computePayrollLine(totalHours, rate, cycle, periodStartIso);
-    const onCost = round2(line.employer_ni_estimate + line.employer_pension_estimate);
+    // Band employer NI + pension on the worker's WHOLE-period gross, less any
+    // salary sacrifice (which is outside both bases). With no sacrifice this is
+    // byte-identical to the previous computePayrollLine-based derivation.
+    const gross = round2(Math.max(0, totalHours) * Math.max(0, rate));
+    const employer = employerCostsForStoredLine(
+      gross,
+      cycle,
+      periodStartIso,
+      sacrificeByUser?.get(userId),
+    );
+    const onCost = round2(
+      employer.employer_ni_estimate + employer.employer_pension_estimate,
+    );
     if (onCost <= 0) continue;
 
     // Apportion across job hours PLUS the unattributed remainder, then drop the
@@ -789,6 +883,16 @@ export function payrollCsv(
     ni_estimate: number;
     net_pay: number;
     /**
+     * Employee-side per-profile deductions. OPTIONAL for backward compatibility —
+     * absent means £0 (no salary sacrifice / student loan / employee pension), the
+     * base case. When a tax profile applies they carry the profile-refined figures so
+     * the bureau file reconciles: net = gross − sacrifice − PAYE − NI − student loan
+     * − employee pension.
+     */
+    salary_sacrifice?: number;
+    student_loan_estimate?: number;
+    employee_pension_estimate?: number;
+    /**
      * Employer-side costs. REQUIRED, not optional: an accountant reading this file
      * must never be handed a payroll export whose employer NI silently defaulted to
      * zero, so the call site is forced to supply it via
@@ -811,6 +915,9 @@ export function payrollCsv(
     "Gross pay",
     "PAYE est",
     "Employee NI est",
+    "Salary sacrifice",
+    "Student loan est",
+    "Employee pension est",
     "Net pay",
     "Employer NI est",
     "Employer pension est",
@@ -830,6 +937,9 @@ export function payrollCsv(
         r.gross_pay.toFixed(2),
         r.paye_estimate.toFixed(2),
         r.ni_estimate.toFixed(2),
+        (r.salary_sacrifice ?? 0).toFixed(2),
+        (r.student_loan_estimate ?? 0).toFixed(2),
+        (r.employee_pension_estimate ?? 0).toFixed(2),
         r.net_pay.toFixed(2),
         r.employer_ni_estimate.toFixed(2),
         r.employer_pension_estimate.toFixed(2),

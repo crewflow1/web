@@ -20,6 +20,7 @@ import {
   gatherVatQuarterInputs,
   type VatInputsDb,
 } from "@/server/services/vat-quarter-inputs";
+import { getPayrollTaxProfilesForOrg } from "@/server/services/payroll-tax-profile";
 import {
   prepareVatReturnAction,
   prepareCis300ReturnAction,
@@ -136,9 +137,10 @@ export default async function TaxDashboardPage() {
         supabase
           .from("payroll_lines")
           // `gross_pay` is required by computePayeMonth — employer NI is derived from
-          // it, and employer NI is part of the monthly PAYE bill.
+          // it, and employer NI is part of the monthly PAYE bill. `user_id` lets us
+          // attach the employee's salary sacrifice (outside the employer NI base).
           .select(
-            "id, paye_estimate, ni_estimate, gross_pay, run:payroll_runs ( period_start, status, cycle )",
+            "id, user_id, paye_estimate, ni_estimate, gross_pay, run:payroll_runs ( period_start, status, cycle )",
           )
           .eq("org_id", ctx.org.id)
           .gte("created_at", `${monthKey}-01T00:00:00Z`)
@@ -167,18 +169,27 @@ export default async function TaxDashboardPage() {
     created_at: f.created_at as string,
   }));
 
-  const payrollLines = (payrollRaw ?? []).map((l) => ({
-    paye_estimate: l.paye_estimate,
-    ni_estimate: l.ni_estimate,
-    gross_pay: l.gross_pay,
-    run: l.run
-      ? {
-          period_start: l.run.period_start as string,
-          status: l.run.status as string,
-          cycle: l.run.cycle as string,
-        }
-      : null,
-  }));
+  // Per-employee salary sacrifice (£/yr) — outside the employer NI base, so it
+  // reduces the monthly HMRC liability. Empty map ⇒ no sacrifice, byte-identical.
+  const taxProfiles = await getPayrollTaxProfilesForOrg(ctx.org.id);
+  const payrollLines = (payrollRaw ?? []).map((l) => {
+    const sacPence = Number(
+      taxProfiles.get(l.user_id as string)?.salary_sacrifice_annual_pence ?? 0,
+    );
+    return {
+      paye_estimate: l.paye_estimate,
+      ni_estimate: l.ni_estimate,
+      gross_pay: l.gross_pay,
+      salary_sacrifice_annual: sacPence > 0 ? sacPence / 100 : undefined,
+      run: l.run
+        ? {
+            period_start: l.run.period_start as string,
+            status: l.run.status as string,
+            cycle: l.run.cycle as string,
+          }
+        : null,
+    };
+  });
 
   // Output VAT (box 1) is CASH-basis from the invoice_payments LEDGER, so a
   // partial payment counts on the day the cash landed rather than £0 until the

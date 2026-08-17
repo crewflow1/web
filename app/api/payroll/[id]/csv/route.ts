@@ -3,10 +3,16 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   employerCostsForStoredLineWithPension,
+  computeEmployeeDeductionsForStoredLine,
+  employeeInputFromStoredProfile,
   payrollCsv,
 } from "@/lib/payroll/compute";
 import { fetchNiNumbersForOrg } from "@/lib/staff/secrets";
-import { getPensionEnrolmentsForOrg } from "@/server/services/pension-enrolment";
+import {
+  getPensionEnrolmentsForOrg,
+  getEmployeePensionRatesForOrg,
+} from "@/server/services/pension-enrolment";
+import { getPayrollTaxProfilesForOrg } from "@/server/services/payroll-tax-profile";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import * as Sentry from "@sentry/nextjs";
@@ -81,26 +87,52 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   // uses the employee's real status + scheme rate; otherwise the statutory 3%.
   // Empty map ⇒ output identical to the statutory-only path.
   const pensionByUser = await getPensionEnrolmentsForOrg(ctx.org.id);
+  // Per-employee tax inputs (region, student-loan plan, salary sacrifice) and the
+  // employee pension CONTRIBUTION rate — the same sources the run detail page uses.
+  // Absent ⇒ the base per-line figures, so a non-profiled employee's PAYE/NI/net are
+  // byte-identical to what was stored (backward compatible).
+  const taxProfiles = await getPayrollTaxProfilesForOrg(ctx.org.id);
+  const employeePensionRates = await getEmployeePensionRatesForOrg(ctx.org.id);
   const csv = payrollCsv(
-    (lines ?? []).map((l) => ({
-      full_name: l.user?.full_name ?? "—",
-      ni_number: niByUser.get(l.user_id) ?? null,
-      hours: Number(l.hours ?? 0),
-      hourly_pay: Number(l.hourly_pay ?? 0),
-      gross_pay: Number(l.gross_pay ?? 0),
-      paye_estimate: Number(l.paye_estimate ?? 0),
-      ni_estimate: Number(l.ni_estimate ?? 0),
-      net_pay: Number(l.net_pay ?? 0),
-      // Employer NI + pension, DERIVED from the stored gross at the rates in force
-      // for this run's own period (never today's), through the one shared helper,
-      // honouring the employee's tracked pension enrolment where one exists.
-      ...employerCostsForStoredLineWithPension(
+    (lines ?? []).map((l) => {
+      const profileInput = employeeInputFromStoredProfile(taxProfiles.get(l.user_id));
+      // Employee-side figures refined by the per-employee tax profile: Scottish bands,
+      // student loan, salary sacrifice and the employee's own pension contribution.
+      // With no profile this reproduces the stored PAYE/NI/net exactly.
+      const employee = computeEmployeeDeductionsForStoredLine(
         l.gross_pay,
         cycle,
         run.period_start,
-        pensionByUser.get(l.user_id),
-      ),
-    })),
+        {
+          ...profileInput,
+          employeePensionRate: employeePensionRates.get(l.user_id),
+        },
+      );
+      return {
+        full_name: l.user?.full_name ?? "—",
+        ni_number: niByUser.get(l.user_id) ?? null,
+        hours: Number(l.hours ?? 0),
+        hourly_pay: Number(l.hourly_pay ?? 0),
+        gross_pay: Number(l.gross_pay ?? 0),
+        paye_estimate: employee.paye_estimate,
+        ni_estimate: employee.ni_estimate,
+        salary_sacrifice: employee.salary_sacrifice,
+        student_loan_estimate: employee.student_loan_estimate,
+        employee_pension_estimate: employee.employee_pension_estimate,
+        net_pay: employee.net_pay,
+        // Employer NI + pension, DERIVED from the stored gross at the rates in force
+        // for this run's own period (never today's), through the one shared helper,
+        // honouring the employee's tracked pension enrolment AND salary sacrifice
+        // (sacrifice is outside the employer NI + pension base too).
+        ...employerCostsForStoredLineWithPension(
+          l.gross_pay,
+          cycle,
+          run.period_start,
+          pensionByUser.get(l.user_id),
+          profileInput.salarySacrificeAnnual,
+        ),
+      };
+    }),
     { period_start: run.period_start, period_end: run.period_end, cycle: run.cycle },
   );
 

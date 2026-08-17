@@ -235,6 +235,12 @@ type PayrollLineRow = {
    * understatement this fix exists to remove.
    */
   gross_pay: number | string | null;
+  /**
+   * Optional annual salary sacrifice (£) for this line's employee. Sacrifice is
+   * outside employer NI, so it reduces the HMRC liability. Absent ⇒ no sacrifice,
+   * employer NI byte-identical to before.
+   */
+  salary_sacrifice_annual?: number | null;
   run: { period_start: string; status: string; cycle: string } | null;
 };
 
@@ -282,6 +288,7 @@ export function computePayeMonth(
       l.gross_pay,
       cycle,
       l.run.period_start,
+      l.salary_sacrifice_annual ?? undefined,
     ).employer_ni_estimate;
   }
   const round2 = (n: number) => Math.round(n * 100) / 100;
