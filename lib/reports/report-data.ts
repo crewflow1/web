@@ -15,6 +15,11 @@ import {
   type JobProfitability,
 } from "@/lib/profitability/compute";
 import {
+  buildJobCostInput,
+  lifetimeHoursSource,
+} from "@/lib/profitability/job-cost-input";
+import type { TimeEntry } from "@/lib/time/compute";
+import {
   gatherCashTimeline,
   type ForecastingClient,
 } from "@/server/services/forecasting";
@@ -71,7 +76,7 @@ async function buildProfitDocument(
   orgId: string,
   now: Date,
 ): Promise<ReportDocument> {
-  const [jobsRes, invRes, finRes, custRes] = await Promise.all([
+  const [jobsRes, invRes, finRes, custRes, teRes, memRes] = await Promise.all([
     fetchAllRows<{
       id: string;
       customer_id: string | null;
@@ -120,18 +125,93 @@ async function buildProfitDocument(
         .order("id", { ascending: true })
         .range(from, to),
     ),
+    // Time-tracked labour, so the per-job cost matches the dashboard and
+    // company-health: finances ALONE omit labour + employer on-costs, which
+    // overstated gross profit / margin on every job with clocked hours.
+    fetchAllRows<{
+      id: string;
+      user_id: string;
+      job_id: string | null;
+      started_at: string;
+      ended_at: string | null;
+      breaks: TimeEntry["breaks"];
+    }>((from, to) =>
+      client
+        .from("time_entries")
+        .select("id, user_id, job_id, started_at, ended_at, breaks")
+        .eq("org_id", orgId)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    // Org members, for their hourly pay. `user_id` only — no user embed (a bare
+    // cross-FK embed PGRST201s the whole query).
+    fetchAllRows<{ user_id: string | null }>((from, to) =>
+      client
+        .from("memberships")
+        .select("user_id")
+        .eq("org_id", orgId)
+        .order("user_id", { ascending: true })
+        .range(from, to),
+    ),
   ]);
   if (jobsRes.error) throw readFailure("reports: profit jobs", jobsRes.error);
   if (invRes.error) throw readFailure("reports: profit invoices", invRes.error);
   if (finRes.error) throw readFailure("reports: profit finances", finRes.error);
   if (custRes.error) throw readFailure("reports: profit customers", custRes.error);
+  if (teRes.error) throw readFailure("reports: profit time entries", teRes.error);
+  if (memRes.error) throw readFailure("reports: profit memberships", memRes.error);
 
   const jobs = jobsRes.data ?? [];
   const invoices = invRes.data ?? [];
   const finances = finRes.data ?? [];
+  const timeEntries = (teRes.data ?? []) as unknown as TimeEntry[];
   const customerName = new Map((custRes.data ?? []).map((c) => [c.id, c.name ?? "—"]));
 
-  const perJob = computeAllJobsProfitability(jobs, invoices, finances);
+  // Rates come from members → `users`, the SAME source the dashboard and
+  // company-health use, so the per-job pages and the report agree even on
+  // ex-staff (no membership ⇒ no rate anywhere). `users` is global; scoped by
+  // the org's membership ids, the documented exception to the org-pin rule.
+  // fetchAllRows surfaces the error loudly, so a failed pay read can never
+  // silently zero labour cost and re-inflate profitability.
+  const memberIds = [
+    ...new Set(
+      (memRes.data ?? [])
+        .map((m) => (m.user_id == null ? null : String(m.user_id)))
+        .filter((v): v is string => !!v),
+    ),
+  ];
+  const hourlyByUser = new Map<string, number>();
+  if (memberIds.length > 0) {
+    const payRes = await fetchAllRows<{ id: string; hourly_pay: number | string | null }>(
+      (from, to) =>
+        client
+          .from("users")
+          .select("id, hourly_pay")
+          .in("id", memberIds)
+          .order("id", { ascending: true })
+          .range(from, to),
+    );
+    if (payRes.error) throw readFailure("reports: profit user pay", payRes.error);
+    for (const u of payRes.data ?? []) {
+      if (!u.id) continue;
+      hourlyByUser.set(String(u.id), Number(u.hourly_pay ?? 0));
+    }
+  }
+
+  // The SAME shared cost composition the per-job commercial page, the dashboard
+  // and company-health use: finances PLUS time-tracked labour (gross) PLUS
+  // employer NI + pension on-costs, measured over job-lifetime hours (a job and
+  // its budget span its whole life, so a month window would drop earlier
+  // labour). Matches company-health's monthly cycle.
+  const costInput = buildJobCostInput({
+    finances,
+    timeEntries,
+    hourlyByUser,
+    hoursForEntries: lifetimeHoursSource(),
+    cycle: "monthly",
+  });
+
+  const perJob = computeAllJobsProfitability(jobs, invoices, costInput);
   const labelFor = (jobId: string): string => {
     const job = jobs.find((j) => j.id === jobId);
     if (!job) return `Job ${jobId.slice(0, 8)}`;
