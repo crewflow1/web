@@ -156,6 +156,17 @@ describe("quote create — money computed server-side, no cost/secret injection"
     expect(CODE).toMatch(/target_org: guard\.key\.orgId/);
   });
 
+  it("rolls the parent quote back (org-pinned delete) if the line items fail — no orphan / burned number", () => {
+    // The two inserts are not one transaction; a line-items failure must delete
+    // the just-created parent quote (pinned to id AND the key's org) so no
+    // orphan draft persists. Because next_quote_number derives from max(number),
+    // removing the orphan also frees the number.
+    expect(CODE).toMatch(/if \(liErr\) \{/);
+    expect(CODE).toMatch(/\.delete\(\)/);
+    expect(CODE).toMatch(/\.eq\("id", quote\.id\)/);
+    expect(CODE).toMatch(/\.eq\("org_id", guard\.key\.orgId\)/);
+  });
+
   it("the create schema never accepts a cost/total/secret field", () => {
     // The strict schema is the gate; assert the dangerous names are simply
     // absent from the quote input object.
