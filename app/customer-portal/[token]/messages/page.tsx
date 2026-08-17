@@ -201,9 +201,16 @@ export default async function PortalMessagesPage({
               // one of the two parties to this conversation. 'hq' is CrewFlow
               // talking to the org on its own helpdesk — not addressed to this
               // customer, and previously previewed as though the org sent it.
-              const lastVisible = (t.last_message ?? []).find(
-                (m) => !m.internal && m.author_kind !== "hq",
-              );
+              // The embedded to-many rows arrive in unspecified (PK) order, so
+              // sort by created_at DESC before selecting — otherwise the preview
+              // shows an arbitrary/oldest message instead of the latest reply.
+              const lastVisible = [...(t.last_message ?? [])]
+                .sort(
+                  (a, b) =>
+                    new Date(b.created_at).getTime() -
+                    new Date(a.created_at).getTime(),
+                )
+                .find((m) => !m.internal && m.author_kind !== "hq");
               return (
                 <li key={t.id}>
                   <a

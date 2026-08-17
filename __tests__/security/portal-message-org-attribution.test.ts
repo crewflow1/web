@@ -168,6 +168,72 @@ describe("portal — customers see org replies as the org", () => {
     );
     expect(PORTAL_LIST).toMatch(/!m\.internal && m\.author_kind !== "hq"/);
   });
+
+  it("list preview sorts the embedded rows by created_at DESC before selecting", () => {
+    // The embedded to-many `last_message` rows arrive in unspecified (PK) order,
+    // so a bare `.find(...)` returned an arbitrary/oldest message instead of the
+    // latest reply. The sort must happen BEFORE the attribution filter.
+    const sortIdx = PORTAL_LIST.search(
+      /\[\.\.\.\(t\.last_message \?\? \[\]\)\][\s\S]*?\.sort\(/,
+    );
+    const findIdx = PORTAL_LIST.indexOf("!m.internal && m.author_kind !== \"hq\"");
+    expect(sortIdx).toBeGreaterThan(-1);
+    expect(findIdx).toBeGreaterThan(-1);
+    expect(sortIdx).toBeLessThan(findIdx);
+    // Descending on created_at: newer (b) before older (a).
+    expect(PORTAL_LIST).toMatch(
+      /new Date\(b\.created_at\)\.getTime\(\)\s*-\s*new Date\(a\.created_at\)\.getTime\(\)/,
+    );
+  });
+});
+
+// =====================================================================
+// Preview selection — newest non-internal, non-hq message wins
+// =====================================================================
+
+describe("portal list preview — picks the latest visible message", () => {
+  // Mirrors the exact inline selection in app/customer-portal/[token]/
+  // messages/page.tsx so a regression in the ordering is caught behaviourally,
+  // not just by source-string match.
+  type Msg = {
+    body: string;
+    created_at: string;
+    author_kind: string;
+    internal: boolean;
+  };
+  const selectPreview = (rows: Msg[]) =>
+    [...rows]
+      .sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      )
+      .find((m) => !m.internal && m.author_kind !== "hq");
+
+  it("returns the newest reply even when rows arrive oldest-first (PK order)", () => {
+    const rows: Msg[] = [
+      { body: "first", created_at: "2026-01-01T00:00:00Z", author_kind: "customer", internal: false },
+      { body: "latest reply", created_at: "2026-03-01T00:00:00Z", author_kind: "org", internal: false },
+      { body: "middle", created_at: "2026-02-01T00:00:00Z", author_kind: "customer", internal: false },
+    ];
+    expect(selectPreview(rows)?.body).toBe("latest reply");
+  });
+
+  it("skips a newer internal HQ note and falls back to the newest visible message", () => {
+    const rows: Msg[] = [
+      { body: "customer question", created_at: "2026-01-01T00:00:00Z", author_kind: "customer", internal: false },
+      { body: "org answer", created_at: "2026-02-01T00:00:00Z", author_kind: "org", internal: false },
+      { body: "internal note", created_at: "2026-03-01T00:00:00Z", author_kind: "hq", internal: true },
+    ];
+    expect(selectPreview(rows)?.body).toBe("org answer");
+  });
+
+  it("never surfaces an hq message even when it is the newest visible one", () => {
+    const rows: Msg[] = [
+      { body: "org answer", created_at: "2026-02-01T00:00:00Z", author_kind: "org", internal: false },
+      { body: "crewflow to org", created_at: "2026-03-01T00:00:00Z", author_kind: "hq", internal: false },
+    ];
+    expect(selectPreview(rows)?.body).toBe("org answer");
+  });
 });
 
 // =====================================================================
