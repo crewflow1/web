@@ -134,7 +134,7 @@ async function buildProfitDocument(
       job_id: string | null;
       started_at: string;
       ended_at: string | null;
-      breaks: TimeEntry["breaks"];
+      breaks: unknown;
     }>((from, to) =>
       client
         .from("time_entries")
