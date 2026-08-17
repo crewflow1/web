@@ -1,6 +1,6 @@
 import { round2, toPounds } from "@/lib/money";
 
-import { rateForStatus } from "./verification";
+import { isVerificationStale, rateForStatus } from "./verification";
 import { isOutcomeStatus, type CisStatus } from "./types";
 
 /**
@@ -81,9 +81,26 @@ export type RateAuthority =
  * rate where it cannot identify the subcontractor; "we have not asked yet" is not
  * that, and guessing either 20% or 30% files a return that is wrong. Refusing is
  * the conservative branch — docs/cis-domain.md §7.
+ *
+ * STALENESS: an HMRC verification is valid only for the tax year it was obtained
+ * plus the two following tax years. Pass `asOf` (an ISO yyyy-mm-dd — normally the
+ * payment date) together with the profile's `verified_at` / `verification_expires_at`
+ * and a LAPSED verification is refused too, forcing re-verification rather than
+ * silently deducting at the old rate. The staleness rule itself lives in
+ * lib/cis/verification.ts (isVerificationStale) and is not duplicated here. This
+ * is the app-side twin of the database gate in
+ * 20261175000000_cis_stale_verification_gate.sql, which is the backstop; omit
+ * `asOf` when a freshness judgement is not wanted (e.g. reading back a historical
+ * rate for display).
  */
 export function resolveCisRate(
-  profile: { cis_status: CisStatus; deduction_rate: number | null } | null,
+  profile: {
+    cis_status: CisStatus;
+    deduction_rate: number | null;
+    verified_at?: string | null;
+    verification_expires_at?: string | null;
+  } | null,
+  asOf?: string,
 ): RateAuthority {
   if (!profile) {
     return {
@@ -112,6 +129,28 @@ export function resolveCisRate(
       status: profile.cis_status,
       reason:
         "This subcontractor's status and deduction rate disagree. Re-record their verification before paying them.",
+    };
+  }
+  // A verified outcome whose verification has since lapsed carries no authority to
+  // deduct: HMRC may have moved the subcontractor to the higher rate, so applying
+  // the old rate would under-deduct. Refuse and point at re-verification, exactly
+  // as the database gate does. Only checked when the caller supplies `asOf`.
+  if (
+    asOf &&
+    isVerificationStale(
+      {
+        cis_status: profile.cis_status,
+        verified_at: profile.verified_at ?? null,
+        verification_expires_at: profile.verification_expires_at ?? null,
+      },
+      asOf,
+    )
+  ) {
+    return {
+      ok: false,
+      status: profile.cis_status,
+      reason:
+        "This subcontractor's HMRC verification has expired. Re-verify them with HMRC before recording a payment — the old rate no longer applies.",
     };
   }
   return { ok: true, rate: stored, status: profile.cis_status };
