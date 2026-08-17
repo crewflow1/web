@@ -101,7 +101,7 @@ describe("sendStaffInvite — success", () => {
     // createUser carries the invite metadata, no email_confirm.
     expect(createUserMock).toHaveBeenCalledTimes(1);
     expect(createUserMock).toHaveBeenCalledWith(
-      expect.objectContaining({ email: "jane@x.test", user_metadata: metadata }),
+      expect.objectContaining({ email: "jane@x.test", app_metadata: metadata }),
     );
     const createArg = createUserMock.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
     expect(createArg?.email_confirm).toBeUndefined();
@@ -178,7 +178,7 @@ describe("sendStaffInvite — idempotent already-exists path", () => {
     expect(res).toEqual({ ok: true, alreadyExisted: true, hadMagicLink: true });
     // Metadata is refreshed on the matched existing user (case-insensitive).
     expect(updateUserByIdMock).toHaveBeenCalledTimes(1);
-    expect(updateUserByIdMock).toHaveBeenCalledWith("existing-9", { user_metadata: metadata });
+    expect(updateUserByIdMock).toHaveBeenCalledWith("existing-9", { app_metadata: metadata });
     expect(sendEmailMock).toHaveBeenCalledTimes(1);
   });
 
