@@ -12,7 +12,7 @@ export default async function CompanyPage({
   // Invited users (with invited_org_id in their auth metadata) go to the
   // join flow instead of the create-org flow.
   const user = await requireUser();
-  const meta = (user.user_metadata ?? {}) as { invited_org_id?: string };
+  const meta = (user.app_metadata ?? {}) as { invited_org_id?: string };
   if (meta.invited_org_id) {
     redirect("/onboarding/join");
   }

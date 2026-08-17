@@ -27,7 +27,9 @@ export default async function JoinPage({
 
   // Pull the invite intent from auth metadata. The client lib hides this
   // behind `user.user_metadata` after sign-in.
-  const meta = (user.user_metadata ?? {}) as {
+  // Read the invite anchor from admin-only app_metadata (see acceptOrgInvite /
+  // sendStaffInvite — user_metadata is user-writable and must not carry authz).
+  const meta = (user.app_metadata ?? {}) as {
     invited_org_id?: string;
     invited_role?: string;
   };
