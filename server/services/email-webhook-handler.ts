@@ -157,8 +157,13 @@ async function markFailed(eventKey: string, error: string): Promise<void> {
  * Resolve an active org route for a destination address, or null (→ ack-drop).
  * The lookup is on the NORMALISED address (lower/trim), matching how routes are
  * stored — so casing/whitespace in the delivery can never miss (or forge) a route.
+ *
+ * Exported so the shared normalised inbound endpoint
+ * (`app/api/receptionist/inbound`) resolves the email channel through the EXACT
+ * same `email_inbound_routes` lookup as this webhook — org attribution is a DB
+ * lookup on the reached infra identity, never a body-claimed value.
  */
-async function resolveOrgForAddress(
+export async function resolveOrgForAddress(
   toAddress: string | null,
 ): Promise<string | null> {
   const normalized = normalizeEmailAddress(toAddress);

@@ -162,8 +162,15 @@ async function markFailed(eventKey: string, error: string): Promise<void> {
   }
 }
 
-/** Resolve an active org route for a phone_number_id, or null (→ ack-drop). */
-async function resolveOrgForNumber(
+/**
+ * Resolve an active org route for a phone_number_id, or null (→ ack-drop).
+ *
+ * Exported so the shared normalised inbound endpoint
+ * (`app/api/receptionist/inbound`) resolves the WhatsApp channel through the
+ * EXACT same `whatsapp_number_routes` lookup as this webhook — org attribution
+ * is a DB lookup on the reached infra identity, never a body-claimed value.
+ */
+export async function resolveOrgForNumber(
   phoneNumberId: string | null,
 ): Promise<string | null> {
   if (!phoneNumberId) return null;
