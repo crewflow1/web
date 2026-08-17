@@ -10,8 +10,24 @@ import { useRouter } from "next/navigation";
  * debounce.
  */
 
+// Keep this union, TYPE_LABELS and TYPE_ICONS in lockstep with every `type`
+// the backend can emit (app/api/search/route.ts). A drift-guard test
+// (__tests__/search/palette-type-coverage.test.ts) fails if any backend type
+// is missing a label or icon here.
 type Hit = {
-  type: "customer" | "job" | "quote" | "invoice" | "lead" | "staff" | "risk_assessment" | "permit";
+  type:
+    | "customer"
+    | "job"
+    | "quote"
+    | "invoice"
+    | "lead"
+    | "staff"
+    | "risk_assessment"
+    | "permit"
+    | "job_document"
+    | "snag"
+    | "purchase_order"
+    | "site_report";
   id: string;
   title: string;
   subtitle: string | null;
@@ -27,6 +43,10 @@ const TYPE_LABELS: Record<Hit["type"], string> = {
   staff: "Staff",
   risk_assessment: "RAMS",
   permit: "Permit",
+  job_document: "Document",
+  snag: "Snag",
+  purchase_order: "PO",
+  site_report: "Report",
 };
 
 const TYPE_ICONS: Record<Hit["type"], string> = {
@@ -38,6 +58,10 @@ const TYPE_ICONS: Record<Hit["type"], string> = {
   staff: "👷",
   risk_assessment: "🦺",
   permit: "📋",
+  job_document: "📄",
+  snag: "🚧",
+  purchase_order: "🛒",
+  site_report: "📑",
 };
 
 export function SearchPalette() {
@@ -47,6 +71,7 @@ export function SearchPalette() {
   const [active, setActive] = useState(0);
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
   // Global Cmd/Ctrl+K binding.
@@ -57,6 +82,25 @@ export function SearchPalette() {
         setOpen((o) => !o);
       } else if (e.key === "Escape" && open) {
         setOpen(false);
+      } else if (e.key === "Tab" && open) {
+        // Focus trap: the palette is aria-modal, so keyboard focus must not
+        // escape to the (inert) app behind it. Wrap Tab / Shift+Tab at edges.
+        const root = dialogRef.current;
+        if (!root) return;
+        const f = root.querySelectorAll<HTMLElement>(
+          'a[href],button:not([disabled]),input:not([disabled]),[tabindex]:not([tabindex="-1"])',
+        );
+        const first = f[0];
+        const last = f[f.length - 1];
+        if (!first || !last) return;
+        const activeEl = document.activeElement;
+        if (e.shiftKey && (activeEl === first || activeEl === root)) {
+          last.focus();
+          e.preventDefault();
+        } else if (!e.shiftKey && activeEl === last) {
+          first.focus();
+          e.preventDefault();
+        }
       }
     }
     window.addEventListener("keydown", onKey);
@@ -151,6 +195,10 @@ export function SearchPalette() {
           onClick={() => setOpen(false)}
         >
           <div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Global search"
             className="w-full max-w-xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
