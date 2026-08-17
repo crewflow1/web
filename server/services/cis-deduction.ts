@@ -330,6 +330,14 @@ export async function recordCisPayment(
           "deduct. Verify them first.",
       };
     }
+    if (/verification for supplier .* expired/i.test(message)) {
+      return {
+        ok: false,
+        error:
+          "This subcontractor's HMRC verification has expired, so the old rate no longer applies. " +
+          "Re-verify them with HMRC before recording this payment.",
+      };
+    }
     if (/is not set up as a CIS subcontractor/i.test(message)) {
       return {
         ok: false,
