@@ -112,6 +112,12 @@ export type JobCostInputParams = {
   cycle: "weekly" | "monthly";
   /** Period start, selecting the dated NI/pension rate table. Undefined = latest. */
   periodStartIso?: string;
+  /**
+   * Optional per-user annual salary sacrifice (£). Sacrifice is outside the employer
+   * NI + pension base, so it lowers the on-cost for that worker. Absent ⇒ no
+   * sacrifice, on-costs byte-identical to before.
+   */
+  sacrificeByUser?: Map<string, number>;
 };
 
 /**
@@ -128,6 +134,7 @@ export function buildJobCostInput(params: JobCostInputParams): CostInputRow[] {
     params.hourlyByUser,
     params.cycle,
     params.periodStartIso,
+    params.sacrificeByUser,
   );
   return [...params.finances, ...labourRows, ...employerOnCostRows];
 }

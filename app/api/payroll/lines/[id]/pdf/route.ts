@@ -3,6 +3,12 @@ import { renderToBuffer } from "@react-pdf/renderer";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { PayslipPdf, type PayslipInput } from "@/lib/pdf/payslip-pdf";
+import {
+  computeEmployeeDeductionsForStoredLine,
+  employeeInputFromStoredProfile,
+} from "@/lib/payroll/compute";
+import { getPayrollTaxProfile } from "@/server/services/payroll-tax-profile";
+import { getPensionEnrolment } from "@/server/services/pension-enrolment";
 
 export const runtime = "nodejs";
 
@@ -72,6 +78,30 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   const { maskNiNumber } = await import("@/lib/staff/secrets");
   const niForPayslip = isAdmin ? secret?.ni_number ?? null : maskNiNumber(secret?.ni_number ?? null);
 
+  // Refine PAYE / NI / net with this employee's stored tax profile (Scottish bands,
+  // student loan, salary sacrifice) and their pension contribution — the same
+  // overlay the run detail page applies. Both reads are org-pinned in the service.
+  // With no profile this reproduces the stored figures exactly, so a standard
+  // payslip is byte-identical.
+  const cycle = line.run?.cycle === "weekly" ? "weekly" : "monthly";
+  const [taxProfile, pension] = await Promise.all([
+    getPayrollTaxProfile(ctx.org.id, line.user_id),
+    getPensionEnrolment(ctx.org.id, line.user_id),
+  ]);
+  const employeePensionRate =
+    pension?.status === "enrolled" && pension.employee_contribution_rate > 0
+      ? pension.employee_contribution_rate
+      : undefined;
+  const employee = computeEmployeeDeductionsForStoredLine(
+    line.gross_pay,
+    cycle,
+    line.run?.period_start ?? "",
+    {
+      ...employeeInputFromStoredProfile(taxProfile),
+      employeePensionRate,
+    },
+  );
+
   const input: PayslipInput = {
     org_name: org?.name ?? ctx.org.name,
     org_phone: org?.phone ?? null,
@@ -83,9 +113,12 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     hours: Number(line.hours ?? 0),
     hourly_pay: Number(line.hourly_pay ?? 0),
     gross_pay: Number(line.gross_pay ?? 0),
-    paye_estimate: Number(line.paye_estimate ?? 0),
-    ni_estimate: Number(line.ni_estimate ?? 0),
-    net_pay: Number(line.net_pay ?? 0),
+    paye_estimate: employee.paye_estimate,
+    ni_estimate: employee.ni_estimate,
+    salary_sacrifice: employee.salary_sacrifice,
+    student_loan_estimate: employee.student_loan_estimate,
+    employee_pension_estimate: employee.employee_pension_estimate,
+    net_pay: employee.net_pay,
   };
 
   const buffer = await renderToBuffer(PayslipPdf({ data: input }));

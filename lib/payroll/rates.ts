@@ -82,8 +82,17 @@ export type TaxRegion = "rest_of_uk" | "scotland";
  * postgraduate loan, its own rate. A borrower can be on a main plan AND the
  * postgraduate loan at once in real life; we model a single selected plan per
  * employee, which is the common case and all the schema could ever carry.
+ *
+ * Plan 5 is the post-2023 undergraduate plan for English/Welsh students who started
+ * their course on or after 1 August 2023; repayments began on 6 April 2026 (the
+ * 2026-27 tax year) at 9% above a £25,000 threshold.
  */
-export type StudentLoanPlan = "plan_1" | "plan_2" | "plan_4" | "postgraduate";
+export type StudentLoanPlan =
+  | "plan_1"
+  | "plan_2"
+  | "plan_4"
+  | "plan_5"
+  | "postgraduate";
 
 export type StudentLoanPlanRate = {
   /** Annual repayment threshold — 9% (or 6% postgrad) is due on earnings ABOVE this. */
@@ -159,6 +168,9 @@ const RATE_TABLES: Readonly<Record<TaxYear, EmploymentCostRates>> = {
       plan_1: { threshold_annual: 24_990, rate: 0.09 }, // 2024-25
       plan_2: { threshold_annual: 27_295, rate: 0.09 }, // 2024-25
       plan_4: { threshold_annual: 31_395, rate: 0.09 }, // 2024-25 (Scotland-domiciled)
+      // Plan 5 repayments did NOT start until 6 Apr 2026; carried at its statutory
+      // £25,000 threshold for type completeness — no Plan 5 borrower repays in 2024-25.
+      plan_5: { threshold_annual: 25_000, rate: 0.09 }, // 2024-25 (not yet in force)
       postgraduate: { threshold_annual: 21_000, rate: 0.06 }, // 2024-25
     },
     // Scottish income-tax scale, tax year 2024-25 (same £12,570 PA as rUK; six
@@ -200,6 +212,9 @@ const RATE_TABLES: Readonly<Record<TaxYear, EmploymentCostRates>> = {
       plan_1: { threshold_annual: 26_065, rate: 0.09 }, // 2025-26
       plan_2: { threshold_annual: 28_470, rate: 0.09 }, // 2025-26
       plan_4: { threshold_annual: 32_745, rate: 0.09 }, // 2025-26 (Scotland-domiciled)
+      // Plan 5 repayments start 6 Apr 2026; carried at £25,000 for type completeness
+      // — no Plan 5 borrower repays in 2025-26.
+      plan_5: { threshold_annual: 25_000, rate: 0.09 }, // 2025-26 (not yet in force)
       postgraduate: { threshold_annual: 21_000, rate: 0.06 }, // 2025-26 (frozen)
     },
     // Scottish income-tax scale, tax year 2025-26 (starter/basic band tops raised;
@@ -247,6 +262,9 @@ const RATE_TABLES: Readonly<Record<TaxYear, EmploymentCostRates>> = {
       plan_1: { threshold_annual: 26_065, rate: 0.09 }, // 2026-27 (carried from 2025-26 — unconfirmed)
       plan_2: { threshold_annual: 28_470, rate: 0.09 }, // 2026-27 (carried from 2025-26 — unconfirmed)
       plan_4: { threshold_annual: 32_745, rate: 0.09 }, // 2026-27 (carried from 2025-26 — unconfirmed)
+      // Plan 5 — LIVE from 6 Apr 2026 (this tax year): 9% above £25,000. See
+      // docs/payroll-employer-costs.md.
+      plan_5: { threshold_annual: 25_000, rate: 0.09 }, // 2026-27 (first repayments)
       postgraduate: { threshold_annual: 21_000, rate: 0.06 }, // 2026-27 (frozen)
     },
     // Scottish income tax, tax year 2026-27. CAUTION: the 2026-27 Scottish Budget

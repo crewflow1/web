@@ -17,6 +17,7 @@ export type StudentLoanPlanValue =
   | "plan_1"
   | "plan_2"
   | "plan_4"
+  | "plan_5"
   | "postgraduate";
 
 export type PayrollTaxProfile = {
@@ -32,6 +33,7 @@ const PLANS: readonly StudentLoanPlanValue[] = [
   "plan_1",
   "plan_2",
   "plan_4",
+  "plan_5",
   "postgraduate",
 ];
 
