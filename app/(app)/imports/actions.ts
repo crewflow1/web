@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { sendStaffInvite } from "@/server/services/staff-invite";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
 import type { Json } from "@/lib/supabase/types";
@@ -1155,7 +1156,8 @@ export async function sendStaffInvitesFromImport(importId: string) {
   if (!uuid.safeParse(importId).success) redirect("/imports?error=bad_id");
 
   const supabase = await createClient();
-  const admin = createAdminClient();
+  // Invites now go through sendStaffInvite (service-role inside it), so this
+  // function no longer needs its own admin client.
 
   // ACTIVE-org pin. This action SENDS REAL INVITE EMAILS carrying
   // `invited_org_id: ctx.org.id`, so unpinned it read ANOTHER company's staff
@@ -1194,25 +1196,29 @@ export async function sendStaffInvitesFromImport(importId: string) {
       continue;
     }
     try {
-      await admin.auth.admin.inviteUserByEmail(email, {
-        // Must match the canonical staff-invite contract in
-        // app/(app)/staff/actions.ts. The /onboarding join flow keys off
-        // `invited_org_id` (+ a "staff_invite" source tag). The previous
-        // payload used the key `org_id` and an "import" source tag, which
-        // NOTHING consumed — so an imported staff member clicking their invite
-        // wasn't recognised as invited, fell through to the create-company
-        // form, and spun up a brand-new empty org instead of joining their
-        // employer.
-        data: {
+      // Route through the ONE sanctioned staff-invite path (sendStaffInvite), the
+      // same one inviteStaff / resendStaffInvite use. It writes the invite anchor
+      // (invited_org_id / invited_role / source) to admin-only app_metadata — the
+      // bucket acceptOrgInvite and the pending-invites list now read — and sends
+      // the branded, cross-device Resend magic link. The previous direct
+      // inviteUserByEmail({ data }) wrote the anchor to user_metadata, which the
+      // app_metadata-only readers no longer consult, so import-invited staff hit
+      // `invite_mismatch` and could not join. role is hardcoded 'staff'
+      // (owner/admin are never grantable via import).
+      const result = await sendStaffInvite({
+        email,
+        fullName: m.full_name ?? null,
+        orgName: ctx.org.name ?? "your team",
+        metadata: {
           invited_org_id: ctx.org.id,
           invited_role: "staff",
           invited_full_name: m.full_name ?? null,
           source: "staff_invite",
         },
-        redirectTo: process.env.NEXT_PUBLIC_APP_URL
-          ? `${process.env.NEXT_PUBLIC_APP_URL}/onboarding/company?invited_org=${ctx.org.id}&invited_role=staff`
-          : undefined,
       });
+      if (!result.ok) {
+        throw new Error(result.reason);
+      }
       sent.push(email);
       await supabase
         .from("import_rows")
