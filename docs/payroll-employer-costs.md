@@ -219,25 +219,30 @@ trigger to revisit this decision.
 
 ### Student-loan repayment thresholds
 
-9% of earnings above the threshold for the income-contingent plans (1/2/4); 6% for the postgraduate
+9% of earnings above the threshold for the income-contingent plans (1/2/4/5); 6% for the postgraduate
 loan. No upper limit, no banding.
 
-| Plan | 2024-25 threshold | 2025-26 threshold | Rate |
-| --- | --- | --- | --- |
-| Plan 1 | £24,990 | £26,065 | 9% |
-| Plan 2 | £27,295 | £28,470 | 9% |
-| Plan 4 (Scotland-domiciled) | £31,395 | £32,745 | 9% |
-| Postgraduate Loan | £21,000 | £21,000 (frozen) | 6% |
+| Plan | 2024-25 threshold | 2025-26 threshold | 2026-27 threshold | Rate |
+| --- | --- | --- | --- | --- |
+| Plan 1 | £24,990 | £26,065 | £26,065 (carried) | 9% |
+| Plan 2 | £27,295 | £28,470 | £28,470 (carried) | 9% |
+| Plan 4 (Scotland-domiciled) | £31,395 | £32,745 | £32,745 (carried) | 9% |
+| Plan 5 (post-2023 undergraduate) | — (not in force) | — (not in force) | £25,000 | 9% |
+| Postgraduate Loan | £21,000 | £21,000 (frozen) | £21,000 (frozen) | 6% |
 
-Source: GOV.UK "Repaying your student loan — What you'll pay". **2026-27 thresholds had not been
-published at the retrieval date**, so `rates.ts` carries the 2025-26 figures forward with a loud
-`unconfirmed` comment; the postgraduate threshold is frozen regardless. Update on publication.
+Source: GOV.UK "Repaying your student loan — What you'll pay". **Plan 5** is the plan for
+English/Welsh students who started their course on or after 1 August 2023; **repayments began on
+6 April 2026** (the 2026-27 tax year) at 9% above a £25,000 threshold — the first live year, so it
+carries no earlier-year figure. The other **2026-27 thresholds had not been published at the retrieval
+date**, so `rates.ts` carries the 2025-26 figures forward with a loud `unconfirmed` comment; the
+postgraduate threshold is frozen regardless. Update on publication.
 
 ### Scottish income tax
 
 Scotland sets its own non-savings-income bands (six vs the rest-of-UK three); the personal allowance
 is UK-wide (£12,570). Applied only when an employee's tax region is Scotland (their code carries an
-`S`). The personal-allowance taper above £100k is **not** modelled, matching the rest-of-UK path.
+`S`). The £100k personal-allowance taper **is** modelled here (see below), matching the rest-of-UK
+path — the allowance is UK-wide.
 
 | Band | 2024-25 (income up to) | 2025-26 (income up to) | Rate |
 | --- | --- | --- | --- |
@@ -250,6 +255,22 @@ is UK-wide (£12,570). Applied only when an employee's tax region is Scotland (t
 
 Source: GOV.UK / Scottish Government "Scottish Income Tax" rates and bands. **2026-27 Scottish Budget
 bands were not confirmed at the retrieval date**, so 2025-26 is carried forward (flagged).
+
+### Personal-allowance taper (£100k)
+
+The tax-free personal allowance is withdrawn by **£1 for every £2** of adjusted income above
+**£100,000**, reaching **£0** at £100,000 + 2 × PA (£125,140 for the standard £12,570 allowance). It
+is modelled by `taperedPersonalAllowance(annualGross, basePA)` and applied in **both**
+`annualIncomeTax` (rest-of-UK) and `annualScottishIncomeTax` (the allowance is UK-wide).
+
+Mechanically the reduced allowance pushes the reclaimed income up into the taxed bands: the basic-rate
+band **width** is fixed, so the higher-rate threshold moves **down** with the shrinking allowance,
+while the additional/top threshold (£125,140) is a fixed total-income figure (the taper is already
+complete there). This creates the well-known **60% marginal band** between £100,000 and £125,140
+(rest-of-UK: 40% on the £1 plus 40% on the 50p of allowance lost). Below £100,000 the full allowance
+stands, so sub-£100k pay is unchanged.
+
+Source: GOV.UK "Income Tax rates and Personal Allowances — Income over £100,000".
 
 ### Employee pension + salary sacrifice
 
