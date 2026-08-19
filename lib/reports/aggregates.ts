@@ -2,7 +2,12 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
-import { computeVatQuarter, endOfQuarterExclusiveIso } from "@/lib/tax/compute";
+import {
+  computeVatQuarter,
+  endOfQuarterExclusiveIso,
+  resolveFlatRateForPeriod,
+} from "@/lib/tax/compute";
+import { readOrgSettings } from "@/lib/org-config/service";
 import {
   gatherVatQuarterInputs,
   type VatInputsDb,
@@ -255,6 +260,11 @@ export async function vatPerQuarter(
   // authority (SAME call shape as the /tax page and the quarterly-PDF route),
   // then compute boxes 1/4/5 with the one pure function. The EXCLUSIVE upper
   // bound keeps a next-quarter payment out.
+  // The org's scheme + FRS config so this trend reconciles with /tax, /dashboard,
+  // the PDF and the frozen return. Read ONCE; each quarter re-resolves FRS on its
+  // own start (effective-date gating handles quarters before FRS began). Cash +
+  // disabled FRS ⇒ inert opts ⇒ the trend is byte-for-byte the pre-scheme figures.
+  const orgSettings = await readOrgSettings(supabase, orgId);
   const vatDb = supabase as unknown as VatInputsDb;
   const rows = await Promise.all(
     quarterStarts.map(async (quarterStartIso) => {
@@ -264,6 +274,7 @@ export async function vatPerQuarter(
         orgId,
         quarterStartIso,
         quarterEndExclusiveIso,
+        orgSettings.vat_scheme,
       );
       const vat = computeVatQuarter(
         inputs.invoicePayments,
@@ -271,6 +282,11 @@ export async function vatPerQuarter(
         quarterStartIso,
         quarterEndExclusiveIso,
         inputs.reverseCharge.vat,
+        {
+          scheme: orgSettings.vat_scheme,
+          accrualInvoices: inputs.accrualInvoices,
+          flatRate: resolveFlatRateForPeriod(orgSettings.flat_rate_config, quarterStartIso),
+        },
       );
       return {
         quarter: quarterStartIso,

@@ -1,7 +1,17 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
-import { startOfQuarterIso } from "@/lib/tax/compute";
+import {
+  startOfQuarterIso,
+  endOfQuarterExclusiveIso,
+  resolveFlatRateForPeriod,
+  type AccrualInvoiceRow,
+} from "@/lib/tax/compute";
+import { readOrgSettings } from "@/lib/org-config/service";
+import {
+  gatherAccrualInvoices,
+  type VatInputsDb,
+} from "@/server/services/vat-quarter-inputs";
 import { cisTaxMonthEnd } from "@/lib/cis/tax-month";
 import { invoiceBusinessToday } from "@/lib/invoices/overdue";
 import type { CisPaymentSnapshotRow } from "@/lib/cis/statements";
@@ -373,6 +383,27 @@ export async function buildOrgCashOut(
     const supabase = await createClient();
     const facts = await gatherCashOutFacts(supabase as unknown as CashOutClient, orgId, todayIso);
 
+    // Scheme (cash/standard) + FRS come from org_settings so /cash's "VAT due"
+    // reconciles with /tax, the PDF and the frozen return instead of a cash-basis
+    // divergence. LOUD read: a config-read failure throws into the best-effort
+    // catch below (→ loadError banner), never a silently divergent basis. Cash +
+    // disabled FRS ⇒ inert opts ⇒ the VAT figure is byte-for-byte the pre-scheme one.
+    const quarterStartIso = startOfQuarterIso(now);
+    const orgSettings = await readOrgSettings(supabase, orgId);
+    const flatRate = resolveFlatRateForPeriod(orgSettings.flat_rate_config, quarterStartIso);
+    // Accrual output VAT needs the quarter's ISSUED invoices — read ONLY for a
+    // standard-scheme org (the cash path pays no extra query). Same authority reader
+    // (org-pinned, paged, loud) the tile/PDF/return use, so the window can't drift.
+    let vatAccrualInvoices: AccrualInvoiceRow[] = [];
+    if (orgSettings.vat_scheme === "standard") {
+      vatAccrualInvoices = await gatherAccrualInvoices(
+        supabase as unknown as VatInputsDb,
+        orgId,
+        quarterStartIso,
+        endOfQuarterExclusiveIso(quarterStartIso),
+      );
+    }
+
     const summary = computeOrgCashOut({
       bills: facts.bills,
       payments: facts.payments,
@@ -383,7 +414,10 @@ export async function buildOrgCashOut(
       cisSnapshots: facts.cisSnapshots,
       vatInvoicePayments: facts.invoicePayments,
       vatFinances: facts.allFinances,
-      quarterStartIso: startOfQuarterIso(now),
+      vatScheme: orgSettings.vat_scheme,
+      vatAccrualInvoices,
+      vatFlatRate: flatRate,
+      quarterStartIso,
       todayIso,
     });
 

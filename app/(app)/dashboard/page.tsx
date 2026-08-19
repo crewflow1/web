@@ -51,7 +51,9 @@ import { getPayrollTaxProfilesForOrg } from "@/server/services/payroll-tax-profi
 import {
   computeVatQuarter,
   endOfQuarterExclusiveIso,
+  resolveFlatRateForPeriod,
 } from "@/lib/tax/compute";
+import { readOrgSettings } from "@/lib/org-config/service";
 
 /**
  * Owner dashboard.
@@ -508,11 +510,16 @@ export default async function DashboardPage() {
   // self-accounted into boxes 1 AND 4 (net-neutral) — both from the ONE paged
   // read layer the /tax tile, the PDF and the frozen HMRC return share.
   const quarterEndExclusive = endOfQuarterExclusiveIso(quarterStart);
+  // Scheme (cash/standard) + FRS come from org_settings so the dashboard tile
+  // reconciles with /tax, the PDF and the frozen return. LOUD read: a config error
+  // must not silently fall back to a divergent basis. Cash + disabled FRS ⇒ inert.
+  const dashOrgSettings = await readOrgSettings(supabase, ctx.org.id);
   const vatInputs = await gatherVatQuarterInputs(
     supabase as unknown as VatInputsDb,
     ctx.org.id,
     quarterStart,
     quarterEndExclusive,
+    dashOrgSettings.vat_scheme,
   );
   const vat = computeVatQuarter(
     vatInputs.invoicePayments,
@@ -520,6 +527,11 @@ export default async function DashboardPage() {
     quarterStart,
     quarterEndExclusive,
     vatInputs.reverseCharge.vat,
+    {
+      scheme: dashOrgSettings.vat_scheme,
+      accrualInvoices: vatInputs.accrualInvoices,
+      flatRate: resolveFlatRateForPeriod(dashOrgSettings.flat_rate_config, quarterStart),
+    },
   );
 
   // ---- time + labour (Wave 4) ----

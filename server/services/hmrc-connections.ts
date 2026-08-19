@@ -7,8 +7,6 @@ import {
   computeVatNetTotals,
   computeVatQuarter,
   endOfVatPeriodExclusiveIso,
-  flatRateTurnoverInclVat,
-  relevantGoodsInclVat,
   resolveFlatRateForPeriod,
   DEFAULT_VAT_STAGGER,
   DEFAULT_VAT_SCHEME,
@@ -400,24 +398,13 @@ export async function prepareVatReturn(params: {
     created_at: string;
   }>).map((f) => ({ vat_total: f.vat_total, amount: f.amount, created_at: f.created_at }));
 
-  // Resolve the FRS position (if any) against the SAME turnover the flat box-1
-  // calculation uses and the window's measured relevant-goods spend, then build the
-  // scheme+FRS options once and use them for BOTH the VAT boxes and the net totals
-  // so the frozen 9-box return is internally consistent. Scheme `cash` + disabled
-  // FRS ⇒ opts are inert ⇒ the frozen figures are byte-for-byte the pre-scheme ones.
-  const flatRate = resolveFlatRateForPeriod(
-    flatRateConfig,
-    quarterStartIso,
-    quarterEndIso,
-    flatRateTurnoverInclVat(
-      inputs.invoicePayments,
-      inputs.accrualInvoices,
-      quarterStartIso,
-      quarterEndIso,
-      scheme,
-    ),
-    relevantGoodsInclVat(finances, quarterStartIso, quarterEndIso),
-  );
+  // Resolve the FRS position (if any) from the org's config and the period start,
+  // then build the scheme+FRS options once and use them for BOTH the VAT boxes and
+  // the net totals so the frozen 9-box return is internally consistent. Limited-cost
+  // status is the org's EXPLICIT declaration; undeclared ⇒ the conservative 16.5%
+  // (never the lower sector rate). Scheme `cash` + disabled FRS ⇒ opts are inert ⇒
+  // the frozen figures are byte-for-byte the pre-scheme ones.
+  const flatRate = resolveFlatRateForPeriod(flatRateConfig, quarterStartIso);
   const vatOpts: VatComputeOptions = {
     scheme,
     accrualInvoices: inputs.accrualInvoices,

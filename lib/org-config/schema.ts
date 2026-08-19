@@ -199,7 +199,9 @@ export const flatRateConfigSchema = z
     first_year_discount: z.coerce.boolean().default(false),
     effective_from: optionalIsoDate,
     effective_to: optionalIsoDate,
-    limited_cost: z.enum(["auto", "yes", "no"]).default("auto"),
+    // EXPLICIT limited-cost declaration — never auto-derived (see lib/tax/compute.ts).
+    // 'unset' is the safe default and files the conservative 16.5%.
+    limited_cost: z.enum(["yes", "no", "unset"]).default("unset"),
   })
   .strip();
 

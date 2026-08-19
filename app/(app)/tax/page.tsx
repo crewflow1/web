@@ -10,8 +10,6 @@ import {
   startOfVatPeriodIso,
   endOfVatPeriodExclusiveIso,
   startOfTaxYearIso,
-  flatRateTurnoverInclVat,
-  relevantGoodsInclVat,
   resolveFlatRateForPeriod,
   type VatComputeOptions,
 } from "@/lib/tax/compute";
@@ -214,21 +212,12 @@ export default async function TaxDashboardPage() {
     orgSettings.vat_scheme,
   );
   // The org's output-VAT basis (cash/standard) and FRS config branch the SAME
-  // authority. FRS is resolved against the exact turnover the flat box-1 uses and
-  // the window's measured relevant-goods spend. Cash + disabled FRS ⇒ inert opts ⇒
-  // the tile shows the byte-for-byte pre-scheme figures.
+  // authority. Limited-cost status is the org's EXPLICIT declaration; undeclared ⇒
+  // conservative 16.5%. Cash + disabled FRS ⇒ inert opts ⇒ the tile shows the
+  // byte-for-byte pre-scheme figures.
   const vatFlatRate = resolveFlatRateForPeriod(
     orgSettings.flat_rate_config,
     quarterStartIso,
-    quarterEndExclusiveIso,
-    flatRateTurnoverInclVat(
-      vatInputs.invoicePayments,
-      vatInputs.accrualInvoices,
-      quarterStartIso,
-      quarterEndExclusiveIso,
-      orgSettings.vat_scheme,
-    ),
-    relevantGoodsInclVat(finances, quarterStartIso, quarterEndExclusiveIso),
   );
   const vatOpts: VatComputeOptions = {
     scheme: orgSettings.vat_scheme,

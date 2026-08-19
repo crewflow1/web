@@ -13,9 +13,9 @@ const inputClass =
   "mt-1.5 block w-full rounded-md border border-slate-300 px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500";
 
 const LIMITED_COST_LABEL: Record<FlatRateSchemeConfig["limited_cost"], string> = {
-  auto: "Automatic — apply the HMRC limited-cost test each period",
-  yes: "Always limited cost (16.5%)",
-  no: "Never limited cost",
+  unset: "Not yet declared — files at the conservative 16.5%",
+  yes: "Yes — limited-cost business (16.5%)",
+  no: "No — not a limited-cost business (use my sector rate)",
 };
 
 /**
@@ -41,10 +41,25 @@ export function FlatRateForm({
 
   const fe = state.fieldErrors ?? {};
 
+  const limitedCostUndeclared = config.enabled && config.limited_cost === "unset";
+
   return (
     <form action={formAction} noValidate className="mt-5 space-y-4">
       <FormErrorBanner error={state.error} />
       <FormSuccessBanner message={state.ok ? state.successMessage : null} />
+
+      {limitedCostUndeclared ? (
+        <div
+          role="alert"
+          className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+        >
+          <strong>Declare your limited-cost status.</strong> Until you set
+          &ldquo;Limited-cost trader&rdquo; to Yes or No below, your VAT returns file
+          at the conservative <strong>16.5%</strong> flat rate. This never
+          under-declares, but if you are not a limited-cost business you may be paying
+          more VAT than you owe — set it to your correct status and save.
+        </div>
+      ) : null}
 
       <fieldset disabled={!isAdmin} className="space-y-4 disabled:opacity-60">
         <label className="flex items-start gap-3">
@@ -111,7 +126,7 @@ export function FlatRateForm({
               <p role="alert" className="mt-1 text-xs text-red-700">{fe.limited_cost}</p>
             ) : (
               <p className="mt-1 text-xs text-slate-500">
-                Automatic uses the HMRC test (goods below 2% of turnover / £250 a quarter → 16.5%). We treat all logged costs as goods, so a services-heavy business should force this.
+                HMRC&rsquo;s limited-cost test compares your spend on <em>goods</em> (not services, labour, rent or software) with your turnover. We can&rsquo;t split that from your costs, so you must declare it. Until you do, returns file at the safe 16.5%.
               </p>
             )}
           </div>

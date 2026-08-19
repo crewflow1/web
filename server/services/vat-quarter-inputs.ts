@@ -284,7 +284,7 @@ type RawAccrualInvoice = {
  * + PAGED (F-1: invoices is high-value, a bare select truncates at the 1000-row
  * cap and would under-state a filed accrual VAT figure).
  */
-async function gatherAccrualInvoices(
+export async function gatherAccrualInvoices(
   db: VatInputsDb,
   orgId: string,
   quarterStartIso: string,

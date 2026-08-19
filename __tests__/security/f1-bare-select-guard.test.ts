@@ -252,11 +252,11 @@ const ALLOWLIST: Record<string, string> = {
   // boxes 1/4/7 reconcile in one quarter: the RC path now pages the finances
   // window, chunks the allocations by finance_id, then chunks the void filter by
   // supplier_payments.id — lines 194→224/243.)
-  "server/services/vat-quarter-inputs.ts:144":
-    "bounded: chunked .in('id', slice(≤IN_CHUNK=500 unique invoice PKs)) — parent invoice_payments read is fully paged; ≤500 rows per call",
-  "server/services/vat-quarter-inputs.ts:224":
+  "server/services/vat-quarter-inputs.ts:155":
+    "bounded: chunked .in('id', slice(≤IN_CHUNK=500 unique invoice PKs)) — parent invoice_payments read is fully paged; ≤500 rows per call. (Lines moved +11 when the standard-scheme accrual-invoice source + imports were added.)",
+  "server/services/vat-quarter-inputs.ts:235":
     "bounded: chunked .in('finance_id', slice(≤IN_CHUNK=500 unique finance PKs)) — parent finances window read is fully paged (fetchAllRows); ≤500 rows per call",
-  "server/services/vat-quarter-inputs.ts:243":
+  "server/services/vat-quarter-inputs.ts:254":
     "bounded: chunked .in('id', slice(≤IN_CHUNK=500 unique payment PKs)) — the void filter; the payment-id set is drawn from the already-chunked allocations, supplier_payments.id is unique so ≤500 rows per call",
   // Surfaced only once quote_line_items joined HIGH_VALUE_TABLES. This line is an
   // INSERT (`.from('quote_line_items').insert(rows)`), NOT a read — it cannot
@@ -393,8 +393,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE org's members (.eq('org_id')) — the assessor picker (listAssessors); an org's headcount is tens/low-hundreds, never near 1000",
   "app/(app)/health-safety/_signoff-data.ts:137":
     "bounded: name lookup .in('user_id', ids) where ids is a de-duped Set of sign-off user_ids from a bounded parent set — ≤ parent rows, never near 1000",
-  "app/(app)/settings/page.tsx:76":
-    "bounded: ONE org's members (.eq('org_id')) — the settings team panel; bounded by the org's headcount, never near 1000",
+  "app/(app)/settings/page.tsx:77":
+    "bounded: ONE org's members (.eq('org_id')) — the settings team panel; bounded by the org's headcount, never near 1000 (line moved 76→77 when the FlatRateSettings import was added)",
   "app/(app)/staff/leave/page.tsx:97":
     "bounded: ONE org's members (.eq('org_id')) — the leave-page name lookup; bounded by the org's headcount (line moved 96→97 when the getHolidayBalanceForUser import was added for the holiday-balance card)",
   "app/(app)/staff/page.tsx:56":

@@ -13,8 +13,6 @@ import {
   computeVatQuarter,
   startOfVatPeriodIso,
   endOfVatPeriodExclusiveIso,
-  flatRateTurnoverInclVat,
-  relevantGoodsInclVat,
   resolveFlatRateForPeriod,
 } from "@/lib/tax/compute";
 import { readOrgSettings } from "@/lib/org-config/service";
@@ -142,20 +140,9 @@ export async function GET(request: NextRequest) {
     created_at: r.created_at as string,
   }));
   // Scheme + FRS branch the SAME authority (cash + disabled FRS ⇒ inert ⇒ unchanged
-  // working paper). Resolve FRS against the exact turnover the flat box-1 uses.
-  const flatRate = resolveFlatRateForPeriod(
-    orgSettings.flat_rate_config,
-    qStart,
-    qEndExclusiveIso,
-    flatRateTurnoverInclVat(
-      inputs.invoicePayments,
-      inputs.accrualInvoices,
-      qStart,
-      qEndExclusiveIso,
-      orgSettings.vat_scheme,
-    ),
-    relevantGoodsInclVat(finances, qStart, qEndExclusiveIso),
-  );
+  // working paper). Limited-cost status is the org's explicit declaration; undeclared
+  // ⇒ conservative 16.5%.
+  const flatRate = resolveFlatRateForPeriod(orgSettings.flat_rate_config, qStart);
   const vat = computeVatQuarter(
     inputs.invoicePayments,
     finances,
