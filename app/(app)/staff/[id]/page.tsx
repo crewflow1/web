@@ -145,6 +145,12 @@ export default async function StaffDetailPage({
     salary_sacrifice_annual_pounds: taxProfile
       ? String(Math.round(taxProfile.salary_sacrifice_annual_pence) / 100)
       : "0",
+    ni_category: taxProfile?.ni_category ?? "A",
+    date_of_birth: taxProfile?.date_of_birth ?? "",
+    standard_hours_per_day:
+      taxProfile?.standard_hours_per_day != null
+        ? String(taxProfile.standard_hours_per_day)
+        : "",
   };
 
   const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;

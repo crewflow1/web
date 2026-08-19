@@ -222,6 +222,140 @@ export function annualEmployerNi(annualGross: number, rates: EmployerNiRates): n
   return (annualGross - rates.secondary_threshold_annual) * rates.rate;
 }
 
+// ---------------------------------------------------------------------------
+// Employer NI category letters
+// ---------------------------------------------------------------------------
+
+/**
+ * The employer-NI category letters CrewFlow prices. Two employer-cost profiles:
+ *
+ *   STANDARD (A, B, C, J) — secondary rate (15% for 2025-26/2026-27) on all
+ *   earnings above the Secondary Threshold. B/C/J differ from A on the EMPLOYEE
+ *   side only (reduced-rate married women, over-State-Pension-age, deferment); the
+ *   EMPLOYER pays the same standard secondary rate for all four.
+ *
+ *   ZERO-RATE-TO-UST (H, M, V, Z) — 0% employer NI up to the Upper Secondary
+ *   Threshold (£50,270), then the standard rate ABOVE it:
+ *     H — apprentice under 25
+ *     M — employee under 21
+ *     V — qualifying veteran (first civilian employment)
+ *     Z — under 21 with deferment
+ *
+ * The category is an INPUT (the letter an admin records on the employee's tax
+ * profile), never inferred from age — mirroring how the tax REGION is an input, not
+ * guessed from a postcode. Absent ⇒ 'A', so an employee with no category recorded is
+ * priced exactly as before (standard rate). Date of birth, where recorded, feeds only
+ * a non-blocking CONSISTENCY warning ({@link niCategoryAgeWarning}); it never changes
+ * the figure, because the letter the employer has entered on their payroll is
+ * authoritative.
+ */
+export type NiCategory = "A" | "B" | "C" | "J" | "H" | "M" | "V" | "Z";
+
+export const NI_CATEGORIES: readonly NiCategory[] = [
+  "A",
+  "B",
+  "C",
+  "J",
+  "H",
+  "M",
+  "V",
+  "Z",
+];
+
+/** Standard secondary rate above the Secondary Threshold. */
+export const STANDARD_EMPLOYER_NI_CATEGORIES: readonly NiCategory[] = [
+  "A",
+  "B",
+  "C",
+  "J",
+];
+
+/** 0% up to the Upper Secondary Threshold, then the standard rate above it. */
+export const ZERO_RATE_TO_UST_NI_CATEGORIES: readonly NiCategory[] = [
+  "H",
+  "M",
+  "V",
+  "Z",
+];
+
+export const DEFAULT_NI_CATEGORY: NiCategory = "A";
+
+export function isNiCategory(v: unknown): v is NiCategory {
+  return typeof v === "string" && (NI_CATEGORIES as readonly string[]).includes(v);
+}
+
+export type EmployerNiProfile = "standard" | "zero_rate_to_ust";
+
+export function employerNiProfileForCategory(category: NiCategory): EmployerNiProfile {
+  return (ZERO_RATE_TO_UST_NI_CATEGORIES as readonly string[]).includes(category)
+    ? "zero_rate_to_ust"
+    : "standard";
+}
+
+/**
+ * Employer (secondary) Class 1 NI on an annual gross for a specific category letter.
+ *
+ * Standard letters (A, B, C, J) — the existing {@link annualEmployerNi} rule,
+ * byte-identical, so the default path is unchanged.
+ *
+ * Zero-rate-to-UST letters (H, M, V, Z) — 0% employer NI on the band between the
+ * Secondary Threshold and the Upper Secondary Threshold, then the standard rate on
+ * earnings above the UST. Net effect: nil up to the UST, standard rate above it. This
+ * uses the SAME `upper_secondary_threshold_annual` and `rate` already carried in the
+ * dated rate table (`./rates`) — no new numbers are introduced, so a rate change next
+ * 6 April flows through here automatically.
+ */
+export function annualEmployerNiForCategory(
+  annualGross: number,
+  rates: EmployerNiRates,
+  category: NiCategory = DEFAULT_NI_CATEGORY,
+): number {
+  if (employerNiProfileForCategory(category) === "zero_rate_to_ust") {
+    const ust = rates.upper_secondary_threshold_annual;
+    if (annualGross <= ust) return 0;
+    return (annualGross - ust) * rates.rate;
+  }
+  return annualEmployerNi(annualGross, rates);
+}
+
+/** Whole years from `dobIso` to `atIso` (both `YYYY-MM-DD`), or null if unparseable. */
+function ageYearsAt(dobIso: string, atIso: string): number | null {
+  const dob = /^(\d{4})-(\d{2})-(\d{2})/.exec(dobIso);
+  const at = /^(\d{4})-(\d{2})-(\d{2})/.exec(atIso);
+  if (!dob || !at) return null;
+  const [dy, dm, dd] = [Number(dob[1]), Number(dob[2]), Number(dob[3])];
+  const [ay, am, ad] = [Number(at[1]), Number(at[2]), Number(at[3])];
+  let age = ay - dy;
+  if (am < dm || (am === dm && ad < dd)) age -= 1;
+  return age;
+}
+
+/**
+ * A non-blocking consistency check between a recorded NI category and date of birth.
+ *
+ * Categories M (under 21) and Z (under 21, deferment) require the employee to be
+ * under 21; H (apprentice) requires under 25. When a date of birth is recorded and the
+ * employee is at/over that age at the period end, the recorded category is likely
+ * stale (e.g. an under-21 who has since turned 21 stays on category A). Returns a
+ * human-readable warning string, or null when there is nothing to flag or no DOB is
+ * recorded. It NEVER changes the computed NI — the employer's recorded letter is
+ * authoritative; this only surfaces a prompt to review it. Veteran category V has a
+ * 52-week relief window from first civilian employment that DOB alone cannot verify,
+ * so it is never flagged here.
+ */
+export function niCategoryAgeWarning(
+  category: NiCategory,
+  dobIso: string | null | undefined,
+  periodEndIso: string,
+): string | null {
+  if (!dobIso) return null;
+  const limit = category === "H" ? 25 : category === "M" || category === "Z" ? 21 : null;
+  if (limit === null) return null;
+  const age = ageYearsAt(dobIso, periodEndIso);
+  if (age === null || age < limit) return null;
+  return `NI category ${category} requires the employee to be under ${limit}, but they are ${age} at the period end — review whether this category still applies.`;
+}
+
 /**
  * Employer automatic-enrolment pension contribution on an annual gross.
  *
@@ -247,9 +381,102 @@ export function annualEmployerPension(
   return qualifying * rates.minimum_employer_rate;
 }
 
+// ---------------------------------------------------------------------------
+// Gross pay composition — worked hours + overtime + paid leave
+// ---------------------------------------------------------------------------
+
+/** The default overtime premium when overtime hours are entered without one. */
+export const DEFAULT_OVERTIME_MULTIPLIER = 1.5;
+
+/**
+ * The three ADDITIVE components a period's gross can carry beyond plain worked hours.
+ * Every field is optional; an entirely empty object reproduces the plain
+ * hours × rate gross exactly, so existing runs are byte-identical.
+ *
+ *   overtimeHours / overtimeMultiplier — extra hours paid at a premium. The
+ *   multiplier is a per-line INPUT (not one hardcoded rate): 1.5 for time-and-a-half,
+ *   2 for double time, etc. Absent multiplier with overtime hours present ⇒
+ *   {@link DEFAULT_OVERTIME_MULTIPLIER}. Zero overtime hours ⇒ no overtime pay and a
+ *   reported multiplier of 0.
+ *
+ *   leaveHours — PAID-LEAVE hours (approved 'holiday' leave), paid at plain rate.
+ *   These are added ON TOP of worked hours. There is no double payment because worked
+ *   `hours` come only from clocked time_entries and a paid-leave day has no clocked
+ *   shift — the two sources are disjoint by construction (see
+ *   `app/(app)/payroll/actions.ts`). Absent ⇒ no holiday pay.
+ */
+export type PayrollExtras = {
+  overtimeHours?: number;
+  overtimeMultiplier?: number;
+  leaveHours?: number;
+};
+
+export type GrossBreakdown = {
+  /** Worked hours (from time_entries) — the plain-rate base. */
+  normal_hours: number;
+  overtime_hours: number;
+  /** Effective premium applied to overtime hours (0 when no overtime). */
+  overtime_multiplier: number;
+  leave_hours: number;
+  /** normal_hours × rate. */
+  normal_pay: number;
+  /** overtime_hours × rate × multiplier. */
+  overtime_pay: number;
+  /** leave_hours × rate (paid exactly once — see {@link PayrollExtras}). */
+  leave_pay: number;
+  /** normal_pay + overtime_pay + leave_pay. */
+  gross_pay: number;
+};
+
+/**
+ * Break a period's gross into its worked / overtime / paid-leave components.
+ *
+ * PURE. With no extras, `gross_pay === round2(hours × hourlyPay)` to the penny — the
+ * historical formula — so every existing stored line and every existing run recompute
+ * identically. Negative inputs are clamped to zero.
+ */
+export function computeGrossBreakdown(
+  hours: number,
+  hourlyPay: number,
+  extras: PayrollExtras = {},
+): GrossBreakdown {
+  const rate = Math.max(0, Number(hourlyPay) || 0);
+  const normalHours = Math.max(0, Number(hours) || 0);
+  const overtimeHours = Math.max(0, Number(extras.overtimeHours ?? 0) || 0);
+  const multiplier =
+    overtimeHours > 0
+      ? Math.max(
+          0,
+          Number(extras.overtimeMultiplier ?? DEFAULT_OVERTIME_MULTIPLIER) || 0,
+        )
+      : 0;
+  const leaveHours = Math.max(0, Number(extras.leaveHours ?? 0) || 0);
+  const normalPay = round2(normalHours * rate);
+  const overtimePay = round2(overtimeHours * rate * multiplier);
+  const leavePay = round2(leaveHours * rate);
+  return {
+    normal_hours: round2(normalHours),
+    overtime_hours: round2(overtimeHours),
+    overtime_multiplier: multiplier,
+    leave_hours: round2(leaveHours),
+    normal_pay: normalPay,
+    overtime_pay: overtimePay,
+    leave_pay: leavePay,
+    gross_pay: round2(normalPay + overtimePay + leavePay),
+  };
+}
+
 export type PayrollLineCompute = {
   hours: number;
   hourly_pay: number;
+  /** Worked-hours pay at plain rate (hours × hourly_pay). */
+  normal_pay: number;
+  overtime_hours: number;
+  overtime_multiplier: number;
+  overtime_pay: number;
+  /** Paid-leave hours included in this line's gross. */
+  leave_hours: number;
+  leave_pay: number;
   gross_pay: number;
   paye_estimate: number;
   ni_estimate: number;
@@ -293,10 +520,15 @@ export function computePayrollLine(
    * latest published table, which is only appropriate for pure-arithmetic tests.
    */
   periodStartIso?: string,
+  /**
+   * Optional overtime + paid-leave components. Absent ⇒ gross is plain hours × rate
+   * and every figure is byte-identical to the pre-overtime behaviour.
+   */
+  extras: PayrollExtras = {},
 ): PayrollLineCompute {
-  const safeHours = Math.max(0, hours);
   const safeRate = Math.max(0, hourlyPay);
-  const grossPay = round2(safeHours * safeRate);
+  const breakdown = computeGrossBreakdown(hours, hourlyPay, extras);
+  const grossPay = breakdown.gross_pay;
   const periods = periodsPerYear(cycle);
   const annualised = grossPay * periods;
   const annualTax = annualIncomeTax(annualised);
@@ -314,8 +546,14 @@ export function computePayrollLine(
     annualEmployerPension(annualised, resolved.rates.employer_pension) / periods,
   );
   return {
-    hours: round2(safeHours),
+    hours: breakdown.normal_hours,
     hourly_pay: round2(safeRate),
+    normal_pay: breakdown.normal_pay,
+    overtime_hours: breakdown.overtime_hours,
+    overtime_multiplier: breakdown.overtime_multiplier,
+    overtime_pay: breakdown.overtime_pay,
+    leave_hours: breakdown.leave_hours,
+    leave_pay: breakdown.leave_pay,
     gross_pay: grossPay,
     paye_estimate: payeEstimate,
     ni_estimate: niEstimate,
@@ -334,6 +572,8 @@ export type EmployerCostEstimate = {
   employment_cost_estimate: number;
   employer_rates_tax_year: TaxYear;
   employer_rates_extrapolated: boolean;
+  /** The NI category letter actually applied (defaults to 'A'). */
+  ni_category: NiCategory;
 };
 
 /**
@@ -429,13 +669,20 @@ export function employerCostsForStoredLine(
    * the pension basis, so it reduces both. Absent/0 ⇒ figures unchanged.
    */
   salarySacrificeAnnual?: number,
+  /**
+   * Optional NI category letter. Absent ⇒ 'A' (standard rate), so an untracked
+   * employee is priced exactly as before. H/M/V/Z pay 0% employer NI up to the Upper
+   * Secondary Threshold.
+   */
+  niCategory: NiCategory = DEFAULT_NI_CATEGORY,
 ): EmployerCostEstimate {
   const gross = round2(Math.max(0, Number(grossPay ?? 0) || 0));
   const periods = periodsPerYear(cycle);
   const annualised = sacrificedAnnualBase(gross, cycle, salarySacrificeAnnual);
   const resolved = resolveEmploymentCostRates(periodStartIso);
   const employerNi = round2(
-    annualEmployerNi(annualised, resolved.rates.employer_ni) / periods,
+    annualEmployerNiForCategory(annualised, resolved.rates.employer_ni, niCategory) /
+      periods,
   );
   const employerPension = round2(
     annualEmployerPension(annualised, resolved.rates.employer_pension) / periods,
@@ -446,6 +693,7 @@ export function employerCostsForStoredLine(
     employment_cost_estimate: round2(gross + employerNi + employerPension),
     employer_rates_tax_year: resolved.applied_tax_year,
     employer_rates_extrapolated: resolved.extrapolated,
+    ni_category: niCategory,
   };
 }
 
@@ -470,13 +718,19 @@ export function employerCostsForStoredLineWithPension(
    * exactly as on {@link employerCostsForStoredLine}. Absent/0 ⇒ figures unchanged.
    */
   salarySacrificeAnnual?: number,
+  /**
+   * Optional NI category letter. Absent ⇒ 'A' (standard rate). H/M/V/Z pay 0%
+   * employer NI up to the Upper Secondary Threshold.
+   */
+  niCategory: NiCategory = DEFAULT_NI_CATEGORY,
 ): EmployerCostEstimate {
   const gross = round2(Math.max(0, Number(grossPay ?? 0) || 0));
   const periods = periodsPerYear(cycle);
   const annualised = sacrificedAnnualBase(gross, cycle, salarySacrificeAnnual);
   const resolved = resolveEmploymentCostRates(periodStartIso);
   const employerNi = round2(
-    annualEmployerNi(annualised, resolved.rates.employer_ni) / periods,
+    annualEmployerNiForCategory(annualised, resolved.rates.employer_ni, niCategory) /
+      periods,
   );
   const annualPension = enrolment
     ? annualEmployerPensionForEnrolment(
@@ -492,6 +746,7 @@ export function employerCostsForStoredLineWithPension(
     employment_cost_estimate: round2(gross + employerNi + employerPension),
     employer_rates_tax_year: resolved.applied_tax_year,
     employer_rates_extrapolated: resolved.extrapolated,
+    ni_category: niCategory,
   };
 }
 
@@ -643,7 +898,38 @@ export type StoredPayrollTaxProfile = {
   tax_region?: string | null;
   student_loan_plan?: string | null;
   salary_sacrifice_annual_pence?: number | string | null;
+  /** Employer-NI category letter (A/B/C/J/H/M/V/Z). Absent/invalid ⇒ 'A'. */
+  ni_category?: string | null;
+  /** Date of birth (YYYY-MM-DD) — feeds the category consistency warning only. */
+  date_of_birth?: string | null;
+  /**
+   * Contracted hours per WORKING day, used to convert approved paid-leave days into
+   * holiday-pay hours. Absent/0 ⇒ no holiday pay is added (default-safe).
+   */
+  standard_hours_per_day?: number | string | null;
 };
+
+/**
+ * The NI category letter to price this employee at. Defaults to 'A' (standard rate)
+ * for an absent, null or unrecognised value, so an employee with nothing recorded is
+ * priced exactly as before.
+ */
+export function niCategoryFromStoredProfile(
+  profile: StoredPayrollTaxProfile | null | undefined,
+): NiCategory {
+  const raw = profile?.ni_category;
+  return isNiCategory(raw) ? raw : DEFAULT_NI_CATEGORY;
+}
+
+/**
+ * Contracted hours per working day from a stored profile, or 0 when not set. Used to
+ * turn approved paid-leave working days into holiday-pay hours; 0 ⇒ no holiday pay.
+ */
+export function standardHoursPerDayFromStoredProfile(
+  profile: StoredPayrollTaxProfile | null | undefined,
+): number {
+  return Math.max(0, Number(profile?.standard_hours_per_day ?? 0) || 0);
+}
 
 /**
  * Translate a stored per-employee tax profile into calculator inputs.
@@ -782,6 +1068,13 @@ export function employerOnCostsFromTimeEntries(
    * user ⇒ no sacrifice, figures byte-identical to the pre-sacrifice behaviour.
    */
   sacrificeByUser?: Map<string, number>,
+  /**
+   * Optional per-user NI category letter. Absent map / absent user ⇒ 'A' (standard
+   * rate), so on-costs are byte-identical to the pre-category behaviour. H/M/V/Z pay
+   * 0% employer NI up to the Upper Secondary Threshold, reducing their attributed
+   * labour on-cost.
+   */
+  niCategoryByUser?: Map<string, NiCategory>,
 ): LabourOnCostRow[] {
   // Group by worker: employer NI bands on the person, not on the job.
   const byUser = new Map<string, { jobHours: Map<string, number>; unattributed: number }>();
@@ -819,6 +1112,7 @@ export function employerOnCostsFromTimeEntries(
       cycle,
       periodStartIso,
       sacrificeByUser?.get(userId),
+      niCategoryByUser?.get(userId) ?? DEFAULT_NI_CATEGORY,
     );
     const onCost = round2(
       employer.employer_ni_estimate + employer.employer_pension_estimate,
@@ -901,6 +1195,17 @@ export function payrollCsv(
     employer_ni_estimate: number;
     employer_pension_estimate: number;
     employment_cost_estimate: number;
+    /**
+     * Overtime + holiday breakdown of gross. OPTIONAL for backward compatibility —
+     * absent means 0 (no overtime / no paid leave), and the columns are appended
+     * AFTER the existing ones so a downstream consumer keying on column position is
+     * unaffected. NI category defaults to 'A'.
+     */
+    overtime_hours?: number;
+    overtime_pay?: number;
+    holiday_hours?: number;
+    holiday_pay?: number;
+    ni_category?: string;
   }>,
   period: { period_start: string; period_end: string; cycle: string },
 ): string {
@@ -922,6 +1227,12 @@ export function payrollCsv(
     "Employer NI est",
     "Employer pension est",
     "Total employment cost est",
+    // Appended (see the row type) so existing column positions never shift.
+    "Overtime hours",
+    "Overtime pay",
+    "Holiday hours",
+    "Holiday pay",
+    "NI category",
   ];
   const lines = [header.join(",")];
   for (const r of rows) {
@@ -944,6 +1255,11 @@ export function payrollCsv(
         r.employer_ni_estimate.toFixed(2),
         r.employer_pension_estimate.toFixed(2),
         r.employment_cost_estimate.toFixed(2),
+        (r.overtime_hours ?? 0).toFixed(2),
+        (r.overtime_pay ?? 0).toFixed(2),
+        (r.holiday_hours ?? 0).toFixed(2),
+        (r.holiday_pay ?? 0).toFixed(2),
+        r.ni_category ?? "A",
       ]
         .map(csvEscape)
         .join(","),

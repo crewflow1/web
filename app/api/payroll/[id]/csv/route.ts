@@ -5,6 +5,7 @@ import {
   employerCostsForStoredLineWithPension,
   computeEmployeeDeductionsForStoredLine,
   employeeInputFromStoredProfile,
+  niCategoryFromStoredProfile,
   payrollCsv,
 } from "@/lib/payroll/compute";
 import { fetchNiNumbersForOrg } from "@/lib/staff/secrets";
@@ -55,6 +56,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
         .select(
           `
             user_id, hours, hourly_pay, gross_pay, paye_estimate, ni_estimate, net_pay,
+            overtime_hours, overtime_pay, leave_hours, leave_pay,
             user:users ( full_name )
           `,
         )
@@ -120,16 +122,23 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
         student_loan_estimate: employee.student_loan_estimate,
         employee_pension_estimate: employee.employee_pension_estimate,
         net_pay: employee.net_pay,
+        // Overtime + holiday breakdown of the stored gross (appended CSV columns).
+        overtime_hours: Number(l.overtime_hours ?? 0),
+        overtime_pay: Number(l.overtime_pay ?? 0),
+        holiday_hours: Number(l.leave_hours ?? 0),
+        holiday_pay: Number(l.leave_pay ?? 0),
         // Employer NI + pension, DERIVED from the stored gross at the rates in force
         // for this run's own period (never today's), through the one shared helper,
-        // honouring the employee's tracked pension enrolment AND salary sacrifice
-        // (sacrifice is outside the employer NI + pension base too).
+        // honouring the employee's tracked pension enrolment, salary sacrifice
+        // (outside the employer NI + pension base) AND their NI category letter
+        // (H/M/V/Z pay 0% employer NI up to the Upper Secondary Threshold).
         ...employerCostsForStoredLineWithPension(
           l.gross_pay,
           cycle,
           run.period_start,
           pensionByUser.get(l.user_id),
           profileInput.salarySacrificeAnnual,
+          niCategoryFromStoredProfile(taxProfiles.get(l.user_id)),
         ),
       };
     }),
