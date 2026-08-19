@@ -33,6 +33,7 @@ export const HQ_NAV: ReadonlyArray<NavItem> = [
   { href: "/admin/command-centre", label: "⚡ Command Centre" },
   { href: "/admin/pulse", label: "📡 The Pulse" },
   { href: "/admin/ceo", label: "👑 CEO Dashboard" },
+  { href: "/admin/ceo/briefings", label: "↳ Morning briefings" },
   { href: "/admin/overview", label: "Overview" },
   { href: "/admin/ai-boardroom", label: "🧠 AI Boardroom" },
   { href: "/admin/tasks", label: "🛰️ AI Task Queue" },
