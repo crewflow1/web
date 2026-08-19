@@ -51,7 +51,7 @@ export type AccountingConnection = {
   lastError: string | null;
 };
 
-const PROVIDERS: readonly AccountingProvider[] = ["xero", "quickbooks"];
+const PROVIDERS: readonly AccountingProvider[] = ["xero", "quickbooks", "sage"];
 
 /**
  * A minimal, token-FREE projection of the connection row. The token columns are

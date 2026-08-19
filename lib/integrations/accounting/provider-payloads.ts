@@ -95,6 +95,20 @@ export function qboSalesTaxCodeName(rate: number): string {
   }
 }
 
+/**
+ * Sage Business Cloud Accounting SALES tax rate PERCENTAGE for a line, keyed by
+ * effective VAT rate. Unlike Xero (a system TaxType string) or QBO (a code NAME),
+ * Sage identifies a tax rate by a `tax_rate_id` the adapter must resolve from the
+ * business's own `/tax_rates` collection — and it resolves it by matching this
+ * whole-percent percentage. This helper is the single fail-loud gate: an
+ * unmappable rate throws (UnknownVatRateError) rather than silently falling
+ * through to a wrong (often exempt) rate, mirroring the other two providers.
+ */
+export function sageSalesTaxRatePercentage(rate: number): number {
+  // FAIL LOUD on an unmappable rate — never post VAT under the wrong Sage rate.
+  return assertKnownVatRate(rate, "Sage sales tax rate");
+}
+
 // ── Xero ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -279,4 +293,106 @@ export function buildQboPaymentBody(
     ];
   }
   return body;
+}
+
+// ── Sage Business Cloud Accounting ────────────────────────────────────────────
+
+/**
+ * Sage `POST /sales_invoices` body for ONE canonical invoice row. Like QBO (and
+ * unlike Xero), Sage cannot resolve a contact / ledger account / tax rate inline
+ * by name — each must be an existing entity id — so the caller resolves them
+ * first and passes them in. `reference` carries the CrewFlow invoice number so a
+ * re-push is detectable and the payment link can find the invoice again.
+ *
+ * VAT. Canonical `net` is the ex-VAT unit price, and Sage computes the tax itself
+ * from each line's `tax_rate_id`. So every emitted line names its own tax rate id
+ * (resolved by the caller, by rate) — INCLUDING a zero-rated line, which names the
+ * business's 0% rate id so it posts zero-rated rather than out-of-scope.
+ *
+ * PER-RATE LINES. When the row carries `taxLines` (the push path) the body emits
+ * ONE `invoice_lines` entry per rate bucket, each with its own `tax_rate_id` from
+ * `refs.taxRateByRate` — so a mixed-rate invoice posts each line under the correct
+ * rate and Sage's gross equals the header gross. A row WITHOUT taxLines (a
+ * directly-built single line) keeps the legacy single-rate shape via
+ * `refs.taxRateId`.
+ */
+export function buildSageInvoiceBody(
+  row: CanonicalAccountingRow,
+  refs: {
+    contactId: string;
+    ledgerAccountId: string;
+    /** Legacy single-line path (no taxLines): the one resolved tax rate id, when VAT-bearing. */
+    taxRateId?: string | null;
+    /** Push path: resolved Sage tax_rate_id per whole-percent rate (incl. 0). */
+    taxRateByRate?: ReadonlyMap<number, string>;
+  },
+): Record<string, unknown> {
+  const description = row.invoice_number ? `Invoice ${row.invoice_number}` : "Sales invoice";
+  const multi = !!(row.taxLines && row.taxLines.length > 0);
+
+  let invoiceLines: Record<string, unknown>[];
+  if (multi) {
+    invoiceLines = row.taxLines!.map((bucket) => {
+      const rateId = refs.taxRateByRate?.get(bucket.rate) ?? null;
+      return {
+        description,
+        ledger_account_id: refs.ledgerAccountId,
+        quantity: 1,
+        unit_price: amount(bucket.net),
+        // Per-line rate — resolved for EVERY rate incl. 0 so a zero-rated line
+        // posts zero-rated (a rate id is named) rather than out-of-scope.
+        ...(rateId ? { tax_rate_id: rateId } : {}),
+      };
+    });
+  } else {
+    const net = amount(row.net || row.gross);
+    invoiceLines = [
+      {
+        description,
+        ledger_account_id: refs.ledgerAccountId,
+        quantity: 1,
+        unit_price: net,
+        ...(refs.taxRateId ? { tax_rate_id: refs.taxRateId } : {}),
+      },
+    ];
+  }
+
+  return {
+    sales_invoice: {
+      contact_id: refs.contactId,
+      date: row.date,
+      reference: row.invoice_number,
+      invoice_lines: invoiceLines,
+    },
+  };
+}
+
+/**
+ * Sage `POST /contact_payments` body for ONE canonical payment row — a customer
+ * receipt allocated against its sales invoice. Sage records a receipt as a
+ * `contact_payment` of `transaction_type_id` CUSTOMER_RECEIPT, landing in a bank
+ * account, with the invoice named in `allocated_artefacts` (the caller resolves
+ * the Sage invoice id). Only ever emitted once the payment-link gate has proven
+ * the invoice exists at Sage, so an allocation target is always present.
+ */
+export function buildSagePaymentBody(
+  row: CanonicalAccountingRow,
+  refs: {
+    contactId: string;
+    bankAccountId: string;
+    transactionTypeId: string;
+    invoiceId: string;
+  },
+): Record<string, unknown> {
+  const total = amount(row.gross);
+  return {
+    contact_payment: {
+      transaction_type_id: refs.transactionTypeId,
+      contact_id: refs.contactId,
+      bank_account_id: refs.bankAccountId,
+      date: row.date,
+      total_amount: total,
+      allocated_artefacts: [{ artefact_id: refs.invoiceId, amount: total }],
+    },
+  };
 }

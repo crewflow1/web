@@ -7,6 +7,7 @@ import {
   accountingCsvReady,
   xeroReady,
   quickbooksReady,
+  sageReady,
 } from "@/lib/integrations/accounting/adapters";
 
 /**
@@ -32,6 +33,7 @@ const CANONICAL = "lib/integrations/accounting/canonical.ts";
 const CSV = "lib/integrations/accounting/csv.ts";
 const XERO = "lib/integrations/accounting/adapters/xero.ts";
 const QBO = "lib/integrations/accounting/adapters/quickbooks.ts";
+const SAGE = "lib/integrations/accounting/adapters/sage.ts";
 const SERVICE = "server/services/accounting-export.ts";
 const CONNECTIONS_SERVICE = "server/services/accounting-connections.ts";
 const ROUTE = "app/api/accounting/export/route.ts";
@@ -71,6 +73,8 @@ describe("accounting adapters are dark without credentials", () => {
       "XERO_CLIENT_SECRET",
       "QBO_CLIENT_ID",
       "QBO_CLIENT_SECRET",
+      "SAGE_CLIENT_ID",
+      "SAGE_CLIENT_SECRET",
     ]) {
       delete process.env[k];
     }
@@ -80,6 +84,7 @@ describe("accounting adapters are dark without credentials", () => {
     clear();
     expect(getAccountingAdapter("xero").isAvailable()).toBe(false);
     expect(getAccountingAdapter("quickbooks").isAvailable()).toBe(false);
+    expect(getAccountingAdapter("sage").isAvailable()).toBe(false);
     process.env = { ...original };
   });
 
@@ -94,7 +99,7 @@ describe("accounting adapters are dark without credentials", () => {
 
   it("push NOTHING and return `unavailable` on the dark path", async () => {
     clear();
-    for (const p of ["xero", "quickbooks"] as const) {
+    for (const p of ["xero", "quickbooks", "sage"] as const) {
       const a = getAccountingAdapter(p);
       // If a `fetch` were reached it would throw in this test env; a clean
       // `unavailable` return proves the push never touched the network.
@@ -109,7 +114,7 @@ describe("accounting adapters are dark without credentials", () => {
   });
 
   it("construct NO provider SDK client (only `fetch` is the network)", () => {
-    for (const f of [XERO, QBO]) {
+    for (const f of [XERO, QBO, SAGE]) {
       const code = codeOf(read(f));
       expect(code).not.toMatch(/\bnew\s+XMLHttpRequest\b/);
       // No provider SDK import — the only network is the guarded `fetch`.
@@ -120,7 +125,7 @@ describe("accounting adapters are dark without credentials", () => {
   });
 
   it("REFUSE before fetch: every `fetch` lives AFTER the isAvailable guard", () => {
-    for (const f of [XERO, QBO]) {
+    for (const f of [XERO, QBO, SAGE]) {
       const code = codeOf(read(f));
       const guardIdx = code.indexOf("if (!this.isAvailable())");
       const fetchIdx = code.indexOf("fetch(");
@@ -141,16 +146,20 @@ describe("accounting readiness — CSV live, providers dark", () => {
       "XERO_CLIENT_SECRET",
       "QBO_CLIENT_ID",
       "QBO_CLIENT_SECRET",
+      "SAGE_CLIENT_ID",
+      "SAGE_CLIENT_SECRET",
     ]) {
       delete process.env[k];
     }
     expect(accountingCsvReady()).toBe(true);
     expect(xeroReady()).toBe(false);
     expect(quickbooksReady()).toBe(false);
+    expect(sageReady()).toBe(false);
     expect(getAccountingReadiness()).toEqual({
       csv: true,
       xero: false,
       quickbooks: false,
+      sage: false,
     });
     process.env = { ...original };
   });

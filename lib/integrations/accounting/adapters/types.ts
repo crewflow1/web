@@ -26,7 +26,7 @@
 
 import type { CanonicalAccountingRow } from "../canonical";
 
-export type AccountingProvider = "xero" | "quickbooks";
+export type AccountingProvider = "xero" | "quickbooks" | "sage";
 
 /**
  * Everything an adapter needs to push ONE org's rows to its connected book —
@@ -38,9 +38,13 @@ export type AccountingPushInput = {
   rows: readonly CanonicalAccountingRow[];
   /** DECRYPTED access token for the connected org. */
   accessToken: string;
-  /** Xero tenant id — required by the `Xero-tenant-id` header. Null for QBO. */
+  /**
+   * Xero tenant id — required by the `Xero-tenant-id` header. Also carries the
+   * Sage business id (sent via the `X-Business` header), which plays the same
+   * "which company book does this token act on" role. Null for QBO.
+   */
   tenantId?: string | null;
-  /** QBO realm id — the company path segment. Null for Xero. */
+  /** QBO realm id — the company path segment. Null for Xero / Sage. */
   realmId?: string | null;
   /**
    * Refresh-and-persist callback. On a provider 401 the adapter calls this ONCE
@@ -205,9 +209,12 @@ export function unavailable(
 export type AccountingPullInput = {
   /** DECRYPTED access token for the connected org. */
   accessToken: string;
-  /** Xero tenant id — required by the `Xero-tenant-id` header. Null for QBO. */
+  /**
+   * Xero tenant id — required by the `Xero-tenant-id` header. Also carries the
+   * Sage business id (sent via the `X-Business` header). Null for QBO.
+   */
   tenantId?: string | null;
-  /** QBO realm id — the company path segment. Null for Xero. */
+  /** QBO realm id — the company path segment. Null for Xero / Sage. */
   realmId?: string | null;
   /**
    * Refresh-and-persist callback. On a provider 401 the adapter calls this ONCE

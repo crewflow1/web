@@ -4,12 +4,14 @@ import { resolve } from "node:path";
 import {
   isXeroConnectable,
   isQuickbooksConnectable,
+  isSageConnectable,
   isProviderConnectable,
   accountingConnectFeatureEnabled,
   buildAuthorizeUrl,
   exchangeCodeForTokens,
   refreshAccessToken,
   resolveXeroTenantId,
+  resolveSageBusinessId,
 } from "@/lib/integrations/accounting/oauth";
 
 /**
@@ -60,6 +62,8 @@ const OAUTH_ENV = [
   "XERO_CLIENT_SECRET",
   "QBO_CLIENT_ID",
   "QBO_CLIENT_SECRET",
+  "SAGE_CLIENT_ID",
+  "SAGE_CLIENT_SECRET",
   "FEATURE_ACCOUNTING_CONNECT",
 ];
 
@@ -80,8 +84,10 @@ describe("accounting OAuth resolver is dark without credentials", () => {
     expect(accountingConnectFeatureEnabled()).toBe(false);
     expect(isXeroConnectable()).toBe(false);
     expect(isQuickbooksConnectable()).toBe(false);
+    expect(isSageConnectable()).toBe(false);
     expect(isProviderConnectable("xero")).toBe(false);
     expect(isProviderConnectable("quickbooks")).toBe(false);
+    expect(isProviderConnectable("sage")).toBe(false);
   });
 
   it("credentials WITHOUT the feature flag are still not connectable (two-switch)", () => {
@@ -92,7 +98,7 @@ describe("accounting OAuth resolver is dark without credentials", () => {
   });
 
   it("buildAuthorizeUrl REFUSES with no URL / no PKCE material when dark", () => {
-    for (const p of ["xero", "quickbooks"] as const) {
+    for (const p of ["xero", "quickbooks", "sage"] as const) {
       const res = buildAuthorizeUrl(p, "https://app.example/callback");
       expect(res.ok).toBe(false);
       if (!res.ok) expect(res.reason).toBe("not_configured");
@@ -102,7 +108,7 @@ describe("accounting OAuth resolver is dark without credentials", () => {
   it("exchangeCodeForTokens REFUSES with NO network call when dark", async () => {
     // If a `fetch` were reached it would throw in this test env; a clean
     // `not_configured` return proves the exchange never touched the network.
-    for (const p of ["xero", "quickbooks"] as const) {
+    for (const p of ["xero", "quickbooks", "sage"] as const) {
       const res = await exchangeCodeForTokens({
         provider: p,
         code: "irrelevant",
@@ -125,7 +131,7 @@ describe("accounting OAuth resolver is dark without credentials", () => {
   });
 
   it("refreshAccessToken REFUSES with NO network call when dark", async () => {
-    for (const p of ["xero", "quickbooks"] as const) {
+    for (const p of ["xero", "quickbooks", "sage"] as const) {
       const res = await refreshAccessToken({ provider: p, refreshToken: "irrelevant" });
       expect(res.ok).toBe(false);
       if (!res.ok) expect(res.reason).toBe("not_configured");
@@ -134,6 +140,12 @@ describe("accounting OAuth resolver is dark without credentials", () => {
 
   it("resolveXeroTenantId REFUSES with NO network call when dark", async () => {
     const res = await resolveXeroTenantId("irrelevant-access-token");
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("not_configured");
+  });
+
+  it("resolveSageBusinessId REFUSES with NO network call when dark", async () => {
+    const res = await resolveSageBusinessId("irrelevant-access-token");
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("not_configured");
   });

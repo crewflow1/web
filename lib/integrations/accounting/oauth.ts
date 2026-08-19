@@ -35,6 +35,7 @@ import type { AccountingProvider } from "./adapters/types";
  * FEATURE_ACCOUNTING_CONNECT. No code change is required to reach the live path:
  *   Xero        → XERO_CLIENT_ID, XERO_CLIENT_SECRET
  *   QuickBooks  → QBO_CLIENT_ID,  QBO_CLIENT_SECRET
+ *   Sage        → SAGE_CLIENT_ID, SAGE_CLIENT_SECRET
  * The redirect URI is derived per-request from the request origin, so no extra
  * env is needed for it. Secrets are read here and NEVER logged.
  */
@@ -46,6 +47,7 @@ const PROVIDER_ENV: Record<
 > = {
   xero: { clientId: "XERO_CLIENT_ID", clientSecret: "XERO_CLIENT_SECRET" },
   quickbooks: { clientId: "QBO_CLIENT_ID", clientSecret: "QBO_CLIENT_SECRET" },
+  sage: { clientId: "SAGE_CLIENT_ID", clientSecret: "SAGE_CLIENT_SECRET" },
 };
 
 /**
@@ -78,6 +80,10 @@ export function isQuickbooksConnectable(): boolean {
   return isProviderConnectable("quickbooks");
 }
 
+export function isSageConnectable(): boolean {
+  return isProviderConnectable("sage");
+}
+
 /** Resolve a provider's OAuth client credentials, or null when absent (dark). */
 function resolveClient(
   provider: AccountingProvider,
@@ -103,6 +109,15 @@ const PROVIDER_OAUTH: Record<
     authorizeUrl: "https://appcenter.intuit.com/connect/oauth2",
     tokenUrl: "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
     scope: "com.intuit.quickbooks.accounting",
+  },
+  // Sage Business Cloud Accounting OAuth 2.0 (PKCE, S256). The authorize
+  // endpoint is the Sage identity "central" login; the token endpoint is the
+  // Sage Accounting OAuth host. `full_access` is the read+write scope the push
+  // and pull paths both need.
+  sage: {
+    authorizeUrl: "https://www.sageone.com/oauth2/auth/central",
+    tokenUrl: "https://oauth.accounting.sage.com/token",
+    scope: "full_access",
   },
 };
 
@@ -436,4 +451,61 @@ export async function resolveXeroTenantId(
     return { ok: false, reason: "error", message: "xero connections returned no tenant" };
   }
   return { ok: true, tenantId };
+}
+
+/** Sage's businesses endpoint — resolves which business an access token can act on. */
+const SAGE_BUSINESSES_URL = "https://api.accounting.sage.com/v3.1/businesses";
+
+/**
+ * Resolve the Sage business id for a freshly-exchanged access token by calling
+ * `GET /v3.1/businesses`. Like Xero, Sage's authorization_code exchange returns
+ * tokens but NOT the business to act on; a connected user may have access to one
+ * or more businesses, and every Accounting API call scopes to one via the
+ * `X-Business` header. This is the follow-up that turns "we have a token" into
+ * "we know which business book to post to", so the connection completes with a
+ * real account handle (stored in external_tenant_id, exactly like Xero's tenant).
+ *
+ * REFUSES (no network) when Sage is not connectable — the dark guard is first,
+ * so the `fetch` is unreachable dark. Returns the FIRST business id; a token with
+ * no business is an `error` (the connection would otherwise have no handle).
+ */
+export async function resolveSageBusinessId(
+  accessToken: string,
+): Promise<TenantResolution> {
+  // DARK GUARD FIRST. Not connectable → no network call.
+  if (!isProviderConnectable("sage")) {
+    return {
+      ok: false,
+      reason: "not_configured",
+      message: "sage is not configured; cannot resolve a business id.",
+    };
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(SAGE_BUSINESSES_URL, {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        accept: "application/json",
+      },
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      reason: "error",
+      message: `sage businesses request failed: ${e instanceof Error ? e.message : "network error"}`,
+    };
+  }
+  if (!res.ok) {
+    return { ok: false, reason: "error", message: `sage businesses returned ${res.status}` };
+  }
+
+  const json = (await res.json()) as { $items?: Array<{ id?: string }> } | null;
+  const list = Array.isArray(json?.$items) ? json!.$items : [];
+  const businessId = list.find((b) => typeof b.id === "string" && b.id)?.id ?? null;
+  if (!businessId) {
+    return { ok: false, reason: "error", message: "sage businesses returned no business" };
+  }
+  return { ok: true, tenantId: businessId };
 }
