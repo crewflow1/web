@@ -46,6 +46,14 @@
  * token than generation. It was the last ungoverned AI path in the build (the
  * readiness surface said so explicitly) — admitted here, and to the ledger's
  * CHECK, by migration 20261080.
+ *
+ * `transcription` is a THIRD modality on the same footing: Speech-to-Text turns
+ * audio bytes into a transcript, billed on audio DURATION through a distinct
+ * vendor surface (lib/ai/transcription.ts). Like `embedding` it must be
+ * independently armable — binding a text model must not authorise transcription
+ * spend, and binding an STT model must open no text door — so it carries its own
+ * tier (below). Admitted here, and to the ledger's CHECK, by migration 20261191;
+ * still DARK (no STT model bound), so it meters nothing until activation.
  */
 export const AI_TASK_CLASSES = [
   "deterministic",
@@ -53,6 +61,7 @@ export const AI_TASK_CLASSES = [
   "drafting",
   "complex",
   "embedding",
+  "transcription",
 ] as const;
 export type AiTaskClass = (typeof AI_TASK_CLASSES)[number];
 
@@ -66,7 +75,7 @@ export type AiTaskClass = (typeof AI_TASK_CLASSES)[number];
  * tiers being separable — see isInferenceTierActivated / isEmbeddingActivated
  * in ./readiness.ts.
  */
-export const AI_TIERS = ["cheap", "mid", "high", "embedding"] as const;
+export const AI_TIERS = ["cheap", "mid", "high", "embedding", "transcription"] as const;
 export type AiTier = (typeof AI_TIERS)[number];
 
 /**
@@ -95,6 +104,9 @@ export const TASK_CLASS_TIER: Readonly<Record<AiTaskClass, AiTier | null>> = {
   // Vector generation. Its own tier — see the AI_TIERS note for why it must
   // never share an arming switch with a generative tier.
   embedding: "embedding",
+  // Speech-to-Text. Its own tier for the same reason as embedding: the STT
+  // modality must be independently armable from generation and from embeddings.
+  transcription: "transcription",
 };
 
 // ---------------------------------------------------------------------------
@@ -163,6 +175,15 @@ export const TIER_MODEL: Readonly<Record<AiTier, AiModelBinding | null>> = {
   // only — and `reserveInputTokens` is the worst-case BATCH size the worker
   // may submit in one call, not one document's tokens.
   embedding: null,
+  // The transcription (STT) modality's own switch — the governor-side COST
+  // binding, distinct from the transport binding in lib/ai/transcription.ts
+  // (TRANSCRIPTION_MODEL). Both are null today. On activation BOTH are bound
+  // together: TRANSCRIPTION_MODEL does the vendor call; this entry states the
+  // worst-case reservation envelope so the ceiling can claim budget before an
+  // STT call whose true cost (audio seconds) is unknowable in advance. STT
+  // bills on audio, so `usdPerMTokOut`/`reserveOutputTokens` are 0 and
+  // `reserveInputTokens` encodes the worst-case audio duration as a token proxy.
+  transcription: null,
 };
 
 /** The concrete model for a task class, or `null` when the tier is dark or the class reaches no model. */
@@ -298,6 +319,32 @@ export const AI_FEATURES = {
     taskClass: "drafting",
     degradesTo:
       "null — the voice webhook plays the deterministic acknowledgement TwiML (no generated speech). A caller hears the fixed greeting, exactly as today; nothing is generated.",
+  },
+  /**
+   * WhatsApp voice-note TRANSCRIPTION (Speech-to-Text). When a customer sends a
+   * voice note, the assistant pipeline downloads the audio
+   * (server/services/whatsapp-media-pipeline.ts), validates it, and — through
+   * this feature — asks the STT seam (lib/ai/transcription.ts) for a transcript
+   * to store as the job note.
+   *
+   * `transcription`, NOT a generative class: it is a distinct modality (audio →
+   * text), so it maps to the `transcription` tier which shares an arming switch
+   * with no generative tier. The registry is the authority, so a call site
+   * declaring `drafting` (to reach the text door) is refused by
+   * invokeWithGovernor.
+   *
+   * DARK: no STT model is bound (TRANSCRIPTION_MODEL is null), so the seam
+   * returns `deferred` with a null transcript and NEVER fabricates. The note is
+   * recorded with the deterministic placeholder text instead. There is no
+   * transcript until an STT model is bound AND its credential is present AND the
+   * `transcription` tier's cost binding (TIER_MODEL) is set.
+   */
+  "voice_note.transcription": {
+    key: "voice_note.transcription",
+    label: "WhatsApp voice-note transcription",
+    taskClass: "transcription",
+    degradesTo:
+      "deferred — a null transcript that is NEVER fabricated. The voice note's job note keeps the deterministic placeholder (its caption / a fixed marker), and the operator still sees the stored audio bytes. Byte-identical to today while dark.",
   },
   /**
    * Quote drafting — a scope of works a human reviews, edits, prices and only

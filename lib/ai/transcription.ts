@@ -1,4 +1,6 @@
 import "server-only";
+import { createHash } from "node:crypto";
+import { invokeWithGovernor, isTierActivated, type GovernedCall } from "@/lib/ai/governor";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -96,9 +98,29 @@ export type TranscriptionInput = {
   mimeType: string | null;
 };
 
+/**
+ * The metered usage a bound STT call reports, for the governor's ledger. STT is
+ * billed on audio DURATION, so `outputTokens` is 0 and `inputTokens` carries the
+ * worst-case audio-duration proxy the reservation envelope was calibrated
+ * against. Absent while dark — no call, no usage.
+ */
+export type TranscriptionUsage = {
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+};
+
 export type TranscriptionResult =
   /** A real provider returned a transcript. Only reachable once a model is bound. */
-  | { status: "completed"; transcript: string; provider: string; model: string }
+  | {
+      status: "completed";
+      transcript: string;
+      provider: string;
+      model: string;
+      /** Metered usage for the governor's ledger; present only on a real bound call. */
+      usage?: TranscriptionUsage;
+    }
   /**
    * DARK: no model bound / no credential. transcript is null — NEVER fabricated.
    * The caller stores null and shows the deterministic placeholder instead.
@@ -149,7 +171,152 @@ async function runBoundTranscription(
 ): Promise<TranscriptionResult> {
   throw new Error(
     `[transcription] model ${binding.provider}/${binding.model} is bound but no transport ` +
-      `is implemented — wire the vendor call (through invokeWithGovernor) in the activation diff. ` +
-      `Refusing to fabricate a transcript.`,
+      `is implemented — implement the vendor call here (returning status:"completed" with a ` +
+      `populated \`usage\`) in the activation diff. The governor wrapper ` +
+      `(transcribeVoiceNoteGoverned) already meters it. Refusing to fabricate a transcript.`,
   );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SAFE VALIDATION — reject before any spend decision.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Hard cap on the audio accepted for transcription. Mirrors the media pipeline's
+ * MAX_WHATSAPP_MEDIA_BYTES (25 MB): a byte count is the cheapest defence against
+ * a hostile or malformed media id inflating an STT bill.
+ */
+export const MAX_TRANSCRIPTION_AUDIO_BYTES = 25 * 1024 * 1024;
+
+/**
+ * The audio MIME types a voice note may carry, base type only (parameters like
+ * `; codecs=opus` are stripped before the check). WhatsApp voice notes are
+ * `audio/ogg` (opus); the rest cover the other inbound voice formats. An
+ * unlisted type is refused rather than sent to a provider that would reject or
+ * mis-handle it — a cost + correctness guard.
+ */
+const ALLOWED_AUDIO_MIME: ReadonlySet<string> = new Set([
+  "audio/ogg",
+  "audio/opus",
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/mp4",
+  "audio/aac",
+  "audio/amr",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/webm",
+]);
+
+export type AudioValidation =
+  | { ok: true; mimeBase: string }
+  | { ok: false; reason: "empty" | "too_large" | "unsupported_mime" };
+
+/**
+ * Validate voice-note audio before it can reach the (governed) transcription
+ * call. Pure and side-effect-free — no I/O, no throw — so it is trivially tested
+ * and can gate the spend decision without itself being able to fail open.
+ */
+export function validateVoiceNoteAudio(input: {
+  audio: Uint8Array;
+  mimeType: string | null;
+}): AudioValidation {
+  if (!input.audio || input.audio.byteLength === 0) return { ok: false, reason: "empty" };
+  if (input.audio.byteLength > MAX_TRANSCRIPTION_AUDIO_BYTES) {
+    return { ok: false, reason: "too_large" };
+  }
+  const base = (input.mimeType?.split(";")[0] ?? "").trim().toLowerCase();
+  if (!base || !ALLOWED_AUDIO_MIME.has(base)) return { ok: false, reason: "unsupported_mime" };
+  return { ok: true, mimeBase: base };
+}
+
+/**
+ * A stable, PII-free dedupe key for one voice note: the SHA-256 of its exact
+ * audio bytes. The governor hashes (feature, taskClass, this) into the ledger's
+ * content_hash, so a webhook REDELIVERY of the identical voice note refuses as a
+ * duplicate rather than paying to transcribe the same audio twice. The bytes
+ * themselves never leave this function.
+ */
+function audioDedupeKey(audio: Uint8Array): string {
+  return createHash("sha256").update(audio).digest("hex");
+}
+
+/**
+ * GOVERNED transcription — the metered wrapper the assistant pipeline calls.
+ *
+ * This is the seam that COMPLETES the WhatsApp voice-note → note path under the
+ * cost governor, and it is dark-safe by construction:
+ *
+ *   1. SAFE VALIDATION FIRST. Empty, oversized, or non-audio bytes are refused
+ *      as `failed` before any spend decision — a malformed media id can never
+ *      reach a provider or the ledger.
+ *   2. DARK TRANSPORT ⇒ DEFER, no governor. With no STT model bound (today,
+ *      always) `isTranscriptionActivated()` is false, so this returns the seam's
+ *      `deferred` result WITHOUT entering the governor — no reads, no writes, no
+ *      fabrication. Identical to the pre-governor behaviour while dark.
+ *   3. FAIL-CLOSED ON A HALF-WIRED ACTIVATION. If the transport is armed
+ *      (TRANSCRIPTION_MODEL + credential) but the governor's `transcription`
+ *      COST binding (TIER_MODEL.transcription) is still dark, this REFUSES —
+ *      deferring rather than making an ungoverned paid call with no ceiling and
+ *      no ledger. This is the door's own-tier gate, mirroring the primary fix in
+ *      lib/telephony/ai-turn.ts; the governor's backstop is the second line.
+ *   4. GOVERNED. Only when BOTH the transport and the cost binding are armed does
+ *      the real vendor call run — inside `invokeWithGovernor` under the
+ *      registered `voice_note.transcription` feature (task class
+ *      `transcription`), so the £100/org ceiling, the atomic reservation, the
+ *      SHA-256 duplicate refusal and the invocation ledger are all in the path.
+ *
+ * NEVER FABRICATES and NEVER THROWS. Any non-`completed` outcome — deferred,
+ * blocked, duplicate, a provider error — returns a null transcript so the caller
+ * records the honest deterministic placeholder instead.
+ */
+export async function transcribeVoiceNoteGoverned(
+  input: TranscriptionInput & { userId?: string | null },
+): Promise<TranscriptionResult> {
+  // 1. Safe validation — reject before any spend decision.
+  const valid = validateVoiceNoteAudio({ audio: input.audio, mimeType: input.mimeType });
+  if (!valid.ok) {
+    return { status: "failed", transcript: null, error: `audio_${valid.reason}` };
+  }
+
+  // 2. DARK TRANSPORT ⇒ defer without touching the governor (no call, no cost).
+  if (!isTranscriptionActivated()) {
+    return transcribeVoiceNote(input);
+  }
+
+  // 3. Transport armed but the governor's cost binding dark ⇒ half-wired
+  //    activation. Refuse rather than spend ungoverned. Fail closed.
+  if (!isTierActivated("transcription")) {
+    return { status: "deferred", transcript: null, reason: "no_model_bound" };
+  }
+
+  // 4. GOVERNED. The registry classes this as `transcription`; the governor owns
+  //    the ceiling, the ledger and the duplicate refusal.
+  try {
+    const outcome = await invokeWithGovernor(
+      "voice_note.transcription",
+      "transcription",
+      async (): Promise<GovernedCall<TranscriptionResult>> => {
+        const result = await transcribeVoiceNote(input);
+        // Only a COMPLETED call reached a provider ⇒ meter it. A deferred/failed
+        // result took no provider call, so usage is null and the governor
+        // releases the claim and records nothing.
+        if (result.status === "completed" && result.usage) {
+          return { value: result, usage: result.usage };
+        }
+        return { value: result, usage: null };
+      },
+      {
+        orgId: input.orgId,
+        userId: input.userId ?? null,
+        dedupeContent: audioDedupeKey(input.audio),
+      },
+    );
+    if (outcome.status === "ran") return outcome.value;
+  } catch (e) {
+    // The governor settles the failure + rethrows; degrade honestly, never fabricate.
+    return { status: "failed", transcript: null, error: e instanceof Error ? e.message : String(e) };
+  }
+  // blocked / duplicate ⇒ defer honestly (never a fabricated transcript).
+  return { status: "deferred", transcript: null, reason: "no_model_bound" };
 }

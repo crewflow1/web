@@ -870,8 +870,22 @@ export async function invokeWithGovernor<T>(
     // resolving a provider (the primary fix); this is the backstop that makes a
     // MISSED gate fail CLOSED. If the modality this class belongs to is
     // resolvable while this tier is dark, REFUSE — do not run fn().
+    // Per MODALITY: the generative modality (cheap/mid/high) shares two doors,
+    // so "any generative tier bound" makes its provider resolvable even when
+    // THIS tier is dark — that is the hole this backstop closes. The embedding
+    // and transcription modalities are SINGLE-tier, so a dark tier means the
+    // modality is dark: their resolvability is exactly this tier's own gate,
+    // which is false here (we are inside `!isTierActivated(tier)`). The
+    // transcription transport door (isTranscriptionActivated, keyed on a
+    // separate credential) is enforced at the seam BEFORE the governor is
+    // entered, so a transport-armed-but-cost-binding-dark activation is refused
+    // there and never reaches this branch.
     const modalityResolvable =
-      tier === "embedding" ? isEmbeddingActivated() : isInferenceTierActivated();
+      tier === "embedding"
+        ? isEmbeddingActivated()
+        : tier === "transcription"
+          ? isTierActivated("transcription")
+          : isInferenceTierActivated();
     if (tier !== null && modalityResolvable) {
       console.warn(
         `[ai/governor] REFUSED ${feature}: task class "${taskClass}" routes to the dark ` +

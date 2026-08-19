@@ -153,6 +153,11 @@ export async function maybeGenerateVoiceTurn(input: VoiceTurnInput): Promise<str
             .filter(Boolean)
             .join("\n"),
           maxTokens: 200,
+          // TIMEOUT — a voice call cannot hang on a slow provider. A stalled
+          // generation aborts and the webhook falls back to the deterministic
+          // acknowledgement TwiML, exactly as a blocked/duplicate/error outcome
+          // does. Mirrors server/services/chat-auto-reply.ts.
+          signal: AbortSignal.timeout(8_000),
         });
         return {
           value: res.text.trim() || null,
