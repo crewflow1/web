@@ -12,6 +12,10 @@ const MIG_RPCS = "supabase/migrations/20261065000000_stock_rpcs.sql";
 const MIG_GUARD = "supabase/migrations/20261069000000_stock_correction_transfer_guard.sql";
 /** Residual hardening: the two composite FKs, the write-path gate, the derived RPC. */
 const MIG_RESIDUAL = "supabase/migrations/20261071000000_stock_residual_hardening.sql";
+/** W1: weighted-average cost valuation — CEO decision D1, now DECIDED. */
+const MIG_WAVG = "supabase/migrations/20261180000000_stock_weighted_average_cost.sql";
+/** The pure valuation fold — the read-side authority, must also never touch finances. */
+const LIB_VALUATION = "lib/stock/valuation.ts";
 const ACTIONS = "app/(app)/stock/actions.ts";
 const SERVICE = "server/services/stock.ts";
 const LIB_BALANCE = "lib/stock/balance.ts";
@@ -40,14 +44,22 @@ const codeOf = (ts: string) =>
 // ---------------------------------------------------------------------------
 
 describe("operational stock never touches `finances`", () => {
-  // THE headline invariant of this milestone, and the reason it was allowed to
-  // ship while CEO decision D1 (stock valuation) is undecided.
+  // THE headline invariant of this milestone, AND the double-count-safety proof
+  // for the now-DECIDED weighted-average valuation (CEO decision D1).
   //
   // Purchased materials are ALREADY expensed by recordSupplierBill. If a stock
   // movement ever posted to `finances`, the same spend would land twice — once
   // when the supplier invoiced, once when the boards were issued — and every
   // affected job's cost would be silently inflated. Invisible until year end,
   // and one line of code away at any time.
+  //
+  // D1 is now DECIDED (weighted-average cost), and the reason it is STILL
+  // double-count-safe is precisely that it changed nothing here: the valuation
+  // layer (20261180000000 + lib/stock/valuation.ts) is a management-accounting
+  // overlay that posts NOTHING to `finances`, so the company's cost of sale is
+  // byte-identical with or without it. This block therefore now guards the
+  // valuation files TOO — the boundary is only as strong as its least-swept
+  // file.
   const surfaces: Array<[string, string]> = [
     [MIG_ITEMS, sqlOnly(read(MIG_ITEMS))],
     [MIG_LEDGER, sqlOnly(read(MIG_LEDGER))],
@@ -58,6 +70,10 @@ describe("operational stock never touches `finances`", () => {
     // in now.
     [MIG_GUARD, sqlOnly(read(MIG_GUARD))],
     [MIG_RESIDUAL, sqlOnly(read(MIG_RESIDUAL))],
+    // The valuation layer. This is where a cost NOW lives, so it is the file a
+    // contributor would be most tempted to "just also post to finances" from.
+    [MIG_WAVG, sqlOnly(read(MIG_WAVG))],
+    [LIB_VALUATION, codeOf(read(LIB_VALUATION))],
     [ACTIONS, codeOf(read(ACTIONS))],
     [SERVICE, codeOf(read(SERVICE))],
     [LIB_BALANCE, codeOf(read(LIB_BALANCE))],
@@ -82,15 +98,24 @@ describe("operational stock never touches `finances`", () => {
     }
   });
 
-  it("the schema carries NO money column at all — a valuation cannot be computed", () => {
-    // Not "does not post a cost": there is nowhere to put one. `unit_price`,
-    // `cost`, `value`, `amount`, `vat` do not exist on stock_items or
-    // stock_movements, so even a well-meaning report cannot invent a figure.
+  it("the QUANTITY ledger (63/64) still inlines NO money — cost is a separate additive layer", () => {
+    // REASON FOR THE CHANGE (D1 decided → weighted-average): valuation now
+    // exists, but it was added ADDITIVELY in its own migration (20261180000000),
+    // NOT welded into the quantity ledger. The quantity tables stay cost-free so
+    // the balance fold, the append-only guards and the tenant FKs are unchanged
+    // and a rollback of valuation is a clean column drop.
+    //
+    // `unit_cost` and `cost` were DELIBERATELY REMOVED from this ban list: those
+    // columns (`unit_cost`, `cost_effect`, `costed_qty_effect`) NOW EXIST — but
+    // only on the OVERLAY migration (20261180000000), never on 20261063/64. This
+    // test scans ONLY 63/64, so it still proves the quantity ledger itself
+    // inlines no money; the overlay's cost columns are asserted positively in the
+    // "weighted-average cost valuation" block below. The remaining tokens
+    // (`unit_price`, `value`, `amount`, `vat*`, `price`, …) must STILL be absent
+    // from 63/64 — a cost basis or VAT rate has no business on the quantity ledger.
     const sql = sqlOnly(read(MIG_ITEMS)) + "\n" + sqlOnly(read(MIG_LEDGER));
     for (const money of [
-      "unit_cost",
       "unit_price",
-      "cost",
       "value",
       "amount",
       "vat_rate",
@@ -100,7 +125,7 @@ describe("operational stock never touches `finances`", () => {
       "currency",
       "price",
     ]) {
-      expect(sql, `${money} appears in the stock schema`).not.toMatch(
+      expect(sql, `${money} appears in the quantity-ledger schema`).not.toMatch(
         new RegExp(`\\b${money}\\s+(numeric|integer|text|money|decimal)`, "i"),
       );
     }
@@ -127,6 +152,10 @@ describe("operational stock never touches `finances`", () => {
       [MIG_RPCS, read(MIG_RPCS)],
       [MIG_GUARD, read(MIG_GUARD)],
       [MIG_RESIDUAL, read(MIG_RESIDUAL)],
+      // The valuation layer must carry the SAME boundary + double-count argument,
+      // because it is the file that finally introduces a cost.
+      [MIG_WAVG, read(MIG_WAVG)],
+      [LIB_VALUATION, read(LIB_VALUATION)],
       [LIB_MOVEMENTS, read(LIB_MOVEMENTS)],
       [DOC, read(DOC)],
     ] as const) {
@@ -136,8 +165,115 @@ describe("operational stock never touches `finances`", () => {
       expect(src, `${name} must name the double-count risk`).toMatch(
         /double-count|double count/i,
       );
-      expect(src, `${name} must name D1 as undecided`).toMatch(/D1/);
+      expect(src, `${name} must reference CEO decision D1`).toMatch(/D1/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 1b. WEIGHTED-AVERAGE VALUATION (20261180) — D1 DECIDED, and STILL safe
+// ---------------------------------------------------------------------------
+
+describe("weighted-average cost valuation is additive, derived and double-count-safe", () => {
+  const sql = sqlOnly(read(MIG_WAVG));
+  const raw = read(MIG_WAVG);
+
+  it("adds the cost facts as NULLABLE columns — historical rows stay safe", () => {
+    // Nullable so every pre-existing quantity-only movement is UNCOSTED, not
+    // crashed and not silently valued at £0.
+    expect(sql).toMatch(/add column if not exists unit_cost\s+numeric\(12, 4\)/i);
+    expect(sql).toMatch(/add column if not exists cost_effect\s+numeric\(14, 2\)/i);
+    expect(sql).toMatch(/add column if not exists costed_qty_effect\s+numeric\(12, 2\)/i);
+    expect(raw).toMatch(/HISTORICAL CONSISTENCY/);
+    // The columns are declared without NOT NULL — assert no default/not-null crept in.
+    expect(sql).not.toMatch(/cost_effect\s+numeric\(14, 2\)\s+not null/i);
+  });
+
+  it("CAPS an OUT movement's release at the costed pool — book value can never go negative (S1)", () => {
+    // The S1 boundary rule: an OUT that draws physical units across the
+    // costed↔uncosted boundary must release cost for ONLY the costed part.
+    // least(qty, costed_qty) is what floors costed_qty and book_value at 0.
+    expect(sql).toMatch(/v_released\s*:=\s*least\(new\.qty, v_costed_qty\)/);
+    // Full drain releases the entire remaining book value (no penny residue).
+    expect(sql).toMatch(/when v_released >= v_costed_qty then v_value/);
+    // Partial draw is ALSO capped at the pool value, so 4dp avg-rounding drift
+    // can never over-release COGS past what was capitalised (negative book).
+    expect(sql).toMatch(/else least\(round\(v_released \* v_avg, 2\), v_value\)/);
+    expect(sql).toMatch(/new\.costed_qty_effect\s*:=\s*-\s*v_released/);
+    // costed_qty is summed from the CAPPED fact, never from physical effect.
+    expect(sql).toMatch(/coalesce\(sum\(costed_qty_effect\), 0\)/);
+    expect(sql).not.toMatch(/filter \(where cost_effect is not null\)/);
+    expect(raw).toMatch(/S1 boundary rule/i);
+  });
+
+  it("a transfer stays cost-neutral: transfer_in MIRRORS its paired transfer_out", () => {
+    // An internal move must net to exactly zero at org level even when the
+    // out-leg crossed the boundary — so the in-leg copies the out-leg rather than
+    // re-valuing at the post-drain average.
+    expect(sql).toMatch(/elsif new\.movement_type = 'transfer_in' then/);
+    expect(sql).toMatch(/where transfer_group_id = new\.transfer_group_id\s*\n?\s*and movement_type = 'transfer_out'/);
+    expect(sql).toMatch(/new\.cost_effect\s*:=\s*-\s*v_out_ce/);
+    expect(sql).toMatch(/new\.costed_qty_effect\s*:=\s*-\s*v_out_cqe/);
+  });
+
+  it("assigns cost by a BEFORE INSERT trigger that runs AFTER the sign is derived", () => {
+    expect(sql).toMatch(
+      /create trigger stock_movements_wavg_cost\s*\n?\s*before insert on public\.stock_movements/i,
+    );
+    // Trigger firing order is alphabetical: the cost trigger must sort AFTER
+    // stock_movements_derive (which sets `effect`) so it can read it, and after
+    // stock_movements_authorised_write so a refused direct insert never costs.
+    expect("stock_movements_wavg_cost" > "stock_movements_derive").toBe(true);
+    expect("stock_movements_wavg_cost" > "stock_movements_authorised_write").toBe(true);
+  });
+
+  it("keeps NO stored aggregate — the average is DERIVED, like the balance", () => {
+    // The 20261064 doctrine extended to cost: a stored running average is a
+    // second source of truth that lies the first time a write is lost.
+    for (const banned of ["stock_item_costs", "avg_cost_cache", "running_average", "current_cost"]) {
+      expect(sql, `${banned} would be a stored second source of truth`).not.toMatch(
+        new RegExp(`create table[^;]*\\b${banned}\\b`, "i"),
+      );
+    }
+    // Value and average are computed by summing the ledger in the view.
+    expect(sql).toMatch(/sum\(cost_effect\)/i);
+  });
+
+  it("sources a receipt's cost from the ORDERED price, reading no finances", () => {
+    expect(sql).toMatch(/poli\.unit_price/);
+    expect(sql).toMatch(/join public\.purchase_order_line_items poli/i);
+    // The whole double-count argument: this file posts nothing to the ledger.
+    expect(sql).not.toMatch(/\bfinances\b/);
+  });
+
+  it("exposes the valuation as a SECURITY INVOKER view, so RLS still applies", () => {
+    expect(sql).toMatch(
+      /create or replace view public\.stock_valuation\s*\n?\s*with \(security_invoker = true\)/i,
+    );
+    // A plain view runs as its owner and would bypass the caller's RLS.
+    const view = sql.slice(sql.indexOf("create or replace view public.stock_valuation"));
+    expect(view).toMatch(/avg_unit_cost/);
+    expect(view).toMatch(/uncosted_qty/);
+  });
+
+  it("keeps the cost trigger SECURITY DEFINER and writes no other table", () => {
+    const fn = sql.slice(
+      sql.indexOf("create or replace function public.tg_stock_movements_wavg_cost()"),
+      sql.indexOf("drop trigger if exists stock_movements_wavg_cost"),
+    );
+    expect(fn).toMatch(/security definer set search_path = public/i);
+    // It only reads + stamps NEW. It must not insert/update/delete anything —
+    // that would make it a privileged write path.
+    expect(fn).not.toMatch(/\binsert\s+into\b/i);
+    expect(fn).not.toMatch(/\bupdate\s+public\./i);
+    expect(fn).not.toMatch(/\bdelete\s+from\b/i);
+  });
+
+  it("documents the decided model, the double-count safety and D1", () => {
+    expect(raw).toMatch(/weighted-average/i);
+    expect(raw).toMatch(/D1 IS NOW DECIDED/i);
+    expect(raw).toMatch(/double-count/i);
+    expect(raw).toMatch(/capitalise-on-receipt/i);
   });
 });
 
