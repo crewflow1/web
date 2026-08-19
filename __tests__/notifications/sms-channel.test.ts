@@ -44,7 +44,6 @@ let seq = 0;
 function mkRow(partial: Partial<NotificationRow> & { org_id: string }): NotificationRow {
   return {
     id: `n${++seq}`,
-    org_id: partial.org_id,
     user_id: partial.user_id ?? null,
     audience: partial.audience ?? "customer",
     type: partial.type ?? "job.updated",
