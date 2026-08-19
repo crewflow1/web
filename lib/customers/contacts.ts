@@ -34,33 +34,63 @@ export const CONTACT_ROLE_LABELS: Record<ContactRole, string> = {
 };
 
 /**
- * Add-contact input. At least one of email/phone is required — a contact with
- * no way to reach them is a data-entry slip, not a contact. Empty strings are
- * normalised to undefined so the "at least one" rule is meaningful.
+ * Shared field shape for a customer contact. Both the portal add-form and the
+ * staff CRUD surface build on this so the two can never disagree on what a valid
+ * contact is. At least one of email/phone is required — a contact with no way to
+ * reach them is a data-entry slip, not a contact — enforced by the `.refine` on
+ * each derived schema (a bare object can't carry a cross-field refinement).
  */
-export const customerContactSchema = z
-  .object({
-    name: z.string().trim().min(2, "Enter the contact's name").max(200),
-    email: z
+const customerContactBase = z.object({
+  name: z.string().trim().min(2, "Enter the contact's name").max(200),
+  email: z
+    .string()
+    .trim()
+    .max(320)
+    .email("Enter a valid email")
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
+  phone: z
+    .string()
+    .trim()
+    .max(50)
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
+  role: z.enum(CONTACT_ROLES).default("other"),
+});
+
+const REACHABLE_MESSAGE = "Add an email or a phone number so we can reach them";
+
+/**
+ * Portal add-contact input. Empty strings are normalised to undefined so the
+ * "at least one" rule is meaningful. Deliberately has NO notes field — the
+ * customer-facing form never writes the staff-only note.
+ */
+export const customerContactSchema = customerContactBase.refine(
+  (v) => Boolean(v.email) || Boolean(v.phone),
+  { message: REACHABLE_MESSAGE, path: ["email"] },
+);
+export type CustomerContactInput = z.infer<typeof customerContactSchema>;
+
+/**
+ * Staff CRUD input. Same reachable-person rule as the portal form, plus the
+ * staff-only free-form `notes` field (who they are, when to call). Used by both
+ * the add and edit staff actions; the edit action carries the contact id
+ * separately.
+ */
+export const staffCustomerContactSchema = customerContactBase
+  .extend({
+    notes: z
       .string()
       .trim()
-      .max(320)
-      .email("Enter a valid email")
+      .max(2000)
       .optional()
       .or(z.literal("").transform(() => undefined)),
-    phone: z
-      .string()
-      .trim()
-      .max(50)
-      .optional()
-      .or(z.literal("").transform(() => undefined)),
-    role: z.enum(CONTACT_ROLES).default("other"),
   })
   .refine((v) => Boolean(v.email) || Boolean(v.phone), {
-    message: "Add an email or a phone number so we can reach them",
+    message: REACHABLE_MESSAGE,
     path: ["email"],
   });
-export type CustomerContactInput = z.infer<typeof customerContactSchema>;
+export type StaffCustomerContactInput = z.infer<typeof staffCustomerContactSchema>;
 
 /** Declared, exhaustive read-back shape — note: NO portal_token field. */
 export const CONTACT_PORTAL_KEYS = [
