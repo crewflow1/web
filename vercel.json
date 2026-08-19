@@ -152,6 +152,10 @@
     {
       "path": "/api/cron/hq-decision-autopropose",
       "schedule": "15 3 * * *"
+    },
+    {
+      "path": "/api/cron/site-diary-rollup",
+      "schedule": "30 1 * * *"
     }
   ]
 }
