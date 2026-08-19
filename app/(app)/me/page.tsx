@@ -239,30 +239,42 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
   // "My tasks" — checklist items assigned to me, still open (migration
   // 20261182000000). ACTIVE-org pinned + assigned + open at the DB (RLS admits
   // every org I belong to, so the org pin is the real scope); the pure
-  // selectMyOpenTasks re-asserts "mine and open" and orders by due date. Read
-  // loudly — a failed read must not silently show an empty task list.
+  // selectMyOpenTasks re-asserts "mine and open" and orders by due date.
+  //
+  // COMPLETE (F-1): a personal open-worklist must show EVERY open task, so it is
+  // PAGED via fetchAllRows on a stable total order (due_on asc, id asc) rather
+  // than clamped — a capped read would silently hide a busy worker's later
+  // tasks. Read LOUDLY — a failed read must not render an empty task list.
   // job_checklists isn't in the generated types yet — the `as never` idiom.
-  const tasksRes = await supabase
-    .from("job_checklists" as never)
-    .select(
-      "id, label, job_id, is_done, assigned_to, due_on, job:jobs ( customer:customers ( name ) )" as never,
-    )
-    .eq("org_id" as never, ctx.org.id as never)
-    .eq("assigned_to" as never, user.id as never)
-    .eq("is_done" as never, false as never)
-    .order("due_on" as never, { ascending: true, nullsFirst: false })
-    .limit(200);
+  type MyTaskDbRow = {
+    id: string;
+    label: string;
+    job_id: string;
+    is_done: boolean;
+    assigned_to: string | null;
+    due_on: string | null;
+    job: { customer: { name: string | null } | null } | null;
+  };
+  const tasksRes = await fetchAllRows<MyTaskDbRow>(
+    (from, to) =>
+      supabase
+        .from("job_checklists" as never)
+        .select(
+          "id, label, job_id, is_done, assigned_to, due_on, job:jobs ( customer:customers ( name ) )" as never,
+        )
+        .eq("org_id" as never, ctx.org.id as never)
+        .eq("assigned_to" as never, user.id as never)
+        .eq("is_done" as never, false as never)
+        .order("due_on" as never, { ascending: true, nullsFirst: false })
+        .order("id" as never, { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: MyTaskDbRow[] | null;
+        error: unknown;
+      }>,
+  );
   if (tasksRes.error) throw readFailure("me: my tasks", tasksRes.error);
   const myTasks = selectMyOpenTasks(
-    ((tasksRes.data ?? []) as unknown as Array<{
-      id: string;
-      label: string;
-      job_id: string;
-      is_done: boolean;
-      assigned_to: string | null;
-      due_on: string | null;
-      job: { customer: { name: string | null } | null } | null;
-    }>).map(
+    (tasksRes.data ?? []).map(
       (r): MyTaskRow => ({
         id: r.id,
         label: r.label,

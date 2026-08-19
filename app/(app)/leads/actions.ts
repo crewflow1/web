@@ -391,12 +391,15 @@ export async function convertLeadToCustomer(id: string) {
     // A concurrent conversion won the race. Remove our orphan and send the user
     // to the customer that actually got linked.
     await supabase.from("customers").delete().eq("id", created.id).eq("org_id", ctx.org.id);
-    const { data: winner } = await supabase
+    // LOUD read — bind the error rather than discard it; a rejected re-read must
+    // not masquerade as "no winner" and silently swallow the concurrent link.
+    const { data: winner, error: winnerError } = await supabase
       .from("leads")
       .select("customer_id")
       .eq("id", id)
       .eq("org_id", ctx.org.id)
       .maybeSingle();
+    if (winnerError) throw readFailure("lead convert: winner re-read", winnerError);
     const winnerId = (winner as { customer_id: string | null } | null)?.customer_id ?? null;
     if (winnerId) redirect(`/customers/${winnerId}?saved=lead_converted`);
     redirect(`/leads/${id}?error=convert_failed`);
