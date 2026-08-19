@@ -129,7 +129,10 @@
 --     released_costed = least(out_qty, costed_qty_before)
 --     value_released  = (released_costed = costed_qty_before)   -- full drain
 --                         ? book_value_before                   --   → release ALL book value (no penny drift)
---                         : round(released_costed * avg, 2)
+--                         : least(round(released_costed * avg, 2), book_value_before)
+--                                                               -- partial: value at avg, but never MORE than the
+--                                                               --   pool holds (4dp avg-rounding drift could
+--                                                               --   otherwise over-release COGS → negative book)
 --
 -- The remaining (out_qty − released_costed) units are uncosted: they carry no
 -- book value. This FLOORS costed_qty at 0 and book_value at 0 — neither can ever
@@ -233,10 +236,15 @@ begin
     if v_costed_qty > 0 then
       v_released := least(new.qty, v_costed_qty);
       -- On a FULL drain, release the entire remaining book value so it lands at
-      -- exactly £0 (no rounding residue); on a partial draw, value at the average.
+      -- exactly £0 (no rounding residue). On a PARTIAL draw, value at the average
+      -- but CAP at the remaining book value: `avg` is rounded to 4dp, so on a
+      -- large partial draw of a low-unit-cost blended item `round(released*avg,2)`
+      -- can drift a penny or two PAST what the pool holds and over-release COGS,
+      -- pushing book_value slightly negative. `least(…, v_value)` forbids ever
+      -- releasing more value than is capitalised.
       v_val_rel := case
                      when v_released >= v_costed_qty then v_value
-                     else round(v_released * v_avg, 2)
+                     else least(round(v_released * v_avg, 2), v_value)
                    end;
       new.unit_cost         := v_avg;
       new.cost_effect       := - v_val_rel;

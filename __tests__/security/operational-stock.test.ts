@@ -196,6 +196,9 @@ describe("weighted-average cost valuation is additive, derived and double-count-
     expect(sql).toMatch(/v_released\s*:=\s*least\(new\.qty, v_costed_qty\)/);
     // Full drain releases the entire remaining book value (no penny residue).
     expect(sql).toMatch(/when v_released >= v_costed_qty then v_value/);
+    // Partial draw is ALSO capped at the pool value, so 4dp avg-rounding drift
+    // can never over-release COGS past what was capitalised (negative book).
+    expect(sql).toMatch(/else least\(round\(v_released \* v_avg, 2\), v_value\)/);
     expect(sql).toMatch(/new\.costed_qty_effect\s*:=\s*-\s*v_released/);
     // costed_qty is summed from the CAPPED fact, never from physical effect.
     expect(sql).toMatch(/coalesce\(sum\(costed_qty_effect\), 0\)/);

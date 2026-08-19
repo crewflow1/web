@@ -45,6 +45,9 @@ const nextId = () => `m-${String(++seq).padStart(4, "0")}`;
 type Pool = { value: number; costedQty: number };
 
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+/** Sum two (possibly stringy/nullable) cost_effect values to 2dp. */
+const round2Sum = (...vals: Array<number | string | null | undefined>) =>
+  r2(vals.reduce<number>((s, v) => s + Number(v ?? 0), 0));
 
 function stamp(
   state: Map<string, Pool>,
@@ -95,7 +98,11 @@ function stamp(
     // RELEASE, CAPPED at the costed pool (the S1 boundary rule).
     if (pool.costedQty > 0 && avg != null) {
       const released = Math.min(m.qty, pool.costedQty);
-      const valueReleased = released >= pool.costedQty ? pool.value : r2(released * avg);
+      // Full drain releases the whole pool value; a partial draw values at avg
+      // but is CAPPED at the remaining book value so 4dp avg-rounding drift can
+      // never over-release past what was capitalised (mirrors the SQL `least`).
+      const valueReleased =
+        released >= pool.costedQty ? pool.value : Math.min(r2(released * avg), pool.value);
       unit_cost = avg;
       cost_effect = -valueReleased;
       costed_qty_effect = -released;
@@ -473,6 +480,45 @@ describe("the costed↔uncosted boundary — book value can NEVER go negative (S
     expect(v.onHand).toBe(3); // 5 + 10 - 12
     expect(v.costedQty).toBe(0);
     expect(v.bookValue).toBe(0);
+  });
+
+  it("ROUNDING DRIFT (the reviewer's repro): blended avg, large partial issue ⇒ book_value ≥ 0, COGS ≤ capitalised", () => {
+    // Seed book_value £12,345.00 over 100,000 costed units via a BLEND (a single
+    // 4dp price isn't representable — PO prices are 2dp), so avg = £0.1235 (4dp,
+    // rounded UP from 0.12345). Issue 99,970 (a partial draw). Valued naively,
+    // round(99,970 × 0.1235, 2) = £12,346.30 — £1.30 MORE than was capitalised —
+    // which drove book_value to −£1.30 before the cap.
+    const st = new Map<string, Pool>();
+    const rA = stamp(st, { stock_item_id: ITEM, site_id: SITE_A, movement_type: "receipt", qty: 99999, price: 0.12 });
+    const rB = stamp(st, { stock_item_id: ITEM, site_id: SITE_A, movement_type: "receipt", qty: 1, price: 345.12 });
+    const capitalised = round2Sum(rA.cost_effect, rB.cost_effect);
+    expect(capitalised).toBe(12345); // £11,999.88 + £345.12
+
+    const iss = stamp(st, { stock_item_id: ITEM, site_id: SITE_A, movement_type: "issue", qty: 99970, job_id: JOB });
+    // Released COGS is CAPPED at the £12,345 pool — never the £12,346.30 drift.
+    expect(Math.abs(iss.cost_effect as number)).toBeLessThanOrEqual(capitalised);
+    expect(iss.cost_effect).toBe(-12345);
+
+    const v = foldItemValuations([rA, rB, iss]).get(ITEM)!;
+    expect(v.bookValue).toBeGreaterThanOrEqual(0); // NOT −1.30
+    expect(v.bookValue).toBeLessThanOrEqual(1); // at most a penny or two of residue
+    expect(v.bookValue).toBe(0);
+    // Job COGS never exceeds what was actually capitalised.
+    expect(stockCogsByJob([rA, rB, iss]).get(JOB)!).toBeLessThanOrEqual(capitalised);
+  });
+
+  it("ROUNDING DRIFT (smaller case): £1,234.50 over 10,000 units, issue 9,997 ⇒ book_value ≥ 0", () => {
+    const st = new Map<string, Pool>();
+    const rA = stamp(st, { stock_item_id: ITEM, site_id: SITE_A, movement_type: "receipt", qty: 9999, price: 0.12 });
+    const rB = stamp(st, { stock_item_id: ITEM, site_id: SITE_A, movement_type: "receipt", qty: 1, price: 34.62 });
+    const capitalised = round2Sum(rA.cost_effect, rB.cost_effect);
+    expect(capitalised).toBe(1234.5); // £1,199.88 + £34.62
+
+    const iss = stamp(st, { stock_item_id: ITEM, site_id: SITE_A, movement_type: "issue", qty: 9997, job_id: JOB });
+    expect(Math.abs(iss.cost_effect as number)).toBeLessThanOrEqual(capitalised);
+    const v = foldItemValuations([rA, rB, iss]).get(ITEM)!;
+    expect(v.bookValue).toBeGreaterThanOrEqual(0); // NOT −0.13
+    expect(v.bookValue).toBeLessThanOrEqual(1);
   });
 
   it("adjustment_out across the boundary also floors at 0 (never a negative write-off)", () => {
