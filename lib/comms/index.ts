@@ -158,6 +158,24 @@ export function isSmsConfigured(): boolean {
 }
 
 /**
+ * The SMS provider for the NOTIFICATION channel (lib/notifications/sms.ts), or
+ * `null` when Twilio is unconfigured.
+ *
+ * A DELIBERATELY SEPARATE door from the receptionist's `getTransportProvider`:
+ * the notification channel is SMS-only, so it resolves a concrete
+ * `SmsProvider` here rather than the receptionist's `sms | whatsapp` transport
+ * registry — there is no WhatsApp branch to fall back to, which is the whole
+ * point. The raw vendor factory (`getSmsProvider`) stays captive to THIS registry
+ * module (its "no module outside lib/comms reaches a raw provider" invariant is
+ * intact); the notification channel depends only on this named accessor, so it
+ * can never accidentally acquire a WhatsApp provider. Same two-switch DARK
+ * contract as `getSmsProvider`: null until Twilio is fully configured.
+ */
+export function getNotificationSmsProvider(): SmsProvider | null {
+  return getSmsProvider();
+}
+
+/**
  * Resolve the configured WhatsApp provider, or `null` when none is usable.
  *
  * The receptionist's SECOND outbound transport (Directive #018 R6). Same seam

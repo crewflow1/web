@@ -42,6 +42,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/sms-drain",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/alerts-poll",
       "schedule": "0 3 * * *"
     },
