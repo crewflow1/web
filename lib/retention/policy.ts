@@ -189,6 +189,7 @@ export const RETENTION_EXCLUDED: Readonly<Record<string, string>> = Object.freez
   // ── Payroll / pension (HMRC PAYE / Pensions Act / WTR) ──────────────────────
   payroll_runs: "statutory payroll record (HMRC/PAYE — keep 6y)",
   payroll_lines: "statutory payroll record (HMRC/PAYE)",
+  payroll_line_adjustments: "statutory payroll audit trail (HMRC/PAYE — overtime/NI/holiday adjustments)",
   payroll_tax_profiles: "statutory payroll config (PAYE)",
   pension_enrolments: "statutory auto-enrolment record (Pensions Act)",
   holiday_entitlements: "statutory employment record (WTR)",
