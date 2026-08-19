@@ -226,10 +226,32 @@ const salarySacrificePounds = z.preprocess(
   z.coerce.number().min(0).max(1_000_000),
 );
 
+/** Employer-NI category letters. 'A' is the standard-rate default. */
+export const NI_CATEGORIES = [
+  "A",
+  "B",
+  "C",
+  "J",
+  "H",
+  "M",
+  "V",
+  "Z",
+] as const;
+export type NiCategoryInput = (typeof NI_CATEGORIES)[number];
+
+/** Contracted hours per working day (0..24). Empty ⇒ undefined (no holiday pay). */
+const standardHoursPerDay = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  z.coerce.number().min(0).max(24).optional(),
+);
+
 export const payrollTaxProfileFormSchema = z.object({
   tax_region: z.enum(TAX_REGIONS),
   student_loan_plan: z.enum(STUDENT_LOAN_PLANS),
   salary_sacrifice_annual_pounds: salarySacrificePounds,
+  ni_category: z.enum(NI_CATEGORIES),
+  date_of_birth: optionalDate,
+  standard_hours_per_day: standardHoursPerDay,
 });
 export type PayrollTaxProfileFormInput = z.infer<
   typeof payrollTaxProfileFormSchema

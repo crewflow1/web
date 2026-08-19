@@ -6,7 +6,10 @@ import {
   addChecklistItem,
   setChecklistItemDone,
   deleteChecklistItem,
+  setChecklistAssignment,
 } from "./checklist-actions";
+
+export type ChecklistStaff = { id: string; full_name: string | null; email: string };
 
 /**
  * Interactive job checklist. Optimistic toggles/adds/removes call the server
@@ -23,14 +26,18 @@ export type ChecklistItem = {
   is_done: boolean;
   done_at: string | null;
   sort: number;
+  assigned_to: string | null;
+  due_on: string | null;
 };
 
 export function ChecklistClient({
   jobId,
   initialItems,
+  staff,
 }: {
   jobId: string;
   initialItems: ChecklistItem[];
+  staff: ChecklistStaff[];
 }) {
   const router = useRouter();
   const [items, setItems] = useState<ChecklistItem[]>(initialItems);
@@ -77,6 +84,34 @@ export function ChecklistClient({
     reconcile();
   }
 
+  async function onAssign(
+    item: ChecklistItem,
+    next: { assigned_to?: string | null; due_on?: string | null },
+  ) {
+    const assignedTo = next.assigned_to !== undefined ? next.assigned_to : item.assigned_to;
+    const dueOn = next.due_on !== undefined ? next.due_on : item.due_on;
+    setError(null);
+    const prev = items;
+    setItems((p) =>
+      p.map((i) =>
+        i.id === item.id ? { ...i, assigned_to: assignedTo, due_on: dueOn } : i,
+      ),
+    );
+    const res = await setChecklistAssignment(item.id, assignedTo, dueOn);
+    if (!res.ok) {
+      setError(res.error ?? "Couldn't update the assignment.");
+      setItems(prev);
+      return;
+    }
+    reconcile();
+  }
+
+  const staffName = (id: string | null) => {
+    if (!id) return null;
+    const s = staff.find((m) => m.id === id);
+    return s ? s.full_name ?? s.email : "Unknown";
+  };
+
   async function onDelete(item: ChecklistItem) {
     setError(null);
     const prev = items;
@@ -122,34 +157,75 @@ export function ChecklistClient({
       {items.length > 0 ? (
         <ul className="mt-4 divide-y divide-slate-100 border-t border-slate-100">
           {items.map((item) => (
-            <li key={item.id} className="flex items-center gap-3 py-2">
-              <input
-                type="checkbox"
-                checked={item.is_done}
-                onChange={() => onToggle(item)}
-                aria-label={`Mark "${item.label}" ${item.is_done ? "not done" : "done"}`}
-                className="h-4 w-4 shrink-0 rounded border-slate-300"
-              />
-              <span
-                className={`min-w-0 flex-1 text-sm ${
-                  item.is_done ? "text-slate-400 line-through" : "text-slate-800"
-                }`}
-              >
-                {item.label}
-                {item.requires_photo ? (
-                  <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
-                    photo
+            <li key={item.id} className="py-2">
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={item.is_done}
+                  onChange={() => onToggle(item)}
+                  aria-label={`Mark "${item.label}" ${item.is_done ? "not done" : "done"}`}
+                  className="h-4 w-4 shrink-0 rounded border-slate-300"
+                />
+                <span
+                  className={`min-w-0 flex-1 text-sm ${
+                    item.is_done ? "text-slate-400 line-through" : "text-slate-800"
+                  }`}
+                >
+                  {item.label}
+                  {item.requires_photo ? (
+                    <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                      photo
+                    </span>
+                  ) : null}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onDelete(item)}
+                  aria-label={`Remove "${item.label}"`}
+                  className="shrink-0 text-xs font-medium text-slate-400 hover:text-red-600"
+                >
+                  Remove
+                </button>
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 pl-7">
+                <label className="sr-only" htmlFor={`assignee-${item.id}`}>
+                  Assign &quot;{item.label}&quot; to
+                </label>
+                <select
+                  id={`assignee-${item.id}`}
+                  value={item.assigned_to ?? ""}
+                  onChange={(e) =>
+                    void onAssign(item, { assigned_to: e.target.value || null })
+                  }
+                  className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+                >
+                  <option value="">— Unassigned —</option>
+                  {staff.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.full_name ?? m.email}
+                    </option>
+                  ))}
+                </select>
+                <label className="sr-only" htmlFor={`due-${item.id}`}>
+                  Due date for &quot;{item.label}&quot;
+                </label>
+                <input
+                  id={`due-${item.id}`}
+                  type="date"
+                  value={item.due_on ?? ""}
+                  onChange={(e) =>
+                    void onAssign(item, { due_on: e.target.value || null })
+                  }
+                  className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+                />
+                {item.assigned_to || item.due_on ? (
+                  <span className="text-[11px] text-slate-500">
+                    {item.assigned_to ? staffName(item.assigned_to) : null}
+                    {item.assigned_to && item.due_on ? " · " : ""}
+                    {item.due_on ? `due ${item.due_on}` : null}
                   </span>
                 ) : null}
-              </span>
-              <button
-                type="button"
-                onClick={() => onDelete(item)}
-                aria-label={`Remove "${item.label}"`}
-                className="shrink-0 text-xs font-medium text-slate-400 hover:text-red-600"
-              >
-                Remove
-              </button>
+              </div>
             </li>
           ))}
         </ul>

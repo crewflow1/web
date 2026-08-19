@@ -393,11 +393,11 @@ export const NOT_MODELLED: readonly {
       "An eligible employer offsets up to £10,500 of employer NI per YEAR (2025-26 and 2026-27). It is an org-level allowance consumed across all employees, so it cannot be apportioned to one line. Employer NI is therefore overstated by up to £10,500/year for an eligible org — the largest single omission here.",
   },
   {
-    item: "Under-21, apprentice-under-25 and veteran NI categories",
-    needs: "date of birth, apprenticeship flag, veteran first-civilian-employment date",
+    item: "Under-21, apprentice-under-25 and veteran NI categories (only when the letter is NOT recorded)",
+    needs: "the NI category letter recorded on the employee's payroll tax profile",
     effect: "overstates_employer_cost",
     detail:
-      "Categories H, M, V and Z pay 0% employer NI up to the Upper Secondary Threshold (£50,270). We apply the standard 15%, so employer NI is overstated by up to 15% of earnings between the secondary and upper secondary thresholds for those staff.",
+      "Categories H, M, V and Z pay 0% employer NI up to the Upper Secondary Threshold (£50,270). CrewFlow NOW applies this whenever the category letter is recorded on the employee's tax profile (via annualEmployerNiForCategory). It is only overstated for a qualifying employee whose letter has NOT been set — the default is 'A' (standard rate), so employer NI is overstated by up to the standard rate on earnings between the secondary and upper secondary thresholds until the correct letter is recorded.",
   },
   {
     item: "Directors' cumulative (annual-basis) NI",

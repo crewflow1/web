@@ -52,17 +52,29 @@ A, B, C and J as 15%.
 - <https://www.gov.uk/guidance/rates-and-thresholds-for-employers-2026-to-2027> — retrieved 2026-07-30 (page "Last updated: 5 June 2026")
 - <https://taxscape.deloitte.com/uk-budget/autumn-budget-2024/measures-autumn-budget-2024/increase-to-employer-nic-rate-and-lowering-of-the-secondary-threshold.aspx> — retrieved 2026-07-30 (the April 2025 step change)
 
-### 1.1 Category letters — NOT modelled
+### 1.1 Category letters — MODELLED when the letter is recorded
 
-Categories **H** (apprentice under 25), **M** (under 21), **V** (veteran) and **Z** pay **0%**
-employer NI up to the **Upper Secondary Threshold** of £50,270/year, then 15% above it. CrewFlow
-applies the standard rate to everyone because the schema holds **no date of birth, no apprenticeship
-flag and no veteran start date**.
+Categories **H** (apprentice under 25), **M** (under 21), **V** (veteran) and **Z** (under-21
+deferment) pay **0%** employer NI up to the **Upper Secondary Threshold** of £50,270/year, then 15%
+above it. Categories **A, B, C, J** pay the standard secondary rate (15% for 2025-26/2026-27) above
+the £5,000 Secondary Threshold (B/C/J differ from A only on the EMPLOYEE side).
 
-**Effect: employer NI is OVERSTATED** for those staff, by up to 15% of earnings between the
-secondary and upper secondary thresholds. Recorded in `rates.ts` as
-`upper_secondary_threshold_annual` so the size of the un-modelled relief is computable, but never
-applied.
+CrewFlow now applies this via `annualEmployerNiForCategory` in `lib/payroll/compute.ts`, driven by
+the **NI category letter recorded on the employee's payroll tax profile**
+(`payroll_tax_profiles.ni_category`). The letter is an INPUT the employer records — never inferred
+from age — mirroring how the income-tax REGION is an input. It reuses the SAME
+`upper_secondary_threshold_annual` and `rate` already in the dated table, so no new numbers are
+introduced and an April rate change flows through automatically.
+
+**Default is `A` (standard rate)**, so an employee with no letter recorded is priced exactly as
+before — the change is opt-in per employee and never alters an existing run. `date_of_birth`, where
+recorded, powers only a **non-blocking consistency warning** (`niCategoryAgeWarning`, e.g. an
+under-21 who has since turned 21 while still on category M); it never changes a figure.
+
+**Residual effect: employer NI is still OVERSTATED** only for a qualifying employee whose correct
+letter has **not yet been recorded** (they default to `A`). Veteran category V has a 52-week relief
+window from first civilian employment that date of birth alone cannot verify, so V is never
+age-flagged.
 
 ### 1.2 Employment Allowance — NOT modelled
 

@@ -18,6 +18,11 @@ import {
   validateFormData,
 } from "@/lib/forms/state";
 import { verifyCrmReferences } from "@/lib/crm/reference-integrity";
+import {
+  decideConversion,
+  buildCustomerFromLead,
+  type ConvertibleLead,
+} from "@/lib/leads/convert";
 
 /**
  * Lead pipeline server actions.
@@ -300,6 +305,110 @@ export async function regenerateLeadSummary(id: string) {
 
   revalidatePath(`/leads/${id}`);
   redirect(`/leads/${id}?saved=summary_regenerated`);
+}
+
+/**
+ * Convert a lead into a customer.
+ *
+ * Creates a NEW customer from the lead's contact fields (name/email/phone) and
+ * backfills leads.customer_id so the lead and the customer are linked. This is
+ * the "this enquiry is now a real client" moment.
+ *
+ * IDEMPOTENT, on purpose. A double-click, a retried POST, or a race between two
+ * staff must never mint two customers for one lead:
+ *   1. The lead is read ACTIVE-org pinned. A lead in another org is
+ *      indistinguishable from a missing one (RLS admits every org the caller
+ *      belongs to — the pin is the real scope).
+ *   2. If leads.customer_id is ALREADY set, this is a no-op: we redirect to the
+ *      EXISTING customer rather than creating another (the idempotency guard).
+ *   3. Otherwise we create the customer, then backfill customer_id ONLY WHERE it
+ *      is still null (`.is("customer_id", null)`). If a concurrent conversion won
+ *      that race (count === 0), we delete the customer we just created (an
+ *      orphan) and send the user to the winner — so the invariant "one lead → at
+ *      most one converted customer" holds even under concurrency.
+ *
+ * Button-only (redirect + querystring, no useActionState) — matches the other
+ * lifecycle actions in this file and sidesteps the deep-swap commit race.
+ */
+export async function convertLeadToCustomer(id: string) {
+  const { ctx } = await requireOrgContext();
+  if (!idSchema.safeParse(id).success) redirect("/leads?error=bad_id");
+
+  const supabase = await createClient();
+
+  // contact_* + customer_id, ACTIVE-org pinned. contact_* aren't in the
+  // generated types yet (20260601000100) — string selector + unknown-cast.
+  const { data: leadRaw, error: leadError } = await supabase
+    .from("leads")
+    .select("id, customer_id, contact_name, contact_email, contact_phone" as never)
+    .eq("id", id)
+    .eq("org_id", ctx.org.id)
+    .maybeSingle();
+  if (leadError) throw readFailure("lead convert: lead", leadError);
+  if (!leadRaw) redirect(`/leads/${id}?error=not_found`);
+  const lead = leadRaw as unknown as ConvertibleLead;
+
+  const decision = decideConversion(lead);
+  // Already converted → return the existing customer (idempotent no-op).
+  if (decision.kind === "already") {
+    redirect(`/customers/${decision.customerId}?saved=lead_converted`);
+  }
+  if (decision.kind === "no_contact") {
+    redirect(`/leads/${id}?error=convert_no_contact`);
+  }
+
+  const { data: created, error: createError } = await supabase
+    .from("customers")
+    .insert(buildCustomerFromLead(ctx.org.id, decision.name, lead))
+    .select("id")
+    .single();
+  if (createError || !created) {
+    console.error("[leads] convert: customer create failed", createError);
+    redirect(`/leads/${id}?error=convert_failed`);
+  }
+
+  // Backfill ONLY while still unconverted — the concurrency guard. `count`
+  // distinguishes "we linked it" from "someone else already did".
+  const { error: linkError, count } = await supabase
+    .from("leads")
+    .update(
+      {
+        customer_id: created.id,
+        last_activity_at: new Date().toISOString(),
+      } as never,
+      { count: "exact" },
+    )
+    .eq("id", id)
+    .eq("org_id", ctx.org.id)
+    .is("customer_id", null);
+  if (linkError) {
+    console.error("[leads] convert: backfill failed", linkError);
+    // Roll back the orphan customer so a failed link can't strand a record.
+    await supabase.from("customers").delete().eq("id", created.id).eq("org_id", ctx.org.id);
+    redirect(`/leads/${id}?error=convert_failed`);
+  }
+  if (count === 0) {
+    // A concurrent conversion won the race. Remove our orphan and send the user
+    // to the customer that actually got linked.
+    await supabase.from("customers").delete().eq("id", created.id).eq("org_id", ctx.org.id);
+    // LOUD read — bind the error rather than discard it; a rejected re-read must
+    // not masquerade as "no winner" and silently swallow the concurrent link.
+    const { data: winner, error: winnerError } = await supabase
+      .from("leads")
+      .select("customer_id")
+      .eq("id", id)
+      .eq("org_id", ctx.org.id)
+      .maybeSingle();
+    if (winnerError) throw readFailure("lead convert: winner re-read", winnerError);
+    const winnerId = (winner as { customer_id: string | null } | null)?.customer_id ?? null;
+    if (winnerId) redirect(`/customers/${winnerId}?saved=lead_converted`);
+    redirect(`/leads/${id}?error=convert_failed`);
+  }
+
+  revalidatePath("/leads");
+  revalidatePath(`/leads/${id}`);
+  revalidatePath("/customers");
+  redirect(`/customers/${created.id}?saved=lead_converted`);
 }
 
 export async function deleteLead(id: string) {
