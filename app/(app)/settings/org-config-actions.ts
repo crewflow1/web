@@ -192,7 +192,8 @@ export async function saveFlatRateConfig(
     first_year_discount: formData.get("frs_first_year_discount") === "on",
     effective_from: formData.get("frs_effective_from"),
     effective_to: formData.get("frs_effective_to"),
-    limited_cost: formData.get("frs_limited_cost") ?? "auto",
+    // Absent ⇒ undefined so the schema's conservative 'unset' default applies.
+    limited_cost: formData.get("frs_limited_cost") ?? undefined,
   });
   if (!parsed.success) {
     const fieldErrors: Record<string, string> = {};

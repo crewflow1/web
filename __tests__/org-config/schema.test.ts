@@ -8,6 +8,7 @@ import {
   defaultTaxDefaults,
   defaultOrgSettings,
   defaultFlatRateConfig,
+  flatRateConfigSchema,
   VAT_RATES,
   CIS_RATES,
 } from "@/lib/org-config/schema";
@@ -235,5 +236,59 @@ describe("combined org settings", () => {
     });
     // The FRS default must be DISABLED so no existing tenant's VAT numbers move.
     expect(s.flat_rate_config.enabled).toBe(false);
+  });
+});
+
+describe("flat rate scheme config — cross-field sector-rate validation", () => {
+  const enabled = (sector: unknown) => ({
+    enabled: true,
+    sector_percent: sector,
+    registration_date: null,
+    first_year_discount: false,
+    effective_from: null,
+    effective_to: null,
+    limited_cost: "no",
+  });
+
+  it("DISABLED config is accepted with the default sector_percent 0 (FRS off, unaffected)", () => {
+    const parsed = flatRateConfigSchema.safeParse({ enabled: false });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.sector_percent).toBe(0);
+  });
+
+  it("ENABLING FRS with sector_percent 0 is REJECTED (would file box 1 = £0)", () => {
+    const parsed = flatRateConfigSchema.safeParse(enabled(0));
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      // The error is attached to sector_percent so the settings panel can show it inline.
+      expect(parsed.error.issues.some((i) => i.path[0] === "sector_percent")).toBe(true);
+    }
+  });
+
+  it("ENABLING FRS with a rate above 16.5% is REJECTED", () => {
+    expect(flatRateConfigSchema.safeParse(enabled(17)).success).toBe(false);
+    expect(flatRateConfigSchema.safeParse(enabled(20)).success).toBe(false);
+  });
+
+  it("ENABLING FRS with a below-1% rate is REJECTED", () => {
+    expect(flatRateConfigSchema.safeParse(enabled(0.5)).success).toBe(false);
+  });
+
+  it("ENABLING FRS with a valid rate (coerced from a form string) is ACCEPTED", () => {
+    const parsed = flatRateConfigSchema.safeParse(enabled("9.5"));
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.sector_percent).toBe(9.5);
+  });
+
+  it("accepts the band boundaries 1% and 16.5% when enabled", () => {
+    expect(flatRateConfigSchema.safeParse(enabled(1)).success).toBe(true);
+    expect(flatRateConfigSchema.safeParse(enabled(16.5)).success).toBe(true);
+  });
+
+  it("limited_cost has no 'auto' member; unknown values are rejected", () => {
+    expect(flatRateConfigSchema.safeParse({ ...enabled(9.5), limited_cost: "auto" }).success).toBe(false);
+    for (const lc of ["yes", "no", "unset"]) {
+      expect(flatRateConfigSchema.safeParse({ ...enabled(9.5), limited_cost: lc }).success).toBe(true);
+    }
   });
 });

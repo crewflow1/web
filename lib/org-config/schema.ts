@@ -186,10 +186,20 @@ const optionalIsoDate = z.preprocess(
  * DB default is a DISABLED config, so FRS never applies until an org opts in and no
  * existing tenant's VAT numbers change.
  */
+/**
+ * HMRC FRS sector rates run from 4% up to 16.5% (limited-cost). We accept the
+ * slightly wider 1%–16.5% band as valid WHEN FRS IS ENABLED (see the superRefine
+ * below) — the 1% floor catches a first-year-discounted low sector rate, and 16.5%
+ * is the highest possible flat rate. The bare field still allows 0 so a DISABLED
+ * config keeps its 0 default; the cross-field rule only bites when enabled.
+ */
+const FRS_SECTOR_MIN = 1;
+const FRS_SECTOR_MAX = 16.5;
+
 export const flatRateConfigSchema = z
   .object({
     enabled: z.coerce.boolean().default(false),
-    // HMRC sector rates run roughly 4%–16.5%; clamp to a sane 0–20 band.
+    // Bare bound is generous (0–20); the enabled-only band is enforced below.
     sector_percent: z.coerce
       .number()
       .min(0, "Cannot be negative")
@@ -203,7 +213,20 @@ export const flatRateConfigSchema = z
     // 'unset' is the safe default and files the conservative 16.5%.
     limited_cost: z.enum(["yes", "no", "unset"]).default("unset"),
   })
-  .strip();
+  .strip()
+  .superRefine((cfg, ctx) => {
+    // CROSS-FIELD: an ENABLED FRS config must carry a plausible sector rate.
+    // The schema default is 0, which would file box 1 = 0% × turnover = £0 — a
+    // silent under-declaration for a user who turns FRS on without setting a rate.
+    // Require 1%–16.5% when enabled; disabled/default (FRS off) is unaffected.
+    if (cfg.enabled && !(cfg.sector_percent >= FRS_SECTOR_MIN && cfg.sector_percent <= FRS_SECTOR_MAX)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["sector_percent"],
+        message: `Enter your FRS sector percentage (HMRC rates run from ${FRS_SECTOR_MIN}% to ${FRS_SECTOR_MAX}%).`,
+      });
+    }
+  });
 
 /** The disabled default (mirrors the engine's DEFAULT_FLAT_RATE_CONFIG). */
 export function defaultFlatRateConfig(): FlatRateSchemeConfig {
