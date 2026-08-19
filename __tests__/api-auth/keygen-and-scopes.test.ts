@@ -109,10 +109,16 @@ describe("SCOPES registry — the drift guard", () => {
       "read:customers",
       "read:invoices",
       "read:quotes",
+      "read:time",
+      "read:staff",
+      "read:expenses",
+      "read:materials",
       "write:customers",
       "write:leads",
       "write:jobs",
       "write:quotes",
+      "write:expenses",
+      "write:invoices",
     ]);
   });
 

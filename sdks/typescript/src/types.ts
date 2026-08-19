@@ -104,6 +104,79 @@ export interface Lead {
   updated_at?: string | null;
 }
 
+export interface TimeEntry {
+  id?: string | null;
+  started_at?: string | null;
+  ended_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface TimeEntryList {
+  data: TimeEntry[];
+  pagination: {
+    page: number;
+    per_page: number;
+    has_more: boolean;
+  };
+}
+
+export interface StaffMember {
+  id?: string | null;
+  role?: string | null;
+  created_at?: string | null;
+}
+
+export interface StaffMemberList {
+  data: StaffMember[];
+  pagination: {
+    page: number;
+    per_page: number;
+    has_more: boolean;
+  };
+}
+
+export interface Expense {
+  id?: string | null;
+  amount?: number | null;
+  currency?: string | null;
+  vat_rate?: number | null;
+  vat_total?: number | null;
+  category?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ExpenseList {
+  data: Expense[];
+  pagination: {
+    page: number;
+    per_page: number;
+    has_more: boolean;
+  };
+}
+
+export interface MaterialRequest {
+  id?: string | null;
+  number?: string | null;
+  status?: string | null;
+  priority?: string | null;
+  needed_by?: string | null;
+  submitted_at?: string | null;
+  decided_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface MaterialRequestList {
+  data: MaterialRequest[];
+  pagination: {
+    page: number;
+    per_page: number;
+    has_more: boolean;
+  };
+}
+
 export interface CustomerWriteInput {
   name: string;
   email?: string;
@@ -191,6 +264,30 @@ export interface QuoteWriteInput {
   line_items: QuoteLineItemInput[];
 }
 
+/** Record a cost. vat_total is computed server-side (amount * vat_rate) and can never be sent. Currency is fixed to GBP. */
+export interface ExpenseWriteInput {
+  amount: number;
+  vat_rate?: 0 | 5 | 20;
+  category?: string;
+  notes?: string;
+  job_id?: string;
+}
+
+/** At least one field must be provided. Omitted fields are left unchanged. job_id and vat_total are not updatable. */
+export interface ExpenseUpdateInput {
+  amount?: number;
+  vat_rate?: 0 | 5 | 20;
+  category?: string;
+  notes?: string;
+}
+
+/** Update invoice status and metadata. Money columns (amount, vat_total, total, number) are not writable. 'overdue' is derived, not stored, and is rejected. At least one field must be provided. */
+export interface InvoiceUpdateInput {
+  status?: "draft" | "sent" | "awaiting_payment" | "partially_paid" | "paid";
+  due_date?: string;
+  notes?: string;
+}
+
 // Synthesized response envelopes for operations with inline bodies.
 export type GetMeResponse = {
   org_id?: string;
@@ -226,6 +323,26 @@ export type PostLeadsResponse = {
   data?: Lead;
 };
 
+export type GetInvoicesByIdResponse = {
+  data?: Invoice;
+};
+
+export type PatchInvoicesByIdResponse = {
+  data?: Invoice;
+};
+
 export type PostQuotesResponse = {
   data?: Quote;
+};
+
+export type PostExpensesResponse = {
+  data?: Expense;
+};
+
+export type GetExpensesByIdResponse = {
+  data?: Expense;
+};
+
+export type PatchExpensesByIdResponse = {
+  data?: Expense;
 };

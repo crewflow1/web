@@ -51,5 +51,14 @@ key's organisation. Non-2xx responses throw `CrewFlowApiError` (carrying
 | `patchCustomersById` | `PATCH /customers/{id}` | `write:customers` |
 | `postLeads` | `POST /leads` | `write:leads` |
 | `getInvoices` | `GET /invoices` | `read:invoices` |
+| `getInvoicesById` | `GET /invoices/{id}` | `read:invoices` |
+| `patchInvoicesById` | `PATCH /invoices/{id}` | `write:invoices` |
 | `getQuotes` | `GET /quotes` | `read:quotes` |
 | `postQuotes` | `POST /quotes` | `write:quotes` |
+| `getTime` | `GET /time` | `read:time` |
+| `getStaff` | `GET /staff` | `read:staff` |
+| `getExpenses` | `GET /expenses` | `read:expenses` |
+| `postExpenses` | `POST /expenses` | `write:expenses` |
+| `getExpensesById` | `GET /expenses/{id}` | `read:expenses` |
+| `patchExpensesById` | `PATCH /expenses/{id}` | `write:expenses` |
+| `getMaterials` | `GET /materials` | `read:materials` |

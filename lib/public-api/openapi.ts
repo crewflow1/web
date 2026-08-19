@@ -3,6 +3,10 @@ import { CUSTOMER_DTO_COLUMNS } from "@/lib/public-api/customers";
 import { INVOICE_DTO_COLUMNS } from "@/lib/public-api/invoices";
 import { QUOTE_DTO_COLUMNS } from "@/lib/public-api/quotes";
 import { LEAD_DTO_COLUMNS } from "@/lib/public-api/leads";
+import { TIME_DTO_COLUMNS } from "@/lib/public-api/time";
+import { STAFF_DTO_COLUMNS } from "@/lib/public-api/staff";
+import { EXPENSE_DTO_COLUMNS } from "@/lib/public-api/expenses";
+import { MATERIAL_DTO_COLUMNS } from "@/lib/public-api/materials";
 import { SCOPE_LABELS } from "@/lib/api-auth/scopes";
 
 /**
@@ -90,6 +94,43 @@ const LEAD_FIELD_TYPES: Record<string, SchemaType> = {
   urgency: "string",
   estimated_value: "number",
   postcode: "string",
+  created_at: "string",
+  updated_at: "string",
+};
+
+const TIME_FIELD_TYPES: Record<string, SchemaType> = {
+  id: "string",
+  started_at: "string",
+  ended_at: "string",
+  created_at: "string",
+  updated_at: "string",
+};
+
+const STAFF_FIELD_TYPES: Record<string, SchemaType> = {
+  id: "string",
+  role: "string",
+  created_at: "string",
+};
+
+const EXPENSE_FIELD_TYPES: Record<string, SchemaType> = {
+  id: "string",
+  amount: "number",
+  currency: "string",
+  vat_rate: "number",
+  vat_total: "number",
+  category: "string",
+  created_at: "string",
+  updated_at: "string",
+};
+
+const MATERIAL_FIELD_TYPES: Record<string, SchemaType> = {
+  id: "string",
+  number: "string",
+  status: "string",
+  priority: "string",
+  needed_by: "string",
+  submitted_at: "string",
+  decided_at: "string",
   created_at: "string",
   updated_at: "string",
 };
@@ -329,6 +370,53 @@ const QuoteWriteInput: Record<string, unknown> = {
   },
 };
 
+const ExpenseWriteInput: Record<string, unknown> = {
+  type: "object",
+  required: ["amount"],
+  additionalProperties: false,
+  description:
+    "Record a cost. vat_total is computed server-side (amount * vat_rate) and " +
+    "can never be sent. Currency is fixed to GBP.",
+  properties: {
+    amount: { type: "number", minimum: 0 },
+    vat_rate: { type: "number", enum: [0, 5, 20], default: 20 },
+    category: { type: "string", maxLength: 120 },
+    notes: { type: "string", maxLength: 5000 },
+    job_id: { type: "string", format: "uuid" },
+  },
+};
+
+const ExpenseUpdateInput: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  description:
+    "At least one field must be provided. Omitted fields are left unchanged. " +
+    "job_id and vat_total are not updatable.",
+  properties: {
+    amount: { type: "number", minimum: 0 },
+    vat_rate: { type: "number", enum: [0, 5, 20] },
+    category: { type: "string", maxLength: 120 },
+    notes: { type: "string", maxLength: 5000 },
+  },
+};
+
+const InvoiceUpdateInput: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  description:
+    "Update invoice status and metadata. Money columns (amount, vat_total, " +
+    "total, number) are not writable. 'overdue' is derived, not stored, and is " +
+    "rejected. At least one field must be provided.",
+  properties: {
+    status: {
+      type: "string",
+      enum: ["draft", "sent", "awaiting_payment", "partially_paid", "paid"],
+    },
+    due_date: { type: "string", description: "YYYY-MM-DD" },
+    notes: { type: "string", maxLength: 5000 },
+  },
+};
+
 /** Build the full OpenAPI 3.1 document. Pure — no env, no I/O. */
 export function buildOpenApiDocument(): Record<string, unknown> {
   return {
@@ -382,6 +470,14 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         Quote: objectSchema(QUOTE_DTO_COLUMNS, QUOTE_FIELD_TYPES),
         QuoteList: listEnvelope("#/components/schemas/Quote"),
         Lead: objectSchema(LEAD_DTO_COLUMNS, LEAD_FIELD_TYPES),
+        TimeEntry: objectSchema(TIME_DTO_COLUMNS, TIME_FIELD_TYPES),
+        TimeEntryList: listEnvelope("#/components/schemas/TimeEntry"),
+        StaffMember: objectSchema(STAFF_DTO_COLUMNS, STAFF_FIELD_TYPES),
+        StaffMemberList: listEnvelope("#/components/schemas/StaffMember"),
+        Expense: objectSchema(EXPENSE_DTO_COLUMNS, EXPENSE_FIELD_TYPES),
+        ExpenseList: listEnvelope("#/components/schemas/Expense"),
+        MaterialRequest: objectSchema(MATERIAL_DTO_COLUMNS, MATERIAL_FIELD_TYPES),
+        MaterialRequestList: listEnvelope("#/components/schemas/MaterialRequest"),
         // Write-input (request body) schemas.
         CustomerWriteInput,
         CustomerUpdateInput,
@@ -390,6 +486,9 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         JobUpdateInput,
         QuoteLineItemInput,
         QuoteWriteInput,
+        ExpenseWriteInput,
+        ExpenseUpdateInput,
+        InvoiceUpdateInput,
       },
     },
     paths: {
@@ -526,6 +625,42 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       "/invoices": {
         get: listOperation("Invoices", "List invoices.", "read:invoices", "Invoice"),
       },
+      "/invoices/{id}": {
+        get: {
+          tags: ["Invoices"],
+          summary: "Fetch a single invoice by id.",
+          security: [{ apiKey: ["read:invoices"] }],
+          parameters: [
+            { name: "id", in: "path", required: true, schema: { type: "string" } },
+          ],
+          responses: {
+            "200": {
+              description: "The invoice.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { data: { $ref: "#/components/schemas/Invoice" } },
+                  },
+                },
+              },
+            },
+            "401": { description: "Missing, malformed, unknown, revoked or expired API key." },
+            "403": { description: "The key lacks the read:invoices scope." },
+            "404": { description: "No such invoice in this organisation." },
+            "429": { description: "Rate limit exceeded (120 requests/minute per key)." },
+          },
+        },
+        patch: writeOperation({
+          tag: "Invoices",
+          summary: "Update an invoice's status and metadata (never its money).",
+          scope: "write:invoices",
+          bodyRef: "#/components/schemas/InvoiceUpdateInput",
+          resultRef: "#/components/schemas/Invoice",
+          successStatus: "200",
+          hasIdParam: true,
+        }),
+      },
       "/quotes": {
         get: listOperation("Quotes", "List quotes.", "read:quotes", "Quote"),
         post: writeOperation({
@@ -536,6 +671,72 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           resultRef: "#/components/schemas/Quote",
           successStatus: "201",
         }),
+      },
+      "/time": {
+        get: listOperation("Time", "List time entries.", "read:time", "TimeEntry"),
+      },
+      "/staff": {
+        get: listOperation(
+          "Staff",
+          "List staff (role and join date only — no identity).",
+          "read:staff",
+          "StaffMember",
+        ),
+      },
+      "/expenses": {
+        get: listOperation("Expenses", "List expenses.", "read:expenses", "Expense"),
+        post: writeOperation({
+          tag: "Expenses",
+          summary: "Record an expense.",
+          scope: "write:expenses",
+          bodyRef: "#/components/schemas/ExpenseWriteInput",
+          resultRef: "#/components/schemas/Expense",
+          successStatus: "201",
+        }),
+      },
+      "/expenses/{id}": {
+        get: {
+          tags: ["Expenses"],
+          summary: "Fetch a single expense by id.",
+          security: [{ apiKey: ["read:expenses"] }],
+          parameters: [
+            { name: "id", in: "path", required: true, schema: { type: "string" } },
+          ],
+          responses: {
+            "200": {
+              description: "The expense.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { data: { $ref: "#/components/schemas/Expense" } },
+                  },
+                },
+              },
+            },
+            "401": { description: "Missing, malformed, unknown, revoked or expired API key." },
+            "403": { description: "The key lacks the read:expenses scope." },
+            "404": { description: "No such expense in this organisation." },
+            "429": { description: "Rate limit exceeded (120 requests/minute per key)." },
+          },
+        },
+        patch: writeOperation({
+          tag: "Expenses",
+          summary: "Update an expense.",
+          scope: "write:expenses",
+          bodyRef: "#/components/schemas/ExpenseUpdateInput",
+          resultRef: "#/components/schemas/Expense",
+          successStatus: "200",
+          hasIdParam: true,
+        }),
+      },
+      "/materials": {
+        get: listOperation(
+          "Materials",
+          "List material requests.",
+          "read:materials",
+          "MaterialRequest",
+        ),
       },
     },
   };

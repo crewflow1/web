@@ -2,6 +2,7 @@ import { z } from "zod";
 import { JOB_STATUSES } from "@/lib/jobs/schema";
 import { LEAD_SOURCES, LEAD_URGENCIES } from "@/lib/leads/schema";
 import { QUOTE_VAT_RATES } from "@/lib/quotes/schema";
+import { WRITABLE_INVOICE_STATUSES } from "@/lib/invoices/schema";
 
 /**
  * Public API v1 — the WRITE input contracts (create/update).
@@ -230,3 +231,88 @@ export const createQuoteSchema = z
   .strict();
 
 export type CreateQuoteInput = z.infer<typeof createQuoteSchema>;
+
+// ---------------------------------------------------------------------------
+// Expenses (finances / money-out ledger)
+// ---------------------------------------------------------------------------
+
+/**
+ * The VAT rate an expense may carry — the exact set the `finances.vat_rate`
+ * CHECK admits (0 zero-rated, 5 reduced, 20 standard). Reuses the quotes VAT
+ * vocabulary so the two never drift.
+ */
+const expenseVatRate = z
+  .number()
+  .refine(
+    (v) => (QUOTE_VAT_RATES as readonly number[]).includes(v),
+    "VAT rate must be 0, 5, or 20",
+  )
+  .optional();
+
+/**
+ * POST /api/v1/expenses — record a cost. `amount` is required and non-negative;
+ * `vat_total` is a STORED GENERATED column and can NEVER be set (a body that
+ * tries is refused by `.strict()`), so an integration cannot forge the VAT
+ * figure. `job_id`, when set, is verified in the key's org by the route before
+ * the insert. Currency is fixed to GBP by the route (not a client input).
+ */
+export const createExpenseSchema = z
+  .object({
+    amount: z.number().nonnegative("Must be zero or more").max(99_999_999),
+    vat_rate: expenseVatRate,
+    category: optionalText(120),
+    notes: optionalText(5000),
+    job_id: optionalUuid,
+  })
+  .strict();
+
+export type CreateExpenseInput = z.infer<typeof createExpenseSchema>;
+
+/**
+ * PATCH /api/v1/expenses/{id} — every field optional, at least one present.
+ * `job_id` is deliberately NOT patchable (re-linking an expense to another job
+ * is an internal accounting move, not a public-key operation); it can only be
+ * set at create time. `vat_total` remains unwritable (generated).
+ */
+export const updateExpenseSchema = z
+  .object({
+    amount: z.number().nonnegative("Must be zero or more").max(99_999_999).optional(),
+    vat_rate: expenseVatRate,
+    category: optionalText(120),
+    notes: optionalText(5000),
+  })
+  .strict()
+  .refine((v) => Object.values(v).some((x) => x !== undefined), {
+    message: "Provide at least one field to update.",
+  });
+
+export type UpdateExpenseInput = z.infer<typeof updateExpenseSchema>;
+
+// ---------------------------------------------------------------------------
+// Invoices (metadata / status update only — money is never writable)
+// ---------------------------------------------------------------------------
+
+/**
+ * PATCH /api/v1/invoices/{id}. The ONLY invoice write the public API opens: a
+ * metadata + status update. There is NO invoice CREATE (raising an invoice is
+ * an accounting operation the public API does not open) and the MONEY columns
+ * (amount / vat_total / total / number) are deliberately ABSENT — `.strict()`
+ * refuses them, so a public key can never move a billed figure.
+ *
+ * `status` is constrained to WRITABLE_INVOICE_STATUSES — `overdue` is derived,
+ * not stored, so it is rejected here exactly as the in-app PATCH rejects it. At
+ * least one field must be present. This PATCH is IDEMPOTENT: re-sending the same
+ * body leaves the invoice in the same state.
+ */
+export const updateInvoiceSchema = z
+  .object({
+    status: z.enum(WRITABLE_INVOICE_STATUSES).optional(),
+    due_date: optionalDate,
+    notes: optionalText(5000),
+  })
+  .strict()
+  .refine((v) => Object.values(v).some((x) => x !== undefined), {
+    message: "Provide at least one field to update.",
+  });
+
+export type UpdateInvoiceInput = z.infer<typeof updateInvoiceSchema>;

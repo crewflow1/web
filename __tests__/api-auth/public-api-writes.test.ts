@@ -16,6 +16,9 @@ import {
   createJobSchema,
   updateJobSchema,
   createQuoteSchema,
+  createExpenseSchema,
+  updateExpenseSchema,
+  updateInvoiceSchema,
 } from "@/lib/public-api/write-schemas";
 import { toPublicLeadDto, LEAD_DTO_COLUMNS } from "@/lib/public-api/leads";
 
@@ -113,6 +116,14 @@ describe("strict schemas reject injected privileged fields (mass assignment)", (
     [createQuoteSchema, { customer_id: crypto.randomUUID(), line_items: [{ description: "x", qty: 1, unit_price: 1, vat_rate: 20 }] }, "cost_total"],
     [createQuoteSchema, { customer_id: crypto.randomUUID(), line_items: [{ description: "x", qty: 1, unit_price: 1, vat_rate: 20 }] }, "public_token"],
     [createQuoteSchema, { customer_id: crypto.randomUUID(), line_items: [{ description: "x", qty: 1, unit_price: 1, vat_rate: 20 }] }, "subtotal"],
+    // Open-API breadth wave — expenses + invoices.
+    [createExpenseSchema, { amount: 10 }, "org_id"],
+    [createExpenseSchema, { amount: 10 }, "vat_total"],
+    [createExpenseSchema, { amount: 10 }, "id"],
+    [updateExpenseSchema, { category: "fuel" }, "job_id"],
+    [updateInvoiceSchema, { status: "sent" }, "amount"],
+    [updateInvoiceSchema, { status: "sent" }, "total"],
+    [updateInvoiceSchema, { status: "sent" }, "org_id"],
   ];
 
   it.each(forbiddenByResource)(
@@ -195,6 +206,71 @@ describe("job + quote schemas — enums and line items", () => {
         line_items: [{ description: "x", qty: 1, unit_price: 1, vat_rate: 17.5 }],
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("expense schemas — money in, generated VAT out", () => {
+  it("create requires a non-negative amount", () => {
+    expect(createExpenseSchema.safeParse({}).success).toBe(false);
+    expect(createExpenseSchema.safeParse({ amount: -1 }).success).toBe(false);
+    expect(createExpenseSchema.safeParse({ amount: 250 }).success).toBe(true);
+  });
+
+  it("create rejects an off-list VAT rate but accepts 0/5/20", () => {
+    expect(createExpenseSchema.safeParse({ amount: 1, vat_rate: 17.5 }).success).toBe(false);
+    for (const vat_rate of [0, 5, 20]) {
+      expect(createExpenseSchema.safeParse({ amount: 1, vat_rate }).success).toBe(true);
+    }
+  });
+
+  it("update requires at least one field and never accepts job_id", () => {
+    expect(updateExpenseSchema.safeParse({}).success).toBe(false);
+    expect(updateExpenseSchema.safeParse({ category: "materials" }).success).toBe(true);
+    expect(updateExpenseSchema.safeParse({ job_id: crypto.randomUUID() }).success).toBe(false);
+  });
+});
+
+describe("invoice update schema — status/metadata only, no money, no derived status", () => {
+  it("accepts a writable status but rejects the derived 'overdue'", () => {
+    expect(updateInvoiceSchema.safeParse({ status: "paid" }).success).toBe(true);
+    expect(updateInvoiceSchema.safeParse({ status: "overdue" }).success).toBe(false);
+  });
+
+  it("requires at least one field and rejects a money column", () => {
+    expect(updateInvoiceSchema.safeParse({}).success).toBe(false);
+    expect(updateInvoiceSchema.safeParse({ amount: 100 }).success).toBe(false);
+    expect(updateInvoiceSchema.safeParse({ total: 100 }).success).toBe(false);
+    expect(updateInvoiceSchema.safeParse({ due_date: "2026-09-01" }).success).toBe(true);
+  });
+});
+
+describe("PATCH idempotency — same body, same computed update row", () => {
+  // A PATCH is idempotent by construction: the route builds the DB update from
+  // pickDefined(body, allowlist), so re-sending an identical body produces an
+  // identical update — no accumulation, no drift. These assert that reduction is
+  // stable and never carries a field outside the allowlist.
+  const EXPENSE_UPDATE_COLUMNS = ["amount", "vat_rate", "category", "notes"] as const;
+  const INVOICE_UPDATE_COLUMNS = ["status", "due_date", "notes"] as const;
+
+  it("an expense PATCH reduces to the same allowlisted row twice", () => {
+    const body = updateExpenseSchema.parse({ amount: 500, category: "fuel" });
+    const first = pickDefined(body as Record<string, unknown>, EXPENSE_UPDATE_COLUMNS);
+    const second = pickDefined(body as Record<string, unknown>, EXPENSE_UPDATE_COLUMNS);
+    expect(first).toEqual(second);
+    expect(first).toEqual({ amount: 500, category: "fuel" });
+    expect(first).not.toHaveProperty("vat_total");
+    expect(first).not.toHaveProperty("org_id");
+  });
+
+  it("an invoice PATCH reduces to the same allowlisted row twice (no money leaks in)", () => {
+    const body = updateInvoiceSchema.parse({ status: "sent", due_date: "2026-09-01" });
+    const first = pickDefined(body as Record<string, unknown>, INVOICE_UPDATE_COLUMNS);
+    const second = pickDefined(body as Record<string, unknown>, INVOICE_UPDATE_COLUMNS);
+    expect(first).toEqual(second);
+    expect(first).toEqual({ status: "sent", due_date: "2026-09-01" });
+    for (const money of ["amount", "vat_total", "total", "number"]) {
+      expect(first).not.toHaveProperty(money);
+    }
   });
 });
 

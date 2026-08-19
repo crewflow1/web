@@ -22,9 +22,21 @@ import type {
   LeadWriteInput,
   PostLeadsResponse,
   InvoiceList,
+  GetInvoicesByIdResponse,
+  InvoiceUpdateInput,
+  PatchInvoicesByIdResponse,
   QuoteList,
   QuoteWriteInput,
   PostQuotesResponse,
+  TimeEntryList,
+  StaffMemberList,
+  ExpenseList,
+  ExpenseWriteInput,
+  PostExpensesResponse,
+  GetExpensesByIdResponse,
+  ExpenseUpdateInput,
+  PatchExpensesByIdResponse,
+  MaterialRequestList,
 } from "./types.js";
 import { OPERATIONS } from "./operations.js";
 
@@ -170,6 +182,22 @@ export class CrewFlowClient {
   }
 
   /**
+   * GET /invoices/{id} — Fetch a single invoice by id.
+   * Requires scope: read:invoices.
+   */
+  getInvoicesById(id: string, options?: RequestOptions): Promise<GetInvoicesByIdResponse> {
+    return this.request<GetInvoicesByIdResponse>(OPERATIONS.getInvoicesById.method, `/invoices/${encodeURIComponent(id)}`, undefined, undefined, options);
+  }
+
+  /**
+   * PATCH /invoices/{id} — Update an invoice's status and metadata (never its money).
+   * Requires scope: write:invoices.
+   */
+  patchInvoicesById(id: string, body: InvoiceUpdateInput, options?: RequestOptions): Promise<PatchInvoicesByIdResponse> {
+    return this.request<PatchInvoicesByIdResponse>(OPERATIONS.patchInvoicesById.method, `/invoices/${encodeURIComponent(id)}`, undefined, body, options);
+  }
+
+  /**
    * GET /quotes — List quotes.
    * Requires scope: read:quotes.
    */
@@ -183,6 +211,62 @@ export class CrewFlowClient {
    */
   postQuotes(body: QuoteWriteInput, options?: RequestOptions): Promise<PostQuotesResponse> {
     return this.request<PostQuotesResponse>(OPERATIONS.postQuotes.method, `/quotes`, undefined, body, options);
+  }
+
+  /**
+   * GET /time — List time entries.
+   * Requires scope: read:time.
+   */
+  getTime(query?: { page?: number; per_page?: number }, options?: RequestOptions): Promise<TimeEntryList> {
+    return this.request<TimeEntryList>(OPERATIONS.getTime.method, `/time`, query, undefined, options);
+  }
+
+  /**
+   * GET /staff — List staff (role and join date only — no identity).
+   * Requires scope: read:staff.
+   */
+  getStaff(query?: { page?: number; per_page?: number }, options?: RequestOptions): Promise<StaffMemberList> {
+    return this.request<StaffMemberList>(OPERATIONS.getStaff.method, `/staff`, query, undefined, options);
+  }
+
+  /**
+   * GET /expenses — List expenses.
+   * Requires scope: read:expenses.
+   */
+  getExpenses(query?: { page?: number; per_page?: number }, options?: RequestOptions): Promise<ExpenseList> {
+    return this.request<ExpenseList>(OPERATIONS.getExpenses.method, `/expenses`, query, undefined, options);
+  }
+
+  /**
+   * POST /expenses — Record an expense.
+   * Requires scope: write:expenses.
+   */
+  postExpenses(body: ExpenseWriteInput, options?: RequestOptions): Promise<PostExpensesResponse> {
+    return this.request<PostExpensesResponse>(OPERATIONS.postExpenses.method, `/expenses`, undefined, body, options);
+  }
+
+  /**
+   * GET /expenses/{id} — Fetch a single expense by id.
+   * Requires scope: read:expenses.
+   */
+  getExpensesById(id: string, options?: RequestOptions): Promise<GetExpensesByIdResponse> {
+    return this.request<GetExpensesByIdResponse>(OPERATIONS.getExpensesById.method, `/expenses/${encodeURIComponent(id)}`, undefined, undefined, options);
+  }
+
+  /**
+   * PATCH /expenses/{id} — Update an expense.
+   * Requires scope: write:expenses.
+   */
+  patchExpensesById(id: string, body: ExpenseUpdateInput, options?: RequestOptions): Promise<PatchExpensesByIdResponse> {
+    return this.request<PatchExpensesByIdResponse>(OPERATIONS.patchExpensesById.method, `/expenses/${encodeURIComponent(id)}`, undefined, body, options);
+  }
+
+  /**
+   * GET /materials — List material requests.
+   * Requires scope: read:materials.
+   */
+  getMaterials(query?: { page?: number; per_page?: number }, options?: RequestOptions): Promise<MaterialRequestList> {
+    return this.request<MaterialRequestList>(OPERATIONS.getMaterials.method, `/materials`, query, undefined, options);
   }
 
   /** Execute one request, applying auth, query, body and error mapping. */

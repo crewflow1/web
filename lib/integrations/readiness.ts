@@ -23,11 +23,14 @@ export type ApiKeysReadiness = {
    */
   implemented: boolean;
   /**
-   * How many /api/v1 route files this build ships. Currently 9 — the
+   * How many /api/v1 route files this build ships. Currently 15 — the
    * /api/v1/me probe, the jobs read pair (/api/v1/jobs and /api/v1/jobs/[id]),
    * the customers pair (/api/v1/customers and /api/v1/customers/[id]), the
-   * /api/v1/invoices + /api/v1/quotes reads, the /api/v1/leads write, and the
-   * /api/v1/openapi.json spec. Several of these files now carry WRITE verbs
+   * /api/v1/invoices read + by-id read/PATCH, the /api/v1/quotes read/write, the
+   * /api/v1/leads write, the /api/v1/openapi.json spec, and the Open-API breadth
+   * wave: /api/v1/time, /api/v1/staff and /api/v1/materials reads, the expenses
+   * read/write collection (/api/v1/expenses) and its by-id read/PATCH
+   * (/api/v1/expenses/[id]). Several of these files carry WRITE verbs
    * (POST/PATCH) too. The whole surface ships DARK behind
    * FEATURE_PUBLIC_API_JOBS (each 404s until the CEO enables it), so this count
    * is the built surface, not the live one. The drift-guard test ties it to the
@@ -45,11 +48,12 @@ export type IntegrationsReadiness = {
 export function getApiKeysReadiness(): ApiKeysReadiness {
   return {
     // lib/api-auth/{keygen,resolve,scopes}.ts + app/api/v1/me/route.ts
-    // + the jobs read/write pair + customers read/write pair + invoices/quotes
-    // reads (quotes also writes) + the leads write + openapi.json — all dark
-    // behind FEATURE_PUBLIC_API_JOBS.
+    // + the jobs read/write pair + customers read/write pair + invoices read &
+    // by-id read/PATCH + quotes read/write + the leads write + openapi.json
+    // + the breadth wave (time/staff/materials reads, expenses read/write
+    // collection + by-id read/PATCH) — all dark behind FEATURE_PUBLIC_API_JOBS.
     implemented: true,
-    endpoints: 9,
+    endpoints: 15,
   };
 }
 
