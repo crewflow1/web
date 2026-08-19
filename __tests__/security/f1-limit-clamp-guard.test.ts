@@ -305,7 +305,7 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // Per-request id-set lookup. (Line shifted +1 by the additive `barcode` column
   // on StockItemRow / STOCK_ITEM_COLUMNS, 20261144000000; shifted again by the
   // additive loadStockValuationReport + cost columns, W1 stock COGS, 20261180000000.)
-  "server/services/stock.ts:270":
+  "server/services/stock.ts:272":
     "bounded: receipt movements for a specific GRN's line-id set (.in('grn_line_id', grnLineIds)) — request-sized lookup; the balance-fold read (listStockMovements) is separately paged via fetchAllRows",
 
   // ── .from(as never) CAST-FORM WAVE — genuinely-bounded recency / per-scope

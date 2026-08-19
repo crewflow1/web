@@ -103,10 +103,16 @@ describe("operational stock never touches `finances`", () => {
     // exists, but it was added ADDITIVELY in its own migration (20261180000000),
     // NOT welded into the quantity ledger. The quantity tables stay cost-free so
     // the balance fold, the append-only guards and the tenant FKs are unchanged
-    // and a rollback of valuation is a clean column drop. `unit_price`, `cost`,
-    // `value`, `amount`, `vat` still do not exist on stock_items or the ORIGINAL
-    // stock_movements definition — the cost columns live only in the overlay
-    // migration, asserted separately below.
+    // and a rollback of valuation is a clean column drop.
+    //
+    // `unit_cost` and `cost` were DELIBERATELY REMOVED from this ban list: those
+    // columns (`unit_cost`, `cost_effect`, `costed_qty_effect`) NOW EXIST — but
+    // only on the OVERLAY migration (20261180000000), never on 20261063/64. This
+    // test scans ONLY 63/64, so it still proves the quantity ledger itself
+    // inlines no money; the overlay's cost columns are asserted positively in the
+    // "weighted-average cost valuation" block below. The remaining tokens
+    // (`unit_price`, `value`, `amount`, `vat*`, `price`, …) must STILL be absent
+    // from 63/64 — a cost basis or VAT rate has no business on the quantity ledger.
     const sql = sqlOnly(read(MIG_ITEMS)) + "\n" + sqlOnly(read(MIG_LEDGER));
     for (const money of [
       "unit_price",
@@ -177,9 +183,34 @@ describe("weighted-average cost valuation is additive, derived and double-count-
     // crashed and not silently valued at £0.
     expect(sql).toMatch(/add column if not exists unit_cost\s+numeric\(12, 4\)/i);
     expect(sql).toMatch(/add column if not exists cost_effect\s+numeric\(14, 2\)/i);
+    expect(sql).toMatch(/add column if not exists costed_qty_effect\s+numeric\(12, 2\)/i);
     expect(raw).toMatch(/HISTORICAL CONSISTENCY/);
     // The columns are declared without NOT NULL — assert no default/not-null crept in.
     expect(sql).not.toMatch(/cost_effect\s+numeric\(14, 2\)\s+not null/i);
+  });
+
+  it("CAPS an OUT movement's release at the costed pool — book value can never go negative (S1)", () => {
+    // The S1 boundary rule: an OUT that draws physical units across the
+    // costed↔uncosted boundary must release cost for ONLY the costed part.
+    // least(qty, costed_qty) is what floors costed_qty and book_value at 0.
+    expect(sql).toMatch(/v_released\s*:=\s*least\(new\.qty, v_costed_qty\)/);
+    // Full drain releases the entire remaining book value (no penny residue).
+    expect(sql).toMatch(/when v_released >= v_costed_qty then v_value/);
+    expect(sql).toMatch(/new\.costed_qty_effect\s*:=\s*-\s*v_released/);
+    // costed_qty is summed from the CAPPED fact, never from physical effect.
+    expect(sql).toMatch(/coalesce\(sum\(costed_qty_effect\), 0\)/);
+    expect(sql).not.toMatch(/filter \(where cost_effect is not null\)/);
+    expect(raw).toMatch(/S1 boundary rule/i);
+  });
+
+  it("a transfer stays cost-neutral: transfer_in MIRRORS its paired transfer_out", () => {
+    // An internal move must net to exactly zero at org level even when the
+    // out-leg crossed the boundary — so the in-leg copies the out-leg rather than
+    // re-valuing at the post-drain average.
+    expect(sql).toMatch(/elsif new\.movement_type = 'transfer_in' then/);
+    expect(sql).toMatch(/where transfer_group_id = new\.transfer_group_id\s*\n?\s*and movement_type = 'transfer_out'/);
+    expect(sql).toMatch(/new\.cost_effect\s*:=\s*-\s*v_out_ce/);
+    expect(sql).toMatch(/new\.costed_qty_effect\s*:=\s*-\s*v_out_cqe/);
   });
 
   it("assigns cost by a BEFORE INSERT trigger that runs AFTER the sign is derived", () => {

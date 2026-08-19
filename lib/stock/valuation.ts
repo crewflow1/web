@@ -25,14 +25,23 @@ import type { MovementRow } from "./balance";
  * movement rows, so the two must agree — hence the numerator/denominator rule
  * here is byte-for-byte the view's:
  *
- *     book_value    = Σ cost_effect
- *     costed_qty    = Σ effect  over rows WHERE cost_effect IS NOT NULL
- *     avg_unit_cost = book_value / costed_qty   (null when costed_qty ≤ 0)
+ *     on_hand       = Σ effect                 (physical quantity)
+ *     book_value    = Σ cost_effect            (£ in the costed pool)
+ *     costed_qty    = Σ costed_qty_effect      (units in the costed pool, CAPPED)
+ *     avg_unit_cost = book_value / costed_qty  (null when costed_qty ≤ 0)
  *
- * A NULL-cost movement (every pre-20261180 row, and any hand receipt with no
- * price) is UNCOSTED: it contributes to neither sum, so it never drags the
- * average toward zero and a division by zero is impossible. Physical on-hand
- * still counts it, so `uncosted_qty = on_hand − costed_qty` reports it honestly.
+ * COSTED_QTY IS TRACKED BY ITS OWN CAPPED FACT, NOT BY `effect`. An OUT movement
+ * that draws PHYSICAL units across the costed↔uncosted boundary releases cost for
+ * only the costed part it holds (the DB caps `cost_effect`/`costed_qty_effect` at
+ * the pool), so `costed_qty` and `book_value` FLOOR AT 0 and can never go
+ * negative — the S1 defect this closes. Deriving costed_qty from physical
+ * `effect` would let a −6 issue against a 5-unit costed pool report costed_qty
+ * −1 / book_value −£8, poisoning the company total.
+ *
+ * A NULL-cost movement (every pre-20261180 row, a hand receipt with no price, a
+ * fully-uncosted OUT) is UNCOSTED: it contributes to neither sum, so it never
+ * drags the average and a division by zero is impossible. Physical on-hand still
+ * counts it, so `uncosted_qty = on_hand − costed_qty` reports it honestly.
  */
 
 /** Unit costs are held to 4dp in the database (numeric(12,4)); mirror that. */
@@ -44,6 +53,12 @@ export function round4(n: number): number {
 export interface CostedMovementRow extends MovementRow {
   /** Signed value impact (£). Null = uncosted (outside the valuation pool). */
   cost_effect?: number | string | null;
+  /**
+   * Signed COSTED-QUANTITY impact (units) — the capped pool quantity, which
+   * differs from physical `effect` at the costed↔uncosted boundary. Null =
+   * uncosted. costed_qty of an item = Σ costed_qty_effect (floors at 0).
+   */
+  costed_qty_effect?: number | string | null;
   /** Per-unit cost basis used (£/unit). Null = uncosted. */
   unit_cost?: number | string | null;
   /** Present on issue rows; the job the COGS is allocated to. */
@@ -71,6 +86,21 @@ export function movementCostEffect(row: {
 /** True when the movement carries a known cost (is inside the valuation pool). */
 export function isCosted(row: { cost_effect?: number | string | null }): boolean {
   return movementCostEffect(row) !== null;
+}
+
+/**
+ * The signed COSTED-QUANTITY impact of one movement, or null when uncosted.
+ *
+ * The DB froze this (capped at the costed pool for an OUT movement) so it differs
+ * from physical `effect` exactly at the boundary. Summing it gives a costed_qty
+ * that floors at 0 — see the module header.
+ */
+export function movementCostedQtyEffect(row: {
+  costed_qty_effect?: number | string | null;
+}): number | null {
+  const q = row.costed_qty_effect;
+  if (q === undefined || q === null || q === "") return null;
+  return round2(toPounds(q));
 }
 
 /** A folded (item) valuation — the shape `stock_valuation` returns per row. */
@@ -120,13 +150,13 @@ export function foldItemValuations(
       };
       out.set(m.stock_item_id, v);
     }
-    const effect = movementEffect(m);
-    v.onHand = round2(v.onHand + effect);
+    v.onHand = round2(v.onHand + movementEffect(m));
+    // Book value and costed quantity come from their OWN capped facts, never
+    // from physical `effect` — that is what floors both at 0 across the boundary.
     const cost = movementCostEffect(m);
-    if (cost !== null) {
-      v.costedQty = round2(v.costedQty + effect);
-      v.bookValue = round2(v.bookValue + cost);
-    }
+    if (cost !== null) v.bookValue = round2(v.bookValue + cost);
+    const costedQty = movementCostedQtyEffect(m);
+    if (costedQty !== null) v.costedQty = round2(v.costedQty + costedQty);
   }
   for (const v of out.values()) {
     v.uncostedQty = round2(v.onHand - v.costedQty);
@@ -193,12 +223,22 @@ export type StockCogsCostRow = {
 /**
  * Turn the per-job stock COGS into cost-input rows for computeJobProfitability.
  *
- * DOUBLE-COUNT SAFETY: these rows are an ALLOCATION of the depot-replenishment
- * spend onto the consuming job, not a new expense — see the migration header.
- * They are returned as a DISTINCT, labelled stream a caller composes on purpose;
- * they are never auto-merged into the finances-derived cost, so a job that
- * genuinely carried BOTH a direct materials bill and a stock issue stays
- * auditable rather than silently doubled.
+ * ⚠ CURRENTLY UNWIRED. No live surface composes these into job profitability yet
+ * — this is the seam, ready for activation, not an active cost path. Wiring it in
+ * is a deliberate step gated on the assumption below; it must not be spread into
+ * the dashboard/job cost input "while we're here".
+ *
+ * DOUBLE-COUNT SAFETY (holds ONLY under the depot convention): these rows are an
+ * ALLOCATION of depot-replenishment spend onto the consuming job, not a new
+ * expense — see the 20261180000000 migration header. They are safe to add to a
+ * job's finances-derived cost ONLY when stock-replenishment supplier bills are
+ * booked to the depot (`finances.job_id` null) and job-specific direct purchases
+ * are not ALSO issued from stock — otherwise a job that carried both a direct
+ * materials bill AND a stock issue would be double-counted. They are returned as
+ * a DISTINCT, labelled stream a caller composes on purpose (never auto-merged),
+ * so that when someone does wire it, the two streams stay separable and
+ * auditable. Confirm the convention (or capitalise-on-receipt in `finances`
+ * itself) before composing this into live margins.
  */
 export function buildStockCogsCostRows(
   movements: readonly CostedMovementRow[],

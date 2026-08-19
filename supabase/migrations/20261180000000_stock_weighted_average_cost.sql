@@ -73,21 +73,28 @@
 --                      A receipt with no delivery line (a hand receipt) has NO
 --                      derivable price → cost_effect/unit_cost stay NULL
 --                      (UNCOSTED — see historical handling below).
---   issue,             unit_cost := current weighted-average; a RELEASE.
---   transfer_out,      cost_effect := -round(qty * avg, 2).
---   adjustment_out
---   transfer_in,       unit_cost := current weighted-average; re-entry at book.
---   adjustment_in      cost_effect := +round(qty * avg, 2). (adjustment_in is
---                      "found" stock re-entering at book cost — no new purchase,
---                      so it leaves the average UNCHANGED. A transfer pair nets
---                      to zero value at org level, as it must — the average is
---                      per (item, org), and a move within the org is not a cost
---                      event.)
---   correction         the EXACT reversal of the row it names:
---                      cost_effect := -corrected.cost_effect, unit_cost copied.
---                      A correction restates current inventory value; it does
---                      NOT retroactively restate COGS already released on earlier
---                      issues — standard perpetual weighted-average behaviour.
+--   issue,             a RELEASE at the current weighted-average, CAPPED at the
+--   adjustment_out,    costed pool (the S1 boundary rule above): released_costed
+--   transfer_out       := least(qty, costed_qty_before); cost_effect :=
+--                      -value_released; costed_qty_effect := -released_costed;
+--                      unit_cost := avg. Never releases more cost than the pool
+--                      holds, so book_value / costed_qty floor at 0.
+--   transfer_in        MIRRORS its paired transfer_out (via transfer_group_id):
+--                      cost_effect := -out.cost_effect, costed_qty_effect :=
+--                      -out.costed_qty_effect, unit_cost := out.unit_cost. This
+--                      makes the transfer pair net to EXACTLY zero at org level
+--                      even when the out-leg crossed the boundary — the average
+--                      is per (item, org) and an internal move is not a cost
+--                      event.
+--   adjustment_in      "found" stock re-entering at book cost: unit_cost := avg,
+--                      cost_effect := +round(qty*avg,2), costed_qty_effect :=
+--                      +qty. No new purchase, so the average is UNCHANGED.
+--   correction         the EXACT reversal of the row it names: cost_effect :=
+--                      -corrected.cost_effect, costed_qty_effect :=
+--                      -corrected.costed_qty_effect, unit_cost copied. Restates
+--                      current inventory value; does NOT retroactively restate
+--                      COGS already released on earlier issues — standard
+--                      perpetual weighted-average behaviour.
 --
 -- Only receipts change the average, and a receipt's cost_effect does NOT depend
 -- on the current average (it is qty × the delivery's own price), so it is
@@ -111,6 +118,33 @@
 -- the unknown is bounded to legacy data and shrinks as it is issued out.
 --
 -- ── ADDITIVE AND REVERSIBLE ──────────────────────────────────────────────────
+-- ── THE COSTED↔UNCOSTED BOUNDARY (the S1 correctness rule) ────────────────────
+-- Physical on-hand can mix COSTED units (received under a known price since this
+-- migration) with UNCOSTED units (pre-migration legacy, or hand receipts with no
+-- price). An OUT movement (issue / adjustment_out / transfer_out) draws PHYSICAL
+-- units, which may include uncosted ones — but it can only RELEASE cost for the
+-- part of the draw that the costed pool actually holds. So the released cost is
+-- CAPPED:
+--
+--     released_costed = least(out_qty, costed_qty_before)
+--     value_released  = (released_costed = costed_qty_before)   -- full drain
+--                         ? book_value_before                   --   → release ALL book value (no penny drift)
+--                         : round(released_costed * avg, 2)
+--
+-- The remaining (out_qty − released_costed) units are uncosted: they carry no
+-- book value. This FLOORS costed_qty at 0 and book_value at 0 — neither can ever
+-- go negative — and is why the pool's quantity is tracked by its OWN frozen fact
+-- (`costed_qty_effect`, capped) rather than by the physical `effect`: the two
+-- diverge exactly on a boundary-crossing draw (a −6 physical issue that releases
+-- only −5 costed units) and on an unpriced receipt (+qty physical, +0 costed).
+--
+-- A TRANSFER is org-internal and must stay COST-NEUTRAL even across the boundary,
+-- so the `transfer_in` leg MIRRORS its paired `transfer_out` (found via
+-- transfer_group_id, exactly as a correction mirrors the row it reverses) rather
+-- than re-valuing at the post-drain average — otherwise a transfer that drained
+-- the costed pool would destroy book value it should merely relocate.
+--
+-- ── ADDITIVE AND REVERSIBLE ──────────────────────────────────────────────────
 -- New nullable columns + one BEFORE INSERT trigger + one SECURITY INVOKER view.
 -- Nothing existing is altered or dropped; every prior guard (append-only,
 -- no-delete, composite FKs, advisory locks, admin-only adjustments, the
@@ -119,18 +153,22 @@
 --   drop view if exists public.stock_valuation;
 --   drop trigger if exists stock_movements_wavg_cost on public.stock_movements;
 --   drop function if exists public.tg_stock_movements_wavg_cost();
+--   alter table public.stock_movements drop column if exists costed_qty_effect;
 --   alter table public.stock_movements drop column if exists cost_effect;
 --   alter table public.stock_movements drop column if exists unit_cost;
 
--- ── 1. The two per-row derived cost facts (nullable ⇒ historical-safe) ───────
+-- ── 1. The three per-row derived cost facts (nullable ⇒ historical-safe) ─────
 alter table public.stock_movements
-  add column if not exists unit_cost   numeric(12, 4),
-  add column if not exists cost_effect numeric(14, 2);
+  add column if not exists unit_cost         numeric(12, 4),
+  add column if not exists cost_effect       numeric(14, 2),
+  add column if not exists costed_qty_effect numeric(12, 2);
 
 comment on column public.stock_movements.unit_cost is
   'The per-unit cost basis used for this movement (£/unit), frozen at insert by tg_stock_movements_wavg_cost. Receipt = the delivery line''s ordered price; issue/transfer/adjustment = the weighted-average at the moment; correction = copied from the row it reverses. NULL for a hand receipt with no price and for every pre-20261180000000 (uncosted) movement.';
 comment on column public.stock_movements.cost_effect is
-  'Signed VALUE impact of this movement (£), frozen at insert. Book value of an item = sum(cost_effect); weighted-average = sum(cost_effect)/sum(effect over costed rows). NULL = UNCOSTED (outside the valuation pool). Posts to NO accounts — see the 20261180000000 header for the double-count-safety argument.';
+  'Signed VALUE impact of this movement (£), frozen at insert. Book value of an item = sum(cost_effect). NULL = UNCOSTED. An OUT movement releases at most the costed pool''s value (capped), so this floors book_value at 0. Posts to NO accounts — see the 20261180000000 header for the double-count-safety argument.';
+comment on column public.stock_movements.costed_qty_effect is
+  'Signed COSTED-QUANTITY impact (units), frozen at insert. costed_qty of an item = sum(costed_qty_effect); it differs from physical `effect` exactly at the costed↔uncosted boundary (a boundary-crossing OUT is capped at the costed pool; an unpriced receipt is +0 here). NULL = UNCOSTED. Floors costed_qty at 0, so avg = book_value/costed_qty is always well-defined and non-negative.';
 
 -- ── 2. The cost-assignment trigger ───────────────────────────────────────────
 -- SECURITY DEFINER + fixed search_path, mirroring tg_stock_movements_derive: it
@@ -141,17 +179,25 @@ create or replace function public.tg_stock_movements_wavg_cost()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare
   v_value      numeric(14, 2);   -- prior book value of the (org, item) pool
-  v_costed_qty numeric(12, 2);   -- prior physical qty that carries a cost
+  v_costed_qty numeric(12, 2);   -- prior COSTED quantity of the pool (capped, ≥ 0)
   v_avg        numeric(12, 4);   -- prior weighted-average unit cost
   v_price      numeric(12, 4);   -- a receipt's ordered unit price
+  v_released   numeric(12, 2);   -- costed units an OUT movement actually releases
+  v_val_rel    numeric(14, 2);   -- book value that OUT movement releases
+  v_out_ce     numeric(14, 2);   -- a transfer_out leg's cost_effect
+  v_out_cqe    numeric(12, 2);   -- a transfer_out leg's costed_qty_effect
+  v_out_uc     numeric(12, 4);   -- a transfer_out leg's unit_cost
   v_corr_ce    numeric(14, 2);   -- the corrected row's cost_effect
+  v_corr_cqe   numeric(12, 2);   -- the corrected row's costed_qty_effect
   v_corr_uc    numeric(12, 4);   -- the corrected row's unit_cost
 begin
-  -- Prior state of the COSTED pool for this (org, item). NULL-cost (historical
-  -- or hand-receipt) rows are excluded from BOTH sums, so they never distort the
-  -- average and a division by zero is impossible (guarded below).
+  -- Prior state of the COSTED pool for this (org, item). The costed QUANTITY is
+  -- summed from costed_qty_effect (capped, ≥ 0) — NOT from physical `effect` —
+  -- so a boundary-crossing OUT can never have driven it negative. NULL-cost
+  -- (historical / hand-receipt / fully-uncosted) rows contribute 0 to both sums,
+  -- so they never distort the average and a division by zero is impossible.
   select coalesce(sum(cost_effect), 0),
-         coalesce(sum(effect) filter (where cost_effect is not null), 0)
+         coalesce(sum(costed_qty_effect), 0)
     into v_value, v_costed_qty
     from public.stock_movements
    where org_id = new.org_id
@@ -174,38 +220,70 @@ begin
          and grl.org_id = new.org_id;
     end if;
     if v_price is not null then
-      new.unit_cost   := v_price;
-      new.cost_effect := round(new.qty * v_price, 2);
+      new.unit_cost         := v_price;
+      new.cost_effect       := round(new.qty * v_price, 2);
+      new.costed_qty_effect := new.qty;
     end if;
 
   elsif new.movement_type in ('issue', 'transfer_out', 'adjustment_out') then
-    -- A RELEASE at the current weighted-average. Uncosted while the pool is
-    -- empty (only pre-cost-era stock on hand) — an honest "cost unknown".
-    if v_avg is not null then
-      new.unit_cost   := v_avg;
-      new.cost_effect := - round(new.qty * v_avg, 2);
+    -- A RELEASE at the current weighted-average, CAPPED at the costed pool (the
+    -- S1 boundary rule): never release more cost than the pool actually holds, so
+    -- the physical units drawn beyond it are treated as uncosted. Fully uncosted
+    -- while the pool is empty (only pre-cost-era stock on hand).
+    if v_costed_qty > 0 then
+      v_released := least(new.qty, v_costed_qty);
+      -- On a FULL drain, release the entire remaining book value so it lands at
+      -- exactly £0 (no rounding residue); on a partial draw, value at the average.
+      v_val_rel := case
+                     when v_released >= v_costed_qty then v_value
+                     else round(v_released * v_avg, 2)
+                   end;
+      new.unit_cost         := v_avg;
+      new.cost_effect       := - v_val_rel;
+      new.costed_qty_effect := - v_released;
     end if;
 
-  elsif new.movement_type in ('transfer_in', 'adjustment_in') then
-    -- Re-entry at book cost: the return leg of a transfer, or found stock. No
-    -- new purchase, so the average is unchanged; a transfer pair nets to zero.
+  elsif new.movement_type = 'transfer_in' then
+    -- MIRROR the paired transfer_out (same transfer_group_id), so an internal
+    -- move nets to EXACTLY zero at org level even when the out-leg crossed the
+    -- costed↔uncosted boundary. The out-leg is inserted first in the pair
+    -- (record_stock_transfer), so it is already visible here.
+    if new.transfer_group_id is not null then
+      select cost_effect, costed_qty_effect, unit_cost
+        into v_out_ce, v_out_cqe, v_out_uc
+        from public.stock_movements
+       where transfer_group_id = new.transfer_group_id
+         and movement_type = 'transfer_out'
+         and org_id = new.org_id;
+      if v_out_ce is not null then
+        new.unit_cost         := v_out_uc;
+        new.cost_effect       := - v_out_ce;
+        new.costed_qty_effect := - v_out_cqe;
+      end if;
+    end if;
+
+  elsif new.movement_type = 'adjustment_in' then
+    -- "Found" stock re-entering at book cost. No new purchase, so the average is
+    -- unchanged; uncosted while nothing is costed.
     if v_avg is not null then
-      new.unit_cost   := v_avg;
-      new.cost_effect := round(new.qty * v_avg, 2);
+      new.unit_cost         := v_avg;
+      new.cost_effect       := round(new.qty * v_avg, 2);
+      new.costed_qty_effect := new.qty;
     end if;
 
   else
-    -- correction: the exact value reversal of the row it names. `effect` was
-    -- already set to -(corrected.effect) by tg_stock_movements_derive; the cost
-    -- mirrors it. If the corrected row was uncosted, the correction is too.
-    select cost_effect, unit_cost
-      into v_corr_ce, v_corr_uc
+    -- correction: the exact reversal of the row it names, in BOTH value and
+    -- costed quantity. `effect` was already set to -(corrected.effect) by
+    -- tg_stock_movements_derive. If the corrected row was uncosted, so is this.
+    select cost_effect, costed_qty_effect, unit_cost
+      into v_corr_ce, v_corr_cqe, v_corr_uc
       from public.stock_movements
      where id = new.corrects_movement_id
        and org_id = new.org_id;
     if v_corr_ce is not null then
-      new.unit_cost   := v_corr_uc;
-      new.cost_effect := - v_corr_ce;
+      new.unit_cost         := v_corr_uc;
+      new.cost_effect       := - v_corr_ce;
+      new.costed_qty_effect := - v_corr_cqe;
     end if;
   end if;
 
@@ -236,14 +314,16 @@ with (security_invoker = true) as
   select org_id,
          stock_item_id,
          sum(effect)::numeric(12, 2)                                   as on_hand,
-         sum(effect) filter (where cost_effect is not null)::numeric(12, 2)
-                                                                       as costed_qty,
-         (sum(effect) - sum(effect) filter (where cost_effect is not null))::numeric(12, 2)
+         -- The COSTED quantity is the capped costed_qty_effect, never the
+         -- physical effect — so it floors at 0 across the costed↔uncosted
+         -- boundary and avg = book_value/costed_qty is always well-defined.
+         coalesce(sum(costed_qty_effect), 0)::numeric(12, 2)           as costed_qty,
+         (sum(effect) - coalesce(sum(costed_qty_effect), 0))::numeric(12, 2)
                                                                        as uncosted_qty,
          coalesce(sum(cost_effect), 0)::numeric(14, 2)                 as book_value,
          case
-           when coalesce(sum(effect) filter (where cost_effect is not null), 0) > 0
-           then round(sum(cost_effect) / sum(effect) filter (where cost_effect is not null), 4)
+           when coalesce(sum(costed_qty_effect), 0) > 0
+           then round(sum(cost_effect) / sum(costed_qty_effect), 4)
            else null
          end                                                           as avg_unit_cost,
          max(occurred_at)                                              as last_movement_at

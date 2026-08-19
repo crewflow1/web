@@ -60,6 +60,17 @@ built so it is double-count-safe by construction:
   toward zero and never divides by zero. The report shows physical on-hand *and*
   the uncosted quantity separately: *"N units at unknown cost"*, never *"worth
   £0"*.
+- **The costed↔uncosted boundary floors at £0 (no negative book value).** An OUT
+  movement (issue / adjustment_out / transfer_out) can draw physical units that
+  include uncosted legacy stock, so the cost it releases is **capped** at what the
+  costed pool actually holds: `released = least(out_qty, costed_qty)`, and on a
+  full drain it releases the entire remaining book value exactly. The costed
+  quantity is tracked by its own capped fact (`costed_qty_effect`), never by the
+  physical `effect` — so `costed_qty` and `book_value` can never go negative and
+  a boundary-crossing issue never poisons the company Total stock value. A
+  **transfer** stays cost-neutral across the boundary because the `transfer_in`
+  leg mirrors its paired `transfer_out` (value is relocated between sites, never
+  destroyed).
 
 There is still **no VAT anywhere** in stock — VAT is reclaimable and belongs to
 the supplier bill, not to a quantity or a cost of sale.

@@ -90,9 +90,9 @@ export const STOCK_ITEM_COLUMNS =
   "reorder_level, target_level, reorder_quantity, notes, created_at";
 
 export const STOCK_MOVEMENT_COLUMNS =
-  "id, stock_item_id, site_id, movement_type, qty, effect, unit_cost, cost_effect, occurred_at, " +
-  "actor_id, notes, grn_line_id, job_id, material_request_line_id, transfer_group_id, " +
-  "corrects_movement_id, created_at";
+  "id, stock_item_id, site_id, movement_type, qty, effect, unit_cost, cost_effect, " +
+  "costed_qty_effect, occurred_at, actor_id, notes, grn_line_id, job_id, " +
+  "material_request_line_id, transfer_group_id, corrects_movement_id, created_at";
 
 export type StockItemRow = {
   id: string;
@@ -116,6 +116,8 @@ export type StockMovementRow = MovementRow & {
   unit_cost: number | string | null;
   /** Signed value impact (£); null = uncosted. Book value = Σ cost_effect. */
   cost_effect: number | string | null;
+  /** Signed costed-quantity impact (capped); null = uncosted. costed_qty = Σ this. */
+  costed_qty_effect: number | string | null;
   actor_id: string | null;
   notes: string | null;
   grn_line_id: string | null;

@@ -44,6 +44,8 @@ const nextId = () => `m-${String(++seq).padStart(4, "0")}`;
  */
 type Pool = { value: number; costedQty: number };
 
+const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+
 function stamp(
   state: Map<string, Pool>,
   m: {
@@ -56,6 +58,8 @@ function stamp(
     price?: number | null;
     /** For a correction: the row it reverses. */
     corrects?: CostedMovementRow | null;
+    /** For a transfer_in: its paired transfer_out leg (it MIRRORS it). */
+    pairedOut?: CostedMovementRow | null;
   },
 ): CostedMovementRow {
   const pool = state.get(m.stock_item_id) ?? { value: 0, costedQty: 0 };
@@ -75,40 +79,59 @@ function stamp(
 
   let unit_cost: number | null = null;
   let cost_effect: number | null = null;
+  let costed_qty_effect: number | null = null;
 
   if (m.movement_type === "receipt") {
     if (m.price != null) {
       unit_cost = m.price;
-      cost_effect = Math.round(m.qty * m.price * 100) / 100;
+      cost_effect = r2(m.qty * m.price);
+      costed_qty_effect = m.qty;
     }
   } else if (
     m.movement_type === "issue" ||
     m.movement_type === "transfer_out" ||
     m.movement_type === "adjustment_out"
   ) {
-    if (avg != null) {
+    // RELEASE, CAPPED at the costed pool (the S1 boundary rule).
+    if (pool.costedQty > 0 && avg != null) {
+      const released = Math.min(m.qty, pool.costedQty);
+      const valueReleased = released >= pool.costedQty ? pool.value : r2(released * avg);
       unit_cost = avg;
-      cost_effect = -(Math.round(m.qty * avg * 100) / 100);
+      cost_effect = -valueReleased;
+      costed_qty_effect = -released;
     }
-  } else if (m.movement_type === "transfer_in" || m.movement_type === "adjustment_in") {
+  } else if (m.movement_type === "transfer_in") {
+    // MIRROR the paired transfer_out leg — cost-neutral even across the boundary.
+    const out = m.pairedOut ?? null;
+    const outCe = out ? movementCostEffect(out) : null;
+    if (out != null && outCe != null) {
+      unit_cost = out.unit_cost != null ? Number(out.unit_cost) : null;
+      cost_effect = -outCe;
+      costed_qty_effect =
+        out.costed_qty_effect != null ? -Number(out.costed_qty_effect) : null;
+    }
+  } else if (m.movement_type === "adjustment_in") {
+    // Found stock, re-entered at book cost; average unchanged.
     if (avg != null) {
       unit_cost = avg;
-      cost_effect = Math.round(m.qty * avg * 100) / 100;
+      cost_effect = r2(m.qty * avg);
+      costed_qty_effect = m.qty;
     }
   } else {
-    // correction
+    // correction: exact reversal of the row it names, in BOTH value and qty.
     const cc = m.corrects ? movementCostEffect(m.corrects) : null;
     if (cc != null) {
       unit_cost = m.corrects?.unit_cost != null ? Number(m.corrects.unit_cost) : null;
       cost_effect = -cc;
+      costed_qty_effect =
+        m.corrects?.costed_qty_effect != null ? -Number(m.corrects.costed_qty_effect) : null;
     }
   }
 
-  // Advance the pool exactly as the trigger's next read would see it.
-  if (cost_effect != null) {
-    pool.value = Math.round((pool.value + cost_effect) * 100) / 100;
-    pool.costedQty = Math.round((pool.costedQty + effect) * 100) / 100;
-  }
+  // Advance the pool exactly as the trigger's next read would see it: value from
+  // cost_effect, costed quantity from the CAPPED costed_qty_effect (never effect).
+  if (cost_effect != null) pool.value = r2(pool.value + cost_effect);
+  if (costed_qty_effect != null) pool.costedQty = r2(pool.costedQty + costed_qty_effect);
   state.set(m.stock_item_id, pool);
 
   return {
@@ -120,6 +143,7 @@ function stamp(
     effect,
     unit_cost,
     cost_effect,
+    costed_qty_effect,
     job_id: m.job_id ?? null,
     corrects_movement_id: m.corrects ? m.corrects.id : null,
   };
@@ -236,6 +260,7 @@ describe("a transfer pair nets to zero value at org level", () => {
       site_id: SITE_B,
       movement_type: "transfer_in",
       qty: 4,
+      pairedOut: out,
     });
     expect(out.cost_effect).toBe(-12);
     expect(inn.cost_effect).toBe(12);
@@ -330,6 +355,7 @@ describe("historical (pre-valuation) movements are UNCOSTED, never crash, report
       effect: 100,
       unit_cost: null,
       cost_effect: null,
+      costed_qty_effect: null,
     };
     const st = new Map<string, Pool>(); // fresh pool: legacy contributes nothing
     const priced = stamp(st, { stock_item_id: ITEM, site_id: SITE_A, movement_type: "receipt", qty: 10, price: 5 });
@@ -351,6 +377,7 @@ describe("historical (pre-valuation) movements are UNCOSTED, never crash, report
       effect: 40,
       unit_cost: null,
       cost_effect: null,
+      costed_qty_effect: null,
     };
     const v = foldItemValuations([legacy]).get(ITEM)!;
     expect(v.onHand).toBe(40);
@@ -370,11 +397,124 @@ describe("historical (pre-valuation) movements are UNCOSTED, never crash, report
       effect: 40,
       unit_cost: null,
       cost_effect: null,
+      costed_qty_effect: null,
     };
     const st = new Map<string, Pool>(); // empty costed pool
     const iss = stamp(st, { stock_item_id: ITEM, site_id: SITE_A, movement_type: "issue", qty: 5, job_id: JOB });
     expect(iss.cost_effect).toBeNull();
     expect(stockCogsByJob([legacy, iss]).size).toBe(0);
+  });
+});
+
+describe("the costed↔uncosted boundary — book value can NEVER go negative (S1)", () => {
+  /** A legacy pre-valuation movement: physical stock, no cost. */
+  const legacy = (qty: number): CostedMovementRow => ({
+    id: nextId(),
+    stock_item_id: ITEM,
+    site_id: SITE_A,
+    movement_type: "receipt",
+    qty,
+    effect: qty,
+    unit_cost: null,
+    cost_effect: null,
+    costed_qty_effect: null,
+  });
+
+  it("THE WORKED CASE: legacy 5 uncosted + receipt 5@£8 + issue 6 ⇒ on_hand 4, costed_qty 0, book £0", () => {
+    const st = new Map<string, Pool>();
+    const leg = legacy(5); // 5 uncosted units, no cost pool contribution
+    const rcpt = stamp(st, { stock_item_id: ITEM, site_id: SITE_A, movement_type: "receipt", qty: 5, price: 8 });
+    // pool now: book £40, costed 5, avg £8.
+    const iss = stamp(st, { stock_item_id: ITEM, site_id: SITE_A, movement_type: "issue", qty: 6, job_id: JOB });
+
+    // The issue draws 6 physical units but only 5 are costed → release is CAPPED.
+    expect(iss.cost_effect).toBe(-40); // NOT -48
+    expect(iss.costed_qty_effect).toBe(-5); // NOT -6
+
+    const v = foldItemValuations([leg, rcpt, iss]).get(ITEM)!;
+    expect(v.onHand).toBe(4); // 5 + 5 - 6
+    expect(v.costedQty).toBe(0); // floored, NOT -1
+    expect(v.bookValue).toBe(0); // floored, NOT -8
+    expect(v.uncostedQty).toBe(4); // all 4 remaining units are uncosted
+    expect(v.avgUnitCost).toBeNull();
+    expect(v.bookValue).toBeGreaterThanOrEqual(0);
+
+    // The job is charged the HONEST £40 of known cost that was actually released.
+    expect(stockCogsByJob([leg, rcpt, iss]).get(JOB)).toBe(40);
+  });
+
+  it("SCALED: legacy 500 uncosted + receipt 200@£12.50 + issue 650 ⇒ costed_qty 0, book £0, COGS £2,500", () => {
+    const st = new Map<string, Pool>();
+    const leg = legacy(500);
+    const rcpt = stamp(st, { stock_item_id: ITEM, site_id: SITE_A, movement_type: "receipt", qty: 200, price: 12.5 });
+    // pool: book £2,500, costed 200, avg £12.50.
+    const iss = stamp(st, { stock_item_id: ITEM, site_id: SITE_A, movement_type: "issue", qty: 650, job_id: JOB });
+    expect(iss.cost_effect).toBe(-2500); // capped at the full £2,500 pool
+    expect(iss.costed_qty_effect).toBe(-200);
+
+    const v = foldItemValuations([leg, rcpt, iss]).get(ITEM)!;
+    expect(v.onHand).toBe(50); // 500 + 200 - 650
+    expect(v.costedQty).toBe(0);
+    expect(v.bookValue).toBe(0);
+    expect(v.uncostedQty).toBe(50);
+    expect(stockCogsByJob([leg, rcpt, iss]).get(JOB)).toBe(2500);
+  });
+
+  it("a PARTIAL boundary draw releases only the costed portion and leaves the rest costed", () => {
+    const st = new Map<string, Pool>();
+    const leg = legacy(5);
+    const rcpt = stamp(st, { stock_item_id: ITEM, site_id: SITE_A, movement_type: "receipt", qty: 10, price: 4 });
+    // pool: book £40, costed 10, avg £4.
+    const iss = stamp(st, { stock_item_id: ITEM, site_id: SITE_A, movement_type: "issue", qty: 12, job_id: JOB });
+    // 12 drawn, 10 costed → release 10 @ £4 = £40 (full drain), 2 uncosted units drawn.
+    expect(iss.cost_effect).toBe(-40);
+    expect(iss.costed_qty_effect).toBe(-10);
+    const v = foldItemValuations([leg, rcpt, iss]).get(ITEM)!;
+    expect(v.onHand).toBe(3); // 5 + 10 - 12
+    expect(v.costedQty).toBe(0);
+    expect(v.bookValue).toBe(0);
+  });
+
+  it("adjustment_out across the boundary also floors at 0 (never a negative write-off)", () => {
+    const st = new Map<string, Pool>();
+    const leg = legacy(3);
+    const rcpt = stamp(st, { stock_item_id: ITEM, site_id: SITE_A, movement_type: "receipt", qty: 2, price: 10 });
+    // pool: book £20, costed 2, avg £10.
+    const adj = stamp(st, {
+      stock_item_id: ITEM,
+      site_id: SITE_A,
+      movement_type: "adjustment_out",
+      qty: 4,
+    });
+    expect(adj.cost_effect).toBe(-20); // capped, not -40
+    const v = foldItemValuations([leg, rcpt, adj]).get(ITEM)!;
+    expect(v.onHand).toBe(1);
+    expect(v.costedQty).toBe(0);
+    expect(v.bookValue).toBe(0);
+  });
+
+  it("a transfer that crosses the boundary stays COST-NEUTRAL (in-leg mirrors out-leg)", () => {
+    const st = new Map<string, Pool>();
+    const leg = legacy(5);
+    const rcpt = stamp(st, { stock_item_id: ITEM, site_id: SITE_A, movement_type: "receipt", qty: 5, price: 8 });
+    // pool: book £40, costed 5, avg £8. Transfer 6 units A→B (crosses boundary).
+    const out = stamp(st, { stock_item_id: ITEM, site_id: SITE_A, movement_type: "transfer_out", qty: 6 });
+    const inn = stamp(st, {
+      stock_item_id: ITEM,
+      site_id: SITE_B,
+      movement_type: "transfer_in",
+      qty: 6,
+      pairedOut: out,
+    });
+    expect(out.cost_effect).toBe(-40); // capped release
+    expect(inn.cost_effect).toBe(40); // exact mirror
+    expect(inn.costed_qty_effect).toBe(5);
+    const v = foldItemValuations([leg, rcpt, out, inn]).get(ITEM)!;
+    // Org valuation is UNCHANGED by an internal move — value is relocated, not lost.
+    expect(v.onHand).toBe(10); // 5 + 5 - 6 + 6
+    expect(v.costedQty).toBe(5);
+    expect(v.bookValue).toBe(40);
+    expect(v.avgUnitCost).toBe(8);
   });
 });
 
@@ -435,6 +575,7 @@ describe("the valuation report joins the catalogue and totals honestly", () => {
     effect: 6,
     unit_cost: null,
     cost_effect: null,
+    costed_qty_effect: null,
   });
 
   const items = [
