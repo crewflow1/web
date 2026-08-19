@@ -21,7 +21,11 @@
  * (REVIEW_THRESHOLD in app/(app)/imports/actions.ts); this module only scores.
  */
 
-import type { PulledContact, PulledInvoice } from "@/lib/integrations/accounting/adapters";
+import type {
+  AccountingProvider,
+  PulledContact,
+  PulledInvoice,
+} from "@/lib/integrations/accounting/adapters";
 
 /**
  * A connector row in the shape the import pipeline stages. Mirrors the detector's
@@ -42,7 +46,7 @@ const REVIEW_CONFIDENCE = 40;
 
 /** Map ONE pulled contact onto a `customer` import row. */
 export function normaliseContact(
-  provider: "xero" | "quickbooks",
+  provider: AccountingProvider,
   c: PulledContact,
 ): NormalisedConnectorRow {
   const name = (c.name ?? "").trim();
@@ -72,7 +76,7 @@ export function normaliseContact(
 
 /** Map ONE pulled invoice onto an `invoice` import row. */
 export function normaliseInvoice(
-  provider: "xero" | "quickbooks",
+  provider: AccountingProvider,
   inv: PulledInvoice,
 ): NormalisedConnectorRow {
   const number = (inv.number ?? "").trim();

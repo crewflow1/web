@@ -27,6 +27,7 @@ const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 
 const XERO = "lib/integrations/accounting/adapters/xero.ts";
 const QBO = "lib/integrations/accounting/adapters/quickbooks.ts";
+const SAGE = "lib/integrations/accounting/adapters/sage.ts";
 const SERVICE = "server/services/accounting-import.ts";
 const CONNECTIONS = "server/services/accounting-connections.ts";
 const NORMALISE = "lib/imports/connector-normalise.ts";
@@ -41,6 +42,8 @@ const OAUTH_ENV = [
   "XERO_CLIENT_SECRET",
   "QBO_CLIENT_ID",
   "QBO_CLIENT_SECRET",
+  "SAGE_CLIENT_ID",
+  "SAGE_CLIENT_SECRET",
 ];
 
 // ---------------------------------------------------------------------------
@@ -61,7 +64,7 @@ describe("pull adapters are dark without credentials", () => {
 
   it("report unavailable and read NOTHING on the dark path (no network)", async () => {
     clear();
-    for (const p of ["xero", "quickbooks"] as const) {
+    for (const p of ["xero", "quickbooks", "sage"] as const) {
       const a = getAccountingImportAdapter(p);
       expect(a.isAvailable()).toBe(false);
       // If a `fetch` were reached it would throw in this test env; a clean
@@ -90,7 +93,7 @@ describe("pull adapters are dark without credentials", () => {
   });
 
   it("each pull method guards on isAvailable and refuses via pullUnavailable", () => {
-    for (const f of [XERO, QBO]) {
+    for (const f of [XERO, QBO, SAGE]) {
       const code = codeOf(read(f));
       expect(code).toMatch(/pullContacts\s*\(/);
       expect(code).toMatch(/pullInvoices\s*\(/);
@@ -151,7 +154,7 @@ describe("token seam reuse did not widen the read surface", () => {
   });
 
   it("no new connector source logs a secret or a token", () => {
-    for (const f of [SERVICE, NORMALISE, XERO, QBO]) {
+    for (const f of [SERVICE, NORMALISE, XERO, QBO, SAGE]) {
       const code = codeOf(read(f));
       const logCalls = code.match(/console\.\w+\([^;]*\)/g) ?? [];
       for (const call of logCalls) {

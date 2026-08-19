@@ -40,15 +40,27 @@ function isAdminRole(role: string): boolean {
   return role === "owner" || role === "admin";
 }
 
+/** Human label per provider, for the honest-dark "not connected" sentence. */
+const PROVIDER_LABEL: Record<AccountingProvider, string> = {
+  xero: "Xero",
+  quickbooks: "QuickBooks",
+  sage: "Sage",
+};
+
+/** Narrow an untrusted form value to a known accounting provider. */
+function isKnownProvider(value: string): value is AccountingProvider {
+  return value === "xero" || value === "quickbooks" || value === "sage";
+}
+
 export async function requestAccountingPush(
   _prev: AccountingPushState | null,
   formData: FormData,
 ): Promise<AccountingPushState> {
   const providerRaw = String(formData.get("provider") ?? "");
-  if (providerRaw !== "xero" && providerRaw !== "quickbooks") {
+  if (!isKnownProvider(providerRaw)) {
     return { ok: false, message: "Unknown accounting provider." };
   }
-  const provider = providerRaw as AccountingProvider;
+  const provider = providerRaw;
 
   const { ctx, user } = await requireOrgContext();
   if (!isAdminRole(ctx.membership.role)) {
@@ -66,10 +78,7 @@ export async function requestAccountingPush(
     return {
       ok: false,
       provider,
-      message:
-        provider === "xero"
-          ? "Xero is not connected yet. Use CSV export today; API push activates once Xero OAuth is configured."
-          : "QuickBooks is not connected yet. Use CSV export today; API push activates once QuickBooks OAuth is configured.",
+      message: `${PROVIDER_LABEL[provider]} is not connected yet. Use CSV export today; API push activates once ${PROVIDER_LABEL[provider]} OAuth is configured.`,
     };
   }
   return { ok: result.ok, provider, message: result.message };
@@ -92,10 +101,10 @@ export async function disconnectAccountingConnection(
   formData: FormData,
 ): Promise<void> {
   const providerRaw = String(formData.get("provider") ?? "");
-  if (providerRaw !== "xero" && providerRaw !== "quickbooks") {
+  if (!isKnownProvider(providerRaw)) {
     throw new Error("Unknown accounting provider.");
   }
-  const provider = providerRaw as AccountingProvider;
+  const provider = providerRaw;
 
   const { ctx } = await requireOrgContext();
   if (!isAdminRole(ctx.membership.role)) {

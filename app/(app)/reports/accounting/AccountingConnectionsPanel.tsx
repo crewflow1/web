@@ -5,7 +5,7 @@ import { disconnectAccountingConnection } from "./actions";
 /**
  * Accounting connections panel — the per-provider connect surface. DARK.
  *
- * Renders one row per provider (Xero, QuickBooks) showing its connection state.
+ * Renders one row per provider (Xero, QuickBooks, Sage) showing its connection state.
  * Because the OAuth flow is credential-gated and off today, every provider is
  * `connectable: false`, so the connect control renders as a DISABLED
  * "Connect (configure credentials)" button — it never links to the OAuth flow
@@ -21,6 +21,7 @@ import { disconnectAccountingConnection } from "./actions";
 const PROVIDER_LABEL: Record<AccountingProvider, string> = {
   xero: "Xero",
   quickbooks: "QuickBooks",
+  sage: "Sage",
 };
 
 export function AccountingConnectionsPanel({

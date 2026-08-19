@@ -19,6 +19,7 @@ import { REPORTS } from "@/lib/reports/registry";
 import {
   isXeroConnectable,
   isQuickbooksConnectable,
+  isSageConnectable,
 } from "@/lib/integrations/accounting/oauth";
 
 /**
@@ -219,6 +220,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
           connectable={{
             xero: isXeroConnectable(),
             quickbooks: isQuickbooksConnectable(),
+            sage: isSageConnectable(),
           }}
         />
       ) : null}

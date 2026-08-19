@@ -374,7 +374,7 @@ async function readInvoiceLineItems(
 export type AccountingExportLogInput = {
   orgId: string;
   createdBy: string;
-  format: "csv" | "xero" | "quickbooks";
+  format: "csv" | "xero" | "quickbooks" | "sage";
   status: "generated" | "pushed" | "skipped_dark";
   rowCount: number;
   periodStart?: string | null;

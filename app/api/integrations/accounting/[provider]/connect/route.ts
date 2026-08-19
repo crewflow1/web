@@ -22,7 +22,7 @@ import type { AccountingProvider } from "@/lib/integrations/accounting/adapters"
  * secret is ever logged.
  */
 
-const VALID: readonly AccountingProvider[] = ["xero", "quickbooks"];
+const VALID: readonly AccountingProvider[] = ["xero", "quickbooks", "sage"];
 
 function isAdminRole(role: string): boolean {
   return role === "owner" || role === "admin";

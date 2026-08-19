@@ -9,6 +9,7 @@ import {
   exchangeCodeForTokens,
   isProviderConnectable,
   resolveXeroTenantId,
+  resolveSageBusinessId,
   accountingRedirectUri,
 } from "@/lib/integrations/accounting/oauth";
 import {
@@ -37,7 +38,7 @@ import { resetPushedLedger } from "@/server/services/accounting-connections";
  * writes none. No secret is ever logged.
  */
 
-const VALID: readonly AccountingProvider[] = ["xero", "quickbooks"];
+const VALID: readonly AccountingProvider[] = ["xero", "quickbooks", "sage"];
 
 function isAdminRole(role: string): boolean {
   return role === "owner" || role === "admin";
@@ -169,14 +170,23 @@ export async function GET(
     return backToReports(origin, "error", provider);
   }
 
-  // Xero's code exchange returns tokens but NOT the tenant to act on — resolve it
-  // via GET /connections so the connection completes with a real account handle
-  // (no more `no_account` dead-end). QuickBooks carries its realm id on the
-  // callback query, so it needs no follow-up. Both follow-up calls are after the
-  // connectable guard, so they are unreachable dark.
+  // Xero's / Sage's code exchange returns tokens but NOT the account to act on —
+  // resolve it via a follow-up call (Xero GET /connections → tenant; Sage GET
+  // /businesses → business id) so the connection completes with a real account
+  // handle (no more `no_account` dead-end). Both store the handle in
+  // external_tenant_id and send it as their scoping header (Xero-tenant-id /
+  // X-Business). QuickBooks carries its realm id on the callback query, so it
+  // needs no follow-up. Every follow-up call is after the connectable guard, so
+  // it is unreachable dark.
   let externalTenantId = exchanged.tokens.externalTenantId;
   if (provider === "xero" && !externalTenantId) {
     const resolved = await resolveXeroTenantId(exchanged.tokens.accessToken);
+    if (!resolved.ok) {
+      return backToReports(origin, "no_account", provider);
+    }
+    externalTenantId = resolved.tenantId;
+  } else if (provider === "sage" && !externalTenantId) {
+    const resolved = await resolveSageBusinessId(exchanged.tokens.accessToken);
     if (!resolved.ok) {
       return backToReports(origin, "no_account", provider);
     }

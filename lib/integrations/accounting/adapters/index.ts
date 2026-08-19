@@ -16,12 +16,17 @@ import type {
 } from "./types";
 import { XeroAdapter } from "./xero";
 import { QuickBooksAdapter } from "./quickbooks";
+import { SageAdapter } from "./sage";
 
 // One instance per provider satisfies BOTH the push (AccountingAdapter) and the
 // pull (AccountingImportAdapter) contracts — same class, same two-switch gate.
-const ADAPTERS: Record<AccountingProvider, XeroAdapter | QuickBooksAdapter> = {
+const ADAPTERS: Record<
+  AccountingProvider,
+  XeroAdapter | QuickBooksAdapter | SageAdapter
+> = {
   xero: new XeroAdapter(),
   quickbooks: new QuickBooksAdapter(),
+  sage: new SageAdapter(),
 };
 
 /** Resolve the PUSH adapter for a provider. */
@@ -53,10 +58,16 @@ export function quickbooksReady(): boolean {
   return ADAPTERS.quickbooks.isAvailable();
 }
 
+/** Sage API push is ready only when its OAuth credentials are configured (dark today). */
+export function sageReady(): boolean {
+  return ADAPTERS.sage.isAvailable();
+}
+
 export type AccountingReadiness = {
   csv: boolean;
   xero: boolean;
   quickbooks: boolean;
+  sage: boolean;
 };
 
 /** One snapshot of the accounting export paths' readiness. */
@@ -65,6 +76,7 @@ export function getAccountingReadiness(): AccountingReadiness {
     csv: accountingCsvReady(),
     xero: xeroReady(),
     quickbooks: quickbooksReady(),
+    sage: sageReady(),
   };
 }
 
