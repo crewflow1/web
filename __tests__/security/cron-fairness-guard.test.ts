@@ -200,6 +200,8 @@ const ALLOWLIST: Record<string, string> = {
     "A single LIMIT-bounded RPC (hq_ai_task_reap p_limit); the iteration is in SQL over expired leases, not a TS loop over a persistent external candidate set.",
   "weather-watch-sync":
     "Network-free reconciliation: pure district derivation + internal upsert/update, NO external provider call per item; processes the complete paged live-job set in one pass — nothing goes on any wire, so no per-item latency can blow a budget.",
+  "weather-delay-detect":
+    "Bounded to ONE closed UK day (yesterday), not a persistent external feed. Per-job work is INTERNAL only — paged DB reads of the weather CACHE (no provider call per item; readiness-gated dark no-op today) plus at most one idempotent draft insert. Self-excluding: a job that already has a weather delay for the day (any status — manual, prior auto, or withdrawn) is skipped, so a done job/day leaves the candidate set and a truncated pass resumes cleanly next tick. Same class as site-diary-rollup.",
 };
 
 const CRONS = enumerateCrons();
