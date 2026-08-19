@@ -5,7 +5,7 @@ import { queueNotificationEmail } from "@/lib/notifications/email";
 import { resolveEmailRecipient } from "@/lib/notifications/email-routing";
 import { resolveNotificationDelivery } from "@/lib/notifications/preferences";
 import { enqueuePushForNotifications } from "@/lib/notifications/push";
-import { deliverSmsForNotifications } from "@/lib/notifications/sms";
+import { enqueueSmsForNotifications } from "@/lib/notifications/sms";
 import { getPreferencesForUserKeys } from "@/server/services/notification-preferences-service";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import {
@@ -178,8 +178,11 @@ export async function createBulkNotifications(
  *     DARK unless VAPID is configured AND the recipient has a subscription AND
  *     their per-category push preference is on (default on). It ENQUEUES onto
  *     push_deliveries (network-free); /api/cron/push-drain dispatches it.
- *   * SMS — a dark seam (Twilio-gated): the eligibility pipeline runs but no
- *     transport exists yet (refuse-before-send).
+ *   * SMS — Twilio-gated, refuse-before-send. It ENQUEUES onto sms_deliveries
+ *     (network-free): org-wide rows fan out to each member with a usable phone,
+ *     honouring the per-category sms_enabled opt-in; /api/cron/sms-drain
+ *     dispatches via the Twilio transport. DARK unless Twilio is configured
+ *     (getSmsProvider), in which case nothing is enqueued and nothing is sent.
  * All three bridges are best-effort: a channel failure NEVER breaks the primary
  * action or the other channels.
  */
@@ -197,7 +200,7 @@ export async function emitNotifications(
     // (or the primary action) down.
     await Promise.allSettled([
       enqueuePushForNotifications(rows),
-      deliverSmsForNotifications(rows),
+      enqueueSmsForNotifications(rows),
     ]);
   } catch (e) {
     console.error(

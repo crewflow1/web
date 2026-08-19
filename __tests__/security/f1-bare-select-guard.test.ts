@@ -339,6 +339,8 @@ const ALLOWLIST: Record<string, string> = {
     "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read. (Line moved to 144 as the R4 push/notification-channel branch shifted surrounding lines.)",
   "lib/notifications/push.ts:533":
     "bounded: `.from('notifications').select(...).in('id', ids)` where ids is the batch drawn from the just-claimed push_deliveries drain (≤ PUSH_DRAIN_BATCH_SIZE < 1000) — an id-keyed hydrate of an already-bounded set, not a completeness-sensitive scan. Same class as cis-statements.ts:169.",
+  "lib/notifications/sms.ts:524":
+    "bounded: `.from('notifications').select(...).in('id', ids)` where ids is the batch drawn from the just-claimed sms_deliveries drain (≤ SMS_DRAIN_BATCH_SIZE=50 < 1000) — an id-keyed hydrate of an already-bounded set, not a completeness-sensitive scan. Same class as lib/notifications/push.ts:533.",
 
   // ── Job-billing schedule / retention wave — genuinely-bounded SINGLE-SCOPE
   //    reads surfaced once job_billing_plans/job_billing_stages/retention_releases
@@ -1123,6 +1125,13 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   push_subscriptions: "PAGED: fetchAllRows, org-pinned .in('org_id', orgIds) (push send path)",
   push_deliveries:
     "BOUNDED DRAIN: .eq('status','queued').lte('scheduled_for', now) ordered scheduled_for ASC, .limit(PUSH_DRAIN_BATCH_SIZE); self-draining. Service-role send queue.",
+  // MP Wave W4 — SMS notification channel. sms_deliveries drain mirrors
+  // push_deliveries exactly: a self-draining bounded queue read
+  // (.eq('status','queued').lte('scheduled_for', now) ordered scheduled_for ASC,
+  // .limit(SMS_DRAIN_BATCH_SIZE)); a sent/skipped row leaves 'queued'. The other
+  // reads are settle/cleanup writes by id/status, never completeness scans.
+  sms_deliveries:
+    "BOUNDED DRAIN: .eq('status','queued').lte('scheduled_for', now) ordered scheduled_for ASC, .limit(SMS_DRAIN_BATCH_SIZE); self-draining. Service-role send queue.",
   // MP Wave R4 — WhatsApp assistant pending-review queue (assistant-review.ts):
   // fetchAllRows-paged, org-pinned, .eq('status','pending_review').
   whatsapp_assistant_actions: "PAGED: fetchAllRows, org-pinned pending-review queue",
