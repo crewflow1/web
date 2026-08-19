@@ -2,7 +2,11 @@ import "server-only";
 
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure } from "@/lib/supabase/read-failure";
-import type { InvoicePaymentRow } from "@/lib/tax/compute";
+import type {
+  AccrualInvoiceRow,
+  InvoicePaymentRow,
+  VatScheme,
+} from "@/lib/tax/compute";
 
 /**
  * The PAGED read layer behind the single VAT authority (lib/tax/compute.ts).
@@ -77,6 +81,13 @@ export type VatQuarterInputs = {
   invoicePayments: VatLedgerRow[];
   /** Domestic reverse-charge totals for the window. */
   reverseCharge: ReverseChargeQuarterTotals;
+  /**
+   * ISSUED invoices whose tax point (created_at) is in the window — the ACCRUAL
+   * (standard-scheme) output-VAT source. Empty for cash-basis orgs (the default):
+   * this read only runs when the caller asks for the `standard` scheme, so a
+   * cash-basis org pays no extra query and sees no change.
+   */
+  accrualInvoices: AccrualInvoiceRow[];
 };
 
 /** The minimal, read-only PostgREST surface this module needs (real client or cast). */
@@ -257,20 +268,73 @@ async function gatherReverseChargeQuarter(
   return { vat: Math.round(vat * 100) / 100 };
 }
 
+type RawAccrualInvoice = {
+  status: string;
+  created_at: string;
+  vat_total: number | string | null;
+  amount: number | string | null;
+  total: number | string | null;
+};
+
 /**
- * Gather BOTH VAT-authority inputs for one org over `[quarterStartIso,
+ * The ISSUED invoices whose tax point (`created_at`) falls in the window — the
+ * ACCRUAL (standard-scheme) output-VAT source. The status filter (draft ≠ tax
+ * point) is applied by the pure authority via `isIssuedStatus`; this reads the raw
+ * rows on the SAME window/column corp-tax accrual revenue uses, ORG-PINNED + LOUD
+ * + PAGED (F-1: invoices is high-value, a bare select truncates at the 1000-row
+ * cap and would under-state a filed accrual VAT figure).
+ */
+async function gatherAccrualInvoices(
+  db: VatInputsDb,
+  orgId: string,
+  quarterStartIso: string,
+  quarterEndExclusiveIso: string,
+): Promise<AccrualInvoiceRow[]> {
+  const { data, error } = await fetchAllRows<RawAccrualInvoice>((from, to) =>
+    db
+      .from("invoices")
+      .select("status, created_at, vat_total, amount, total")
+      .eq("org_id", orgId)
+      .gte("created_at", quarterStartIso)
+      .lt("created_at", quarterEndExclusiveIso)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to) as unknown as PromiseLike<{
+      data: RawAccrualInvoice[] | null;
+      error: unknown;
+    }>,
+  );
+  if (error) throw readFailure("vat inputs: accrual invoices", error);
+  return (data ?? []).map((inv) => ({
+    status: inv.status,
+    tax_point: inv.created_at,
+    vat_total: inv.vat_total,
+    amount: inv.amount,
+    total: inv.total,
+  }));
+}
+
+/**
+ * Gather the VAT-authority inputs for one org over `[quarterStartIso,
  * quarterEndExclusiveIso)`. Pass the result straight into computeVatQuarter /
  * computeVatNetTotals so the tile, PDF and frozen return reconcile.
+ *
+ * `scheme` (default `cash`) decides whether the ACCRUAL invoice source is read: it
+ * is skipped entirely for cash-basis orgs, so the common path pays no extra query.
  */
 export async function gatherVatQuarterInputs(
   db: VatInputsDb,
   orgId: string,
   quarterStartIso: string,
   quarterEndExclusiveIso: string,
+  scheme: VatScheme = "cash",
 ): Promise<VatQuarterInputs> {
-  const [invoicePayments, reverseCharge] = await Promise.all([
+  const [invoicePayments, reverseCharge, accrualInvoices] = await Promise.all([
     gatherInvoicePaymentLedger(db, orgId, quarterStartIso, quarterEndExclusiveIso),
     gatherReverseChargeQuarter(db, orgId, quarterStartIso, quarterEndExclusiveIso),
+    scheme === "standard"
+      ? gatherAccrualInvoices(db, orgId, quarterStartIso, quarterEndExclusiveIso)
+      : Promise.resolve<AccrualInvoiceRow[]>([]),
   ]);
-  return { invoicePayments, reverseCharge };
+  return { invoicePayments, reverseCharge, accrualInvoices };
 }

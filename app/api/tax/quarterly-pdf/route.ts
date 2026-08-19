@@ -13,6 +13,9 @@ import {
   computeVatQuarter,
   startOfVatPeriodIso,
   endOfVatPeriodExclusiveIso,
+  flatRateTurnoverInclVat,
+  relevantGoodsInclVat,
+  resolveFlatRateForPeriod,
 } from "@/lib/tax/compute";
 import { readOrgSettings } from "@/lib/org-config/service";
 import {
@@ -76,6 +79,7 @@ export async function GET(request: NextRequest) {
         ctx.org.id,
         qStart,
         qEndExclusiveIso,
+        orgSettings.vat_scheme,
       ),
       // PAGED (F-1). The finance rows ARE the input-VAT audit trail and
       // `computeVatQuarter` sums over every one: a bare `.select()` truncates at
@@ -137,12 +141,32 @@ export async function GET(request: NextRequest) {
     amount: r.amount,
     created_at: r.created_at as string,
   }));
+  // Scheme + FRS branch the SAME authority (cash + disabled FRS ⇒ inert ⇒ unchanged
+  // working paper). Resolve FRS against the exact turnover the flat box-1 uses.
+  const flatRate = resolveFlatRateForPeriod(
+    orgSettings.flat_rate_config,
+    qStart,
+    qEndExclusiveIso,
+    flatRateTurnoverInclVat(
+      inputs.invoicePayments,
+      inputs.accrualInvoices,
+      qStart,
+      qEndExclusiveIso,
+      orgSettings.vat_scheme,
+    ),
+    relevantGoodsInclVat(finances, qStart, qEndExclusiveIso),
+  );
   const vat = computeVatQuarter(
     inputs.invoicePayments,
     finances,
     qStart,
     qEndExclusiveIso,
     inputs.reverseCharge.vat,
+    {
+      scheme: orgSettings.vat_scheme,
+      accrualInvoices: inputs.accrualInvoices,
+      flatRate,
+    },
   );
 
   const input: TaxQuarterPdfInput = {

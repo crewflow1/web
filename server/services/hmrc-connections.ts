@@ -7,8 +7,17 @@ import {
   computeVatNetTotals,
   computeVatQuarter,
   endOfVatPeriodExclusiveIso,
+  flatRateTurnoverInclVat,
+  relevantGoodsInclVat,
+  resolveFlatRateForPeriod,
   DEFAULT_VAT_STAGGER,
+  DEFAULT_VAT_SCHEME,
+  DEFAULT_FLAT_RATE_CONFIG,
+  normalizeVatScheme,
+  type VatComputeOptions,
   type VatStagger,
+  type VatScheme,
+  type FlatRateSchemeConfig,
 } from "@/lib/tax/compute";
 import {
   gatherVatQuarterInputs,
@@ -325,10 +334,22 @@ export async function prepareVatReturn(params: {
    * stagger is unchanged.
    */
   stagger?: VatStagger;
+  /**
+   * The org's VAT output-basis scheme (from org_settings). Defaults to `cash` — the
+   * existing behaviour — so an org that never opted in freezes the same figures.
+   */
+  scheme?: VatScheme;
+  /**
+   * The org's Flat Rate Scheme config (from org_settings). Defaults to DISABLED, so
+   * FRS never applies and the frozen return is unchanged unless the org opted in.
+   */
+  flatRateConfig?: FlatRateSchemeConfig;
   status?: HmrcSubmissionStatus;
 }): Promise<PrepareSubmissionResult> {
   const { orgId, preparedBy } = params;
   const status = params.status ?? "prepared";
+  const scheme = normalizeVatScheme(params.scheme ?? DEFAULT_VAT_SCHEME);
+  const flatRateConfig = params.flatRateConfig ?? DEFAULT_FLAT_RATE_CONFIG;
   const quarterStartIso = params.quarterStartIso;
   const quarterEndIso = endOfVatPeriodExclusiveIso(
     quarterStartIso,
@@ -358,6 +379,7 @@ export async function prepareVatReturn(params: {
     orgId,
     quarterStartIso,
     quarterEndIso,
+    scheme,
   );
   const { data: finRows, error: finErr } = await fetchAllRows((from, to) =>
     db
@@ -378,12 +400,37 @@ export async function prepareVatReturn(params: {
     created_at: string;
   }>).map((f) => ({ vat_total: f.vat_total, amount: f.amount, created_at: f.created_at }));
 
+  // Resolve the FRS position (if any) against the SAME turnover the flat box-1
+  // calculation uses and the window's measured relevant-goods spend, then build the
+  // scheme+FRS options once and use them for BOTH the VAT boxes and the net totals
+  // so the frozen 9-box return is internally consistent. Scheme `cash` + disabled
+  // FRS ⇒ opts are inert ⇒ the frozen figures are byte-for-byte the pre-scheme ones.
+  const flatRate = resolveFlatRateForPeriod(
+    flatRateConfig,
+    quarterStartIso,
+    quarterEndIso,
+    flatRateTurnoverInclVat(
+      inputs.invoicePayments,
+      inputs.accrualInvoices,
+      quarterStartIso,
+      quarterEndIso,
+      scheme,
+    ),
+    relevantGoodsInclVat(finances, quarterStartIso, quarterEndIso),
+  );
+  const vatOpts: VatComputeOptions = {
+    scheme,
+    accrualInvoices: inputs.accrualInvoices,
+    flatRate,
+  };
+
   const vat = computeVatQuarter(
     inputs.invoicePayments,
     finances,
     quarterStartIso,
     quarterEndIso,
     inputs.reverseCharge.vat,
+    vatOpts,
   );
   // Boxes 6/7 (mandatory net totals) are NOT VAT amounts, but they ARE derivable
   // from the SAME rows and window that feed boxes 1/4: box 6 is the net (ex-VAT)
@@ -397,6 +444,7 @@ export async function prepareVatReturn(params: {
     finances,
     quarterStartIso,
     quarterEndIso,
+    vatOpts,
   );
   const composed = composeVatReturn(
     { periodKey, vat, netTotals },

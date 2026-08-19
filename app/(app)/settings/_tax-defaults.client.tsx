@@ -14,9 +14,10 @@ import {
   CIS_RATE_LABEL,
   MONTH_LABEL,
   VAT_STAGGER_LABEL,
+  VAT_SCHEME_LABEL,
   type TaxDefaults,
 } from "@/lib/org-config/schema";
-import { VAT_STAGGERS } from "@/lib/tax/compute";
+import { VAT_STAGGERS, VAT_SCHEMES } from "@/lib/tax/compute";
 
 type Action = (
   prev: FormState,
@@ -168,6 +169,31 @@ export function TaxDefaultsForm({
             ) : (
               <p className="mt-1 text-xs text-slate-500">
                 HMRC assigns your quarterly stagger (or monthly returns) when you register. This selects which VAT period the tax dashboard and returns are computed for.
+              </p>
+            )}
+          </div>
+
+          <div className="sm:col-span-2">
+            <label htmlFor="vat_scheme" className="block text-sm font-medium text-slate-800">
+              VAT accounting scheme
+            </label>
+            <select
+              id="vat_scheme"
+              name="vat_scheme"
+              defaultValue={defaults.vat_scheme}
+              className={selectClass}
+            >
+              {VAT_SCHEMES.map((s) => (
+                <option key={s} value={s}>
+                  {VAT_SCHEME_LABEL[s]}
+                </option>
+              ))}
+            </select>
+            {fe.vat_scheme ? (
+              <p role="alert" className="mt-1 text-xs text-red-700">{fe.vat_scheme}</p>
+            ) : (
+              <p className="mt-1 text-xs text-slate-500">
+                Cash accounting (the default) counts output VAT when an invoice is paid; standard/accrual counts it at the invoice date. Input VAT is on your logged costs under both. Change this only to match the scheme HMRC has you on.
               </p>
             )}
           </div>

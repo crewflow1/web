@@ -2,10 +2,11 @@ import "server-only";
 
 import type { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
-import { normalizeVatStagger } from "@/lib/tax/compute";
+import { normalizeVatStagger, normalizeVatScheme } from "@/lib/tax/compute";
 import {
   defaultOrgSettings,
   normalizeWorkingHours,
+  normalizeFlatRateConfig,
   taxDefaultsSchema,
   type OrgSettings,
 } from "./schema";
@@ -35,6 +36,8 @@ type OrgSettingsRow = {
   financial_year_start_month: number;
   default_payment_terms_days: number;
   vat_stagger: unknown;
+  vat_scheme: unknown;
+  flat_rate_config: unknown;
 };
 
 type ServerClient = Awaited<ReturnType<typeof createClient>>;
@@ -46,7 +49,7 @@ export async function readOrgSettings(
   const { data, error } = await supabase
     .from("org_settings" as never)
     .select(
-      "working_hours, default_vat_rate, cis_default_rate, financial_year_start_month, default_payment_terms_days, vat_stagger" as never,
+      "working_hours, default_vat_rate, cis_default_rate, financial_year_start_month, default_payment_terms_days, vat_stagger, vat_scheme, flat_rate_config" as never,
     )
     .eq("org_id" as never, orgId as never)
     .maybeSingle();
@@ -81,5 +84,10 @@ export async function readOrgSettings(
     // outside the four HMRC options degrades to the default (calendar quarter)
     // rather than surfacing an invalid period to the VAT authority.
     vat_stagger: normalizeVatStagger(row.vat_stagger),
+    // The output-VAT scheme and FRS config coerce independently too: an invalid
+    // stored value degrades to the default (cash basis / FRS disabled), so a
+    // broken config can never move a non-opted tenant's VAT numbers.
+    vat_scheme: normalizeVatScheme(row.vat_scheme),
+    flat_rate_config: normalizeFlatRateConfig(row.flat_rate_config),
   };
 }

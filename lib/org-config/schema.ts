@@ -18,7 +18,12 @@ import { z } from "zod";
 import {
   VAT_STAGGERS,
   DEFAULT_VAT_STAGGER,
+  VAT_SCHEMES,
+  DEFAULT_VAT_SCHEME,
+  DEFAULT_FLAT_RATE_CONFIG,
   type VatStagger,
+  type VatScheme,
+  type FlatRateSchemeConfig,
 } from "@/lib/tax/compute";
 
 // ---------------------------------------------------------------------------
@@ -141,13 +146,77 @@ export const VAT_STAGGER_LABEL: Record<VatStagger, string> = {
   monthly: "Monthly",
 };
 
+/**
+ * VAT accounting SCHEME (output-VAT basis). The valid values + the branch math are
+ * owned by the single VAT authority (lib/tax/compute.ts); this only validates the
+ * stored org_settings column. `cash` is the DEFAULT — the existing behaviour, so no
+ * org's numbers move until it opts in.
+ */
+export const VAT_SCHEME_LABEL: Record<VatScheme, string> = {
+  cash: "Cash accounting — output VAT when paid (default)",
+  standard: "Standard / accrual — output VAT at the invoice date",
+};
+
 export type TaxDefaults = {
   default_vat_rate: VatRate;
   cis_default_rate: CisRate;
   financial_year_start_month: number;
   default_payment_terms_days: number;
   vat_stagger: VatStagger;
+  vat_scheme: VatScheme;
 };
+
+// ---------------------------------------------------------------------------
+// Flat Rate Scheme (FRS) config
+// ---------------------------------------------------------------------------
+
+/** An optional YYYY-MM-DD date, or null. Empty string / bad input ⇒ null. */
+const optionalIsoDate = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() === "" ? null : v),
+  z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2026-04-01")
+    .nullable()
+    .default(null),
+);
+
+/**
+ * The FRS config blob stored in org_settings.flat_rate_config (jsonb). Structurally
+ * the engine's FlatRateSchemeConfig (lib/tax/compute.ts owns the computation). The
+ * DB default is a DISABLED config, so FRS never applies until an org opts in and no
+ * existing tenant's VAT numbers change.
+ */
+export const flatRateConfigSchema = z
+  .object({
+    enabled: z.coerce.boolean().default(false),
+    // HMRC sector rates run roughly 4%–16.5%; clamp to a sane 0–20 band.
+    sector_percent: z.coerce
+      .number()
+      .min(0, "Cannot be negative")
+      .max(20, "FRS sector rates do not exceed 20%")
+      .default(0),
+    registration_date: optionalIsoDate,
+    first_year_discount: z.coerce.boolean().default(false),
+    effective_from: optionalIsoDate,
+    effective_to: optionalIsoDate,
+    limited_cost: z.enum(["auto", "yes", "no"]).default("auto"),
+  })
+  .strip();
+
+/** The disabled default (mirrors the engine's DEFAULT_FLAT_RATE_CONFIG). */
+export function defaultFlatRateConfig(): FlatRateSchemeConfig {
+  return { ...DEFAULT_FLAT_RATE_CONFIG };
+}
+
+/**
+ * Lenient READ coercion — anything that does not parse degrades to the disabled
+ * default rather than surfacing a broken FRS config to the VAT authority. The write
+ * action uses `flatRateConfigSchema` directly to REJECT bad input.
+ */
+export function normalizeFlatRateConfig(value: unknown): FlatRateSchemeConfig {
+  const parsed = flatRateConfigSchema.safeParse(value ?? {});
+  return parsed.success ? parsed.data : defaultFlatRateConfig();
+}
 
 export const taxDefaultsSchema = z.object({
   default_vat_rate: z.coerce
@@ -171,11 +240,13 @@ export const taxDefaultsSchema = z.object({
     .min(0, "Cannot be negative")
     .max(365, "Use 365 days or fewer"),
   vat_stagger: z.enum(VAT_STAGGERS),
+  vat_scheme: z.enum(VAT_SCHEMES),
 });
 
 /**
  * Default tax config — UK 20% VAT, 20% CIS, April FY start, 30-day terms,
- * calendar-quarter VAT stagger (group 1 = the existing behaviour).
+ * calendar-quarter VAT stagger (group 1) and CASH-basis output VAT (= the existing
+ * behaviour). Both VAT dimensions default to the pre-scheme behaviour.
  */
 export function defaultTaxDefaults(): TaxDefaults {
   return {
@@ -184,6 +255,7 @@ export function defaultTaxDefaults(): TaxDefaults {
     financial_year_start_month: 4,
     default_payment_terms_days: 30,
     vat_stagger: DEFAULT_VAT_STAGGER,
+    vat_scheme: DEFAULT_VAT_SCHEME,
   };
 }
 
@@ -191,9 +263,16 @@ export function defaultTaxDefaults(): TaxDefaults {
 // Combined settings
 // ---------------------------------------------------------------------------
 
-export type OrgSettings = TaxDefaults & { working_hours: WorkingHours };
+export type OrgSettings = TaxDefaults & {
+  working_hours: WorkingHours;
+  flat_rate_config: FlatRateSchemeConfig;
+};
 
 /** The full defaults an org falls back to when it has no org_settings row. */
 export function defaultOrgSettings(): OrgSettings {
-  return { ...defaultTaxDefaults(), working_hours: defaultWorkingHours() };
+  return {
+    ...defaultTaxDefaults(),
+    working_hours: defaultWorkingHours(),
+    flat_rate_config: defaultFlatRateConfig(),
+  };
 }

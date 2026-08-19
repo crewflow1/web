@@ -7,6 +7,7 @@ import {
   taxDefaultsSchema,
   defaultTaxDefaults,
   defaultOrgSettings,
+  defaultFlatRateConfig,
   VAT_RATES,
   CIS_RATES,
 } from "@/lib/org-config/schema";
@@ -79,13 +80,14 @@ describe("working hours", () => {
 });
 
 describe("tax defaults", () => {
-  it("defaults are 20% VAT, 20% CIS, April FY start, 30-day terms, group_1 stagger", () => {
+  it("defaults are 20% VAT, 20% CIS, April FY start, 30-day terms, group_1 stagger, cash scheme", () => {
     expect(defaultTaxDefaults()).toEqual({
       default_vat_rate: 20,
       cis_default_rate: 20,
       financial_year_start_month: 4,
       default_payment_terms_days: 30,
       vat_stagger: "group_1",
+      vat_scheme: "cash",
     });
   });
 
@@ -98,6 +100,7 @@ describe("tax defaults", () => {
           financial_year_start_month: 4,
           default_payment_terms_days: 30,
           vat_stagger: "group_1",
+          vat_scheme: "cash",
         }).success,
       ).toBe(true);
     }
@@ -109,6 +112,7 @@ describe("tax defaults", () => {
           financial_year_start_month: 4,
           default_payment_terms_days: 30,
           vat_stagger: "group_1",
+          vat_scheme: "cash",
         }).success,
       ).toBe(true);
     }
@@ -123,6 +127,7 @@ describe("tax defaults", () => {
           financial_year_start_month: 4,
           default_payment_terms_days: 30,
           vat_stagger: s,
+          vat_scheme: "cash",
         }).success,
       ).toBe(true);
     }
@@ -133,6 +138,32 @@ describe("tax defaults", () => {
         financial_year_start_month: 4,
         default_payment_terms_days: 30,
         vat_stagger: "quarterly",
+        vat_scheme: "cash",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts both VAT schemes and rejects an unknown one", () => {
+    for (const scheme of ["cash", "standard"]) {
+      expect(
+        taxDefaultsSchema.safeParse({
+          default_vat_rate: 20,
+          cis_default_rate: 20,
+          financial_year_start_month: 4,
+          default_payment_terms_days: 30,
+          vat_stagger: "group_1",
+          vat_scheme: scheme,
+        }).success,
+      ).toBe(true);
+    }
+    expect(
+      taxDefaultsSchema.safeParse({
+        default_vat_rate: 20,
+        cis_default_rate: 20,
+        financial_year_start_month: 4,
+        default_payment_terms_days: 30,
+        vat_stagger: "group_1",
+        vat_scheme: "accrual", // not a valid stored value; the label is "standard"
       }).success,
     ).toBe(false);
   });
@@ -144,6 +175,7 @@ describe("tax defaults", () => {
       financial_year_start_month: "4",
       default_payment_terms_days: "14",
       vat_stagger: "group_2",
+      vat_scheme: "standard",
     });
     expect(parsed.success).toBe(true);
     if (parsed.success) {
@@ -151,6 +183,7 @@ describe("tax defaults", () => {
       expect(parsed.data.cis_default_rate).toBe(30);
       expect(parsed.data.default_payment_terms_days).toBe(14);
       expect(parsed.data.vat_stagger).toBe("group_2");
+      expect(parsed.data.vat_scheme).toBe("standard");
     }
   });
 
@@ -193,8 +226,14 @@ describe("tax defaults", () => {
 });
 
 describe("combined org settings", () => {
-  it("defaultOrgSettings() merges tax defaults + working-hours defaults", () => {
+  it("defaultOrgSettings() merges tax defaults + working-hours + disabled FRS defaults", () => {
     const s = defaultOrgSettings();
-    expect(s).toEqual({ ...defaultTaxDefaults(), working_hours: defaultWorkingHours() });
+    expect(s).toEqual({
+      ...defaultTaxDefaults(),
+      working_hours: defaultWorkingHours(),
+      flat_rate_config: defaultFlatRateConfig(),
+    });
+    // The FRS default must be DISABLED so no existing tenant's VAT numbers move.
+    expect(s.flat_rate_config.enabled).toBe(false);
   });
 });

@@ -43,6 +43,7 @@ export async function TaxDefaultsSettings() {
           financial_year_start_month: settings.financial_year_start_month,
           default_payment_terms_days: settings.default_payment_terms_days,
           vat_stagger: settings.vat_stagger,
+          vat_scheme: settings.vat_scheme,
         }}
         isAdmin={isAdmin}
         action={saveTaxDefaults}
