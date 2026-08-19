@@ -125,7 +125,7 @@ describe("runSiteDiaryRollup — composition + scoping", () => {
     expect(summary.created).toBe(1);
     expect(summary.jobsWithActivity).toBe(1); // JOB_DONE excluded
 
-    const entries = store.site_diary_entries;
+    const entries = store.site_diary_entries!;
     expect(entries).toHaveLength(1);
     const e = entries[0]!;
     expect(e.org_id).toBe(ORG);
@@ -157,7 +157,7 @@ describe("runSiteDiaryRollup — IDEMPOTENT", () => {
 describe("runSiteDiaryRollup — never collides with a MANUAL entry", () => {
   it("skips a job/day that already has a human diary entry", async () => {
     const store = seedStore();
-    store.site_diary_entries.push({
+    store.site_diary_entries!.push({
       id: "manual-1",
       org_id: ORG,
       job_id: JOB_A,
@@ -172,8 +172,8 @@ describe("runSiteDiaryRollup — never collides with a MANUAL entry", () => {
     expect(summary.created).toBe(0);
     // The manual entry is untouched and no auto entry was added beside it.
     expect(store.site_diary_entries).toHaveLength(1);
-    expect(store.site_diary_entries[0]!.source).toBe("manual");
-    expect(store.site_diary_entries[0]!.work_summary).toBe("Poured the slab. All good.");
+    expect(store.site_diary_entries![0]!.source).toBe("manual");
+    expect(store.site_diary_entries![0]!.work_summary).toBe("Poured the slab. All good.");
   });
 });
 
