@@ -344,6 +344,13 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   "stocktake_sessions → users",
   "supplier_payments → users",
   "support_tickets → users",
+  // worker_signoff_tokens (20261185000000): created_by (staff who issued the
+  // link) + revoked_by (staff who revoked it) both → users. Reviewed
+  // 2026-08-19: neither _data.ts reader nor the portal loader embeds users(...)
+  // on this table — the staff list renders no issuer/revoker name via embed, so
+  // no query is ambiguous. Two FKs is inherent (who issued vs who revoked); a
+  // future users embed must FK-hint (test 2 enforces).
+  "worker_signoff_tokens → users",
 ] as const;
 
 const graph = buildFkGraph();
