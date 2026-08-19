@@ -16,11 +16,14 @@ import { listTelematicsConnections } from "@/server/services/telematics-connecti
 import { isTelematicsProviderConnectable } from "@/lib/integrations/telematics/oauth";
 import { listMerchantConnections } from "@/server/services/merchant-connections";
 import { isMerchantConnectable } from "@/lib/integrations/merchants/connect";
+import { getOrgPaymentConnection } from "@/server/services/org-payment-connections";
+import { isPortalPaymentsConfigured } from "@/lib/payments/portal-stripe";
 import { CalendarConnectionsPanel } from "./CalendarConnectionsPanel";
 import { HmrcConnectionPanel } from "./HmrcConnectionPanel";
 import { BankConnectionsPanel } from "./BankConnectionsPanel";
 import { TelematicsConnectionsPanel } from "./TelematicsConnectionsPanel";
 import { MerchantConnectionsPanel } from "./MerchantConnectionsPanel";
+import { PaymentsConnectionPanel } from "./PaymentsConnectionPanel";
 
 /**
  * /settings/integrations — third-party integration connections (calendar today).
@@ -58,6 +61,7 @@ export default async function IntegrationsSettingsPage() {
   const bankConnections = await listBankConnections(ctx.org.id);
   const telematicsConnections = await listTelematicsConnections(ctx.org.id);
   const merchantConnections = await listMerchantConnections(ctx.org.id);
+  const paymentConnection = await getOrgPaymentConnection(ctx.org.id);
 
   // The HMRC connect flow resolves the VRN from organizations.vat_number (HMRC
   // never returns one). Read it org-pinned so the panel can surface the
@@ -112,6 +116,10 @@ export default async function IntegrationsSettingsPage() {
           travis_perkins: isMerchantConnectable("travis_perkins"),
           haldane_fisher: isMerchantConnectable("haldane_fisher"),
         }}
+      />
+      <PaymentsConnectionPanel
+        connection={paymentConnection}
+        connectable={isPortalPaymentsConfigured()}
       />
     </div>
   );

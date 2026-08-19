@@ -1139,7 +1139,7 @@ const COVERAGE_REVIEWED: Record<string, string> = {
     "PAGED: listPushedExternalEventIds (calendar pull dedup) reads external_event_id in an explicit .range(from,from+PAGE-1) loop under the PostgREST cap (PAGE=500) until a short page — the complete pushed-id set, never truncated. Service-role, org+connection pinned.",
   cis_subcontractors: "PAGED: fetchAllRows (CIS subcontractor roster)",
   customer_contacts:
-    "PAGED: fetchAllRows (portal contacts — the customer's own contacts .eq(org_id).eq(customer_id), paged in app/customer-portal/_contacts.ts)",
+    "PAGED: fetchAllRows on every set-read — the portal contacts read (.eq(org_id).eq(customer_id), app/customer-portal/_contacts.ts) AND the staff contacts section (.eq(org_id).eq(customer_id), app/(app)/customers/[id]/_contacts-section.tsx); both a single customer's contact list, complete.",
   service_bookings:
     "PAGED: fetchAllRows on every set-read (portal servicing — the customer's own bookings .eq(org_id).eq(customer_id), and the org-wide live-count read for slot availability .in(slot_id) — both paged in app/customer-portal/_booking.ts)",
   service_booking_slots:
@@ -1179,6 +1179,8 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   job_document_versions: "PER-PARENT/ID-BATCH: .eq('document_id')/.in(doc ids) — one document's versions",
   job_documents: "PER-PARENT: .eq('job_id') — one job's document register",
   job_budgets: "PER-PARENT: .eq('job_id') budget history; the CVR rollup read is fetchAllRows-paged",
+  job_checklists:
+    "PAGED + PER-PARENT: the two set-reads are both structurally complete. (1) The /me 'My tasks' worklist (app/(app)/me/page.tsx) is .eq('org_id').eq('assigned_to', me).eq('is_done', false) F-1 PAGED via fetchAllRows on a stable (due_on asc, id asc) order — a personal open-task list shows EVERY open task, never a clamped sample. (2) The per-job checklist panel (app/(app)/jobs/[id]/_job-checklist.tsx) is .eq('org_id').eq('job_id') for ONE job — bounded by a single job's run-list (dozens of items), never a cross-job/estate scan or aggregate. The checklist-actions reads are single-row (max-sort .limit(1).maybeSingle / assignment prior .maybeSingle); the rest are inserts/updates.",
   calls:
     "PER-PARENT/PER-ORG/RECENT-N: leads/[id] reads one lead's log (.eq('lead_id').limit(20)); the admin voice-panel reads a per-org recent-20 (.eq('org_id').order.limit(20)) — both author-capped displays below the 1000 cap, not summed. (C66: reason widened to cover the voice-panel per-org read the pre-de-vacuum scanner didn't fully window.)",
   // lead_followup_state: REMOVED (no set-read any more). The only read is a

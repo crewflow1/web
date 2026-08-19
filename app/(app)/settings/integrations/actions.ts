@@ -17,6 +17,17 @@ import {
   isMerchantProvider,
   type MerchantProvider,
 } from "@/lib/integrations/merchants/connect";
+import { isPortalPaymentsConfigured } from "@/lib/payments/portal-stripe";
+import { stripeConnectOps } from "@/lib/payments/stripe-connect";
+import {
+  disconnectOrgPaymentConnection,
+  loadOnboardingConnection,
+  updateOrgPaymentStatus,
+} from "@/server/services/org-payment-connections";
+import {
+  refreshStripeConnectStatus,
+  type RefreshStatusDeps,
+} from "@/server/services/stripe-connect-onboarding";
 
 /**
  * Calendar integration actions — the admin disconnect that wires the panel's
@@ -152,6 +163,60 @@ export async function disconnectMerchantConnection(formData: FormData): Promise<
   if (!res.ok) {
     throw new Error(res.error ?? "Disconnect failed.");
   }
+
+  revalidatePath("/settings/integrations");
+}
+
+/**
+ * Stripe Connect (payments) disconnect — wires the panel's "Disconnect" control to
+ * `disconnectOrgPaymentConnection`. Unbinds the connected account + clears the
+ * capability state, returning the row to `disconnected` so the pay-now gate closes.
+ * A later reconnect creates a fresh account.
+ *
+ * AUTHORISATION IS DOUBLED. The role check here refuses a non-admin loudly; the
+ * admin-write RLS on org_payment_connections (20261120) is the real boundary for
+ * the UPDATE, which runs under the caller's JWT. Org-pinned via ctx.org.id. LOUD.
+ */
+export async function disconnectStripeConnect(): Promise<void> {
+  const { ctx } = await requireOrgContext();
+  if (!isAdminRole(ctx.membership.role)) {
+    throw new Error("Only an owner or admin may disconnect payments.");
+  }
+
+  const res = await disconnectOrgPaymentConnection(ctx.org.id);
+  if (!res.ok) {
+    throw new Error(res.error ?? "Disconnect failed.");
+  }
+
+  revalidatePath("/settings/integrations");
+}
+
+/**
+ * Stripe Connect (payments) status refresh — polls accounts.retrieve and re-maps
+ * the tenant's capability state onto the connection status (charges_enabled →
+ * 'connected'). Wired to the panel's "Refresh status" control.
+ *
+ * DARK. `isPortalPaymentsConfigured()` gates the refresh: while the feature flag is
+ * off or the platform Connect key is absent the orchestration refuses before any
+ * Stripe call and nothing is written. Admin-gated + org-pinned + LOUD.
+ */
+export async function refreshStripeConnectStatusAction(): Promise<void> {
+  const { ctx } = await requireOrgContext();
+  if (!isAdminRole(ctx.membership.role)) {
+    throw new Error("Only an owner or admin may refresh the payments connection.");
+  }
+
+  const deps: RefreshStatusDeps = {
+    isConfigured: () => isPortalPaymentsConfigured(),
+    loadConnection: (orgId) => loadOnboardingConnection(orgId),
+    stripe: { retrieveAccount: stripeConnectOps().retrieveAccount },
+    updateStatus: (row) => updateOrgPaymentStatus(row),
+  };
+
+  // A dark/not-connected refusal is not an error the admin needs to see thrown —
+  // the panel already shows the dark/disconnected state. Only a genuine Stripe
+  // failure (which the service persists as 'error') surfaces via the row.
+  await refreshStripeConnectStatus(deps, { orgId: ctx.org.id });
 
   revalidatePath("/settings/integrations");
 }

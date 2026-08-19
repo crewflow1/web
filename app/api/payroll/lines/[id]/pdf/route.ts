@@ -37,6 +37,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     .select(
       `
         id, user_id, hours, hourly_pay, gross_pay, paye_estimate, ni_estimate, net_pay,
+        overtime_hours, overtime_pay, leave_hours, leave_pay,
         user:users ( full_name ),
         run:payroll_runs ( cycle, period_start, period_end )
       `,
@@ -119,6 +120,11 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     student_loan_estimate: employee.student_loan_estimate,
     employee_pension_estimate: employee.employee_pension_estimate,
     net_pay: employee.net_pay,
+    // Overtime + holiday breakdown of gross (informational lines on the payslip).
+    overtime_hours: Number(line.overtime_hours ?? 0),
+    overtime_pay: Number(line.overtime_pay ?? 0),
+    holiday_hours: Number(line.leave_hours ?? 0),
+    holiday_pay: Number(line.leave_pay ?? 0),
   };
 
   const buffer = await renderToBuffer(PayslipPdf({ data: input }));

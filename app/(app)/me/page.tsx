@@ -21,6 +21,11 @@ import {
 import { getPayrollTaxProfile } from "@/server/services/payroll-tax-profile";
 import { getPensionEnrolment } from "@/server/services/pension-enrolment";
 import { formatTimeUK, formatDateUK } from "@/lib/time/format";
+import {
+  selectMyOpenTasks,
+  isTaskOverdue,
+  type MyTaskRow,
+} from "@/lib/jobs/my-tasks";
 import { clockIn, clockOut, startBreak, endBreak } from "./actions";
 
 /**
@@ -229,6 +234,58 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
 
   const myJobs = (jobsRes.data ?? []).filter(
     (j) => (j as { assigned_to?: string | null }).assigned_to === user.id,
+  );
+
+  // "My tasks" — checklist items assigned to me, still open (migration
+  // 20261182000000). ACTIVE-org pinned + assigned + open at the DB (RLS admits
+  // every org I belong to, so the org pin is the real scope); the pure
+  // selectMyOpenTasks re-asserts "mine and open" and orders by due date.
+  //
+  // COMPLETE (F-1): a personal open-worklist must show EVERY open task, so it is
+  // PAGED via fetchAllRows on a stable total order (due_on asc, id asc) rather
+  // than clamped — a capped read would silently hide a busy worker's later
+  // tasks. Read LOUDLY — a failed read must not render an empty task list.
+  // job_checklists isn't in the generated types yet — the `as never` idiom.
+  type MyTaskDbRow = {
+    id: string;
+    label: string;
+    job_id: string;
+    is_done: boolean;
+    assigned_to: string | null;
+    due_on: string | null;
+    job: { customer: { name: string | null } | null } | null;
+  };
+  const tasksRes = await fetchAllRows<MyTaskDbRow>(
+    (from, to) =>
+      supabase
+        .from("job_checklists" as never)
+        .select(
+          "id, label, job_id, is_done, assigned_to, due_on, job:jobs ( customer:customers ( name ) )" as never,
+        )
+        .eq("org_id" as never, ctx.org.id as never)
+        .eq("assigned_to" as never, user.id as never)
+        .eq("is_done" as never, false as never)
+        .order("due_on" as never, { ascending: true, nullsFirst: false })
+        .order("id" as never, { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: MyTaskDbRow[] | null;
+        error: unknown;
+      }>,
+  );
+  if (tasksRes.error) throw readFailure("me: my tasks", tasksRes.error);
+  const myTasks = selectMyOpenTasks(
+    (tasksRes.data ?? []).map(
+      (r): MyTaskRow => ({
+        id: r.id,
+        label: r.label,
+        job_id: r.job_id,
+        is_done: r.is_done,
+        assigned_to: r.assigned_to,
+        due_on: r.due_on,
+        customer_name: r.job?.customer?.name ?? null,
+      }),
+    ),
+    user.id,
   );
 
   return (
@@ -458,6 +515,58 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
                 </span>
               </li>
             ))}
+          </ul>
+        )}
+      </section>
+
+      {/* My tasks — assigned checklist items */}
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-900">My tasks</h2>
+          {myTasks.length > 0 ? (
+            <span className="text-xs text-slate-500">
+              {myTasks.length} open
+            </span>
+          ) : null}
+        </div>
+        {myTasks.length === 0 ? (
+          <p className="mt-2 text-sm text-slate-500">
+            No tasks assigned to you right now.
+          </p>
+        ) : (
+          <ul className="mt-2 divide-y divide-slate-100 text-sm">
+            {myTasks.map((t) => {
+              const overdue = isTaskOverdue(t.due_on, todayIso);
+              return (
+                <li key={t.id} className="flex items-center justify-between gap-3 py-1.5">
+                  <Link
+                    href={`/jobs/${t.job_id}#checklist`}
+                    className="min-w-0 flex-1 truncate text-slate-700 hover:text-slate-900"
+                  >
+                    {t.label}
+                    {t.customer_name ? (
+                      <span className="ml-1 text-xs text-slate-400">
+                        · {t.customer_name}
+                      </span>
+                    ) : null}
+                  </Link>
+                  {t.due_on ? (
+                    <span
+                      className={
+                        overdue
+                          ? "shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700"
+                          : "shrink-0 text-xs text-slate-500"
+                      }
+                    >
+                      {overdue ? "overdue · " : "due "}
+                      {t.due_on}
+                    </span>
+                  ) : (
+                    <span className="shrink-0 text-xs text-slate-400">no date</span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
