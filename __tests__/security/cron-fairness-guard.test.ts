@@ -178,6 +178,8 @@ const ALLOWLIST: Record<string, string> = {
     "Self-draining send queue: a follow-up marker excludes a processed quote from the next pass's candidates. Reads paged in full (F-1).",
   "report-delivery":
     "Self-draining daily delivery: candidates are ordered by last_run_on ASC NULLS FIRST (stalest/never-run first — a recency cursor) and each processed subscription's last_run_on advances to today, so a delivered subscription LEAVES the day's candidate set and a pass killed mid-list resumes from the tail on the next tick rather than re-servicing the head. Single-pass daily; reads paged in full (F-1).",
+  "retention-purge":
+    "Bounded internal sweep: reads only ENABLED retention_policies (a per-org config set capped at the ~10-entry purgeable allowlist), and each policy is one INTERNAL SQL RPC (retention_purge_run) that does its OWN ctid-batched drain in-database — there is no TS-side loop over a persistent external feed and no per-item network I/O. The candidate rows a policy targets are aged out in the same pass, so the set self-drains toward the window rather than re-servicing a starved head. Single-pass daily, like health-recompute.",
   "retention-reminders":
     "Self-draining: each retention moiety reminder is guarded by a reminded_*_at CAS marker on jobs (self-excluding — a reminded moiety leaves the candidate set), and per-job work is an in-memory schedule computation plus, only for a moiety actually coming due, an internal claim + notification insert — no external per-item I/O. Candidate jobs and the base invoices/releases are read once, paged in full (F-1).",
   "research-drain":

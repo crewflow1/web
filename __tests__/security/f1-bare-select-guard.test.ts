@@ -1128,6 +1128,10 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   whatsapp_assistant_actions: "PAGED: fetchAllRows, org-pinned pending-review queue",
   accounting_pushed_entities: "PAGED: fetchAllRows (accounting-export ledger reconcile read)",
   activity_log: "PAGED: fetchAllRows on every read (activity feed, dashboard tile, AI aggregates)",
+  retention_policies:
+    "PER-ORG config + PAGED cron read. The settings page read (app/(app)/settings/data-retention/page.tsx) is .eq('org_id') over a per-org config set bounded at the ~10-entry purgeable allowlist (one row per (org,table) via the unique constraint). The cron's cross-org read (server/services/retention-purge.ts, runRetentionPurge) is F-1 PAGED via fetchAllRows on a stable id order, so it can never truncate and skip an org's enabled policy.",
+  retention_purge_log:
+    "RECENT-N display + no completeness-sensitive TS read. The only set-read (app/(app)/settings/data-retention/page.tsx) is .eq('org_id').order('created_at', desc).limit(20) — a bounded recent-activity table, not an aggregate or estate scan. The table is written only by the retention_purge_run SECURITY DEFINER primitive; nothing sums or counts it in TypeScript.",
   automation_approvals:
     "PER-ORG/PAGED: the only set-read is listPendingApprovals (server/services/automation-custom-rules.ts) — .eq('org_id').eq('status','pending') F-1 paged via .range on a stable (created_at desc, id asc) order (CUSTOM_RULE_PAGE_SIZE window). The decideApproval reads are an .update(...).select() RETURNING (id-filtered, ≤1 row); the rest are inserts/updates.",
   automation_custom_rules:
