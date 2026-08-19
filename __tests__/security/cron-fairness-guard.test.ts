@@ -148,6 +148,8 @@ const ALLOWLIST: Record<string, string> = {
     "Builds ONE in-memory alerts snapshot, maps its CRITICAL signals to draft decision proposals, and opens each via a light idempotent insert (guarded by a partial-unique source_signal_key index — a repeated signal is a no-op). No persistent external candidate set, no per-item network I/O — a bounded single-pass job that finishes in one invocation, like alerts-poll and health-recompute.",
   "saga-drain":
     "LIMIT-bounded (≤200) reads of ACTIVE sagas ordered by updated_at ASC (a recency cursor — a saga touched this pass rotates to the back); each step dispatch is exactly-once via the Task-Engine's stable dedupe key (saga_step:<id>), so a dispatched step leaves the undispatched candidate set (self-draining). Per-step work is an internal DB claim + enqueue, not a paginated external feed.",
+  "site-diary-rollup":
+    "Bounded to ONE closed day (yesterday's activity), not a persistent external feed. Per-job work is INTERNAL only — DB reads plus one idempotent upsert; weather is dark-gated (isWeatherAvailable() false everywhere today) so no wire call happens per item. Self-excluding: the (org_id, job_id, entry_date) partial unique index (source='auto_rollup') makes a re-run refresh-in-place or 23505, so a done job/day leaves the candidate set and a truncated pass resumes cleanly on the next tick.",
   "inspections-due":
     "LIMIT-bounded (BATCH) and ordered by next_due ASC (recency cursor); the INSERT-is-the-claim idempotency makes a generated cycle self-excluding.",
   "invoice-reminders":
