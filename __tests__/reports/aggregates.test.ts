@@ -120,6 +120,13 @@ const h = vi.hoisted(() => {
       range(from: number, to: number) {
         return settle(from, to);
       },
+      // Single-row terminator — used by readOrgSettings (org_settings). An unseeded
+      // org_settings table yields null ⇒ the reader returns the cash-basis defaults,
+      // so the VAT-trend assertions here stay on the pre-scheme behaviour.
+      maybeSingle() {
+        const rows = filteredOrdered().slice(0, cap.rows);
+        return Promise.resolve({ data: rows[0] ?? null, error: null });
+      },
       then<T>(
         onF: (v: { data: unknown[]; error: null }) => T,
         onR?: (e: unknown) => T,

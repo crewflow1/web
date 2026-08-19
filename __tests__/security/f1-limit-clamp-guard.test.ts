@@ -210,10 +210,10 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // create AND draft-edit, so an out-of-cap saved job was silently mis-attributed),
   // so neither carries a producer .limit and neither needs an entry. Same
   // treatment as reviews/new, snags/new and site-reports/new below.
-  "app/(app)/dashboard/page.tsx:189":
-    "bounded: dashboard 'recent 5 leads' widget — an intentional top-5 display",
+  "app/(app)/dashboard/page.tsx:191":
+    "bounded: dashboard 'recent 5 leads' widget — an intentional top-5 display. (Moved 189→191 when the VAT scheme/FRS reads added two import lines above it.)",
   "app/(app)/leads/[id]/page.tsx:136":
-    "bounded: this lead's related quotes — top-5 display on the lead detail page. (Line moved 132→136 when the lead→customer conversion imports + ?error map entries were added above this read; reason unchanged.)",
+    "bounded: this lead's related quotes — top-5 display on the lead detail page. (Line moved 132→136 when the lead→customer conversion imports were added above this read; reason unchanged.)",
   "app/(app)/me/page.tsx:137":
     "bounded: 'my recent 20 jobs' widget on the profile page — a top-N display. (Line moved 132→137 when the My-tasks import was added above this read; reason unchanged.)",
   "server/services/fleet-snapshot.ts:568":

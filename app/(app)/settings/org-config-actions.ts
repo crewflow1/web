@@ -13,6 +13,7 @@ import {
 import {
   WEEKDAYS,
   taxDefaultsSchema,
+  flatRateConfigSchema,
   type WorkingHours,
 } from "@/lib/org-config/schema";
 
@@ -145,6 +146,7 @@ export async function saveTaxDefaults(
         financial_year_start_month: result.data.financial_year_start_month,
         default_payment_terms_days: result.data.default_payment_terms_days,
         vat_stagger: result.data.vat_stagger,
+        vat_scheme: result.data.vat_scheme,
       } as never,
       { onConflict: "org_id" } as never,
     );
@@ -158,4 +160,68 @@ export async function saveTaxDefaults(
 
   revalidatePath("/settings");
   return formSuccess({ successMessage: "Tax & defaults saved." });
+}
+
+// ---------------------------------------------------------------------------
+// Flat Rate Scheme (FRS)
+// ---------------------------------------------------------------------------
+
+/**
+ * Save the org's VAT Flat Rate Scheme config. Validated through the SAME
+ * `flatRateConfigSchema` the read path coerces with, so the form and reader can
+ * never disagree. Stored as the `flat_rate_config` jsonb blob on org_settings
+ * (admin-write / member-read at the DB). Absent/disabled ⇒ FRS never applies, so a
+ * non-opted org's VAT figures are unchanged.
+ *
+ * Checkboxes submit their value only when ticked, so `enabled` / `first_year_discount`
+ * are read as presence booleans; the empty date fields coerce to null in the schema.
+ */
+export async function saveFlatRateConfig(
+  _prev: FormState<SettingsValues>,
+  formData: FormData,
+): Promise<FormState<SettingsValues>> {
+  const { ctx, isAdmin } = await requireAdmin();
+  if (!isAdmin) {
+    return formError("Only admins/owners can change the Flat Rate Scheme.");
+  }
+
+  const parsed = flatRateConfigSchema.safeParse({
+    enabled: formData.get("frs_enabled") === "on",
+    sector_percent: formData.get("frs_sector_percent"),
+    registration_date: formData.get("frs_registration_date"),
+    first_year_discount: formData.get("frs_first_year_discount") === "on",
+    effective_from: formData.get("frs_effective_from"),
+    effective_to: formData.get("frs_effective_to"),
+    // Absent ⇒ undefined so the schema's conservative 'unset' default applies.
+    limited_cost: formData.get("frs_limited_cost") ?? undefined,
+  });
+  if (!parsed.success) {
+    const fieldErrors: Record<string, string> = {};
+    for (const issue of parsed.error.issues) {
+      const key = String(issue.path[0] ?? "form");
+      if (!fieldErrors[key]) fieldErrors[key] = issue.message;
+    }
+    return {
+      ok: false,
+      error: "Fix the highlighted Flat Rate Scheme fields and try again.",
+      fieldErrors,
+      values: {},
+      submittedAt: Date.now(),
+    };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("org_settings" as never)
+    .upsert(
+      { org_id: ctx.org.id, flat_rate_config: parsed.data } as never,
+      { onConflict: "org_id" } as never,
+    );
+  if (error) {
+    console.error("[org-config] flat rate config save failed", error);
+    return formError("Couldn't save the Flat Rate Scheme. Try again.");
+  }
+
+  revalidatePath("/settings");
+  return formSuccess({ successMessage: "Flat Rate Scheme saved." });
 }

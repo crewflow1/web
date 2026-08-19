@@ -10,6 +10,8 @@ import {
   startOfVatPeriodIso,
   endOfVatPeriodExclusiveIso,
   startOfTaxYearIso,
+  resolveFlatRateForPeriod,
+  type VatComputeOptions,
 } from "@/lib/tax/compute";
 import { readOrgSettings } from "@/lib/org-config/service";
 import {
@@ -207,13 +209,28 @@ export default async function TaxDashboardPage() {
     ctx.org.id,
     quarterStartIso,
     quarterEndExclusiveIso,
+    orgSettings.vat_scheme,
   );
+  // The org's output-VAT basis (cash/standard) and FRS config branch the SAME
+  // authority. Limited-cost status is the org's EXPLICIT declaration; undeclared ⇒
+  // conservative 16.5%. Cash + disabled FRS ⇒ inert opts ⇒ the tile shows the
+  // byte-for-byte pre-scheme figures.
+  const vatFlatRate = resolveFlatRateForPeriod(
+    orgSettings.flat_rate_config,
+    quarterStartIso,
+  );
+  const vatOpts: VatComputeOptions = {
+    scheme: orgSettings.vat_scheme,
+    accrualInvoices: vatInputs.accrualInvoices,
+    flatRate: vatFlatRate,
+  };
   const vat = computeVatQuarter(
     vatInputs.invoicePayments,
     finances,
     quarterStartIso,
     quarterEndExclusiveIso,
     vatInputs.reverseCharge.vat,
+    vatOpts,
   );
   const paye = computePayeMonth(payrollLines);
   const corp = computeCorpTaxYear(invoices, finances, yearStartIso);

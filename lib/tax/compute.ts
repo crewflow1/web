@@ -95,9 +95,318 @@ export type InvoicePaymentRow = {
   invoice_amount: number | string | null;
   /** The parent invoice's total — GROSS (net + VAT); the apportionment denominator. */
   invoice_total: number | string | null;
+  /**
+   * True when the parent invoice is a domestic-reverse-charge SALE. RC supplies are
+   * excluded from FRS flat-rate turnover (VAT Notice 733 §7.3). Absent/false ⇒
+   * ordinary sale. Currently always absent (sales-side RC is not yet modelled).
+   */
+  reverse_charge?: boolean;
 };
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+// ===========================================================================
+// VAT SCHEME + FLAT RATE SCHEME (FRS)
+//
+// The org's chosen VAT accounting scheme branches OUTPUT VAT inside the ONE
+// authority below — it does not add a second calculator. Two dimensions:
+//
+//   1. OUTPUT-VAT BASIS (`VatScheme`):
+//        • "cash"     — output VAT falls due when the CASH is received (the
+//                       invoice_payments ledger). This is the EXISTING behaviour
+//                       and the DEFAULT, so an org that never opts in is byte-for-
+//                       byte unchanged.
+//        • "standard" — output VAT falls due at the invoice TAX POINT (accrual):
+//                       every ISSUED invoice dated in the window, whether or not it
+//                       has been paid. INPUT VAT is accrual under BOTH schemes
+//                       (unchanged) — only the output leg moves.
+//
+//   2. FLAT RATE SCHEME (`FlatRateApplied`). When FRS is in force for the period
+//      the box-1 VAT is NOT the sum of per-line output VAT; it is a single flat
+//      percentage applied to the period's GROSS (VAT-inclusive) flat-rate
+//      turnover, and input VAT is NOT reclaimed (box 4 = 0, bar capital assets
+//      > £2,000 which are out of scope). The flat percentage is resolved by the
+//      pure resolver below from the sector %, the 1% first-year discount, and the
+//      limited-cost-trader 16.5% flag.
+//
+//      LIMITED COST IS AN EXPLICIT DECLARATION, NEVER AN INFERENCE. The HMRC
+//      limited-cost test compares VAT-inclusive spend on *relevant goods* (goods
+//      only — services, subcontractor labour, rent, software, fuel are excluded)
+//      against turnover. CrewFlow's finance rows carry NO goods/services split, so
+//      any auto-derived "goods" figure would inflate the goods total for a
+//      services-heavy trader, wrongly clear the test, apply the LOWER sector rate,
+//      and UNDER-DECLARE box 1 to HMRC. A silent inference must never push a filed
+//      figure toward under-declaration. So limited-cost status is a user
+//      declaration (`yes`/`no`); when left `unset` the FILED return takes the
+//      CONSERVATIVE 16.5% (biased toward over-, never under-declaration) and the
+//      surface prompts the org to declare it.
+//
+//      Domestic reverse charge is accounted OUTSIDE FRS (HMRC VAT Notice 733
+//      §7.3): RC supplies are excluded from flat-rate turnover, and the notional
+//      VAT still enters boxes 1 AND 4 equally, so it stays net-neutral.
+// ===========================================================================
+
+/** The org-level VAT output-basis scheme. `cash` is the default = existing behaviour. */
+export const VAT_SCHEMES = ["cash", "standard"] as const;
+export type VatScheme = (typeof VAT_SCHEMES)[number];
+
+/** DEFAULT scheme — cash-basis output VAT, byte-for-byte the pre-scheme behaviour. */
+export const DEFAULT_VAT_SCHEME: VatScheme = "cash";
+
+/** Narrow an unknown/stored value to a VatScheme, falling back to the default (cash). */
+export function normalizeVatScheme(value: unknown): VatScheme {
+  return (VAT_SCHEMES as readonly string[]).includes(value as string)
+    ? (value as VatScheme)
+    : DEFAULT_VAT_SCHEME;
+}
+
+/**
+ * One ISSUED invoice as the ACCRUAL (standard-scheme) output-VAT source, keyed on
+ * its tax point (the invoice date). Only `isIssuedStatus` invoices count — a draft
+ * is not a tax point. Structurally a subset the service builds from `invoices`.
+ */
+export type AccrualInvoiceRow = {
+  /** invoices.status — filtered through isIssuedStatus (drafts never create a tax point). */
+  status: string;
+  /** The invoice tax point (invoice date). CrewFlow uses invoices.created_at. */
+  tax_point: string | null;
+  /** invoices.vat_total — the whole-invoice output VAT (→ box 1, accrual). */
+  vat_total: number | string | null;
+  /** invoices.amount — net of VAT (→ box 6, accrual). */
+  amount: number | string | null;
+  /** invoices.total — GROSS (net + VAT); the FRS flat-rate turnover base. */
+  total: number | string | null;
+  /**
+   * True when this is a domestic-reverse-charge SALE (the customer accounts for
+   * the VAT). RC supplies sit OUTSIDE FRS flat-rate turnover (VAT Notice 733 §7.3),
+   * so a flagged row is excluded from grossTurnover. Absent/false ⇒ ordinary sale.
+   * (CrewFlow does not yet model RC on the sales invoice, so this is currently
+   * always absent — the guard is forward-safe and byte-neutral for real data.)
+   */
+  reverse_charge?: boolean;
+};
+
+/** The resolved FRS position for a period — passed into the authority when FRS is on. */
+export type FlatRateApplied = {
+  /** Whether FRS is in force for this return period (effective-date + enabled gated). */
+  applies: boolean;
+  /** The resolved flat percentage AFTER the LCT override and first-year discount, e.g. 8.5. */
+  effectivePercent: number;
+};
+
+/** Options that branch the ONE VAT authority. All optional; absent ⇒ unchanged cash-basis. */
+export type VatComputeOptions = {
+  /** Output-VAT basis. Default `cash` (existing behaviour). */
+  scheme?: VatScheme;
+  /** ISSUED invoices for the window — REQUIRED for `standard` output VAT; ignored for `cash`. */
+  accrualInvoices?: AccrualInvoiceRow[];
+  /** When present and `applies`, box 1 is the flat calculation and box 4 drops the input reclaim. */
+  flatRate?: FlatRateApplied;
+};
+
+// --- FRS rate constants (HMRC VAT Notice 733) ------------------------------
+
+/** Limited-cost trader flat rate — the CONSERVATIVE rate used when LCT is declared/unset. */
+export const FRS_LIMITED_COST_PERCENT = 16.5;
+/** First-year-of-registration discount — 1 percentage point off the applicable rate. */
+export const FRS_FIRST_YEAR_DISCOUNT_PERCENT = 1;
+
+/**
+ * The user's limited-cost-trader declaration. This is NOT auto-derived: CrewFlow's
+ * finance rows carry no goods/services split, so inferring it would risk applying
+ * the LOWER sector rate and UNDER-declaring VAT (see the section header). The org
+ * declares it; `unset` is the safe default that files at the conservative 16.5%.
+ */
+export type LimitedCostDeclaration = "yes" | "no" | "unset";
+
+/**
+ * The stored FRS configuration for an org. Absent/disabled ⇒ FRS never applies and
+ * numbers are unchanged.
+ */
+export type FlatRateSchemeConfig = {
+  /** Master switch. false ⇒ FRS never applies (default), org stays on scheme output VAT. */
+  enabled: boolean;
+  /** The org's HMRC FRS sector percentage (e.g. 9.5). Ignored when limited-cost applies (16.5%). */
+  sector_percent: number;
+  /** VAT registration date (YYYY-MM-DD) — anchors the 1% first-year discount window. Null ⇒ no discount. */
+  registration_date: string | null;
+  /** Whether the org is eligible for and wants the 1% first-year discount applied. */
+  first_year_discount: boolean;
+  /** FRS scheme start (YYYY-MM-DD, inclusive). Null ⇒ no lower bound. */
+  effective_from: string | null;
+  /** FRS scheme end (YYYY-MM-DD, exclusive). Null ⇒ open-ended. */
+  effective_to: string | null;
+  /**
+   * EXPLICIT limited-cost-trader declaration (never inferred from finance data):
+   *   • "yes"   — limited cost, flat rate forced to 16.5%.
+   *   • "no"    — not limited cost (the org's own declaration), sector rate applies.
+   *   • "unset" — not yet declared; the FILED return uses the CONSERVATIVE 16.5% and
+   *               the surface prompts the org to declare, so an undeclared org can
+   *               never silently under-declare on the lower rate.
+   */
+  limited_cost: LimitedCostDeclaration;
+};
+
+/** The disabled default — FRS off, limited-cost undeclared, so no existing tenant's numbers move. */
+export const DEFAULT_FLAT_RATE_CONFIG: FlatRateSchemeConfig = {
+  enabled: false,
+  sector_percent: 0,
+  registration_date: null,
+  first_year_discount: false,
+  effective_from: null,
+  effective_to: null,
+  limited_cost: "unset",
+};
+
+/**
+ * Resolve the effective FRS percentage from the sector rate, the limited-cost flag
+ * and the first-year discount. Limited cost forces 16.5% (ignoring the sector rate);
+ * the 1% discount then comes off WHATEVER rate applies — including the 16.5% rate
+ * (→ 15.5% in the first year), per HMRC. Clamped at 0.
+ */
+export function resolveFlatRatePercent(input: {
+  sectorPercent: number;
+  limitedCostTrader: boolean;
+  firstYearDiscount: boolean;
+}): number {
+  const base = input.limitedCostTrader
+    ? FRS_LIMITED_COST_PERCENT
+    : Math.max(0, Number(input.sectorPercent) || 0);
+  const pct = input.firstYearDiscount ? base - FRS_FIRST_YEAR_DISCOUNT_PERCENT : base;
+  return round2(Math.max(0, pct));
+}
+
+/**
+ * Is `periodStartIso` inside the first year of VAT registration? The 1% discount
+ * runs from the registration date up to (but not including) its first anniversary.
+ * Anchored on the period START so a return belongs wholly to one side of the line.
+ */
+function isWithinFirstYear(registrationDateIso: string | null, periodStartIso: string): boolean {
+  if (!registrationDateIso) return false;
+  const reg = new Date(`${registrationDateIso}T00:00:00Z`);
+  const ps = new Date(`${periodStartIso}T00:00:00Z`);
+  if (Number.isNaN(reg.getTime()) || Number.isNaN(ps.getTime())) return false;
+  const anniversary = Date.UTC(
+    reg.getUTCFullYear() + 1,
+    reg.getUTCMonth(),
+    reg.getUTCDate(),
+  );
+  return ps.getTime() >= reg.getTime() && ps.getTime() < anniversary;
+}
+
+/** The full resolved FRS position for a period, including the flags for audit/UI. */
+export type FlatRateResolution = FlatRateApplied & {
+  /** The limited-cost flag actually applied (declared 'yes', OR undeclared → conservative true). */
+  limitedCostTrader: boolean;
+  /** Whether the 1% first-year discount was applied this period. */
+  firstYearApplied: boolean;
+  /**
+   * True when FRS applies but limited-cost status is UNDECLARED — the return has
+   * been filed at the conservative 16.5% and the surface must prompt the org to
+   * declare. Surfacing this is how an undeclared org avoids a permanently-wrong rate.
+   */
+  limitedCostDeclarationMissing: boolean;
+};
+
+/**
+ * Resolve whether FRS applies to the period starting `periodStartIso` and, if so, at
+ * what effective percentage. PURE — no data reads, no inference. FRS applies only
+ * when enabled AND the period start falls within the configured effective window.
+ *
+ * Limited-cost status comes ONLY from the explicit declaration. When undeclared
+ * (`unset`) the resolver takes the CONSERVATIVE 16.5% and flags
+ * `limitedCostDeclarationMissing` so the surface can prompt — never the lower sector
+ * rate, so an undeclared org can never under-declare box 1.
+ */
+export function resolveFlatRateForPeriod(
+  cfg: FlatRateSchemeConfig,
+  periodStartIso: string,
+): FlatRateResolution {
+  const off: FlatRateResolution = {
+    applies: false,
+    effectivePercent: 0,
+    limitedCostTrader: false,
+    firstYearApplied: false,
+    limitedCostDeclarationMissing: false,
+  };
+  if (!cfg.enabled) return off;
+  if (cfg.effective_from && periodStartIso < cfg.effective_from) return off;
+  if (cfg.effective_to && periodStartIso >= cfg.effective_to) return off;
+
+  // Limited cost from the EXPLICIT declaration only. Undeclared ⇒ conservative 16.5%.
+  const limitedCostDeclarationMissing = cfg.limited_cost === "unset";
+  const limitedCostTrader = cfg.limited_cost !== "no"; // "yes" OR "unset" ⇒ 16.5%
+  const firstYearApplied =
+    cfg.first_year_discount && isWithinFirstYear(cfg.registration_date, periodStartIso);
+  const effectivePercent = resolveFlatRatePercent({
+    sectorPercent: cfg.sector_percent,
+    limitedCostTrader,
+    firstYearDiscount: firstYearApplied,
+  });
+  return {
+    applies: true,
+    effectivePercent,
+    limitedCostTrader,
+    firstYearApplied,
+    limitedCostDeclarationMissing,
+  };
+}
+
+/** Accumulated sales figures for one window under a given scheme (pre-rounding). */
+type SalesAccumulation = {
+  /** Σ output VAT (box 1 before FRS/RC). */
+  outputVat: number;
+  /** Σ GROSS (VAT-inclusive) turnover — the FRS flat-rate base and cash-received total. */
+  grossTurnover: number;
+  /** Σ NET (ex-VAT) sales (box 6 before FRS). */
+  netSales: number;
+};
+
+/**
+ * Accumulate output VAT, gross turnover and net sales for the window under the
+ * chosen scheme. This is the ONE place output-basis branches:
+ *   • cash     — proportional shares of each payment in the invoice_payments ledger
+ *                (the existing apportionment; grossTurnover = the cash received).
+ *   • standard — the whole-invoice figures of every ISSUED invoice whose tax point
+ *                is in the window (accrual), regardless of payment.
+ */
+function accumulateSales(
+  scheme: VatScheme,
+  invoicePayments: InvoicePaymentRow[],
+  accrualInvoices: AccrualInvoiceRow[] | undefined,
+  inPeriod: (iso: string) => boolean,
+): SalesAccumulation {
+  if (scheme === "standard") {
+    let outputVat = 0;
+    let grossTurnover = 0;
+    let netSales = 0;
+    for (const inv of accrualInvoices ?? []) {
+      if (!inv.tax_point || !inPeriod(inv.tax_point)) continue;
+      if (!isIssuedStatus(inv.status)) continue; // a draft is not a tax point
+      outputVat += Number(inv.vat_total ?? 0);
+      netSales += Number(inv.amount ?? 0);
+      // RC sales sit OUTSIDE FRS flat-rate turnover (VAT Notice 733 §7.3), but stay
+      // in box 6 for standard VAT — so exclude them from grossTurnover only.
+      if (!inv.reverse_charge) grossTurnover += Number(inv.total ?? 0);
+    }
+    return { outputVat, grossTurnover, netSales };
+  }
+  // cash (default) — proportional per-payment shares from the ledger.
+  let outputVat = 0;
+  let grossTurnover = 0;
+  let netSales = 0;
+  for (const p of invoicePayments) {
+    if (!p.paid_at || !inPeriod(p.paid_at)) continue;
+    const total = Number(p.invoice_total ?? 0);
+    if (!Number.isFinite(total) || total <= 0) continue; // divide-by-zero guard
+    const amount = Number(p.amount ?? 0);
+    outputVat += amount * (Number(p.invoice_vat_total ?? 0) / total);
+    netSales += amount * (Number(p.invoice_amount ?? 0) / total);
+    // RC sales are excluded from FRS flat-rate turnover only (VAT Notice 733 §7.3).
+    if (!p.reverse_charge) grossTurnover += amount; // gross (VAT-inclusive) cash received
+  }
+  return { outputVat, grossTurnover, netSales };
+}
 
 /**
  * The single VAT authority — CASH-basis output VAT from the invoice_payments
@@ -136,31 +445,50 @@ export function computeVatQuarter(
   quarterStartIso: string,
   quarterEndIso?: string,
   reverseChargeVat = 0,
+  opts?: VatComputeOptions,
 ): TaxSummary["vat_quarter"] {
+  const scheme = normalizeVatScheme(opts?.scheme);
   const inPeriod = (iso: string): boolean =>
     iso >= quarterStartIso &&
     (quarterEndIso === undefined || iso < quarterEndIso);
-  // Box 1 — output VAT on the CASH received in the window, apportioned per payment.
-  let outputVat = 0;
-  for (const p of invoicePayments) {
-    if (!p.paid_at || !inPeriod(p.paid_at)) continue;
-    const total = Number(p.invoice_total ?? 0);
-    // Guard divide-by-zero / NaN: a £0-total invoice has no VAT to apportion.
-    if (!Number.isFinite(total) || total <= 0) continue;
-    const amount = Number(p.amount ?? 0);
-    const vatTotal = Number(p.invoice_vat_total ?? 0);
-    outputVat += amount * (vatTotal / total);
-  }
-  // Box 4 — input VAT on all logged costs in the window.
+
+  // Box 1 source — output VAT on the chosen basis (cash ledger / accrual invoices),
+  // plus the gross turnover the FRS flat calculation needs.
+  const sales = accumulateSales(scheme, invoicePayments, opts?.accrualInvoices, inPeriod);
+
+  // Box 4 — input VAT on all logged costs in the window (ACCRUAL under both schemes).
   let inputVat = 0;
   for (const f of finances) {
     if (inPeriod(f.created_at)) {
       inputVat += Number(f.vat_total ?? 0);
     }
   }
+
   // Domestic reverse charge: the notional VAT is BOTH output and input, so the
-  // net (box 5) is unchanged — it only surfaces the liability in boxes 1 and 4.
+  // net (box 5) is unchanged. Under FRS it is accounted OUTSIDE the flat scheme
+  // (HMRC VAT Notice 733 §7.3), so it is still added to BOTH legs equally.
   const rc = Number.isFinite(reverseChargeVat) ? reverseChargeVat : 0;
+
+  const frs = opts?.flatRate;
+  if (frs?.applies) {
+    // FLAT RATE: box 1 = flat % × gross (VAT-inclusive) flat-rate turnover; input
+    // VAT is NOT reclaimed under FRS (box 4 = 0, bar capital assets > £2,000 which
+    // are out of scope). Reverse charge stays net-neutral on top.
+    const flatVat = (Math.max(0, frs.effectivePercent) / 100) * sales.grossTurnover;
+    const outputVat = flatVat + rc;
+    const inputVatFrs = rc;
+    return {
+      output_vat: round2(outputVat),
+      input_vat: round2(inputVatFrs),
+      net_payable: round2(outputVat - inputVatFrs),
+      confidence: "computed",
+    };
+  }
+
+  // STANDARD/CASH: box 1 is the accumulated output VAT; box 4 the logged input VAT.
+  // Reverse charge is THREADED (added to both legs), never re-derived — the frozen
+  // ledger total enters output AND input so box 5 stays net-neutral.
+  let outputVat = sales.outputVat;
   outputVat += rc;
   inputVat += rc;
   return {
@@ -199,19 +527,15 @@ export function computeVatNetTotals(
   finances: FinanceRow[],
   quarterStartIso: string,
   quarterEndIso?: string,
+  opts?: VatComputeOptions,
 ): { totalValueSalesExVAT: number; totalValuePurchasesExVAT: number } {
+  const scheme = normalizeVatScheme(opts?.scheme);
   const inPeriod = (iso: string): boolean =>
     iso >= quarterStartIso &&
     (quarterEndIso === undefined || iso < quarterEndIso);
-  let sales = 0;
-  for (const p of invoicePayments) {
-    if (!p.paid_at || !inPeriod(p.paid_at)) continue;
-    const total = Number(p.invoice_total ?? 0);
-    if (!Number.isFinite(total) || total <= 0) continue;
-    const amount = Number(p.amount ?? 0);
-    const net = Number(p.invoice_amount ?? 0);
-    sales += amount * (net / total); // this payment's net (ex-VAT) share
-  }
+
+  const sales = accumulateSales(scheme, invoicePayments, opts?.accrualInvoices, inPeriod);
+
   let purchases = 0;
   for (const f of finances) {
     if (inPeriod(f.created_at)) {
@@ -220,8 +544,21 @@ export function computeVatNetTotals(
       purchases += Number(f.amount ?? 0);
     }
   }
+
+  const frs = opts?.flatRate;
+  if (frs?.applies) {
+    // FLAT RATE: box 6 is the flat-rate turnover, which HMRC defines as the GROSS
+    // (VAT-INCLUSIVE) value of sales (VAT Notice 733 §6.3) — not the ex-VAT net.
+    // Box 7 is left at 0: an FRS user does not reclaim input VAT on purchases (bar
+    // capital assets > £2,000, out of scope), so purchases are not reported.
+    return {
+      totalValueSalesExVAT: round2(sales.grossTurnover),
+      totalValuePurchasesExVAT: 0,
+    };
+  }
+
   return {
-    totalValueSalesExVAT: round2(sales),
+    totalValueSalesExVAT: round2(sales.netSales),
     totalValuePurchasesExVAT: round2(purchases),
   };
 }

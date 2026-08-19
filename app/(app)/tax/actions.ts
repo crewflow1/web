@@ -58,6 +58,10 @@ export async function prepareVatReturnAction(formData: FormData): Promise<void> 
     preparedBy: user.id,
     quarterStartIso,
     stagger,
+    // The org's output-VAT basis and FRS config drive the frozen 9-box figures.
+    // Both default to the pre-scheme behaviour (cash / FRS off) inside the service.
+    scheme: orgSettings.vat_scheme,
+    flatRateConfig: orgSettings.flat_rate_config,
   });
   if (!res.ok) {
     throw new Error(res.error || "Could not prepare the VAT return.");

@@ -12,6 +12,9 @@ import {
   computeVatQuarter,
   endOfQuarterExclusiveIso,
   type InvoicePaymentRow,
+  type AccrualInvoiceRow,
+  type FlatRateApplied,
+  type VatScheme,
 } from "@/lib/tax/compute";
 import { buildMonthlyReturnDataset, type CisPaymentSnapshotRow } from "@/lib/cis/statements";
 import { cisPaymentDueDate, cisTaxMonthLabel } from "@/lib/cis/tax-month";
@@ -354,6 +357,20 @@ export function computeOrgCashOut(input: {
   vatInvoicePayments: CashOutVatPaymentRow[];
   /** Every finance row (not just bills) — input VAT is on all logged costs. */
   vatFinances: CashOutVatFinanceRow[];
+  /**
+   * The org's VAT output-basis scheme. Default `cash` (existing behaviour). When
+   * `standard` the VAT-due figure uses accrual output VAT so /cash reconciles with
+   * /tax, the PDF and the frozen return instead of showing a cash-basis divergence.
+   */
+  vatScheme?: VatScheme;
+  /** ISSUED invoices for the quarter — the accrual output-VAT source (standard scheme). */
+  vatAccrualInvoices?: AccrualInvoiceRow[];
+  /**
+   * The resolved FRS position for the quarter (from the single authority's
+   * resolveFlatRateForPeriod). When it applies, VAT due is the FRS flat calculation.
+   * Absent/`applies:false` ⇒ standard/cash net VAT (unchanged).
+   */
+  vatFlatRate?: FlatRateApplied;
   quarterStartIso: string;
   todayIso: string;
 }): OrgCashOutSummary {
@@ -379,6 +396,12 @@ export function computeOrgCashOut(input: {
     input.vatFinances,
     input.quarterStartIso,
     endOfQuarterExclusiveIso(input.quarterStartIso),
+    0,
+    {
+      scheme: input.vatScheme,
+      accrualInvoices: input.vatAccrualInvoices,
+      flatRate: input.vatFlatRate,
+    },
   );
   const vatDue = round2(Math.max(0, vat.net_payable));
   const vatReclaim = round2(Math.max(0, -vat.net_payable));

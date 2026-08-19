@@ -10,6 +10,7 @@ import { outboundWebhooksEnabled } from "@/lib/webhooks/flags";
 import { NotificationPreferences } from "./_notification-prefs";
 import { WorkingHoursSettings } from "./_working-hours";
 import { TaxDefaultsSettings } from "./_tax-defaults";
+import { FlatRateSettings } from "./_flat-rate";
 import { HelpLink } from "../_components/help-link";
 
 /**
@@ -199,6 +200,9 @@ export default async function SettingsPage() {
 
       {/* Tax & defaults ------------------------------------------------ */}
       <TaxDefaultsSettings />
+
+      {/* VAT Flat Rate Scheme ------------------------------------------ */}
+      <FlatRateSettings />
 
       {/* AI Receptionist ----------------------------------------------- */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
