@@ -41,9 +41,16 @@ export function Tile({
           ? "border-emerald-200 bg-emerald-50"
           : "border-slate-200 bg-white";
   const body = (
-    <div className={`rounded-xl border p-4 shadow-sm ${toneClass}`}>
+    // `min-w-0` so the tile can shrink below its content's min-content width when
+    // it is a grid item — a grid track defaults to `min-content`, which would let
+    // a comma-grouped GBP figure (`£6,234,567.00`) push the whole grid past a
+    // 375px viewport. Paired with `truncate` on the value line, the figure clips
+    // instead of scrolling the page. The contract is asserted by
+    // __tests__/ui/money-tile-overflow-guard.test.ts (Tile is a money-fed
+    // primitive once /stock/valuation passes it `value={formatGbp(…)}`).
+    <div className={`min-w-0 rounded-xl border p-4 shadow-sm ${toneClass}`}>
       <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">{value}</p>
+      <p className="mt-1 truncate text-2xl font-bold tabular-nums text-slate-900">{value}</p>
       {hint ? <p className="mt-0.5 text-xs text-slate-500">{hint}</p> : null}
     </div>
   );
