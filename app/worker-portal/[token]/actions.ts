@@ -99,7 +99,11 @@ export async function acknowledgeAsWorker(token: string, formData: FormData): Pr
     await deleteSignatureImage(drawn);
   } else if (error) {
     await deleteSignatureImage(drawn);
-    redirect(`${back}?error=${encodeURIComponent(error.message)}`);
+    // Log the real DB error server-side; NEVER reflect raw DB text to an
+    // unauthenticated external worker (info disclosure). Surface a generic,
+    // user-safe message instead.
+    console.error("[worker-portal] acknowledgement insert failed", error);
+    redirect(`${back}?error=${encodeURIComponent("Could not record your sign-off — please try again.")}`);
   }
 
   redirect(`${back}?saved=signed`);

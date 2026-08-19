@@ -348,8 +348,17 @@ create policy worker_signoff_tokens_update on public.worker_signoff_tokens
 -- the token-gated portal on the service-role client (RLS-bypassing), after the
 -- validate trigger has proved token + org + job + subject. An authenticated
 -- member therefore cannot forge a worker signature, and an external worker has
--- no session at all. No UPDATE / DELETE → immutable, non-erasable evidence (the
--- append-only trigger blocks UPDATE even for the service role).
+-- no session at all.
+--
+-- IMMUTABILITY — stated accurately (matches the safety_acknowledgements /
+-- site_inductions precedent; deliberately NOT a divergent no-delete trigger):
+--   * UPDATE is blocked by the tg_worker_ack_no_update trigger for ALL roles,
+--     the service role included (RLS alone would not stop the service role).
+--   * DELETE is prevented by RLS: there is NO delete policy, so no authenticated
+--     member can delete a row. The service role bypasses RLS, so a hard delete
+--     is possible only from a privileged service-role path (reserved for a
+--     future controlled GDPR-erasure flow); ordinary org teardown removes rows
+--     via the org_id cascade, never a hand DELETE here.
 alter table public.worker_acknowledgements enable row level security;
 
 create policy worker_ack_select on public.worker_acknowledgements
