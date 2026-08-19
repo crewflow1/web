@@ -1,6 +1,7 @@
 import { requireOrgContext } from "@/server/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import { listStaffForOrg } from "../_form-helpers";
 import { ChecklistClient, type ChecklistItem } from "./_checklist-client";
 
 /**
@@ -20,11 +21,17 @@ export async function JobChecklistSection({ jobId }: { jobId: string }) {
   const tbl = (c: unknown) => (c as { from: (t: string) => any }).from.bind(c);
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
-  const res = await tbl(supabase)("job_checklists")
-    .select("id, label, requires_photo, is_done, done_at, sort")
-    .eq("org_id", ctx.org.id)
-    .eq("job_id", jobId)
-    .order("sort", { ascending: true });
+  const [res, staff] = await Promise.all([
+    tbl(supabase)("job_checklists")
+      .select("id, label, requires_photo, is_done, done_at, sort, assigned_to, due_on")
+      .eq("org_id", ctx.org.id)
+      .eq("job_id", jobId)
+      .order("sort", { ascending: true }),
+    // Assignee picker source — org-pinned, complete (F-1). listStaffForOrg reads
+    // loudly and throws on error, so a failed staff read fails the whole panel
+    // rather than silently offering an empty assignee list.
+    listStaffForOrg(ctx.org.id),
+  ]);
 
   if (res.error) {
     reportReadFailure("job hub: checklist", res.error as SupabaseReadError);
@@ -43,5 +50,5 @@ export async function JobChecklistSection({ jobId }: { jobId: string }) {
   }
 
   const items = (res.data ?? []) as ChecklistItem[];
-  return <ChecklistClient jobId={jobId} initialItems={items} />;
+  return <ChecklistClient jobId={jobId} initialItems={items} staff={staff} />;
 }

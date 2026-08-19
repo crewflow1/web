@@ -15,6 +15,7 @@ import {
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { CustomerForm } from "../_form";
 import { StatementPanel } from "./_statement-panel";
+import { CustomerContactsSection } from "./_contacts-section";
 import { ShareLinkPanel } from "@/app/_components/share-link-panel";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { env } from "@/lib/env";
@@ -218,6 +219,7 @@ export default async function EditCustomerPage({
 
   const portalSaved = saved === "portal_link";
   const statementSent = saved === "statement_sent";
+  const leadConverted = saved === "lead_converted";
 
   // Bind id into action so the form submission knows which customer.
   const updateAction = updateCustomer.bind(null, customer.id);
@@ -239,6 +241,15 @@ export default async function EditCustomerPage({
         <span aria-hidden>/</span>
         <span className="truncate text-slate-900">{customer.name}</span>
       </div>
+
+      {leadConverted ? (
+        <div
+          role="status"
+          className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700"
+        >
+          Lead converted. This customer was created from the enquiry.
+        </div>
+      ) : null}
 
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -419,6 +430,9 @@ export default async function EditCustomerPage({
             href: `/invoices/${p.invoice_id}`,
           }))}
       />
+
+      {/* Named contacts (staff CRUD) */}
+      <CustomerContactsSection customerId={customer.id} />
 
       {/* Statement of account */}
       {statementSent ? (
