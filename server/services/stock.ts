@@ -10,6 +10,13 @@ import {
   type MovementRow,
   type SiteBalance,
 } from "@/lib/stock/balance";
+import {
+  buildValuationReport,
+  foldItemValuations,
+  summariseValuation,
+  type ValuationReportRow,
+  type ValuationTotals,
+} from "@/lib/stock/valuation";
 
 /**
  * OPERATIONAL STOCK — the read layer behind /stock, its detail routes, the
@@ -83,8 +90,9 @@ export const STOCK_ITEM_COLUMNS =
   "reorder_level, target_level, reorder_quantity, notes, created_at";
 
 export const STOCK_MOVEMENT_COLUMNS =
-  "id, stock_item_id, site_id, movement_type, qty, effect, occurred_at, actor_id, notes, " +
-  "grn_line_id, job_id, material_request_line_id, transfer_group_id, corrects_movement_id, created_at";
+  "id, stock_item_id, site_id, movement_type, qty, effect, unit_cost, cost_effect, occurred_at, " +
+  "actor_id, notes, grn_line_id, job_id, material_request_line_id, transfer_group_id, " +
+  "corrects_movement_id, created_at";
 
 export type StockItemRow = {
   id: string;
@@ -104,6 +112,10 @@ export type StockItemRow = {
 };
 
 export type StockMovementRow = MovementRow & {
+  /** Per-unit cost basis (£/unit); null on uncosted / pre-valuation rows. */
+  unit_cost: number | string | null;
+  /** Signed value impact (£); null = uncosted. Book value = Σ cost_effect. */
+  cost_effect: number | string | null;
   actor_id: string | null;
   notes: string | null;
   grn_line_id: string | null;
@@ -213,6 +225,30 @@ export async function loadStockPositions(
   const balances = foldSiteBalances(movements);
   const positions = buildItemPositions(items, foldItemTotals(balances));
   return { items, movements, balances, positions };
+}
+
+/**
+ * The weighted-average stock valuation report (qty × wavg cost), org-pinned.
+ *
+ * ACCOUNTING BOUNDARY: this returns a MANAGEMENT-ACCOUNTING valuation folded
+ * from the frozen per-row cost facts (`cost_effect`); it reads and writes NO
+ * `finances` and posts nothing — the double-count-safe overlay described in the
+ * 20261180000000 migration header. It reuses the SAME complete-ledger read the
+ * balances use (no new `.select(`), so the valuation and the on-hand quantities
+ * can never disagree, and it inherits that read's org-pin and loud-failure.
+ */
+export interface StockValuationSnapshot {
+  rows: ValuationReportRow[];
+  totals: ValuationTotals;
+}
+
+export async function loadStockValuationReport(
+  db: StockClient,
+  orgId: string,
+): Promise<StockValuationSnapshot> {
+  const { items, movements } = await loadStockPositions(db, orgId);
+  const rows = buildValuationReport(items, foldItemValuations(movements));
+  return { rows, totals: summariseValuation(rows) };
 }
 
 /**

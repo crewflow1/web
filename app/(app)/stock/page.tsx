@@ -95,6 +95,12 @@ export default async function StockPage({ searchParams }: { searchParams: SP }) 
             Replenishment
           </Link>
           <Link
+            href="/stock/valuation"
+            className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Valuation
+          </Link>
+          <Link
             href="/stock/vans"
             className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >

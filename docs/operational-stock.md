@@ -9,37 +9,67 @@ cross-lane FKs, the write-path gate, the derived fulfilment RPC). Surface:
 
 ## THE ACCOUNTING BOUNDARY — read this first
 
-**This milestone is an operational QUANTITY ledger. It records where things
-are, never what they are worth.**
-
-Stock movements **never** post to `public.finances`.
+**The base ledger is an operational QUANTITY ledger. On top of it sits a
+weighted-average COST valuation that posts to no accounts.** Stock movements —
+quantity and cost alike — **never** post to `public.finances`.
 
 Purchased materials are *already* expensed when the supplier's bill is recorded
-(`recordSupplierBill` → `finances`, migration `20261009000000`). Issuing 10
-boards to Job A records *"10 boards moved Depot → Job A"* and **no new expense**.
-A second posting would **double-count** the same spend — once when the supplier
-invoiced, once when the boards left the shelf — and would silently inflate the
-cost of sale on every affected job. Invisible until year end.
+(`recordSupplierBill` → `finances`, migration `20261009000000`). That is the
+**single authoritative expensing** of materials into the company P&L, and it
+lands exactly once. Issuing 10 boards to Job A records *"10 boards moved Depot →
+Job A"* and **no new expense** in the accounts. A second posting to `finances`
+would **double-count** the same spend — once when the supplier invoiced, once
+when the boards left the shelf — and would silently inflate the cost of sale on
+every affected job. Invisible until year end.
 
-So there is:
+### D1 is DECIDED: weighted-average cost (migration `20261180000000`)
 
-- no inventory asset value,
-- no COGS-on-issue posting,
-- no VAT anywhere,
-- **no unit cost column at all** — a valuation cannot be computed even by
-  accident, because the number does not exist.
+*"Should stock be capitalised as an asset and released to cost when it is
+issued?"* was **CEO decision D1**. It is now **DECIDED: weighted-average cost.**
+It is implemented as a **management-accounting overlay** on the quantity ledger,
+built so it is double-count-safe by construction:
 
-**Why the boundary exists rather than being an oversight:** *"should stock be
-capitalised as an asset and released to cost when it is issued?"* is **CEO
-decision D1** and it is **UNDECIDED**. This is the authorised safe interim.
-Whichever way D1 lands, nothing recorded here has to be unwound: a movement
-history is a strict prerequisite for a valuation layer, never a contradiction of
-one.
+- **Capitalise on receipt, release on issue** — but in a *valuation ledger*, not
+  the General Ledger. A receipt capitalises value (`cost_effect > 0`); an issue
+  releases it as COGS (`cost_effect < 0`). Both happen on the movement row, never
+  in `finances`.
+- **No new P&L posting.** Because the overlay writes nothing to `finances`, the
+  company's cost of sale is byte-identical with or without it — so a company
+  total can **never double-count**. This is *the* double-count-safety argument.
+- **Cost basis** = the delivery line's *ordered* unit price
+  (`goods_received_lines → purchase_order_line_items.unit_price`), the same basis
+  the three-way match values received goods at. Recomputed to a running
+  weighted-average per `(item, org)` as receipts arrive.
+- **COGS-on-issue → job costing** is surfaced as an **allocation** stream
+  (`buildStockCogsCostRows`, `lib/stock/valuation.ts`), composed into job
+  profitability exactly as labour is. It **re-classifies** the depot-replenishment
+  spend onto the consuming job; it is not a second expense. Its **one assumption**
+  (flagged, not hidden): stock-replenishment supplier bills are booked to the
+  depot (`finances.job_id` null) while job-specific direct purchases are not also
+  issued from stock — so a job's material cost is *either* a direct bill *or* a
+  stock issue, never both. The allocation is exposed as a **distinct, labelled
+  stream** so a job that carried both stays auditable rather than silently
+  doubled, and it is **not auto-injected** into live job margins by the
+  migration.
+- **No stored average.** The weighted-average is *derived* (`book_value =
+  Σ cost_effect`, `avg = book_value / costed_qty`), held to the same standard as
+  the balance: a stored running total is a second source of truth that lies the
+  first time a write is lost. The `stock_valuation` view is `security_invoker`.
+- **Historical safety.** Every pre-`20261180` movement has `cost_effect` NULL and
+  is treated as **uncosted** — outside both sums, so it never drags the average
+  toward zero and never divides by zero. The report shows physical on-hand *and*
+  the uncosted quantity separately: *"N units at unknown cost"*, never *"worth
+  £0"*.
+
+There is still **no VAT anywhere** in stock — VAT is reclaimable and belongs to
+the supplier bill, not to a quantity or a cost of sale.
 
 **Enforced, not merely stated.** `__tests__/security/operational-stock.test.ts`
-asserts that no file in this diff contains an executable reference to
-`finances`, performs no insert/update/delete against it, creates no trigger on
-it, and that the schema carries no money column and no money RPC parameter.
+asserts that no file in this milestone — the valuation overlay included —
+contains an executable reference to `finances`, performs no insert/update/delete
+against it, and creates no trigger on it; that the quantity ledger inlines no
+money; that the average is derived (no stored aggregate); and that the cost
+trigger stamps the row but writes no other table.
 
 ---
 
@@ -442,9 +472,15 @@ revalidation at all, says why at length, and
 
 ## Escalations for the CEO
 
-1. **D1 — stock valuation.** Should stock be an asset released to cost on issue?
-   Until decided, this stays a quantity ledger. (No action needed to keep
-   shipping; the ledger is a prerequisite either way.)
+1. **D1 — stock valuation. DECIDED: weighted-average cost** (migration
+   `20261180000000`). Built as a double-count-safe management-accounting overlay
+   (see the boundary section above). **One CEO/finance policy question remains for
+   activation:** turning the stock-COGS **job allocation** on in live job margins
+   assumes stock-replenishment supplier bills are booked to the depot
+   (`finances.job_id` null), not to a job. That convention holds today for
+   depot→issue flows; confirm it (or adopt capitalise-on-receipt in `finances`
+   itself) before `buildStockCogsCostRows` is composed into the live dashboard.
+   The valuation report itself needs no such decision and is live now.
 2. **Negative-stock tolerance.** Currently refused outright, and since
    `20261071000000` refused on *every* path a user can reach rather than only the
    RPCs. If merchants' habits make that impractical, it becomes a per-org setting
