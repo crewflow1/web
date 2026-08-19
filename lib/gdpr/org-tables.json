@@ -214,7 +214,9 @@
     "whatsapp_assistant_actions",
     "whatsapp_inbound_media",
     "whatsapp_number_routes",
-    "whatsapp_webhook_events"
+    "whatsapp_webhook_events",
+    "worker_acknowledgements",
+    "worker_signoff_tokens"
   ],
   "excluded": {
     "accounting_connections": "credentials: OAuth access/refresh tokens",
@@ -228,6 +230,7 @@
     "webhook_endpoints": "credentials: webhook signing secret",
     "whatsapp_number_routes": "credentials/provider routing + secrets",
     "whatsapp_webhook_events": "provider webhook payloads/secrets (service-internal)",
+    "worker_signoff_tokens": "credentials: hashed external-worker sign-off link tokens (access-token material) + issuance metadata; the resulting H&S evidence is exported via worker_acknowledgements",
     "asset_qr_identities": "credentials: QR access token",
     "staff_secrets": "government identifiers (NI numbers) \u2014 separate controlled subject-export path, never bulk-dumped",
     "accounting_pushed_entities": "service telemetry: provider-sync push-once high-water-mark (org/provider/entity_type/entity_id/pushed_at) \u2014 internal integration bookkeeping, no tenant business data; the referenced invoices/payments are themselves exported via their own tables",
