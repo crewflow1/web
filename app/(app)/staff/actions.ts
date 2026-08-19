@@ -791,6 +791,10 @@ export async function upsertPayrollTaxProfileAction(
     tax_region: d.tax_region,
     student_loan_plan: d.student_loan_plan,
     salary_sacrifice_annual_pence: Math.round(d.salary_sacrifice_annual_pounds * 100),
+    ni_category: d.ni_category,
+    date_of_birth: d.date_of_birth ?? null,
+    standard_hours_per_day:
+      d.standard_hours_per_day === undefined ? null : d.standard_hours_per_day,
   });
   if (!ok) {
     return formError(

@@ -117,6 +117,15 @@ export type PayslipInput = {
   salary_sacrifice?: number;
   student_loan_estimate?: number;
   employee_pension_estimate?: number;
+  /**
+   * Overtime + holiday components ALREADY included in gross_pay. OPTIONAL/0 ⇒ their
+   * informational lines are hidden, so a standard payslip is unchanged. Shown as a
+   * breakdown OF gross (not extra additions) so the figures reconcile.
+   */
+  overtime_hours?: number;
+  overtime_pay?: number;
+  holiday_hours?: number;
+  holiday_pay?: number;
 };
 
 export function PayslipPdf({ data }: { data: PayslipInput }) {
@@ -172,6 +181,22 @@ export function PayslipPdf({ data }: { data: PayslipInput }) {
             <Text style={styles.rowLabel}>Gross pay</Text>
             <Text style={styles.rowValue}>{GBP.format(data.gross_pay)}</Text>
           </View>
+          {data.overtime_pay && data.overtime_pay > 0 ? (
+            <View style={styles.row}>
+              <Text style={styles.rowLabel}>
+                incl. overtime ({(data.overtime_hours ?? 0).toFixed(2)}h)
+              </Text>
+              <Text style={styles.rowValue}>{GBP.format(data.overtime_pay)}</Text>
+            </View>
+          ) : null}
+          {data.holiday_pay && data.holiday_pay > 0 ? (
+            <View style={styles.row}>
+              <Text style={styles.rowLabel}>
+                incl. holiday pay ({(data.holiday_hours ?? 0).toFixed(2)}h)
+              </Text>
+              <Text style={styles.rowValue}>{GBP.format(data.holiday_pay)}</Text>
+            </View>
+          ) : null}
           {data.salary_sacrifice && data.salary_sacrifice > 0 ? (
             <View style={styles.row}>
               <Text style={styles.rowLabel}>Salary sacrifice</Text>

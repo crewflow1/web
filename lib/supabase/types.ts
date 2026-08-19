@@ -1766,6 +1766,51 @@ export type Database = {
         }
         Relationships: []
       }
+      payroll_line_adjustments: {
+        Row: {
+          actor_id: string | null
+          created_at: string
+          field: string
+          id: string
+          new_gross_pay: number
+          new_overtime_hours: number
+          new_overtime_multiplier: number
+          old_gross_pay: number
+          old_overtime_hours: number
+          old_overtime_multiplier: number
+          org_id: string
+          payroll_line_id: string
+        }
+        Insert: {
+          actor_id?: string | null
+          created_at?: string
+          field?: string
+          id?: string
+          new_gross_pay?: number
+          new_overtime_hours?: number
+          new_overtime_multiplier?: number
+          old_gross_pay?: number
+          old_overtime_hours?: number
+          old_overtime_multiplier?: number
+          org_id: string
+          payroll_line_id: string
+        }
+        Update: {
+          actor_id?: string | null
+          created_at?: string
+          field?: string
+          id?: string
+          new_gross_pay?: number
+          new_overtime_hours?: number
+          new_overtime_multiplier?: number
+          old_gross_pay?: number
+          old_overtime_hours?: number
+          old_overtime_multiplier?: number
+          org_id?: string
+          payroll_line_id?: string
+        }
+        Relationships: []
+      }
       payroll_lines: {
         Row: {
           created_at: string
@@ -1773,10 +1818,15 @@ export type Database = {
           hourly_pay: number
           hours: number
           id: string
+          leave_hours: number
+          leave_pay: number
           net_pay: number
           ni_estimate: number
           note: string | null
           org_id: string
+          overtime_hours: number
+          overtime_multiplier: number
+          overtime_pay: number
           paye_estimate: number
           payroll_run_id: string
           updated_at: string
@@ -1788,10 +1838,15 @@ export type Database = {
           hourly_pay?: number
           hours?: number
           id?: string
+          leave_hours?: number
+          leave_pay?: number
           net_pay?: number
           ni_estimate?: number
           note?: string | null
           org_id: string
+          overtime_hours?: number
+          overtime_multiplier?: number
+          overtime_pay?: number
           paye_estimate?: number
           payroll_run_id: string
           updated_at?: string
@@ -1803,10 +1858,15 @@ export type Database = {
           hourly_pay?: number
           hours?: number
           id?: string
+          leave_hours?: number
+          leave_pay?: number
           net_pay?: number
           ni_estimate?: number
           note?: string | null
           org_id?: string
+          overtime_hours?: number
+          overtime_multiplier?: number
+          overtime_pay?: number
           paye_estimate?: number
           payroll_run_id?: string
           updated_at?: string
@@ -1893,9 +1953,12 @@ export type Database = {
       payroll_tax_profiles: {
         Row: {
           created_at: string
+          date_of_birth: string | null
           id: string
+          ni_category: string
           org_id: string
           salary_sacrifice_annual_pence: number
+          standard_hours_per_day: number | null
           student_loan_plan: string
           tax_region: string
           updated_at: string
@@ -1903,9 +1966,12 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          date_of_birth?: string | null
           id?: string
+          ni_category?: string
           org_id: string
           salary_sacrifice_annual_pence?: number
+          standard_hours_per_day?: number | null
           student_loan_plan?: string
           tax_region?: string
           updated_at?: string
@@ -1913,9 +1979,12 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          date_of_birth?: string | null
           id?: string
+          ni_category?: string
           org_id?: string
           salary_sacrifice_annual_pence?: number
+          standard_hours_per_day?: number | null
           student_loan_plan?: string
           tax_region?: string
           updated_at?: string

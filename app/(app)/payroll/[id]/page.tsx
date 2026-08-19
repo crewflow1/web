@@ -4,7 +4,13 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
-import { finalisePayrollRun, deletePayrollRun, prepareFpsRunAction } from "../actions";
+import {
+  finalisePayrollRun,
+  deletePayrollRun,
+  prepareFpsRunAction,
+  setPayrollLineOvertime,
+} from "../actions";
+import { OvertimeForm } from "./_overtime-form";
 import { RTI_NO_FILING_NOTICE } from "@/lib/integrations/hmrc/rti-fps";
 import { fetchNiNumbersForOrg, maskNiNumber } from "@/lib/staff/secrets";
 import {
@@ -12,6 +18,8 @@ import {
   computeEmployeeDeductionsForStoredLine,
   employeeInputFromStoredProfile,
   employmentAllowanceReliefForRun,
+  niCategoryFromStoredProfile,
+  niCategoryAgeWarning,
   type EmployerCostEstimate,
   type EmployeeDeductionsEstimate,
 } from "@/lib/payroll/compute";
@@ -84,6 +92,7 @@ export default async function PayrollRunPage({
         .select(
           `
             id, user_id, hours, hourly_pay, gross_pay, paye_estimate, ni_estimate, net_pay, note,
+            overtime_hours, overtime_multiplier, overtime_pay, leave_hours, leave_pay,
             user:users ( full_name, email )
           `,
         )
@@ -177,6 +186,7 @@ export default async function PayrollRunPage({
   const runCycle = run.cycle === "weekly" ? "weekly" : "monthly";
   const employerByLine = new Map<string, EmployerCostEstimate>();
   for (const l of lines) {
+    const profileInput = employeeInputFromStoredProfile(taxProfiles.get(l.user_id));
     employerByLine.set(
       l.id,
       employerCostsForStoredLineWithPension(
@@ -184,9 +194,28 @@ export default async function PayrollRunPage({
         runCycle,
         run.period_start,
         pensionByUser.get(l.user_id),
+        // Salary sacrifice + NI category are outside/alter the employer NI base.
+        // Defaults (no sacrifice, category A) reproduce the previous figures exactly.
+        profileInput.salarySacrificeAnnual,
+        niCategoryFromStoredProfile(taxProfiles.get(l.user_id)),
       ),
     );
   }
+  // Non-blocking NI category / date-of-birth consistency prompts (never change a
+  // figure — see niCategoryAgeWarning).
+  const niCategoryWarnings = lines
+    .map((l) => {
+      const profile = taxProfiles.get(l.user_id);
+      const w = niCategoryAgeWarning(
+        niCategoryFromStoredProfile(profile),
+        profile?.date_of_birth ?? null,
+        run.period_end,
+      );
+      return w
+        ? { name: l.user?.full_name ?? l.user?.email ?? l.user_id.slice(0, 8), warning: w }
+        : null;
+    })
+    .filter((x): x is { name: string; warning: string } => x !== null);
   // Employee-side deductions DERIVED from the stored gross. Today the only tracked
   // per-employee input is the pension contribution rate (enrolled staff); tax region,
   // student-loan plan and salary sacrifice are not yet stored, so those inputs are
@@ -228,6 +257,10 @@ export default async function PayrollRunPage({
       acc.paye += Number(l.paye_estimate ?? 0);
       acc.ni += Number(l.ni_estimate ?? 0);
       acc.net += Number(l.net_pay ?? 0);
+      acc.overtimeHours += Number(l.overtime_hours ?? 0);
+      acc.overtimePay += Number(l.overtime_pay ?? 0);
+      acc.holidayHours += Number(l.leave_hours ?? 0);
+      acc.holidayPay += Number(l.leave_pay ?? 0);
       const emp = employerByLine.get(l.id);
       acc.employerNi += emp?.employer_ni_estimate ?? 0;
       acc.employerPension += emp?.employer_pension_estimate ?? 0;
@@ -243,6 +276,10 @@ export default async function PayrollRunPage({
       paye: 0,
       ni: 0,
       net: 0,
+      overtimeHours: 0,
+      overtimePay: 0,
+      holidayHours: 0,
+      holidayPay: 0,
       employerNi: 0,
       employerPension: 0,
       employmentCost: 0,
@@ -404,6 +441,38 @@ export default async function PayrollRunPage({
         <Stat label="Net" value={GBP.format(totals.net)} emphasis />
       </section>
 
+      {totals.overtimePay > 0 || totals.holidayPay > 0 ? (
+        <section className="space-y-2">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Stat label="Overtime hours" value={totals.overtimeHours.toFixed(2)} />
+            <Stat label="Overtime pay" value={GBP.format(totals.overtimePay)} />
+            <Stat label="Holiday hours" value={totals.holidayHours.toFixed(2)} />
+            <Stat label="Holiday pay" value={GBP.format(totals.holidayPay)} />
+          </div>
+          <p className="text-xs text-slate-500">
+            Overtime (hours × the line&apos;s multiplier) and approved paid holiday are
+            included in gross — and therefore in PAYE, NI and net. Holiday hours come
+            from approved holiday leave and each day is paid once (worked hours are
+            clocked shifts, which a holiday day has none of).
+          </p>
+        </section>
+      ) : null}
+
+      {niCategoryWarnings.length > 0 ? (
+        <section className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+          <h2 className="text-sm font-semibold text-amber-900">
+            NI category checks
+          </h2>
+          <ul className="mt-1 space-y-1 text-xs text-amber-800">
+            {niCategoryWarnings.map((w) => (
+              <li key={w.name}>
+                <strong>{w.name}:</strong> {w.warning}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       {fidelityApplied > 0 ? (
         <section className="space-y-2">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
@@ -480,6 +549,8 @@ export default async function PayrollRunPage({
                 <th className="px-4 py-2 text-right">PAYE</th>
                 <th className="px-4 py-2 text-right">Employee NI</th>
                 <th className="px-4 py-2 text-right">Net</th>
+                <th className="px-4 py-2 text-right">Overtime</th>
+                <th className="px-4 py-2 text-right">Holiday</th>
                 <th className="px-4 py-2 text-right">EE pension</th>
                 <th className="px-4 py-2 text-right">Take-home</th>
                 <th className="px-4 py-2 text-right">Employer cost</th>
@@ -489,7 +560,7 @@ export default async function PayrollRunPage({
             <tbody className="divide-y divide-slate-100">
               {lines.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-4 py-6 text-center text-sm text-slate-500">
+                  <td colSpan={14} className="px-4 py-6 text-center text-sm text-slate-500">
                     No staff had hours logged in this period.
                   </td>
                 </tr>
@@ -515,6 +586,39 @@ export default async function PayrollRunPage({
                   </td>
                   <td className="px-4 py-2 text-right font-semibold text-slate-900">
                     {GBP.format(Number(l.net_pay ?? 0))}
+                  </td>
+                  {/* Overtime — editable inline on a DRAFT run, read-only once finalised. */}
+                  <td className="px-4 py-2 text-right text-slate-700">
+                    {run.status === "draft" ? (
+                      <OvertimeForm
+                        action={setPayrollLineOvertime.bind(null, l.id)}
+                        defaults={{
+                          overtime_hours: String(Number(l.overtime_hours ?? 0)),
+                          overtime_multiplier: String(
+                            Number(l.overtime_multiplier ?? 1.5),
+                          ),
+                        }}
+                        overtimePay={Number(l.overtime_pay ?? 0)}
+                      />
+                    ) : Number(l.overtime_hours ?? 0) > 0 ? (
+                      <span>
+                        {Number(l.overtime_hours ?? 0).toFixed(2)}h ·{" "}
+                        {GBP.format(Number(l.overtime_pay ?? 0))}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
+                  </td>
+                  {/* Holiday pay baked into gross at generation. */}
+                  <td className="px-4 py-2 text-right text-slate-700">
+                    {Number(l.leave_hours ?? 0) > 0 ? (
+                      <span>
+                        {Number(l.leave_hours ?? 0).toFixed(2)}h ·{" "}
+                        {GBP.format(Number(l.leave_pay ?? 0))}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
                   </td>
                   {/* Employee pension contribution + take-home after it. */}
                   <td className="px-4 py-2 text-right text-slate-700">
