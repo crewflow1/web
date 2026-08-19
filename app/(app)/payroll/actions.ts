@@ -8,7 +8,13 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { hoursByUser, type TimeEntry } from "@/lib/time/compute";
-import { computePayrollLine } from "@/lib/payroll/compute";
+import {
+  computePayrollLine,
+  standardHoursPerDayFromStoredProfile,
+  type PayrollExtras,
+} from "@/lib/payroll/compute";
+import { workingDaysInWindow, type LeaveSpan } from "@/lib/staff/holiday";
+import { getPayrollTaxProfilesForOrg } from "@/server/services/payroll-tax-profile";
 import { prepareFpsReturn } from "@/server/services/hmrc-connections";
 import {
   type FormState,
@@ -203,6 +209,52 @@ export async function createPayrollRun(
     new Date(windowEndIso),
   );
 
+  // -----------------------------------------------------------------
+  // Holiday pay into gross (paid EXACTLY once).
+  //
+  // Approved 'holiday' leave_requests overlapping the period are paid at plain
+  // rate ON TOP of worked hours. There is no double payment because worked hours
+  // come only from clocked time_entries and a holiday day has no clocked shift —
+  // the two sources are disjoint by construction. Leave hours are computed as the
+  // approved WORKING days that fall in the window (Mon–Fri, clipped to the period)
+  // multiplied by the employee's contracted hours-per-working-day. That figure is
+  // OPT-IN per employee (payroll_tax_profiles.standard_hours_per_day): absent ⇒ 0
+  // leave hours ⇒ no holiday pay, so existing tenants are unchanged.
+  //
+  // PAGED (F-1): a large org's approved holiday must be seen in full, else a
+  // worker past the 1000-row cap would silently lose their holiday pay.
+  // -----------------------------------------------------------------
+  type LeaveRow = { user_id: string; starts_at: string; ends_at: string; status: string };
+  const { data: leaveRaw, error: leaveError } = await fetchAllRows<LeaveRow>(
+    (from, to) =>
+      supabase
+        .from("leave_requests")
+        .select("user_id, starts_at, ends_at, status")
+        .eq("org_id", ctx.org.id)
+        .eq("type", "holiday")
+        .eq("status", "approved")
+        .lte("starts_at", period_end)
+        .gte("ends_at", period_start)
+        .order("user_id", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: LeaveRow[] | null;
+        error: unknown;
+      }>,
+  );
+  // Fail loud — a failed leave read would silently drop holiday pay from the run.
+  if (leaveError) throw readFailure("payroll create: holiday leave", leaveError);
+  const spansByUser = new Map<string, LeaveSpan[]>();
+  for (const l of leaveRaw ?? []) {
+    const arr = spansByUser.get(l.user_id) ?? [];
+    arr.push({ starts_at: l.starts_at, ends_at: l.ends_at, status: l.status });
+    spansByUser.set(l.user_id, arr);
+  }
+  // Per-employee contracted hours-per-day (holiday) + NI category live on the tax
+  // profile. Absent ⇒ 0 leave hours / category A ⇒ figures unchanged. Empty map on
+  // error (the service swallows read errors), which is the safe, unchanged default.
+  const taxProfiles = await getPayrollTaxProfilesForOrg(ctx.org.id);
+
   type PayrollLineInsert = {
     org_id: string;
     payroll_run_id: string;
@@ -213,20 +265,42 @@ export async function createPayrollRun(
     paye_estimate: number;
     ni_estimate: number;
     net_pay: number;
+    overtime_hours: number;
+    overtime_multiplier: number;
+    overtime_pay: number;
+    leave_hours: number;
+    leave_pay: number;
   };
   const lines: PayrollLineInsert[] = [];
   for (const m of members ?? []) {
     const uid = (m as { user_id: string }).user_id;
     const u = (m as { user?: { id: string; full_name: string | null; hourly_pay: number | null } }).user;
     const hours = hoursByU.get(uid) ?? 0;
-    if (hours === 0) continue; // skip unpaid rows
+    const profile = taxProfiles.get(uid);
+    const hoursPerDay = standardHoursPerDayFromStoredProfile(profile);
+    // Approved holiday working days in the period × contracted hours-per-day.
+    const leaveDays =
+      hoursPerDay > 0
+        ? workingDaysInWindow(
+            spansByUser.get(uid) ?? [],
+            period_start,
+            period_end,
+            ["approved"],
+          )
+        : 0;
+    const leaveHours = Math.round(leaveDays * hoursPerDay * 100) / 100;
+    // A worker with ONLY holiday (no clocked hours) is still paid — do not skip.
+    if (hours === 0 && leaveHours === 0) continue;
     const hourlyPay = Number(u?.hourly_pay ?? 0);
+    // Overtime defaults to 0 at generation; an admin records it on the draft line
+    // afterwards (audited). Holiday hours are baked into gross here.
+    const extras: PayrollExtras = { leaveHours };
     // `period_start` (not today) picks the employer rate table, so the run is
     // priced at the rates in force for the period it covers — and stays that way
     // when rates change next 6 April. Employer NI/pension are DERIVED on read from
     // the stored gross via `employerCostsForStoredLine`, so there is nothing extra
     // to persist here and no second copy of the rate table.
-    const c = computePayrollLine(hours, hourlyPay, cycle, period_start);
+    const c = computePayrollLine(hours, hourlyPay, cycle, period_start, extras);
     lines.push({
       org_id: ctx.org.id,
       payroll_run_id: run.id,
@@ -237,6 +311,11 @@ export async function createPayrollRun(
       paye_estimate: c.paye_estimate,
       ni_estimate: c.ni_estimate,
       net_pay: c.net_pay,
+      overtime_hours: c.overtime_hours,
+      overtime_multiplier: c.overtime_multiplier,
+      overtime_pay: c.overtime_pay,
+      leave_hours: c.leave_hours,
+      leave_pay: c.leave_pay,
     });
   }
 
@@ -410,6 +489,117 @@ export async function prepareFpsRunAction(runId: string) {
   }
   revalidatePath(`/payroll/${runId}`);
   redirect(`/payroll/${runId}?saved=fps_prepared`);
+}
+
+const overtimeSchema = z.object({
+  overtime_hours: z.coerce.number().min(0).max(1000),
+  // Per-line premium (default 1.5 = time-and-a-half). Capped at 10× as a sanity bound.
+  overtime_multiplier: z.coerce.number().min(0).max(10),
+});
+
+/**
+ * Record OVERTIME on a single DRAFT payroll line, and audit the change.
+ *
+ * Overtime is a per-line input (hours × multiplier) added to gross ON TOP of worked
+ * and holiday pay. Recomputes gross/PAYE/NI/net from the SAME authority the run was
+ * built with (computePayrollLine) so the figures reconcile, preserving the line's
+ * stored holiday hours. Draft-only: a finalised run is immutable (mirrors
+ * deletePayrollRun / finalisePayrollRun). Admin/owner only. Every change writes an
+ * append-only row to payroll_line_adjustments (before/after + actor).
+ */
+export async function setPayrollLineOvertime(
+  lineId: string,
+  _prevState: FormState<Record<string, unknown>>,
+  formData: FormData,
+): Promise<FormState<Record<string, unknown>>> {
+  const { ctx, user } = await requireOrgContext();
+  if (!isOwnerOrAdmin(ctx.membership.role)) {
+    return formError("Only admins/owners can edit payroll lines.");
+  }
+  if (!z.string().uuid().safeParse(lineId).success) {
+    return formError("Invalid payroll line.");
+  }
+  const result = validateFormData(formData, overtimeSchema);
+  if (!result.ok) return result.state as FormState<Record<string, unknown>>;
+
+  const supabase = await createClient();
+  // Read the line + its run, ACTIVE-org pinned (RLS admits every org the admin
+  // belongs to). We need the run's cycle + period_start to reprice, its status to
+  // enforce draft-only, and the stored leave hours so holiday pay is preserved.
+  const { data: line, error: lineError } = await supabase
+    .from("payroll_lines")
+    .select(
+      "id, payroll_run_id, hours, hourly_pay, leave_hours, overtime_hours, overtime_multiplier, gross_pay, run:payroll_runs ( cycle, period_start, status )",
+    )
+    .eq("id", lineId)
+    .eq("org_id", ctx.org.id)
+    .maybeSingle();
+  if (lineError) throw readFailure("payroll overtime: line", lineError);
+  if (!line) return formError("Payroll line not found.");
+  const runRel = (line as { run?: { cycle: string; period_start: string; status: string } | null }).run;
+  if (!runRel) return formError("Payroll line not found.");
+  if (runRel.status !== "draft") {
+    return formError("This run is finalised — its lines are locked.");
+  }
+
+  const cycle = runRel.cycle === "weekly" ? "weekly" : "monthly";
+  const leaveHours = Number((line as { leave_hours?: number | string | null }).leave_hours ?? 0) || 0;
+  const extras: PayrollExtras = {
+    overtimeHours: result.data.overtime_hours,
+    overtimeMultiplier: result.data.overtime_multiplier,
+    leaveHours,
+  };
+  const c = computePayrollLine(
+    Number((line as { hours?: number | string | null }).hours ?? 0) || 0,
+    Number((line as { hourly_pay?: number | string | null }).hourly_pay ?? 0) || 0,
+    cycle,
+    runRel.period_start,
+    extras,
+  );
+
+  const { error: updErr } = await supabase
+    .from("payroll_lines")
+    .update({
+      overtime_hours: c.overtime_hours,
+      overtime_multiplier: c.overtime_multiplier,
+      overtime_pay: c.overtime_pay,
+      gross_pay: c.gross_pay,
+      paye_estimate: c.paye_estimate,
+      ni_estimate: c.ni_estimate,
+      net_pay: c.net_pay,
+    })
+    .eq("id", lineId)
+    .eq("org_id", ctx.org.id);
+  if (updErr) {
+    console.error("[payroll] overtime update failed", { lineId, error: updErr });
+    return formError("Couldn't save overtime. Try again.");
+  }
+
+  // Append-only audit row (before → after). Loud on failure: the change committed,
+  // so a missing audit trail must be visible in the logs, but we still report
+  // success because the payroll figure itself is correct.
+  const { error: auditErr } = await supabase.from("payroll_line_adjustments").insert({
+    org_id: ctx.org.id,
+    payroll_line_id: lineId,
+    actor_id: user.id,
+    field: "overtime",
+    old_overtime_hours: Number((line as { overtime_hours?: number | string | null }).overtime_hours ?? 0) || 0,
+    new_overtime_hours: c.overtime_hours,
+    old_overtime_multiplier: Number((line as { overtime_multiplier?: number | string | null }).overtime_multiplier ?? 0) || 0,
+    new_overtime_multiplier: c.overtime_multiplier,
+    old_gross_pay: Number((line as { gross_pay?: number | string | null }).gross_pay ?? 0) || 0,
+    new_gross_pay: c.gross_pay,
+  });
+  if (auditErr) {
+    console.error("[payroll] overtime audit insert failed — change applied without a trail", {
+      lineId,
+      error: auditErr,
+    });
+  }
+
+  revalidatePath(`/payroll/${line.payroll_run_id}`);
+  revalidatePath("/payroll");
+  return formSuccess({ successMessage: "Overtime updated." });
 }
 
 function isOwnerOrAdmin(role: string): boolean {

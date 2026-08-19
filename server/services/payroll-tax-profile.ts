@@ -20,11 +20,26 @@ export type StudentLoanPlanValue =
   | "plan_5"
   | "postgraduate";
 
+export type NiCategoryValue =
+  | "A"
+  | "B"
+  | "C"
+  | "J"
+  | "H"
+  | "M"
+  | "V"
+  | "Z";
+
 export type PayrollTaxProfile = {
   user_id: string;
   tax_region: TaxRegionValue;
   student_loan_plan: StudentLoanPlanValue;
   salary_sacrifice_annual_pence: number;
+  ni_category: NiCategoryValue;
+  /** YYYY-MM-DD or null. Feeds the non-blocking NI category age warning only. */
+  date_of_birth: string | null;
+  /** Contracted hours per working day, or null. NULL ⇒ no holiday pay. */
+  standard_hours_per_day: number | null;
 };
 
 const REGIONS: readonly TaxRegionValue[] = ["rest_of_uk", "scotland"];
@@ -36,6 +51,21 @@ const PLANS: readonly StudentLoanPlanValue[] = [
   "plan_5",
   "postgraduate",
 ];
+const NI_CATEGORY_VALUES: readonly NiCategoryValue[] = [
+  "A",
+  "B",
+  "C",
+  "J",
+  "H",
+  "M",
+  "V",
+  "Z",
+];
+
+/** The columns every read selects — kept in one place so reads never drift. */
+const PROFILE_COLS =
+  "user_id, tax_region, student_loan_plan, salary_sacrifice_annual_pence, " +
+  "ni_category, date_of_birth, standard_hours_per_day";
 
 function coerce(raw: unknown): PayrollTaxProfile {
   const r = raw as Record<string, unknown>;
@@ -45,6 +75,14 @@ function coerce(raw: unknown): PayrollTaxProfile {
   const plan = PLANS.includes(r.student_loan_plan as StudentLoanPlanValue)
     ? (r.student_loan_plan as StudentLoanPlanValue)
     : "none";
+  const niCategory = NI_CATEGORY_VALUES.includes(r.ni_category as NiCategoryValue)
+    ? (r.ni_category as NiCategoryValue)
+    : "A";
+  const dob = typeof r.date_of_birth === "string" ? r.date_of_birth.slice(0, 10) : null;
+  const hoursPerDay =
+    r.standard_hours_per_day === null || r.standard_hours_per_day === undefined
+      ? null
+      : Math.max(0, Number(r.standard_hours_per_day) || 0);
   return {
     user_id: String(r.user_id),
     tax_region: region,
@@ -53,6 +91,9 @@ function coerce(raw: unknown): PayrollTaxProfile {
       0,
       Number(r.salary_sacrifice_annual_pence ?? 0) || 0,
     ),
+    ni_category: niCategory,
+    date_of_birth: dob,
+    standard_hours_per_day: hoursPerDay,
   };
 }
 
@@ -64,7 +105,7 @@ export async function getPayrollTaxProfile(
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("payroll_tax_profiles")
-    .select("user_id, tax_region, student_loan_plan, salary_sacrifice_annual_pence")
+    .select(PROFILE_COLS)
     .eq("org_id", orgId)
     .eq("user_id", userId)
     .maybeSingle();
@@ -87,9 +128,7 @@ export async function getPayrollTaxProfilesForOrg(
   const { data, error } = await fetchAllRows<Record<string, unknown>>((from, to) =>
     supabase
       .from("payroll_tax_profiles")
-      .select(
-        "id, user_id, tax_region, student_loan_plan, salary_sacrifice_annual_pence",
-      )
+      .select(`id, ${PROFILE_COLS}`)
       .eq("org_id", orgId)
       .order("id", { ascending: true })
       .range(from, to),
@@ -101,6 +140,9 @@ export async function getPayrollTaxProfilesForOrg(
       tax_region: p.tax_region,
       student_loan_plan: p.student_loan_plan,
       salary_sacrifice_annual_pence: p.salary_sacrifice_annual_pence,
+      ni_category: p.ni_category,
+      date_of_birth: p.date_of_birth,
+      standard_hours_per_day: p.standard_hours_per_day,
     });
   }
   return out;
@@ -110,6 +152,11 @@ export type PayrollTaxProfileUpsert = {
   tax_region: TaxRegionValue;
   student_loan_plan: StudentLoanPlanValue;
   salary_sacrifice_annual_pence: number;
+  ni_category: NiCategoryValue;
+  /** YYYY-MM-DD or null to clear. */
+  date_of_birth: string | null;
+  /** Contracted hours per working day, or null to clear (no holiday pay). */
+  standard_hours_per_day: number | null;
 };
 
 /**
@@ -130,6 +177,9 @@ export async function upsertPayrollTaxProfile(
       tax_region: input.tax_region,
       student_loan_plan: input.student_loan_plan,
       salary_sacrifice_annual_pence: input.salary_sacrifice_annual_pence,
+      ni_category: input.ni_category,
+      date_of_birth: input.date_of_birth,
+      standard_hours_per_day: input.standard_hours_per_day,
     },
     { onConflict: "org_id,user_id" },
   );

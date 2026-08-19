@@ -212,10 +212,10 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // treatment as reviews/new, snags/new and site-reports/new below.
   "app/(app)/dashboard/page.tsx:189":
     "bounded: dashboard 'recent 5 leads' widget — an intentional top-5 display",
-  "app/(app)/leads/[id]/page.tsx:132":
-    "bounded: this lead's related quotes — top-5 display on the lead detail page",
-  "app/(app)/me/page.tsx:132":
-    "bounded: 'my recent 20 jobs' widget on the profile page — a top-N display",
+  "app/(app)/leads/[id]/page.tsx:136":
+    "bounded: this lead's related quotes — top-5 display on the lead detail page. (Line moved 132→136 when the lead→customer conversion imports + ?error map entries were added above this read; reason unchanged.)",
+  "app/(app)/me/page.tsx:137":
+    "bounded: 'my recent 20 jobs' widget on the profile page — a top-N display. (Line moved 132→137 when the My-tasks import was added above this read; reason unchanged.)",
   "server/services/fleet-snapshot.ts:568":
     "bounded: last-50 telematics readings for a vehicle track display (recent-N sample)",
   "server/services/hq-customer-snapshot.ts:216":
