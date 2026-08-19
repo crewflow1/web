@@ -188,6 +188,12 @@ export default async function HealthSafetyPage({
         >
           Permits to work
         </Link>
+        <Link
+          href="/health-safety/worker-links"
+          className="inline-flex min-h-[44px] items-center rounded-md px-3 font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+        >
+          Worker sign-off links
+        </Link>
       </nav>
 
       <HealthSafetySignals signals={signals} />

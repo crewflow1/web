@@ -1241,6 +1241,8 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   receptionist_conversation_outcomes: "RECENT-N: .order.limit(OUTCOME_WINDOW) — HQ QA window display",
   impersonation_sessions: "RECENT-N: .order.limit(Math.min(limit,1000)) audit list (caller passes 100) — admin display",
   toolbox_talks: "PER-PARENT/RECENT-N: .eq('job_id') / .limit recent / per-root revision series — bounded display",
+  worker_signoff_tokens: "PAGED: the staff worker-links list (app/(app)/health-safety/worker-links/_data.ts) reads via fetchAllRows on (created_at desc, id desc) — COMPLETE, not truncated. Not a money/ledger table; the portal loader read is a .maybeSingle() by unique token_hash.",
+  worker_acknowledgements: "PAGED: both set-reads (worker-links/_data.ts signed-counts, worker-portal/_materials.ts per-token acks) page via fetchAllRows with .range — COMPLETE. Not a money table; append-only H&S evidence scoped by org_id + token_id.",
 
   // ---- CLOSED registry / SINGLE existence ----
   help_articles: "CLOSED/GLOBAL: the platform help/knowledge-base — curated CrewFlow-authored content shared by every org (NOT tenant data, no org_id, service-role-only writes). listHelpArticles reads all active rows (.eq('active',true)); a hand-authored closed content set of tens of articles, never near the cap, never summed or fed to a count. Per-article reads are .eq('slug').maybeSingle().",
