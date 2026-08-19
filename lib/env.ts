@@ -366,6 +366,14 @@ const envSchema = z.object({
   // all required. Left unset in every environment until an erasure is deliberately
   // performed under human authorisation.
   FEATURE_GDPR_ERASURE: z.enum(["true", "false"]).default("false"),
+  // Data-retention PURGE switch — DEFAULTS OFF (server-only; never inlined into a
+  // client bundle). While off, the /api/cron/retention-purge pass runs every
+  // enabled per-org policy in DRY-RUN: it audits what WOULD be purged and deletes
+  // nothing. Flipping it to "true" makes the SAME enabled policies purge for real.
+  // The flag alone opens no door to protected data: the DB primitive is
+  // service_role-only and enforces the statutory/financial/audit exclusion
+  // allowlist regardless. Activation is a single, reversible config flip.
+  FEATURE_RETENTION_PURGE: z.enum(["true", "false"]).default("false"),
   // HMRC MTD connect surface — DEFAULTS OFF. While off the HMRC connect/callback
   // routes 503, isHmrcConnectable() returns false regardless of credentials, and
   // the settings surface renders "not configured". The SECOND switch is the HMRC

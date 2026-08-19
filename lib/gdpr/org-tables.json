@@ -175,6 +175,8 @@
     "receptionist_messages",
     "receptionist_review_resolutions",
     "report_subscriptions",
+    "retention_policies",
+    "retention_purge_log",
     "retention_releases",
     "review_requests",
     "risk_assessment_hazards",
@@ -258,7 +260,9 @@
     "merchant_connections": "credentials: per-merchant API key + endpoint",
     "org_payment_connections": "credentials: Stripe connected-account / platform secret",
     "calendar_watch_channels": "credentials/integration state: provider watch verification_token + channel registration",
-    "calendar_pulled_events": "integration mirror of external provider calendar events (provider is source of truth; may include third-party attendee data)"
+    "calendar_pulled_events": "integration mirror of external provider calendar events (provider is source of truth; may include third-party attendee data)",
+    "retention_policies": "service config: per-org data-retention windows (table + days + enabled) — operational configuration, no tenant business data and no personal data",
+    "retention_purge_log": "service telemetry: append-only audit of retention purges/previews (table/mode/counts/timestamps) — accountability metadata, no tenant business data and no personal data"
   },
   "_order_keys_comment": "Stable, unique per-row ORDER BY column for the fully-paged DSAR export (server/services/gdpr-export.ts). Every exported table is paged via fetchAllRows, which REQUIRES a stable total ordering so no row is dropped/repeated at a page boundary. The default key is 'id'; the entries below are the ONLY exported tables lacking an 'id' column \u2014 each maps to a column that is unique WITHIN an org-pinned read (the non-org_id part of the table's primary key; org_id is constant under the .eq('org_id', orgId) pin). Ordering by a column that does not exist on a table is a hard read error (Postgres 42703) that would abort the whole export, so this map must stay exhaustive \u2014 the integration FORWARD drift test orders each table by its key against live Postgres, failing CI if a key is wrong or a new id-less table appears.",
   "order_keys": {
@@ -324,6 +328,7 @@
     "org_subscriptions": "CrewFlow platform SaaS subscription state — CrewFlow-side; not the tenant's to erase",
     "health_score_events": "CrewFlow platform ops telemetry — CrewFlow-side, not tenant data; left intact",
     "gdpr_export_log": "GDPR EXPORT accountability trail (Art. 5(2)) — evidence of what left the building; destroying it would erase the audit of erasure",
-    "gdpr_erasure_log": "GDPR ERASURE accountability trail (Art. 5(2)) — the record OF this very erasure; must survive the operation it documents"
+    "gdpr_erasure_log": "GDPR ERASURE accountability trail (Art. 5(2)) — the record OF this very erasure; must survive the operation it documents",
+    "retention_purge_log": "data-retention accountability trail — append-only audit of every purge/preview (counts + timestamps, no PII); evidence of what the retention system did, retained like the GDPR logs"
   }
 }
