@@ -23,6 +23,7 @@ import {
   buildCustomerFromLead,
   type ConvertibleLead,
 } from "@/lib/leads/convert";
+import { recomputeLeadScore } from "@/server/services/lead-score";
 
 /**
  * Lead pipeline server actions.
@@ -95,6 +96,9 @@ export async function createLead(
     console.error("[leads] create failed", error);
     return formError("Couldn't save the lead. Try again.", result.data as LeadValues);
   }
+  // Refresh the lead-score cache from the row as just written (non-fatal on
+  // failure — the pipeline + detail pages compute the score live regardless).
+  await recomputeLeadScore(supabase, ctx.org.id, data.id);
   revalidatePath("/leads");
   return formSuccess({
     successMessage: "Lead saved.",
@@ -155,6 +159,9 @@ export async function updateLead(
       result.data as LeadValues,
     );
   }
+  // The edit changed scoring inputs (value / source / contact / customer link),
+  // so refresh the score cache from the persisted row.
+  await recomputeLeadScore(supabase, ctx.org.id, id);
   revalidatePath("/leads");
   revalidatePath(`/leads/${id}`);
   return formSuccess({ successMessage: "Lead updated." });
@@ -191,6 +198,8 @@ export async function moveLeadStage(id: string, formData: FormData) {
     console.error("[leads] stage move failed", error);
     redirect(`/leads/${id}?error=move_failed`);
   }
+  // Stage is a scoring factor — refresh the cache after the move.
+  await recomputeLeadScore(supabase, ctx.org.id, id);
   revalidatePath("/leads");
   revalidatePath(`/leads/${id}`);
   redirect(`/leads`);
@@ -261,6 +270,14 @@ export async function acknowledgeLead(id: string, formData: FormData) {
       .eq("id", id)
       .eq("org_id", ctx.org.id);
   }
+
+  // NB: deliberately NOT rescoring here. Acknowledge only nudges recency (a
+  // small factor) and, on archive, removes the lead from the pipeline entirely —
+  // where its cached score no longer matters. The pipeline + detail pages
+  // compute the score LIVE, so the display stays correct regardless, and the
+  // cache is refreshed on the next scoring-input edit (save / stage move). This
+  // keeps acknowledge's single-write footprint (and its ownership-gate invariant)
+  // exactly as audited.
 
   revalidatePath("/leads");
   revalidatePath(`/leads/${id}`);

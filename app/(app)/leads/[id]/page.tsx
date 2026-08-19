@@ -10,6 +10,12 @@ import {
   type LeadStage,
 } from "@/lib/leads/schema";
 import {
+  scoreLead,
+  LEAD_SCORE_BAND_LABELS,
+  LEAD_SCORE_BAND_STYLES,
+} from "@/lib/leads/score";
+import { SIGNAL_KIND_LABEL } from "@/lib/intelligence/provenance";
+import {
   listCustomersForLead,
   listStaffForLead,
 } from "../_form-helpers";
@@ -170,6 +176,21 @@ export default async function LeadDetailPage({
     ? (lead.status as LeadStage)
     : ("new" as LeadStage);
 
+  // Deterministic lead score — computed LIVE from the rubric (the DB cache is a
+  // denormalised copy, not the display source), so it's correct for every lead.
+  const leadScore = scoreLead({
+    status: lead.status,
+    source: lead.source,
+    estimatedValue: lead.estimated_value != null ? Number(lead.estimated_value) : null,
+    contactName: leadContact.contact_name,
+    contactEmail: leadContact.contact_email,
+    contactPhone: leadContact.contact_phone,
+    lastActivityAt: lead.last_activity_at,
+    createdAt: lead.created_at,
+    customerId: lead.customer_id,
+    asOfMs: Date.now(),
+  });
+
   // Lifecycle (stage move / delete) still redirect with ?error.
   // Edit form errors render inline via useActionState.
   const errorMessage = sp.error
@@ -277,6 +298,68 @@ export default async function LeadDetailPage({
           {savedMessage}
         </div>
       ) : null}
+
+      {/* Lead score — deterministic rubric with a per-factor breakdown */}
+      <section
+        aria-labelledby="lead-score-heading"
+        className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 id="lead-score-heading" className="text-sm font-semibold text-slate-900">
+              Lead score
+            </h2>
+            <p className="mt-1 text-xs text-slate-600">
+              A transparent rubric over this lead&rsquo;s own signals — not AI. Every
+              factor below shows exactly how it scored. Confidence {leadScore.confidence}%
+              (share of the rubric backed by data on file).
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span
+              className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${LEAD_SCORE_BAND_STYLES[leadScore.band]}`}
+            >
+              {LEAD_SCORE_BAND_LABELS[leadScore.band]}
+            </span>
+            <span className="text-2xl font-bold tabular-nums text-slate-900">
+              {leadScore.score}
+              <span className="text-sm font-normal text-slate-400">/100</span>
+            </span>
+          </div>
+        </div>
+
+        <ul className="mt-4 space-y-3">
+          {leadScore.factors.map((f) => (
+            <li key={f.key} className="text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-slate-900">{f.label}</span>
+                  <span
+                    className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-600"
+                    title="How this figure is derived"
+                  >
+                    {SIGNAL_KIND_LABEL[f.kind]}
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    weight {Math.round(f.weight * 100)}%
+                  </span>
+                </div>
+                <span className="tabular-nums font-medium text-slate-700">
+                  {f.known ? `${f.value}/100` : "No data"}
+                </span>
+              </div>
+              <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                <div
+                  className={`h-full rounded-full ${f.known ? "bg-slate-700" : "bg-slate-200"}`}
+                  style={{ width: `${f.known ? f.value : 0}%` }}
+                  aria-hidden
+                />
+              </div>
+              <p className="mt-1 text-xs text-slate-500">{f.detail}</p>
+            </li>
+          ))}
+        </ul>
+      </section>
 
       {/* Convert to customer */}
       <section

@@ -7,6 +7,11 @@ import {
   type LeadStage,
   type LeadUrgency,
 } from "@/lib/leads/schema";
+import {
+  LEAD_SCORE_BAND_LABELS,
+  LEAD_SCORE_BAND_STYLES,
+  type LeadScoreBand,
+} from "@/lib/leads/score";
 
 /**
  * Pipeline card for a single lead.
@@ -34,6 +39,9 @@ export type PipelineLead = {
   last_activity_at: string;
   customer_name: string | null;
   assigned_name: string | null;
+  /** Deterministic lead score (0–100) + its band, computed by the rubric. */
+  score: number;
+  band: LeadScoreBand;
 };
 
 export function LeadCard({ lead }: { lead: PipelineLead }) {
@@ -54,11 +62,19 @@ export function LeadCard({ lead }: { lead: PipelineLead }) {
               {lead.service ?? "—"}
             </div>
           </div>
-          <span
-            className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${LEAD_URGENCY_STYLES[urgency] ?? "bg-slate-100 text-slate-600"}`}
-          >
-            {urgency}
-          </span>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            <span
+              className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${LEAD_SCORE_BAND_STYLES[lead.band]}`}
+              title={`Lead score ${lead.score}/100 — ${LEAD_SCORE_BAND_LABELS[lead.band]}`}
+            >
+              {LEAD_SCORE_BAND_LABELS[lead.band]} · {lead.score}
+            </span>
+            <span
+              className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${LEAD_URGENCY_STYLES[urgency] ?? "bg-slate-100 text-slate-600"}`}
+            >
+              {urgency}
+            </span>
+          </div>
         </div>
 
         <div className="mt-2 flex items-center justify-between gap-2 text-xs text-slate-500">

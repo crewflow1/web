@@ -11,8 +11,13 @@ import {
   LEAD_SOURCES,
   LEAD_URGENCIES,
 } from "@/lib/leads/schema";
+import {
+  LEAD_SCORE_BANDS,
+  LEAD_SCORE_BAND_LABELS,
+  type LeadScoreBand,
+} from "@/lib/leads/score";
 import { LeadCard } from "./_card";
-import { bucketPipelineLeads } from "./pipeline";
+import { bucketPipelineLeads, type RawPipelineLead } from "./pipeline";
 import { sanitizeSearchTerm } from "@/lib/search/sanitize";
 import { ilikeOrFilter, LEAD_SEARCH_COLUMNS } from "@/lib/search/filters";
 
@@ -40,6 +45,7 @@ type SP = Promise<{
   source?: string;
   urgency?: string;
   assigned?: string;
+  band?: string;
 }>;
 
 export default async function LeadsPage({ searchParams }: { searchParams: SP }) {
@@ -104,10 +110,61 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
   if (error) throw readFailure("leads pipeline: leads", error);
   const leads = raw ?? [];
 
+  // Contact fields feed the lead-score's contactability factor but aren't in the
+  // generated Supabase types (migration 20260601000100), so they're fetched in a
+  // separate string-selected query and merged by id. PAGED + ORG-PINNED + LOUD,
+  // mirroring the main pipeline read (same archived exclusion + id order).
+  const { data: contactRaw, error: contactErr } = await fetchAllRows((from, to) =>
+    supabase
+      .from("leads")
+      .select("id, contact_name, contact_email, contact_phone" as never)
+      .eq("org_id", ctx.org.id)
+      .neq("status", "archived")
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (contactErr) throw readFailure("leads pipeline: contacts", contactErr);
+  const contactById = new Map<
+    string,
+    { name: string | null; email: string | null; phone: string | null }
+  >();
+  for (const c of (contactRaw ?? []) as unknown as Array<{
+    id: string;
+    contact_name: string | null;
+    contact_email: string | null;
+    contact_phone: string | null;
+  }>) {
+    contactById.set(c.id, {
+      name: c.contact_name,
+      email: c.contact_email,
+      phone: c.contact_phone,
+    });
+  }
+  const enriched: RawPipelineLead[] = leads.map((l) => {
+    const contact = contactById.get(l.id);
+    return {
+      ...(l as unknown as RawPipelineLead),
+      contact_name: contact?.name ?? null,
+      contact_email: contact?.email ?? null,
+      contact_phone: contact?.phone ?? null,
+    };
+  });
+
+  // Score-band filter (?band=hot|warm|cold) — applied in-memory (the score is a
+  // live computation, not a stored predicate), affecting BOTH the columns and
+  // the forecast, exactly like the source/urgency filters.
+  const bandFilter = (LEAD_SCORE_BANDS as readonly string[]).includes(sp.band ?? "")
+    ? (sp.band as LeadScoreBand)
+    : null;
+
   // Bucket by stage + tally the forecast. Any row whose status is not a known
   // stage (archived, or a legacy/unknown value) is skipped entirely — it lands
-  // in no column and is excluded from totalValue. See bucketPipelineLeads.
-  const { byStage, totalValue } = bucketPipelineLeads(leads);
+  // in no column and is excluded from totalValue. See bucketPipelineLeads. Each
+  // card carries a deterministic lead score + band; cards sort hottest-first.
+  const { byStage, totalValue } = bucketPipelineLeads(enriched, {
+    asOfMs: Date.now(),
+    band: bandFilter,
+  });
 
   // Build assigned-staff filter options inline from the visible data.
   const assignedOptions = new Map<string, string>();
@@ -120,7 +177,14 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
     }
   }
 
-  if (leads.length === 0 && !q && !sp.source && !sp.urgency && !sp.assigned) {
+  if (
+    leads.length === 0 &&
+    !q &&
+    !sp.source &&
+    !sp.urgency &&
+    !sp.assigned &&
+    !bandFilter
+  ) {
     return (
       <div className="space-y-6">
         <header className="flex items-center justify-between">
@@ -190,6 +254,21 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
             {LEAD_SOURCES.map((s) => (
               <option key={s} value={s}>
                 {s}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-slate-700">Score</label>
+          <select
+            name="band"
+            defaultValue={bandFilter ?? ""}
+            className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+          >
+            <option value="">All</option>
+            {LEAD_SCORE_BANDS.map((b) => (
+              <option key={b} value={b}>
+                {LEAD_SCORE_BAND_LABELS[b]}
               </option>
             ))}
           </select>
