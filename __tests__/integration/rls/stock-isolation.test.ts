@@ -348,91 +348,6 @@ describeIntegration("operational stock · boundary, isolation, concurrency, immu
     }
   });
 
-  // ── DEPOT-ONLY: a job-tagged PO cannot enter stock (COGS double-count fix) ──
-  it("REFUSES to take a JOB-TAGGED purchase order's delivery into stock", async () => {
-    // The S1 the COGS wiring's adversarial review found: a job-tagged PO gets
-    // billed to its job (recordSupplierBill copies po.job_id) AND, if stocked and
-    // issued back to the job, allocates the SAME spend again as COGS — ~2x
-    // materials. Migration 20261212 refuses the stock receipt for a job-tagged PO,
-    // so the two paths are disjoint by construction. Prove the refusal live.
-    const po = await svc()
-      .from("purchase_orders")
-      .insert({
-        org_id: orgA,
-        number: `${TOKEN}-PO-JOB`,
-        status: "sent",
-        subtotal: 50,
-        vat_total: 10,
-        job_id: jobA, // ← tagged to a job: this must NOT be stockable
-      })
-      .select("id")
-      .single();
-    expect(po.error, po.error?.message).toBeNull();
-    const jobPoId = String(po.data?.id ?? "");
-
-    const li = await svc()
-      .from("purchase_order_line_items")
-      .insert({
-        org_id: orgA,
-        purchase_order_id: jobPoId,
-        description: "Job-direct blocks",
-        qty: 20,
-        unit: "ea",
-        unit_price: 2.5,
-        vat_rate: 20,
-        line_total: 50,
-        sort_order: 0,
-      })
-      .select("id")
-      .single();
-    expect(li.error, li.error?.message).toBeNull();
-    const jobPoLineId = String(li.data?.id ?? "");
-
-    const posted = await rpc(userClient(dualToken)).rpc("post_goods_received_note", {
-      p_org_id: orgA,
-      p_purchase_order_id: jobPoId,
-      p_delivery_date: "2026-07-29",
-      p_delivery_note_reference: "DN-JOB-1",
-      p_delivery_location: null,
-      p_notes: null,
-      p_received_by: dualUserId,
-      p_lines: [{ line_item_id: jobPoLineId, qty_received: 20 }],
-    });
-    expect(posted.error, posted.error?.message).toBeNull();
-
-    const grn = await svc()
-      .from("goods_received_lines")
-      .select("id")
-      .eq("purchase_order_line_item_id", jobPoLineId)
-      .maybeSingle();
-    const jobGrnLineId = String(grn.data?.id ?? "");
-    expect(jobGrnLineId).not.toBe("");
-
-    // The receipt into stock is REFUSED because the PO carries a job_id.
-    const { data, error } = await rpc(userClient(dualToken)).rpc(
-      "record_stock_receipt_from_grn",
-      {
-        p_org_id: orgA,
-        p_grn_line_id: jobGrnLineId,
-        p_item_id: itemA,
-        p_site_id: depotA,
-        p_notes: null,
-      },
-    );
-    expect(error, "a job-tagged PO was allowed into stock — double-count reachable").not.toBeNull();
-    expect(error?.message ?? "").toMatch(/for a specific job/i);
-    expect(data ?? null).toBeNull();
-
-    // Belt to braces: NO receipt movement exists for that GRN line — nothing was
-    // written before the refusal, so the depot pool never held this job's goods.
-    const moved = await svc()
-      .from("stock_movements")
-      .select("id")
-      .eq("org_id", orgA)
-      .eq("grn_line_id", jobGrnLineId);
-    expect((moved.data ?? []).length, "a movement leaked past the depot-only guard").toBe(0);
-  });
-
   // ── THE ACCOUNTING BOUNDARY ───────────────────────────────────────────────
   it("a FULL cycle writes NOT ONE `finances` row", async () => {
     const before = await svc().from("finances").select("id").eq("org_id", orgA);
@@ -1397,5 +1312,141 @@ describeIntegration("operational stock · boundary, isolation, concurrency, immu
       const left = await svc().from(t).select("id").eq("org_id", doomed);
       expect(left.data ?? [], `${t} rows survived teardown`).toHaveLength(0);
     }
+  });
+
+  // ── DEPOT-ONLY: a job-tagged PO cannot enter stock (COGS double-count fix) ──
+  // ISOLATED fixture (its own org): the S1 double-count the adversarial review of
+  // the stock-COGS wiring found is that a job-tagged PO gets billed to its job
+  // (recordSupplierBill copies po.job_id) AND, if stocked and issued back to the
+  // job, allocates the SAME spend again as COGS — ~2× materials. Migration 20261212
+  // makes record_stock_receipt_from_grn REFUSE a job-tagged delivery, so the two
+  // cost paths are disjoint by construction. Own org so it never pollutes the
+  // single-GRN assumptions the void/idempotency tests above rely on.
+  describe("the depot-only receipt guard", () => {
+    let depOrg = "";
+    let depSite = "";
+    let depItem = "";
+    let depJob = "";
+    let depAdminToken = "";
+
+    async function seedPoWithGrn(
+      opts: { jobId: string | null; ref: string },
+    ): Promise<{ grnLineId: string }> {
+      const po = await svc()
+        .from("purchase_orders")
+        .insert({
+          org_id: depOrg,
+          number: `${TOKEN}-${opts.ref}`,
+          status: "sent",
+          subtotal: 50,
+          vat_total: 10,
+          job_id: opts.jobId,
+        })
+        .select("id")
+        .single();
+      expect(po.error, po.error?.message).toBeNull();
+      const poId = String(po.data?.id ?? "");
+
+      const li = await svc()
+        .from("purchase_order_line_items")
+        .insert({
+          org_id: depOrg,
+          purchase_order_id: poId,
+          description: "Dense blocks",
+          qty: 20,
+          unit: "ea",
+          unit_price: 2.5,
+          vat_rate: 20,
+          line_total: 50,
+          sort_order: 0,
+        })
+        .select("id")
+        .single();
+      expect(li.error, li.error?.message).toBeNull();
+      const lineId = String(li.data?.id ?? "");
+
+      const posted = await rpc(userClient(depAdminToken)).rpc("post_goods_received_note", {
+        p_org_id: depOrg,
+        p_purchase_order_id: poId,
+        p_delivery_date: "2026-07-29",
+        p_delivery_note_reference: `DN-${opts.ref}`,
+        p_delivery_location: null,
+        p_notes: null,
+        p_received_by: null,
+        p_lines: [{ line_item_id: lineId, qty_received: 20 }],
+      });
+      expect(posted.error, posted.error?.message).toBeNull();
+
+      const grl = await svc()
+        .from("goods_received_lines")
+        .select("id")
+        .eq("purchase_order_line_item_id", lineId)
+        .maybeSingle();
+      const grnLineId = String(grl.data?.id ?? "");
+      expect(grnLineId).not.toBe("");
+      return { grnLineId };
+    }
+
+    beforeAll(async () => {
+      depOrg = await makeOrg("Depot Guard", `${TOKEN}-depot`);
+      depSite = await makeSite(depOrg, "Main yard");
+      depItem = await makeItem(depOrg, "Dense blocks 100mm");
+      depJob = await makeJob(depOrg);
+      const admin = await makeUser("depot-admin");
+      depAdminToken = admin.token;
+      const m = await svc()
+        .from("memberships")
+        .insert({ org_id: depOrg, user_id: admin.id, role: "admin" })
+        .select("user_id")
+        .single();
+      expect(m.error, m.error?.message).toBeNull();
+    });
+
+    it("REFUSES a JOB-TAGGED purchase order's delivery, writing nothing", async () => {
+      const { grnLineId } = await seedPoWithGrn({ jobId: depJob, ref: "PO-JOB" });
+
+      const { data, error } = await rpc(userClient(depAdminToken)).rpc(
+        "record_stock_receipt_from_grn",
+        {
+          p_org_id: depOrg,
+          p_grn_line_id: grnLineId,
+          p_item_id: depItem,
+          p_site_id: depSite,
+          p_notes: null,
+        },
+      );
+      expect(
+        error,
+        "a job-tagged PO was allowed into stock — the COGS double-count is reachable",
+      ).not.toBeNull();
+      expect(error?.message ?? "").toMatch(/for a specific job/i);
+      expect(data ?? null).toBeNull();
+
+      // Nothing was written before the refusal — the depot never held these goods.
+      const moved = await svc()
+        .from("stock_movements")
+        .select("id")
+        .eq("org_id", depOrg)
+        .eq("grn_line_id", grnLineId);
+      expect((moved.data ?? []).length, "a movement leaked past the depot-only guard").toBe(0);
+    });
+
+    it("STILL ACCEPTS a job-less (depot) purchase order's delivery — the normal path", async () => {
+      const { grnLineId } = await seedPoWithGrn({ jobId: null, ref: "PO-DEPOT" });
+
+      const { data, error } = await rpc(userClient(depAdminToken)).rpc(
+        "record_stock_receipt_from_grn",
+        {
+          p_org_id: depOrg,
+          p_grn_line_id: grnLineId,
+          p_item_id: depItem,
+          p_site_id: depSite,
+          p_notes: null,
+        },
+      );
+      expect(error, error?.message).toBeNull();
+      expect(typeof data).toBe("string");
+      expect(await balance(depOrg, depItem, depSite)).toBe(20);
+    });
   });
 });

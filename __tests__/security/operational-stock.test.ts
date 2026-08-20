@@ -889,6 +889,22 @@ describe("stock receipt refuses a job-tagged purchase order (COGS double-count f
     expect(sql).not.toMatch(/\bfinances\b/i);
   });
 
+  it("PRESERVES the write-path marker around the insert (the 20261071 gate)", () => {
+    // REGRESSION GUARD. This CREATE OR REPLACE must be built on the 20261071 body,
+    // which sets `crewflow.stock_write` before the insert and clears it after — the
+    // marker the write-path RLS policy + guard trigger require. A re-definition
+    // based on the older 20261065 body drops the marker, and every legitimate depot
+    // receipt then fails 42501 ("recorded through a stock write path …"). Pin it so
+    // that can never silently recur.
+    expect(sql).toMatch(/set_config\('crewflow\.stock_write',\s*p_org_id::text,\s*true\)/i);
+    expect(sql).toMatch(/set_config\('crewflow\.stock_write',\s*'',\s*true\)/i);
+    // The marker is SET before the insert.
+    const setIdx = sql.search(/set_config\('crewflow\.stock_write',\s*p_org_id::text/i);
+    const insertIdx = sql.search(/insert into public\.stock_movements/i);
+    expect(setIdx).toBeGreaterThan(-1);
+    expect(insertIdx).toBeGreaterThan(setIdx);
+  });
+
   it("the receiving action surfaces the refusal in plain words", () => {
     // friendlyStockError maps the RPC's 'for a specific job' message so the yard
     // gets guidance, not a raw check_violation.

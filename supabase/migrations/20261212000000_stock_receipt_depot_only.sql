@@ -25,12 +25,30 @@
 -- ║  a job-tagged purchase can never enter shared stock. The two cost paths    ║
 -- ║  can therefore never both land on one job for one spend — the double-count ║
 -- ║  is UNREACHABLE, not merely discouraged.                                  ║
--- ║                                                                          ║
--- ║  ADDITIVE. Only the function BODY changes (a new pre-insert guard); the    ║
--- ║  signature, SECURITY INVOKER posture, idempotency, org pins and grant are  ║
--- ║  byte-for-byte the 20261065000000 original. No table, RLS policy or        ║
--- ║  quantity is touched. This RPC still posts NOTHING to `finances`.          ║
 -- ╚══════════════════════════════════════════════════════════════════════════╝
+--
+-- ── BASELINE: THE MARKER-SETTING BODY FROM 20261071, NOT 20261065 ────────────
+-- The AUTHORITATIVE definition of this function is 20261071000000 §3a, which
+-- wraps the insert in the `crewflow.stock_write` transaction marker the write-path
+-- RLS policy + guard trigger require (a marker-less insert is refused with 42501,
+-- "recorded through a stock write path …"). This CREATE OR REPLACE is built on
+-- THAT body — the two `set_config('crewflow.stock_write', …)` calls are preserved
+-- verbatim — and adds ONLY the depot-only guard. (An earlier draft was rebased on
+-- the older 20261065 body by mistake, which dropped the marker and made every
+-- legitimate depot receipt fail 42501; this restores it.)
+--
+-- ── PRIVILEGES: STILL SECURITY INVOKER, NO NEW GRANT ─────────────────────────
+-- The new read of the parent purchase order's job_id joins `public.purchase_orders`.
+-- `authenticated` already holds SELECT on that table (RLS-gated by
+-- `org_id in current_org_ids()`, identical to goods_received_notes), so the join
+-- runs under the caller's own privileges — no SECURITY DEFINER, no widened grant.
+-- The join is org-pinned on both sides (po.org_id = gn.org_id, gn pinned to
+-- p_org_id), so it reads only the same-org parent order.
+--
+-- ADDITIVE. Only the function BODY changes (a new pre-insert guard + the PO read);
+-- the signature, SECURITY INVOKER posture, marker, idempotency, org pins and grant
+-- are otherwise the 20261071 original. No table, RLS policy or quantity is touched.
+-- This RPC still posts NOTHING to `finances`.
 
 create or replace function public.record_stock_receipt_from_grn(
   p_org_id      uuid,
@@ -55,10 +73,10 @@ begin
 
   -- ACTIVE-ORG PIN on the delivery line AND its note, plus the posted check AND
   -- the parent purchase order's job_id, in one read. RLS admits every org the
-  -- caller belongs to; p_org_id narrows that to the company they are working in,
-  -- so a dual-org member cannot take another company's delivery into this
-  -- company's yard. The join to purchase_orders is org-pinned on both sides
-  -- (gn.purchase_order_id is NOT NULL and same-org by composite FK, 20261059).
+  -- caller belongs to; p_org_id narrows that to the company they are working in.
+  -- The join to purchase_orders is org-pinned on both sides (gn.purchase_order_id
+  -- is NOT NULL and same-org by composite FK, 20261059), and authenticated already
+  -- holds SELECT on purchase_orders — so this stays SECURITY INVOKER.
   select grl.qty_received, gn.status, po.job_id
     into v_qty, v_grn_status, v_po_job_id
     from public.goods_received_lines grl
@@ -87,11 +105,7 @@ begin
       using errcode = 'check_violation';
   end if;
 
-  -- IDEMPOTENCY. The partial unique index (20261064000000) is the real guard —
-  -- this pre-check exists so the ordinary double-submit returns the SAME
-  -- movement id and a success, rather than a unique violation the caller has to
-  -- interpret. A concurrent double-submit that races past this read is still
-  -- caught by the index, which is why the index and not this read is the rule.
+  -- IDEMPOTENCY. The partial unique index (20261064000000) is the real guard.
   select id into v_existing
     from public.stock_movements
    where grn_line_id = p_grn_line_id
@@ -101,9 +115,6 @@ begin
     return v_existing;
   end if;
 
-  -- The item and the site must both be in the ACTIVE org. The composite FKs
-  -- prove this structurally at insert time; reading them first turns a raw
-  -- 23503 into a sentence the yard can act on.
   if not exists (select 1 from public.stock_items where id = p_item_id and org_id = p_org_id) then
     raise exception 'stock item not found' using errcode = 'no_data_found';
   end if;
@@ -111,18 +122,24 @@ begin
     raise exception 'site not found' using errcode = 'no_data_found';
   end if;
 
+  -- The write-path marker the RLS insert policy + guard trigger require
+  -- (20261071000000). Transaction-local; names THIS org; cleared immediately after.
+  perform set_config('crewflow.stock_write', p_org_id::text, true);
   insert into public.stock_movements (
     org_id, stock_item_id, site_id, movement_type, qty, actor_id, notes, grn_line_id
   ) values (
     p_org_id, p_item_id, p_site_id, 'receipt', v_qty, auth.uid(),
     nullif(btrim(coalesce(p_notes, '')), ''), p_grn_line_id
   ) returning id into v_movement;
+  perform set_config('crewflow.stock_write', '', true);
 
   return v_movement;
 exception
   when unique_violation then
     -- The racing sibling won. Return ITS movement: the caller asked for the
-    -- delivery to be in stock, and it is.
+    -- delivery to be in stock, and it is. (The subtransaction rollback has
+    -- already retired the marker; clearing it again is belt and braces.)
+    perform set_config('crewflow.stock_write', '', true);
     select id into v_existing
       from public.stock_movements
      where grn_line_id = p_grn_line_id and movement_type = 'receipt' and org_id = p_org_id;
