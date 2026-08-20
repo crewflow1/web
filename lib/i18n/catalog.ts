@@ -135,6 +135,63 @@ export const enGB: MessageCatalogue = {
   "settings.data_retention.title": "Data retention",
   "settings.billing.title": "Plan & billing",
   "settings.members.title": "Members",
+
+  // ── Dashboard (owner landing) — header, primary actions, section + card
+  //    headings. Values are the EXACT current literals so the rendered
+  //    dashboard chrome is byte-identical for en-GB (pinned by the wiring test).
+  "dashboard.title": "Dashboard",
+  "dashboard.subtitle": "{orgName} — overview of your last week.",
+  "dashboard.action.add_lead": "+ Add lead",
+  "dashboard.action.add_job": "+ Add job",
+  "dashboard.action.add_staff": "+ Add staff",
+  "dashboard.section.profitability": "Job profitability",
+  "dashboard.card.jobs_by_status": "Jobs by status",
+  "dashboard.card.photos_missing": "Photos missing",
+  "dashboard.card.staff_workload": "Staff workload",
+  "dashboard.card.recent_jobs": "Recent jobs",
+  "dashboard.card.recent_invoices": "Recent invoices",
+  "dashboard.card.recent_leads": "Recent leads",
+
+  // ── Core list-page chrome — page title, primary "new" action, empty-state
+  //    heading / body / CTA labels. One coherent vocabulary per high-traffic
+  //    surface (jobs · customers · invoices · leads · quotes). Note the page
+  //    titles for invoices/quotes reuse the existing invoices.title/quotes.title
+  //    keys above; the others add their own. All EXACT current literals.
+  "jobs.title": "Jobs",
+  "jobs.action.new": "+ New job",
+  "jobs.empty.title": "No jobs yet",
+  "jobs.empty.body":
+    "Schedule your first job. Pick a customer, set a date, assign a staff member. Field staff can attach photos as work progresses.",
+  "jobs.empty.primary": "Create first job",
+  "jobs.empty.secondary": "Add a customer first",
+
+  "customers.title": "Customers",
+  "customers.action.new": "+ New customer",
+  "customers.empty.title": "No customers yet",
+  "customers.empty.body":
+    "Capture the people you do work for. You can link jobs, quotes, and invoices to customers later.",
+  "customers.empty.primary": "Add first customer",
+
+  "invoices.action.new": "+ Generate from quote",
+  "invoices.empty.title": "No invoices yet",
+  "invoices.empty.body":
+    "Once a quote is accepted, generate a sequential HMRC-compliant invoice from it. Status transitions stamp sent/paid timestamps for the audit trail.",
+  "invoices.empty.primary": "Generate first invoice",
+
+  "leads.title": "Leads",
+  "leads.action.new": "+ New lead",
+  "leads.subtitle_overview": "Pipeline overview.",
+  "leads.empty.title": "No leads yet",
+  "leads.empty.body":
+    "Capture every enquiry — phone, web, referral. Move them through the pipeline as you contact, qualify, quote, and win.",
+  "leads.empty.primary": "Add first lead",
+
+  "quotes.action.new": "+ New quote",
+  "quotes.empty.title": "No quotes yet",
+  "quotes.empty.body":
+    "Send your first priced proposal. Builder lets you add line items, terms, and a customer-facing link they can accept online.",
+  "quotes.empty.primary": "Create first quote",
+  "quotes.empty.secondary": "Add a customer first",
 };
 
 /**

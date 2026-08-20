@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { getRequestI18n } from "@/server/i18n/request";
 import { EmptyState } from "../_components/empty-state";
 import { formatAddressOneLine, customerToAddress } from "@/lib/address";
 import {
@@ -15,7 +15,7 @@ import {
  * Customers list.
  *
  * Server-component fetch under user JWT — RLS limits the rows to the
- * caller's org automatically. We still call requireOrgContext() so the
+ * caller's org automatically. We still resolve org context (via getRequestI18n) so the
  * page redirects to /onboarding if the user has no org yet.
  *
  * Paginated server-side (`.range()` + an EXACT count) so an org with
@@ -45,7 +45,7 @@ export default async function CustomersPage({
 }: {
   searchParams: SP;
 }) {
-  const { ctx } = await requireOrgContext();
+  const { ctx, t } = await getRequestI18n();
   const sp = await searchParams;
   const page = parsePage(sp.page);
   const offset = offsetForPage(page);
@@ -108,7 +108,7 @@ export default async function CustomersPage({
     <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Customers</h1>
+          <h1 className="text-2xl font-bold text-slate-900">{t("customers.title")}</h1>
           <p className="mt-1 text-sm text-slate-600">
             {term
               ? `${totalCount} matching “${term}”`
@@ -123,7 +123,7 @@ export default async function CustomersPage({
           href="/customers/new"
           className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
         >
-          + New customer
+          {t("customers.action.new")}
         </Link>
       </header>
 
@@ -186,9 +186,9 @@ export default async function CustomersPage({
         <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
           <EmptyState
             icon="👥"
-            title="No customers yet"
-            body="Capture the people you do work for. You can link jobs, quotes, and invoices to customers later."
-            primary={{ href: "/customers/new", label: "Add first customer" }}
+            title={t("customers.empty.title")}
+            body={t("customers.empty.body")}
+            primary={{ href: "/customers/new", label: t("customers.empty.primary") }}
           />
         </div>
       ) : rows.length === 0 ? (

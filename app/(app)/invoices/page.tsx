@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { getRequestI18n } from "@/server/i18n/request";
 import {
   INVOICE_STATUSES,
   OUTSTANDING_STATUSES,
@@ -44,7 +44,7 @@ const STATUS_STYLES: Record<InvoiceStatus, string> = {
 };
 
 export default async function InvoicesPage({ searchParams }: { searchParams: SP }) {
-  const { ctx } = await requireOrgContext();
+  const { ctx, t } = await getRequestI18n();
   const sp = await searchParams;
   const page = Math.max(parseInt(sp.page ?? "1", 10) || 1, 1);
   const offset = (page - 1) * PAGE_SIZE;
@@ -154,7 +154,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-slate-900">Invoices</h1>
+            <h1 className="text-2xl font-bold text-slate-900">{t("invoices.title")}</h1>
             <HelpLink article="sending-your-first-invoice" label="Help with invoicing" />
           </div>
           <p className="mt-1 text-sm text-slate-600">
@@ -192,7 +192,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
             href="/invoices/new"
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
           >
-            + Generate from quote
+            {t("invoices.action.new")}
           </Link>
         </div>
       </header>
@@ -260,9 +260,9 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
         <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <EmptyState
             icon="💷"
-            title="No invoices yet"
-            body="Once a quote is accepted, generate a sequential HMRC-compliant invoice from it. Status transitions stamp sent/paid timestamps for the audit trail."
-            primary={{ href: "/invoices/new", label: "Generate first invoice" }}
+            title={t("invoices.empty.title")}
+            body={t("invoices.empty.body")}
+            primary={{ href: "/invoices/new", label: t("invoices.empty.primary") }}
           />
         </div>
       ) : (

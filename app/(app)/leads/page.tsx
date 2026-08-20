@@ -2,7 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
-import { requireOrgContext } from "@/server/auth/session";
+import { getRequestI18n } from "@/server/i18n/request";
 import { EmptyState } from "../_components/empty-state";
 import {
   LEAD_STAGES,
@@ -49,7 +49,7 @@ type SP = Promise<{
 }>;
 
 export default async function LeadsPage({ searchParams }: { searchParams: SP }) {
-  const { ctx } = await requireOrgContext();
+  const { ctx, t } = await getRequestI18n();
   const sp = await searchParams;
   const supabase = await createClient();
 
@@ -189,22 +189,22 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
       <div className="space-y-6">
         <header className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Leads</h1>
-            <p className="mt-1 text-sm text-slate-600">Pipeline overview.</p>
+            <h1 className="text-2xl font-bold text-slate-900">{t("leads.title")}</h1>
+            <p className="mt-1 text-sm text-slate-600">{t("leads.subtitle_overview")}</p>
           </div>
           <Link
             href="/leads/new"
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
           >
-            + New lead
+            {t("leads.action.new")}
           </Link>
         </header>
         <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
           <EmptyState
             icon="🎯"
-            title="No leads yet"
-            body="Capture every enquiry — phone, web, referral. Move them through the pipeline as you contact, qualify, quote, and win."
-            primary={{ href: "/leads/new", label: "Add first lead" }}
+            title={t("leads.empty.title")}
+            body={t("leads.empty.body")}
+            primary={{ href: "/leads/new", label: t("leads.empty.primary") }}
           />
         </div>
       </div>
@@ -215,7 +215,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
     <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Leads</h1>
+          <h1 className="text-2xl font-bold text-slate-900">{t("leads.title")}</h1>
           <p className="mt-1 text-sm text-slate-600">
             {leads.length} {leads.length === 1 ? "lead" : "leads"} · forecast{" "}
             {GBP.format(totalValue)}
@@ -225,7 +225,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
           href="/leads/new"
           className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
         >
-          + New lead
+          {t("leads.action.new")}
         </Link>
       </header>
 
