@@ -19,7 +19,7 @@ export function PricingBlock() {
           <div>
             <CoordTag>One price. Everything in.</CoordTag>
             <h2 className="mt-5 font-display text-[clamp(1.9rem,3.4vw,2.9rem)] font-bold leading-[1.04] tracking-[-0.02em] text-ink">
-              Simple, transparent pricing.
+              Priced for a builder, not a software buyer.
             </h2>
             <p className="mt-4 max-w-md text-lg leading-relaxed text-ink-mut">
               No per-seat fees, no per-feature upsells, no card-processing skim.

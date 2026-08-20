@@ -28,7 +28,7 @@ export function ProductFrame({
   const isPlaceholder = !children;
   return (
     <figure
-      className={`overflow-hidden rounded-2xl border border-white/10 bg-navy-850 shadow-cf ring-1 ring-inset ring-white/[0.04] ${className}`}
+      className={`overflow-hidden rounded-cf border border-white/10 bg-navy-850 shadow-cf ring-1 ring-inset ring-white/[0.04] ${className}`}
       {...(isPlaceholder ? { "data-proof": "placeholder" } : {})}
     >
       {/* Browser chrome */}

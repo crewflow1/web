@@ -20,7 +20,7 @@ const STATIONS = [
   { n: "03", label: "Accepted", note: "e-signed → job" },
   { n: "04", label: "Site", note: "RAMS · diary · drawings" },
   { n: "05", label: "Variation", note: "Captured, not lost" },
-  { n: "06", label: "Valuation", note: "Interim + retention" },
+  { n: "06", label: "Retention", note: "Held & released" },
   { n: "07", label: "Invoice", note: "Chases itself" },
   { n: "08", label: "Cash", note: "Bank transfer" },
   { n: "09", label: "Control", note: "Margin, live" },
@@ -43,7 +43,7 @@ export function JobFlow() {
         <ol className="relative mt-16 hidden grid-cols-9 lg:grid" aria-label="How a job flows through CrewFlow">
           <span
             aria-hidden="true"
-            className="absolute left-[5.55%] right-[5.55%] top-[6px] h-px bg-gradient-to-r from-blueprint via-blueprint to-gold-500"
+            className="jf-rail absolute left-[5.55%] right-[5.55%] top-[6px] h-px bg-gradient-to-r from-blueprint via-blueprint to-gold-500"
           />
           {STATIONS.map((s, i) => {
             const last = i === STATIONS.length - 1;
@@ -67,7 +67,7 @@ export function JobFlow() {
         <ol className="relative mt-12 lg:hidden" aria-label="How a job flows through CrewFlow">
           <span
             aria-hidden="true"
-            className="absolute bottom-3 left-[6px] top-2 w-px bg-gradient-to-b from-blueprint via-blueprint to-gold-500"
+            className="jf-rail-v absolute bottom-3 left-[6px] top-2 w-px bg-gradient-to-b from-blueprint via-blueprint to-gold-500"
           />
           {STATIONS.map((s, i) => {
             const last = i === STATIONS.length - 1;

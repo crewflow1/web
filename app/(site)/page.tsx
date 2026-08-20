@@ -9,11 +9,12 @@ import { SwitchTrust } from "@/components/marketing/home/switch-trust";
 import { PricingBlock } from "@/components/marketing/home/pricing-block";
 import { Faq } from "@/components/marketing/home/faq";
 import { PillarsIndex } from "@/components/marketing/home/pillars-index";
+import { Reveal } from "@/components/marketing/reveal";
 
 export const metadata: Metadata = {
   title: "CrewFlow — the operating system for UK construction companies",
   description:
-    "Run the whole job, from the first call to the last payment. Leads, quotes, site paperwork, valuations, CIS and VAT — one system built for how UK construction actually gets paid.",
+    "Run the whole job, from the first call to the last payment. Leads, quotes, site paperwork, CIS and VAT — one system built for how UK construction actually gets paid.",
   alternates: { canonical: "/" },
 };
 
@@ -25,12 +26,12 @@ export default function HomePage() {
         <DatumGrid refs />
         <div className="relative mx-auto max-w-cf px-5 pb-14 pt-20 sm:px-7 sm:pb-20 sm:pt-28">
           <CoordTag>The operating system for UK construction</CoordTag>
-          <h1 className="mt-6 max-w-[15ch] font-display text-[clamp(2.75rem,6.6vw,4.75rem)] font-bold leading-[0.98] tracking-[-0.03em] text-ink">
+          <h1 className="mt-6 max-w-[15ch] font-display text-[clamp(2.4rem,6.4vw,4.75rem)] font-bold leading-[0.98] tracking-[-0.03em] text-ink">
             Run the whole job. From the first call to{" "}
             <span className="text-gold-500">the last payment.</span>
           </h1>
           <p className="mt-7 max-w-xl text-lg leading-relaxed text-ink-mut">
-            Leads, quotes, site paperwork, valuations, CIS and VAT — one system
+            Leads, quotes, site paperwork, CIS and VAT — one system
             built for how UK construction actually gets paid.
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-3">
@@ -61,13 +62,13 @@ export default function HomePage() {
       {/* Beat 2 — Product as hero: the light "built object" set into the board */}
       <section className="relative border-t border-white/5 bg-navy-900">
         <div className="mx-auto max-w-cf px-5 py-16 sm:px-7 sm:py-24">
-          <div className="cf-reveal">
+          <Reveal>
             <ProductFrame
               screen="Operations dashboard"
               url="app.crewflow.uk/dashboard"
               className="mx-auto max-w-4xl"
             />
-          </div>
+          </Reveal>
           <p className="mx-auto mt-7 max-w-md text-center text-[15px] leading-relaxed text-ink-dim">
             One screen for what&apos;s on, what&apos;s late and what needs a
             look — the whole company at a glance.
@@ -76,29 +77,29 @@ export default function HomePage() {
       </section>
 
       {/* Beat 3 — Signature moment: one job, end to end */}
-      <div className="cf-reveal">
+      <Reveal>
         <JobFlow />
-      </div>
+      </Reveal>
 
       {/* Beat 4 — Six pillars (drawing register) */}
-      <div className="cf-reveal">
+      <Reveal>
         <PillarsIndex />
-      </div>
+      </Reveal>
 
       {/* Beat 5 — Differentiation */}
-      <div className="cf-reveal">
+      <Reveal>
         <Differentiation />
-      </div>
+      </Reveal>
 
       {/* Beat 6 — Switching & trust */}
-      <div className="cf-reveal">
+      <Reveal>
         <SwitchTrust />
-      </div>
+      </Reveal>
 
       {/* Beat 7 — Pricing / value */}
-      <div className="cf-reveal">
+      <Reveal>
         <PricingBlock />
-      </div>
+      </Reveal>
 
       {/* Beat 8 — Final CTA */}
       <section className="relative overflow-hidden border-t border-white/5">

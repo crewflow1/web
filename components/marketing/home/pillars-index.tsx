@@ -25,7 +25,7 @@ export function PillarsIndex() {
             <li key={p.slug}>
               <Link
                 href={`/product/${p.slug}`}
-                className="group grid grid-cols-1 gap-3 border-b border-white/10 py-7 transition-colors hover:bg-white/[0.02] focus-visible:outline-none focus-visible:bg-white/[0.03] md:grid-cols-[3rem_1fr_auto] md:items-baseline md:gap-8"
+                className="group grid grid-cols-1 gap-3 rounded-lg border-b border-white/10 py-7 transition-colors hover:bg-white/[0.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-500 md:grid-cols-[3rem_1fr_auto] md:items-baseline md:gap-8"
               >
                 <span className="font-mono text-sm tabular-nums text-gold-500">{p.n}</span>
                 <span className="min-w-0">

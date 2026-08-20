@@ -31,7 +31,6 @@ export const PILLARS: Pillar[] = [
       "Every lead, quote and customer in one pipeline, so nothing slips while you're on site and every quote can become a job in one step.",
     capabilities: [
       { name: "CRM & leads", note: "Every enquiry in one pipeline, tagged by source and value." },
-      { name: "Lead scoring", note: "See which enquiries are worth chasing first." },
       { name: "Quotes & estimates", note: "Line-item quotes with full VAT and a branded PDF." },
       { name: "Online acceptance", note: "Customers sign off by name — an accepted quote becomes a job." },
       { name: "Follow-ups", note: "Reminders so a quiet quote gets chased while the job's still warm." },
@@ -79,10 +78,9 @@ export const PILLARS: Pillar[] = [
     eyebrow: "Money",
     headline: "Know where every pound is — to the penny, per job",
     summary:
-      "Invoicing that chases itself, real per-job margin, and the UK-specific money work — CIS, retention, staged valuations, VAT and Corporation Tax — built in.",
+      "Invoicing that chases itself, real per-job margin, and the UK-specific money work — CIS, retention, VAT and Corporation Tax — built in.",
     capabilities: [
       { name: "Invoicing", note: "Raise from a finished job; reminders go out on day 3, 7, 14, 21." },
-      { name: "Staged valuations", note: "Interim valuations / applications for payment with retention." },
       { name: "Retention & aged debt", note: "Track retention release and who owes what, when." },
       { name: "Job costing", note: "Revenue minus materials and clocked labour — real margin, live." },
       { name: "CIS & tax figures", note: "CIS deductions and statements; VAT and Corp Tax ready for your accountant." },
@@ -99,7 +97,7 @@ export const PILLARS: Pillar[] = [
       "Rota, timesheets and payroll for the team; MOT, insurance and inspections for the fleet; stock, suppliers and material requests for the stores.",
     capabilities: [
       { name: "Workforce", note: "Staff, rota, leave and timesheets with GPS clock-in." },
-      { name: "Payroll", note: "Pay runs from real clocked hours — PAYE/NI, payslips, CSV export." },
+      { name: "Payroll", note: "Pay runs from clocked hours — PAYE/NI estimates, payslips, CSV export." },
       { name: "Fleet compliance", note: "MOT, tax, insurance and fuel — expiries flagged before they lapse." },
       { name: "Assets", note: "Register, inspections, service/calibration schedules and QR labels." },
       { name: "Stock & warehouses", note: "Stock items, locations and balances across the business." },
@@ -117,9 +115,8 @@ export const PILLARS: Pillar[] = [
     capabilities: [
       { name: "Automatic reminders", note: "Overdue invoices, expiring certs and due inspections chased on their own." },
       { name: "Clash & risk signals", note: "Double-booked staff and cold quotes surfaced before they bite." },
-      { name: "Company health", note: "A plain-English weekly view of where the business stands." },
+      { name: "Company health", note: "Where the business stands, on one screen." },
       { name: "Reporting", note: "Profit, cashflow, utilisation and pipeline — on screen and as PDF/CSV." },
-      { name: "Lead scoring", note: "Enquiries ranked so you spend time on the work worth winning." },
       { name: "Built-in workflows", note: "Event-driven rules that move work along without manual chasing." },
     ],
   },

@@ -4,7 +4,7 @@ import { CoordTag } from "@/components/marketing/setting-out";
 const FAQS = [
   {
     q: "How long does setup take?",
-    a: "Most companies are live in 2–3 days. We import your customers, invoices and finances from a CSV or Excel export, show you a preview before we commit, and can roll back in one click.",
+    a: "Setup usually takes 2–3 days. We import your customers, invoices and finances from a CSV or Excel export, show you a preview before we commit, and can roll back in one click.",
   },
   {
     q: "We already use Xero — do we have to ditch it?",

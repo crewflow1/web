@@ -70,9 +70,9 @@ function FooterCol({
 }) {
   return (
     <div>
-      <h2 className="text-xs font-semibold uppercase tracking-wider text-ink-dim">
+      <p className="text-xs font-semibold uppercase tracking-wider text-ink-dim">
         {title}
-      </h2>
+      </p>
       <ul className="mt-3 space-y-2.5">
         {links.map((l) => (
           <li key={l.href}>

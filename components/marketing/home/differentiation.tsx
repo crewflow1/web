@@ -20,9 +20,9 @@ const COLUMNS = [
     items: [
       "Variations captured against the job",
       "Extensions of time",
-      "Staged valuations / applications for payment",
       "Retention register & release tracking",
       "Job costing — real margin, live",
+      "Aged debtors & creditors",
     ],
   },
   {
