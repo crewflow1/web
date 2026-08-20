@@ -181,3 +181,30 @@ describe("GDPR census registration", () => {
     });
   }
 });
+
+describe("money-integrity: concurrent-certify lock + variation draft-invoice supersede (review #819)", () => {
+  const sql = read(MIG);
+
+  it("S0 — certify serializes per job with a txn advisory lock taken BEFORE the sibling cumulation sum", () => {
+    // Without a per-job lock, two concurrent certifications read the same
+    // (unlocked) sibling sum and both certify the full amount → over-certify a
+    // job (double-bill). The lock must precede the sum that feeds net_certified.
+    expect(sql).toContain("pg_advisory_xact_lock(hashtextextended(v_val.job_id::text, 0))");
+    const lockIdx = sql.indexOf("pg_advisory_xact_lock");
+    const sumIdx = sql.indexOf("coalesce(sum(net_certified_this)");
+    expect(lockIdx).toBeGreaterThan(-1);
+    expect(sumIdx).toBeGreaterThan(lockIdx);
+  });
+
+  it("S1 — linking a variation supersedes (DELETEs) its never-issued DRAFT accept-invoice", () => {
+    // Accepting a variation auto-creates a draft accept-invoice; once the
+    // variation is billed via a valuation that draft must never be sendable.
+    expect(sql).toMatch(/status = 'draft'[\s\S]*?delete from public\.invoices/);
+    expect(sql).toContain("invoice.superseded_by_valuation");
+  });
+
+  it("S1 — generation refuses an issued variation invoice AND re-supersedes any lingering draft", () => {
+    expect(sql).toContain("a linked variation now carries an issued invoice");
+    expect(sql).toContain("generate-time supersede");
+  });
+});

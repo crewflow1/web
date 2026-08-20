@@ -336,6 +336,7 @@ declare
   v_q_status    text;
   v_q_varnum    integer;
   v_q_subtotal  numeric;
+  v_draft_inv   record;
 begin
   -- Parent valuation must exist, be same-org, and still be a DRAFT (variations
   -- are part of the assessment, fixed once submitted for certification).
@@ -374,9 +375,12 @@ begin
       new.variation_quote_id, v_q_status using errcode = 'check_violation';
   end if;
 
-  -- No double bill: refuse a variation that already carries an ISSUED (non-draft)
-  -- invoice of its own. A draft accept-invoice is harmless (excluded from every
-  -- money authority) and is superseded by the valuation.
+  -- No double bill — two cases, because accepting a variation AUTO-CREATES a
+  -- DRAFT accept-invoice (quote_id = variation, status 'draft'; see
+  -- acceptQuoteAsOwner / the portal accept path):
+  --
+  --   • An ISSUED (non-draft) invoice is already money in the ledger. Refuse the
+  --     link outright — the operator must resolve the existing bill first.
   if exists (
     select 1 from public.invoices i
     where i.quote_id = new.variation_quote_id
@@ -386,6 +390,35 @@ begin
     raise exception 'variation % already has an issued invoice — cannot bill it again via a valuation',
       new.variation_quote_id using errcode = 'check_violation';
   end if;
+
+  --   • A DRAFT accept-invoice carries no money in any authority (draft is
+  --     "never issued" — excluded from receivables, revenue and retention; see
+  --     lib/invoices/schema.ts) but it COULD later be SENT and thereby bill the
+  --     variation a SECOND time, on top of the valuation. Linking the variation
+  --     to a valuation SUPERSEDES it: the variation is now billed via the
+  --     valuation invoice, so its provisional accept-invoice must never be
+  --     issued. public.invoices has no `void`/`cancelled` status (the enum is
+  --     draft|sent|awaiting_payment|partially_paid|paid|overdue), so the supersede
+  --     is a DELETE of the never-issued draft — which also frees the
+  --     invoices(quote_id) unique slot. Audited per row. Same transaction as the
+  --     link insert: if the insert later fails, the supersede rolls back with it.
+  for v_draft_inv in
+    select id, number from public.invoices
+    where quote_id = new.variation_quote_id
+      and org_id = new.org_id
+      and status = 'draft'
+  loop
+    delete from public.invoices where id = v_draft_inv.id and org_id = new.org_id;
+    perform public._record_activity(
+      new.org_id, 'invoice.superseded_by_valuation', 'invoices', v_draft_inv.id,
+      jsonb_build_object(
+        'variation_quote_id', new.variation_quote_id,
+        'valuation_id', new.valuation_id,
+        'invoice_number', v_draft_inv.number,
+        'reason', 'variation billed via interim valuation'
+      )
+    );
+  end loop;
 
   -- Pin the snapshot amount to the variation's ex-VAT subtotal (ignore any client
   -- value), so the certificate cannot be seeded with a wrong figure.
@@ -425,6 +458,22 @@ begin
   if v_val.status <> 'submitted' then
     raise exception 'only a submitted valuation can be certified (this one is %)', v_val.status;
   end if;
+
+  -- ── SERIALIZE CERTIFICATION PER JOB (concurrent double-count fence) ──────────
+  -- The `for update` above locks only THIS row. The cumulation base below is a
+  -- sum over the job's OTHER certified/invoiced valuations, read UNLOCKED. Under
+  -- READ COMMITTED, two concurrent certifications of SIBLING valuations of the
+  -- same job would both read previous_certified_gross before either commits — so
+  -- both see the stale base (e.g. 0), both certify the full increment, and Σ
+  -- net_certified_this exceeds the true cumulative works: a double invoice.
+  --
+  -- A transaction-scoped advisory lock keyed on the JOB serializes them: the
+  -- second certification blocks here until the first COMMITS, then reads the
+  -- first's committed net_certified_this into the base (or the non-negative guard
+  -- below rejects the now-over-certified increment). Per-job (not global) so
+  -- certifications on different jobs never contend. Released automatically at
+  -- transaction end.
+  perform pg_advisory_xact_lock(hashtextextended(v_val.job_id::text, 0));
 
   -- Σ linked variation NET values (org-pinned). Re-validate each is still an
   -- accepted variation with no issued invoice — the same fence as the link guard,
@@ -523,6 +572,7 @@ declare
   v_due      date;
   v_invoice  uuid;
   v_desc     text;
+  v_draft_inv record;
 begin
   if auth.uid() is null then raise exception 'authentication required'; end if;
 
@@ -552,6 +602,29 @@ begin
   ) then
     raise exception 'a linked variation now carries an issued invoice — cannot generate a valuation invoice';
   end if;
+
+  -- Defense-in-depth supersede: delete any variation DRAFT accept-invoice that
+  -- reappeared after linking (e.g. the variation was re-accepted between link and
+  -- now). The link-time delete is the primary fence; this closes the
+  -- re-accept-between-link-and-generate window so a variation billed via this
+  -- valuation can never also be billed by a lingering draft accept-invoice.
+  for v_draft_inv in
+    select i.id, i.number
+    from public.job_valuation_variations jvv
+    join public.invoices i
+      on i.quote_id = jvv.variation_quote_id and i.org_id = jvv.org_id and i.status = 'draft'
+    where jvv.valuation_id = p_valuation_id and jvv.org_id = v_val.org_id
+  loop
+    delete from public.invoices where id = v_draft_inv.id and org_id = v_val.org_id;
+    perform public._record_activity(
+      v_val.org_id, 'invoice.superseded_by_valuation', 'invoices', v_draft_inv.id,
+      jsonb_build_object(
+        'valuation_id', p_valuation_id,
+        'invoice_number', v_draft_inv.number,
+        'reason', 'variation billed via interim valuation (generate-time supersede)'
+      )
+    );
+  end loop;
 
   select customer_id into v_customer from public.jobs
   where id = v_val.job_id and org_id = v_val.org_id;
