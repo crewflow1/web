@@ -1310,6 +1310,13 @@ const COVERAGE_REVIEWED: Record<string, string> = {
     "PER-ORG/RECENT-N: an author-capped .eq('org_id').order.limit(25) recent-deliveries display, joined to endpoints by id; not summed.",
   webhook_endpoints:
     "PER-ORG/SINGLE: an org's webhook endpoints (.eq('org_id')) — config-scale (a handful), list + urlById join; the resume read is .eq('id').maybeSingle().",
+  // ---- Marketplace / partner platform (Phase 14) ----
+  marketplace_partners:
+    "PER-ORG config: the developer console (app/(app)/settings/marketplace/page.tsx) reads the org's own partner identity .eq('org_id') — typically ONE row per org; never summed or scanned cross-tenant.",
+  marketplace_listings:
+    "CURATED CATALOGUE + PER-PARENT: the discovery read (app/(app)/marketplace/page.tsx) is the approved-app catalogue .eq('status','approved') — a small curated global set displayed for browse, not tenant data, not an aggregate/count/estate scan; the developer-console read (settings/marketplace/page.tsx) is .eq('partner_id') over ONE org's own listings (a handful). Neither is completeness-sensitive.",
+  marketplace_installs:
+    "PER-ORG config: the discovery read (app/(app)/marketplace/page.tsx) is the org's live installs .eq('org_id').eq('status','active') — config-scale (a firm installs a handful of apps), rendered as an installed-badge map; never summed or scanned cross-tenant.",
 };
 
 /** Tables with at least one SET read in ONE file's (raw) source — the per-source
