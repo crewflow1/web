@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import "./_marketing/tokens.css";
 import { CookieConsent } from "@/app/_components/cookie-consent";
 
 // Boot-time env validation — throws if anything required is missing.
