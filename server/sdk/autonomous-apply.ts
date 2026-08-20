@@ -1,5 +1,14 @@
-import type { ProposedAction } from "./gate";
-import type { ToolImplementation } from "./executor";
+import type { GateVerdict, ProposedAction } from "./gate";
+import {
+  executeVerified,
+  featureHqAutonomousApplyEnabled,
+  planExecution,
+  type ApplyAuditStep,
+  type ApplyStage,
+  type BoundToolImplementation,
+  type ToolImplementation,
+} from "./executor";
+import { isReversibleTool, REFERENCE_TOOL_REGISTRY, type ToolRegistry } from "./tools";
 
 /**
  * CrewFlow HQ — the autonomous-apply authority (P2 HQ AI Operating System; the
@@ -44,11 +53,14 @@ import type { ToolImplementation } from "./executor";
  * promise structural: the runner composes the executor over the authority's implementation;
  * the authority owns the effect.
  *
- * Pure + I/O-free (deliberately NO `server-only`): the only imports are the sibling pure
- * contracts {@link import("./gate")} and {@link import("./executor")}, TYPES only — so at
- * runtime this module imports nothing. The real, bound authority (if one is ever built) and
- * the durable application store live in `server/services`, exactly as the apply-on-approval
- * authority does.
+ * Pure + I/O-free (deliberately NO `server-only`): the only imports are the sibling PURE
+ * contracts {@link import("./gate")}, {@link import("./executor")} and {@link import("./tools")}
+ * — types plus their pure, I/O-free functions ({@link import("./executor").executeVerified},
+ * {@link import("./executor").planExecution}, {@link import("./executor").featureHqAutonomousApplyEnabled},
+ * {@link import("./tools").isReversibleTool}). Every effect the bound authority performs — the
+ * SECURITY DEFINER boundary and the durable audit sink — is INJECTED by the caller, so this module
+ * still reaches for no server module, no admin client, and no facet. The durable audit sink binding
+ * lives in `server/services`, exactly as the apply-on-approval authority's durable store does.
  */
 
 // ---------------------------------------------------------------------
@@ -103,4 +115,198 @@ export interface AutonomousApplyAuthority {
  */
 export function createUnboundAutonomousApplyAuthority(): AutonomousApplyAuthority {
   return Object.freeze({ resolve: () => null });
+}
+
+// =====================================================================
+// The immutable apply audit — every attempt, whatever its fate
+// =====================================================================
+
+/**
+ * One immutable audit entry for a single apply attempt — recorded regardless of the attempt's fate
+ * (approved · executed · verified · rolled_back · refused · failed). This is the permanent record the
+ * capability owes: with real execution locked, NOTHING is ever recorded in production; behind the
+ * flag it is the ground truth of what the machinery did. The `steps` carry the ordered stage trail
+ * from {@link import("./executor").executeVerified}; `stage` is the attempt's TERMINAL stage.
+ */
+export interface ApplyAuditEntry {
+  /** Which apply path produced the attempt — the inline autonomous branch or the approval sweep. */
+  readonly path: "autonomous" | "approval";
+  /** The registered tool the attempt applied (or would have). */
+  readonly toolLabel: string;
+  /** The action's stable identity within the run (`subjectType:subjectId:type` / the approval action). */
+  readonly actionId: string;
+  /** The run's spine trace id — threads the attempt into its originating run. */
+  readonly correlationId: string;
+  /** The attempt's terminal stage — the single word that says how it ended. */
+  readonly stage: ApplyStage;
+  /** The ordered stage trail of the attempt (empty for a pre-boundary refusal). */
+  readonly steps: readonly ApplyAuditStep[];
+  /** A human-readable summary of the terminal stage. */
+  readonly detail: string;
+}
+
+/**
+ * The apply audit's persistence — an INJECTED seam, exactly like the apply-once
+ * {@link import("./application").ApplicationStore}. The production binding is a durable append-only
+ * table (migration 20261199000000, bound in server/services/hq-apply-audit.ts); the pure reference
+ * ({@link createInMemoryApplyAuditSink}) lets the machinery be proven end-to-end without a DB. It is
+ * the one place an audit write happens, and it belongs to the caller — this module only CALLS it.
+ */
+export interface ApplyAuditSink {
+  record(entry: ApplyAuditEntry): Promise<void>;
+}
+
+/**
+ * An in-memory {@link ApplyAuditSink} — the reference implementation (no DB, no I/O), the sibling of
+ * {@link import("./application").createInMemoryApplicationStore}. The array is exposed so a test can
+ * assert the exact stage trail every attempt recorded; production uses the durable table instead.
+ */
+export function createInMemoryApplyAuditSink(): ApplyAuditSink & {
+  readonly entries: ApplyAuditEntry[];
+} {
+  const entries: ApplyAuditEntry[] = [];
+  return {
+    entries,
+    async record(entry: ApplyAuditEntry): Promise<void> {
+      entries.push(entry);
+    },
+  };
+}
+
+/** Derive the terminal stage of an attempt from the last step of its trail (defaults to `refused`). */
+export function terminalStage(steps: readonly ApplyAuditStep[]): ApplyStage {
+  return steps.length > 0 ? steps[steps.length - 1]!.stage : "refused";
+}
+
+/**
+ * A no-op {@link ApplyAuditSink}. The default when no sink is injected: recording is best-effort at
+ * the call sites, so a missing sink simply records nothing (it never fabricates an effect). Frozen.
+ */
+export function createNullApplyAuditSink(): ApplyAuditSink {
+  return Object.freeze({ async record(): Promise<void> {} });
+}
+
+// =====================================================================
+// The bound tool registry — per-tool deterministic implementations
+// =====================================================================
+
+/**
+ * A per-tool catalogue of {@link BoundToolImplementation}s, keyed by tool label — the concrete,
+ * sanctioned boundaries the authority resolves an APPROVED, DETERMINISTIC action to. It is INJECTED
+ * by the runtime/test; the production default is EMPTY (see {@link GatedAutonomousApplyDeps}), so the
+ * authority is dark by an empty map even before the flag is consulted. A live binding populates it
+ * with implementations whose `apply` routes through each tool's SECURITY DEFINER entry point.
+ */
+export type BoundToolRegistry = ReadonlyMap<string, BoundToolImplementation>;
+
+/** The dependencies of {@link createGatedAutonomousApplyAuthority} — all injected, all with dark defaults. */
+export interface GatedAutonomousApplyDeps {
+  /** The build-flag env (defaults to `process.env`). Off (the default) ⇒ resolve returns null. */
+  readonly env?: Record<string, string | undefined>;
+  /** The per-tool bound implementations (defaults to EMPTY ⇒ every action unmapped ⇒ null). */
+  readonly bound?: BoundToolRegistry;
+  /** The tool registry used to plan/validate + classify reversibility (defaults to the reference). */
+  readonly registry?: ToolRegistry;
+  /** The immutable audit sink (defaults to no-op). Behind the flag it records every attempt. */
+  readonly audit?: ApplyAuditSink;
+  /** The run's correlation id, threaded into every audit entry. */
+  readonly correlationId?: string;
+}
+
+/** The cleared verdict used to re-assert an approved/autonomous action at the execution boundary. */
+const CLEARED_VERDICT: GateVerdict = { decision: "autonomous", reasons: [] };
+
+/**
+ * THE PRODUCTION AUTONOMOUS-APPLY AUTHORITY — complete engineering, LOCKED by default.
+ *
+ * Unlike {@link createUnboundAutonomousApplyAuthority} (which resolves EVERYTHING to null and is the
+ * safe production default the runner still wires), this authority is the fully-built resolver a CEO
+ * activation would switch to. Its {@link AutonomousApplyAuthority.resolve} maps ONE cleared,
+ * deterministic action to a boundary closure that applies → verifies → rolls-back → audits — but only
+ * after passing a strict, layered gate, and it DECLINES (`null`) at the first failing layer:
+ *
+ *   1. THE LOCK. `FEATURE_HQ_AUTONOMOUS_APPLY !== "on"` ⇒ null, recording a `refused` audit entry.
+ *      This is the default in production TODAY, so today this authority resolves nothing. No env, no
+ *      caller, no descriptor can move past this layer while the flag is off.
+ *   2. MAPPED. No {@link BoundToolImplementation} is registered for `action.type` ⇒ null (unmapped).
+ *   3. PLANNABLE. {@link planExecution} refuses the action (unknown tool / arg-schema mismatch /
+ *      capability mismatch) ⇒ null — refuse-BEFORE-effect at the boundary.
+ *   4. DETERMINISTIC-ONLY. The resolved tool is irreversible ⇒ null. A generative/irreversible action
+ *      is never bound for autonomous apply — the governor is dark, and an irreversible effect has no
+ *      rollback. Only a reversible tool earns a boundary here.
+ *
+ * Only when all four pass does it return a {@link ToolImplementation} closure. That closure runs the
+ * COMPLETE apply lifecycle through {@link executeVerified} (execute → verify → rollback), records the
+ * immutable audit entry, and — on a non-applied outcome — THROWS, so the executor captures `failed`
+ * and the apply-once store never files an `applied` marker for a rolled-back/failed attempt.
+ */
+export function createGatedAutonomousApplyAuthority(
+  deps: GatedAutonomousApplyDeps = {},
+): AutonomousApplyAuthority {
+  const env = deps.env;
+  const bound = deps.bound ?? new Map<string, BoundToolImplementation>();
+  const registry = deps.registry ?? REFERENCE_TOOL_REGISTRY;
+  const audit = deps.audit ?? createNullApplyAuditSink();
+  const correlationId = deps.correlationId ?? "";
+
+  return Object.freeze({
+    resolve(action: ProposedAction): ToolImplementation | null {
+      const actionId = `${action.subjectType}:${action.subjectId}:${action.type}`;
+      const refuse = (detail: string): null => {
+        // Best-effort audit of the refusal — a pre-boundary decline is still an attempt worth
+        // recording. A failing sink can never turn a decline into an effect, so swallow its error.
+        void audit
+          .record({
+            path: "autonomous",
+            toolLabel: action.type,
+            actionId,
+            correlationId,
+            stage: "refused",
+            steps: [],
+            detail,
+          })
+          .catch(() => {});
+        return null;
+      };
+
+      // 1. THE LOCK — production execution stays off unless FEATURE_HQ_AUTONOMOUS_APPLY === "on".
+      if (!featureHqAutonomousApplyEnabled(env)) {
+        return refuse("locked: FEATURE_HQ_AUTONOMOUS_APPLY is off (deny-by-default)");
+      }
+      // 2. MAPPED — a bound implementation must exist for the action's tool.
+      const impl = bound.get(action.type);
+      if (!impl) return refuse(`unmapped: no bound implementation for "${action.type}"`);
+      // 3. PLANNABLE — re-assert the tool + typed args at the boundary (refuse-before-effect).
+      const planned = planExecution(registry, action, CLEARED_VERDICT);
+      if (!planned.ok) return refuse(`unplannable: ${planned.refusal.reason}`);
+      // 4. DETERMINISTIC-ONLY — only a reversible tool may be applied autonomously.
+      if (!isReversibleTool(planned.plan.tool)) {
+        return refuse(`non-deterministic: "${action.type}" is irreversible`);
+      }
+
+      return async (args) => {
+        const plan = Object.freeze({ tool: planned.plan.tool, action, args }) as typeof planned.plan;
+        const outcome = await executeVerified(plan, impl);
+        await audit
+          .record({
+            path: "autonomous",
+            toolLabel: plan.tool.label,
+            actionId,
+            correlationId,
+            stage: terminalStage(outcome.steps),
+            steps: outcome.steps,
+            detail:
+              outcome.status === "applied"
+                ? "applied and verified"
+                : `not applied: ${outcome.error}${outcome.rolledBack ? " (rolled back)" : ""}`,
+          })
+          .catch(() => {});
+        if (outcome.status === "failed") {
+          // Surface as a throw so the executor captures `failed` and no `applied` marker is filed.
+          throw new Error(outcome.error);
+        }
+        return outcome.result;
+      };
+    },
+  });
 }

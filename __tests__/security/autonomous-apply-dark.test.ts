@@ -1,6 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+
+// hq-apply-drain is server-only; its module graph reaches createAdminClient (never CALLED at import).
+vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({}) }));
 
 /**
  * CrewFlow HQ — autonomous-apply darkness, security source-contracts (P2 HQ AI Operating System).
@@ -65,5 +68,66 @@ describe("autonomous apply — the deny-by-default posture floor is intact (the 
   });
   it("an autonomous verdict requires an EMPTY reasons list", () => {
     expect(GATE).toMatch(/decision:\s*reasons\.length === 0 \? "autonomous" : "needs_approval"/);
+  });
+});
+
+// =====================================================================
+// The GATED production authorities — complete engineering, LOCKED by the
+// FEATURE_HQ_AUTONOMOUS_APPLY build flag. The completed apply capability is
+// shipped, but production execution stays off: with the flag off (the default
+// and prod today) EVERY descriptor resolves to null — the deny-by-default
+// posture the whole capability rests on, proven behaviourally here.
+// =====================================================================
+
+describe("autonomous apply — the gated production authorities are LOCKED (deny-by-default) while the flag is off", () => {
+  it("the build flag defaults OFF (true only for the exact literal 'on')", async () => {
+    const { featureHqAutonomousApplyEnabled } = await import("@/server/sdk/executor");
+    expect(featureHqAutonomousApplyEnabled({})).toBe(false);
+    expect(featureHqAutonomousApplyEnabled({ FEATURE_HQ_AUTONOMOUS_APPLY: "true" })).toBe(false);
+    expect(featureHqAutonomousApplyEnabled({ FEATURE_HQ_AUTONOMOUS_APPLY: "ON" })).toBe(false);
+    expect(featureHqAutonomousApplyEnabled({ FEATURE_HQ_AUTONOMOUS_APPLY: "on" })).toBe(true);
+  });
+
+  it("the autonomous authority resolves EVERY action to null while the flag is off — even with a bound tool", async () => {
+    const { createGatedAutonomousApplyAuthority } = await import("@/server/sdk/autonomous-apply");
+    const bound = new Map([
+      ["memory.write", { label: "memory.write", apply: async () => ({ ok: true }) }],
+    ]);
+    const authority = createGatedAutonomousApplyAuthority({ env: {}, bound });
+    expect(
+      authority.resolve({
+        type: "memory.write",
+        subjectType: "lead",
+        subjectId: "lead_1",
+        reversible: true,
+        typedTarget: true,
+        payload: { verdict: "qualified" },
+      }),
+      "a bound, plannable, reversible action must STILL resolve to null while locked",
+    ).toBeNull();
+  });
+
+  it("the apply-on-approval authority resolves EVERY item to null while the flag is off — even with a bound tool", async () => {
+    const { createGatedApplyAuthority } = await import("@/server/services/hq-apply-drain");
+    const bound = new Map([
+      ["memory.write", { label: "memory.write", apply: async () => ({ ok: true }) }],
+    ]);
+    const authority = createGatedApplyAuthority({ env: {}, bound });
+    expect(
+      authority.resolve({
+        kind: "approval",
+        id: "a",
+        identity: {
+          source: "approval",
+          correlationId: "corr-a",
+          approvalId: "a",
+          toolLabel: "memory.write",
+          actionId: "lead:a:memory.write",
+        },
+        approver: null,
+        descriptor: { type: "memory.write", subjectType: "lead", subjectId: "a", payload: { verdict: "ok" } },
+      }),
+      "a bound, plannable, reversible item must STILL resolve to null while locked",
+    ).toBeNull();
   });
 });

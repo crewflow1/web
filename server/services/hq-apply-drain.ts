@@ -1,11 +1,26 @@
 import "server-only";
-import type { ExecutionOutcome } from "@/server/sdk/executor";
+import {
+  executeVerified,
+  featureHqAutonomousApplyEnabled,
+  planExecution,
+  verifiedToOutcome,
+  type BoundToolImplementation,
+  type ExecutionOutcome,
+} from "@/server/sdk/executor";
 import {
   applyOnce,
   type ApplicationStore,
   type ApproverAttribution,
   type ExecutionIdentity,
 } from "@/server/sdk/application";
+import {
+  createNullApplyAuditSink,
+  terminalStage,
+  type ApplyAuditSink,
+  type BoundToolRegistry,
+} from "@/server/sdk/autonomous-apply";
+import type { GateVerdict, ProposedAction } from "@/server/sdk/gate";
+import { isReversibleTool, REFERENCE_TOOL_REGISTRY, type ToolRegistry } from "@/server/sdk/tools";
 import { createDurableApplicationStore } from "@/server/services/hq-application";
 import { listApprovedApprovals } from "@/server/services/hq-approvals";
 import { listDecisions } from "@/server/services/hq-decisions";
@@ -150,6 +165,119 @@ export interface ApplyAuthority {
  */
 export function createUnboundApplyAuthority(): ApplyAuthority {
   return Object.freeze({ resolve: () => null });
+}
+
+// ---------------------------------------------------------------------
+// The gated production authority — complete engineering, LOCKED by default
+// ---------------------------------------------------------------------
+
+/** The dependencies of {@link createGatedApplyAuthority} — all injected, all with dark defaults. */
+export interface GatedApplyDeps {
+  /** The build-flag env (defaults to `process.env`). Off (the default) ⇒ resolve returns null. */
+  readonly env?: Record<string, string | undefined>;
+  /** The per-tool bound implementations (defaults to EMPTY ⇒ every item unmapped ⇒ null). */
+  readonly bound?: BoundToolRegistry;
+  /** The tool registry used to plan/validate + classify reversibility (defaults to the reference). */
+  readonly registry?: ToolRegistry;
+  /** The immutable audit sink (defaults to no-op). Behind the flag it records every attempt. */
+  readonly audit?: ApplyAuditSink;
+}
+
+/** The cleared verdict used to re-assert an APPROVED item at the execution boundary. */
+const CLEARED_VERDICT: GateVerdict = { decision: "autonomous", reasons: [] };
+
+/**
+ * THE PRODUCTION APPLY-ON-APPROVAL AUTHORITY — complete engineering, LOCKED by default.
+ *
+ * The counterpart of {@link createUnboundApplyAuthority} (the safe production default the cron route
+ * still wires) that a CEO activation would switch to. It maps ONE approved item — already through the
+ * full approval ladder (the sweep reads `approved`-only) — to the boundary-crossing closure the sweep
+ * applies exactly once, but only after a strict, layered gate, DECLINING (`null`) at the first
+ * failing layer so an unmapped/ill-formed/irreversible item is simply skipped (nothing applied,
+ * nothing recorded):
+ *
+ *   1. THE LOCK. `FEATURE_HQ_AUTONOMOUS_APPLY !== "on"` ⇒ null. The production default TODAY, so this
+ *      authority resolves nothing today — the sweep skips every item. On TOP of the sweep's own
+ *      default-off kill-switch and the deny-by-default posture floor.
+ *   2. MAPPED. No {@link BoundToolImplementation} for the descriptor's `type` ⇒ null (e.g. a strategic
+ *      `hq.decision`, which has no tool to apply, always declines here).
+ *   3. PLANNABLE. {@link planExecution} refuses (unknown tool / payload fails the tool's argSchema) ⇒
+ *      null — refuse-BEFORE-effect, re-asserting the typed target at the boundary.
+ *   4. DETERMINISTIC-ONLY. The resolved tool is irreversible ⇒ null — an irreversible effect has no
+ *      rollback, so it stays on the human path; only a reversible tool earns a boundary.
+ *
+ * Only when all four pass does it return the closure the sweep hands to `applyOnce`. That closure runs
+ * the COMPLETE lifecycle through {@link executeVerified} (execute → verify → rollback), records the
+ * immutable audit entry, and returns the {@link ExecutionOutcome} `applyOnce` records under its
+ * idempotency key — `applied` only on a verified success, `failed` (never a stuck marker) on a
+ * boundary throw, a failed verification, or a rolled-back apply.
+ */
+export function createGatedApplyAuthority(deps: GatedApplyDeps = {}): ApplyAuthority {
+  const env = deps.env;
+  const bound = deps.bound ?? new Map<string, BoundToolImplementation>();
+  const registry = deps.registry ?? REFERENCE_TOOL_REGISTRY;
+  const audit = deps.audit ?? createNullApplyAuditSink();
+
+  return Object.freeze({
+    resolve(item: ApprovedItem): (() => Promise<ExecutionOutcome>) | null {
+      const refuse = (detail: string): null => {
+        void audit
+          .record({
+            path: "approval",
+            toolLabel: item.descriptor.type,
+            actionId: item.identity.actionId,
+            correlationId: item.identity.correlationId,
+            stage: "refused",
+            steps: [],
+            detail,
+          })
+          .catch(() => {});
+        return null;
+      };
+
+      // 1. THE LOCK — production execution stays off unless FEATURE_HQ_AUTONOMOUS_APPLY === "on".
+      if (!featureHqAutonomousApplyEnabled(env)) {
+        return refuse("locked: FEATURE_HQ_AUTONOMOUS_APPLY is off (deny-by-default)");
+      }
+      // 2. MAPPED — a bound implementation must exist for the item's tool.
+      const impl = bound.get(item.descriptor.type);
+      if (!impl) return refuse(`unmapped: no bound implementation for "${item.descriptor.type}"`);
+      // 3. PLANNABLE — re-assert the tool + typed payload at the boundary (refuse-before-effect).
+      const action: ProposedAction = {
+        type: item.descriptor.type,
+        subjectType: item.descriptor.subjectType ?? "hq",
+        subjectId: item.descriptor.subjectId ?? item.id,
+        reversible: true,
+        typedTarget: true,
+        payload: item.descriptor.payload,
+      };
+      const planned = planExecution(registry, action, CLEARED_VERDICT);
+      if (!planned.ok) return refuse(`unplannable: ${planned.refusal.reason}`);
+      // 4. DETERMINISTIC-ONLY — only a reversible tool may be applied.
+      if (!isReversibleTool(planned.plan.tool)) {
+        return refuse(`non-deterministic: "${item.descriptor.type}" is irreversible`);
+      }
+
+      return async (): Promise<ExecutionOutcome> => {
+        const outcome = await executeVerified(planned.plan, impl);
+        await audit
+          .record({
+            path: "approval",
+            toolLabel: planned.plan.tool.label,
+            actionId: item.identity.actionId,
+            correlationId: item.identity.correlationId,
+            stage: terminalStage(outcome.steps),
+            steps: outcome.steps,
+            detail:
+              outcome.status === "applied"
+                ? "applied and verified"
+                : `not applied: ${outcome.error}${outcome.rolledBack ? " (rolled back)" : ""}`,
+          })
+          .catch(() => {});
+        return verifiedToOutcome(outcome);
+      };
+    },
+  });
 }
 
 // ---------------------------------------------------------------------
