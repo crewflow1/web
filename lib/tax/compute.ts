@@ -66,7 +66,7 @@ type InvoiceRow = {
   created_at: string;
 };
 
-type FinanceRow = {
+export type FinanceRow = {
   vat_total: number | string | null;
   amount: number | string | null;
   created_at: string;
