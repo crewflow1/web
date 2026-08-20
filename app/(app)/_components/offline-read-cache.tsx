@@ -6,6 +6,8 @@ import {
   purgeForeignReads,
   putSnapshot,
 } from "@/lib/offline/read-cache";
+import { countOnDevice } from "@/lib/offline/write-queue";
+import { countPhotosOnDevice } from "@/lib/offline/photo-queue";
 import { fetchOfflineReadSnapshots } from "@/app/(app)/offline-read-actions";
 
 /**
@@ -44,6 +46,24 @@ export function OfflineReadCache({
   const hydrate = useCallback(async () => {
     if (busy.current || !isReadCacheSupported()) return;
     if (typeof navigator !== "undefined" && !navigator.onLine) return;
+    // DEFER to unsent user work. The write + photo outboxes must own the network on
+    // reconnect: their items exist NOWHERE ELSE, so a queued write's flush must not
+    // be delayed by a re-downloadable read cache warming itself. Because Next.js
+    // serialises server actions single-flight, invoking the read-snapshot action
+    // here while a queued write is waiting would take the slot ahead of the outbox's
+    // sync and hold its item pending longer than it should. So while ANY unsent
+    // write/capture is on the device, skip this cycle entirely (no server action at
+    // all) and let a later tick warm the cache once the outbox has drained. These
+    // are plain IndexedDB counts — no network, no server action, no contention.
+    try {
+      const [pendingWrites, pendingPhotos] = await Promise.all([
+        countOnDevice(),
+        countPhotosOnDevice(),
+      ]);
+      if (pendingWrites + pendingPhotos > 0) return;
+    } catch {
+      /* if we cannot tell, fall through — a stale count must not block caching */
+    }
     busy.current = true;
     try {
       const snapshots = await fetchOfflineReadSnapshots();
