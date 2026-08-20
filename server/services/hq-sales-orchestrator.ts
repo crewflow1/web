@@ -281,6 +281,18 @@ async function readCadence(
 export async function loadSalesOrchestratorBoard(): Promise<SalesOrchestratorBoardResult> {
   await requireHqPage(); // HQ-only; never mixes with tenant auth.
 
+  const board = await gatherSalesOrchestratorBoard();
+  const narrative = await loadSalesOrchestratorNarrative(board);
+
+  return { board, narrative, generatedAt: new Date().toISOString() };
+}
+
+/**
+ * Build the deterministic Sales-Orchestrator board WITHOUT the page auth gate — the
+ * shared derivation used by both `loadSalesOrchestratorBoard` (super-admin page) and the
+ * Sales executive runner (service-role cron). Reads only; no narrative, no auth.
+ */
+export async function gatherSalesOrchestratorBoard(): Promise<SalesOrchestratorBoard> {
   const [companies, drains] = await Promise.all([readPipeline(), readDrains()]);
   const cadence = await readCadence(companies);
 
@@ -299,10 +311,7 @@ export async function loadSalesOrchestratorBoard(): Promise<SalesOrchestratorBoa
     cadence,
   };
 
-  const board = computeSalesOrchestratorBoard(input, new Date());
-  const narrative = await loadSalesOrchestratorNarrative(board);
-
-  return { board, narrative, generatedAt: new Date().toISOString() };
+  return computeSalesOrchestratorBoard(input, new Date());
 }
 
 /**

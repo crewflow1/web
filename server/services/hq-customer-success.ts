@@ -143,14 +143,23 @@ async function readHealth(): Promise<CustomerSuccessInput["health"]> {
 export async function loadCustomerSuccessBoard(): Promise<CustomerSuccessBoardResult> {
   await requireHqPage(); // HQ-only; never mixes with tenant auth.
 
+  const board = await gatherCustomerSuccessBoard();
+  const narrative = await loadCustomerSuccessNarrative(board);
+
+  return { board, narrative, generatedAt: new Date().toISOString() };
+}
+
+/**
+ * Build the deterministic Customer-Success board WITHOUT the page auth gate — the
+ * shared derivation used by both `loadCustomerSuccessBoard` (super-admin page) and the
+ * Customer-Success executive runner (service-role cron). Reads only; no narrative, no auth.
+ */
+export async function gatherCustomerSuccessBoard(): Promise<CustomerSuccessBoard> {
   const [lifecycle, health] = await Promise.all([readLifecycle(), readHealth()]);
 
   const input: CustomerSuccessInput = { lifecycle, health };
 
-  const board = computeCustomerSuccessBoard(input, new Date());
-  const narrative = await loadCustomerSuccessNarrative(board);
-
-  return { board, narrative, generatedAt: new Date().toISOString() };
+  return computeCustomerSuccessBoard(input, new Date());
 }
 
 /**

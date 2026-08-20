@@ -162,6 +162,18 @@ async function readOutcomeCount(): Promise<QaOutcomeInput | null> {
 export async function loadQaBoard(): Promise<QaBoardResult> {
   await requireHqPage(); // HQ-only; never mixes with tenant auth.
 
+  const board = await gatherQaBoard();
+  const narrative = await loadQaNarrative(board);
+
+  return { board, narrative, generatedAt: new Date().toISOString() };
+}
+
+/**
+ * Build the deterministic QA board WITHOUT the page auth gate — the shared
+ * derivation used by both `loadQaBoard` (super-admin page) and the QA executive
+ * runner (service-role cron). Reads only; no narrative, no auth.
+ */
+export async function gatherQaBoard(): Promise<QaBoard> {
   const [shadow, reply, outcome, tasks] = await Promise.all([
     getExecutorShadowFeed().catch((e) => {
       console.error("[hq-qa] executor-shadow read failed", e);
@@ -186,10 +198,7 @@ export async function loadQaBoard(): Promise<QaBoardResult> {
     reliability: tasks == null ? null : { tasks },
   };
 
-  const board = computeQaBoard(input, new Date());
-  const narrative = await loadQaNarrative(board);
-
-  return { board, narrative, generatedAt: new Date().toISOString() };
+  return computeQaBoard(input, new Date());
 }
 
 /**

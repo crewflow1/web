@@ -53,6 +53,18 @@ export type ProductBoardResult = {
 export async function loadProductBoard(): Promise<ProductBoardResult> {
   await requireHqPage(); // HQ-only; never mixes with tenant auth.
 
+  const board = await gatherProductBoard();
+  const narrative = await loadProductNarrative(board);
+
+  return { board, narrative, generatedAt: new Date().toISOString() };
+}
+
+/**
+ * Build the deterministic Product board WITHOUT the page auth gate — the shared
+ * derivation used by both `loadProductBoard` (super-admin page) and the Product
+ * executive runner (service-role cron). Reads only; no narrative, no auth.
+ */
+export async function gatherProductBoard(): Promise<ProductBoard> {
   const [tickets, snapshot] = await Promise.all([
     listFeatureSignalRowsForHq().catch((e) => {
       console.error("[hq-product] feature-signal read threw", e);
@@ -98,10 +110,7 @@ export async function loadProductBoard(): Promise<ProductBoardResult> {
           })(),
   };
 
-  const board = computeProductBoard(input, new Date());
-  const narrative = await loadProductNarrative(board);
-
-  return { board, narrative, generatedAt: new Date().toISOString() };
+  return computeProductBoard(input, new Date());
 }
 
 /**
