@@ -620,6 +620,22 @@ const envSchema = z.object({
   // install/uninstall actions refuse: the surface does not exist yet.
   FEATURE_MARKETPLACE: z.enum(["true", "false"]).default("false"),
 
+  // -- Enterprise SSO (SAML 2.0 + OIDC) + SCIM 2.0 provisioning ----------
+  // SERVER-ONLY (deliberately NOT NEXT_PUBLIC): whether the enterprise SSO +
+  // SCIM surface is EXPOSED — the SAML ACS + SP-metadata routes, the OIDC
+  // start + callback routes, and the /scim/v2 provisioning endpoints.
+  // DEFAULTS OFF — the whole surface ships DARK. While off, every SSO route
+  // 404s and SCIM returns 401/403, and NOTHING auto-provisions. Going live is
+  // NOT just flipping this bit: a live tenant also needs its per-org config
+  // row enabled AND a real customer IdP's metadata (SAML entityID + SSO URL +
+  // x509 signing cert, or OIDC issuer + client credentials) or a minted SCIM
+  // bearer token — external inputs this repo never fabricates. The engineering
+  // — per-org config, SAML assertion signature+condition validation, OIDC
+  // id_token validation, SCIM User/Group lifecycle mapped to EXISTING
+  // memberships only (deny-unmatched, never auto-create) — is built and tested
+  // behind this flag. Server-only so the flag never leaks into a client bundle.
+  FEATURE_ENTERPRISE_SSO: z.enum(["true", "false"]).default("false"),
+
   // -- Capability authority source (Directive #015 / D-05) ---------------
   // RETIRED in LR5.3 (the Rollback Independence Rule, 25th §2 standard). The
   // CAPABILITY_AUTHORITY_SOURCE rollback lever is gone: the Capability Registry is
