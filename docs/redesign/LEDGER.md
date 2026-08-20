@@ -56,3 +56,14 @@ Authority: `~/.claude/skills/crewflow-brand-design/references/product-truth.md`.
 - CP2: unified dark tokens + Tailwind mapping; dev server :3200; typecheck clean; baseline renders (pipeline verified).
 - CP3 (commit a695cb3d): accessible global nav — desktop dropdowns + mobile drawer (browser-verified @375px) — canonical wordmark, `/product` allowlist, dead `/for/` dropped.
 - CP4: **AI-receptionist overclaim removed site-wide** — feature page deleted, 8 comparison rows, both industry pages, pricing, schema `featureList`; `operatingSystem`→`"Web"`; 301 `/features/ai-receptionist`→`/features/construction-crm`. Verified live: redirect 308, sitemap 0 entries, rendered pages 0 "receptionist", all pages 200, typecheck clean.
+- CP5: **new dark site shell + `/product` six-pillar section** — `app/(site)/` route group with dark layout (SiteNav + dark SiteFooter + skip link + single `<main>`, Clash+Satoshi applied group-wide, entity JSON-LD). Built `/product` overview + 6 pillar pages (win-work / run-jobs / site-safety / money / people-assets / automation) from `lib/marketing/pillars.ts` — **honest LIVE capabilities only** (product-truth checked). Verified: all 6 routes 200, unknown→404 (static params), one `<h1>` + one `<main>` per page, no overflow, no console errors, navy-950 ground, browser-screenshotted desktop. PENDING for this section: add `/product*` to `sitemap.ts`; per-pillar OG images; real product screenshots (R1).
+
+## Remaining programme (post-CP5)
+- Homepage rebuild on the (site) shell (problem → OS → six pillars → proof → connection → CTA); `aria-hidden` decorative mockups.
+- Migrate legacy light sub-pages (features/compare/industries/locations/blog/tools/pricing) onto the dark shell (restyle `sections.tsx`), or move into `(site)`.
+- New high-intent feature pages (H&S/RAMS, CIS, fleet, stock, retention, valuations, blueprints, site diaries) — LIVE only.
+- SEO: `/product*` + new pages into sitemap; per-page OG; fix `/offline` noindex + `liverpool` dangling link; verbose compare slugs.
+- CRO: rebuild demo modal on `components/ui/modal.tsx` (focus trap/scroll-lock); add a low-commitment secondary CTA.
+- Analytics: PostHog + funnel events (config-gated; flagged for CEO).
+- Real product proof: seed a demo org (R1 feasibility) → art-directed screenshots.
+- Hardening: full multi-breakpoint responsive + a11y + perf sweep; adversarial reviewer pass; branch-push preview.
