@@ -414,9 +414,9 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE org's members (.eq('org_id')) — the rota staff list + assign-form labels; bounded by the org's headcount",
   "app/customer-portal/_warranties.ts:133":
     "bounded: completion_certificates for the customer's OWN warranty job set (.eq('org_id').eq('status','issued').in('job_id', <de-duped set from the customer's visible warranties>)) — one issued cert per job, bounded by the customer's warranties, not a cross-tenant scan",
-  "server/auth/session.ts:114":
+  "server/auth/session.ts:122":
     "bounded: ONE user's memberships (.eq('user_id')) — org resolution / active-org fallback; a user belongs to a handful of orgs, never near 1000",
-  "server/auth/session.ts:196":
+  "server/auth/session.ts:220":
     "bounded: ONE user's memberships (.eq('user_id')) — the header org switcher (listOrgsForUser); a user belongs to a handful of orgs",
   "lib/email/send-leave.ts:60":
     "bounded: ONE org's owner/admin recipients (.eq('org_id').in('role', ['owner','admin'])) — a handful of privileged users per org, far below 1000",
