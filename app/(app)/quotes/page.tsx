@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
-import { requireOrgContext } from "@/server/auth/session";
+import { getRequestI18n } from "@/server/i18n/request";
 import { EmptyState } from "../_components/empty-state";
 import { HelpLink } from "../_components/help-link";
 import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
@@ -38,7 +38,7 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default async function QuotesPage({ searchParams }: { searchParams: SP }) {
-  const { ctx } = await requireOrgContext();
+  const { ctx, t } = await getRequestI18n();
   const sp = await searchParams;
   const page = Math.max(parseInt(sp.page ?? "1", 10) || 1, 1);
   const offset = (page - 1) * PAGE_SIZE;
@@ -94,7 +94,7 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
       <header className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-slate-900">Quotes</h1>
+            <h1 className="text-2xl font-bold text-slate-900">{t("quotes.title")}</h1>
             <HelpLink article="creating-a-quote" label="Help with quotes" />
           </div>
           <p className="mt-1 text-sm text-slate-600">
@@ -105,7 +105,7 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
           href="/quotes/new"
           className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
         >
-          + New quote
+          {t("quotes.action.new")}
         </Link>
       </header>
 
@@ -171,10 +171,10 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
         <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <EmptyState
             icon="📝"
-            title="No quotes yet"
-            body="Send your first priced proposal. Builder lets you add line items, terms, and a customer-facing link they can accept online."
-            primary={{ href: "/quotes/new", label: "Create first quote" }}
-            secondary={{ href: "/customers/new", label: "Add a customer first" }}
+            title={t("quotes.empty.title")}
+            body={t("quotes.empty.body")}
+            primary={{ href: "/quotes/new", label: t("quotes.empty.primary") }}
+            secondary={{ href: "/customers/new", label: t("quotes.empty.secondary") }}
           />
         </div>
       ) : (

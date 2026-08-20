@@ -8,8 +8,11 @@ import { defaultOrgI18n, type OrgI18n } from "@/lib/i18n/config";
 /**
  * i18n WIRING PROOF — the framework is now live in real UI.
  *
- * Two surfaces are wired through t(): the app-shell primary navigation (sidebar +
- * mobile bottom-nav) and the Settings page section headings. This suite pins the
+ * Multiple core surfaces are wired through t(): the app-shell primary navigation
+ * (sidebar + mobile bottom-nav), the Settings page section headings, the owner
+ * dashboard chrome (header, primary actions, section + card headings) and the
+ * high-traffic list pages (jobs · customers · invoices · leads · quotes — page
+ * title, primary "new" action, empty-state heading/body/CTAs). This suite pins the
  * three properties that make the wiring genuine end-to-end:
  *
  *   (a) en-GB is BYTE-IDENTICAL — every wired key resolves to the EXACT prior
@@ -95,7 +98,66 @@ const WIRED_SETTINGS: Record<string, string> = {
   "settings.members.title": "Members",
 };
 
-const WIRED = { ...WIRED_NAV, ...WIRED_SETTINGS };
+/** Dashboard (owner landing) — header, primary actions, section + card headings. */
+const WIRED_DASHBOARD: Record<string, string> = {
+  "dashboard.title": "Dashboard",
+  "dashboard.subtitle": "{orgName} — overview of your last week.",
+  "dashboard.action.add_lead": "+ Add lead",
+  "dashboard.action.add_job": "+ Add job",
+  "dashboard.action.add_staff": "+ Add staff",
+  "dashboard.section.profitability": "Job profitability",
+  "dashboard.card.jobs_by_status": "Jobs by status",
+  "dashboard.card.photos_missing": "Photos missing",
+  "dashboard.card.staff_workload": "Staff workload",
+  "dashboard.card.recent_jobs": "Recent jobs",
+  "dashboard.card.recent_invoices": "Recent invoices",
+  "dashboard.card.recent_leads": "Recent leads",
+};
+
+/** Core list pages — title, primary "new" action, empty-state heading/body/CTAs. */
+const WIRED_LISTS: Record<string, string> = {
+  "jobs.title": "Jobs",
+  "jobs.action.new": "+ New job",
+  "jobs.empty.title": "No jobs yet",
+  "jobs.empty.body":
+    "Schedule your first job. Pick a customer, set a date, assign a staff member. Field staff can attach photos as work progresses.",
+  "jobs.empty.primary": "Create first job",
+  "jobs.empty.secondary": "Add a customer first",
+  "customers.title": "Customers",
+  "customers.action.new": "+ New customer",
+  "customers.empty.title": "No customers yet",
+  "customers.empty.body":
+    "Capture the people you do work for. You can link jobs, quotes, and invoices to customers later.",
+  "customers.empty.primary": "Add first customer",
+  // invoices/quotes page titles reuse the existing invoices.title/quotes.title.
+  "invoices.title": "Invoices",
+  "invoices.action.new": "+ Generate from quote",
+  "invoices.empty.title": "No invoices yet",
+  "invoices.empty.body":
+    "Once a quote is accepted, generate a sequential HMRC-compliant invoice from it. Status transitions stamp sent/paid timestamps for the audit trail.",
+  "invoices.empty.primary": "Generate first invoice",
+  "leads.title": "Leads",
+  "leads.action.new": "+ New lead",
+  "leads.subtitle_overview": "Pipeline overview.",
+  "leads.empty.title": "No leads yet",
+  "leads.empty.body":
+    "Capture every enquiry — phone, web, referral. Move them through the pipeline as you contact, qualify, quote, and win.",
+  "leads.empty.primary": "Add first lead",
+  "quotes.title": "Quotes",
+  "quotes.action.new": "+ New quote",
+  "quotes.empty.title": "No quotes yet",
+  "quotes.empty.body":
+    "Send your first priced proposal. Builder lets you add line items, terms, and a customer-facing link they can accept online.",
+  "quotes.empty.primary": "Create first quote",
+  "quotes.empty.secondary": "Add a customer first",
+};
+
+const WIRED = {
+  ...WIRED_NAV,
+  ...WIRED_SETTINGS,
+  ...WIRED_DASHBOARD,
+  ...WIRED_LISTS,
+};
 
 describe("(a) en-GB byte-identical guard for the wired surface", () => {
   const t = createTranslator("en-GB").t;

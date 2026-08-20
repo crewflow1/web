@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
-import { requireOrgContext } from "@/server/auth/session";
+import { getRequestI18n } from "@/server/i18n/request";
 import { EmptyState } from "../_components/empty-state";
 import { HelpLink } from "../_components/help-link";
 import { resolveJobAddress, formatAddressOneLine } from "@/lib/address";
@@ -65,7 +65,7 @@ const JOB_SELECT = `
 const CUSTOMER_MATCH_LIMIT = 200;
 
 export default async function JobsPage({ searchParams }: { searchParams: SP }) {
-  const { ctx } = await requireOrgContext();
+  const { ctx, t } = await getRequestI18n();
   const sp = await searchParams;
   const customerFilter =
     sp.customer && UUID_RE.test(sp.customer) ? sp.customer : null;
@@ -186,7 +186,7 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
       <header className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-slate-900">Jobs</h1>
+            <h1 className="text-2xl font-bold text-slate-900">{t("jobs.title")}</h1>
             <HelpLink article="converting-a-quote-to-a-job" label="Help with jobs" />
           </div>
           <p className="mt-1 text-sm text-slate-600">
@@ -212,7 +212,7 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
             href="/jobs/new"
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
           >
-            + New job
+            {t("jobs.action.new")}
           </Link>
         </div>
       </header>
@@ -302,10 +302,10 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
         <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <EmptyState
             icon="🔧"
-            title="No jobs yet"
-            body="Schedule your first job. Pick a customer, set a date, assign a staff member. Field staff can attach photos as work progresses."
-            primary={{ href: "/jobs/new", label: "Create first job" }}
-            secondary={{ href: "/customers/new", label: "Add a customer first" }}
+            title={t("jobs.empty.title")}
+            body={t("jobs.empty.body")}
+            primary={{ href: "/jobs/new", label: t("jobs.empty.primary") }}
+            secondary={{ href: "/customers/new", label: t("jobs.empty.secondary") }}
           />
         </div>
       ) : rows.length === 0 ? (

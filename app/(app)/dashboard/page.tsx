@@ -2,7 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure } from "@/lib/supabase/read-failure";
-import { requireOrgContext } from "@/server/auth/session";
+import { getRequestI18n } from "@/server/i18n/request";
 import { computeReceivables } from "@/lib/invoices/receivables";
 import { computeRetentionDueRollup } from "@/lib/retentions/rollup";
 import { ActivityFeed } from "./_activity-feed";
@@ -128,7 +128,10 @@ const INVOICE_STATUS_STYLES: Record<string, string> = {
 };
 
 export default async function DashboardPage() {
-  const { user, ctx } = await requireOrgContext();
+  // Resolve the request ONCE: org context + the negotiated active locale (from
+  // organizations.locale, else en-GB). `t` renders the dashboard chrome —
+  // byte-identical for en-GB, per-key fallback for other locales.
+  const { user, ctx, t } = await getRequestI18n();
   // Wave 4 — staff role goes to /me; the business dashboard is owner/admin.
   if (ctx.membership.role === "staff") {
     const { redirect } = await import("next/navigation");
@@ -798,9 +801,9 @@ export default async function DashboardPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
+          <h1 className="text-2xl font-bold text-slate-900">{t("dashboard.title")}</h1>
           <p className="mt-1 text-sm text-slate-600">
-            {ctx.org.name} — overview of your last week.
+            {t("dashboard.subtitle", { orgName: ctx.org.name })}
           </p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
@@ -808,19 +811,19 @@ export default async function DashboardPage() {
             href="/leads/new"
             className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
           >
-            + Add lead
+            {t("dashboard.action.add_lead")}
           </Link>
           <Link
             href="/jobs/new"
             className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
           >
-            + Add job
+            {t("dashboard.action.add_job")}
           </Link>
           <Link
             href="/staff"
             className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
           >
-            + Add staff
+            {t("dashboard.action.add_staff")}
           </Link>
         </div>
       </header>
@@ -967,7 +970,7 @@ export default async function DashboardPage() {
       {/* Profitability ----------------------------------------------------- */}
       <section className="space-y-3">
         <h2 className="text-base font-semibold text-slate-900">
-          Job profitability
+          {t("dashboard.section.profitability")}
         </h2>
         {profitabilityRows.length === 0 ? (
           <p className="rounded-lg border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">
@@ -1243,7 +1246,7 @@ export default async function DashboardPage() {
 
       {/* Status + photos + staff */}
       <section className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-        <Card title="Jobs by status" href="/jobs">
+        <Card title={t("dashboard.card.jobs_by_status")} href="/jobs">
           <ul className="space-y-2">
             {JOB_STATUSES.map((s) => (
               <li key={s} className="flex items-center justify-between text-sm">
@@ -1260,7 +1263,7 @@ export default async function DashboardPage() {
           </ul>
         </Card>
 
-        <Card title="Photos missing" href="/jobs">
+        <Card title={t("dashboard.card.photos_missing")} href="/jobs">
           <p className="text-3xl font-bold text-slate-900">{photosMissing}</p>
           <p className="mt-2 text-xs text-slate-500">
             In-progress or completed jobs with zero photos. Field staff should
@@ -1268,7 +1271,7 @@ export default async function DashboardPage() {
           </p>
         </Card>
 
-        <Card title="Staff workload" href="/staff">
+        <Card title={t("dashboard.card.staff_workload")} href="/staff">
           {staffWorkload.length === 0 ? (
             <p className="text-sm text-slate-500">
               No team members yet. <Link href="/staff" className="text-slate-700 underline">Add staff</Link>
@@ -1296,7 +1299,7 @@ export default async function DashboardPage() {
 
       {/* Recent activity */}
       <section className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-        <Card title="Recent jobs" href="/jobs">
+        <Card title={t("dashboard.card.recent_jobs")} href="/jobs">
           {recentJobs.length === 0 ? (
             <p className="text-sm text-slate-500">No jobs yet.</p>
           ) : (
@@ -1320,7 +1323,7 @@ export default async function DashboardPage() {
           )}
         </Card>
 
-        <Card title="Recent invoices" href="/invoices">
+        <Card title={t("dashboard.card.recent_invoices")} href="/invoices">
           {recentInvoices.length === 0 ? (
             <p className="text-sm text-slate-500">No invoices yet.</p>
           ) : (
@@ -1349,7 +1352,7 @@ export default async function DashboardPage() {
           )}
         </Card>
 
-        <Card title="Recent leads" href="/leads">
+        <Card title={t("dashboard.card.recent_leads")} href="/leads">
           {leads.length === 0 ? (
             <p className="text-sm text-slate-500">
               No leads yet. <Link href="/leads/new" className="text-slate-700 underline">Add one</Link>
