@@ -1706,17 +1706,21 @@ export type Database = {
           bank_details: Json | null
           country: string
           created_at: string
+          currency: string
           default_terms: string | null
           email: string | null
           id: string
+          locale: string
           logo_path: string | null
           logo_url: string | null
           name: string
           onboarding_state: Json
           phone: string | null
+          phone_region: string
           plan: string
           require_mfa: boolean
           slug: string
+          tax_jurisdiction: string
           timezone: string
           trial_ends_at: string | null
           updated_at: string
@@ -1727,17 +1731,21 @@ export type Database = {
           bank_details?: Json | null
           country?: string
           created_at?: string
+          currency?: string
           default_terms?: string | null
           email?: string | null
           id?: string
+          locale?: string
           logo_path?: string | null
           logo_url?: string | null
           name: string
           onboarding_state?: Json
           phone?: string | null
+          phone_region?: string
           plan?: string
           require_mfa?: boolean
           slug: string
+          tax_jurisdiction?: string
           timezone?: string
           trial_ends_at?: string | null
           updated_at?: string
@@ -1755,10 +1763,14 @@ export type Database = {
           logo_url?: string | null
           name?: string
           onboarding_state?: Json
+          currency?: string
+          locale?: string
           phone?: string | null
+          phone_region?: string
           plan?: string
           require_mfa?: boolean
           slug?: string
+          tax_jurisdiction?: string
           timezone?: string
           trial_ends_at?: string | null
           updated_at?: string

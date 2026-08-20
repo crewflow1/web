@@ -94,3 +94,89 @@ export function toE164(input: string | null | undefined): string | null {
   const digits = toInternationalDigits(input);
   return digits ? `+${digits}` : null;
 }
+
+// ---------------------------------------------------------------------------
+// Region-aware normalisation (multi-country readiness)
+// ---------------------------------------------------------------------------
+//
+// The helpers above are UK-first: a bare national number is assumed +44. For a
+// non-UK org that is wrong (a French "06 12 34 56 78" would become +44…). The
+// functions below take an org phone_region (ISO 3166-1 alpha-2, default 'GB')
+// and parse accordingly using libphonenumber-js (already a dependency).
+//
+// DEFAULT-SAFETY: when region is 'GB' (the default for every existing org) the
+// region-aware path DELEGATES to the hand-rolled UK helpers above, so an existing
+// tenant's numbers are byte-identical. libphonenumber-js is used ONLY for non-GB
+// regions and as a fallback, never on the GB path.
+
+import { parsePhoneNumberFromString, type CountryCode } from "libphonenumber-js";
+
+/** ISO 3166-1 alpha-2 region used when the caller passes none. */
+export const DEFAULT_PHONE_REGION: CountryCode = "GB";
+
+function normalizeRegion(region: string | null | undefined): CountryCode {
+  const r = (region || "").trim().toUpperCase();
+  return (r.length === 2 ? (r as CountryCode) : DEFAULT_PHONE_REGION);
+}
+
+/**
+ * Region-aware version of {@link toInternationalDigits} — digits-only
+ * international form (no "+"). GB delegates to the UK helper (byte-identical);
+ * other regions parse via libphonenumber-js, falling back to the UK helper only
+ * when the number cannot be parsed for the region.
+ */
+export function toInternationalDigitsForRegion(
+  input: string | null | undefined,
+  region: string | null | undefined = DEFAULT_PHONE_REGION,
+): string | null {
+  const rc = normalizeRegion(region);
+  if (rc === "GB") return toInternationalDigits(input);
+  if (!input || !input.trim()) return null;
+  const parsed = parsePhoneNumberFromString(input, rc);
+  if (parsed && parsed.isValid()) {
+    // number is E.164 with a leading "+"; drop it for wa.me digits form.
+    return parsed.number.replace(/^\+/, "");
+  }
+  // Unparseable for the region — fall back to the generic UK-first normaliser
+  // rather than dropping the number entirely.
+  return toInternationalDigits(input);
+}
+
+/**
+ * Region-aware E.164 (`+<country><subscriber>`). GB delegates to {@link toE164}
+ * (byte-identical); other regions use libphonenumber-js.
+ */
+export function toE164ForRegion(
+  input: string | null | undefined,
+  region: string | null | undefined = DEFAULT_PHONE_REGION,
+): string | null {
+  const rc = normalizeRegion(region);
+  if (rc === "GB") return toE164(input);
+  if (!input || !input.trim()) return null;
+  const parsed = parsePhoneNumberFromString(input, rc);
+  if (parsed && parsed.isValid()) return parsed.number;
+  return toE164(input);
+}
+
+/** Region-aware WhatsApp click-to-chat URL. GB is byte-identical to {@link whatsAppHref}. */
+export function whatsAppHrefForRegion(
+  input: string | null | undefined,
+  region: string | null | undefined = DEFAULT_PHONE_REGION,
+): string | null {
+  const digits = toInternationalDigitsForRegion(input, region);
+  return digits ? `https://wa.me/${digits}` : null;
+}
+
+/**
+ * Is `input` a valid phone number for `region`? For GB this uses
+ * libphonenumber-js validation (a NEW capability — the old code never validated),
+ * so it is additive, not a behavioural change to any existing formatting path.
+ */
+export function isValidPhoneForRegion(
+  input: string | null | undefined,
+  region: string | null | undefined = DEFAULT_PHONE_REGION,
+): boolean {
+  if (!input || !input.trim()) return false;
+  const parsed = parsePhoneNumberFromString(input, normalizeRegion(region));
+  return Boolean(parsed && parsed.isValid());
+}

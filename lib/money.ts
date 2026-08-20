@@ -12,6 +12,132 @@ const GBP = new Intl.NumberFormat("en-GB", {
   minimumFractionDigits: 2,
 });
 
+// ---------------------------------------------------------------------------
+// Currency-aware formatting (multi-country readiness)
+// ---------------------------------------------------------------------------
+//
+// The GBP formatter above is the pre-wave default. `formatCurrency` generalises
+// it to any (locale, currency) while the GBP path stays BYTE-IDENTICAL: calling
+// formatCurrency with the defaults produces the exact same Intl.NumberFormat as
+// `GBP`, so formatGbp is unchanged and no existing figure moves. Per-org currency
+// flows in from organizations.currency / .locale (lib/i18n/config.ts defaults
+// GBP/en-GB), so an existing UK org renders identically.
+
+/** The org money identity: an amount paired with the currency it is denominated in. */
+export type Money = {
+  /** Major units (pounds/dollars/euros), 2dp — NOT minor units. */
+  amount: number;
+  /** ISO 4217 alpha-3 (e.g. "GBP"). */
+  currency: string;
+};
+
+export type CurrencyFormatOptions = {
+  /** BCP-47 locale for grouping/symbol placement. Default "en-GB". */
+  locale?: string;
+  /** ISO 4217 currency. Default "GBP". */
+  currency?: string;
+  /** minimumFractionDigits (default 2, matching the legacy GBP formatter). */
+  minimumFractionDigits?: number;
+  /** maximumFractionDigits (defaults to Intl's currency-derived value). */
+  maximumFractionDigits?: number;
+};
+
+// Intl.NumberFormat construction is not free; cache by the option signature.
+const currencyFormatterCache = new Map<string, Intl.NumberFormat>();
+
+function currencyFormatter(opts: CurrencyFormatOptions): Intl.NumberFormat {
+  const locale = opts.locale || "en-GB";
+  const currency = (opts.currency || "GBP").toUpperCase();
+  const minFrac = opts.minimumFractionDigits ?? 2;
+  const key = `${locale}|${currency}|${minFrac}|${opts.maximumFractionDigits ?? ""}`;
+  let fmt = currencyFormatterCache.get(key);
+  if (!fmt) {
+    try {
+      fmt = new Intl.NumberFormat(locale, {
+        style: "currency",
+        currency,
+        minimumFractionDigits: minFrac,
+        ...(opts.maximumFractionDigits !== undefined
+          ? { maximumFractionDigits: opts.maximumFractionDigits }
+          : {}),
+      });
+    } catch {
+      // A bad locale/currency (should be filtered upstream by lib/i18n) must never
+      // throw at a render boundary — fall back to the pre-wave GBP/en-GB formatter.
+      fmt = GBP;
+    }
+    currencyFormatterCache.set(key, fmt);
+  }
+  return fmt;
+}
+
+/**
+ * Locale/currency-aware money formatter. The generalisation of `formatGbp`.
+ * With the defaults (en-GB, GBP) it is byte-identical to formatGbp — that
+ * equivalence is pinned by a default-safety test. Route per-org money display
+ * through this with the org's locale + currency.
+ */
+export function formatCurrency(
+  v: number | string | null | undefined,
+  opts: CurrencyFormatOptions = {},
+): string {
+  return currencyFormatter(opts).format(toPounds(v));
+}
+
+/** Format a {@link Money} value with a locale (currency travels with the value). */
+export function formatMoney(money: Money, locale = "en-GB"): string {
+  return formatCurrency(money.amount, { locale, currency: money.currency });
+}
+
+/** Pair an amount with a currency (the org base currency by default). */
+export function money(amount: number | string | null | undefined, currency = "GBP"): Money {
+  return { amount: toPounds(amount), currency: currency.toUpperCase() };
+}
+
+// ---------------------------------------------------------------------------
+// Currency conversion authority (INTERFACE ONLY — dark)
+// ---------------------------------------------------------------------------
+//
+// The roadmap does NOT require cross-currency conversion yet: each org has ONE
+// base currency and all its stored amounts are denominated in it. This interface
+// defines the seam so a future FX provider plugs in without a second money model.
+// The only implementation shipped is the identity converter, which refuses any
+// cross-currency conversion (there is no rate source) — so nothing can silently
+// invent an exchange rate.
+
+export type CurrencyConverter = {
+  /**
+   * Convert `amount` from one currency to another as at `asOf` (or now).
+   * MUST throw when it has no authoritative rate for the pair — never guess.
+   */
+  convert(
+    amount: number,
+    from: string,
+    to: string,
+    asOf?: Date,
+  ): Money;
+  /** Does this converter have a rate for the pair (same-currency is always true)? */
+  supports(from: string, to: string): boolean;
+};
+
+/**
+ * The only converter shipped: a no-op that passes same-currency amounts through
+ * and REFUSES any real conversion (no rate authority exists yet). Keeps the
+ * platform single-base-currency and honest until an FX source is wired.
+ */
+export const identityConverter: CurrencyConverter = {
+  supports: (from, to) => from.toUpperCase() === to.toUpperCase(),
+  convert: (amount, from, to) => {
+    const f = from.toUpperCase();
+    const t = to.toUpperCase();
+    if (f === t) return { amount: round2(amount), currency: t };
+    throw new Error(
+      `No currency conversion authority: cannot convert ${f}→${t}. ` +
+        `The platform is single-base-currency; wire an FX provider before converting.`,
+    );
+  },
+};
+
 /** Coerce a numeric/`numeric`-string/null to a finite pounds number (0 fallback). */
 export function toPounds(v: number | string | null | undefined): number {
   const n = Number(v ?? 0);

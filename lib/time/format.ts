@@ -120,6 +120,105 @@ export function formatDayKeyUK(input: DateInput): string {
   }).format(d);
 }
 
+// ---------------------------------------------------------------------------
+// Locale/timezone-aware formatting (multi-country readiness)
+// ---------------------------------------------------------------------------
+//
+// The *UK helpers above pin Europe/London + en-GB — correct for every existing
+// org. The functions below take an org's { locale, timeZone } (from
+// organizations.locale / .timezone; lib/i18n/config.ts defaults en-GB /
+// Europe/London) so a non-UK org's timestamps render in its own zone/locale.
+//
+// DEFAULT-SAFETY: called with no options — or with en-GB / Europe/London — these
+// produce output byte-identical to the *UK helpers (same locale, same timeZone,
+// same Intl options). A default-safety test pins that equivalence, and a bad
+// locale/tz degrades to the UK constants rather than throwing at a render.
+
+export type ZonedFormatOptions = {
+  /** BCP-47 locale. Default "en-GB". */
+  locale?: string;
+  /** IANA time zone. Default "Europe/London". */
+  timeZone?: string;
+};
+
+function safeLocale(locale?: string): string {
+  return locale && locale.trim() ? locale : UK_LOCALE;
+}
+function safeZone(tz?: string): string {
+  if (!tz || !tz.trim()) return UK_TIME_ZONE;
+  try {
+    new Intl.DateTimeFormat(UK_LOCALE, { timeZone: tz });
+    return tz;
+  } catch {
+    return UK_TIME_ZONE;
+  }
+}
+
+/** HH:mm in the given zone/locale (default Europe/London / en-GB → == formatTimeUK). */
+export function formatTimeInZone(input: DateInput, opts: ZonedFormatOptions = {}): string {
+  const d = toDate(input);
+  if (!d) return "";
+  return d.toLocaleTimeString(safeLocale(opts.locale), {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: safeZone(opts.timeZone),
+  });
+}
+
+/** Numeric date in the given zone/locale (default → == formatDateUK). */
+export function formatDateInZone(input: DateInput, opts: ZonedFormatOptions = {}): string {
+  const d = toDate(input);
+  if (!d) return "";
+  return d.toLocaleDateString(safeLocale(opts.locale), {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone: safeZone(opts.timeZone),
+  });
+}
+
+/** Numeric date + time in the given zone/locale (default → == formatDateTimeUK). */
+export function formatDateTimeInZone(input: DateInput, opts: ZonedFormatOptions = {}): string {
+  const d = toDate(input);
+  if (!d) return "";
+  return d.toLocaleString(safeLocale(opts.locale), {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: safeZone(opts.timeZone),
+  });
+}
+
+/** Long-form date in the given zone/locale (default → == formatDateLongUK). */
+export function formatDateLongInZone(input: DateInput, opts: ZonedFormatOptions = {}): string {
+  const d = toDate(input);
+  if (!d) return "";
+  return d.toLocaleDateString(safeLocale(opts.locale), {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: safeZone(opts.timeZone),
+  });
+}
+
+/**
+ * The CALENDAR DAY an instant falls on IN A GIVEN ZONE, as `YYYY-MM-DD`. The
+ * zone-aware generalisation of formatDayKeyUK — used to bucket timestamps into an
+ * org's local days. Uses en-CA purely for ISO field order (like formatDayKeyUK).
+ */
+export function formatDayKeyInZone(input: DateInput, timeZone?: string): string {
+  const d = toDate(input);
+  if (!d) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: safeZone(timeZone),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
 /** Whether a UTC instant currently falls in British Summer Time. */
 export function isBST(input: DateInput): boolean {
   const d = toDate(input);
