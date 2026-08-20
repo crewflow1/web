@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import Image from "next/image";
 import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
 import { DatumGrid, CoordTag } from "@/components/marketing/setting-out";
 import { ProductFrame } from "@/components/marketing/product-frame";
@@ -66,8 +67,18 @@ export default function HomePage() {
             <ProductFrame
               screen="Operations dashboard"
               url="app.crewflow.uk/dashboard"
-              className="mx-auto max-w-4xl"
-            />
+              className="mx-auto max-w-5xl"
+            >
+              <Image
+                src="/product-shots/dashboard.png"
+                alt="The CrewFlow dashboard for Brightwork Construction: a morning brief flagging 3 active jobs without a current RAMS, £11,520 overdue across one invoice, and £55,440 due from customers this week."
+                width={1440}
+                height={620}
+                priority
+                sizes="(max-width: 1024px) 100vw, 1024px"
+                className="h-auto w-full"
+              />
+            </ProductFrame>
           </Reveal>
           <p className="mx-auto mt-7 max-w-md text-center text-[15px] leading-relaxed text-ink-dim">
             One screen for what&apos;s on, what&apos;s late and what needs a
