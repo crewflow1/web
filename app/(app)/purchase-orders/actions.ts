@@ -16,6 +16,8 @@ import {
   type PurchaseOrderStatus,
 } from "@/lib/purchase-orders/schema";
 import { purchaseOrderHasReceipts } from "./_receiving-data";
+import { submitPurchaseOrderToMerchantForOrg } from "@/server/services/merchant-writers";
+import { isMerchantProvider } from "@/lib/integrations/merchants/connect";
 import { type FormState, formError, formSuccess } from "@/lib/forms/state";
 import { z } from "zod";
 
@@ -310,6 +312,51 @@ export async function setPurchaseOrderStatus(id: string, formData: FormData) {
 
   revalidatePath(`/purchase-orders/${id}`);
   redirect(`/purchase-orders/${id}?saved=status`);
+}
+
+/**
+ * Submit a purchase order to a builders' merchant electronically — the PO-core
+ * caller of the merchant submit seam. Maps this order onto the provider-agnostic
+ * payload (via the service-role writer), sends it through the built cXML adapter,
+ * and records the outcome in merchant_po_submissions.
+ *
+ * DARK-SAFE. The writer refuses BEFORE any client construction / network call when
+ * the merchant is not connectable (`skipped_dark`) or the org has no `connected`
+ * row (`not_connected`) — nothing is submitted and no ledger row is written while
+ * the integration is not activated. Org-pinned via ctx.org.id (a foreign PO is
+ * not-found); the merchant provider comes from the form and is validated. The PO
+ * core is untouched — this never mutates a purchase_orders row.
+ */
+export async function submitPurchaseOrderToMerchantAction(id: string, formData: FormData) {
+  const { ctx, user } = await requireOrgContext();
+  if (!idSchema.safeParse(id).success) redirect("/purchase-orders");
+
+  const providerRaw = String(formData.get("provider") ?? "");
+  if (!isMerchantProvider(providerRaw)) {
+    redirect(`/purchase-orders/${id}?error=merchant_unknown`);
+  }
+
+  const outcome = await submitPurchaseOrderToMerchantForOrg({
+    orgId: ctx.org.id,
+    provider: providerRaw,
+    purchaseOrderId: id,
+    submittedBy: user.id,
+  });
+
+  if (outcome.status === "acknowledged" || outcome.status === "already_submitted") {
+    await recordAdminActivity({
+      actorId: user.id,
+      actorEmail: user.email ?? null,
+      action: "purchase_order.merchant_submitted",
+      targetTable: "purchase_orders",
+      targetId: id,
+      metadata: { provider: providerRaw, external_order_ref: outcome.externalOrderRef },
+    });
+    redirect(`/purchase-orders/${id}?saved=merchant`);
+  }
+
+  // Dark / not-connected / rejected / error — surface a coarse, non-secret code.
+  redirect(`/purchase-orders/${id}?error=merchant_${outcome.status}`);
 }
 
 export async function deletePurchaseOrder(id: string) {
