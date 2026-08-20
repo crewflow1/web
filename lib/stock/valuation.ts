@@ -231,16 +231,23 @@ export type StockCogsCostRow = {
  * surface composes on purpose (never auto-merged into `finances`), so the streams
  * stay separable and auditable.
  *
- * DOUBLE-COUNT SAFETY (holds under the depot convention): these rows are an
- * ALLOCATION of depot-replenishment spend onto the consuming job, not a new
- * expense — see the 20261180000000 migration header. `lib/stock` posts NOTHING to
- * `finances` (a stock issue creates no finance row; the single expense is
- * `recordSupplierBill`), so folding these into a job's finances-derived cost adds
- * the cost EXACTLY ONCE: a job's material cost reaches its margin through EITHER a
- * direct `finances` materials bill (job-specific purchase) OR a stock issue (drawn
- * from the depot pool), never both — stock-replenishment bills are booked to the
- * depot (`finances.job_id` null) and job-direct purchases are not also issued from
- * stock. The company-level P&L is byte-identical with or without this stream.
+ * DOUBLE-COUNT SAFETY — STRUCTURALLY ENFORCED, not a convention to hope for.
+ * These rows are an ALLOCATION of depot-replenishment spend onto the consuming
+ * job, not a new expense (see the 20261180000000 migration header). `lib/stock`
+ * posts NOTHING to `finances` (a stock issue creates no finance row; the single
+ * expense is `recordSupplierBill`). Folding these into a job's finances-derived
+ * cost adds the cost EXACTLY ONCE because the two paths are DISJOINT BY
+ * CONSTRUCTION: a job's material cost reaches its margin through EITHER a direct
+ * `finances` materials bill (a job-tagged purchase — `recordSupplierBill` copies
+ * `po.job_id` onto the bill) OR a stock issue (goods drawn from the job-less depot
+ * pool), and never both for one spend. What makes that an INVARIANT rather than a
+ * convention: `record_stock_receipt_from_grn` REFUSES to take a delivery into
+ * stock when its purchase order carries a `job_id` (migration 20261212000000), so
+ * a job-tagged purchase can never enter shared stock and thus can never also be
+ * issued back to that job as COGS. The company-level P&L is byte-identical with or
+ * without this stream. (A job CAN legitimately carry both a direct materials bill
+ * AND stock COGS — but only from DIFFERENT purchases: a job-direct buy plus depot
+ * stock it consumed — which are two genuine spends, correctly summed.)
  */
 export function buildStockCogsCostRows(
   movements: readonly CostedMovementRow[],

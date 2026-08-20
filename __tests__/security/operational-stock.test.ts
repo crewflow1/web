@@ -14,6 +14,8 @@ const MIG_GUARD = "supabase/migrations/20261069000000_stock_correction_transfer_
 const MIG_RESIDUAL = "supabase/migrations/20261071000000_stock_residual_hardening.sql";
 /** W1: weighted-average cost valuation — CEO decision D1, now DECIDED. */
 const MIG_WAVG = "supabase/migrations/20261180000000_stock_weighted_average_cost.sql";
+/** Depot-only receipt: a job-tagged PO cannot enter stock (the COGS double-count fix). */
+const MIG_DEPOT_ONLY = "supabase/migrations/20261212000000_stock_receipt_depot_only.sql";
 /** The pure valuation fold — the read-side authority, must also never touch finances. */
 const LIB_VALUATION = "lib/stock/valuation.ts";
 const ACTIONS = "app/(app)/stock/actions.ts";
@@ -840,5 +842,63 @@ describe("PostgREST embed safety on the new tables", () => {
     for (const f of [SERVICE, ACTIONS]) {
       expect(codeOf(read(f)), `${f} embeds users`).not.toMatch(/users\s*\(/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. STOCK RECEIPT IS DEPOT-ONLY — the COGS double-count fix, at the source
+// ---------------------------------------------------------------------------
+
+describe("stock receipt refuses a job-tagged purchase order (COGS double-count fix)", () => {
+  // THE fix for the S1 the adversarial review of the stock-COGS wiring found: a
+  // job-tagged PO could be taken into stock (job-less receipt) while
+  // recordSupplierBill copied po.job_id onto the finances bill, and issuing that
+  // stock to the job then allocated the SAME spend to the job again as COGS —
+  // ~2x materials. record_stock_receipt_from_grn now REFUSES a job-tagged
+  // delivery, so the two cost paths are disjoint BY CONSTRUCTION. These assert
+  // the guard on the migration source; the integration test proves it live.
+  const sql = sqlOnly(read(MIG_DEPOT_ONLY));
+
+  it("re-defines the RPC additively — same signature, same grant, still SECURITY INVOKER", () => {
+    expect(sql).toMatch(
+      /create or replace function public\.record_stock_receipt_from_grn\(/i,
+    );
+    expect(sql).toMatch(
+      /grant execute on function public\.record_stock_receipt_from_grn\(uuid, uuid, uuid, uuid, text\) to authenticated/i,
+    );
+    // The receipt must run as the CALLER (RLS-subject), exactly like the original
+    // — a SECURITY DEFINER re-definition would silently widen its reach.
+    expect(sql).not.toMatch(/security definer/i);
+  });
+
+  it("reads the parent PO's job_id and RAISES before any insert when it is set", () => {
+    // Joins to the purchase order (org-pinned) and reads its job_id.
+    expect(sql).toMatch(/join public\.purchase_orders po\b/i);
+    expect(sql).toMatch(/po\.job_id/i);
+    // Refuses when the PO carries a job.
+    expect(sql).toMatch(/if\s+v_po_job_id\s+is\s+not\s+null\s+then/i);
+    expect(sql).toMatch(/raise exception[^;]*for a specific job/i);
+    // The refusal sits BEFORE the stock_movements insert — nothing is written.
+    const guardIdx = sql.search(/v_po_job_id\s+is\s+not\s+null/i);
+    const insertIdx = sql.search(/insert into public\.stock_movements/i);
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(insertIdx).toBeGreaterThan(guardIdx);
+  });
+
+  it("still posts NOTHING to `finances` in the new body (the boundary holds)", () => {
+    expect(sql).not.toMatch(/\bfinances\b/i);
+  });
+
+  it("the receiving action surfaces the refusal in plain words", () => {
+    // friendlyStockError maps the RPC's 'for a specific job' message so the yard
+    // gets guidance, not a raw check_violation.
+    expect(read(LIB_SCHEMA)).toMatch(/for a specific job/i);
+  });
+
+  it("the PO page hides the receive-into-stock affordance for a job-tagged order", () => {
+    // No point offering a button that can only ever hit the depot-only refusal.
+    expect(codeOf(read("app/(app)/purchase-orders/[id]/page.tsx"))).toMatch(
+      /po\.job_id\s*\?/,
+    );
   });
 });

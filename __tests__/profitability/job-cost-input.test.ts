@@ -236,13 +236,22 @@ describe("buildJobCostInput — stock COGS stream", () => {
     expect(p.costs_total).toBe(100);
   });
 
-  it("folds COGS EXACTLY ONCE, disjoint from a finances materials bill", () => {
-    // A job can carry a direct finances materials bill AND a stock issue; each is a
-    // distinct real cost (depot convention), so the bucket is their SUM, never a
-    // double-count of one spend.
+  it("sums a job-direct materials bill and depot-stock COGS as TWO distinct spends", () => {
+    // The £2000 finances bill and the £100 stock COGS here are DIFFERENT
+    // purchases, not one spend counted twice:
+    //   - the £2000 bill comes from a JOB-TAGGED purchase order (recordSupplierBill
+    //     copies po.job_id onto the bill). Such a PO can NEVER enter shared stock —
+    //     record_stock_receipt_from_grn refuses a job-tagged delivery (migration
+    //     20261212000000) — so it is not the source of any COGS;
+    //   - the £100 COGS is depot stock (from job-less POs) the job later consumed.
+    // Two genuine spends ⇒ the materials bucket is their SUM. The double-count the
+    // adversarial review found (ONE spend billed to the job AND issued back to it as
+    // COGS) is unreachable by that RPC guard, so this is not it — it is composed
+    // once. That unreachability is proven at the RPC in the integration + source
+    // guards, not here; this test only pins the pure composition.
     const stockCogs = buildStockCogsCostRows([receipt, issue]);
     const input = buildJobCostInput({
-      finances, // { JOB, 2000, materials }
+      finances, // { JOB, 2000, materials } — a job-direct bill (non-stocked PO)
       timeEntries: [],
       hourlyByUser: hourly,
       hoursForEntries: lifetimeHoursSource(now),
@@ -250,7 +259,6 @@ describe("buildJobCostInput — stock COGS stream", () => {
       stockCogs,
     });
     const p = computeJobProfitability(JOB, invoices, input)!;
-    // 2000 (direct bill) + 100 (stock COGS) — each counted once.
     expect(p.costs_by_bucket.materials).toBe(2100);
     expect(p.costs_total).toBe(2100);
 

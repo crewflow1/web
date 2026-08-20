@@ -397,23 +397,34 @@ export default async function PurchaseOrderDetailPage({
                               </span>
                             </div>
                             {note.status === "posted" ? (
-                              <ReceiveIntoStockForm
-                                purchaseOrderId={po.id}
-                                grnLineId={l.id}
-                                description={ordered?.description ?? "this line"}
-                                qty={formatQty(l.qty_received)}
-                                unit={ordered?.unit ?? ""}
-                                items={stockItemOptions}
-                                sites={stockSiteOptions}
-                                stocked={
-                                  stocked
-                                    ? {
-                                        itemName: stockItemName.get(stocked.itemId) ?? "a stock item",
-                                        siteName: stockSiteName.get(stocked.siteId) ?? "a site",
-                                      }
-                                    : null
-                                }
-                              />
+                              // DEPOT-ONLY: a job-tagged order is costed to its job
+                              // via the supplier bill, so it is never taken into
+                              // shared stock — offering the button would only ever
+                              // hit the RPC's depot-only refusal. The double-count
+                              // this prevents is stated in migration 20261212.
+                              po.job_id ? (
+                                <p className="mt-1 text-xs text-slate-500">
+                                  For a specific job — costed to the job when you record the supplier bill, not taken into shared stock.
+                                </p>
+                              ) : (
+                                <ReceiveIntoStockForm
+                                  purchaseOrderId={po.id}
+                                  grnLineId={l.id}
+                                  description={ordered?.description ?? "this line"}
+                                  qty={formatQty(l.qty_received)}
+                                  unit={ordered?.unit ?? ""}
+                                  items={stockItemOptions}
+                                  sites={stockSiteOptions}
+                                  stocked={
+                                    stocked
+                                      ? {
+                                          itemName: stockItemName.get(stocked.itemId) ?? "a stock item",
+                                          siteName: stockSiteName.get(stocked.siteId) ?? "a site",
+                                        }
+                                      : null
+                                  }
+                                />
+                              )
                             ) : null}
                           </li>
                         );

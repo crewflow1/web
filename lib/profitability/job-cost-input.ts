@@ -33,10 +33,13 @@
  * "materials"`, so they land in the materials bucket exactly as labour lands in
  * labour. They are an ALLOCATION of depot-replenishment spend onto the consuming
  * job — never a new expense — so the company-level P&L is byte-identical with or
- * without them, and NO amount is counted twice: a material cost reaches a job's
- * margin through EITHER a direct `finances` materials bill (job-specific purchase)
- * OR a stock issue (drawn from the depot pool), never both, under the depot
- * convention documented in that migration. Because the caller passes `stockCogs`
+ * without them, and NO amount is counted twice. That last claim is an INVARIANT,
+ * not a hope: a material cost reaches a job's margin through EITHER a direct
+ * `finances` materials bill (from a job-tagged PO) OR a stock issue (goods from
+ * the job-less depot pool), never both for one spend — because
+ * `record_stock_receipt_from_grn` REFUSES to stock a delivery whose PO carries a
+ * `job_id` (migration 20261212000000), so a job-tagged purchase can never also be
+ * issued back to its job as COGS. Because the caller passes `stockCogs`
  * explicitly, the stream stays a deliberate, labelled composition (never
  * auto-merged) and remains separable and auditable.
  *
