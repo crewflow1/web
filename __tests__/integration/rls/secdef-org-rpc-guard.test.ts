@@ -98,6 +98,21 @@ const ALLOWLIST: ReadonlyMap<string, string> = new Map<string, string>([
     "membership-guarded: the job's org is checked against current_org_ids(); raises a generic exception (not 42501); a non-member is denied.",
   ],
 
+  // Interim-valuation RPCs (20261192000000). Both take a valuation uuid, look the
+  // row up, DERIVE org_id from that row, and enforce is_org_admin(that org) — a
+  // caller passing another org's valuation uuid is refused because they are not an
+  // admin of the row's org. They never trust a caller-supplied org, only write
+  // within the row's org, and are revoked from anon/authenticated at CREATE +
+  // re-granted to authenticated (admin-gated inside). Not cross-tenant primitives.
+  [
+    "certify_valuation",
+    "membership-guarded: derives org_id from the valuation row addressed by the uuid and enforces is_org_admin(that org); a foreign-org uuid is refused. Also takes a per-job advisory lock before the cumulation read.",
+  ],
+  [
+    "generate_valuation_invoice",
+    "membership-guarded: derives org_id from the valuation row addressed by the uuid and enforces is_org_admin(that org); a foreign-org uuid is refused. Bills only within the row's org via next_invoice_number + invoices.",
+  ],
+
   // Guarded by a direct memberships lookup on auth.uid() + 42501 — sound, just
   // not via the current_org_ids() helper, so it misses the auto-pass predicate.
   [

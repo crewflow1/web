@@ -43,13 +43,62 @@ export default async function NewInvoicePage() {
   );
   if (quotesError) throw readFailure("new invoice: accepted quotes", quotesError);
 
-  const options = (quotes ?? []).map((q) => ({
+  const rawOptions = (quotes ?? []).map((q) => ({
     id: q.id,
     number: q.number ?? null,
     subtotal: Number(q.subtotal ?? 0),
     total: Number(q.total ?? 0),
     status: String(q.status ?? "draft"),
   }));
+
+  // Exclude any accepted variation quote already captured in a non-cancelled
+  // interim valuation — it is billed via the valuation invoice, so offering it
+  // here would let an operator double-bill (its accept-invoice was deleted on
+  // valuation-link, freeing the quote_id unique slot). The valuation link table is
+  // the persistent fence. Bounded to this page's accepted set; loud + org-pinned.
+  const acceptedIds = rawOptions.map((o) => o.id);
+  const excluded = new Set<string>();
+  if (acceptedIds.length > 0) {
+    type QB = PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }> & {
+      select: (c: string) => QB;
+      eq: (k: string, v: unknown) => QB;
+      in: (k: string, v: unknown[]) => QB;
+      neq: (k: string, v: unknown) => QB;
+      order: (k: string, o: { ascending: boolean }) => QB;
+      range: (f: number, t: number) => PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }>;
+    };
+    const looseDb = supabase as unknown as { from: (t: string) => QB };
+    const { data: links, error: linksError } = await fetchAllRows<Record<string, unknown>>((from, to) =>
+      looseDb
+        .from("job_valuation_variations")
+        .select("variation_quote_id, valuation_id")
+        .eq("org_id", ctx.org.id)
+        .in("variation_quote_id", acceptedIds)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+    if (linksError) throw readFailure("new invoice: valuation links", linksError);
+    const valIds = [...new Set((links ?? []).map((l) => String(l.valuation_id)))];
+    const liveVal = new Set<string>();
+    if (valIds.length > 0) {
+      const { data: vals, error: valsError } = await fetchAllRows<Record<string, unknown>>((from, to) =>
+        looseDb
+          .from("job_valuations")
+          .select("id")
+          .eq("org_id", ctx.org.id)
+          .in("id", valIds)
+          .neq("status", "cancelled")
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+      if (valsError) throw readFailure("new invoice: valuation status", valsError);
+      for (const v of vals ?? []) liveVal.add(String(v.id));
+    }
+    for (const l of links ?? []) {
+      if (liveVal.has(String(l.valuation_id))) excluded.add(String(l.variation_quote_id));
+    }
+  }
+  const options = rawOptions.filter((o) => !excluded.has(o.id));
 
   return (
     <div className="mx-auto max-w-xl space-y-6">

@@ -95,6 +95,51 @@ export async function POST(request: NextRequest) {
     return respond.error(409, "Only accepted quotes can be invoiced.");
   }
 
+  // Do NOT standalone-bill a variation already captured in a non-cancelled interim
+  // valuation: it is billed via the valuation invoice, so a second invoice here
+  // double-bills. The valuation LINK TABLE is the persistent fence — the variation's
+  // draft accept-invoice is deleted when it is linked to a valuation (freeing the
+  // invoices(quote_id) unique slot), so the DB unique index no longer guards this
+  // path. Two-step (avoids a PostgREST embed the ambiguity guard would flag).
+  type QB = PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }> & {
+    select: (c: string) => QB;
+    eq: (k: string, v: unknown) => QB;
+    in: (k: string, v: unknown[]) => QB;
+    neq: (k: string, v: unknown) => QB;
+    limit: (n: number) => PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }>;
+  };
+  const looseDb = supabase as unknown as { from: (t: string) => QB };
+  const { data: vlinks, error: vlinkErr } = await looseDb
+    .from("job_valuation_variations")
+    .select("valuation_id")
+    .eq("variation_quote_id", quote.id)
+    .eq("org_id", ctx.org.id)
+    .limit(500);
+  if (vlinkErr) {
+    console.error("[invoices] valuation-link check failed", vlinkErr);
+    return respond.error(500, "Failed to verify billing eligibility");
+  }
+  const linkedValuationIds = (vlinks ?? []).map((r) => String(r.valuation_id));
+  if (linkedValuationIds.length > 0) {
+    const { data: liveVals, error: liveErr } = await looseDb
+      .from("job_valuations")
+      .select("id")
+      .eq("org_id", ctx.org.id)
+      .in("id", linkedValuationIds)
+      .neq("status", "cancelled")
+      .limit(1);
+    if (liveErr) {
+      console.error("[invoices] valuation-status check failed", liveErr);
+      return respond.error(500, "Failed to verify billing eligibility");
+    }
+    if ((liveVals ?? []).length > 0) {
+      return respond.error(
+        409,
+        "This variation is billed via an interim valuation and cannot be invoiced separately.",
+      );
+    }
+  }
+
   // Allocate the next per-org invoice number via the SECURITY DEFINER RPC.
   const { data: numberRpc, error: numErr } = await supabase.rpc(
     "next_invoice_number",
