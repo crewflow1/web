@@ -117,11 +117,14 @@ describe("FPS has no live transmission path", () => {
     expect(code).toMatch(/allowInternalPrepare/);
   });
 
-  it("no FPS file contacts an HMRC service host (no submit adapter exists)", () => {
+  it("the composer, prepare/hold service and payroll action contact no HMRC host", () => {
+    // The FPS SUBMIT adapter now exists, but it lives in a SEPARATE file
+    // (lib/integrations/hmrc/rti-fps-submit.ts, proven structurally dark in
+    // __tests__/security/hmrc-submit-adapters.test.ts). The composer, the
+    // prepare/hold service and the payroll action stay PURE — none POST to an
+    // HMRC endpoint or name the RTI transaction host.
     for (const f of [FPS, SERVICE, ACTION]) {
       const code = codeOf(read(f));
-      // There is deliberately no FPS submit adapter: none of these files POST to
-      // an HMRC endpoint or name the RTI transaction host.
       expect(code, `${f} must contact no HMRC host`).not.toMatch(/service\.gov\.uk|hmrc\.gov\.uk/i);
       expect(code, `${f} must contain no fetch`).not.toMatch(/\bfetch\(/);
     }
