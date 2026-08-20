@@ -6,7 +6,7 @@ import {
   listWorkflowVersions,
 } from "@/server/services/automation-workflows";
 import { restoreWorkflowVersionAction } from "../actions";
-import { WorkflowCanvas } from "../WorkflowCanvas";
+import { WorkflowCanvasLoader } from "../WorkflowCanvasLoader";
 
 /**
  * Settings → Automations → Visual workflow builder (20261193).
@@ -104,7 +104,7 @@ export default async function WorkflowBuilderPage({
       ) : null}
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <WorkflowCanvas
+        <WorkflowCanvasLoader
           ruleId={editRule?.id}
           initialName={editRule?.name}
           initialDescription={editRule?.description ?? null}
