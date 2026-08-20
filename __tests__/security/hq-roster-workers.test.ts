@@ -199,4 +199,19 @@ describe("roster-workers — cron driver is auth-gated and telemetry-wrapped", (
       expect(cron).toContain(`"${label}"`);
     }
   });
+
+  // 4. REGISTRATION: the tick endpoint must actually be SCHEDULED in vercel.json — an
+  //    unscheduled cron never runs in prod, silently disabling all twelve roster workers.
+  //    (This is the guard the original wave lacked, which let the schedule gap ship.)
+  it("hq-roster-workers-tick is registered as a scheduled cron in vercel.json", () => {
+    const vercel = JSON.parse(readFileSync(resolve(__dirname, "..", "..", "vercel.json"), "utf8"));
+    const paths = (vercel.crons ?? []).map((c: { path: string }) => c.path);
+    expect(paths).toContain("/api/cron/hq-roster-workers-tick");
+    const entry = (vercel.crons ?? []).find(
+      (c: { path: string }) => c.path === "/api/cron/hq-roster-workers-tick",
+    );
+    // A real cron expression, not an empty/placeholder string.
+    expect(typeof entry.schedule).toBe("string");
+    expect(entry.schedule.trim().split(/\s+/).length).toBe(5);
+  });
 });
