@@ -172,6 +172,11 @@ const INTERNAL_RLS: readonly string[] = [
   // additionally carries its own unique(id, org_id).
   "invoice_payment_intents_invoice_payment_id_fkey",
   "whatsapp_assistant_actions_enquiry_id_fkey",
+  // Marketplace install's optional webhook endpoint: nullable, ON DELETE SET NULL
+  // (a composite FK can't SET NULL the NOT-NULL org_id), same-org enforced by a
+  // BEFORE-write trigger, RLS admin-only, and written only by the marketplace RPC
+  // that already proved the caller admin of the install's org. Never tenant-supplied.
+  "marketplace_installs_webhook_endpoint_id_fkey",
 ];
 
 const SELF_REASON =

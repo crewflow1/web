@@ -308,6 +308,12 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   // promise. Any future embed must name its FK constraint; test 2 enforces it.
   "job_warranties → users",
   "leave_requests → users",
+  // Marketplace listings (Phase 14, 20261195000000): created_by + reviewed_by
+  // both → users. Reviewed 2026-08-20: readers (app/(app)/marketplace/page.tsx,
+  // app/(app)/settings/marketplace/page.tsx) select scalar columns only — no
+  // users(...) embed. Two FKs is inherent (author vs platform reviewer). Any
+  // future embed must name its FK constraint.
+  "marketplace_listings → users",
   // Material requests (20261066, M4): requested_by + decided_by + created_by
   // all → users. Reviewed 2026-07-29: the ONE embed of this pair
   // (server/services/material-requests.ts, REQUEST_COLS) names both FK

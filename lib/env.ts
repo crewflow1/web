@@ -605,6 +605,21 @@ const envSchema = z.object({
   // Server-only so the flag itself never leaks into a client bundle.
   FEATURE_PUBLIC_API_JOBS: z.enum(["true", "false"]).default("false"),
 
+  // -- Marketplace / partner platform (Phase 14) -------------------------
+  // SERVER-ONLY (deliberately NOT NEXT_PUBLIC): whether the marketplace /
+  // partner platform is EXPOSED — developer listings, tenant discovery, and
+  // the consent-gated install flow. DEFAULTS OFF — the whole surface ships
+  // DARK. Going live is not a code decision: it needs external partner
+  // onboarding (real commercial agreements, developer vetting) which lives
+  // outside this repo. The engineering — partner identity, listing +
+  // approval workflow, consent-scoped installs that mint an install-bound
+  // API key and route webhooks to the install, uninstall that revokes the
+  // entitlement + the bound key — is built and tested behind this flag.
+  // Flipping it to "true" (plus onboarding a real partner) is the whole
+  // activation. While off, the developer + discovery pages 404 and the
+  // install/uninstall actions refuse: the surface does not exist yet.
+  FEATURE_MARKETPLACE: z.enum(["true", "false"]).default("false"),
+
   // -- Capability authority source (Directive #015 / D-05) ---------------
   // RETIRED in LR5.3 (the Rollback Independence Rule, 25th §2 standard). The
   // CAPABILITY_AUTHORITY_SOURCE rollback lever is gone: the Capability Registry is

@@ -97,6 +97,10 @@ const ALLOWLIST: ReadonlyMap<string, string> = new Map<string, string>([
     "next_variation_number",
     "membership-guarded: the job's org is checked against current_org_ids(); raises a generic exception (not 42501); a non-member is denied.",
   ],
+  [
+    "marketplace_submit_listing",
+    "membership-guarded: requires the caller be an admin of p_org_id (is_org_admin) AND that p_org_id own the listing (v_owner = p_org_id); a non-admin or cross-org caller is refused. Generic exception (not 42501), so misses the canonical auto-pass.",
+  ],
 
   // Interim-valuation RPCs (20261192000000). Both take a valuation uuid, look the
   // row up, DERIVE org_id from that row, and enforce is_org_admin(that org) — a
