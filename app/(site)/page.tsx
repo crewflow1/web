@@ -4,6 +4,10 @@ import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
 import { DatumGrid, CoordTag } from "@/components/marketing/setting-out";
 import { ProductFrame } from "@/components/marketing/product-frame";
 import { JobFlow } from "@/components/marketing/home/job-flow";
+import { Differentiation } from "@/components/marketing/home/differentiation";
+import { SwitchTrust } from "@/components/marketing/home/switch-trust";
+import { PricingBlock } from "@/components/marketing/home/pricing-block";
+import { Faq } from "@/components/marketing/home/faq";
 
 export const metadata: Metadata = {
   title: "CrewFlow — the operating system for UK construction companies",
@@ -70,6 +74,43 @@ export default function HomePage() {
 
       {/* Beat 3 — Signature moment: one job, end to end */}
       <JobFlow />
+
+      {/* Beat 5 — Differentiation (Beat 4 pillars slots in above this) */}
+      <Differentiation />
+
+      {/* Beat 6 — Switching & trust */}
+      <SwitchTrust />
+
+      {/* Beat 7 — Pricing / value */}
+      <PricingBlock />
+
+      {/* Beat 8 — Final CTA */}
+      <section className="relative overflow-hidden border-t border-white/5">
+        <DatumGrid />
+        <div className="relative mx-auto max-w-cf px-5 py-24 text-center sm:px-7 sm:py-32">
+          <h2 className="mx-auto max-w-3xl font-display text-[clamp(2rem,4.2vw,3.4rem)] font-bold leading-[1.02] tracking-[-0.025em] text-ink">
+            Run your whole construction company from one place.
+          </h2>
+          <p className="mx-auto mt-5 max-w-lg text-lg text-ink-mut">
+            A 30-minute demo, walked through with your own jobs and figures. No
+            slides.
+          </p>
+          <div className="mt-9 flex flex-wrap justify-center gap-3">
+            <BookDemoButton className="inline-flex h-12 items-center rounded-lg bg-gold-500 px-6 text-base font-semibold text-navy-950 shadow-cf-gold transition-colors hover:bg-gold-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">
+              Book a demo
+            </BookDemoButton>
+            <Link
+              href="/product"
+              className="inline-flex h-12 items-center gap-1.5 rounded-lg border border-white/12 px-6 text-base font-medium text-ink transition-colors hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+            >
+              Explore the platform <span aria-hidden="true">→</span>
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Beat 9 — FAQ */}
+      <Faq />
     </>
   );
 }
