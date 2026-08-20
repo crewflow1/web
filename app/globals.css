@@ -46,3 +46,28 @@
     @apply rounded bg-slate-100 px-1 py-0.5 font-mono text-[12px] text-slate-900;
   }
 }
+
+/*
+ * Marketing scroll-reveal — CSS scroll-driven (no JS, compositor-run).
+ * DEFAULT (no view-timeline support OR reduced-motion) = fully visible, so
+ * content is NEVER stuck hidden. Where supported, sections rise as they enter.
+ */
+@keyframes cf-rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    .cf-reveal {
+      animation: cf-rise linear both;
+      animation-timeline: view();
+      animation-range: entry 8% entry 52%;
+    }
+  }
+}

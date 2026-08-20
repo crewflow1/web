@@ -8,6 +8,7 @@ import { Differentiation } from "@/components/marketing/home/differentiation";
 import { SwitchTrust } from "@/components/marketing/home/switch-trust";
 import { PricingBlock } from "@/components/marketing/home/pricing-block";
 import { Faq } from "@/components/marketing/home/faq";
+import { PillarsIndex } from "@/components/marketing/home/pillars-index";
 
 export const metadata: Metadata = {
   title: "CrewFlow — the operating system for UK construction companies",
@@ -60,11 +61,13 @@ export default function HomePage() {
       {/* Beat 2 — Product as hero: the light "built object" set into the board */}
       <section className="relative border-t border-white/5 bg-navy-900">
         <div className="mx-auto max-w-cf px-5 py-16 sm:px-7 sm:py-24">
-          <ProductFrame
-            screen="Operations dashboard"
-            url="app.crewflow.uk/dashboard"
-            className="mx-auto max-w-4xl"
-          />
+          <div className="cf-reveal">
+            <ProductFrame
+              screen="Operations dashboard"
+              url="app.crewflow.uk/dashboard"
+              className="mx-auto max-w-4xl"
+            />
+          </div>
           <p className="mx-auto mt-7 max-w-md text-center text-[15px] leading-relaxed text-ink-dim">
             One screen for what&apos;s on, what&apos;s late and what needs a
             look — the whole company at a glance.
@@ -73,16 +76,29 @@ export default function HomePage() {
       </section>
 
       {/* Beat 3 — Signature moment: one job, end to end */}
-      <JobFlow />
+      <div className="cf-reveal">
+        <JobFlow />
+      </div>
 
-      {/* Beat 5 — Differentiation (Beat 4 pillars slots in above this) */}
-      <Differentiation />
+      {/* Beat 4 — Six pillars (drawing register) */}
+      <div className="cf-reveal">
+        <PillarsIndex />
+      </div>
+
+      {/* Beat 5 — Differentiation */}
+      <div className="cf-reveal">
+        <Differentiation />
+      </div>
 
       {/* Beat 6 — Switching & trust */}
-      <SwitchTrust />
+      <div className="cf-reveal">
+        <SwitchTrust />
+      </div>
 
       {/* Beat 7 — Pricing / value */}
-      <PricingBlock />
+      <div className="cf-reveal">
+        <PricingBlock />
+      </div>
 
       {/* Beat 8 — Final CTA */}
       <section className="relative overflow-hidden border-t border-white/5">
