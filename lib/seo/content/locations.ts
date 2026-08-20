@@ -125,7 +125,7 @@ export const LOCATIONS: LocationPage[] = [
     faqs: [
       { q: "Can Manchester firms get a CrewFlow demo?", a: "Yes. Book a demo and we'll show how CrewFlow brings quoting, jobs, payroll, invoicing and tax into one system for your Manchester firm." },
     ],
-    related: ["leeds", "liverpool", "sheffield"],
+    related: ["leeds", "sheffield"],
   },
   {
     slug: "birmingham",
@@ -201,7 +201,7 @@ export const LOCATIONS: LocationPage[] = [
     faqs: [
       { q: "Is CrewFlow suitable for Leeds construction businesses?", a: "Yes. CrewFlow is built for UK construction SMEs, bringing quoting, jobs, payroll, invoicing and tax together for Leeds and West Yorkshire firms." },
     ],
-    related: ["manchester", "sheffield", "liverpool"],
+    related: ["manchester", "sheffield"],
   },
   {
     slug: "bristol",
