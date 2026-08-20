@@ -5,7 +5,7 @@ import {
 } from "@/lib/site-diary/schema";
 import { createSnagSchema, updateSnagSchema } from "@/lib/snags/schema";
 import { materialRequestFormSchema } from "@/lib/material-requests/schema";
-import { createDelayEventSchema } from "@/lib/eot/schema";
+import { createDelayEventSchema, updateDelayEventSchema } from "@/lib/eot/schema";
 import { createSiteReportSchema } from "@/lib/site-reports/schema";
 
 /**
@@ -119,6 +119,23 @@ import { createSiteReportSchema } from "@/lib/site-reports/schema";
  *                            (that lifecycle stays online, with its server-pinned
  *                            resolved_at, for the toolbox-ack reason below).
  *
+ *   delay_event.update       A DRAFT delay event's owned scalar detail (category,
+ *                            dates, the working-days-lost CLAIM, description,
+ *                            evidence links), amended on site with no signal and
+ *                            reconciled by the same 3-way merge. Enabled ONLY while
+ *                            the row is a draft — a 'recorded'/'withdrawn' event is
+ *                            contemporaneous evidence whose provenance the
+ *                            transition trigger pins, so it is frozen. Draft-only is
+ *                            enforced in three places (the server core's status
+ *                            re-read, the updated_at compare-and-swap, and the
+ *                            existing tg_delay_event_transition trigger). The job is
+ *                            NOT in the merge set — a draft is never re-homed to
+ *                            another job offline. See 20261197000000. Idempotent via
+ *                            last_offline_write_key, like the diary/snag updates.
+ *                            Because the delay schema is camelCase and the table is
+ *                            snake_case, the entity declares a `columnMap`; the merge
+ *                            engine is unchanged and still runs in payload-key space.
+ *
  * Both run through the SAME shared write core the online edit uses, on the tenant
  * client, under the same RLS UPDATE policy — a queued update is not a special write.
  * DELETE stays unenabled offline for every entity: a replayed delete cannot be
@@ -191,6 +208,7 @@ export const OFFLINE_WRITE_KINDS = [
   "snag.update",
   "material_request.create",
   "delay_event.create",
+  "delay_event.update",
   "site_report.create",
 ] as const;
 export type OfflineWriteKind = (typeof OFFLINE_WRITE_KINDS)[number];
@@ -208,6 +226,25 @@ export type OfflineWriteEntity = {
    * payload keys, so an edit can only ever change a column named here.
    */
   readonly mergeFields?: readonly string[];
+  /**
+   * UPDATE kinds only, OPTIONAL: maps a mergeField (the payload key the shared Zod
+   * schema uses) to the database COLUMN it is stored in, for entities whose schema
+   * is camelCase while their table is snake_case (e.g. delay events: `startedOn` →
+   * `started_on`). When absent, or for a field not listed, the merge field name IS
+   * the column name (the diary and snag schemas are already snake_case-aligned, so
+   * they declare no map and behave exactly as before). The 3-way merge itself
+   * (lib/offline/merge.ts) always runs in payload-key space and is UNCHANGED; this
+   * only tells the server core which column to read `theirs` from and write back to.
+   */
+  readonly columnMap?: Readonly<Record<string, string>>;
+  /**
+   * UPDATE kinds only, OPTIONAL: a column that must hold one of `editableWhen` for
+   * the row to be offline-editable at all (e.g. delay events are only editable
+   * while `status = 'draft'`). The server core reads it and refuses a row that is
+   * no longer editable, matching the online edit action's own status guard.
+   */
+  readonly statusColumn?: string;
+  readonly editableWhen?: readonly string[];
   /** Human label for the outbox UI ("2 diary entries waiting to sync"). */
   readonly label: string;
   readonly labelPlural: string;
@@ -345,6 +382,48 @@ export const OFFLINE_WRITE_REGISTRY: Readonly<
     schema: createDelayEventSchema,
     // The recorder's own words + the facts of the stoppage — what they must be
     // able to read back and re-type if the server ever refuses the item.
+    recoverFields: [
+      "description",
+      "category",
+      "startedOn",
+      "endedOn",
+      "workingDaysLost",
+    ],
+  },
+  "delay_event.update": {
+    mode: "update",
+    label: "delay edit",
+    labelPlural: "delay edits",
+    viewHref: "/delays",
+    schema: updateDelayEventSchema,
+    // The owned scalar detail of a DRAFT delay event. Payload keys (camelCase, the
+    // shared Zod schema's) — mapped to their snake_case columns below. `jobId` is
+    // DELIBERATELY EXCLUDED: re-homing a draft to another job with no signal is not
+    // an owned-field edit, so an offline update never moves the job (do it online).
+    // `id` is the target, not a mergeable field. No `status` — the update schema
+    // carries none, so a lifecycle transition can never ride a queued edit.
+    mergeFields: [
+      "category",
+      "startedOn",
+      "endedOn",
+      "workingDaysLost",
+      "description",
+      "diaryEntryId",
+      "variationQuoteId",
+      "weatherDistrict",
+    ],
+    columnMap: {
+      startedOn: "started_on",
+      endedOn: "ended_on",
+      workingDaysLost: "working_days_lost",
+      diaryEntryId: "diary_entry_id",
+      variationQuoteId: "variation_quote_id",
+      weatherDistrict: "weather_district",
+    },
+    // Only a draft is offline-editable — a recorded/withdrawn event is frozen
+    // evidence (the transition trigger enforces this server-side too).
+    statusColumn: "status",
+    editableWhen: ["draft"],
     recoverFields: [
       "description",
       "category",

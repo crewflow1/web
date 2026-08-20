@@ -5,6 +5,8 @@ import { SignOutButton } from "./_components/sign-out-button";
 import { SwRegister } from "./_components/sw-register";
 import { OfflineIdentityMarker } from "./_components/offline-identity-marker";
 import { OfflineOutbox } from "./_components/offline-outbox";
+import { OfflineReadCache } from "./_components/offline-read-cache";
+import { OfflinePhotoOutbox } from "./_components/offline-photo-outbox";
 import { createClient } from "@/lib/supabase/server";
 import { getActiveImpersonation } from "@/server/services/impersonation";
 import { endImpersonation } from "@/app/admin/impersonation/actions";
@@ -104,6 +106,10 @@ export default async function AppLayout({
           outbox is empty. Identity is the server-resolved session, so this session
           can only ever see and flush its own queued work. */}
       <OfflineOutbox userId={user.id} orgId={ctx.org.id} />
+      {/* Binary captures (photos/files) authored with no signal, uploaded on
+          reconnect. A sibling of the write outbox because binary needs its own
+          store, size limits and upload path — see lib/offline/photo-queue.ts. */}
+      <OfflinePhotoOutbox userId={user.id} orgId={ctx.org.id} />
 
       <div className="flex">
         <Sidebar role={ctx.membership.role} />
@@ -114,6 +120,10 @@ export default async function AppLayout({
       </div>
       <BottomNav role={ctx.membership.role} />
       <OfflineIdentityMarker userId={user.id} orgId={ctx.org.id} />
+      {/* Keeps the device's offline READ cache warm (jobs, customers, invoice
+          headers, diary, snags) so pages still render with no signal. Identity is
+          the server-resolved session; it purges any other user's cache first. */}
+      <OfflineReadCache userId={user.id} orgId={ctx.org.id} />
       <SwRegister />
     </div>
   );

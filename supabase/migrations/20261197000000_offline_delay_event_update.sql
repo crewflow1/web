@@ -1,0 +1,70 @@
+-- Offline Write Queue — the first offline UPDATE for a DRAFT entity.
+--
+-- 20261129000000 built conflict resolution and enabled offline UPDATEs for the two
+-- entities whose owned free-text/scalar fields carry no server-pinned provenance:
+-- the site diary and the snag. This migration extends that pattern to ONE more —
+-- the DELAY EVENT, but only while it is a DRAFT.
+--
+--   delay_event.update   A foreman amending a delay he recorded earlier from a
+--                        basement with no signal is the exact no-signal moment the
+--                        queue exists for. The delay's owned scalar detail
+--                        (category, dates, working-days-lost CLAIM, description,
+--                        evidence links) is reconciled field by field against
+--                        whatever the office changed meanwhile, by the SAME 3-way
+--                        merge the diary/snag updates use (lib/offline/merge.ts —
+--                        unchanged, not rewritten).
+--
+-- ── DRAFT ONLY — the honesty boundary, enforced in THREE places ──────────────
+-- Only a 'draft' delay event is offline-editable, because a 'recorded' event is
+-- contemporaneous EVIDENCE whose provenance (recorded_at/by) the transition trigger
+-- pins server-side. The offline update never replays the recorded/withdrawn
+-- transitions (the payload cannot carry a status — updateDelayEventSchema has no
+-- status field, and job_id is deliberately excluded from the offline merge set so a
+-- draft can never be re-homed to another job with no signal). "Draft only" is
+-- enforced by (1) the server core re-reading status and refusing a non-draft row,
+-- (2) the compare-and-swap being anchored on the updated_at the client rendered —
+-- a promotion since then bumps updated_at and fails the swap — and (3) the existing
+-- tg_delay_event_transition() trigger ("drafts are freely editable"; anything else
+-- frozen), which would raise on a recorded row even if the first two were bypassed.
+--
+-- ── The version anchor (updated_at) already exists ───────────────────────────
+-- delay_events already carries `updated_at timestamptz not null default now()`
+-- maintained by tg_set_updated_at() (20261084). The offline update sends the
+-- updated_at it rendered the edit form with; the server 3-way-merges against the
+-- current row and compare-and-swaps on that version. No new version column.
+--
+-- ── The one new column: last_offline_write_key ───────────────────────────────
+-- An UPDATE creates no new row, so the create's (org_id, client_write_key) unique
+-- index cannot dedupe it, and updated_at is the wrong dedupe marker (the first
+-- successful replay bumps it). So — exactly as 20261129000000 did for diary/snag —
+-- the row records the client key of the LAST offline update applied to it. Replay
+-- protocol (server/services/offline-writes.ts, unchanged shape):
+--
+--   read row (merge cols + updated_at + status + last_offline_write_key)
+--     status <> 'draft'                       -> reject (not editable offline)
+--     last_offline_write_key = THIS key       -> duplicate (already applied; done)
+--     otherwise                               -> 3-way merge, then
+--                                                CAS UPDATE ... where updated_at =
+--                                                <read version> and status='draft'
+--                                                SET ..., last_offline_write_key=<key>
+--
+-- last_offline_write_key is distinct from client_write_key (20261101, the CREATE
+-- idempotency anchor, never rewritten by an edit) and is NOT unique — one queued
+-- update targets exactly one row, and two updates to the same row are ordered by
+-- the queue's seq + stop-on-first-transient flush.
+--
+-- ── No new write privilege — the security argument is preserved ──────────────
+-- A queued update is still not a special write: tenant (user-JWT) client, the SAME
+-- RLS UPDATE policy the online updateDelayEvent obeys (with its own .eq(status,
+-- 'draft')), the SAME Zod schema. NO function, NO SECURITY DEFINER, NO RPC, NO
+-- policy, NO grant added here.
+--
+-- ── Additive / reversible / teardown-safe (the 20261052 lesson) ──────────────
+-- One nullable column, no index, no FK, no RESTRICT, nothing on the org-teardown
+-- cascade path (org_id already cascades). Reverse: drop the column.
+
+alter table public.delay_events
+  add column if not exists last_offline_write_key uuid;
+
+comment on column public.delay_events.last_offline_write_key is
+  'Client key of the last offline UPDATE applied to this row (offline write queue conflict resolution). Distinct from client_write_key (CREATE idempotency, never rewritten). Makes a re-delivered queued update idempotent against its own updated_at bump. Not unique. Only ever set on DRAFT rows.';
