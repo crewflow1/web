@@ -5,6 +5,7 @@ import { listStaffCustomerFiles } from "@/lib/customers/portal-file-inbox";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { loadCustomerFinancials } from "@/lib/customers/financials";
+import { loadCustomerCommsTimeline } from "@/lib/customers/comms-timeline";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   updateCustomer,
@@ -157,7 +158,27 @@ export default async function EditCustomerPage({
   // reader uses. Each carries a short-lived signed URL for staff to open it.
   const customerFiles = await listStaffCustomerFiles(ctx.org.id, customer.id);
 
-  // Timeline — merge quotes / invoices / jobs / payments / leads.
+  // Communications — inbound + outbound email / SMS / WhatsApp / voice (call
+  // logs) / live-chat for this customer, read from the EXISTING unified-inbox
+  // authority (conversations + messages). Resolved by the customer's normalised
+  // contact identity (the projection + composer key threads on contact_ref, not
+  // customer_id), ACTIVE-org pinned, paged and loud inside the loader. The
+  // receptionist substrate already projects into these same rows, so this covers
+  // AI-receptionist activity too without a second read path.
+  const commsEvents = await loadCustomerCommsTimeline(supabase, ctx.org.id, {
+    id: customer.id,
+    email: customer.email,
+    phone: customer.phone,
+  });
+
+  // Timeline — merge quotes / invoices / jobs / payments / leads / comms.
+  const COMMS_KIND: Record<string, string> = {
+    email: "email",
+    sms: "sms",
+    whatsapp: "whatsapp",
+    voice: "call",
+    chat: "chat",
+  };
   type TimelineEntry = {
     when: string;
     kind: string;
@@ -194,6 +215,17 @@ export default async function EditCustomerPage({
       kind: "payment",
       label: `Payment £${Number(p.amount ?? 0).toFixed(2)}${p.reference ? ` · ${p.reference}` : ""}`,
       href: `/invoices/${p.invoice_id}`,
+    })),
+    ...commsEvents.map((c) => ({
+      when: c.at,
+      kind: COMMS_KIND[c.channel] ?? c.channel,
+      label:
+        `${c.direction === "inbound" ? "↓ from" : "↑ to"} ${c.sender}` +
+        (c.snippet ? ` · ${c.snippet}` : "") +
+        (c.direction === "outbound" && c.status && c.status !== "sent" && c.status !== "delivered"
+          ? ` (${c.status})`
+          : ""),
+      href: `/inbox/conversations/${c.conversationId}`,
     })),
   ].sort((a, b) => (a.when < b.when ? 1 : -1));
 
