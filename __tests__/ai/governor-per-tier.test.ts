@@ -28,6 +28,7 @@ const tierModelRef = vi.hoisted(
       mid: null,
       high: null,
       embedding: null,
+      transcription: null,
     }) as Record<string, unknown>,
 );
 
@@ -81,12 +82,12 @@ const CHEAP_BINDING = {
 };
 
 function bindOnly(tier: "embedding" | "cheap", binding: unknown): void {
-  for (const t of ["cheap", "mid", "high", "embedding"]) tierModelRef[t] = null;
+  for (const t of ["cheap", "mid", "high", "embedding", "transcription"]) tierModelRef[t] = null;
   tierModelRef[tier] = binding;
 }
 
 beforeEach(() => {
-  for (const t of ["cheap", "mid", "high", "embedding"]) tierModelRef[t] = null;
+  for (const t of ["cheap", "mid", "high", "embedding", "transcription"]) tierModelRef[t] = null;
   adminConstructions.count = 0;
   // Worst case an operator can create: EVERY vendor credential present.
   vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-not-real");

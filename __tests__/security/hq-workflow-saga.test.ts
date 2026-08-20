@@ -231,8 +231,13 @@ describe("ai-decompose — dark seam, no unbound governor TIER key", () => {
   it("the feature key is registered as `complex` and adds NO new tier", () => {
     const registry = codeOf(read("lib/ai/governor/registry.ts"));
     expect(registry).toMatch(/"hq\.saga_decomposition"/);
-    // No new AI_TIER: the tier list stays cheap/mid/high/embedding.
-    expect(registry).toMatch(/AI_TIERS = \["cheap", "mid", "high", "embedding"\]/);
+    // The saga feature adds NO new tier — it maps to the existing `complex`
+    // class. The canonical tier list is cheap/mid/high/embedding/transcription
+    // (transcription is the STT modality's tier, added by migration 20261191 —
+    // not by this feature). The pin is that the saga feature did not grow it.
+    expect(registry).toMatch(
+      /AI_TIERS = \["cheap", "mid", "high", "embedding", "transcription"\]/,
+    );
   });
 });
 

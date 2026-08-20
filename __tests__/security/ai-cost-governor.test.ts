@@ -26,7 +26,7 @@ import { AI_MONTHLY_CEILING_PENCE } from "@/lib/ai/governor/policy";
 
 const tierModelRef = vi.hoisted(
   () =>
-    ({ cheap: null, mid: null, high: null, embedding: null }) as Record<string, unknown>,
+    ({ cheap: null, mid: null, high: null, embedding: null, transcription: null }) as Record<string, unknown>,
 );
 vi.mock("@/lib/ai/governor/registry", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/ai/governor/registry")>();
@@ -1022,15 +1022,85 @@ describe("20261080 migration hygiene — embeddings admitted to the governed voc
     expect(exec).not.toMatch(/'deterministic'/i);
   });
 
-  it("the widened vocabulary matches the registry's billable classes EXACTLY", () => {
-    // The TS side and the SQL side of one closed set: every non-deterministic
-    // task class is admitted, and nothing else is. Drift in either direction
-    // fails here rather than at INSERT time in production.
+  it("admits its OWN frozen embedding-era vocabulary (this migration is historical)", () => {
+    // The embedding migration file is immutable: its CHECK froze the four-class
+    // vocabulary of its day. The live "SQL matches the registry EXACTLY"
+    // invariant now belongs to the LATEST task_class widening (the transcription
+    // migration below) — a later additive migration is the current CHECK.
     const exec = execOf(read(EMBEDDINGS_MIG));
+    const inList = exec.match(/task_class\s+in\s*\(([^)]*)\)/i)?.[1] ?? "";
+    const sqlClasses = [...inList.matchAll(/'(\w+)'/g)].map((m) => m[1]).sort();
+    expect(sqlClasses).toEqual(["classification", "complex", "drafting", "embedding"]);
+  });
+});
+
+// =====================================================================
+// 9b. TRANSCRIPTION GOVERNANCE (slot 20261191) — the latest widened CHECK.
+// =====================================================================
+
+describe("20261191 migration hygiene — transcription admitted to the governed vocabulary", () => {
+  const TRANSCRIPTION_MIG =
+    "supabase/migrations/20261191000000_transcription_governance.sql";
+
+  it("exists in its slot", () => {
+    expect(existsSync(resolve(ROOT, TRANSCRIPTION_MIG))).toBe(true);
+  });
+
+  it("is a PURE WIDENING — two constraint swaps on the two governor tables, nothing else", () => {
+    const exec = execOf(read(TRANSCRIPTION_MIG));
+    expect(exec).not.toMatch(
+      /\balter\s+table\s+public\.(?!ai_invocations\b|ai_cost_reservations\b)/i,
+    );
+    expect(exec).not.toMatch(/\bcreate\s+table\b/i);
+    expect(exec).not.toMatch(/\bdrop\s+table\b/i);
+    expect(exec).not.toMatch(/\bcreate\s+(or\s+replace\s+)?function\b/i);
+    expect(exec).not.toMatch(/\bcreate\s+policy\b/i);
+    const drops = exec.match(/drop\s+constraint\s+\w+_task_class_check/gi) ?? [];
+    const adds = exec.match(/add\s+constraint\s+\w+_task_class_check/gi) ?? [];
+    expect(drops).toHaveLength(2);
+    expect(adds).toHaveLength(2);
+  });
+
+  it("widens BOTH CHECKs to admit 'transcription' — ledger and reservations agree", () => {
+    const exec = execOf(read(TRANSCRIPTION_MIG));
+    const widened =
+      /check\s*\(\s*task_class\s+in\s*\(\s*'classification'\s*,\s*'drafting'\s*,\s*'complex'\s*,\s*'embedding'\s*,\s*'transcription'\s*\)\s*\)/gi;
+    expect(exec.match(widened) ?? []).toHaveLength(2);
+    for (const table of ["ai_invocations", "ai_cost_reservations"]) {
+      expect(exec, `${table} must get the widened CHECK`).toMatch(
+        new RegExp(
+          `alter\\s+table\\s+public\\.${table}\\s+add\\s+constraint\\s+${table}_task_class_check`,
+          "i",
+        ),
+      );
+    }
+  });
+
+  it("'deterministic' remains structurally unrepresentable in BOTH new CHECKs", () => {
+    const exec = execOf(read(TRANSCRIPTION_MIG));
+    expect(exec).not.toMatch(/'deterministic'/i);
+  });
+
+  it("the widened vocabulary matches the registry's billable classes EXACTLY", () => {
+    // The live invariant: the TS side and the SQL side of one closed set. Every
+    // non-deterministic task class the registry declares is admitted by the
+    // current CHECK, and nothing else — drift in either direction fails here
+    // rather than at INSERT time in production.
+    const exec = execOf(read(TRANSCRIPTION_MIG));
     const inList = exec.match(/task_class\s+in\s*\(([^)]*)\)/i)?.[1] ?? "";
     const sqlClasses = [...inList.matchAll(/'(\w+)'/g)].map((m) => m[1]).sort();
     const billable = AI_TASK_CLASSES.filter((c) => c !== "deterministic").sort();
     expect(sqlClasses).toEqual(billable);
+  });
+
+  it("sorts strictly AFTER the embedding widening (additive on top of 20261080)", () => {
+    const versions = readdirSync(MIG_DIR)
+      .filter((f) => f.endsWith(".sql"))
+      .map((f) => f.split("_")[0]!)
+      .sort();
+    expect(versions.indexOf("20261191000000")).toBeGreaterThan(
+      versions.indexOf("20261080000000"),
+    );
   });
 });
 
@@ -1061,7 +1131,7 @@ const PARTIAL_ORG = "00000000-0000-0000-0000-0000000000c3";
 
 describe("only 'cheap' bound: a 'drafting' path spends NOTHING and reserves NOTHING", () => {
   beforeEach(() => {
-    for (const t of ["cheap", "mid", "high", "embedding"]) tierModelRef[t] = null;
+    for (const t of ["cheap", "mid", "high", "embedding", "transcription"]) tierModelRef[t] = null;
     tierModelRef.cheap = CHEAP_BINDING; // ONLY the cheap generative tier is armed…
     adminConstructions.count = 0;
     providerGenerate.mockReset();
@@ -1077,7 +1147,7 @@ describe("only 'cheap' bound: a 'drafting' path spends NOTHING and reserves NOTH
     vi.stubEnv("MEMORY_TEXT_PROVIDER", "auto");
   });
   afterEach(() => {
-    for (const t of ["cheap", "mid", "high", "embedding"]) tierModelRef[t] = null;
+    for (const t of ["cheap", "mid", "high", "embedding", "transcription"]) tierModelRef[t] = null;
     vi.unstubAllEnvs();
   });
 

@@ -22,7 +22,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
  */
 
 const tierModelRef = vi.hoisted(
-  () => ({ cheap: null, mid: null, high: null, embedding: null }) as Record<string, unknown>,
+  () => ({ cheap: null, mid: null, high: null, embedding: null, transcription: null }) as Record<string, unknown>,
 );
 vi.mock("@/lib/ai/governor/registry", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/ai/governor/registry")>();
@@ -78,7 +78,7 @@ const INPUT = { orgId: "org-1", userId: "user-1" };
 
 let prevKey: string | undefined;
 beforeEach(() => {
-  for (const t of ["cheap", "mid", "high", "embedding"]) tierModelRef[t] = null;
+  for (const t of ["cheap", "mid", "high", "embedding", "transcription"]) tierModelRef[t] = null;
   tierModelRef.mid = MID_BINDING; // drafting → mid
   // A bound tier alone is not "activated": readiness also requires the vendor
   // credential (see lib/ai/governor/readiness.ts). Set it so the seam reaches
@@ -91,7 +91,7 @@ beforeEach(() => {
   reserveState.settleCalls = 0;
 });
 afterEach(() => {
-  for (const t of ["cheap", "mid", "high", "embedding"]) tierModelRef[t] = null;
+  for (const t of ["cheap", "mid", "high", "embedding", "transcription"]) tierModelRef[t] = null;
   if (prevKey === undefined) delete process.env.ANTHROPIC_API_KEY;
   else process.env.ANTHROPIC_API_KEY = prevKey;
 });

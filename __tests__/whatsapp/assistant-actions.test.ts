@@ -237,6 +237,63 @@ describe("ORG ISOLATION — a foreign job is never written", () => {
   });
 });
 
+describe("voice-note note path — governed STT, dark-safe, org-scoped", () => {
+  function voiceMsg(over: Partial<NormalizedWhatsAppMessage> = {}): NormalizedWhatsAppMessage {
+    return msg({
+      wamid: "wamid.voice",
+      raw_text: "",
+      message_type: "audio",
+      has_media: true,
+      media: {
+        media_id: "MV1",
+        message_type: "audio",
+        mime_type: "audio/ogg; codecs=opus",
+        declared_sha256: null,
+        filename: null,
+        caption: null,
+        is_voice_note: true,
+      },
+      ...over,
+    });
+  }
+
+  it("DEFERS while dark — records the note with a null (never fabricated) transcript", async () => {
+    h.db.jobs.push({ id: "job-v", org_id: ORG_A, customer_id: "c1", status: "in-progress", notes: null });
+    const res = await runWhatsAppAssistantActions({
+      orgId: ORG_A,
+      wamid: "wamid.voice",
+      enquiryId: null,
+      message: voiceMsg(),
+      jobId: "job-v",
+      media: { bytes: new Uint8Array([9, 9, 9, 9]), mimeType: "audio/ogg" },
+    });
+    expect(res.intent).toBe("note");
+    const rec = res.actions[0]!;
+    expect(rec.status).toBe("created");
+    // The transcription outcome is recorded as DEFERRED — dark, not fabricated.
+    const detail = rec.detail as { transcription?: { status: string; reason?: string } };
+    expect(detail.transcription?.status).toBe("deferred");
+    // No transcript ⇒ the note body is NOT a made-up string.
+    const job = h.db.jobs.find((j) => j.id === "job-v")!;
+    expect(String(job.notes ?? "")).not.toContain("SHOULD");
+  });
+
+  it("never writes a voice note against ANOTHER org's job", async () => {
+    h.db.jobs.push({ id: "job-A", org_id: ORG_A, customer_id: "c1", status: "new", notes: "orgA private" });
+    const res = await runWhatsAppAssistantActions({
+      orgId: ORG_B,
+      wamid: "wamid.voicecross",
+      enquiryId: null,
+      message: voiceMsg({ wamid: "wamid.voicecross" }),
+      jobId: "job-A",
+      media: { bytes: new Uint8Array([1, 1, 1]), mimeType: "audio/ogg" },
+    });
+    expect(res.actions[0]?.status).toBe("skipped");
+    const job = h.db.jobs.find((j) => j.id === "job-A")!;
+    expect(job.notes).toBe("orgA private");
+  });
+});
+
 describe("resolveJobForCaller — deterministic, org-scoped", () => {
   it("matches a caller to a customer's most recent open job in the SAME org only", async () => {
     h.db.customers.push({ id: "c1", org_id: ORG_A, phone: "+44 7700 900123" });

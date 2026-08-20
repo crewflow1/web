@@ -2,7 +2,10 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { uploadTenantAttachmentAsService } from "@/server/services/tenant-attachments";
-import { transcribeVoiceNote } from "@/lib/ai/transcription";
+import { transcribeVoiceNoteGoverned, type TranscriptionResult } from "@/lib/ai/transcription";
+
+/** The transcription outcome recorded on a voice-note action, for observability. */
+type TranscriptionStatus = TranscriptionResult["status"];
 import type { NormalizedWhatsAppMessage } from "@/lib/comms/providers/meta-whatsapp";
 
 /**
@@ -381,15 +384,29 @@ export async function runWhatsAppAssistantActions(
 
       case "note": {
         // A voice note may carry a transcript once STT is bound; while dark the
-        // seam returns null (NEVER fabricated) and we record the placeholder text.
+        // governed seam DEFERS with a null transcript (NEVER fabricated) and we
+        // record the placeholder text. The transcription call is metered through
+        // invokeWithGovernor (feature voice_note.transcription) — so the ceiling,
+        // the ledger and the duplicate refusal are already in the path, and audio
+        // is safety-validated (size/MIME) before any spend decision.
         let noteBody = message.raw_text ?? "";
+        let transcription: { status: TranscriptionStatus; reason?: string } | null = null;
         if (message.media?.is_voice_note && input.media?.bytes) {
-          const t = await transcribeVoiceNote({
+          const t = await transcribeVoiceNoteGoverned({
             orgId,
+            userId: null,
             audio: input.media.bytes,
             mimeType: input.media.mimeType ?? message.media.mime_type,
           });
-          if (t.status === "completed") noteBody = t.transcript;
+          transcription = {
+            status: t.status,
+            reason: t.status === "deferred" ? t.reason : t.status === "failed" ? t.error : undefined,
+          };
+          // ONLY a completed transcript replaces the note body. A deferred/failed
+          // outcome leaves the deterministic placeholder — never a fabrication.
+          if (t.status === "completed" && t.transcript.trim().length > 0) {
+            noteBody = t.transcript;
+          }
         }
         if (!jobId) {
           await record({
@@ -397,7 +414,7 @@ export async function runWhatsAppAssistantActions(
             status: "pending_review",
             target_table: null,
             target_id: null,
-            detail: { reason: "no_job_context", text: noteBody.slice(0, 2000) },
+            detail: { reason: "no_job_context", text: noteBody.slice(0, 2000), transcription },
           });
           break;
         }
@@ -418,7 +435,7 @@ export async function runWhatsAppAssistantActions(
           status: ok ? "created" : "failed",
           target_table: "jobs",
           target_id: jobId,
-          detail: ok ? { appended: true } : { error: "note_append_failed" },
+          detail: ok ? { appended: true, transcription } : { error: "note_append_failed", transcription },
         });
         break;
       }
