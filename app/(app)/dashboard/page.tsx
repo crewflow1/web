@@ -48,6 +48,7 @@ import {
   employerCostsForStoredLine,
 } from "@/lib/payroll/compute";
 import { getPayrollTaxProfilesForOrg } from "@/server/services/payroll-tax-profile";
+import { loadStockCogsCostRows, type StockClient } from "@/server/services/stock";
 import {
   computeVatQuarter,
   endOfQuarterExclusiveIso,
@@ -657,6 +658,18 @@ export default async function DashboardPage() {
   // The dashboard's labour/margin tiles are a MONTH view, so it measures hours over
   // the month window. The per-job commercial surfaces use job-lifetime hours from
   // the SAME builder — the one composition, two scopes.
+  // Stock COGS: the weighted-average cost of stock issued to each job, an
+  // allocation stream disjoint from `finances` (stock issues post no `finances`
+  // row), so the per-job leaderboard's cost includes stock drawn from the depot
+  // exactly once — the same stream the per-job pages, reports and company-health
+  // compose. SCOPE: job-lifetime (all issues to the job, net of corrections),
+  // matching this leaderboard's all-time invoices/revenue basis. It is NOT added
+  // to the `profitByMonth` / `totalProfitThisMonth` tiles, which read `finances`
+  // directly as the company GL — COGS is a management overlay, never a GL posting.
+  const dashboardStockCogs = await loadStockCogsCostRows(
+    supabase as unknown as StockClient,
+    ctx.org.id,
+  );
   const dashboardCostInput = buildJobCostInput({
     finances,
     timeEntries,
@@ -665,6 +678,7 @@ export default async function DashboardPage() {
     cycle: "monthly",
     periodStartIso: monthStart.slice(0, 10),
     sacrificeByUser,
+    stockCogs: dashboardStockCogs,
   });
   const profitabilityRows: JobProfitability[] = computeAllJobsProfitability(
     jobs,

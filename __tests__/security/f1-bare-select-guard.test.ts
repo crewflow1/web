@@ -308,12 +308,12 @@ const ALLOWLIST: Record<string, string> = {
   //    surfaced only once the cast-form matcher was taught. Each is a single
   //    parent entity's child set (a job's / a PO's), never a cross-tenant scan:
   //    cardinality is bounded by the parent and cannot approach the 1000 cap.
-  "app/(app)/jobs/[id]/commercial/page.tsx:176":
-    "bounded: ONE job's retention releases (.eq('job_id').eq('org_id')) — feeds the committed/forecast retention figure for a single job; retention is released in 1-2 tranches per job, never near 1000. (Surfaced once C66-B de-vacuumed the cast-form windowing; the read is org-pinned per C66-A's cross-org money-injection fix.)",
-  "app/(app)/jobs/[id]/commercial/page.tsx:181":
-    "bounded: ONE job's purchase orders (.eq('job_id')) — feeds the committed-costs tile for a single job; a job has a handful to dozens of POs, never near 1000",
-  "app/(app)/jobs/[id]/page.tsx:317":
-    "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap. (Moved 315→317 when the P3 span column + checklist import were added above it.)",
+  "app/(app)/jobs/[id]/commercial/page.tsx:177":
+    "bounded: ONE job's retention releases (.eq('job_id').eq('org_id')) — feeds the committed/forecast retention figure for a single job; retention is released in 1-2 tranches per job, never near 1000. (Surfaced once C66-B de-vacuumed the cast-form windowing; the read is org-pinned per C66-A's cross-org money-injection fix. Moved 176→177 when the stock-COGS wave added one import line above it.)",
+  "app/(app)/jobs/[id]/commercial/page.tsx:182":
+    "bounded: ONE job's purchase orders (.eq('job_id')) — feeds the committed-costs tile for a single job; a job has a handful to dozens of POs, never near 1000. (Moved 181→182 when the stock-COGS wave added one import line above it.)",
+  "app/(app)/jobs/[id]/page.tsx:330":
+    "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap. (Moved 315→317 when the P3 span column + checklist import were added above it; then 317→330 when the stock-COGS wave added an import line + the loadStockCogsCostRows composition block above it.)",
   "app/(app)/jobs/retention-actions.ts:163":
     "bounded: ONE job's invoices (.eq('job_id')) — folded into the retention position for a single job; a job's invoices are a handful",
   "app/(app)/purchase-orders/[id]/page.tsx:161":

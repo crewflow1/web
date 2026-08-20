@@ -223,22 +223,31 @@ export type StockCogsCostRow = {
 /**
  * Turn the per-job stock COGS into cost-input rows for computeJobProfitability.
  *
- * ⚠ CURRENTLY UNWIRED. No live surface composes these into job profitability yet
- * — this is the seam, ready for activation, not an active cost path. Wiring it in
- * is a deliberate step gated on the assumption below; it must not be spread into
- * the dashboard/job cost input "while we're here".
+ * WIRED (20261212 wave): composed into live job margins via
+ * `buildJobCostInput({ stockCogs })` — loaded per org by
+ * `server/services/stock.loadStockCogsCostRows` and surfaced on the dashboard
+ * leaderboard, the job summary + commercial pages, CVR/variance, company-health
+ * and the profitability report. It remains a DISTINCT, labelled stream each
+ * surface composes on purpose (never auto-merged into `finances`), so the streams
+ * stay separable and auditable.
  *
- * DOUBLE-COUNT SAFETY (holds ONLY under the depot convention): these rows are an
- * ALLOCATION of depot-replenishment spend onto the consuming job, not a new
- * expense — see the 20261180000000 migration header. They are safe to add to a
- * job's finances-derived cost ONLY when stock-replenishment supplier bills are
- * booked to the depot (`finances.job_id` null) and job-specific direct purchases
- * are not ALSO issued from stock — otherwise a job that carried both a direct
- * materials bill AND a stock issue would be double-counted. They are returned as
- * a DISTINCT, labelled stream a caller composes on purpose (never auto-merged),
- * so that when someone does wire it, the two streams stay separable and
- * auditable. Confirm the convention (or capitalise-on-receipt in `finances`
- * itself) before composing this into live margins.
+ * DOUBLE-COUNT SAFETY — STRUCTURALLY ENFORCED, not a convention to hope for.
+ * These rows are an ALLOCATION of depot-replenishment spend onto the consuming
+ * job, not a new expense (see the 20261180000000 migration header). `lib/stock`
+ * posts NOTHING to `finances` (a stock issue creates no finance row; the single
+ * expense is `recordSupplierBill`). Folding these into a job's finances-derived
+ * cost adds the cost EXACTLY ONCE because the two paths are DISJOINT BY
+ * CONSTRUCTION: a job's material cost reaches its margin through EITHER a direct
+ * `finances` materials bill (a job-tagged purchase — `recordSupplierBill` copies
+ * `po.job_id` onto the bill) OR a stock issue (goods drawn from the job-less depot
+ * pool), and never both for one spend. What makes that an INVARIANT rather than a
+ * convention: `record_stock_receipt_from_grn` REFUSES to take a delivery into
+ * stock when its purchase order carries a `job_id` (migration 20261212000000), so
+ * a job-tagged purchase can never enter shared stock and thus can never also be
+ * issued back to that job as COGS. The company-level P&L is byte-identical with or
+ * without this stream. (A job CAN legitimately carry both a direct materials bill
+ * AND stock COGS — but only from DIFFERENT purchases: a job-direct buy plus depot
+ * stock it consumed — which are two genuine spends, correctly summed.)
  */
 export function buildStockCogsCostRows(
   movements: readonly CostedMovementRow[],

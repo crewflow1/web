@@ -26,6 +26,7 @@ import {
   MATERIAL_REQUEST_OPEN_STATUSES,
 } from "@/lib/material-requests/schema";
 import { loadProgressForJobs, type ProgressClient } from "@/server/services/job-progress";
+import { loadStockCogsCostRows, type StockClient } from "@/server/services/stock";
 import { buildRetentionRegisterView } from "@/server/services/retention-register";
 import { buildAgedLedgers } from "@/server/services/aged-ledgers";
 import {
@@ -668,6 +669,12 @@ export async function gatherCvrRollup(
     if (!uid) continue;
     hourlyByUser.set(uid, Number((u as { hourly_pay?: number | string | null }).hourly_pay ?? 0));
   }
+  // Stock COGS: the weighted-average value of stock issued to each job, folded
+  // over the whole org ledger (net of corrections) and disjoint from `finances`
+  // (stock issues post no `finances` row), so CVR's ACTUAL materials cost includes
+  // stock drawn from the depot exactly once — the same stream the commercial page,
+  // dashboard, reports and company-health compose.
+  const cvrStockCogs = await loadStockCogsCostRows(db as unknown as StockClient, orgId);
   const cvrCostRows = buildJobCostInput({
     finances: finances.map((f) => ({
       job_id: sv(f.job_id),
@@ -678,6 +685,7 @@ export async function gatherCvrRollup(
     hourlyByUser,
     hoursForEntries: lifetimeHoursSource(),
     cycle: "monthly",
+    stockCogs: cvrStockCogs,
   });
   const costRowsByJob = new Map<string, CostInputRow[]>();
   for (const r of cvrCostRows) {

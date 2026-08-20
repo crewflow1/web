@@ -36,6 +36,7 @@ import {
   lifetimeHoursSource,
 } from "@/lib/profitability/job-cost-input";
 import { loadOrgHourlyPay } from "@/lib/profitability/labour-rates";
+import { loadStockCogsCostRows, type StockClient } from "@/server/services/stock";
 import type { TimeEntry } from "@/lib/time/compute";
 import {
   computeRetentionPosition,
@@ -259,12 +260,24 @@ export default async function EditJobPage({
   if (teRes.error) throw readFailure("job summary: time entries", teRes.error);
   const jobTimeEntries = (teRes.data ?? []) as unknown as TimeEntry[];
   const hourlyByUser = await loadOrgHourlyPay(supabase, ctx.org.id);
+  // Stock COGS: the weighted-average cost of stock issued to THIS job from
+  // inventory, an allocation stream disjoint from `finances` (stock issues post no
+  // `finances` row), so the job's material cost enters its margin exactly once —
+  // the same stream the dashboard, commercial page, reports and company-health
+  // compose. The COGS fold runs over the whole org ledger (a correction reversing
+  // an issue is a job-less row), then narrows to this job's rows.
+  const stockCogs = await loadStockCogsCostRows(
+    supabase as unknown as StockClient,
+    ctx.org.id,
+    { jobId: job.id },
+  );
   const costInput = buildJobCostInput({
     finances: finRows.map((f) => ({ job_id: f.job_id, amount: f.amount, category: f.category })),
     timeEntries: jobTimeEntries,
     hourlyByUser,
     hoursForEntries: lifetimeHoursSource(),
     cycle: "monthly",
+    stockCogs,
   });
   const profit = computeJobProfitability(job.id, invRows, costInput);
 

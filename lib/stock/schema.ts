@@ -237,6 +237,9 @@ export function friendlyStockError(
   if (/post it before taking it into stock/.test(m)) {
     return "Post the delivery before taking it into stock.";
   }
+  if (/for a specific job/.test(m)) {
+    return "This order is for a specific job — its materials are costed to that job when you record the supplier bill, so it isn’t taken into shared stock.";
+  }
   if (/is in stock \(/.test(m)) {
     return "This delivery is already in stock. Correct the stock receipt first, then void the delivery.";
   }
