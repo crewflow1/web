@@ -105,3 +105,16 @@ Migrate conversion-critical legacy light pages onto the dark `(site)` system (st
   - **Deliberately NOT touched:** the **book-demo modal** (`_book-demo-modal.tsx`) — conversion-funnel code under the standing gate; it stays light when opened (a contained, acceptable "form" surface; hidden on load so pages are fully dark). Flagged for founder: (a) a11y focus-trap/restore, (b) optional dark restyle — both touch the demo/payment funnel. And **`/developers`** — already correctly **dark-gated** (404s in prod behind `FEATURE_PUBLIC_API_JOBS`), so it does not overclaim the public API; its light API-doc badges only ever render if the API launches. Product-truth-correct as-is.
 
 **Site coherence now COMPLETE:** homepage + `/product`×7 + `/pricing` + compare/industries/features/locations/blog/tools all share one premium dark identity, one nav, one footer. Remaining: R1 screenshots (CEO decision), SEO polish (`/offline` noindex, per-page OG, verify new pages in sitemap), full multi-breakpoint QA sweep, analytics (config-gated), non-prod preview push, final CEO package.
+
+- **CP12 (commit): SEO polish.** `/offline` now `noindex,nofollow` (new `app/offline/layout.tsx`; the client page couldn't export metadata and was defaulting to index) — page stays light as product surface by design. Removed `liverpool` from two `locations.ts` `related[]` arrays (no `/construction-software/liverpool` page — it 404s); validated **0** remaining dangling location related-refs. Confirmed the sitemap already carries `/product` + 6 pillars + `/pricing`.
+- **Mobile QA of the migrated surface:** `compare/[slug]` @390 — no page overflow, the comparison table scrolls inside its `overflow-x-auto` wrapper (not the page); `/pricing` @390 no overflow (H1 38px); `tools/markup-calculator` live + dark. Migration is breakpoint-robust.
+
+## STATE AT HANDOFF (this session)
+**Built + verified on `redesign/website-2026` (NOT merged, NOT deployed):** a complete, coherent, premium **dark** redesign of the entire public site on the Setting-Out identity — homepage (adversarially hardened), platform + 6 pillar pages, pricing, and the whole legacy SEO surface (compare/industries/features/locations/blog/tools). Product-truth enforced site-wide (AI-receptionist, valuations, lead-scoring all removed). Honest homepage score ~88–90.
+
+**Three items need a CEO/founder decision (genuine blockers):**
+1. **Real product screenshots (R1)** — the one thing between the homepage and the ≥95 bar. Feasible here (local stack up) but needs a trustworthy demo-seed + auth-capture pass. Options: authorize the seed+capture pass / provide approved screenshots / accept marked placeholders for the preview.
+2. **Book-demo modal** — light + a11y-imperfect (focus trap/restore). It's conversion-funnel code under the standing gate, so untouched. Restyle-to-dark + a11y fix needs founder sign-off (funnel-adjacent).
+3. **Analytics** (PostHog/funnel events) — config/keys gated; deferred.
+
+**Deliverable step available on request:** push `redesign/website-2026` to origin → non-prod Vercel preview (SSO-gated to the CEO) for review. No prod merge without explicit approval.
