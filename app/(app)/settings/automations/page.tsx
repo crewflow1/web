@@ -398,11 +398,23 @@ export default async function AutomationsSettingsPage({
 
       {/* Custom rules -------------------------------------------------- */}
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-base font-semibold text-slate-900">Custom rules</h2>
-        <p className="mt-1 text-sm text-slate-600">
-          Build your own rules: pick a trigger, add conditions, choose the
-          actions, and optionally require approval before some steps run.
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Custom rules</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Build your own rules: pick a trigger, add conditions, choose the
+              actions, and optionally require approval before some steps run.
+            </p>
+          </div>
+          {isAdmin ? (
+            <Link
+              href="/settings/automations/workflow"
+              className="rounded-md bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700"
+            >
+              Open visual builder →
+            </Link>
+          ) : null}
+        </div>
 
         {customRules.items.length === 0 ? (
           <p className="mt-4 text-sm text-slate-500">No custom rules yet.</p>
@@ -463,6 +475,12 @@ export default async function AutomationsSettingsPage({
                               className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
                             >
                               Edit
+                            </Link>
+                            <Link
+                              href={`/settings/automations/workflow?edit=${r.id}`}
+                              className="rounded-md border border-indigo-200 bg-white px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50"
+                            >
+                              Visual
                             </Link>
                             <form action={toggleCustomRuleAction}>
                               <input type="hidden" name="rule_id" value={r.id} />

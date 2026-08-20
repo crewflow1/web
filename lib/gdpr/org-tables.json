@@ -36,6 +36,7 @@
     "automation_rules",
     "automation_runs",
     "automation_schedules",
+    "automation_workflow_versions",
     "bank_connections",
     "bank_statement_lines",
     "bank_statements",

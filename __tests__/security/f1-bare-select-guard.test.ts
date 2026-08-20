@@ -1145,6 +1145,8 @@ const COVERAGE_REVIEWED: Record<string, string> = {
     "PER-ORG/PAGED: the only set-read is listPendingApprovals (server/services/automation-custom-rules.ts) — .eq('org_id').eq('status','pending') F-1 paged via .range on a stable (created_at desc, id asc) order (CUSTOM_RULE_PAGE_SIZE window). The decideApproval reads are an .update(...).select() RETURNING (id-filtered, ≤1 row); the rest are inserts/updates.",
   automation_custom_rules:
     "PER-ORG config-scale/PAGED: listCustomRulesForOrg (server/services/automation-custom-rules.ts) is .eq('org_id') F-1 paged via .range on a stable (created_at desc, id asc) order; the dispatcher's loadEnabledCustomRulesForDispatch is .eq('org_id').eq('trigger_event').eq('enabled') .limit(500) (config-scale, far under the clamp); getCustomRule is .maybeSingle(). Never summed cross-tenant.",
+  automation_workflow_versions:
+    "PER-PARENT/PAGED/SINGLE: the visual-builder version history (server/services/automation-workflows.ts). listWorkflowVersions is .eq('org_id').eq('custom_rule_id') F-1 paged via .range on a stable (version desc) order — ONE rule's revisions, never cross-tenant. nextVersionNumber is .eq('org_id').eq('custom_rule_id').order('version',desc).limit(1) — a single-row max probe (bounded, < clamp). restoreWorkflowVersion is a .maybeSingle() by (id, org_id, custom_rule_id). Never summed.",
   asset_fuel_logs: "PAGED: fetchAllRows (fleet fuel rollup)",
   bank_statements: "PAGED: fetchAllRows (payments page statements list)",
   briefing_dismissals: "PAGED: fetchAllRows (daily briefing)",

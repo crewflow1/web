@@ -20,6 +20,10 @@ import {
   decideApproval,
   type AutomationCustomRuleClient,
 } from "@/server/services/automation-custom-rules";
+import {
+  saveWorkflow,
+  restoreWorkflowVersion,
+} from "@/server/services/automation-workflows";
 import { isValidCron } from "@/lib/automation/cron";
 
 /**
@@ -467,4 +471,147 @@ export async function decideApprovalAction(formData: FormData): Promise<void> {
 
   revalidatePath("/settings/automations");
   redirect("/settings/automations?saved=approval");
+}
+
+// ── Visual workflow builder (the node-graph canvas) ───────────────────────────
+//
+// Same doubled authorisation: the role check redirects the operator; the
+// automation_custom_rules / automation_workflow_versions admin-write RLS policies
+// are the REAL boundary, and the tenant client carries the user's JWT. The graph
+// is COMPILED + validated in the service (compileWorkflowGraph →
+// validateCustomRuleDefinition — the injection chokepoint) before any persist, and
+// the compiled rule lands in the SAME automation_custom_rules.definition the
+// dispatcher already runs. Route depth is 3 (/settings/automations/workflow), still
+// under the deep-swap ≥4 trap, so a plain redirect() is safe.
+
+const saveWorkflowSchema = z.object({
+  rule_id: z.string().uuid().optional(),
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(500).optional().default(""),
+  graph: z.string().min(1).max(200_000),
+});
+const restoreVersionSchema = z.object({
+  rule_id: z.string().uuid(),
+  version_id: z.string().uuid(),
+});
+
+function backToWorkflow(ruleId: string | undefined, query: string): never {
+  const base = ruleId
+    ? `/settings/automations/workflow?edit=${ruleId}`
+    : "/settings/automations/workflow";
+  const sep = base.includes("?") ? "&" : "?";
+  redirect(`${base}${sep}${query}`);
+}
+
+export async function saveWorkflowAction(formData: FormData): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  const editId =
+    typeof formData.get("rule_id") === "string" && formData.get("rule_id")
+      ? String(formData.get("rule_id"))
+      : undefined;
+  if (!isManager(ctx.membership.role)) {
+    backToWorkflow(editId, "error=forbidden");
+  }
+  const parsed = saveWorkflowSchema.safeParse({
+    rule_id: formData.get("rule_id") || undefined,
+    name: formData.get("name") ?? "",
+    description: formData.get("description") ?? "",
+    graph: formData.get("graph") ?? "",
+  });
+  if (!parsed.success) {
+    backToWorkflow(editId, "error=workflow_validation");
+  }
+  const graph = parseDefinitionJson(parsed.data.graph);
+  if (graph === null) {
+    backToWorkflow(editId, "error=workflow_validation");
+  }
+
+  const supabase = await createClient();
+  let result: Awaited<ReturnType<typeof saveWorkflow>>;
+  try {
+    result = await saveWorkflow(
+      customClient(supabase),
+      ctx.org.id,
+      {
+        ruleId: parsed.data.rule_id,
+        name: parsed.data.name,
+        description: parsed.data.description || null,
+        graph,
+      },
+      user.id,
+    );
+  } catch (e) {
+    console.error("[settings/automations] workflow save failed", e);
+    backToWorkflow(editId, "error=workflow_save_failed");
+  }
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: parsed.data.rule_id
+      ? "automation_workflow.updated"
+      : "automation_workflow.created",
+    targetTable: "automation_custom_rules",
+    targetId: result!.ruleId,
+    metadata: {
+      name: parsed.data.name,
+      version: result!.version,
+      is_draft: result!.isDraft,
+      dark_kinds: result!.darkKinds,
+    },
+  });
+
+  revalidatePath("/settings/automations");
+  revalidatePath("/settings/automations/workflow");
+  backToWorkflow(
+    result!.ruleId,
+    result!.isDraft ? "saved=workflow_draft" : "saved=workflow",
+  );
+}
+
+export async function restoreWorkflowVersionAction(
+  formData: FormData,
+): Promise<void> {
+  const { ctx, user } = await requireOrgContext();
+  const ruleId =
+    typeof formData.get("rule_id") === "string"
+      ? String(formData.get("rule_id"))
+      : undefined;
+  if (!isManager(ctx.membership.role)) {
+    backToWorkflow(ruleId, "error=forbidden");
+  }
+  const parsed = restoreVersionSchema.safeParse({
+    rule_id: formData.get("rule_id") ?? "",
+    version_id: formData.get("version_id") ?? "",
+  });
+  if (!parsed.success) {
+    backToWorkflow(ruleId, "error=workflow_validation");
+  }
+
+  const supabase = await createClient();
+  try {
+    await restoreWorkflowVersion(
+      customClient(supabase),
+      ctx.org.id,
+      parsed.data.rule_id,
+      parsed.data.version_id,
+      user.id,
+    );
+  } catch (e) {
+    console.error("[settings/automations] workflow restore failed", e);
+    backToWorkflow(parsed.data.rule_id, "error=workflow_save_failed");
+  }
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "automation_workflow.restored",
+    targetTable: "automation_workflow_versions",
+    targetId: parsed.data.version_id,
+    metadata: { rule_id: parsed.data.rule_id },
+  });
+
+  revalidatePath("/settings/automations");
+  revalidatePath("/settings/automations/workflow");
+  backToWorkflow(parsed.data.rule_id, "saved=workflow_restored");
 }
