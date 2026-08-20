@@ -79,13 +79,14 @@ const ORG = "00000000-0000-0000-0000-0000000000aa";
 // =====================================================================
 
 describe("the task-class routing table is DATA, with models in exactly one place", () => {
-  it("names the five task classes — 'embedding' admitted by migration 20261080", () => {
+  it("names the six task classes — 'embedding' admitted by migration 20261080, 'transcription' by 20261191", () => {
     expect([...AI_TASK_CLASSES]).toEqual([
       "deterministic",
       "classification",
       "drafting",
       "complex",
       "embedding",
+      "transcription",
     ]);
   });
 
