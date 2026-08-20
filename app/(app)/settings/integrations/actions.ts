@@ -13,6 +13,7 @@ import {
   type TelematicsProvider,
 } from "@/lib/integrations/telematics/oauth";
 import { disconnectMerchantProvider } from "@/server/services/merchant-connections";
+import { runMerchantCatalogueImport } from "@/server/services/merchant-writers";
 import {
   isMerchantProvider,
   type MerchantProvider,
@@ -163,6 +164,35 @@ export async function disconnectMerchantConnection(formData: FormData): Promise<
   if (!res.ok) {
     throw new Error(res.error ?? "Disconnect failed.");
   }
+
+  revalidatePath("/settings/integrations");
+}
+
+/**
+ * Merchant catalogue import — wires the panel's "Import price file" control to the
+ * service-role catalogue writer. Fetches the merchant's trade price file and
+ * UPSERTS the parsed rows into merchant_catalogue_items (idempotent on
+ * (org_id, provider, sku)).
+ *
+ * DARK-SAFE. The writer refuses BEFORE any client construction / fetch when the
+ * merchant is not connectable (`skipped_dark`), and returns `not_connected` when
+ * the org has no `connected` row — nothing is fetched or written. Admin-gated +
+ * org-pinned via ctx.org.id; a failed import surfaces on the connection's
+ * last_error (rendered by the panel), so a plain form-action is enough.
+ */
+export async function importMerchantCatalogueAction(formData: FormData): Promise<void> {
+  const providerRaw = String(formData.get("provider") ?? "");
+  if (!isMerchantProvider(providerRaw)) {
+    throw new Error("Unknown merchant.");
+  }
+  const provider: MerchantProvider = providerRaw;
+
+  const { ctx } = await requireOrgContext();
+  if (!isAdminRole(ctx.membership.role)) {
+    throw new Error("Only an owner or admin may import a merchant catalogue.");
+  }
+
+  await runMerchantCatalogueImport({ orgId: ctx.org.id, provider });
 
   revalidatePath("/settings/integrations");
 }

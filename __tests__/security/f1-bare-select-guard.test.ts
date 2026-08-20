@@ -316,8 +316,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap. (Moved 315→317 when the P3 span column + checklist import were added above it.)",
   "app/(app)/jobs/retention-actions.ts:163":
     "bounded: ONE job's invoices (.eq('job_id')) — folded into the retention position for a single job; a job's invoices are a handful",
-  "app/(app)/purchase-orders/[id]/page.tsx:149":
-    "bounded: ONE purchase order's supplier bills (.eq('purchase_order_id')) — a single PO has a handful of finance entries, never near 1000",
+  "app/(app)/purchase-orders/[id]/page.tsx:161":
+    "bounded: ONE purchase order's supplier bills (.eq('purchase_order_id')) — a single PO has a handful of finance entries, never near 1000. (Moved 149→161 when the merchant-submit imports, ERROR_COPY entries and the connected-merchant read were added above it.)",
   // Two enrichment lookups keyed by a ≤500-row parent's distinct org ids: the
   // parent read is capped (.limit(500)), so the distinct-org id set handed to
   // `.in('id', …)` is ≤500 — well below the cap. Not a cross-tenant estate scan.
@@ -1192,6 +1192,10 @@ const COVERAGE_REVIEWED: Record<string, string> = {
     "PER-EMPLOYEE-CONFIG/PAGED: both set-reads in server/services/pension-enrolment.ts are .eq('org_id') and fetchAllRows-paged via .range on a stable id order — getPensionEnrolmentsForOrg (the payroll employer-cost map, one row per employee) and getOptOutRegisterForOrg (.eq('status','opted_out')). Bounded by org headcount, never summed cross-tenant; getPensionEnrolment is .maybeSingle(). The write path is an upsert.",
   payroll_tax_profiles:
     "PER-EMPLOYEE-CONFIG/PAGED: the only set-read is getPayrollTaxProfilesForOrg (server/services/payroll-tax-profile.ts) — .eq('org_id') fetchAllRows-paged via .range on a stable id order (the payroll take-home input map, one row per employee, bounded by org headcount, never summed cross-tenant). getPayrollTaxProfile is .maybeSingle(); the write path is an upsert.",
+  merchant_catalogue_items:
+    "PAGED: the only set-read is the SKU-resolution read in submitPurchaseOrderToMerchantForOrg (server/services/merchant-writers.ts) — .eq('org_id').eq('provider') fetchAllRows-paged via .range on a stable sku order, completeness-sensitive (must see the full catalogue) and therefore fully paged. The catalogue import is an UPSERT write, not a read.",
+  merchant_po_submissions:
+    "BOUNDED/SINGLE: the only set-read is the idempotency guard in submitPurchaseOrderToMerchantForOrg (server/services/merchant-writers.ts) — .eq('org_id').eq('purchase_order_id').eq('status','acknowledged').limit(1), structurally bounded to a single row. The outcome write is an append-only INSERT…RETURNING (single). Service-role only; append-only ledger.",
 
   // ---- PER-PARENT (bounded by ONE parent row) ----
   blueprint_markup: "PER-PARENT: .eq('blueprint_version_id') — one drawing version's markup shapes",
