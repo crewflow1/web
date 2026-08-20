@@ -42,6 +42,47 @@ import { clearAllReads } from "@/lib/offline/read-cache";
  * correct rather than a hole — without JavaScript nothing was ever written to
  * IndexedDB in the first place, so there is nothing to purge.
  */
+/**
+ * Count one IndexedDB store WITHOUT ever hanging or throwing the caller. A count is
+ * only advisory (it drives a warning), so if the store is slow to open, errors, or —
+ * in some browsers/harnesses — never fires success on a brand-new database, it must
+ * degrade to 0 rather than block the sign-out flow. The write-queue count and the
+ * photo-queue count are read INDEPENDENTLY through this, so a stall in one can never
+ * suppress the warning the other would raise (the write queue is the load-bearing
+ * one: unsent writes exist nowhere else, so the warning must fire whenever there are
+ * any, regardless of the photo store's state).
+ */
+function safeCount(fn: () => Promise<number>, timeoutMs = 2000): Promise<number> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (n: number) => {
+      if (settled) return;
+      settled = true;
+      resolve(n);
+    };
+    const t = setTimeout(() => done(0), timeoutMs);
+    fn()
+      .then((n) => {
+        clearTimeout(t);
+        done(typeof n === "number" && Number.isFinite(n) ? n : 0);
+      })
+      .catch(() => {
+        clearTimeout(t);
+        done(0);
+      });
+  });
+}
+
+/** Unsent user work on the device = queued writes + queued binary captures. Each is
+ *  counted independently and defensively, so neither can hang or hide the other. */
+async function countUnsent(): Promise<number> {
+  const [writes, photos] = await Promise.all([
+    safeCount(() => countOnDevice()),
+    safeCount(() => countPhotosOnDevice()),
+  ]);
+  return writes + photos;
+}
+
 export function SignOutButton({ className }: { className?: string }) {
   const [queued, setQueued] = useState(0);
 
@@ -50,13 +91,8 @@ export function SignOutButton({ className }: { className?: string }) {
   useEffect(() => {
     let alive = true;
     const read = async () => {
-      // Unsent = queued writes + queued binary captures. Both hold user work that
-      // exists nowhere else, so both count toward the sign-out warning.
-      const [writes, photos] = await Promise.all([
-        countOnDevice(),
-        countPhotosOnDevice(),
-      ]);
-      if (alive) setQueued(writes + photos);
+      const n = await countUnsent();
+      if (alive) setQueued(n);
     };
     void read();
     const t = setInterval(read, 10_000);
@@ -73,16 +109,9 @@ export function SignOutButton({ className }: { className?: string }) {
       action={async () => {
         // Re-read at the moment of truth: the polled count above could be up to
         // 10s stale, and the warning must reflect what is actually on the device.
-        let unsent = 0;
-        try {
-          const [writes, photos] = await Promise.all([
-            countOnDevice(),
-            countPhotosOnDevice(),
-          ]);
-          unsent = writes + photos;
-        } catch {
-          /* if we cannot count, we still purge below */
-        }
+        // countUnsent never hangs or throws (each store is timeout-guarded), so a
+        // slow/failing photo store can never suppress the writes-driven warning.
+        const unsent = await countUnsent();
         if (unsent > 0) {
           const ok = window.confirm(
             `${unsent} ${unsent === 1 ? "entry has" : "entries have"} not been sent to CrewFlow yet.\n\n` +
