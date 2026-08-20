@@ -10,6 +10,13 @@ export type Address = {
   line2?: string | null;
   city?: string | null;
   county?: string | null;
+  /**
+   * State / province / region — the international equivalent of `county`. Many
+   * countries (US, CA, AU, …) file the sub-national division here rather than in
+   * `county`. Optional and absent for UK addresses, so existing GB formatting is
+   * unchanged (the legacy `parts()` path never reads it).
+   */
+  state?: string | null;
   postcode?: string | null;
   country?: string | null;
 };
@@ -39,6 +46,47 @@ export function formatAddressOneLine(a: Address | null | undefined): string {
 export function formatAddressLines(a: Address | null | undefined): string[] {
   if (!a) return [];
   return parts(a);
+}
+
+/**
+ * Country-aware ordered address parts (multi-country readiness).
+ *
+ * Includes the international `state` field and orders parts by country
+ * convention. For 'GB' (or unset country) the order is IDENTICAL to the legacy
+ * `parts()` — line1, line2, city, county, postcode, country — so UK addresses are
+ * byte-identical. Other countries place the sub-national `state` and the postcode
+ * per their local convention (e.g. US: "city, STATE zip").
+ */
+export function formatAddressPartsForCountry(a: Address | null | undefined): string[] {
+  if (!a) return [];
+  const clean = (v: string | null | undefined) => (v ?? "").trim();
+  const country = clean(a.country).toUpperCase();
+
+  const line1 = clean(a.line1);
+  const line2 = clean(a.line2);
+  const city = clean(a.city);
+  const county = clean(a.county);
+  const state = clean(a.state);
+  const postcode = clean(a.postcode);
+  const countryName = clean(a.country);
+
+  // US-style: "line1", "line2", "City, ST 90210", "United States".
+  if (country === "US" || country === "CA" || country === "AU") {
+    const cityLine = [city, [state, postcode].filter(Boolean).join(" ")]
+      .filter(Boolean)
+      .join(", ");
+    return [line1, line2, cityLine, countryName].filter(Boolean);
+  }
+
+  // Default (GB and everything else): the legacy order, plus `state` after county
+  // when a non-UK address happens to use it. For a pure UK address (no state) this
+  // is byte-identical to parts().
+  return [line1, line2, city, county, state, postcode, countryName].filter(Boolean);
+}
+
+/** Country-aware single-line address. GB output is byte-identical to formatAddressOneLine. */
+export function formatAddressOneLineForCountry(a: Address | null | undefined): string {
+  return formatAddressPartsForCountry(a).join(", ");
 }
 
 type CustomerAddressCols = {
