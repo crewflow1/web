@@ -349,3 +349,206 @@ export function createExecutor(registry: ToolRegistry): Executor {
  * the Reference Path Rule's first deliverable use) has the same catalogue to drive end-to-end.
  */
 export const REFERENCE_EXECUTOR: Executor = createExecutor(REFERENCE_TOOL_REGISTRY);
+
+// =====================================================================
+// The build-flag — the THIRD independent lock (P2 HQ Autonomous Apply)
+// =====================================================================
+
+/**
+ * THE PRODUCTION-EXECUTION LOCK. `FEATURE_HQ_AUTONOMOUS_APPLY` gates whether ANY bound apply
+ * boundary may ever be resolved. It is the THIRD independent lock on the autonomous-apply
+ * capability, on top of (1) the deny-by-default posture floor (server/sdk/gate.ts — structural,
+ * unremovable by config) and (2) the two runtime kill-switches (`CREWFLOW_EXECUTOR_APPLY` for the
+ * inline autonomous path, `CREWFLOW_HQ_APPLY_ON_APPROVAL` for the out-of-band sweep).
+ *
+ * DEFAULT-OFF, AND OFF IN PRODUCTION TODAY. It is `true` ONLY when the env var is exactly the
+ * literal `"on"` — never truthy, never `"true"`, never `"ON"`. While it is off, EVERY production
+ * apply authority ({@link import("./autonomous-apply").createGatedAutonomousApplyAuthority}, {@link
+ * import("@/server/services/hq-apply-drain").createGatedApplyAuthority}) resolves EVERY descriptor
+ * to `null` (deny-by-default) BEFORE any bound tool is consulted, so nothing is executed, verified,
+ * rolled back, or recorded. Turning it on is a SEPARATE, deliberate CEO decision — never a silent
+ * side effect of shipping this engineering. The machinery below is COMPLETE; the flag keeps it inert.
+ *
+ * Pure like the rest of this module — it reads an injected env map (defaulting to `process.env`),
+ * imports nothing, and performs no I/O.
+ */
+export function featureHqAutonomousApplyEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return env.FEATURE_HQ_AUTONOMOUS_APPLY === "on";
+}
+
+// =====================================================================
+// The bound tool implementation — apply + verify + rollback, per tool
+// =====================================================================
+
+/**
+ * The lifecycle stages an apply attempt passes through — the vocabulary of the immutable audit
+ * trail. A single attempt records the ORDERED sequence it actually took:
+ *
+ *   • `approved`    — the action was cleared (an `autonomous` verdict / an approved item) and a
+ *                     valid, typed {@link ExecutionPlan} was produced. Recorded before any effect.
+ *   • `refused`     — a boundary precondition failed (locked flag, unmapped tool, invalid args,
+ *                     non-deterministic tool) — the boundary was NEVER crossed.
+ *   • `executed`    — the injected SECURITY DEFINER boundary ({@link BoundToolImplementation.apply})
+ *                     was crossed and returned.
+ *   • `verified`    — the post-execution check ({@link BoundToolImplementation.verify}) confirmed the
+ *                     effect landed as intended.
+ *   • `rolled_back` — verification failed and the compensating action
+ *                     ({@link BoundToolImplementation.rollback}) undid the effect.
+ *   • `failed`      — the boundary threw, verification failed with no rollback available, or a
+ *                     rollback itself threw. The attempt is not a success.
+ */
+export type ApplyStage =
+  | "approved"
+  | "refused"
+  | "executed"
+  | "verified"
+  | "rolled_back"
+  | "failed";
+
+/** One immutable step in an apply attempt's audit trail — a stage plus a human-readable detail. */
+export interface ApplyAuditStep {
+  readonly stage: ApplyStage;
+  readonly detail: string;
+}
+
+/**
+ * A tool's BOUND implementation — the sanctioned effect boundary plus its post-execution guards.
+ * This is the shape the runtime supplies for a deterministic tool once the capability is activated;
+ * in a test it is a pure stand-in. It is the {@link ToolImplementation} seam enriched with the two
+ * safety acts a live apply needs:
+ *
+ *   • `apply`    — cross the boundary. In production this is bound to the tool's SECURITY DEFINER
+ *                  entry point (the subsystem re-asserts permission at the point of application — ADR
+ *                  0009 Decision 8); it is NEVER a bare tenant write from this layer.
+ *   • `verify`   — (optional) confirm, after applying, that the effect landed as intended. Returns
+ *                  `false` (or throws) to signal the apply did not take — which triggers rollback.
+ *   • `rollback` — (optional) the compensating action that undoes a verified-bad apply. Only a
+ *                  REVERSIBLE tool can carry one; an irreversible tool must never be bound for
+ *                  autonomous apply in the first place (the authority declines it — deterministic-only).
+ *
+ * The contract only ever CALLS these; it provides none of them. They belong to the caller/runtime,
+ * exactly as {@link ToolImplementation} does.
+ */
+export interface BoundToolImplementation {
+  /** The tool's stable label — carried into the outcome and the audit trail. */
+  readonly label: string;
+  /** Cross the sanctioned SECURITY DEFINER boundary with the validated args; resolve with the result. */
+  apply(args: ToolArgs): Promise<unknown>;
+  /** Post-execution verification: `true` iff the effect landed; `false`/throw triggers rollback. */
+  verify?(args: ToolArgs, result: unknown): Promise<boolean>;
+  /** The compensating action that undoes a verified-bad apply (reversible tools only). */
+  rollback?(args: ToolArgs, result: unknown): Promise<void>;
+}
+
+/**
+ * The end-to-end result of {@link executeVerified} — a total, discriminated outcome that also carries
+ * the ORDERED audit trail of every stage the attempt took. `applied` is the only success; `failed`
+ * carries whether a rollback ran (so an audited failure records whether the effect was compensated).
+ * This is a SUPERSET of {@link ExecutionOutcome}: {@link verifiedToOutcome} narrows it back to the
+ * stable outcome the apply-once store ({@link import("./application").applyOnce}) records under its key.
+ */
+export type VerifiedExecutionOutcome =
+  | {
+      readonly status: "applied";
+      readonly label: string;
+      readonly result: unknown;
+      readonly steps: readonly ApplyAuditStep[];
+    }
+  | {
+      readonly status: "failed";
+      readonly label: string;
+      readonly error: string;
+      /** `true` iff the effect was compensated by a rollback after a failed verification. */
+      readonly rolledBack: boolean;
+      readonly steps: readonly ApplyAuditStep[];
+    };
+
+/**
+ * Apply a planned action through its BOUND implementation, VERIFY the effect, and ROLL BACK on a
+ * failed verification — capturing the full, immutable audit trail. This is the completed apply
+ * mechanism the shadow (plan-only) and the C2 {@link executePlan} (apply-only) were precursors to.
+ *
+ * PURE ORCHESTRATION over the injected boundary — its only effects are the calls to `bound.apply`,
+ * `bound.verify`, and `bound.rollback`, all supplied by the caller. It NEVER throws: every fault
+ * (a throwing boundary, a false/throwing verify, a throwing rollback) is CAPTURED into a `failed`
+ * {@link VerifiedExecutionOutcome} with a complete audit trail, so the caller always gets a total
+ * value to record. The sequence:
+ *
+ *   1. record `approved` (the plan is cleared and typed);
+ *   2. cross the boundary (`bound.apply`). A throw → `failed`, boundary crossed but no verified
+ *      effect, no rollback attempted (there is no result to compensate); record `failed`;
+ *   3. record `executed`;
+ *   4. if `bound.verify` is present, run it. On `true` → record `verified`, return `applied`. On
+ *      `false`/throw → attempt `bound.rollback` (if present): success records `rolled_back`, a
+ *      throwing rollback records `failed`; either way return `failed` (the apply did not stick);
+ *   5. with no verifier, the boundary's success IS the outcome → return `applied`.
+ */
+export async function executeVerified(
+  plan: ExecutionPlan,
+  bound: BoundToolImplementation,
+): Promise<VerifiedExecutionOutcome> {
+  const label = plan.tool.label;
+  const steps: ApplyAuditStep[] = [
+    { stage: "approved", detail: `cleared, typed plan for ${label}` },
+  ];
+
+  let result: unknown;
+  try {
+    result = await bound.apply(plan.args);
+  } catch (err) {
+    const error = errorMessage(err);
+    steps.push({ stage: "failed", detail: `boundary threw: ${error}` });
+    return { status: "failed", label, error, rolledBack: false, steps: Object.freeze(steps) };
+  }
+  steps.push({ stage: "executed", detail: "sanctioned boundary crossed" });
+
+  if (bound.verify) {
+    let verified = false;
+    let verifyError: string | null = null;
+    try {
+      verified = await bound.verify(plan.args, result);
+    } catch (err) {
+      verified = false;
+      verifyError = errorMessage(err);
+    }
+    if (!verified) {
+      const why = verifyError
+        ? `post-execution verification threw: ${verifyError}`
+        : "post-execution verification failed";
+      let rolledBack = false;
+      if (bound.rollback) {
+        try {
+          await bound.rollback(plan.args, result);
+          rolledBack = true;
+          steps.push({ stage: "rolled_back", detail: `compensated after ${why}` });
+        } catch (err) {
+          steps.push({ stage: "failed", detail: `rollback threw: ${errorMessage(err)}` });
+        }
+      }
+      if (!rolledBack) {
+        steps.push({ stage: "failed", detail: why });
+      }
+      return { status: "failed", label, error: why, rolledBack, steps: Object.freeze(steps) };
+    }
+    steps.push({ stage: "verified", detail: "post-execution verification passed" });
+  }
+
+  return { status: "applied", label, result, steps: Object.freeze(steps) };
+}
+
+/**
+ * Narrow a {@link VerifiedExecutionOutcome} to the stable {@link ExecutionOutcome} the apply-once
+ * store records under its idempotency key. `applied` (verified, or verifier-absent) maps to `applied`
+ * — the marker that makes a re-attempt a no-op success. Anything else (a boundary throw, a failed
+ * verification, a rolled-back apply) maps to `failed` — the action stays UNAPPLIED and, below the
+ * ceiling, safe to re-attempt. A rolled-back attempt is deliberately a `failed` outcome: the effect
+ * was undone, so there is nothing to mark as applied. The richer stage trail lives in the audit sink.
+ */
+export function verifiedToOutcome(outcome: VerifiedExecutionOutcome): ExecutionOutcome {
+  if (outcome.status === "applied") {
+    return { status: "applied", label: outcome.label, result: outcome.result };
+  }
+  return { status: "failed", label: outcome.label, error: outcome.error };
+}
