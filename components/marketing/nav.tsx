@@ -59,6 +59,7 @@ export function SiteNav() {
   const pathname = usePathname();
   const drawerRef = useRef<HTMLDivElement>(null);
   const menuBarRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   // Close everything on route change.
   useEffect(() => {
@@ -66,21 +67,49 @@ export function SiteNav() {
     setOpenMenu(null);
   }, [pathname]);
 
-  // Mobile drawer: scroll-lock + Esc + focus management.
+  // Mobile drawer: scroll-lock + Esc + real focus trap + restore focus on close.
   useEffect(() => {
     if (!open) return;
+    const drawer = drawerRef.current;
+    const restoreTo = triggerRef.current;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+
+    const focusables = () =>
+      Array.from(
+        drawer?.querySelectorAll<HTMLElement>(
+          'a[href],button:not([disabled]),[tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      ).filter((el) => el.offsetParent !== null);
+
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        setOpen(false);
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const items = focusables();
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (!first || !last) return;
+      const active = document.activeElement as HTMLElement | null;
+      const outside = !drawer?.contains(active);
+      if (e.shiftKey && (active === first || outside)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || outside)) {
+        e.preventDefault();
+        first.focus();
+      }
     };
+
     document.addEventListener("keydown", onKey);
-    // move focus into the drawer
-    const first = drawerRef.current?.querySelector<HTMLElement>("a,button");
-    first?.focus();
+    focusables()[0]?.focus();
+
     return () => {
       document.body.style.overflow = prev;
       document.removeEventListener("keydown", onKey);
+      restoreTo?.focus();
     };
   }, [open]);
 
@@ -152,6 +181,7 @@ export function SiteNav() {
 
         {/* Mobile trigger */}
         <button
+          ref={triggerRef}
           type="button"
           className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-ink lg:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
           aria-expanded={open}
@@ -244,7 +274,7 @@ function DesktopMenu({
               <li key={item.href}>
                 <Link
                   href={item.href}
-                  className="block rounded-lg px-3 py-2.5 transition-colors hover:bg-white/5 focus-visible:outline-none focus-visible:bg-white/5"
+                  className="block rounded-lg px-3 py-2.5 transition-colors hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-500"
                 >
                   <span className="block text-sm font-medium text-ink">{item.label}</span>
                   {item.note && (
