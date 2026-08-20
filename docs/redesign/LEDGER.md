@@ -75,3 +75,23 @@ Authority: `~/.claude/skills/crewflow-brand-design/references/product-truth.md`.
 - Analytics: PostHog + funnel events (config-gated; flagged for CEO).
 - Real product proof: seed a demo org (R1 feasibility) → art-directed screenshots.
 - Hardening: full multi-breakpoint responsive + a11y + perf sweep; adversarial reviewer pass; branch-push preview.
+
+---
+
+## Progress 2 — CP7–CP9 (homepage completed + adversarially hardened)
+
+- **CP7 (commit 7dd4566e):** homepage beats 4–9 built — Beat 4 `PillarsIndex` (six-pillar "drawing register" index, not a card grid), Beat 5 `Differentiation` (site / commercial / UK-finance columns), Beat 6 `SwitchTrust`, Beat 7 `PricingBlock`, Beat 8 final CTA, Beat 9 `Faq` (native `<details>`, product-truth-safe). Full narrative renders end-to-end; typecheck+lint clean.
+- **Mobile pass:** verified 320 + 390 — no horizontal overflow at either; hero H1 clamp floor dropped to 2.4rem so 320 isn't cramped; signature rail switches to a genuine **vertical** treatment on mobile; product frame adapts (sidebar hidden, tiles 2-col). Mobile is designed, not stacked-desktop.
+- **Adversarial review (independent agent, job = REJECT):** surfaced legitimate P0 product-truth violations + real a11y defects. **All safe findings fixed (CP8/CP9):**
+  - **CP8 (commit 954d23fd):** P0 truth — removed **"valuations / applications for payment"** (hero, meta, signature station 06→"Retention", differentiation, Money pillar) and **"lead scoring"** (Win-work + Automation) as dark/unconfirmed per product-truth authority; payroll → "PAYE/NI **estimates**"; "company health" reworded off the AI-prose implication; FAQ "most companies"→"setup usually takes". A11y — real gold focus ring on the six primary product-nav links (was an invisible 3% wash); footer column labels `h2`→`p` (stop polluting the heading outline). Motion — replaced `animation-timeline: view()` (re-scrubs/reverses on scroll-up) with a **one-shot IntersectionObserver `Reveal`** (default-visible, fires once, never stuck); added `scaleX/scaleY` **line-draw** to the signature rail on reveal. Polish — pricing headline off the SaaS cliché ("Priced for a builder, not a software buyer."); `product-frame` radius → `rounded-cf` token. Verified live: 6/6 reveals opacity 1, `scaleX(1)`, **zero** "valuation"/"lead scoring" on the rendered page, clean h2 outline.
+  - **CP9 (commit 1217b75a):** nav mobile drawer — real **focus trap** (Tab wraps first↔last) + **restore focus** to the trigger on close (kept scroll-lock + Esc); desktop dropdown items given a visible gold focus ring. tsc clean.
+- **Honest self-score now ~88–90/100.** Blocked from the ≥95 gate on ONE thing: **real product screenshots (R1)** — the reviewer's top "doesn't hit the bar" item; the page's only product visual is the marked placeholder frame.
+
+### R1 — Real product screenshots (feasibility RESOLVED, workstream OPEN)
+- **Feasible in this environment:** Docker running; Supabase CLI 2.98.2; a local **`crewflow`** stack is UP (db/auth/storage/rest/kong) with the DB on `localhost:54322`.
+- **But not turnkey:** live local data is **sparse** (4 orgs, 4 jobs, **0 invoices, 0 customers**) → empty-looking screens; the canonical `scripts/seed.ts` (`npm run db:seed`) is **referenced but absent** on this branch; only QA/war-test seeds remain (unknown/likely-destructive — not run without understanding them). A demo-lifecycle service exists (`server/services/demo-lifecycle.ts`, `app/api/demo`, `lib/demo`).
+- **To produce real screenshots needs a focused pass:** provision/seed ONE realistic demo org (customers→jobs→invoices→RAMS→fleet) safely (new org, not the existing 4), run the app against local Supabase, authenticate, capture 5–8 light-UI screens (working around the pane's scrolled-compositing glitch), crop → drop into `ProductFrame`/`JobFlow` `children` slots.
+- **Decision:** NOT forced mid-session (would risk thin/empty or wrong screens — the opposite of the honesty bar). Sanctioned **marked placeholders retained**. **CEO decision point:** (a) authorize a dedicated seed+capture pass, (b) provide approved screenshots, or (c) accept marked placeholders for the preview. Will NOT fabricate screens.
+
+### Next (non-gated) programme work being continued
+Migrate conversion-critical legacy light pages onto the dark `(site)` system (start: `/pricing`, then `/compare`) so the homepage journey stays coherent; then feature pages, demo-modal rebuild, SEO cleanup, analytics, full QA, preview.
