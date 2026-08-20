@@ -25,7 +25,7 @@ const PRICING_FAQS: Faq[] = [
   },
   {
     q: "What's included in the £500/month?",
-    a: "Everything. Every feature — CRM, quoting, jobs, scheduling, timesheets, payroll, invoicing, payment tracking, job costing, tax and the AI receptionist — plus support. No per-feature upsells.",
+    a: "Everything. Every feature — CRM, quoting, jobs, scheduling, timesheets, payroll, invoicing, payment tracking, job costing, tax, plus H&S, CIS and site management — plus support. No per-feature upsells.",
   },
   {
     q: "Is it per user?",

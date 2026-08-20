@@ -102,17 +102,17 @@ export const INDUSTRIES: IndustryPage[] = [
     sections: [
       {
         h2: "Capture the job before the next one comes in",
-        body: "Log the enquiry, quote it, schedule the engineer — all in one place. The AI receptionist can even catch the calls you miss while you're under a sink, so a busy day doesn't mean lost work.",
+        body: "Log the enquiry, quote it, schedule the engineer — all in one place, so a busy day under a sink doesn't mean lost work. Every enquiry you take is captured against the customer, ready to quote and follow up.",
       },
       {
         h2: "Parts, hours and margin, all on the job",
         body: "Materials get logged against the job, engineer hours come from clock-in, and CrewFlow shows you the real margin. Suddenly you know whether your call-out pricing actually covers your costs.",
       },
     ],
-    featuredModules: ["construction-crm", "ai-receptionist", "scheduling-software", "invoicing-software", "expense-tracking"],
+    featuredModules: ["construction-crm", "scheduling-software", "invoicing-software", "expense-tracking", "job-costing-software"],
     faqs: [
       { q: "Is CrewFlow suitable for a plumbing business?", a: "Yes. It handles call-outs, quotes, scheduling, parts, timesheets, invoicing and tax in one system — built for UK trade businesses including plumbing firms." },
-      { q: "Can it catch calls I miss on a job?", a: "Yes. The AI receptionist captures enquiries when you can't pick up and drops them into your pipeline as leads, so busy days don't cost you work." },
+      { q: "Will an enquiry get lost if I'm on a job?", a: "Every enquiry you log — phone, web form or referral — lands in one pipeline with follow-up reminders, so a busy day under a sink doesn't cost you the work." },
       { q: "Will it show me which jobs make money?", a: "Yes. With parts logged to the job and engineer hours from clock-in, CrewFlow shows real per-job margin so you can price call-outs properly." },
     ],
     related: ["heating-engineers", "electricians", "builders"],
@@ -358,17 +358,17 @@ export const INDUSTRIES: IndustryPage[] = [
     sections: [
       {
         h2: "Capture call-outs, quote the installs",
-        body: "Log service call-outs fast and build proper line-item quotes for installs with full VAT. The AI receptionist catches the calls you miss on a job, so a busy day of breakdowns doesn't cost you the next install.",
+        body: "Log service call-outs fast and build proper line-item quotes for installs with full VAT. Every enquiry lands in one pipeline with follow-up reminders, so a busy day of breakdowns doesn't cost you the next install.",
       },
       {
         h2: "Get paid and keep the records straight",
         body: "Invoice from the job in a click, with automatic reminders chasing payment. Job photos and documents attach to the job, so the paperwork a customer or compliance check needs is in one place.",
       },
     ],
-    featuredModules: ["ai-receptionist", "quoting-software", "scheduling-software", "invoicing-software", "timesheet-software"],
+    featuredModules: ["construction-crm", "quoting-software", "scheduling-software", "invoicing-software", "timesheet-software"],
     faqs: [
       { q: "Does CrewFlow work for gas and heating engineers?", a: "Yes. It handles the mix of quick service call-outs and bigger installs — capturing jobs, quoting, scheduling, tracking time and parts, and invoicing, with payroll and tax in the same system." },
-      { q: "Can it catch call-outs I miss on a job?", a: "Yes. The AI receptionist captures enquiries when you can't answer and creates leads in your pipeline, so breakdown-heavy days don't cost you new work." },
+      { q: "Will a call-out enquiry get lost if I'm on a job?", a: "Every enquiry you log lands in your pipeline with follow-up reminders, so breakdown-heavy days don't cost you new work." },
     ],
     related: ["plumbers", "electricians", "builders"],
   },

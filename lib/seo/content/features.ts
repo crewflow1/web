@@ -3,7 +3,7 @@ import type { FeaturePage } from "./types";
 /**
  * Feature / module pages. Each maps to a REAL CrewFlow capability seen in the
  * product (leads, quotes, jobs, rota, timesheets, invoices, payments,
- * profitability, expenses, payroll, tax, AI receptionist, customer portal),
+ * profitability, expenses, payroll, tax, customer portal),
  * so nothing here overclaims. Each targets a distinct head keyword.
  */
 export const FEATURES: FeaturePage[] = [
@@ -110,7 +110,7 @@ export const FEATURES: FeaturePage[] = [
       { q: "Can I see where my work comes from?", a: "Yes. Because every lead is tagged with a source, you can see which channels actually produce paying jobs and stop wasting money on the ones that don't." },
       { q: "Does it replace my spreadsheet of customers?", a: "Completely — and then some. Import your existing customers in minutes, and from then on every quote, job, invoice and payment attaches to the right customer automatically." },
     ],
-    related: ["quoting-software", "job-management-software", "ai-receptionist", "customer-portal"],
+    related: ["quoting-software", "job-management-software", "customer-portal"],
     industries: ["builders", "electricians", "plumbers"],
   },
   {
@@ -512,52 +512,6 @@ export const FEATURES: FeaturePage[] = [
     ],
     related: ["invoicing-software", "payroll-software", "expense-tracking", "job-costing-software"],
     industries: ["builders", "electricians", "plumbers"],
-  },
-  {
-    slug: "ai-receptionist",
-    keyword: "AI receptionist for construction",
-    secondaryKeywords: ["construction AI software", "AI call answering for builders", "never miss a lead"],
-    name: "AI receptionist",
-    navLabel: "AI receptionist",
-    title: "AI Receptionist for Construction Companies",
-    metaDescription:
-      "Never miss a job because you were up a ladder. CrewFlow's AI receptionist captures enquiries when you can't pick up, so every lead lands in your pipeline. Book a demo.",
-    eyebrow: "AI",
-    h1: "An AI receptionist so you never lose a job to a missed call",
-    intro:
-      "The call you miss while you're up a ladder is the job your competitor wins. CrewFlow's AI receptionist answers when you can't, captures the enquiry, and drops it straight into your pipeline as a lead — with the customer's details and what they need.\n\nIt's the difference between a missed call and a missed mortgage payment.",
-    heroBullets: [
-      "Captures enquiries when you can't pick up",
-      "New leads land straight in your pipeline",
-      "Customer details and job need recorded",
-      "AI assists across the system — it never works alone",
-    ],
-    problem: {
-      heading: "Every missed call is a quote you never got to send",
-      body: "Tradespeople miss calls all day — you're working, not sitting by a phone. But each missed call from a new customer is a job you'll never even get the chance to quote. An AI receptionist closes that gap without you hiring someone to sit by the phone.",
-    },
-    sections: [
-      {
-        h2: "Answer the call you'd otherwise miss",
-        body: "When you can't pick up, the AI receptionist does — takes the details, understands what the customer needs, and creates a lead in CrewFlow with the context attached. You follow up when you're down the ladder, with everything you need to quote already captured.",
-      },
-      {
-        h2: "AI that assists, never the only thing in the loop",
-        body: "Across CrewFlow, AI does the quiet work — summarising leads, flagging anomalies, drafting the weekly digest. But it's always assisting a human, never the sole decision-maker on your money or your customers. Helpful, not reckless.",
-      },
-    ],
-    outcomes: [
-      { label: "No missed leads", body: "The call you can't take still becomes a quote you can send." },
-      { label: "Context captured", body: "Customer details and job need recorded automatically." },
-      { label: "Human in the loop", body: "AI assists; you decide. Never the other way round." },
-    ],
-    faqs: [
-      { q: "What does the AI receptionist actually do?", a: "It captures enquiries when you can't answer — taking the customer's details and what they need, and creating a lead in your pipeline so you can follow up with full context." },
-      { q: "Does AI make decisions about my business?", a: "No. AI across CrewFlow assists — summarising, flagging, drafting — but a human is always in the loop on anything that touches your money or your customers." },
-      { q: "How is this different from voicemail?", a: "Voicemail leaves you a message to decipher later. The AI receptionist captures structured details and creates a ready-to-action lead in your pipeline, so nothing falls through and you follow up faster." },
-    ],
-    related: ["construction-crm", "quoting-software", "customer-portal", "job-management-software"],
-    industries: ["builders", "electricians", "plumbers", "roofers"],
   },
   {
     slug: "customer-portal",

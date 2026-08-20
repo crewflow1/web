@@ -42,7 +42,6 @@ export const COMPARISONS: ComparisonPage[] = [
       { feature: "Per-job profitability", crewflow: "From real clocked labour", competitor: "Enterprise cost controls" },
       { feature: "Pricing", crewflow: "Transparent: £1,000 setup + £500/mo", competitor: "Enterprise quote" },
       { feature: "Time to go live", crewflow: "Days", competitor: "Weeks to months, often with onboarding services" },
-      { feature: "AI receptionist", crewflow: "Included", competitor: "Not a core offering" },
     ],
     whereCompetitorWins: [
       "Large commercial projects with many subcontractors, RFIs, submittals and drawings management.",
@@ -91,7 +90,6 @@ export const COMPARISONS: ComparisonPage[] = [
       { feature: "Bank-transfer payment tracking", crewflow: "Built in (UK works on bank transfer)", competitor: "Card-processor oriented" },
       { feature: "Per-job profitability", crewflow: "From real clocked labour", competitor: "Project budgeting" },
       { feature: "Pricing", crewflow: "£1,000 setup + £500/mo, transparent", competitor: "Tiered subscription (USD)" },
-      { feature: "AI receptionist", crewflow: "Included", competitor: "Not a core offering" },
     ],
     whereCompetitorWins: [
       "US home builders and remodelers who want a mature, US-centric project and client-comms platform.",
@@ -138,7 +136,6 @@ export const COMPARISONS: ComparisonPage[] = [
       { feature: "UK payroll (PAYE, NI)", crewflow: "Built in", competitor: "Not included" },
       { feature: "VAT & Corporation Tax", crewflow: "Built in", competitor: "Not a tax tool" },
       { feature: "Variations on jobs", crewflow: "Captured and billed", competitor: "Service-job oriented" },
-      { feature: "AI receptionist", crewflow: "Included", competitor: "Not a core offering" },
       { feature: "Market", crewflow: "United Kingdom", competitor: "North America–centric" },
     ],
     whereCompetitorWins: [
@@ -186,7 +183,6 @@ export const COMPARISONS: ComparisonPage[] = [
       { feature: "UK payroll", crewflow: "Built in", competitor: "Not included" },
       { feature: "VAT & Corporation Tax", crewflow: "Built in", competitor: "Not a tax tool" },
       { feature: "Bank-transfer reconciliation", crewflow: "Auto-match from CSV", competitor: "Not a core focus" },
-      { feature: "AI receptionist", crewflow: "Included", competitor: "Not a core offering" },
       { feature: "Scope", crewflow: "Whole-business operating system", competitor: "Job management" },
     ],
     whereCompetitorWins: [
@@ -234,7 +230,6 @@ export const COMPARISONS: ComparisonPage[] = [
       { feature: "UK tax (VAT, PAYE, Corp Tax)", crewflow: "Built in", competitor: "Not the focus" },
       { feature: "Per-job profitability", crewflow: "From real clocked labour", competitor: "Strong but complex" },
       { feature: "Learning curve", crewflow: "Designed for owners on site", competitor: "Steeper, configuration-heavy" },
-      { feature: "AI receptionist", crewflow: "Included", competitor: "Not a core offering" },
       { feature: "Pricing", crewflow: "Transparent £1,000 + £500/mo", competitor: "Quote-based, scales with complexity" },
     ],
     whereCompetitorWins: [
@@ -282,7 +277,6 @@ export const COMPARISONS: ComparisonPage[] = [
       { feature: "UK payroll", crewflow: "Built in", competitor: "Not included" },
       { feature: "Per-job profitability", crewflow: "From real clocked labour", competitor: "Limited" },
       { feature: "VAT & Corporation Tax", crewflow: "Built in", competitor: "Not a tax tool" },
-      { feature: "AI receptionist", crewflow: "Included", competitor: "Not a core offering" },
       { feature: "Scope", crewflow: "Operating system", competitor: "Light job management" },
     ],
     whereCompetitorWins: [
@@ -330,7 +324,6 @@ export const COMPARISONS: ComparisonPage[] = [
       { feature: "UK payroll", crewflow: "Built in", competitor: "Not included" },
       { feature: "Per-job profitability", crewflow: "From real clocked labour", competitor: "Estimate vs actual" },
       { feature: "VAT & Corporation Tax", crewflow: "Built in", competitor: "Not a UK tax tool" },
-      { feature: "AI receptionist", crewflow: "Included", competitor: "Not a core offering" },
       { feature: "Market", crewflow: "United Kingdom", competitor: "Australia / US / UK" },
     ],
     whereCompetitorWins: [
@@ -378,7 +371,6 @@ export const COMPARISONS: ComparisonPage[] = [
       { feature: "UK payroll from timesheets", crewflow: "Built in", competitor: "Not the focus" },
       { feature: "Per-job profitability", crewflow: "From real clocked labour", competitor: "Limited" },
       { feature: "Rota & scheduling", crewflow: "Tied to jobs and clock-in", competitor: "Lighter scheduling" },
-      { feature: "AI receptionist", crewflow: "Included", competitor: "Not a core offering" },
       { feature: "Scope", crewflow: "Whole-business operating system", competitor: "Trades quoting/invoicing" },
     ],
     whereCompetitorWins: [

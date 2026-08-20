@@ -111,7 +111,7 @@ export function softwareApplicationSchema(
     name: SITE.name,
     applicationCategory: "BusinessApplication",
     applicationSubCategory: "Construction Management Software",
-    operatingSystem: "Web, iOS, Android",
+    operatingSystem: "Web",
     url: SITE.url,
     description: SITE.description,
     publisher: { "@id": ORG_ID },
@@ -125,7 +125,7 @@ export function softwareApplicationSchema(
       "Per-job profitability tracking",
       "Payroll (PAYE, NI)",
       "VAT and Corporation Tax",
-      "AI receptionist and assistants",
+      "Health & safety: RAMS, permits, toolbox talks",
     ],
     offers: {
       "@type": "Offer",

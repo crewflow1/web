@@ -9,7 +9,7 @@ const PATH = paths.features();
 export const metadata = buildMetadata({
   title: "Features — One System for the Whole Construction Business",
   description:
-    "Every CrewFlow feature in one place: CRM, quoting, job management, scheduling, timesheets, payroll, invoicing, payment tracking, job costing, tax and AI. Book a demo.",
+    "Every CrewFlow feature in one place: CRM, quoting, job management, scheduling, timesheets, payroll, invoicing, payment tracking, job costing, tax, H&S and CIS. Book a demo.",
   path: PATH,
   keywords: ["construction software features", "construction management software", "construction operating system"],
   ogEyebrow: "Features",

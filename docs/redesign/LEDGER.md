@@ -52,4 +52,7 @@ Authority: `~/.claude/skills/crewflow-brand-design/references/product-truth.md`.
 - **R3 — npm ci** feasibility/time — in progress (bg `b3cszxrkt`).
 
 ## Checkpoints
-- CP1: worktree `redesign/website-2026` created off `fc8922c4`; `npm ci` started; skills loaded (now Skill-tool discoverable); ledger written.
+- CP1: worktree `redesign/website-2026` off `fc8922c4`; `npm ci`; skills loaded (Skill-tool discoverable); ledger written.
+- CP2: unified dark tokens + Tailwind mapping; dev server :3200; typecheck clean; baseline renders (pipeline verified).
+- CP3 (commit a695cb3d): accessible global nav — desktop dropdowns + mobile drawer (browser-verified @375px) — canonical wordmark, `/product` allowlist, dead `/for/` dropped.
+- CP4: **AI-receptionist overclaim removed site-wide** — feature page deleted, 8 comparison rows, both industry pages, pricing, schema `featureList`; `operatingSystem`→`"Web"`; 301 `/features/ai-receptionist`→`/features/construction-crm`. Verified live: redirect 308, sitemap 0 entries, rendered pages 0 "receptionist", all pages 200, typecheck clean.
