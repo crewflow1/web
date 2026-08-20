@@ -171,7 +171,8 @@ describe("the Operations route is reachable and correctly placed", () => {
     const SIDEBAR = src("app/(app)/_components/sidebar.tsx");
     const admin = SIDEBAR.slice(SIDEBAR.indexOf("ADMIN_LINKS"), SIDEBAR.indexOf("STAFF_LINKS"));
     const staff = SIDEBAR.slice(SIDEBAR.indexOf("STAFF_LINKS"));
-    expect(admin).toMatch(/\{ href: "\/operations", label: "Operations" \}/);
+    // Labels are now i18n message keys resolved through the translator.
+    expect(admin).toMatch(/\{ href: "\/operations", labelKey: "nav\.operations" \}/);
     expect(staff).not.toMatch(/\/operations/);
   });
 

@@ -61,7 +61,12 @@ const countPins = (source: string) => (source.match(CTX_PIN_G()) ?? []).length;
 const ARG_PIN = /\.eq\(\s*["']org_id["'](?:\s+as\s+never)?,\s*orgId(?:\s+as\s+never)?\s*\)/;
 
 /** A page that captures ctx must actually destructure it, not just await. */
-const CAPTURES_CTX = /const \{[^}]*\bctx\b[^}]*\} = await requireOrgContext\(\)/;
+// A page must CAPTURE ctx (to scope reads by ctx.org.id), not bare-await the auth
+// gate. Either the direct requireOrgContext() or the i18n-wave request helper
+// getRequestI18n() (which returns the same ctx and enforces requireOrgContext
+// internally) satisfies this — both destructure ctx from the resolved request.
+const CAPTURES_CTX =
+  /const \{[^}]*\bctx\b[^}]*\} = await (requireOrgContext|getRequestI18n)\(\)/;
 
 // ---------------------------------------------------------------------------
 // 1. List pages — one pin per collection read, keyed by the table it reads

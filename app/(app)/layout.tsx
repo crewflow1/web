@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { NOINDEX_METADATA } from "@/lib/seo/metadata";
-import { requireOrgContext, listOrgsForUser } from "@/server/auth/session";
+import { listOrgsForUser } from "@/server/auth/session";
+import { getRequestI18n } from "@/server/i18n/request";
 import { SignOutButton } from "./_components/sign-out-button";
 import { SwRegister } from "./_components/sw-register";
 import { OfflineIdentityMarker } from "./_components/offline-identity-marker";
@@ -24,7 +25,10 @@ export default async function AppLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user, ctx } = await requireOrgContext();
+  // Resolve the request once: org context + the negotiated active locale (from
+  // organizations.locale, else en-GB). The locale threads down to the client nav
+  // components so their labels render through the translator.
+  const { user, ctx, locale } = await getRequestI18n();
   const impersonation = await getActiveImpersonation(user.email ?? null);
   const [orgs, notificationsRes] = await Promise.all([
     listOrgsForUser(user.id),
@@ -112,13 +116,13 @@ export default async function AppLayout({
       <OfflinePhotoOutbox userId={user.id} orgId={ctx.org.id} />
 
       <div className="flex">
-        <Sidebar role={ctx.membership.role} />
+        <Sidebar role={ctx.membership.role} locale={locale} />
         {/* Bottom-padding reserves room for the mobile bottom-nav (md:hidden). */}
         <main className="container flex-1 py-6 pb-24 sm:py-10 md:pb-10">
           {children}
         </main>
       </div>
-      <BottomNav role={ctx.membership.role} />
+      <BottomNav role={ctx.membership.role} locale={locale} />
       <OfflineIdentityMarker userId={user.id} orgId={ctx.org.id} />
       {/* Keeps the device's offline READ cache warm (jobs, customers, invoice
           headers, diary, snags) so pages still render with no signal. Identity is

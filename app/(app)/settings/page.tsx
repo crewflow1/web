@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
-import { requireOrgContext } from "@/server/auth/session";
+import { getRequestI18n } from "@/server/i18n/request";
 import { updateProfile, updateOrganization } from "./actions";
 import { ProfileForm, OrganizationForm } from "./_forms";
 import { LogoUpload } from "./_logo-upload";
@@ -27,7 +27,10 @@ import { HelpLink } from "../_components/help-link";
  * auth flows), no role promotion UI.
  */
 export default async function SettingsPage() {
-  const { user, ctx } = await requireOrgContext();
+  // Resolve the request once: org context + a translator bound to the negotiated
+  // locale (organizations.locale, else en-GB). Section headings render through
+  // t() — byte-identical for en-GB, per-key fallback for other locales.
+  const { user, ctx, t } = await getRequestI18n();
   const supabase = await createClient();
 
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
@@ -117,11 +120,11 @@ export default async function SettingsPage() {
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
+            <h1 className="text-2xl font-bold text-slate-900">{t("settings.title")}</h1>
             <HelpLink article="inviting-your-team" label="Help with your team &amp; settings" />
           </div>
           <p className="mt-1 text-sm text-slate-600">
-            Your profile, your organisation, and the people in it.
+            {t("settings.subtitle")}
           </p>
         </div>
         <span
@@ -136,7 +139,7 @@ export default async function SettingsPage() {
 
       {/* Profile ------------------------------------------------------- */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-base font-semibold text-slate-900">Profile</h2>
+        <h2 className="text-base font-semibold text-slate-900">{t("settings.profile.title")}</h2>
         <p className="mt-1 text-sm text-slate-600">
           How you appear in CrewFlow to teammates.
         </p>
@@ -155,14 +158,14 @@ export default async function SettingsPage() {
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">Organisation</h2>
+            <h2 className="text-base font-semibold text-slate-900">{t("settings.org.title")}</h2>
             <p className="mt-1 text-sm text-slate-600">
               Appears on quotes, invoices, and any branded PDFs you send.
             </p>
           </div>
           {!isAdmin ? (
             <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
-              Read only · ask an admin
+              {t("settings.read_only_badge")}
             </span>
           ) : null}
         </div>
@@ -209,7 +212,7 @@ export default async function SettingsPage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold text-slate-900">
-              AI Receptionist
+              {t("settings.ai.title")}
             </h2>
             <p className="mt-1 text-sm text-slate-600">
               An AI receptionist that answers calls, WhatsApps and DMs,
@@ -240,7 +243,7 @@ export default async function SettingsPage() {
       {/* API keys ------------------------------------------------------ */}
       {isAdmin ? (
         <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-base font-semibold text-slate-900">API keys</h2>
+          <h2 className="text-base font-semibold text-slate-900">{t("settings.api_keys.title")}</h2>
           <p className="mt-1 text-sm text-slate-600">
             Create and revoke keys for the CrewFlow API. Keys are shown once at
             creation and can be revoked at any time.
@@ -261,7 +264,7 @@ export default async function SettingsPage() {
 
       {/* Security ------------------------------------------------------ */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-base font-semibold text-slate-900">Security</h2>
+        <h2 className="text-base font-semibold text-slate-900">{t("settings.security.title")}</h2>
         <p className="mt-1 text-sm text-slate-600">
           Set up two-factor authentication and manage your linked sign-in
           methods.
@@ -279,7 +282,7 @@ export default async function SettingsPage() {
       {/* Webhooks ------------------------------------------------------ */}
       {isAdmin && outboundWebhooksEnabled() ? (
         <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-base font-semibold text-slate-900">Webhooks</h2>
+          <h2 className="text-base font-semibold text-slate-900">{t("settings.webhooks.title")}</h2>
           <p className="mt-1 text-sm text-slate-600">
             Receive signed HTTPS notifications when CrewFlow events happen.
           </p>
@@ -297,7 +300,7 @@ export default async function SettingsPage() {
       {/* Integrations -------------------------------------------------- */}
       {isAdmin ? (
         <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-base font-semibold text-slate-900">Integrations</h2>
+          <h2 className="text-base font-semibold text-slate-900">{t("settings.integrations.title")}</h2>
           <p className="mt-1 text-sm text-slate-600">
             Connect a Google or Microsoft calendar to push scheduled jobs and
             rota shifts as events.
@@ -315,7 +318,7 @@ export default async function SettingsPage() {
 
       {/* Automations --------------------------------------------------- */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-base font-semibold text-slate-900">Automations</h2>
+        <h2 className="text-base font-semibold text-slate-900">{t("settings.automations.title")}</h2>
         <p className="mt-1 text-sm text-slate-600">
           Turn CrewFlow&apos;s built-in automations on or off, and schedule rules
           to run on a timetable.
@@ -333,7 +336,7 @@ export default async function SettingsPage() {
       {/* Data retention ------------------------------------------------ */}
       {isAdmin ? (
         <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-base font-semibold text-slate-900">Data retention</h2>
+          <h2 className="text-base font-semibold text-slate-900">{t("settings.data_retention.title")}</h2>
           <p className="mt-1 text-sm text-slate-600">
             Age out high-volume operational logs after a window you choose.
             Financial, payroll, tax and audit records are always protected.
@@ -353,7 +356,7 @@ export default async function SettingsPage() {
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold text-slate-900">
-            Plan &amp; billing
+            {t("settings.billing.title")}
           </h2>
           <span
             className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${STATUS_PILL[status] ?? STATUS_PILL.active}`}
@@ -413,7 +416,7 @@ export default async function SettingsPage() {
       {/* Members ------------------------------------------------------- */}
       {membersError ? (
         <section className="rounded-xl border border-red-200 bg-red-50 p-6 shadow-sm">
-          <h2 className="text-base font-semibold text-red-800">Members</h2>
+          <h2 className="text-base font-semibold text-red-800">{t("settings.members.title")}</h2>
           <p className="mt-1 text-sm text-red-700">
             Couldn&apos;t load the members of this organisation. Refresh to try again.
           </p>
@@ -421,7 +424,7 @@ export default async function SettingsPage() {
       ) : (
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold text-slate-900">Members</h2>
+          <h2 className="text-base font-semibold text-slate-900">{t("settings.members.title")}</h2>
           <span className="text-xs text-slate-500">
             {(members ?? []).length} {(members ?? []).length === 1 ? "person" : "people"}
           </span>

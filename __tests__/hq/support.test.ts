@@ -542,7 +542,9 @@ describe("HQ page wiring", () => {
 
 describe("Customer sidebar", () => {
   it("carries a /support link in ADMIN_LINKS", () => {
-    expect(SIDEBAR).toMatch(/href: "\/support", label: "Support"/);
+    // Labels are now i18n message keys (nav.support) resolved through the
+    // translator; the /support href + its key are pinned here.
+    expect(SIDEBAR).toMatch(/href: "\/support", labelKey: "nav\.support"/);
   });
   it("also offers Support to staff role", () => {
     // Both link arrays expose /support so even staff can raise tickets.

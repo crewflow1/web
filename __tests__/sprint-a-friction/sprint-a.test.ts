@@ -113,7 +113,11 @@ describe("Sprint A item 4 — zero-customer quote dead-end fixed", () => {
 
 describe("Sprint A item 5 — read-only billing/trial section in Settings", () => {
   it("renders a Plan & billing section", () => {
-    expect(SETTINGS).toMatch(/Plan\s*&amp;\s*billing/);
+    // The heading is now an i18n message key resolved through the translator;
+    // its rendered text still comes from the en-GB catalogue value.
+    expect(SETTINGS).toMatch(/t\("settings\.billing\.title"\)/);
+    const catalog = read("lib/i18n/catalog.ts");
+    expect(catalog).toMatch(/"settings\.billing\.title": "Plan & billing"/);
   });
 
   it("shows plan + status + (when trial) days-left", () => {
