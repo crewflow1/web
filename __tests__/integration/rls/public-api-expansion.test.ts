@@ -35,6 +35,18 @@ const db = (client: unknown) => client as unknown as { from(t: string): Table };
 /** Build a params context for an item ([id]) route handler. */
 const itemCtx = (id: string) => ({ params: Promise.resolve({ id }) });
 
+/**
+ * Drop the volatile `updated_at` for idempotency comparisons. A no-op PATCH
+ * leaves every BUSINESS field identical, but the DB's set-updated-at trigger
+ * bumps `updated_at` on every write — that timestamp is expected to move and is
+ * not part of "same state". Every other field (including the money columns) is
+ * kept, so the equality still proves the payload did not otherwise drift.
+ */
+const stripVolatile = (row: Record<string, unknown>): Record<string, unknown> => {
+  const { updated_at: _updated_at, ...stable } = row;
+  return stable;
+};
+
 const TOKEN = `it-pubapix-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 describeIntegration("public API v1 · expansion · isolation, scope, dark flag", () => {
@@ -217,8 +229,12 @@ describeIntegration("public API v1 · expansion · isolation, scope, dark flag",
     // Breadth-wave fixtures: a user+membership per org (time + staff), an
     // expense per org, and a material request per org.
     const userA = await makeUserInOrg(orgA, "staff");
-    await makeUserInOrg(orgB, "staff");
+    const userB = await makeUserInOrg(orgB, "staff");
+    // A time entry in BOTH orgs: the isolation test fetches the OTHER org's
+    // rows first and asserts it saw some, so every resource must be seeded on
+    // both sides.
     await makeTimeEntry(orgA, userA);
+    await makeTimeEntry(orgB, userB);
     expenseA = await makeExpense(orgA);
     expenseB = await makeExpense(orgB);
     await makeMaterialRequest(orgA, `${TOKEN}-A-MR-1`);
@@ -454,9 +470,15 @@ describeIntegration("public API v1 · expansion · isolation, scope, dark flag",
     const second = await patch();
     expect(second.status).toBe(200);
     const b2 = (await second.json()) as { data: Record<string, unknown> };
-    expect(b2.data).toEqual(b1.data);
+    // Idempotent = same BUSINESS state. `updated_at` is bumped by the DB's
+    // set-updated-at trigger on every write and is deliberately excluded from
+    // the equality; every stable field must be identical across the two calls.
+    expect(stripVolatile(b2.data)).toEqual(stripVolatile(b1.data));
     expect(b2.data.category).toBe("plant-hire");
     expect(b2.data.amount).toBe(300);
+    // vat_total is the generated column recomputed from amount — stable and
+    // never a client input.
+    expect(b2.data.vat_total).toBe(60);
   });
 
   it("expenses: org B's expense is a 404 to org A's key on the by-id PATCH (no cross-org write / oracle)", async () => {
@@ -476,9 +498,12 @@ describeIntegration("public API v1 · expansion · isolation, scope, dark flag",
     expect(b1.data.status).toBe("sent");
     const second = await patch();
     const b2 = (await second.json()) as { data: Record<string, unknown> };
-    expect(b2.data).toEqual(b1.data);
+    // Idempotent business state; `updated_at` is trigger-bumped on each write
+    // and excluded from the equality (see the expenses PATCH note).
+    expect(stripVolatile(b2.data)).toEqual(stripVolatile(b1.data));
     // The billed amount is untouched by the status PATCH.
     expect(b2.data.amount).toBe(100);
+    expect(b2.data.vat_total).toBe(20);
   });
 
   it("invoices: the derived 'overdue' status is rejected at validation (422)", async () => {
