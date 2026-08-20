@@ -1,5 +1,6 @@
-import { SiteHeader } from "@/components/marketing/site-header";
-import { SiteFooter } from "@/components/marketing/site-footer";
+import { clashDisplay, satoshi } from "@/app/_marketing/fonts";
+import { SiteNav } from "@/components/marketing/nav";
+import { SiteFooterDark } from "@/components/marketing/footer";
 import { BookDemoModal } from "@/app/(public)/_book-demo-modal";
 import { JsonLd } from "@/components/seo/json-ld";
 import {
@@ -9,13 +10,14 @@ import {
 } from "@/lib/seo/schema";
 
 /**
- * Shared chrome for the whole public marketing surface. The BookDemoModal is
- * mounted once here so every BookDemoButton across the marketing pages works.
+ * Shared chrome for the legacy marketing surface (compare / industries /
+ * features / locations / blog / tools). Migrated onto the unified dark
+ * "Setting-Out" system: same SiteNav, dark footer, skip link, single <main>
+ * and brand fonts as the (site) group, so there is no dark-home / light-subpage
+ * split. The BookDemoModal is mounted once here so every BookDemoButton works.
  *
- * Site-wide entity graph (Organization + WebSite + SoftwareApplication) is
- * injected here rather than the root layout because the homepage already
- * emits its own copy — scoping it to the (marketing) group means every
- * marketing page gets the entity graph with zero duplication on any page.
+ * Site-wide entity graph is injected here (scoped to the group); pages in the
+ * (site) group get their own copy from that layout — no page double-emits.
  */
 export default function MarketingLayout({
   children,
@@ -23,13 +25,23 @@ export default function MarketingLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen flex-col bg-white">
+    <div
+      className={`${clashDisplay.variable} ${satoshi.variable} flex min-h-screen flex-col bg-navy-950 font-body text-ink`}
+    >
       <JsonLd
         data={[organizationSchema(), websiteSchema(), softwareApplicationSchema()]}
       />
-      <SiteHeader />
-      <main className="flex-1">{children}</main>
-      <SiteFooter />
+      <a
+        href="#main"
+        className="sr-only rounded-md bg-gold-500 px-4 py-2 font-semibold text-navy-950 focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-[70]"
+      >
+        Skip to content
+      </a>
+      <SiteNav />
+      <main id="main" className="flex-1">
+        {children}
+      </main>
+      <SiteFooterDark />
       <BookDemoModal />
     </div>
   );
