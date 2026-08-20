@@ -11,6 +11,7 @@ import {
   mfaEnforcementBuildEnabled,
   type AalPair,
 } from "@/lib/auth/mfa-policy";
+import { normalizeOrgI18n, type OrgI18n } from "@/lib/i18n/config";
 
 export type OrgStatus =
   | "pending"
@@ -38,6 +39,13 @@ export type OrgContext = {
      * When true AND the FEATURE_MFA_ENFORCEMENT build gate is on, owner/admin
      * members are gated to aal2 in requireOrgContext. */
     require_mfa: boolean;
+    /**
+     * Internationalisation config (migration 20261210000000) — country, locale,
+     * currency, timezone, tax_jurisdiction, phone_region. Normalised so a
+     * pre-migration / backfill-miss row resolves to the UK defaults (the pre-wave
+     * behaviour). Drives per-org money/date/phone formatting + tax jurisdiction.
+     */
+    i18n: OrgI18n;
   };
 };
 
@@ -133,7 +141,7 @@ export async function getOrgForUser(
   const { data: org, error: orgErr } = await supabase
     .from("organizations")
     .select(
-      "id, name, slug, onboarding_state, status, plan, trial_ends_at, created_at, require_mfa" as never,
+      "id, name, slug, onboarding_state, status, plan, trial_ends_at, created_at, require_mfa, country, locale, currency, timezone, tax_jurisdiction, phone_region" as never,
     )
     .eq("id", preferred.org_id)
     .single();
@@ -150,6 +158,12 @@ export async function getOrgForUser(
     trial_ends_at: string | null;
     created_at: string;
     require_mfa: boolean | null;
+    country: string | null;
+    locale: string | null;
+    currency: string | null;
+    timezone: string | null;
+    tax_jurisdiction: string | null;
+    phone_region: string | null;
   };
 
   return {
@@ -169,6 +183,16 @@ export async function getOrgForUser(
       // Default OFF — a null (pre-migration / backfill miss) must never turn
       // enforcement ON and lock out an org that never opted in.
       require_mfa: row.require_mfa ?? false,
+      // Normalise the six i18n dimensions; a null/absent column degrades to the
+      // UK default (en-GB / GBP / Europe/London / UK / GB), the pre-wave value.
+      i18n: normalizeOrgI18n({
+        country: row.country,
+        locale: row.locale,
+        currency: row.currency,
+        timezone: row.timezone,
+        tax_jurisdiction: row.tax_jurisdiction,
+        phone_region: row.phone_region,
+      }),
     },
   };
 }
@@ -352,7 +376,7 @@ async function loadOrgContextForImpersonation(
   const { data: org, error } = await supabase
     .from("organizations")
     .select(
-      "id, name, slug, onboarding_state, status, plan, trial_ends_at, created_at, require_mfa" as never,
+      "id, name, slug, onboarding_state, status, plan, trial_ends_at, created_at, require_mfa, country, locale, currency, timezone, tax_jurisdiction, phone_region" as never,
     )
     .eq("id", orgId)
     .maybeSingle();
@@ -368,6 +392,12 @@ async function loadOrgContextForImpersonation(
     trial_ends_at: string | null;
     created_at: string;
     require_mfa: boolean | null;
+    country: string | null;
+    locale: string | null;
+    currency: string | null;
+    timezone: string | null;
+    tax_jurisdiction: string | null;
+    phone_region: string | null;
   };
   return {
     // The HQ user is rendered with role='owner' so the workspace
@@ -390,6 +420,14 @@ async function loadOrgContextForImpersonation(
       trial_ends_at: row.trial_ends_at,
       created_at: row.created_at,
       require_mfa: row.require_mfa ?? false,
+      i18n: normalizeOrgI18n({
+        country: row.country,
+        locale: row.locale,
+        currency: row.currency,
+        timezone: row.timezone,
+        tax_jurisdiction: row.tax_jurisdiction,
+        phone_region: row.phone_region,
+      }),
     },
   };
 }
