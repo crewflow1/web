@@ -52,6 +52,15 @@ const HIGH_VALUE_TABLES = new Set<string>([
   "invoices",
   "invoice_payments",
   "invoice_line_items",
+  // Interim valuations / applications for payment (20261192000000). Carry MONEY
+  // (certified increments, ex-VAT) and feed the retention position + the customer
+  // certificate; cross-tenant (RLS admits every org the caller belongs to). Every
+  // set-read is PAGED via fetchAllRows (server/services/job-valuations.ts, the
+  // staff page, and the customer portal). A clamped read would understate what
+  // has been certified. The variation-inclusion junction is part of the same
+  // certified record.
+  "job_valuations",
+  "job_valuation_variations",
   "quotes",
   "supplier_payments",
   "supplier_payment_allocations",

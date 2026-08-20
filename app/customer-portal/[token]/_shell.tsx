@@ -24,6 +24,7 @@ type TabId =
   | "activity"
   | "quotes"
   | "invoices"
+  | "valuations"
   | "jobs"
   | "photos"
   | "reports"
@@ -64,6 +65,7 @@ export function PortalShell({
     { id: "activity", href: `${base}/activity`, label: "Activity" },
     { id: "quotes", href: `${base}/quotes`, label: "Quotes" },
     { id: "invoices", href: `${base}/invoices`, label: "Invoices" },
+    { id: "valuations", href: `${base}/valuations`, label: "Valuations" },
     { id: "jobs", href: `${base}/jobs`, label: "Jobs" },
     { id: "photos", href: `${base}/photos`, label: "Photos" },
     { id: "reports", href: `${base}/reports`, label: "Reports" },

@@ -181,6 +181,8 @@ export const RETENTION_EXCLUDED: Readonly<Record<string, string>> = Object.freez
   retention_releases: "financial retention (money held back) record",
   job_billing_plans: "financial billing record",
   job_billing_stages: "financial billing record",
+  job_valuations: "financial valuation / application-for-payment record",
+  job_valuation_variations: "part of the statutory valuation record",
   bank_statements: "financial record (Companies Act s386 / HMRC 6y)",
   bank_statement_lines: "financial record (Companies Act s386 / HMRC 6y)",
   supplier_payments: "statutory financial record (HMRC 6y / CIS)",

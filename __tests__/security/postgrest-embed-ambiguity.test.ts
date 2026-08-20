@@ -290,6 +290,14 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   // whole point of an edge (successor + predecessor). Any future embed must name
   // its FK constraint; test 2 enforces it.
   "job_milestone_dependencies → job_milestones",
+  // Job valuations (20261192000000): created_by (who raised the application) +
+  // certified_by (the QS/admin who certified it) both → users. Reviewed
+  // 2026-08-20: no read of this table embeds users(...) — server/services/
+  // job-valuations.ts and the two pages select scalar columns only (never a
+  // users(...) join), so no read is ambiguous. Two FKs is inherent to the
+  // certificate's provenance (who applied vs who certified) and collapsing them
+  // would destroy the audit trail. Any future embed must name its FK constraint.
+  "job_valuations → users",
   // Job warranties (20261079): created_by + portal_published_by + voided_by all
   // → users. Reviewed 2026-07-31: no read of this table embeds users(...) — the
   // operator page and actions select scalar columns only, and the customer
