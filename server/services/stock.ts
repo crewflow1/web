@@ -11,9 +11,11 @@ import {
   type SiteBalance,
 } from "@/lib/stock/balance";
 import {
+  buildStockCogsCostRows,
   buildValuationReport,
   foldItemValuations,
   summariseValuation,
+  type StockCogsCostRow,
   type ValuationReportRow,
   type ValuationTotals,
 } from "@/lib/stock/valuation";
@@ -251,6 +253,35 @@ export async function loadStockValuationReport(
   const { items, movements } = await loadStockPositions(db, orgId);
   const rows = buildValuationReport(items, foldItemValuations(movements));
   return { rows, totals: summariseValuation(rows) };
+}
+
+/**
+ * The weighted-average COGS of stock ISSUED to each job, as finance-row-shaped
+ * ALLOCATION rows the profitability engine folds into the materials bucket
+ * (`buildJobCostInput({ stockCogs })`).
+ *
+ * ACCOUNTING BOUNDARY: this reads and writes NO `finances` and posts nothing — it
+ * RE-CLASSIFIES depot-replenishment spend onto the consuming job, so it can never
+ * double-count the single supplier-bill expense (see the 20261180000000 migration
+ * header and lib/profitability/job-cost-input.ts).
+ *
+ * WHY THE WHOLE LEDGER, NEVER A `job_id`-FILTERED READ: a `correction` that
+ * reverses an issue is a SEPARATE, JOB-LESS row (it names the issue via
+ * `corrects_movement_id`), so the net-of-corrections COGS can only be computed
+ * over the complete movement set. Filtering movements by `job_id` at the database
+ * would drop those corrections and leave a reversed issue burdening its job for
+ * ever. So the full org ledger is folded (the SAME complete read the balances and
+ * valuation use, org-pinned and loud), and only the RESULTING per-job rows are
+ * narrowed to `opts.jobId` when a caller wants one job.
+ */
+export async function loadStockCogsCostRows(
+  db: StockClient,
+  orgId: string,
+  opts: { jobId?: string } = {},
+): Promise<StockCogsCostRow[]> {
+  const movements = await listStockMovements(db, orgId);
+  const rows = buildStockCogsCostRows(movements);
+  return opts.jobId ? rows.filter((r) => r.job_id === opts.jobId) : rows;
 }
 
 /**

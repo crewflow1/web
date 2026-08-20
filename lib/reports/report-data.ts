@@ -28,6 +28,7 @@ import {
   type IntelligenceClient,
 } from "@/server/services/intelligence";
 import { UTILISATION_WINDOW_DAYS } from "@/server/services/intelligence";
+import { loadStockCogsCostRows, type StockClient } from "@/server/services/stock";
 import { trailingDayWindow } from "@/lib/intelligence/window";
 import { bucketPipelineLeads, type RawPipelineLead } from "@/app/(app)/leads/pipeline";
 import { LEAD_STAGES, LEAD_STAGE_LABELS, type LeadStage } from "@/lib/leads/schema";
@@ -200,15 +201,20 @@ async function buildProfitDocument(
 
   // The SAME shared cost composition the per-job commercial page, the dashboard
   // and company-health use: finances PLUS time-tracked labour (gross) PLUS
-  // employer NI + pension on-costs, measured over job-lifetime hours (a job and
-  // its budget span its whole life, so a month window would drop earlier
-  // labour). Matches company-health's monthly cycle.
+  // employer NI + pension on-costs PLUS the weighted-average COGS of stock issued
+  // to each job, measured over job-lifetime hours (a job and its budget span its
+  // whole life, so a month window would drop earlier labour). Matches
+  // company-health's monthly cycle. Stock COGS is folded over the whole org ledger
+  // (net of corrections) and is disjoint from `finances` — stock issues post no
+  // `finances` row — so material cost enters each job's margin exactly once.
+  const stockCogs = await loadStockCogsCostRows(client as unknown as StockClient, orgId);
   const costInput = buildJobCostInput({
     finances,
     timeEntries,
     hourlyByUser,
     hoursForEntries: lifetimeHoursSource(),
     cycle: "monthly",
+    stockCogs,
   });
 
   const perJob = computeAllJobsProfitability(jobs, invoices, costInput);

@@ -6,6 +6,11 @@ import {
   lifetimeHoursSource,
 } from "@/lib/profitability/job-cost-input";
 import { computeJobProfitability } from "@/lib/profitability/compute";
+import {
+  buildStockCogsCostRows,
+  stockCogsByJob,
+  type CostedMovementRow,
+} from "@/lib/stock/valuation";
 import type { TimeEntry } from "@/lib/time/compute";
 
 /**
@@ -164,6 +169,159 @@ describe("buildJobCostInput — dashboard/per-job parity", () => {
     const p = computeJobProfitability(JOB, invoices, input)!;
     expect(p.costs_by_bucket.labour).toBe(0);
     expect(p.costs_total).toBe(2000);
+  });
+});
+
+/**
+ * Stock COGS as the third cost stream. Stock issued from inventory to a job is a
+ * real material cost that is NOT in the job's `finances` rows (stock issues post
+ * nothing to `finances`), so before this stream the job margin understated cost by
+ * the whole COGS of the stock it consumed. These tests pin that (a) the COGS
+ * reaches the materials bucket, (b) it is folded EXACTLY ONCE and is disjoint from
+ * finances materials, (c) a job with no stock issue is byte-identical, and (d) the
+ * amount matches the valuation fold's rounding exactly.
+ */
+describe("buildJobCostInput — stock COGS stream", () => {
+  const ITEM = "item-1";
+  const SITE = "site-1";
+
+  /** A costed movement row carrying the DB-frozen cost facts. */
+  function mv(
+    id: string,
+    type: string,
+    qty: number,
+    effect: number,
+    extra: Partial<CostedMovementRow> = {},
+  ): CostedMovementRow {
+    return {
+      id,
+      stock_item_id: ITEM,
+      site_id: SITE,
+      movement_type: type,
+      qty,
+      effect,
+      ...extra,
+    };
+  }
+
+  // Receipt of 100 @ £2.50 = £250 capitalised; issue of 40 to JOB releases £100
+  // of COGS at the £2.50 weighted average (cost_effect frozen at -100 by the DB).
+  const receipt = mv("m-recv", "receipt", 100, 100, {
+    cost_effect: 250,
+    costed_qty_effect: 100,
+    unit_cost: 2.5,
+  });
+  const issue = mv("m-issue", "issue", 40, -40, {
+    cost_effect: -100,
+    costed_qty_effect: -40,
+    unit_cost: 2.5,
+    job_id: JOB,
+  });
+
+  it("folds stock COGS into the materials bucket for the consuming job", () => {
+    const stockCogs = buildStockCogsCostRows([receipt, issue]);
+    // The allocation is the £100 released to JOB, tagged materials.
+    expect(stockCogs).toEqual([{ job_id: JOB, amount: 100, category: "materials" }]);
+
+    const input = buildJobCostInput({
+      finances: [],
+      timeEntries: [],
+      hourlyByUser: hourly,
+      hoursForEntries: lifetimeHoursSource(now),
+      cycle: "monthly",
+      stockCogs,
+    });
+    const p = computeJobProfitability(JOB, invoices, input)!;
+    expect(p.costs_by_bucket.materials).toBe(100);
+    expect(p.costs_total).toBe(100);
+  });
+
+  it("folds COGS EXACTLY ONCE, disjoint from a finances materials bill", () => {
+    // A job can carry a direct finances materials bill AND a stock issue; each is a
+    // distinct real cost (depot convention), so the bucket is their SUM, never a
+    // double-count of one spend.
+    const stockCogs = buildStockCogsCostRows([receipt, issue]);
+    const input = buildJobCostInput({
+      finances, // { JOB, 2000, materials }
+      timeEntries: [],
+      hourlyByUser: hourly,
+      hoursForEntries: lifetimeHoursSource(now),
+      cycle: "monthly",
+      stockCogs,
+    });
+    const p = computeJobProfitability(JOB, invoices, input)!;
+    // 2000 (direct bill) + 100 (stock COGS) — each counted once.
+    expect(p.costs_by_bucket.materials).toBe(2100);
+    expect(p.costs_total).toBe(2100);
+
+    // Removing the stock stream drops EXACTLY the £100 — proof it entered once.
+    const withoutCogs = computeJobProfitability(
+      JOB,
+      invoices,
+      buildJobCostInput({
+        finances,
+        timeEntries: [],
+        hourlyByUser: hourly,
+        hoursForEntries: lifetimeHoursSource(now),
+        cycle: "monthly",
+      }),
+    )!;
+    expect(p.costs_total - withoutCogs.costs_total).toBe(100);
+  });
+
+  it("a job with no stock issue is byte-identical (omitted param and empty rows)", () => {
+    const base = buildJobCostInput({
+      finances,
+      timeEntries: [juneEntry],
+      hourlyByUser: hourly,
+      hoursForEntries: lifetimeHoursSource(now),
+      cycle: "monthly",
+      periodStartIso: "2026-06-01",
+    });
+    const withEmpty = buildJobCostInput({
+      finances,
+      timeEntries: [juneEntry],
+      hourlyByUser: hourly,
+      hoursForEntries: lifetimeHoursSource(now),
+      cycle: "monthly",
+      periodStartIso: "2026-06-01",
+      stockCogs: buildStockCogsCostRows([receipt]), // receipt only, no issue ⇒ []
+    });
+    expect(withEmpty).toEqual(base);
+  });
+
+  it("a correction reversing the issue nets the job's COGS back to zero", () => {
+    // The correction is a SEPARATE, job-less row naming the issue; its +100 cancels
+    // the issue's -100, so the job carries no phantom COGS after reversal.
+    const correction = mv("m-corr", "correction", 40, 40, {
+      cost_effect: 100,
+      costed_qty_effect: 40,
+      unit_cost: 2.5,
+      corrects_movement_id: "m-issue",
+    });
+    expect(stockCogsByJob([receipt, issue, correction]).get(JOB)).toBeUndefined();
+    expect(buildStockCogsCostRows([receipt, issue, correction])).toEqual([]);
+  });
+
+  it("the folded amount matches the valuation report's rounding", () => {
+    // buildJobCostInput must not re-round or re-derive the COGS — the amount it
+    // carries is exactly what the valuation fold (stockCogsByJob) produced.
+    const rows = [receipt, issue];
+    const foldAmount = stockCogsByJob(rows).get(JOB)!;
+    const stockCogs = buildStockCogsCostRows(rows);
+    const p = computeJobProfitability(
+      JOB,
+      invoices,
+      buildJobCostInput({
+        finances: [],
+        timeEntries: [],
+        hourlyByUser: hourly,
+        hoursForEntries: lifetimeHoursSource(now),
+        cycle: "monthly",
+        stockCogs,
+      }),
+    )!;
+    expect(p.costs_by_bucket.materials).toBe(foldAmount);
   });
 });
 

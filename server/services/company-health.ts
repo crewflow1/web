@@ -19,6 +19,7 @@ import {
   type PerformanceClient,
 } from "@/server/services/supplier-performance";
 import { loadCisSubcontractorRoster, type CisRosterClient } from "@/server/services/cis";
+import { loadStockCogsCostRows, type StockClient } from "@/server/services/stock";
 import {
   computeCompanyHealth,
   type CompanyHealth,
@@ -215,9 +216,13 @@ export async function gatherProfitability(
   }
 
   // The SAME shared cost composition the per-job commercial page and CVR use:
-  // finances PLUS time-tracked labour (gross) PLUS employer NI + pension on-costs,
-  // measured over job-lifetime hours. Employer NI is banded per worker across their
-  // jobs, so this is built once over every job.
+  // finances PLUS time-tracked labour (gross) PLUS employer NI + pension on-costs
+  // PLUS the weighted-average COGS of stock issued to each job, measured over
+  // job-lifetime hours. Employer NI is banded per worker across their jobs, so this
+  // is built once over every job. Stock COGS is folded org-wide (the whole ledger,
+  // net of corrections) and is disjoint from `finances` — stock issues post no
+  // `finances` row — so it enters margin exactly once.
+  const stockCogs = await loadStockCogsCostRows(db as unknown as StockClient, orgId);
   const costInput = buildJobCostInput({
     finances: finances.map((f) => ({
       job_id: sv(f.job_id),
@@ -228,6 +233,7 @@ export async function gatherProfitability(
     hourlyByUser,
     hoursForEntries: lifetimeHoursSource(),
     cycle: "monthly",
+    stockCogs,
   });
 
   return computeAllJobsProfitability(

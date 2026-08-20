@@ -12,6 +12,7 @@ import {
   lifetimeHoursSource,
 } from "@/lib/profitability/job-cost-input";
 import { loadOrgHourlyPay } from "@/lib/profitability/labour-rates";
+import { loadStockCogsCostRows, type StockClient } from "@/server/services/stock";
 import { computeCommercialCash } from "@/lib/commercial/cash";
 import { buildCommercialTimeline } from "@/lib/commercial/timeline";
 import { computeRetentionPosition } from "@/lib/retentions/compute";
@@ -244,12 +245,24 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
   if (teRes.error) throw readFailure("job commercial: time entries", teRes.error);
   const jobTimeEntries = (teRes.data ?? []) as unknown as TimeEntry[];
   const hourlyByUser = await loadOrgHourlyPay(supabase, ctx.org.id);
+  // Stock COGS for THIS job — the weighted-average cost of stock issued to it from
+  // inventory, folded into the materials bucket exactly as labour is folded into
+  // labour. It is an allocation of depot-replenishment spend, disjoint from
+  // `finances` (stock issues post no `finances` row), so a material's cost hits
+  // this job's margin exactly once. The fold runs over the whole org ledger (a
+  // correction reversing an issue is a job-less row), then narrows to this job.
+  const stockCogs = await loadStockCogsCostRows(
+    supabase as unknown as StockClient,
+    ctx.org.id,
+    { jobId: id },
+  );
   const costInput = buildJobCostInput({
     finances: finances.map((f) => ({ job_id: f.job_id, amount: f.amount, category: f.category })),
     timeEntries: jobTimeEntries,
     hourlyByUser,
     hoursForEntries: lifetimeHoursSource(),
     cycle: "monthly",
+    stockCogs,
   });
   const profit = computeJobProfitability(
     id,

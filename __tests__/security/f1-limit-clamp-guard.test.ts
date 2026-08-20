@@ -210,8 +210,8 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // create AND draft-edit, so an out-of-cap saved job was silently mis-attributed),
   // so neither carries a producer .limit and neither needs an entry. Same
   // treatment as reviews/new, snags/new and site-reports/new below.
-  "app/(app)/dashboard/page.tsx:194":
-    "bounded: dashboard 'recent 5 leads' widget — an intentional top-5 display. (Moved 189→191 when the VAT scheme/FRS reads added two import lines above it; then 191→194 when the i18n-wave getRequestI18n helper + its comment replaced the bare requireOrgContext call above this read.)",
+  "app/(app)/dashboard/page.tsx:195":
+    "bounded: dashboard 'recent 5 leads' widget — an intentional top-5 display. (Moved 189→191 when the VAT scheme/FRS reads added two import lines above it; then 191→194 when the i18n-wave getRequestI18n helper + its comment replaced the bare requireOrgContext call above this read; then 194→195 when the stock-COGS wave added one import line above it.)",
   "app/(app)/leads/[id]/page.tsx:142":
     "bounded: this lead's related quotes — top-5 display on the lead detail page. (Line moved 132→136 when the lead→customer conversion imports were added; then 136→142 when the lead-score imports + panel were added above this read; reason unchanged.)",
   "app/(app)/me/page.tsx:137":
@@ -305,8 +305,8 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // Per-request id-set lookup. (Line shifted +1 by the additive `barcode` column
   // on StockItemRow / STOCK_ITEM_COLUMNS, 20261144000000; shifted again by the
   // additive loadStockValuationReport + cost columns, W1 stock COGS, 20261180000000.)
-  "server/services/stock.ts:272":
-    "bounded: receipt movements for a specific GRN's line-id set (.in('grn_line_id', grnLineIds)) — request-sized lookup; the balance-fold read (listStockMovements) is separately paged via fetchAllRows",
+  "server/services/stock.ts:303":
+    "bounded: receipt movements for a specific GRN's line-id set (.in('grn_line_id', grnLineIds)) — request-sized lookup; the balance-fold read (listStockMovements) is separately paged via fetchAllRows. (Moved 272→303 when the stock-COGS wave added the loadStockCogsCostRows helper + import above this read.)",
 
   // ── .from(as never) CAST-FORM WAVE — genuinely-bounded recency / per-scope
   //    reads surfaced once notifications / health_score_events joined
