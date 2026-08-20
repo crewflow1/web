@@ -130,7 +130,7 @@ import { createSiteReportSchema } from "@/lib/site-reports/schema";
  *                            re-read, the updated_at compare-and-swap, and the
  *                            existing tg_delay_event_transition trigger). The job is
  *                            NOT in the merge set — a draft is never re-homed to
- *                            another job offline. See 20261195000000. Idempotent via
+ *                            another job offline. See 20261197000000. Idempotent via
  *                            last_offline_write_key, like the diary/snag updates.
  *                            Because the delay schema is camelCase and the table is
  *                            snake_case, the entity declares a `columnMap`; the merge

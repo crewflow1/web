@@ -46,7 +46,7 @@ const conflictMigration = readFileSync(
 const delayUpdateMigration = readFileSync(
   join(
     root,
-    "supabase/migrations/20261195000000_offline_delay_event_update.sql",
+    "supabase/migrations/20261197000000_offline_delay_event_update.sql",
   ),
   "utf8",
 );
