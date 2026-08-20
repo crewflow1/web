@@ -23,6 +23,7 @@ import {
   type SagaStep,
   type StepStatus,
 } from "./model";
+import { SDLC_LIFECYCLE } from "./sdlc";
 
 /** A step as a TEMPLATE declares it — no status yet (steps are born 'pending'). */
 type StepSpec = {
@@ -104,6 +105,7 @@ const CUSTOMER_ONBOARDING: SagaTemplate = {
 
 export const SAGA_TEMPLATES: ReadonlyArray<SagaTemplate> = [
   PRODUCT_LAUNCH,
+  SDLC_LIFECYCLE,
   INCIDENT_RESPONSE,
   CUSTOMER_ONBOARDING,
 ];
