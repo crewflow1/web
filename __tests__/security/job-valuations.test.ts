@@ -208,3 +208,21 @@ describe("money-integrity: concurrent-certify lock + variation draft-invoice sup
     expect(sql).toContain("generate-time supersede");
   });
 });
+
+describe("money-integrity: a variation billed via a valuation cannot be re-billed standalone (review #819 r2)", () => {
+  // Deleting the variation's draft accept-invoice (S1) frees the invoices(quote_id)
+  // unique slot, so the app-layer invoice-creation paths MUST fence the variation
+  // via the persistent job_valuation_variations link table instead.
+  it("POST /api/invoices refuses a variation linked to a non-cancelled valuation", () => {
+    const route = read("app/api/invoices/route.ts");
+    expect(route).toContain("job_valuation_variations");
+    expect(route).toMatch(/billed via an interim valuation and cannot be invoiced separately/);
+    expect(route).toMatch(/\.neq\("status", "cancelled"\)/);
+  });
+  it("/invoices/new excludes accepted variation quotes captured in a non-cancelled valuation", () => {
+    const page = read("app/(app)/invoices/new/page.tsx");
+    expect(page).toContain("job_valuation_variations");
+    expect(page).toMatch(/excluded\.has/);
+    expect(page).toMatch(/\.neq\("status", "cancelled"\)/);
+  });
+});
