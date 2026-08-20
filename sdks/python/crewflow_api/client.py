@@ -30,9 +30,21 @@ from .models import (
     LeadWriteInput,
     PostLeadsResponse,
     InvoiceList,
+    GetInvoicesByIdResponse,
+    InvoiceUpdateInput,
+    PatchInvoicesByIdResponse,
     QuoteList,
     QuoteWriteInput,
     PostQuotesResponse,
+    TimeEntryList,
+    StaffMemberList,
+    ExpenseList,
+    ExpenseWriteInput,
+    PostExpensesResponse,
+    GetExpensesByIdResponse,
+    ExpenseUpdateInput,
+    PatchExpensesByIdResponse,
+    MaterialRequestList,
 )
 from .operations import OPERATIONS
 
@@ -106,6 +118,14 @@ class CrewFlowClient:
         """GET /invoices — List invoices. Requires scope: read:invoices."""
         return self._request(OPERATIONS["getInvoices"]["method"], "/invoices", {"page": page, "per_page": per_page}, None)  # type: ignore[return-value]
 
+    def getInvoicesById(self, id: str) -> GetInvoicesByIdResponse:
+        """GET /invoices/{id} — Fetch a single invoice by id. Requires scope: read:invoices."""
+        return self._request(OPERATIONS["getInvoicesById"]["method"], f"/invoices/{urllib.parse.quote(str(id))}", None, None)  # type: ignore[return-value]
+
+    def patchInvoicesById(self, id: str, body: InvoiceUpdateInput) -> PatchInvoicesByIdResponse:
+        """PATCH /invoices/{id} — Update an invoice's status and metadata (never its money). Requires scope: write:invoices."""
+        return self._request(OPERATIONS["patchInvoicesById"]["method"], f"/invoices/{urllib.parse.quote(str(id))}", None, body)  # type: ignore[return-value]
+
     def getQuotes(self, page: Optional[int] = None, per_page: Optional[int] = None) -> QuoteList:
         """GET /quotes — List quotes. Requires scope: read:quotes."""
         return self._request(OPERATIONS["getQuotes"]["method"], "/quotes", {"page": page, "per_page": per_page}, None)  # type: ignore[return-value]
@@ -113,6 +133,34 @@ class CrewFlowClient:
     def postQuotes(self, body: QuoteWriteInput) -> PostQuotesResponse:
         """POST /quotes — Create a draft quote. Requires scope: write:quotes."""
         return self._request(OPERATIONS["postQuotes"]["method"], "/quotes", None, body)  # type: ignore[return-value]
+
+    def getTime(self, page: Optional[int] = None, per_page: Optional[int] = None) -> TimeEntryList:
+        """GET /time — List time entries. Requires scope: read:time."""
+        return self._request(OPERATIONS["getTime"]["method"], "/time", {"page": page, "per_page": per_page}, None)  # type: ignore[return-value]
+
+    def getStaff(self, page: Optional[int] = None, per_page: Optional[int] = None) -> StaffMemberList:
+        """GET /staff — List staff (role and join date only — no identity). Requires scope: read:staff."""
+        return self._request(OPERATIONS["getStaff"]["method"], "/staff", {"page": page, "per_page": per_page}, None)  # type: ignore[return-value]
+
+    def getExpenses(self, page: Optional[int] = None, per_page: Optional[int] = None) -> ExpenseList:
+        """GET /expenses — List expenses. Requires scope: read:expenses."""
+        return self._request(OPERATIONS["getExpenses"]["method"], "/expenses", {"page": page, "per_page": per_page}, None)  # type: ignore[return-value]
+
+    def postExpenses(self, body: ExpenseWriteInput) -> PostExpensesResponse:
+        """POST /expenses — Record an expense. Requires scope: write:expenses."""
+        return self._request(OPERATIONS["postExpenses"]["method"], "/expenses", None, body)  # type: ignore[return-value]
+
+    def getExpensesById(self, id: str) -> GetExpensesByIdResponse:
+        """GET /expenses/{id} — Fetch a single expense by id. Requires scope: read:expenses."""
+        return self._request(OPERATIONS["getExpensesById"]["method"], f"/expenses/{urllib.parse.quote(str(id))}", None, None)  # type: ignore[return-value]
+
+    def patchExpensesById(self, id: str, body: ExpenseUpdateInput) -> PatchExpensesByIdResponse:
+        """PATCH /expenses/{id} — Update an expense. Requires scope: write:expenses."""
+        return self._request(OPERATIONS["patchExpensesById"]["method"], f"/expenses/{urllib.parse.quote(str(id))}", None, body)  # type: ignore[return-value]
+
+    def getMaterials(self, page: Optional[int] = None, per_page: Optional[int] = None) -> MaterialRequestList:
+        """GET /materials — List material requests. Requires scope: read:materials."""
+        return self._request(OPERATIONS["getMaterials"]["method"], "/materials", {"page": page, "per_page": per_page}, None)  # type: ignore[return-value]
 
     def _request(
         self,

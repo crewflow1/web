@@ -9,20 +9,26 @@
  *
  * v1 defines a per-RESOURCE, per-VERB scope, one string per public-API
  * capability. The READS: `read:jobs`, `read:customers`, `read:invoices`,
- * `read:quotes`. The WRITES: `write:customers`, `write:leads`, `write:jobs`,
- * `write:quotes` (create/update the corresponding resource). Each names a
- * capability the matching /api/v1 endpoint enforces via {@link hasScope}, so a
- * key granted only `read:jobs` cannot read invoices, and a key granted only
- * `read:customers` cannot CREATE a customer — least privilege is expressed in
- * the grant, not just the route. Read and write are DISTINCT capabilities: a
- * key must hold `write:customers` to POST/PATCH a customer even if it already
- * holds `read:customers`. The whole surface ships DARK behind
- * FEATURE_PUBLIC_API_JOBS (lib/public-api/flag.ts); these scopes are inert
- * until that flag is flipped.
+ * `read:quotes`, `read:time`, `read:staff`, `read:expenses`, `read:materials`.
+ * The WRITES: `write:customers`, `write:leads`, `write:jobs`, `write:quotes`,
+ * `write:expenses`, `write:invoices` (create/update the corresponding
+ * resource). Each names a capability the matching /api/v1 endpoint enforces via
+ * {@link hasScope}, so a key granted only `read:jobs` cannot read invoices, and
+ * a key granted only `read:customers` cannot CREATE a customer — least
+ * privilege is expressed in the grant, not just the route. Read and write are
+ * DISTINCT capabilities: a key must hold `write:customers` to POST/PATCH a
+ * customer even if it already holds `read:customers`. The whole surface ships
+ * DARK behind FEATURE_PUBLIC_API_JOBS (lib/public-api/flag.ts); these scopes are
+ * inert until that flag is flipped.
  *
- * There is deliberately NO `read:leads` (no leads read endpoint yet) and NO
- * write scope for invoices (invoicing is an accounting operation the public
- * API does not open) — a scope exists only where a route enforces it.
+ * There is deliberately NO `read:leads` (leads is a write-only capture surface)
+ * and NO `write:time` / `write:staff` / `write:materials`: reading a timesheet,
+ * a staff roster (role-only, no identity) or a material request is opened, but
+ * logging time against a specific worker, mutating the staff roster, or driving
+ * the trigger-governed material-request lifecycle through a public key stays
+ * closed. `write:invoices` opens only a metadata/status PATCH — money on an
+ * invoice is never writable through the API (there is no invoice CREATE). A
+ * scope exists only where a route enforces it.
  *
  * Adding a scope here is a reviewed code change: the drift-guard test in
  * __tests__/api-auth freezes this array with a deep-equal, so growth is a
@@ -40,10 +46,16 @@ export const SCOPES = [
   "read:customers",
   "read:invoices",
   "read:quotes",
+  "read:time",
+  "read:staff",
+  "read:expenses",
+  "read:materials",
   "write:customers",
   "write:leads",
   "write:jobs",
   "write:quotes",
+  "write:expenses",
+  "write:invoices",
 ] as const;
 
 /** Compile-time union of every scope this build understands. */
@@ -56,10 +68,16 @@ export const SCOPE_LABELS: Readonly<Record<Scope, string>> = {
   "read:customers": "Read customers",
   "read:invoices": "Read invoices",
   "read:quotes": "Read quotes",
+  "read:time": "Read time entries",
+  "read:staff": "Read staff roster",
+  "read:expenses": "Read expenses",
+  "read:materials": "Read material requests",
   "write:customers": "Create & update customers",
   "write:leads": "Create leads",
   "write:jobs": "Create & update jobs",
   "write:quotes": "Create quotes",
+  "write:expenses": "Create & update expenses",
+  "write:invoices": "Update invoice status & metadata",
 };
 
 export function isScope(value: string): value is Scope {

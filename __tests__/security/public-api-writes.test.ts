@@ -27,18 +27,36 @@ const codeOf = (ts: string) =>
 
 describe("scope registry — read and write are distinct capabilities", () => {
   it("defines a write scope for each writable resource", () => {
-    for (const s of ["write:customers", "write:leads", "write:jobs", "write:quotes"]) {
+    for (const s of [
+      "write:customers",
+      "write:leads",
+      "write:jobs",
+      "write:quotes",
+      "write:expenses",
+      "write:invoices",
+    ]) {
       expect([...SCOPES]).toContain(s);
       expect(SCOPE_LABELS).toHaveProperty(s);
     }
   });
 
-  it("does NOT define a write scope for invoices (read-only resource)", () => {
-    expect([...SCOPES]).not.toContain("write:invoices");
+  it("opens write:invoices as a metadata/status PATCH ONLY — there is no invoice CREATE", () => {
+    // The scope exists (the by-id PATCH enforces it), but the invoices
+    // COLLECTION route must never export a POST — raising an invoice is an
+    // accounting operation the public API does not open.
+    expect([...SCOPES]).toContain("write:invoices");
+    const collection = codeOf(read("app/api/v1/invoices/route.ts"));
+    expect(collection).not.toMatch(/export (async )?function POST\b/);
   });
 
   it("does NOT define read:leads (leads is a write-only capability)", () => {
     expect([...SCOPES]).not.toContain("read:leads");
+  });
+
+  it("does NOT define write scopes for read-only resources (time/staff/materials)", () => {
+    for (const s of ["write:time", "write:staff", "write:materials"]) {
+      expect([...SCOPES]).not.toContain(s);
+    }
   });
 });
 
@@ -61,6 +79,9 @@ const WRITE_ROUTES: WriteRoute[] = [
   { file: "app/api/v1/jobs/route.ts", verb: "POST", scope: "write:jobs", item: false },
   { file: "app/api/v1/jobs/[id]/route.ts", verb: "PATCH", scope: "write:jobs", item: true },
   { file: "app/api/v1/quotes/route.ts", verb: "POST", scope: "write:quotes", item: true },
+  { file: "app/api/v1/expenses/route.ts", verb: "POST", scope: "write:expenses", item: false },
+  { file: "app/api/v1/expenses/[id]/route.ts", verb: "PATCH", scope: "write:expenses", item: true },
+  { file: "app/api/v1/invoices/[id]/route.ts", verb: "PATCH", scope: "write:invoices", item: true },
 ];
 
 describe.each(WRITE_ROUTES)("$verb $file — scoped, org-pinned, strict", (r) => {
@@ -131,6 +152,12 @@ describe("foreign references are verified in the key's org BEFORE the write", ()
 
   it("quotes verify customer/property/lead references in-org", () => {
     expect(codeOf(read("app/api/v1/quotes/route.ts"))).toMatch(/verifyQuoteReferences\(/);
+  });
+
+  it("expenses verify a linked job_id in-org before recording the cost", () => {
+    const CODE = codeOf(read("app/api/v1/expenses/route.ts"));
+    expect(CODE).toMatch(/verifyJobInOrg\(/);
+    expect(CODE).toMatch(/guard\.key\.orgId/);
   });
 });
 
@@ -203,6 +230,9 @@ describe("all write input schemas are .strict()", () => {
       "createJobSchema",
       "updateJobSchema",
       "createQuoteSchema",
+      "createExpenseSchema",
+      "updateExpenseSchema",
+      "updateInvoiceSchema",
     ]) {
       const block =
         new RegExp(`${name} = [\\s\\S]*?\\n(export|$)`).exec(SCHEMA)?.[0] ?? "";
@@ -252,6 +282,38 @@ describe("openapi document — write operations present, no leaked field", () =>
     expect(scopeFor("/jobs", "post")).toBe("write:jobs");
     expect(scopeFor("/jobs/{id}", "patch")).toBe("write:jobs");
     expect(scopeFor("/quotes", "post")).toBe("write:quotes");
+    expect(scopeFor("/expenses", "post")).toBe("write:expenses");
+    expect(scopeFor("/expenses/{id}", "patch")).toBe("write:expenses");
+    expect(scopeFor("/invoices/{id}", "patch")).toBe("write:invoices");
+  });
+
+  it("does NOT document an invoice CREATE — invoices collection is post-free", async () => {
+    const { buildOpenApiDocument } = await import("@/lib/public-api/openapi");
+    const doc = buildOpenApiDocument() as unknown as {
+      paths: Record<string, Record<string, unknown>>;
+    };
+    expect(doc.paths["/invoices"]!.post).toBeUndefined();
+  });
+
+  it("the invoice update schema never accepts a money column", async () => {
+    const SCHEMA = codeOf(read("lib/public-api/write-schemas.ts"));
+    const block =
+      /updateInvoiceSchema = [\s\S]*?\.strict\(\)/.exec(SCHEMA)?.[0] ?? "";
+    expect(block).not.toBe("");
+    for (const forbidden of ["amount", "vat_total", "total", "number"]) {
+      expect(block, `invoice update accepts ${forbidden}`).not.toMatch(
+        new RegExp(`\\b${forbidden}\\b\\s*:`),
+      );
+    }
+  });
+
+  it("the expense create schema never accepts the generated vat_total", async () => {
+    const SCHEMA = codeOf(read("lib/public-api/write-schemas.ts"));
+    const block =
+      /createExpenseSchema = [\s\S]*?\.strict\(\)/.exec(SCHEMA)?.[0] ?? "";
+    expect(block).not.toBe("");
+    expect(block).not.toMatch(/\bvat_total\b\s*:/);
+    expect(block).not.toMatch(/\borg_id\b\s*:/);
   });
 
   it("still never names a forbidden cost/secret field anywhere", async () => {

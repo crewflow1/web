@@ -150,6 +150,60 @@ const RESOURCES: Resource[] = [
       "org_id",
     ],
   },
+  // --- Open-API breadth wave -------------------------------------------------
+  // Appended AFTER customers/invoices/quotes so RESOURCES[0..2] stay stable for
+  // the OpenAPI schema-match test below.
+  {
+    name: "time",
+    route: "app/api/v1/time/route.ts",
+    dtoFile: "lib/public-api/time.ts",
+    scope: "read:time",
+    columnsConst: "TIME_DTO_COLUMNS",
+    toDtoFn: "toPublicTimeEntryDto",
+    selectConst: "TIME_DTO_SELECT",
+    writeVerbs: [],
+    columns: ["id", "started_at", "ended_at", "created_at", "updated_at"],
+    // Worker identity + precise location are the sharp ones; never expose them.
+    forbidden: ["user_id", "job_id", "gps_lat", "gps_lng", "note", "breaks", "payroll_line_id", "org_id"],
+  },
+  {
+    name: "staff",
+    route: "app/api/v1/staff/route.ts",
+    dtoFile: "lib/public-api/staff.ts",
+    scope: "read:staff",
+    columnsConst: "STAFF_DTO_COLUMNS",
+    toDtoFn: "toPublicStaffDto",
+    selectConst: "STAFF_DTO_SELECT",
+    writeVerbs: [],
+    columns: ["id", "role", "created_at"],
+    // Identity-free: the user id (join key to name/email/phone) never leaks.
+    forbidden: ["user_id", "org_id", "email", "name", "phone"],
+  },
+  {
+    name: "expenses",
+    route: "app/api/v1/expenses/route.ts",
+    dtoFile: "lib/public-api/expenses.ts",
+    scope: "read:expenses",
+    columnsConst: "EXPENSE_DTO_COLUMNS",
+    toDtoFn: "toPublicExpenseDto",
+    selectConst: "EXPENSE_DTO_SELECT",
+    writeVerbs: ["POST"],
+    writeScope: "write:expenses",
+    columns: ["id", "amount", "currency", "vat_rate", "vat_total", "category", "created_at", "updated_at"],
+    forbidden: ["job_id", "supplier_id", "purchase_order_id", "receipt_url", "notes", "org_id"],
+  },
+  {
+    name: "materials",
+    route: "app/api/v1/materials/route.ts",
+    dtoFile: "lib/public-api/materials.ts",
+    scope: "read:materials",
+    columnsConst: "MATERIAL_DTO_COLUMNS",
+    toDtoFn: "toPublicMaterialRequestDto",
+    selectConst: "MATERIAL_DTO_SELECT",
+    writeVerbs: [],
+    columns: ["id", "number", "status", "priority", "needed_by", "submitted_at", "decided_at", "created_at", "updated_at"],
+    forbidden: ["job_id", "requested_by", "decided_by", "created_by", "notes", "rejection_reason", "org_id"],
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -312,10 +366,15 @@ describe("GET /api/v1/openapi.json — dark, tenant-data-free, in-sync", () => {
     const { buildOpenApiDocument } = await import("@/lib/public-api/openapi");
     const doc = buildOpenApiDocument() as unknown as OpenApiDocShape;
     const schemas = doc.components.schemas;
+    const byName = (n: string) => RESOURCES.find((r) => r.name === n)!.columns;
     const map: Record<string, string[]> = {
-      Customer: RESOURCES[0]!.columns,
-      Invoice: RESOURCES[1]!.columns,
-      Quote: RESOURCES[2]!.columns,
+      Customer: byName("customers"),
+      Invoice: byName("invoices"),
+      Quote: byName("quotes"),
+      TimeEntry: byName("time"),
+      StaffMember: byName("staff"),
+      Expense: byName("expenses"),
+      MaterialRequest: byName("materials"),
     };
     for (const [name, cols] of Object.entries(map)) {
       expect(Object.keys(schemas[name]!.properties).sort()).toEqual([...cols].sort());

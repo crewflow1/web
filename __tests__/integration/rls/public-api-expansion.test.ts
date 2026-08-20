@@ -32,6 +32,21 @@ interface Table {
 }
 const db = (client: unknown) => client as unknown as { from(t: string): Table };
 
+/** Build a params context for an item ([id]) route handler. */
+const itemCtx = (id: string) => ({ params: Promise.resolve({ id }) });
+
+/**
+ * Drop the volatile `updated_at` for idempotency comparisons. A no-op PATCH
+ * leaves every BUSINESS field identical, but the DB's set-updated-at trigger
+ * bumps `updated_at` on every write — that timestamp is expected to move and is
+ * not part of "same state". Every other field (including the money columns) is
+ * kept, so the equality still proves the payload did not otherwise drift.
+ */
+const stripVolatile = (row: Record<string, unknown>): Record<string, unknown> => {
+  const { updated_at: _updated_at, ...stable } = row;
+  return stable;
+};
+
 const TOKEN = `it-pubapix-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 describeIntegration("public API v1 · expansion · isolation, scope, dark flag", () => {
@@ -43,10 +58,16 @@ describeIntegration("public API v1 · expansion · isolation, scope, dark flag",
   let custB = "";
 
   // Plaintext keys presented in the Authorization header.
-  let keyA_all = ""; // org A, all four read scopes
+  let keyA_all = ""; // org A, all read scopes
   let keyA_jobsonly = ""; // org A, only read:jobs — 403 on the new surfaces
   let keyA_revoked = ""; // org A, all scopes, revoked
-  let keyB_all = ""; // org B, all four read scopes
+  let keyB_all = ""; // org B, all read scopes
+  let keyA_write = ""; // org A, expense + invoice write scopes
+
+  // Captured fixture ids for the write / by-id flows.
+  let invoiceA = "";
+  let expenseA = "";
+  let expenseB = "";
 
   async function makeOrg(name: string, slug: string): Promise<string> {
     const r = await svc().from("organizations").insert({ name, slug }).select("id").single();
@@ -93,6 +114,63 @@ describeIntegration("public API v1 · expansion · isolation, scope, dark flag",
     return String(r.data?.id ?? "");
   }
 
+  // A real auth user mirrored into public.users + a membership — needed for the
+  // time_entries (user_id NOT NULL) and staff (memberships) fixtures.
+  async function makeUserInOrg(org: string, role: string): Promise<string> {
+    const email = `${TOKEN}-${Math.random().toString(36).slice(2, 8)}@probe.test`;
+    const created = await serviceClient().auth.admin.createUser({
+      email,
+      password: `Pw!${crypto.randomUUID()}`,
+      email_confirm: true,
+    });
+    expect(created.error, created.error?.message).toBeNull();
+    const id = String(created.data.user?.id ?? "");
+    const mirrored = await svc().from("users").insert({ id, email, full_name: `${TOKEN} ${role}` }).select("id").single();
+    expect(mirrored.error, mirrored.error?.message).toBeNull();
+    const m = await svc().from("memberships").insert({ org_id: org, user_id: id, role }).select("user_id").single();
+    expect(m.error, m.error?.message).toBeNull();
+    return id;
+  }
+
+  async function makeTimeEntry(org: string, user: string): Promise<string> {
+    const r = await svc()
+      .from("time_entries")
+      .insert({
+        org_id: org,
+        user_id: user,
+        started_at: new Date().toISOString(),
+        // gps + note set so the DTO's exclusion of them is proven against real data.
+        gps_lat: 51.5,
+        gps_lng: -0.12,
+        note: `${TOKEN} internal note`,
+      })
+      .select("id")
+      .single();
+    expect(r.error, r.error?.message).toBeNull();
+    return String(r.data?.id ?? "");
+  }
+
+  async function makeExpense(org: string): Promise<string> {
+    // `vat_total` is a STORED GENERATED column — never inserted.
+    const r = await svc()
+      .from("finances")
+      .insert({ org_id: org, amount: 200, vat_rate: 20, category: "materials", notes: `${TOKEN} internal` })
+      .select("id")
+      .single();
+    expect(r.error, r.error?.message).toBeNull();
+    return String(r.data?.id ?? "");
+  }
+
+  async function makeMaterialRequest(org: string, num: string): Promise<string> {
+    const r = await svc()
+      .from("material_requests")
+      .insert({ org_id: org, number: num, status: "draft", priority: "normal", notes: `${TOKEN} internal` })
+      .select("id")
+      .single();
+    expect(r.error, r.error?.message).toBeNull();
+    return String(r.data?.id ?? "");
+  }
+
   async function mintKey(
     org: string,
     scopes: string[],
@@ -115,11 +193,28 @@ describeIntegration("public API v1 · expansion · isolation, scope, dark flag",
     return k.plaintext;
   }
 
-  const ALL_SCOPES = ["read:jobs", "read:customers", "read:invoices", "read:quotes"];
+  const ALL_SCOPES = [
+    "read:jobs",
+    "read:customers",
+    "read:invoices",
+    "read:quotes",
+    "read:time",
+    "read:staff",
+    "read:expenses",
+    "read:materials",
+  ];
+  const WRITE_SCOPES = ["read:expenses", "write:expenses", "read:invoices", "write:invoices"];
 
   const req = (path: string, plaintext?: string) =>
     new Request(`https://app.crewflow.uk/api/v1/${path}`, {
       headers: plaintext ? { authorization: `Bearer ${plaintext}` } : {},
+    });
+
+  const bodyReq = (path: string, plaintext: string, method: string, body: unknown) =>
+    new Request(`https://app.crewflow.uk/api/v1/${path}`, {
+      method,
+      headers: { authorization: `Bearer ${plaintext}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
     });
 
   beforeAll(async () => {
@@ -127,18 +222,33 @@ describeIntegration("public API v1 · expansion · isolation, scope, dark flag",
     orgB = await makeOrg("PubAPIx Probe B", `${TOKEN}-b`);
     custA = await makeCustomer(orgA);
     custB = await makeCustomer(orgB);
-    await makeInvoice(orgA, `${TOKEN}-A-INV-1`);
+    invoiceA = await makeInvoice(orgA, `${TOKEN}-A-INV-1`);
     await makeInvoice(orgB, `${TOKEN}-B-INV-1`);
     await makeQuote(orgA, custA, `${TOKEN}-A-QUO-1`);
     await makeQuote(orgB, custB, `${TOKEN}-B-QUO-1`);
+    // Breadth-wave fixtures: a user+membership per org (time + staff), an
+    // expense per org, and a material request per org.
+    const userA = await makeUserInOrg(orgA, "staff");
+    const userB = await makeUserInOrg(orgB, "staff");
+    // A time entry in BOTH orgs: the isolation test fetches the OTHER org's
+    // rows first and asserts it saw some, so every resource must be seeded on
+    // both sides.
+    await makeTimeEntry(orgA, userA);
+    await makeTimeEntry(orgB, userB);
+    expenseA = await makeExpense(orgA);
+    expenseB = await makeExpense(orgB);
+    await makeMaterialRequest(orgA, `${TOKEN}-A-MR-1`);
+    await makeMaterialRequest(orgB, `${TOKEN}-B-MR-1`);
     keyA_all = await mintKey(orgA, ALL_SCOPES);
     keyA_jobsonly = await mintKey(orgA, ["read:jobs"]);
     keyA_revoked = await mintKey(orgA, ALL_SCOPES, { revoked: true });
     keyB_all = await mintKey(orgB, ALL_SCOPES);
+    keyA_write = await mintKey(orgA, WRITE_SCOPES);
   });
 
   afterAll(async () => {
-    // Org teardown cascades api_keys + customers + invoices + quotes.
+    // Org teardown cascades api_keys + customers + invoices + quotes + the
+    // breadth-wave rows (time_entries, finances, material_requests, memberships).
     for (const id of [orgA, orgB]) {
       if (id) await serviceClient().from("organizations").delete().eq("id", id);
     }
@@ -188,6 +298,26 @@ describeIntegration("public API v1 · expansion · isolation, scope, dark flag",
       ],
       forbidden: ["cost_total", "cost_labour", "public_token", "customer_id", "org_id"],
     },
+    {
+      name: "time",
+      allow: ["id", "started_at", "ended_at", "created_at", "updated_at"],
+      forbidden: ["user_id", "job_id", "gps_lat", "gps_lng", "note", "breaks", "org_id"],
+    },
+    {
+      name: "staff",
+      allow: ["id", "role", "created_at"],
+      forbidden: ["user_id", "org_id", "email", "full_name"],
+    },
+    {
+      name: "expenses",
+      allow: ["id", "amount", "currency", "vat_rate", "vat_total", "category", "created_at", "updated_at"],
+      forbidden: ["job_id", "receipt_url", "notes", "org_id"],
+    },
+    {
+      name: "materials",
+      allow: ["id", "number", "status", "priority", "needed_by", "submitted_at", "decided_at", "created_at", "updated_at"],
+      forbidden: ["job_id", "requested_by", "decided_by", "notes", "rejection_reason", "org_id"],
+    },
   ] as const;
 
   // Static imports (not a templated dynamic import — vite cannot analyse those).
@@ -199,6 +329,14 @@ describeIntegration("public API v1 · expansion · isolation, scope, dark flag",
         return (await import("@/app/api/v1/invoices/route")).GET;
       case "quotes":
         return (await import("@/app/api/v1/quotes/route")).GET;
+      case "time":
+        return (await import("@/app/api/v1/time/route")).GET;
+      case "staff":
+        return (await import("@/app/api/v1/staff/route")).GET;
+      case "expenses":
+        return (await import("@/app/api/v1/expenses/route")).GET;
+      case "materials":
+        return (await import("@/app/api/v1/materials/route")).GET;
       default:
         throw new Error(`no handler for ${name}`);
     }
@@ -288,6 +426,109 @@ describeIntegration("public API v1 · expansion · isolation, scope, dark flag",
     }
   });
 
+  // -------------------------------------------------------------------------
+  // Write flows — expenses (create + PATCH) and invoices (PATCH), org-pinned
+  // and idempotent.
+  // -------------------------------------------------------------------------
+
+  it("expenses: POST records a cost in the KEY'S org, returned through the read allowlist", async () => {
+    flagState.enabled = true;
+    const { POST } = await import("@/app/api/v1/expenses/route");
+    const res = await POST(bodyReq("expenses", keyA_write, "POST", { amount: 75, vat_rate: 20, category: "fuel" }));
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { data: Record<string, unknown> };
+    expect(body.data.amount).toBe(75);
+    // vat_total is the generated column, surfaced read-only.
+    expect(body.data.vat_total).toBe(15);
+    for (const f of ["job_id", "notes", "org_id", "receipt_url"]) {
+      expect(body.data).not.toHaveProperty(f);
+    }
+  });
+
+  it("expenses: write:expenses is DISTINCT — a read-only key cannot POST", async () => {
+    flagState.enabled = true;
+    const { POST } = await import("@/app/api/v1/expenses/route");
+    const res = await POST(bodyReq("expenses", keyA_all, "POST", { amount: 10 }));
+    expect(res.status).toBe(403);
+  });
+
+  it("expenses: a cross-org job_id is refused (422), never attached", async () => {
+    flagState.enabled = true;
+    const { POST } = await import("@/app/api/v1/expenses/route");
+    // A random uuid that is not a job in org A → clean reference error.
+    const res = await POST(bodyReq("expenses", keyA_write, "POST", { amount: 10, job_id: crypto.randomUUID() }));
+    expect(res.status).toBe(422);
+  });
+
+  it("expenses: PATCH is org-pinned and IDEMPOTENT — same body twice → same state", async () => {
+    flagState.enabled = true;
+    const { PATCH } = await import("@/app/api/v1/expenses/[id]/route");
+    const patch = () => PATCH(bodyReq(`expenses/${expenseA}`, keyA_write, "PATCH", { category: "plant-hire", amount: 300 }), itemCtx(expenseA));
+    const first = await patch();
+    expect(first.status).toBe(200);
+    const b1 = (await first.json()) as { data: Record<string, unknown> };
+    const second = await patch();
+    expect(second.status).toBe(200);
+    const b2 = (await second.json()) as { data: Record<string, unknown> };
+    // Idempotent = same BUSINESS state. `updated_at` is bumped by the DB's
+    // set-updated-at trigger on every write and is deliberately excluded from
+    // the equality; every stable field must be identical across the two calls.
+    expect(stripVolatile(b2.data)).toEqual(stripVolatile(b1.data));
+    expect(b2.data.category).toBe("plant-hire");
+    expect(b2.data.amount).toBe(300);
+    // vat_total is the generated column recomputed from amount — stable and
+    // never a client input.
+    expect(b2.data.vat_total).toBe(60);
+  });
+
+  it("expenses: org B's expense is a 404 to org A's key on the by-id PATCH (no cross-org write / oracle)", async () => {
+    flagState.enabled = true;
+    const { PATCH } = await import("@/app/api/v1/expenses/[id]/route");
+    const res = await PATCH(bodyReq(`expenses/${expenseB}`, keyA_write, "PATCH", { category: "x" }), itemCtx(expenseB));
+    expect(res.status).toBe(404);
+  });
+
+  it("invoices: PATCH updates status idempotently and never a money column", async () => {
+    flagState.enabled = true;
+    const { PATCH } = await import("@/app/api/v1/invoices/[id]/route");
+    const patch = () => PATCH(bodyReq(`invoices/${invoiceA}`, keyA_write, "PATCH", { status: "sent" }), itemCtx(invoiceA));
+    const first = await patch();
+    expect(first.status).toBe(200);
+    const b1 = (await first.json()) as { data: Record<string, unknown> };
+    expect(b1.data.status).toBe("sent");
+    const second = await patch();
+    const b2 = (await second.json()) as { data: Record<string, unknown> };
+    // Idempotent business state; `updated_at` is trigger-bumped on each write
+    // and excluded from the equality (see the expenses PATCH note).
+    expect(stripVolatile(b2.data)).toEqual(stripVolatile(b1.data));
+    // The billed amount is untouched by the status PATCH.
+    expect(b2.data.amount).toBe(100);
+    expect(b2.data.vat_total).toBe(20);
+  });
+
+  it("invoices: the derived 'overdue' status is rejected at validation (422)", async () => {
+    flagState.enabled = true;
+    const { PATCH } = await import("@/app/api/v1/invoices/[id]/route");
+    const res = await PATCH(bodyReq(`invoices/${invoiceA}`, keyA_write, "PATCH", { status: "overdue" }), itemCtx(invoiceA));
+    expect(res.status).toBe(422);
+  });
+
+  it("invoices: write:invoices is DISTINCT — a read-only key cannot PATCH", async () => {
+    flagState.enabled = true;
+    const { PATCH } = await import("@/app/api/v1/invoices/[id]/route");
+    const res = await PATCH(bodyReq(`invoices/${invoiceA}`, keyA_all, "PATCH", { status: "sent" }), itemCtx(invoiceA));
+    expect(res.status).toBe(403);
+  });
+
+  it("expenses/invoices by-id PATCH: flag OFF → 404 (dark), even with a valid write key", async () => {
+    flagState.enabled = false;
+    const { PATCH: patchExp } = await import("@/app/api/v1/expenses/[id]/route");
+    const { PATCH: patchInv } = await import("@/app/api/v1/invoices/[id]/route");
+    expect((await patchExp(bodyReq(`expenses/${expenseA}`, keyA_write, "PATCH", { category: "z" }), itemCtx(expenseA))).status).toBe(404);
+    expect((await patchInv(bodyReq(`invoices/${invoiceA}`, keyA_write, "PATCH", { status: "sent" }), itemCtx(invoiceA))).status).toBe(404);
+    flagState.enabled = true;
+  });
+
   it("openapi.json: flag OFF → 404, flag ON → 200 OpenAPI 3.1 (no key required, no tenant data)", async () => {
     const { GET } = await import("@/app/api/v1/openapi.json/route");
     flagState.enabled = false;
@@ -297,8 +538,18 @@ describeIntegration("public API v1 · expansion · isolation, scope, dark flag",
     expect(res.status).toBe(200);
     const doc = (await res.json()) as { openapi: string; paths: Record<string, unknown> };
     expect(doc.openapi).toBe("3.1.0");
-    expect(doc.paths["/customers"]).toBeTruthy();
-    expect(doc.paths["/invoices"]).toBeTruthy();
-    expect(doc.paths["/quotes"]).toBeTruthy();
+    for (const p of [
+      "/customers",
+      "/invoices",
+      "/invoices/{id}",
+      "/quotes",
+      "/time",
+      "/staff",
+      "/expenses",
+      "/expenses/{id}",
+      "/materials",
+    ]) {
+      expect(doc.paths[p], `spec missing ${p}`).toBeTruthy();
+    }
   });
 });

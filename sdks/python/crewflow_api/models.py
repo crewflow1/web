@@ -19,6 +19,14 @@ __all__ = [
     "Quote",
     "QuoteList",
     "Lead",
+    "TimeEntry",
+    "TimeEntryList",
+    "StaffMember",
+    "StaffMemberList",
+    "Expense",
+    "ExpenseList",
+    "MaterialRequest",
+    "MaterialRequestList",
     "CustomerWriteInput",
     "CustomerUpdateInput",
     "LeadWriteInput",
@@ -26,6 +34,9 @@ __all__ = [
     "JobUpdateInput",
     "QuoteLineItemInput",
     "QuoteWriteInput",
+    "ExpenseWriteInput",
+    "ExpenseUpdateInput",
+    "InvoiceUpdateInput",
     "GetMeResponse",
     "PostJobsResponse",
     "GetJobsByIdResponse",
@@ -34,7 +45,12 @@ __all__ = [
     "GetCustomersByIdResponse",
     "PatchCustomersByIdResponse",
     "PostLeadsResponse",
+    "GetInvoicesByIdResponse",
+    "PatchInvoicesByIdResponse",
     "PostQuotesResponse",
+    "PostExpensesResponse",
+    "GetExpensesByIdResponse",
+    "PatchExpensesByIdResponse",
 ]
 
 
@@ -122,6 +138,67 @@ class Lead(TypedDict, total=False):
     postcode: Optional[str]
     created_at: Optional[str]
     updated_at: Optional[str]
+
+
+class TimeEntry(TypedDict, total=False):
+    id: Optional[str]
+    started_at: Optional[str]
+    ended_at: Optional[str]
+    created_at: Optional[str]
+    updated_at: Optional[str]
+
+
+class TimeEntryList(TypedDict, total=False):
+    """Required keys: data, pagination."""
+    data: List["TimeEntry"]
+    pagination: Dict[str, Any]
+
+
+class StaffMember(TypedDict, total=False):
+    id: Optional[str]
+    role: Optional[str]
+    created_at: Optional[str]
+
+
+class StaffMemberList(TypedDict, total=False):
+    """Required keys: data, pagination."""
+    data: List["StaffMember"]
+    pagination: Dict[str, Any]
+
+
+class Expense(TypedDict, total=False):
+    id: Optional[str]
+    amount: Optional[float]
+    currency: Optional[str]
+    vat_rate: Optional[float]
+    vat_total: Optional[float]
+    category: Optional[str]
+    created_at: Optional[str]
+    updated_at: Optional[str]
+
+
+class ExpenseList(TypedDict, total=False):
+    """Required keys: data, pagination."""
+    data: List["Expense"]
+    pagination: Dict[str, Any]
+
+
+class MaterialRequest(TypedDict, total=False):
+    id: Optional[str]
+    number: Optional[str]
+    status: Optional[str]
+    priority: Optional[str]
+    needed_by: Optional[str]
+    submitted_at: Optional[str]
+    decided_at: Optional[str]
+    created_at: Optional[str]
+    updated_at: Optional[str]
+
+
+class MaterialRequestList(TypedDict, total=False):
+    """Required keys: data, pagination."""
+    data: List["MaterialRequest"]
+    pagination: Dict[str, Any]
 
 
 class CustomerWriteInput(TypedDict, total=False):
@@ -213,6 +290,30 @@ class QuoteWriteInput(TypedDict, total=False):
     line_items: List["QuoteLineItemInput"]
 
 
+class ExpenseWriteInput(TypedDict, total=False):
+    """Record a cost. vat_total is computed server-side (amount * vat_rate) and can never be sent. Currency is fixed to GBP. Required keys: amount."""
+    amount: float
+    vat_rate: Literal[0, 5, 20]
+    category: str
+    notes: str
+    job_id: str
+
+
+class ExpenseUpdateInput(TypedDict, total=False):
+    """At least one field must be provided. Omitted fields are left unchanged. job_id and vat_total are not updatable."""
+    amount: float
+    vat_rate: Literal[0, 5, 20]
+    category: str
+    notes: str
+
+
+class InvoiceUpdateInput(TypedDict, total=False):
+    """Update invoice status and metadata. Money columns (amount, vat_total, total, number) are not writable. 'overdue' is derived, not stored, and is rejected. At least one field must be provided."""
+    status: Literal["draft", "sent", "awaiting_payment", "partially_paid", "paid"]
+    due_date: str
+    notes: str
+
+
 class GetMeResponse(TypedDict, total=False):
     org_id: str
     key_prefix: str
@@ -247,5 +348,25 @@ class PostLeadsResponse(TypedDict, total=False):
     data: "Lead"
 
 
+class GetInvoicesByIdResponse(TypedDict, total=False):
+    data: "Invoice"
+
+
+class PatchInvoicesByIdResponse(TypedDict, total=False):
+    data: "Invoice"
+
+
 class PostQuotesResponse(TypedDict, total=False):
     data: "Quote"
+
+
+class PostExpensesResponse(TypedDict, total=False):
+    data: "Expense"
+
+
+class GetExpensesByIdResponse(TypedDict, total=False):
+    data: "Expense"
+
+
+class PatchExpensesByIdResponse(TypedDict, total=False):
+    data: "Expense"
