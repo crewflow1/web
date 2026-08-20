@@ -61,6 +61,12 @@ export type SamlValidationResult =
       ok: true;
       email: string;
       nameId: string;
+      /** The signed Assertion's ID — the replay-cache key (F1). Empty string
+       *  when the assertion carries no ID (the ACS then rejects it). */
+      assertionId: string;
+      /** The assertion's Conditions@NotOnOrAfter as epoch ms, when present — the
+       *  replay window the consumed-assertion row is retained until. */
+      notOnOrAfterMs: number | null;
       attributes: Record<string, string[]>;
     }
   | { ok: false; reason: string };
@@ -180,10 +186,12 @@ export function validateSamlResponse(
   if (issuer !== opts.idpEntityId) return { ok: false, reason: "issuer_mismatch" };
 
   // ── Conditions: NotBefore / NotOnOrAfter + AudienceRestriction ──
+  let notOnOrAfterMs: number | null = null;
   const conditions = firstEl(assertion, "Conditions");
   if (conditions) {
     const nb = parseInstant(conditions.getAttribute("NotBefore"));
     const noa = parseInstant(conditions.getAttribute("NotOnOrAfter"));
+    notOnOrAfterMs = noa;
     if (nb !== null && nowMs + skewMs < nb) return { ok: false, reason: "not_yet_valid" };
     if (noa !== null && nowMs - skewMs >= noa) return { ok: false, reason: "expired" };
 
@@ -243,10 +251,23 @@ export function validateSamlResponse(
 
   // Email resolution: prefer a standard email attribute, else the NameID when it
   // looks like an email.
+  //
+  // NOTE (F2, account-takeover): unlike OIDC — where the id_token can come from
+  // an IdP that hands out UNVERIFIED emails, so we require email_verified===true
+  // — a SAML assertion here is CRYPTOGRAPHICALLY SIGNED by the org's PINNED IdP
+  // (signature verified against the configured x509 cert above). The IdP is the
+  // authority for its users' emails and vouches for the value by signing it, so
+  // no separate email-verified attribute is required. If a customer's IdP is
+  // untrustworthy about email ownership that is an IdP-trust decision, not
+  // something an SP-side flag can fix.
   const email = resolveEmail(nameId, nameIdEl, attributes);
   if (!email) return { ok: false, reason: "no_email" };
 
-  return { ok: true, email, nameId, attributes };
+  // Assertion ID — the replay-cache key (F1). SAML assertions SHOULD carry an
+  // ID; the ACS rejects one that does not so a replay key always exists.
+  const assertionId = assertion.getAttribute("ID") ?? "";
+
+  return { ok: true, email, nameId, assertionId, notOnOrAfterMs, attributes };
 }
 
 const EMAIL_ATTR_NAMES = [

@@ -3,6 +3,7 @@ import { anonClient, describeIntegration, serviceClient, userClient } from "../_
 import {
   findActiveMembershipByEmail,
   deactivateMembership,
+  consumeSamlAssertion,
 } from "@/lib/enterprise-sso/provisioning";
 
 /**
@@ -234,5 +235,57 @@ describeIntegration("enterprise SSO + SCIM · RLS + provisioning", () => {
 
     // Idempotent: a second deactivate finds nothing to remove.
     expect((await deactivateMembership(orgA, ownerAEmail)).removed).toBe(false);
+  });
+
+  // ── 6. SAML replay guard (F1) ───────────────────────────────────────────────
+  it("consumeSamlAssertion consumes once, then rejects the replay (unique 23505)", async () => {
+    const assertionId = `_assert-${TOKEN}`;
+    const first = await consumeSamlAssertion({
+      orgId: orgA,
+      assertionId,
+      notOnOrAfterMs: Date.now() + 60_000,
+    });
+    expect(first).toEqual({ consumed: true, errored: false });
+
+    // Re-POST of the same assertion → refused as a replay, not an error.
+    const replay = await consumeSamlAssertion({
+      orgId: orgA,
+      assertionId,
+      notOnOrAfterMs: Date.now() + 60_000,
+    });
+    expect(replay).toEqual({ consumed: false, errored: false });
+
+    // The SAME assertion id in a DIFFERENT org is independent (per-org unique).
+    const otherOrg = await consumeSamlAssertion({
+      orgId: orgB,
+      assertionId,
+      notOnOrAfterMs: Date.now() + 60_000,
+    });
+    expect(otherOrg).toEqual({ consumed: true, errored: false });
+  });
+
+  it("consumed-assertions table: anon blind, admin can read own org", async () => {
+    const svc = db(serviceClient());
+    const aid = `_assert-rls-${TOKEN}`;
+    expect(
+      (
+        await svc.from("sso_consumed_assertions").insert({
+          org_id: orgA,
+          assertion_id: aid,
+          not_on_or_after: new Date(Date.now() + 60_000).toISOString(),
+        })
+      ).error,
+    ).toBeNull();
+
+    const anon = await db(anonClient()).from("sso_consumed_assertions").select("id").eq("org_id", orgA);
+    expect(anon.data ?? []).toHaveLength(0);
+
+    const asAdmin = await db(userClient(ownerAToken))
+      .from("sso_consumed_assertions")
+      .select("id, assertion_id")
+      .eq("org_id", orgA)
+      .eq("assertion_id", aid);
+    expect(asAdmin.error, asAdmin.error?.message).toBeNull();
+    expect((asAdmin.data ?? []).length).toBe(1);
   });
 });

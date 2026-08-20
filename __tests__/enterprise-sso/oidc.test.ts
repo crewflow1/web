@@ -44,6 +44,7 @@ const baseClaims = () => ({
   iat: NOW_S,
   nonce: NONCE,
   email: "user@example.com",
+  email_verified: true,
 });
 
 const opts = () => ({ issuer: ISSUER, clientId: CLIENT_ID, expectedNonce: NONCE, jwks, now: NOW });
@@ -132,5 +133,24 @@ describe("verifyIdToken — claim rejections", () => {
     const res = verifyIdToken(makeJwt({ ...baseClaims(), nonce: "wrong" }), opts());
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("nonce_mismatch");
+  });
+
+  it("REJECTS email_verified:false (account-takeover defence, F2)", () => {
+    const res = verifyIdToken(makeJwt({ ...baseClaims(), email_verified: false }), opts());
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("email_unverified");
+  });
+
+  it("REJECTS an absent email_verified claim (fail closed, F2)", () => {
+    const { email_verified: _omit, ...withoutFlag } = baseClaims();
+    const res = verifyIdToken(makeJwt(withoutFlag), opts());
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("email_unverified");
+  });
+
+  it('REJECTS a STRINGIFIED "true" email_verified (spec is a JSON boolean, F2)', () => {
+    const res = verifyIdToken(makeJwt({ ...baseClaims(), email_verified: "true" }), opts());
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("email_unverified");
   });
 });

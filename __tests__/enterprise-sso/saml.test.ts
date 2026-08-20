@@ -101,12 +101,15 @@ const opts = () => ({
 });
 
 describe("validateSamlResponse — happy path", () => {
-  it("accepts a genuine signed assertion and extracts the email", () => {
+  it("accepts a genuine signed assertion and extracts the email + assertion id", () => {
     const res = validateSamlResponse(sign(buildResponseXml()), opts());
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.email).toBe("user@example.com");
       expect(res.nameId).toBe("user@example.com");
+      // Assertion ID is exposed for the replay cache (F1).
+      expect(res.assertionId).toBe("_assert1");
+      expect(res.notOnOrAfterMs).toBe(Date.parse("2099-01-01T00:00:00Z"));
     }
   });
 
@@ -151,7 +154,8 @@ describe("validateSamlResponse — signature rejections", () => {
     if (res.ok) {
       expect(res.email).toBe("user@example.com");
     } else {
-      expect(res.email).toBeUndefined();
+      // Rejected outright (mutated doc fails the signature) — also acceptable.
+      expect(res.reason).toBeTruthy();
     }
   });
 });

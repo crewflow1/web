@@ -83,10 +83,26 @@ describe("routes deny while dark", () => {
 });
 
 describe("migration 20261211000000 — deny-by-default + RLS + secret handling", () => {
-  it("creates the three tables", () => {
+  it("creates the four tables (incl. the replay guard)", () => {
     expect(M).toMatch(/create table if not exists public\.org_sso_config/);
     expect(M).toMatch(/create table if not exists public\.org_scim_config/);
     expect(M).toMatch(/create table if not exists public\.sso_provisioning_audit/);
+    expect(M).toMatch(/create table if not exists public\.sso_consumed_assertions/);
+  });
+
+  it("REPLAY guard (F1): consumed-assertions table is UNIQUE (org_id, assertion_id), RLS, no anon, no tenant write", () => {
+    expect(M).toMatch(
+      /constraint sso_consumed_assertions_org_assertion_key unique \(org_id, assertion_id\)/,
+    );
+    expect(M).toMatch(/constraint sso_consumed_assertions_id_org_key unique \(id, org_id\)/);
+    expect(M).toMatch(/alter table public\.sso_consumed_assertions enable row level security/);
+    expect(M).toMatch(/revoke all on table public\.sso_consumed_assertions from anon/);
+    expect(M).toMatch(
+      /revoke insert, update, delete on table public\.sso_consumed_assertions from authenticated/,
+    );
+    // No authenticated write policy on the replay table.
+    expect(M).not.toMatch(/on public\.sso_consumed_assertions for insert to authenticated/);
+    expect(M).not.toMatch(/on public\.sso_consumed_assertions for update to authenticated/);
   });
 
   it("both config switches default OFF (deny-by-default)", () => {
@@ -101,10 +117,11 @@ describe("migration 20261211000000 — deny-by-default + RLS + secret handling",
     expect(M).toMatch(/constraint org_scim_config_id_org_key unique \(id, org_id\)/);
   });
 
-  it("RLS is enabled on all three tables", () => {
+  it("RLS is enabled on all four tables", () => {
     expect(M).toMatch(/alter table public\.org_sso_config enable row level security/);
     expect(M).toMatch(/alter table public\.org_scim_config enable row level security/);
     expect(M).toMatch(/alter table public\.sso_provisioning_audit enable row level security/);
+    expect(M).toMatch(/alter table public\.sso_consumed_assertions enable row level security/);
   });
 
   it("no anon access, and no tenant WRITE policy (writes are service-role only)", () => {
@@ -144,8 +161,13 @@ describe("migration 20261211000000 — deny-by-default + RLS + secret handling",
 });
 
 describe("GDPR census classifies the new tables (excluded, security config)", () => {
-  it("all three are KNOWN and EXCLUDED with a reason", () => {
-    for (const t of ["org_sso_config", "org_scim_config", "sso_provisioning_audit"]) {
+  it("all four are KNOWN and EXCLUDED with a reason", () => {
+    for (const t of [
+      "org_sso_config",
+      "org_scim_config",
+      "sso_provisioning_audit",
+      "sso_consumed_assertions",
+    ]) {
       expect(KNOWN_ORG_SCOPED_TABLES).toContain(t);
       expect(EXCLUDED_FROM_EXPORT[t]).toBeTruthy();
       expect(typeof EXCLUDED_FROM_EXPORT[t]).toBe("string");

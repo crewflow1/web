@@ -237,3 +237,47 @@ revoke select on table public.org_scim_config from authenticated;
 grant select (id, org_id, enabled, token_prefix, token_minted_at,
               created_by, created_at, updated_at)
   on public.org_scim_config to authenticated;
+
+-- ── 7. sso_consumed_assertions — SAML REPLAY guard (F1) ──────────────────────
+-- One row PER CONSUMED SAML assertion. The ACS inserts (org_id, assertion_id,
+-- not_on_or_after) after signature+conditions validation and BEFORE returning
+-- authenticated; the UNIQUE (org_id, assertion_id) makes a re-POST of the same
+-- captured-but-still-valid assertion fail with 23505 — the atomic, race-free
+-- replay proof. Writes are SERVICE-ROLE only (no anon/authenticated RPC, no
+-- SECURITY DEFINER), consistent with the rest of the feature. Rows are pruned by
+-- not_on_or_after (past that instant the assertion could no longer be replayed
+-- within its own validity window anyway). Security/replay telemetry — NOT tenant
+-- business data, NOT DSAR-exported.
+create table if not exists public.sso_consumed_assertions (
+  id             uuid primary key default gen_random_uuid(),
+  org_id         uuid not null references public.organizations(id) on delete cascade,
+  -- The SAML Assertion ID (xs:ID). Opaque IdP-issued token; the replay key.
+  assertion_id   text not null check (btrim(assertion_id) <> ''),
+  -- The assertion's Conditions@NotOnOrAfter — the retention/prune horizon.
+  not_on_or_after timestamptz not null,
+  consumed_at    timestamptz not null default now(),
+
+  -- The replay invariant: an assertion id may be consumed AT MOST ONCE per org.
+  constraint sso_consumed_assertions_org_assertion_key unique (org_id, assertion_id),
+  -- Candidate key so any future org-scoped child binds (id, org_id), never id
+  -- alone — keeps cross-tenant references composable (cross-tenant-fk guard).
+  constraint sso_consumed_assertions_id_org_key unique (id, org_id)
+);
+
+comment on table public.sso_consumed_assertions is
+  'SAML assertion replay guard (F1): one row per consumed assertion, UNIQUE (org_id, assertion_id). Written service-role by the ACS before authenticating. Pruned by not_on_or_after. Security/replay telemetry — NOT tenant business data, NOT DSAR-exported.';
+
+-- Prune index: delete/scan rows whose replay window has passed.
+create index if not exists sso_consumed_assertions_prune_idx
+  on public.sso_consumed_assertions (not_on_or_after);
+
+alter table public.sso_consumed_assertions enable row level security;
+
+-- Admins may READ their org's consumed-assertion trail. Append-only + service
+-- -role write: no tenant write policy.
+drop policy if exists "sso_consumed_assertions: admins select" on public.sso_consumed_assertions;
+create policy "sso_consumed_assertions: admins select" on public.sso_consumed_assertions
+  for select to authenticated using (public.is_org_admin(org_id));
+
+revoke all on table public.sso_consumed_assertions from anon;
+revoke insert, update, delete on table public.sso_consumed_assertions from authenticated;

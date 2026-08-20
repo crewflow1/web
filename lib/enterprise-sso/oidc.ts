@@ -174,6 +174,18 @@ export function verifyIdToken(
   const email = resolveEmail(claims);
   if (!email) return { ok: false, reason: "no_email" };
 
+  // ACCOUNT-TAKEOVER DEFENCE (F2): the account is keyed on the email string, so
+  // an IdP that hands out UNVERIFIED emails could let one subject claim another
+  // user's address. Require the standard OIDC `email_verified` claim to be
+  // exactly boolean true. `email_verified` absent, false, or the string "true"
+  // (some IdPs stringify it) that isn't a real boolean → reject. We deliberately
+  // do NOT coerce "true"/"false" strings: the spec types this claim as a JSON
+  // boolean, and accepting a stringified value would re-open the very ambiguity
+  // this check closes. A misconfigured IdP is denied loudly rather than trusted.
+  if (claims.email_verified !== true) {
+    return { ok: false, reason: "email_unverified" };
+  }
+
   return { ok: true, email, sub: String(claims.sub), claims };
 }
 

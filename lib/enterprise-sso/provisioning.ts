@@ -118,3 +118,43 @@ export async function recordSsoAudit(input: {
     // swallow — audit is best-effort, never gates the decision
   }
 }
+
+/**
+ * SAML assertion REPLAY guard (F1). Attempts to CONSUME an assertion by
+ * inserting (org_id, assertion_id, not_on_or_after) into sso_consumed_assertions
+ * via the service role. The table's UNIQUE (org_id, assertion_id) makes a second
+ * consume of the same assertion fail with a Postgres unique-violation (23505) —
+ * which is the atomic, race-free proof that this exact assertion was already
+ * used. First use → { consumed: true }; a replay → { consumed: false }.
+ *
+ * A DB error other than the unique-violation is treated as NOT-consumed AND is
+ * surfaced (errored:true) so the caller can FAIL CLOSED — an assertion whose
+ * uniqueness we could not establish must never be accepted.
+ */
+export async function consumeSamlAssertion(input: {
+  orgId: string;
+  assertionId: string;
+  notOnOrAfterMs: number | null;
+}): Promise<{ consumed: boolean; errored: boolean }> {
+  // Retain until the assertion could no longer be replayed within its own
+  // validity window. Fall back to a bounded default when the assertion carried
+  // no Conditions@NotOnOrAfter (the pruning job cleans it up either way).
+  const notOnOrAfterIso = new Date(
+    input.notOnOrAfterMs ?? Date.now() + 24 * 60 * 60 * 1000,
+  ).toISOString();
+  try {
+    const admin = createAdminClient();
+    const { error } = await (admin.from("sso_consumed_assertions" as never).insert({
+      org_id: input.orgId,
+      assertion_id: input.assertionId,
+      not_on_or_after: notOnOrAfterIso,
+    } as never) as unknown as Promise<{ error: { code?: string } | null }>);
+    if (!error) return { consumed: true, errored: false };
+    // 23505 = unique_violation → this assertion was already consumed (replay).
+    if (error.code === "23505") return { consumed: false, errored: false };
+    // Any other DB error: we could not establish uniqueness → fail closed.
+    return { consumed: false, errored: true };
+  } catch {
+    return { consumed: false, errored: true };
+  }
+}
