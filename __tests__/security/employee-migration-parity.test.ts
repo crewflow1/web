@@ -68,6 +68,69 @@ const MIGRATED = [
     runner: "server/services/hq-notification-runner.ts",
     taskType: "notification_digest",
   },
+  // MP Wave — HQ roster completion. The twelve remaining identity-only roster roles each
+  // get a deterministic runner that reaches the engine the SAME way, completing the roster
+  // as a platform of indistinguishable employees (the Reference Employee Rule).
+  {
+    name: "security-ai",
+    runner: "server/services/hq-security-runner.ts",
+    taskType: "security_posture",
+  },
+  {
+    name: "devops-ai",
+    runner: "server/services/hq-devops-runner.ts",
+    taskType: "devops_health",
+  },
+  {
+    name: "database-ai",
+    runner: "server/services/hq-database-runner.ts",
+    taskType: "database_integrity",
+  },
+  {
+    name: "api-ai",
+    runner: "server/services/hq-api-runner.ts",
+    taskType: "api_contract_health",
+  },
+  {
+    name: "documentation-ai",
+    runner: "server/services/hq-documentation-runner.ts",
+    taskType: "documentation_drift",
+  },
+  {
+    name: "onboarding-ai",
+    runner: "server/services/hq-onboarding-runner.ts",
+    taskType: "onboarding_nudges",
+  },
+  {
+    name: "hr-ai",
+    runner: "server/services/hq-hr-runner.ts",
+    taskType: "workforce_review",
+  },
+  {
+    name: "legal-compliance-ai",
+    runner: "server/services/hq-legal-compliance-runner.ts",
+    taskType: "compliance_review",
+  },
+  {
+    name: "design-ai",
+    runner: "server/services/hq-design-runner.ts",
+    taskType: "design_consistency",
+  },
+  {
+    name: "orchestrator-ai",
+    runner: "server/services/hq-orchestrator-runner.ts",
+    taskType: "orchestration_routing",
+  },
+  {
+    name: "workflow-ai",
+    runner: "server/services/hq-workflow-runner.ts",
+    taskType: "workflow_sequencing",
+  },
+  {
+    name: "memory-manager-ai",
+    runner: "server/services/hq-memory-manager-runner.ts",
+    taskType: "memory_curation",
+  },
 ] as const;
 
 // The canonical engine surface every migrated employee reaches the engine through.
