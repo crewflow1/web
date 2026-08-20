@@ -48,6 +48,18 @@ export type SupportBoardResult = {
 export async function loadSupportBoard(): Promise<SupportBoardResult> {
   await requireHqPage(); // HQ-only; never mixes with tenant auth.
 
+  const board = await gatherSupportBoard();
+  const narrative = await loadSupportNarrative(board);
+
+  return { board, narrative, generatedAt: new Date().toISOString() };
+}
+
+/**
+ * Build the deterministic Support board WITHOUT the page auth gate — the shared
+ * derivation used by both `loadSupportBoard` (super-admin page) and the Support
+ * executive runner (service-role cron). Reads only; no narrative, no auth.
+ */
+export async function gatherSupportBoard(): Promise<SupportBoard> {
   const rows = await listSupportTicketRowsForHq();
 
   const tickets: SupportBoardTicket[] = rows.map((t) => ({
@@ -63,10 +75,7 @@ export async function loadSupportBoard(): Promise<SupportBoardResult> {
 
   const input: SupportBoardInput = { tickets };
 
-  const board = computeSupportBoard(input, new Date());
-  const narrative = await loadSupportNarrative(board);
-
-  return { board, narrative, generatedAt: new Date().toISOString() };
+  return computeSupportBoard(input, new Date());
 }
 
 /**

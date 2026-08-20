@@ -210,6 +210,18 @@ async function readAlerts(): Promise<ExecutiveAssistantInput["alerts"]> {
 export async function loadExecutiveAssistantBoard(): Promise<ExecutiveAssistantBoardResult> {
   await requireHqPage(); // HQ-only; never mixes with tenant auth.
 
+  const board = await gatherExecutiveAssistantBoard();
+  const narrative = await loadExecutiveAssistantNarrative(board);
+
+  return { board, narrative, generatedAt: new Date().toISOString() };
+}
+
+/**
+ * Build the deterministic Executive-Assistant board WITHOUT the page auth gate — the
+ * shared derivation used by both `loadExecutiveAssistantBoard` (super-admin page) and
+ * the Executive-Assistant runner (service-role cron). Reads only; no narrative, no auth.
+ */
+export async function gatherExecutiveAssistantBoard(): Promise<ExecutiveAssistantBoard> {
   const [approvals, decisions, tasks, alerts] = await Promise.all([
     readApprovals(),
     readDecisions(),
@@ -219,10 +231,7 @@ export async function loadExecutiveAssistantBoard(): Promise<ExecutiveAssistantB
 
   const input: ExecutiveAssistantInput = { approvals, decisions, tasks, alerts };
 
-  const board = computeExecutiveAssistantBoard(input, new Date());
-  const narrative = await loadExecutiveAssistantNarrative(board);
-
-  return { board, narrative, generatedAt: new Date().toISOString() };
+  return computeExecutiveAssistantBoard(input, new Date());
 }
 
 /**

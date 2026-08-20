@@ -127,6 +127,18 @@ async function readAcquisition(): Promise<MarketingInput["acquisition"]> {
 export async function loadMarketingBoard(): Promise<MarketingBoardResult> {
   await requireHqPage(); // HQ-only; never mixes with tenant auth.
 
+  const board = await gatherMarketingBoard();
+  const narrative = await loadMarketingNarrative(board);
+
+  return { board, narrative, generatedAt: new Date().toISOString() };
+}
+
+/**
+ * Build the deterministic marketing board WITHOUT the page auth gate — the shared
+ * derivation used by both `loadMarketingBoard` (super-admin page) and the Marketing
+ * executive runner (service-role cron). Reads only; no narrative, no auth.
+ */
+export async function gatherMarketingBoard(): Promise<MarketingBoard> {
   const [leads, acquisition] = await Promise.all([
     readLeads(),
     readAcquisition(),
@@ -134,10 +146,7 @@ export async function loadMarketingBoard(): Promise<MarketingBoardResult> {
 
   const input: MarketingInput = { leads, acquisition };
 
-  const board = computeMarketingBoard(input, new Date());
-  const narrative = await loadMarketingNarrative(board);
-
-  return { board, narrative, generatedAt: new Date().toISOString() };
+  return computeMarketingBoard(input, new Date());
 }
 
 /**

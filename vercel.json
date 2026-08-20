@@ -70,6 +70,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/cron/hq-exec-tick",
+      "schedule": "0 */6 * * *"
+    },
+    {
       "path": "/api/cron/research-drain",
       "schedule": "*/5 * * * *"
     },

@@ -50,6 +50,18 @@ export type FinanceBoardResult = {
 export async function loadFinanceBoard(): Promise<FinanceBoardResult> {
   await requireHqPage(); // HQ-only; never mixes with tenant auth.
 
+  const board = await gatherFinanceBoard();
+  const narrative = await loadFinanceNarrative(board);
+
+  return { board, narrative, generatedAt: new Date().toISOString() };
+}
+
+/**
+ * Build the deterministic finance board WITHOUT the page auth gate — the shared
+ * derivation used by both `loadFinanceBoard` (super-admin page) and the Finance/CFO
+ * executive runners (service-role cron). Reads only; no narrative, no auth.
+ */
+export async function gatherFinanceBoard(): Promise<FinanceBoard> {
   const snapshot = await buildHqSnapshot();
 
   const growth = snapshot.series.customerGrowth;
@@ -73,10 +85,7 @@ export async function loadFinanceBoard(): Promise<FinanceBoardResult> {
     acquisitionSpendGbp: null,
   };
 
-  const board = computeFinanceBoard(input, new Date());
-  const narrative = await loadFinanceNarrative(board);
-
-  return { board, narrative, generatedAt: new Date().toISOString() };
+  return computeFinanceBoard(input, new Date());
 }
 
 /**

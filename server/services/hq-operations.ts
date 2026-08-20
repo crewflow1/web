@@ -124,6 +124,18 @@ async function readQueue(): Promise<OperationsInput["queue"]> {
 export async function loadOperationsBoard(): Promise<OperationsBoardResult> {
   await requireHqPage(); // HQ-only; never mixes with tenant auth.
 
+  const board = await gatherOperationsBoard();
+  const narrative = await loadOperationsNarrative(board);
+
+  return { board, narrative, generatedAt: new Date().toISOString() };
+}
+
+/**
+ * Build the deterministic Operations board WITHOUT the page auth gate — the shared
+ * derivation used by both `loadOperationsBoard` (super-admin page) and the
+ * Operations/COO executive runners (service-role cron). Reads only; no narrative, no auth.
+ */
+export async function gatherOperationsBoard(): Promise<OperationsBoard> {
   const [system, alerts, queue] = await Promise.all([
     readSystem(),
     readAlerts(),
@@ -132,10 +144,7 @@ export async function loadOperationsBoard(): Promise<OperationsBoardResult> {
 
   const input: OperationsInput = { system, alerts, queue };
 
-  const board = computeOperationsBoard(input, new Date());
-  const narrative = await loadOperationsNarrative(board);
-
-  return { board, narrative, generatedAt: new Date().toISOString() };
+  return computeOperationsBoard(input, new Date());
 }
 
 /**

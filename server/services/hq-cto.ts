@@ -94,6 +94,18 @@ async function readReliabilityTasks(): Promise<ReadonlyArray<BoardroomTask> | nu
 export async function loadCtoBoard(): Promise<CtoBoardResult> {
   await requireHqPage(); // HQ-only; never mixes with tenant auth.
 
+  const board = await gatherCtoBoard();
+  const narrative = await loadCtoNarrative(board);
+
+  return { board, narrative, generatedAt: new Date().toISOString() };
+}
+
+/**
+ * Build the deterministic CTO board WITHOUT the page auth gate — the shared
+ * derivation used by both `loadCtoBoard` (super-admin page) and the CTO executive
+ * runner (service-role cron). Reads only; no narrative, no auth.
+ */
+export async function gatherCtoBoard(): Promise<CtoBoard> {
   const [launch, tasks, shadow, aiCost, health] = await Promise.all([
     buildLaunchReadiness().catch((e) => {
       console.error("[hq-cto] launch-readiness read failed", e);
@@ -155,10 +167,7 @@ export async function loadCtoBoard(): Promise<CtoBoardResult> {
           },
   };
 
-  const board = computeCtoBoard(input, new Date());
-  const narrative = await loadCtoNarrative(board);
-
-  return { board, narrative, generatedAt: new Date().toISOString() };
+  return computeCtoBoard(input, new Date());
 }
 
 /**
