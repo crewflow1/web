@@ -266,6 +266,17 @@ describeIntegration("enterprise SSO + SCIM · RLS + provisioning", () => {
 
   it("consumed-assertions table: anon blind, admin can read own org", async () => {
     const svc = db(serviceClient());
+
+    // Self-contained: mint a FRESH org-A owner rather than reusing ownerAToken,
+    // whose org-A membership an earlier test (SCIM deactivate) removes. Vitest
+    // runs tests in file order, so relying on ownerA's membership here would be
+    // order-dependent; a fresh owner keeps this RLS assertion honest and
+    // independent of shared-fixture mutation.
+    const freshOwner = await mintUser("rls-owner");
+    expect(
+      (await svc.from("memberships").insert({ org_id: orgA, user_id: freshOwner.id, role: "owner" })).error,
+    ).toBeNull();
+
     const aid = `_assert-rls-${TOKEN}`;
     expect(
       (
@@ -280,7 +291,7 @@ describeIntegration("enterprise SSO + SCIM · RLS + provisioning", () => {
     const anon = await db(anonClient()).from("sso_consumed_assertions").select("id").eq("org_id", orgA);
     expect(anon.data ?? []).toHaveLength(0);
 
-    const asAdmin = await db(userClient(ownerAToken))
+    const asAdmin = await db(userClient(freshOwner.token))
       .from("sso_consumed_assertions")
       .select("id, assertion_id")
       .eq("org_id", orgA)
