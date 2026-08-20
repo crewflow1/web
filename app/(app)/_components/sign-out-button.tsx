@@ -7,6 +7,11 @@ import {
   clearAll as clearWriteQueue,
   countOnDevice,
 } from "@/lib/offline/write-queue";
+import {
+  clearAllPhotos,
+  countPhotosOnDevice,
+} from "@/lib/offline/photo-queue";
+import { clearAllReads } from "@/lib/offline/read-cache";
 
 /**
  * Sign-out control (Programme E shared-device gate + the offline write queue).
@@ -45,8 +50,13 @@ export function SignOutButton({ className }: { className?: string }) {
   useEffect(() => {
     let alive = true;
     const read = async () => {
-      const n = await countOnDevice();
-      if (alive) setQueued(n);
+      // Unsent = queued writes + queued binary captures. Both hold user work that
+      // exists nowhere else, so both count toward the sign-out warning.
+      const [writes, photos] = await Promise.all([
+        countOnDevice(),
+        countPhotosOnDevice(),
+      ]);
+      if (alive) setQueued(writes + photos);
     };
     void read();
     const t = setInterval(read, 10_000);
@@ -65,7 +75,11 @@ export function SignOutButton({ className }: { className?: string }) {
         // 10s stale, and the warning must reflect what is actually on the device.
         let unsent = 0;
         try {
-          unsent = await countOnDevice();
+          const [writes, photos] = await Promise.all([
+            countOnDevice(),
+            countPhotosOnDevice(),
+          ]);
+          unsent = writes + photos;
         } catch {
           /* if we cannot count, we still purge below */
         }
@@ -84,9 +98,17 @@ export function SignOutButton({ className }: { className?: string }) {
         } catch {
           /* never block logout */
         }
+        // Queued binary captures are unsent user work too — purge before signOut.
+        try {
+          await clearAllPhotos();
+        } catch {
+          /* never block logout */
+        }
         // (SW caches hold ONLY public static/shell assets by the strict allowlist,
         // so there is no private cache to clear here — proven by the security tests.)
         try { await clearAll(); clearOfflineIdentity(); } catch { /* never block logout */ }
+        // The read cache is re-downloadable, so it purges last and never blocks.
+        try { await clearAllReads(); } catch { /* never block logout */ }
         await signOut();
       }}
     >

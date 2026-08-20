@@ -16,7 +16,7 @@ import {
 } from "@/lib/site-diary/schema";
 import { createSnagSchema, updateSnagSchema } from "@/lib/snags/schema";
 import { materialRequestFormSchema } from "@/lib/material-requests/schema";
-import { createDelayEventSchema } from "@/lib/eot/schema";
+import { createDelayEventSchema, updateDelayEventSchema } from "@/lib/eot/schema";
 import { createSiteReportSchema } from "@/lib/site-reports/schema";
 import { createMaterialRequestDraftRecord } from "@/server/services/material-request-writes";
 import { createDelayEventDraftRecord } from "@/server/services/delay-event-writes";
@@ -99,6 +99,8 @@ export type OfflineRejectReason =
   | "assignee_missing" // the named assignee is not a member of the active org
   | "stock_item_missing" // a line's catalogue item is not in the active org
   | "target_missing" // an UPDATE's target row is gone, or belongs to another org
+  | "not_editable" // an UPDATE's target is no longer in an editable state (e.g. a
+  //                   delay event promoted out of 'draft' — frozen evidence now)
   | "not_permitted" // RLS refused the insert/update
   | "malformed_item"; // the queued envelope itself is not a queued write
 
@@ -192,31 +194,18 @@ type RowReadChain = {
   };
 };
 /**
- * COMPARE-AND-SWAP update: `update(...).eq(id).eq(org_id).eq(updated_at, version)`.
- * The third eq on updated_at is the optimistic-concurrency guard — a row changed
- * since we read it fails to match and returns count 0, so we never overwrite a
- * version we did not merge against.
+ * COMPARE-AND-SWAP update: `update(...).eq(id).eq(org_id).eq(updated_at, version)`,
+ * plus any entity-specific match (e.g. `.eq(status, 'draft')`). The eq on
+ * updated_at is the optimistic-concurrency guard — a row changed since we read it
+ * fails to match and returns count 0, so we never overwrite a version we did not
+ * merge against. `.eq()` is chainable an arbitrary number of times and the chain is
+ * awaitable, so the core can append extra guards without a fixed arity.
  */
+type CasEqChain = {
+  eq: (k: string, v: unknown) => CasEqChain;
+} & PromiseLike<{ error: PgError; count: number | null }>;
 type CasUpdateChain = {
-  update: (
-    patch: unknown,
-    opts?: { count?: string },
-  ) => {
-    eq: (
-      k: string,
-      v: unknown,
-    ) => {
-      eq: (
-        k: string,
-        v: unknown,
-      ) => {
-        eq: (
-          k: string,
-          v: unknown,
-        ) => Promise<{ error: PgError; count: number | null }>;
-      };
-    };
-  };
+  update: (patch: unknown, opts?: { count?: string }) => CasEqChain;
 };
 
 export type DiaryWriteInput = {
@@ -534,15 +523,39 @@ async function applyOfflineUpdate(args: {
     orgId: string,
     merged: Record<string, unknown>,
   ) => Promise<OfflineWriteOutcome | null>;
+  /**
+   * OPTIONAL payload-key → DB-column map, for a schema whose keys differ from the
+   * table's columns (delay events: camelCase schema, snake_case table). The 3-way
+   * merge still runs in payload-key space; this only maps which column `theirs` is
+   * read from and the patch is written to. Absent → the field name IS the column.
+   */
+  columnMap?: Readonly<Record<string, string>>;
+  /**
+   * OPTIONAL editable-state guard. `statusColumn` must hold one of `editableWhen`
+   * for the row to be edited at all; otherwise the update is permanently rejected
+   * (`not_editable`), matching the online edit action's own status guard. When
+   * `editableWhen` is a single value it is ALSO appended to the compare-and-swap, so
+   * a promotion racing between our read and our swap fails the swap rather than
+   * editing a now-frozen row.
+   */
+  statusColumn?: string;
+  editableWhen?: readonly string[];
 }): Promise<OfflineUpdateOutcome> {
   const orgId = args.ctx.org.id;
   const tenant = await createClient();
   const fields = offlineMergeFields(args.kind);
   const id = args.input.id;
+  /** payload key → the column it lives in (identity when unmapped). */
+  const colOf = (f: string): string => args.columnMap?.[f] ?? f;
 
   // 1. read the current row, pinned to the ACTIVE org (a by-id read admits every
   //    org a multi-org member belongs to — the diary/_data.ts seam).
-  const readCols = [...fields, "updated_at", "last_offline_write_key"].join(", ");
+  const readCols = [
+    ...fields.map(colOf),
+    "updated_at",
+    "last_offline_write_key",
+    ...(args.statusColumn ? [args.statusColumn] : []),
+  ].join(", ");
   const { data: row, error: readErr } = await (
     tenant.from(args.table as never) as unknown as RowReadChain
   )
@@ -554,6 +567,17 @@ async function applyOfflineUpdate(args: {
     return { status: "retry", reason: readErr.code ?? "target_lookup_failed" };
   }
   if (!row) return { status: "rejected", reason: "target_missing" };
+
+  // 1b. EDITABLE-STATE GUARD. A delay event promoted out of 'draft' is frozen
+  //     evidence; an offline edit of it is permanently refused (not retried — it
+  //     will never become a draft again), matching the online edit's status guard.
+  if (
+    args.statusColumn &&
+    args.editableWhen &&
+    !args.editableWhen.includes(String(row[args.statusColumn]))
+  ) {
+    return { status: "rejected", reason: "not_editable" };
+  }
 
   // 2. IDEMPOTENCY. A re-delivered update (lost response, reinstalled SW) is caught
   //    by the marker it stamped last time, BEFORE its own version bump could read
@@ -567,7 +591,7 @@ async function applyOfflineUpdate(args: {
 
   const currentVersion = String(row.updated_at);
   const theirs: Record<string, unknown> = {};
-  for (const f of fields) theirs[f] = row[f];
+  for (const f of fields) theirs[f] = row[colOf(f)];
   const preferMine = args.resolution === "keep_mine";
 
   // A "keep mine" resolution only applies while the version the author acknowledged
@@ -608,18 +632,27 @@ async function applyOfflineUpdate(args: {
     if (g) return g;
   }
 
-  // 5. compare-and-swap on the version we read.
+  // 5. compare-and-swap on the version we read. Values are written to their mapped
+  //    columns; an empty string (an emptied optional) is stored as NULL, matching
+  //    the create cores' `?? null` and the online edit's orNull().
   const patch: Record<string, unknown> = {};
-  for (const f of fields) patch[f] = merge.merged[f] ?? null;
+  for (const f of fields) {
+    const v = merge.merged[f];
+    patch[colOf(f)] = v === "" || v === undefined ? null : v;
+  }
   patch.last_offline_write_key = args.clientKey;
 
-  const { error, count } = await (
-    tenant.from(args.table as never) as unknown as CasUpdateChain
-  )
+  let cas = (tenant.from(args.table as never) as unknown as CasUpdateChain)
     .update(patch, { count: "exact" })
     .eq("id", id)
     .eq("org_id", orgId)
     .eq("updated_at", currentVersion);
+  // A single-valued editable-state also guards the SWAP, so a promotion racing
+  // between the read and the swap fails the swap instead of editing a frozen row.
+  if (args.statusColumn && args.editableWhen && args.editableWhen.length === 1) {
+    cas = cas.eq(args.statusColumn, args.editableWhen[0]);
+  }
+  const { error, count } = await cas;
 
   if (error) {
     const permanent = error.code ? PERMANENT_CODES[error.code] : undefined;
@@ -748,6 +781,48 @@ export async function updateSnagRecord(args: {
       if (!member) return { status: "rejected", reason: "assignee_missing" };
       return null;
     },
+  });
+}
+
+/**
+ * Reconcile one offline DRAFT delay-event EDIT. Uses the delay schema's camelCase
+ * keys against snake_case columns (the registry columnMap), and is enabled ONLY
+ * while the row is a draft (editableWhen) — a promoted event is frozen evidence.
+ * The job is not in the merge set, so an offline edit never re-homes a draft. Same
+ * shared conflict-resolving core, same tenant client, same RLS.
+ */
+export async function updateDelayEventRecord(args: {
+  ctx: OrgContext;
+  user: { id: string; email?: string | null };
+  input: Record<string, unknown> & { id: string };
+  baseVersion: string;
+  baseValues: Record<string, unknown>;
+  resolution?: "keep_mine";
+  clientKey: string;
+  offlineAuthoredAt?: string | null;
+}): Promise<OfflineUpdateOutcome> {
+  return applyOfflineUpdate({
+    ctx: args.ctx,
+    user: args.user,
+    kind: "delay_event.update",
+    table: "delay_events",
+    auditAction: "delay_event.updated",
+    input: args.input,
+    baseVersion: args.baseVersion,
+    baseValues: args.baseValues,
+    resolution: args.resolution,
+    clientKey: args.clientKey,
+    offlineAuthoredAt: args.offlineAuthoredAt,
+    columnMap: {
+      startedOn: "started_on",
+      endedOn: "ended_on",
+      workingDaysLost: "working_days_lost",
+      diaryEntryId: "diary_entry_id",
+      variationQuoteId: "variation_quote_id",
+      weatherDistrict: "weather_district",
+    },
+    statusColumn: "status",
+    editableWhen: ["draft"],
   });
 }
 
@@ -916,6 +991,23 @@ export async function dispatchOfflineWrite(args: {
         ctx: args.ctx,
         user: args.user,
         input,
+        clientKey: item.clientKey,
+        offlineAuthoredAt:
+          typeof item.authoredAt === "string" ? item.authoredAt : null,
+      });
+    }
+    case "delay_event.update": {
+      const input = updateDelayEventSchema.parse(parsed.data) as Record<
+        string,
+        unknown
+      > & { id: string };
+      return updateDelayEventRecord({
+        ctx: args.ctx,
+        user: args.user,
+        input,
+        baseVersion,
+        baseValues,
+        resolution,
         clientKey: item.clientKey,
         offlineAuthoredAt:
           typeof item.authoredAt === "string" ? item.authoredAt : null,

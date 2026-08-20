@@ -43,6 +43,24 @@ const conflictMigration = readFileSync(
   ),
   "utf8",
 );
+const delayUpdateMigration = readFileSync(
+  join(
+    root,
+    "supabase/migrations/20261195000000_offline_delay_event_update.sql",
+  ),
+  "utf8",
+);
+
+/**
+ * Which migration adds the last_offline_write_key marker for each UPDATE-enabled
+ * table. The diary and snag markers landed together in the conflict-resolution
+ * migration; the delay-event draft-update marker landed in its own later migration.
+ */
+const UPDATE_MARKER_MIGRATION: Record<string, string> = {
+  site_diary_entries: conflictMigration,
+  snags: conflictMigration,
+  delay_events: delayUpdateMigration,
+};
 
 /**
  * kind → (table with the DB idempotency gate, the migration that opened it,
@@ -124,6 +142,19 @@ const GATES: Record<
       description: "Heavy rain stopped groundworks",
     },
   },
+  "delay_event.update": {
+    table: "delay_events",
+    migration: expansion2Migration,
+    validPayload: {
+      id: "11111111-1111-4111-8111-111111111111",
+      jobId: "11111111-1111-4111-8111-111111111111",
+      category: "weather",
+      startedOn: "2026-07-30",
+      endedOn: "2026-07-31",
+      workingDaysLost: 2,
+      description: "Heavy rain stopped groundworks",
+    },
+  },
   "site_report.create": {
     table: "site_reports",
     migration: expansion2Migration,
@@ -153,6 +184,7 @@ describe("offline write registry — exactly the entities the product enabled", 
       "snag.update",
       "material_request.create",
       "delay_event.create",
+      "delay_event.update",
       "site_report.create",
     ]);
   });
@@ -199,9 +231,11 @@ describe("offline write registry — exactly the entities the product enabled", 
     expect(isOfflineWriteKind("material_request.create")).toBe(true);
     expect(isOfflineWriteKind("delay_event.create")).toBe(true);
     expect(isOfflineWriteKind("site_report.create")).toBe(true);
-    // UPDATE is now enabled for the two entities that carry a conflict policy.
+    // UPDATE is now enabled for the entities that carry a conflict policy —
+    // diary, snag, and the DRAFT delay event.
     expect(isOfflineWriteKind("site_diary.update")).toBe(true);
     expect(isOfflineWriteKind("snag.update")).toBe(true);
+    expect(isOfflineWriteKind("delay_event.update")).toBe(true);
     // …but DELETE never is, nor a lifecycle transition.
     expect(isOfflineWriteKind("site_diary.delete")).toBe(false);
     expect(isOfflineWriteKind("snag.delete")).toBe(false);
@@ -268,18 +302,20 @@ describe("offline write registry — no drift between the three gates", () => {
       ),
     );
     for (const table of updateTables) {
-      expect(conflictMigration, `${table}: last_offline_write_key column`).toMatch(
+      const mig = UPDATE_MARKER_MIGRATION[table] ?? "";
+      expect(mig, `${table}: a migration is mapped for its marker`).toBeTruthy();
+      expect(mig, `${table}: last_offline_write_key column`).toMatch(
         new RegExp(
-          `alter table public\\.${table}[\\s\\S]{0,700}last_offline_write_key uuid`,
+          `alter table public\\.${table}[\\s\\S]{0,900}last_offline_write_key uuid`,
         ),
       );
+      // and it adds no privileged write path (the whole security argument). Strip
+      // `--` comments first, or the prose ("NO SECURITY DEFINER") would self-match.
+      const sql = mig.replace(/--.*$/gm, "");
+      expect(sql, `${table}`).not.toMatch(/security definer/i);
+      expect(sql, `${table}`).not.toMatch(/create (or replace )?function/i);
+      expect(sql, `${table}`).not.toMatch(/create policy|drop policy|\bgrant\b/i);
     }
-    // and it adds no privileged write path (the whole security argument). Strip
-    // `--` comments first, or the prose ("NO SECURITY DEFINER") would match itself.
-    const sql = conflictMigration.replace(/--.*$/gm, "");
-    expect(sql).not.toMatch(/security definer/i);
-    expect(sql).not.toMatch(/create (or replace )?function/i);
-    expect(sql).not.toMatch(/create policy|drop policy|\bgrant\b/i);
   });
 
   it("every registry entry is complete (schema, labels, recovery fields)", () => {

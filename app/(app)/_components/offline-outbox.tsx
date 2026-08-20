@@ -283,6 +283,8 @@ const REJECT_REASON: Record<string, string> = {
     "This was written for a different company. It has NOT been filed anywhere. Copy the text below and re-enter it in the right company.",
   target_missing:
     "The entry you edited no longer exists in this company. Copy your text below and re-enter it as a new entry.",
+  not_editable:
+    "The delay you edited has since been recorded and can no longer be changed here. Copy your text below if you need it.",
   not_permitted:
     "You no longer have permission to add entries here. Copy the text below before discarding.",
   unknown_kind: "This kind of entry can't be synced. Copy the text below.",
