@@ -5,7 +5,7 @@
   "description": "CrewFlow — AI receptionist + quotes for construction companies.",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "NODE_OPTIONS=--max-old-space-size=6144 next build",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
