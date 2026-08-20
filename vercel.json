@@ -74,6 +74,10 @@
       "schedule": "0 */6 * * *"
     },
     {
+      "path": "/api/cron/hq-roster-workers-tick",
+      "schedule": "30 */6 * * *"
+    },
+    {
       "path": "/api/cron/research-drain",
       "schedule": "*/5 * * * *"
     },
