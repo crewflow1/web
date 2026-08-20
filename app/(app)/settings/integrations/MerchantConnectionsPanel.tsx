@@ -1,7 +1,10 @@
 import type { MerchantConnection } from "@/server/services/merchant-connections";
 import type { MerchantProvider } from "@/lib/integrations/merchants/types";
 import { MERCHANT_LABELS } from "@/lib/integrations/merchants/types";
-import { disconnectMerchantConnection } from "./actions";
+import {
+  disconnectMerchantConnection,
+  importMerchantCatalogueAction,
+} from "./actions";
 
 /**
  * Merchant connections panel — the per-merchant connect surface. DARK.
@@ -71,21 +74,42 @@ export function MerchantConnectionsPanel({
               </div>
 
               {isConnected ? (
-                <form
-                  action={disconnectMerchantConnection}
-                  className="flex items-center gap-2"
-                >
-                  <input type="hidden" name="provider" value={conn.provider} />
-                  <span className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700">
-                    Connected
-                  </span>
-                  <button
-                    type="submit"
-                    className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
-                  >
-                    Disconnect {label}
-                  </button>
-                </form>
+                <div className="flex flex-col items-end gap-1">
+                  <div className="flex items-center gap-2">
+                    {/* Import the trade price file into this org's catalogue. The
+                        server action refuses (dark) unless the merchant is
+                        connectable AND connected, so nothing is fetched while the
+                        integration is not activated. */}
+                    <form action={importMerchantCatalogueAction}>
+                      <input type="hidden" name="provider" value={conn.provider} />
+                      <button
+                        type="submit"
+                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                      >
+                        Import price file
+                      </button>
+                    </form>
+                    <form
+                      action={disconnectMerchantConnection}
+                      className="flex items-center gap-2"
+                    >
+                      <input type="hidden" name="provider" value={conn.provider} />
+                      <button
+                        type="submit"
+                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                      >
+                        Disconnect {label}
+                      </button>
+                    </form>
+                  </div>
+                  {conn.lastError ? (
+                    <span className="text-xs text-amber-700">Last import: {conn.lastError}</span>
+                  ) : conn.lastSyncAt ? (
+                    <span className="text-xs text-slate-400">
+                      Catalogue imported {new Date(conn.lastSyncAt).toLocaleDateString("en-GB")}
+                    </span>
+                  ) : null}
+                </div>
               ) : isConnectable ? (
                 // LIVE: a real link into the connect flow.
                 <a

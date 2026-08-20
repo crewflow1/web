@@ -12,7 +12,11 @@ import {
   setPurchaseOrderStatus,
   deletePurchaseOrder,
   updatePurchaseOrder,
+  submitPurchaseOrderToMerchantAction,
 } from "../actions";
+import { listMerchantConnections } from "@/server/services/merchant-connections";
+import { merchantsFeatureEnabled } from "@/lib/integrations/merchants/connect";
+import { MERCHANT_LABELS } from "@/lib/integrations/merchants/types";
 import {
   canReceiveAgainstPo,
   poManualTransitions,
@@ -61,6 +65,14 @@ const ERROR_COPY: Record<string, string> = {
   derived_status:
     "Deliveries drive this order's status now. Record or void a delivery to change it — the only manual move left is cancelling.",
   not_found: "Purchase order not found.",
+  merchant_unknown: "That merchant isn't recognised.",
+  merchant_not_connected:
+    "That merchant isn't connected. Connect the trade account in Settings → Integrations first.",
+  merchant_skipped_dark:
+    "Merchant ordering isn't enabled yet. Connect the trade account in Settings → Integrations first.",
+  merchant_rejected: "The merchant declined the order. Check the account and line SKUs, then retry.",
+  merchant_not_found: "Purchase order not found.",
+  merchant_error: "Couldn't submit the order to the merchant. Try again.",
 };
 
 type LineRow = {
@@ -188,6 +200,18 @@ export default async function PurchaseOrderDetailPage({
   const nextStates = poManualTransitions(status, hasPostedReceipt);
   const canReceive = canReceiveAgainstPo(status);
 
+  // ── Electronic merchant submission (dark) ──────────────────────────────────
+  // DARK-CHEAP: while the merchants feature flag is off (every environment today)
+  // no query runs at all — the whole affordance costs nothing until activation.
+  // When enabled, offer "Send to merchant" only for merchants this org has
+  // actually connected, and only for a live order (draft/sent). The action + the
+  // ledger writer already exist, so going live is pure config.
+  const connectedMerchants = merchantsFeatureEnabled()
+    ? (await listMerchantConnections(ctx.org.id)).filter((c) => c.status === "connected")
+    : [];
+  const canSubmitToMerchant =
+    connectedMerchants.length > 0 && (status === "draft" || status === "sent");
+
   const { suppliers, jobs: jobOptions } = editable
     ? await listPoFormOptions(supabase, ctx.org.id)
     : { suppliers: [] as Array<{ id: string; name: string }>, jobs: [] as Array<{ id: string; name: string }> };
@@ -240,7 +264,11 @@ export default async function PurchaseOrderDetailPage({
       ) : null}
       {saved ? (
         <div role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          {saved === "status" ? "Status updated." : "Purchase order saved."}
+          {saved === "status"
+            ? "Status updated."
+            : saved === "merchant"
+              ? "Order submitted to the merchant."
+              : "Purchase order saved."}
         </div>
       ) : null}
       {received ? (
@@ -290,6 +318,36 @@ export default async function PurchaseOrderDetailPage({
             </form>
           ))}
         </div>
+      ) : null}
+
+      {/* Send to a connected builders' merchant electronically (dark until a
+          merchant trade account is connected in Settings → Integrations). */}
+      {canSubmitToMerchant ? (
+        <form
+          action={submitPurchaseOrderToMerchantAction.bind(null, po.id)}
+          className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+        >
+          <label htmlFor="merchant-provider" className="text-sm font-medium text-slate-700">
+            Send to merchant
+          </label>
+          <select
+            id="merchant-provider"
+            name="provider"
+            className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-700"
+          >
+            {connectedMerchants.map((m) => (
+              <option key={m.provider} value={m.provider}>
+                {MERCHANT_LABELS[m.provider]}
+              </option>
+            ))}
+          </select>
+          <button
+            type="submit"
+            className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+          >
+            Submit order
+          </button>
+        </form>
       ) : null}
 
       {/* ── Deliveries (Warehouse M1) ─────────────────────────────────────
