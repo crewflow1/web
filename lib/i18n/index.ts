@@ -25,6 +25,7 @@ export {
 export {
   type MessageCatalogue,
   enGB,
+  enIE,
   CATALOGUES,
   BASE_CATALOGUE,
   BASE_LOCALE,
@@ -39,3 +40,5 @@ export {
 } from "./translator";
 
 export { type OrgFormatters, orgFormatters } from "./org-format";
+
+export { negotiateLocale } from "./negotiate";

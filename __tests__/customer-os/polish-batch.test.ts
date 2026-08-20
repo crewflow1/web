@@ -243,6 +243,10 @@ describe("/insights tenant route", () => {
   it("sidebar exposes the AI insights entry to admin/owner", () => {
     const sidebar = read("app/(app)/_components/sidebar.tsx");
     expect(sidebar).toMatch(/href: "\/insights"/);
-    expect(sidebar).toMatch(/label: "AI insights"/);
+    // Labels are now i18n message keys resolved through the translator; the
+    // rendered text still comes from the en-GB catalogue value.
+    expect(sidebar).toMatch(/labelKey: "nav\.ai_insights"/);
+    const catalog = read("lib/i18n/catalog.ts");
+    expect(catalog).toMatch(/"nav\.ai_insights": "AI insights"/);
   });
 });

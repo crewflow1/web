@@ -37,6 +37,7 @@ const adminLayout = read("app/admin/layout.tsx");
 const hqAuth = read("server/auth/hq.ts");
 const onboardingLayout = read("app/onboarding/layout.tsx");
 const appLayout = read("app/(app)/layout.tsx");
+const requestI18n = read("server/i18n/request.ts");
 const session = read("server/auth/session.ts");
 const middleware = read("lib/supabase/middleware.ts");
 const callback = read("app/auth/callback/route.ts");
@@ -130,8 +131,11 @@ describe("Rule 4 — super-admin never enters a customer workspace unless impers
 
 describe("Rule 5 — non-impersonating super-admin on /dashboard → /admin/organizations", () => {
   it("the (app) chokepoint (requireOrgContext) performs the redirect", () => {
-    // /dashboard lives in the (app) group, which calls requireOrgContext().
-    expect(appLayout).toMatch(/requireOrgContext\(\)/);
+    // /dashboard lives in the (app) group, which resolves the request through
+    // getRequestI18n(); that helper enforces requireOrgContext() (the redirect
+    // chokepoint) before returning — so the enforcement is transitive but intact.
+    expect(appLayout).toMatch(/getRequestI18n\(\)/);
+    expect(requestI18n).toMatch(/requireOrgContext\(\)/);
     expect(session).toMatch(/if \(!imp\) redirect\("\/admin\/organizations"\)/);
   });
 

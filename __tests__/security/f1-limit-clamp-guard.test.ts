@@ -312,8 +312,8 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   //    reads surfaced once notifications / health_score_events joined
   //    PRODUCER_TABLES. Each is a recent-N display or a single-scope read, never
   //    a complete-set aggregation, so the sub-cap .limit is honest.
-  "app/(app)/layout.tsx:34":
-    "bounded: the top nav notification bell — recent-30 notifications for ONE user in the active org (.eq('org_id').eq('user_id').limit(30)), a per-user top-N display. (Moved 32→34 when the offline read-cache + photo-outbox client components were imported into the app layout.)",
+  "app/(app)/layout.tsx:38":
+    "bounded: the top nav notification bell — recent-30 notifications for ONE user in the active org (.eq('org_id').eq('user_id').limit(30)), a per-user top-N display. (Moved 32→34 when the offline read-cache + photo-outbox client components were imported into the app layout; moved 34→38 when the i18n-wave request helper + its comment replaced the bare requireOrgContext call.)",
   "app/customer-portal/_future-work.ts:57":
     "bounded: ONE customer's own portal future-work requests (.eq('org_id').eq('customer_id').eq('source','portal').limit(50)) — token-scoped to a single customer, a recent-50 display",
   "server/services/hq-health-deep-dive.ts:298":
