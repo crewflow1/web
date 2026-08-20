@@ -39,7 +39,7 @@ const WORKFLOW_AI_SLUG = "workflow-ai";
 const WORKFLOW_TASK_TYPE = "workflow_sequencing";
 
 const SAGA_WINDOW = 500;
-const STEP_WINDOW = 2000;
+const STEP_WINDOW = 1000;
 
 async function readSignals(): Promise<{
   sagas: WorkflowSagaRow[];

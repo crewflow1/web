@@ -1264,6 +1264,19 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   hq_ai_tasks: "RECENT-N: .order.limit(TASK_WINDOW) reliability window / per-employee — HQ display, not a complete-set count",
   cron_runs: "RECENT-N: .order('started_at' desc).limit(N) recent cron-run reliability window (hq-monitoring-runner incident sweep) — an HQ ops health display over the most recent runs, framed as a recent window and never a complete-set count; the table grows one row per cron run so a complete read is neither useful nor bounded.",
   hq_ai_schedules: "CLOSED/RECENT-N: the cadence-schedule registry — .order or .limit(Math.min(limit,1000)) due-run picker",
+  // ── HQ roster-worker health sweeps (MP HQ roster completion). Each is a bounded
+  //    RECENT-N window read by a deterministic roster-worker runner
+  //    (server/services/hq-*-runner.ts) that COMPUTES + REPORTS an HQ health/posture
+  //    display; NONE is a money/ledger aggregate or a complete-set count, and each
+  //    read is an honest .order(...desc).limit(<1000) window (never the 1000 boundary).
+  hq_apply_audit: "RECENT-N: .order('recorded_at' desc).limit(200) apply-audit activity window (hq-security-runner posture sweep) — an HQ security-posture display over the most-recent apply-audit records, never a complete-set money count.",
+  hq_ai_schedule_runs: "RECENT-N: .order('fired_at' desc).limit(300) AI-schedule-run outcome window (hq-devops-runner deploy-health sweep) — an HQ ops-health display over the most-recent runs, never a complete-set count; the table grows one row per run.",
+  hq_consumer_retries: "RECENT-N: .order('last_failed_at' desc).limit(500) event-bus retry-backlog window (hq-database-runner integrity sweep) — an HQ data-integrity display over the most-recently-failed events, never a complete-set money count.",
+  hq_event_consumers: "CLOSED/RECENT-N: .order('updated_at' desc).limit(200) registered-consumer roster (one row per consumer — a small closed set) read for the hq-database-runner integrity sweep; an HQ display, never summed.",
+  hq_workflow_sagas: "RECENT-N: .order('updated_at' desc).limit(500) active-saga window (hq-workflow-runner sequencing sweep) — an HQ workflow-health display over the most-recently-touched sagas, never a complete-set count.",
+  hq_saga_steps: "RECENT-N: .order('updated_at' desc).limit(1000) saga-step status window (hq-workflow-runner sequencing sweep), correlated to the active-saga window in JS — an HQ workflow-health display, never a complete-set money count.",
+  hq_memories: "RECENT-N: .order('updated_at' desc).limit(1000) memory-curation window (hq-memory-manager-runner curation sweep) — an HQ curation-candidate display over the most-recently-updated memories; counts only (expired/superseded/stale), never a money aggregate.",
+  hq_memory_versions: "RECENT-N: .order('created_at' desc).limit(1000) memory-version window (hq-memory-manager-runner curation sweep) — an HQ version-sprawl count display, never a money aggregate.",
   receptionist_conversation_outcomes: "RECENT-N: .order.limit(OUTCOME_WINDOW) — HQ QA window display",
   impersonation_sessions: "RECENT-N: .order.limit(Math.min(limit,1000)) audit list (caller passes 100) — admin display",
   toolbox_talks: "PER-PARENT/RECENT-N: .eq('job_id') / .limit recent / per-root revision series — bounded display",

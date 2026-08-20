@@ -16,6 +16,7 @@ import "server-only";
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { summariseOnboarding, type OnboardingOrgRow } from "@/lib/hq/roster-workers";
 import { enqueueTask } from "@/server/services/hq-tasks";
 import {
@@ -34,17 +35,25 @@ import {
 const ONBOARDING_AI_SLUG = "onboarding-ai";
 const ONBOARDING_TASK_TYPE = "onboarding_nudges";
 
-const ORG_WINDOW = 1000;
-
 async function readSignals(): Promise<{ orgs: OnboardingOrgRow[] }> {
   const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("organizations" as never)
-    .select("status, onboarding_state, onboarding_percent")
-    .order("created_at", { ascending: false })
-    .limit(ORG_WINDOW);
-  if (error) throw new Error(`hq-onboarding-runner: org read failed — ${error.message}`);
-  return { orgs: (data ?? []) as unknown as OnboardingOrgRow[] };
+  // organizations is a HIGH-VALUE cross-tenant table and the funnel count must be COMPLETE
+  // (a clamped read would undercount stalled activation) — so page the full set via
+  // fetchAllRows on a stable (created_at desc, id asc) order. SELECT-only.
+  const { data, error } = await fetchAllRows<OnboardingOrgRow>((from, to) =>
+    admin
+      .from("organizations" as never)
+      .select("status, onboarding_state, onboarding_percent")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to) as unknown as PromiseLike<{ data: OnboardingOrgRow[] | null; error: unknown }>,
+  );
+  if (error) {
+    throw new Error(
+      `hq-onboarding-runner: org read failed — ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return { orgs: data };
 }
 
 const onboardingHandler: TaskHandler = async () => {

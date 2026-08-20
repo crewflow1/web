@@ -15,13 +15,14 @@ import "server-only";
  *   • Reads are SELECT-only and bounded; the only queue write is the sanctioned enqueue.
  */
 
-import { createAdminClient } from "@/lib/supabase/admin";
 import {
   summariseCompliance,
   type ComplianceApprovalRow,
   type ComplianceDecisionRow,
 } from "@/lib/hq/roster-workers";
 import { enqueueTask } from "@/server/services/hq-tasks";
+import { listDecisions } from "@/server/services/hq-decisions";
+import { listPendingApprovals } from "@/server/services/hq-approvals";
 import {
   resolveWorkerIdentity,
   normaliseWorkerOutcome,
@@ -39,31 +40,29 @@ const LEGAL_COMPLIANCE_AI_SLUG = "legal-compliance-ai";
 const LEGAL_COMPLIANCE_TASK_TYPE = "compliance_review";
 
 const APPROVAL_WINDOW = 500;
-const DECISION_WINDOW = 500;
+const DECISION_WINDOW = 200;
 
 async function readSignals(): Promise<{
   approvals: ComplianceApprovalRow[];
   decisions: ComplianceDecisionRow[];
 }> {
-  const admin = createAdminClient();
-
-  const { data: apprData, error: apprErr } = await admin
-    .from("hq_approvals" as never)
-    .select("state, expires_at")
-    .order("requested_at", { ascending: false })
-    .limit(APPROVAL_WINDOW);
-  if (apprErr) throw new Error(`hq-legal-compliance-runner: approval read failed — ${apprErr.message}`);
-
-  const { data: decData, error: decErr } = await admin
-    .from("hq_decisions" as never)
-    .select("status, delay_until")
-    .order("created_at", { ascending: false })
-    .limit(DECISION_WINDOW);
-  if (decErr) throw new Error(`hq-legal-compliance-runner: decision read failed — ${decErr.message}`);
+  // Both substrates are read through their SERVICE accessors (single-writer authority) —
+  // never a direct table read. listPendingApprovals returns the outstanding (active-state)
+  // approvals; listDecisions returns the newest decision window (caller-capped at 200).
+  const [approvalRows, decisionRows] = await Promise.all([
+    listPendingApprovals(APPROVAL_WINDOW),
+    listDecisions({ limit: DECISION_WINDOW }),
+  ]);
 
   return {
-    approvals: (apprData ?? []) as unknown as ComplianceApprovalRow[],
-    decisions: (decData ?? []) as unknown as ComplianceDecisionRow[],
+    approvals: approvalRows.map((a) => ({
+      state: a.state ?? null,
+      expires_at: a.expires_at ?? null,
+    })) as ComplianceApprovalRow[],
+    decisions: decisionRows.map((d) => ({
+      status: d.status ?? null,
+      delay_until: d.delay_until ?? null,
+    })) as ComplianceDecisionRow[],
   };
 }
 

@@ -40,7 +40,7 @@ const MEMORY_MANAGER_AI_SLUG = "memory-manager-ai";
 const MEMORY_MANAGER_TASK_TYPE = "memory_curation";
 
 const MEMORY_WINDOW = 1000;
-const VERSION_WINDOW = 2000;
+const VERSION_WINDOW = 1000;
 
 async function readSignals(): Promise<{
   memories: MemoryRow[];
