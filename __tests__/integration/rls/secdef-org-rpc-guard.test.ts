@@ -97,6 +97,10 @@ const ALLOWLIST: ReadonlyMap<string, string> = new Map<string, string>([
     "next_variation_number",
     "membership-guarded: the job's org is checked against current_org_ids(); raises a generic exception (not 42501); a non-member is denied.",
   ],
+  [
+    "marketplace_submit_listing",
+    "membership-guarded: requires the caller be an admin of p_org_id (is_org_admin) AND that p_org_id own the listing (v_owner = p_org_id); a non-admin or cross-org caller is refused. Generic exception (not 42501), so misses the canonical auto-pass.",
+  ],
 
   // Guarded by a direct memberships lookup on auth.uid() + 42501 — sound, just
   // not via the current_org_ids() helper, so it misses the auto-pass predicate.
