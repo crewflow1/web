@@ -88,6 +88,14 @@ export const PILLARS: Pillar[] = [
       { name: "Snags & quality (ITP)", note: "Snag lists and inspection & test plans with hold points." },
       { name: "Blueprint centre", note: "Drawing viewer with pins, markup, version compare and offline." },
     ],
+    shot: {
+      src: "/product-shots/health-safety.png",
+      alt: "The CrewFlow health & safety register — issued RAMS with hazard counts and 5x5 risk ratings, and an alert for active jobs missing a current risk assessment.",
+      screen: "Health & safety",
+      url: "app.crewflow.uk/health-safety",
+      w: 1440,
+      h: 720,
+    },
   },
   {
     slug: "money",
@@ -96,21 +104,22 @@ export const PILLARS: Pillar[] = [
     eyebrow: "Money",
     headline: "Know where every pound is — to the penny, per job",
     summary:
-      "Invoicing that chases itself, real per-job margin, and the UK-specific money work — CIS, retention, VAT and Corporation Tax — built in.",
+      "Invoicing that chases itself, real per-job margin, and the UK-specific money work — CIS, retention, staged valuations, VAT and Corporation Tax — built in.",
     capabilities: [
       { name: "Invoicing", note: "Raise from a finished job; reminders go out on day 3, 7, 14, 21." },
+      { name: "Staged valuations", note: "Interim valuations / applications for payment — certified, then turned into an invoice." },
       { name: "Retention & aged debt", note: "Track retention release and who owes what, when." },
       { name: "Job costing", note: "Revenue minus materials and clocked labour — real margin, live." },
       { name: "CIS & tax figures", note: "CIS deductions and statements; VAT and Corp Tax ready for your accountant." },
       { name: "POs & supplier bills", note: "Purchase orders with 3-way matching against deliveries and bills." },
     ],
     shot: {
-      src: "/product-shots/invoices.png",
-      alt: "The CrewFlow invoices list — invoices with status, due date and a full net / VAT / total breakdown, plus CSV, Xero and Sage export.",
-      screen: "Invoices",
-      url: "app.crewflow.uk/invoices",
+      src: "/product-shots/cash.png",
+      alt: "The CrewFlow cash position — collectable now, overdue, due this week and expected this month, with an honest note that it is not a live bank balance.",
+      screen: "Cash position",
+      url: "app.crewflow.uk/cash",
       w: 1440,
-      h: 540,
+      h: 726,
     },
   },
   {

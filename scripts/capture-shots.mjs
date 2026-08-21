@@ -14,9 +14,12 @@ const PASSWORD = "DemoPass123!";
 // don't capture them (an empty screen is worse than none).
 const SHOTS = [
   { path: "/dashboard", name: "dashboard", wait: 1600, clip: { x: 0, y: 0, width: 1440, height: 620 } },
+  { path: "/cash", name: "cash", wait: 1500, clip: { x: 0, y: 0, width: 1440, height: 726 } },
   { path: "/jobs", name: "jobs", wait: 1400, clip: { x: 0, y: 0, width: 1440, height: 640 } },
   { path: "/invoices", name: "invoices", wait: 1400, clip: { x: 0, y: 0, width: 1440, height: 540 } },
   { path: "/customers", name: "customers", wait: 1400, clip: { x: 0, y: 0, width: 1440, height: 600 } },
+  { path: "/quotes", name: "quotes", wait: 1400, clip: { x: 0, y: 0, width: 1440, height: 560 } },
+  { path: "/health-safety", name: "health-safety", wait: 1500, clip: { x: 0, y: 0, width: 1440, height: 720 } },
 ];
 
 fs.mkdirSync(OUT, { recursive: true });

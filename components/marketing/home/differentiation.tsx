@@ -20,15 +20,15 @@ const COLUMNS = [
     items: [
       "Variations captured against the job",
       "Extensions of time",
+      "Staged valuations / applications for payment",
       "Retention register & release tracking",
       "Job costing — real margin, live",
-      "Aged debtors & creditors",
     ],
   },
   {
     tag: "UK finance",
     items: [
-      "CIS deductions, statements & verification",
+      "CIS deductions & statements",
       "VAT & Corporation Tax working papers",
       "PO 3-way matching to bills & GRNs",
       "Invoices that chase themselves",

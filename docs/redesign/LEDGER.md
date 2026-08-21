@@ -130,3 +130,11 @@ Migrate conversion-critical legacy light pages onto the dark `(site)` system (st
   - Wired in via `next/image`: the homepage hero frame now shows the **real dashboard** (replacing the placeholder — resolves the adversarial reviewer's top P1-1); Run jobs / Money / Win work pillar pages show jobs / invoices / customers. Frames with no seeded data (RAMS, quotes) show nothing rather than an empty screen. All are real LIVE features on illustrative demo data — standard, honest product marketing.
   - **Honest homepage score now ~92–94** (real product proof landed; remaining gap to 95 is breadth of proof + a fuller signature moment, not honesty).
 - **Env note:** local `.env.local` currently points at the local Supabase stack for capture (dummy backup at `.env.local.dummy-bak`); this is local-only and not committed. The Vercel preview uses the project's own env.
+
+---
+
+## Progress 5 — FINAL RC PASS (target: genuine 95+/100)
+
+**Rule Zero (state at RC-pass start):** branch `redesign/website-2026`, **0 behind / 19 ahead** of `origin/main` (`fc8922c4` — unchanged, no prod changes since redesign began, so "current production truth" == the branch base). Working tree clean, HEAD `23a3a905`. PR #835 OPEN + MERGEABLE. **CI all green** (typecheck, lint, tests, security, e2e, integration, Vercel deploy completed). Dev server `:3200` up on the local Supabase stack. Visual spot-check (desktop, reveals settled): hero + real-dashboard proof + signature rail + pillars all render premium; **the signature "one job" moment is still a static rail — the top design opportunity.** Pane composite ceiling ~6k px (tall pages must be captured in bands after reveal settle).
+
+RC-pass plan: (1) product-truth reverify vs current tree; (2) expand real proof (seed RAMS/quotes/etc., capture more strong screens); (3) build the cinematic signature moment; (4) redesign book-demo modal (now CEO-authorised on this branch); (5) hero/rhythm/copy passes; (6) legacy+mobile+a11y+perf+SEO QA; (7) independent adversarial reviewers score /100; (8) fix P0/P1, final CEO report. No merge/deploy.

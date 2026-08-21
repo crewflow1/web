@@ -102,8 +102,8 @@ export default async function PillarPage({
           ))}
         </div>
         <p className="mt-6 max-w-2xl text-sm text-ink-dim">
-          Everything here is live and in daily use by UK construction companies —
-          no add-ons, no per-feature upsells.
+          Everything here is live today — no add-ons, no per-feature upsells,
+          nothing you have to wait for.
         </p>
       </section>
 
