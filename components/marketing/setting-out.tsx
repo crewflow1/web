@@ -69,26 +69,6 @@ export function CoordTag({
   );
 }
 
-/** ② Dimension line — a measured witness-line with end-ticks and a value. */
-export function Dim({
-  value,
-  className = "",
-}: {
-  value: string;
-  className?: string;
-}) {
-  return (
-    <span
-      aria-hidden="true"
-      className={`inline-flex select-none items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-ink-dim ${className}`}
-    >
-      <span className="relative h-2 w-6 before:absolute before:left-0 before:top-1/2 before:h-2 before:w-px before:-translate-y-1/2 before:bg-blueprint after:absolute after:right-0 after:top-1/2 after:h-full after:w-full after:-translate-y-1/2 after:border-t after:border-blueprint" />
-      {value}
-      <span className="relative h-2 w-6 before:absolute before:right-0 before:top-1/2 before:h-2 before:w-px before:-translate-y-1/2 before:bg-blueprint after:absolute after:left-0 after:top-1/2 after:h-full after:w-full after:-translate-y-1/2 after:border-t after:border-blueprint" />
-    </span>
-  );
-}
-
 /** ⑦ Hairline rule with a single datum tick. Section divider. */
 export function DatumRule({ className = "" }: { className?: string }) {
   return (
