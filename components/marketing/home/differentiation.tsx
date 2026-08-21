@@ -1,8 +1,11 @@
+import { Reveal } from "@/components/marketing/reveal";
+
 /**
  * Differentiation, the site / commercial / UK-finance layer that trade apps
  * don't have and that wins bigger work. Every item is LIVE (product-truth).
  * Presented as three plain columns of real capability, no eyebrow, no
- * decorative rules, no monospace.
+ * decorative rules, no monospace. One subtle reveal here (variation, most
+ * sections have no motion at all).
  */
 const COLUMNS = [
   {
@@ -49,22 +52,24 @@ export function Differentiation() {
           touch, the layer that gets you onto bigger tenders and keeps the
           margin you won.
         </p>
-        <div className="mt-16 grid gap-x-12 gap-y-14 pt-2 md:grid-cols-3">
-          {COLUMNS.map((c) => (
-            <div key={c.tag}>
-              <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-gold-500">
-                {c.tag}
-              </h3>
-              <ul className="mt-6 space-y-4">
-                {c.items.map((it) => (
-                  <li key={it} className="text-[17px] leading-snug text-ink">
-                    {it}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
+        <Reveal className="mt-16 pt-2">
+          <div className="grid gap-x-12 gap-y-14 md:grid-cols-3">
+            {COLUMNS.map((c) => (
+              <div key={c.tag}>
+                <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-gold-500">
+                  {c.tag}
+                </h3>
+                <ul className="mt-6 space-y-4">
+                  {c.items.map((it) => (
+                    <li key={it} className="text-[17px] leading-snug text-ink">
+                      {it}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </Reveal>
       </div>
     </section>
   );

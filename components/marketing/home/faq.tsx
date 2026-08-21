@@ -49,7 +49,7 @@ export function Faq() {
                   +
                 </span>
               </summary>
-              <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-ink-mut">{f.a}</p>
+              <p data-faq-answer className="mt-3 max-w-2xl text-[15px] leading-relaxed text-ink-mut">{f.a}</p>
             </details>
           ))}
         </div>

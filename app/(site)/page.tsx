@@ -59,7 +59,7 @@ export default function HomePage() {
 
       {/* The product, full-width and large, the first real proof. */}
       <section className="mx-auto max-w-cf px-5 pb-6 pt-16 sm:px-7 sm:pt-24">
-        <div className="overflow-hidden rounded-2xl bg-[#F7F9FC] shadow-[0_40px_120px_-30px_rgba(0,0,0,0.7)] ring-1 ring-white/10">
+        <div data-cf-enter className="overflow-hidden rounded-2xl bg-[#F7F9FC] shadow-[0_40px_120px_-30px_rgba(0,0,0,0.7)] ring-1 ring-white/10">
           <Image
             src="/product-shots/dashboard.png"
             alt="The CrewFlow dashboard for Brightwork Construction: a morning brief flagging 3 active jobs without a current RAMS, £11,520 overdue across one invoice, and £55,440 due from customers this week."

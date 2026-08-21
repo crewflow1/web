@@ -254,7 +254,7 @@ export function FaqSection({
                   +
                 </span>
               </summary>
-              <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-ink-mut">{q.a}</p>
+              <p data-faq-answer className="mt-3 max-w-2xl text-[15px] leading-relaxed text-ink-mut">{q.a}</p>
             </details>
           ))}
         </div>

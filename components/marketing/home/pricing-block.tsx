@@ -16,7 +16,7 @@ export function PricingBlock() {
     <section className=" bg-navy-900">
       <div className="mx-auto max-w-cf px-5 py-28 sm:px-7 sm:py-36">
         <div className="grid items-center gap-14 lg:grid-cols-[1.1fr_0.9fr]">
-          <div>
+          <div className="min-w-0">
             <h2 className="max-w-[15ch] font-display text-[clamp(2.1rem,4.6vw,3.75rem)] font-bold leading-[1.0] tracking-[-0.02em] text-ink">
               Everything, for one monthly price
             </h2>
@@ -32,12 +32,12 @@ export function PricingBlock() {
               ))}
             </ul>
           </div>
-          <div className="rounded-2xl border border-white/10 bg-navy-950 p-8 sm:p-10">
+          <div className="min-w-0 rounded-2xl border border-white/10 bg-navy-950 p-6 sm:p-10">
             <p className="text-sm font-semibold uppercase tracking-[0.12em] text-gold-500">
               CrewFlow, all in
             </p>
             <div className="mt-4 flex items-baseline gap-3">
-              <span className="font-display text-[clamp(4rem,9vw,6.5rem)] font-bold leading-none tabular-nums tracking-[-0.02em] text-ink">
+              <span className="font-display text-[clamp(3.25rem,9vw,6.5rem)] font-bold leading-none tabular-nums tracking-[-0.02em] text-ink">
                 £500
               </span>
               <span className="text-lg text-ink-mut">/ month</span>
