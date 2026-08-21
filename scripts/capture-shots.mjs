@@ -22,6 +22,15 @@ const SHOTS = [
   { path: "/health-safety", name: "health-safety", wait: 1500, clip: { x: 0, y: 0, width: 1440, height: 720 } },
 ];
 
+// Signature-moment set: identical aspect (1440x600) so frames cross-fade cleanly.
+const JOURNEY = [
+  { path: "/quotes", name: "quotes" },
+  { path: "/jobs", name: "jobs" },
+  { path: "/health-safety", name: "rams" },
+  { path: "/invoices", name: "invoices" },
+  { path: "/dashboard", name: "dashboard" },
+].map((s) => ({ ...s, wait: 1500, dir: "journey", clip: { x: 0, y: 0, width: 1440, height: 600 } }));
+
 fs.mkdirSync(OUT, { recursive: true });
 
 const browser = await chromium.launch();
@@ -45,11 +54,13 @@ console.log("after login, url:", page.url());
 
 // --- capture ---------------------------------------------------------------
 const results = [];
-for (const s of SHOTS) {
+for (const s of [...SHOTS, ...JOURNEY]) {
   try {
     await page.goto(`${BASE}${s.path}`, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(s.wait);
-    const file = `${OUT}/${s.name}.png`;
+    const dir = s.dir ? `${OUT}/${s.dir}` : OUT;
+    fs.mkdirSync(dir, { recursive: true });
+    const file = `${dir}/${s.name}.png`;
     await page.screenshot(s.clip ? { path: file, clip: s.clip } : { path: file });
     const bytes = fs.statSync(file).size;
     results.push(`${s.name}: ${page.url()} (${Math.round(bytes / 1024)}kB)`);

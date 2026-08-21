@@ -4,7 +4,7 @@ import Image from "next/image";
 import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
 import { DatumGrid, CoordTag } from "@/components/marketing/setting-out";
 import { ProductFrame } from "@/components/marketing/product-frame";
-import { JobFlow } from "@/components/marketing/home/job-flow";
+import { JobJourney } from "@/components/marketing/home/job-journey";
 import { Differentiation } from "@/components/marketing/home/differentiation";
 import { SwitchTrust } from "@/components/marketing/home/switch-trust";
 import { PricingBlock } from "@/components/marketing/home/pricing-block";
@@ -87,10 +87,9 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Beat 3 — Signature moment: one job, end to end */}
-      <Reveal>
-        <JobFlow />
-      </Reveal>
+      {/* Beat 3 — Signature moment: one job, end to end (own scroll behaviour;
+          NOT wrapped in Reveal — a transformed ancestor would break sticky). */}
+      <JobJourney />
 
       {/* Beat 4 — Six pillars (drawing register) */}
       <Reveal>
