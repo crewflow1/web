@@ -26,7 +26,11 @@ export const clashDisplay = localFont({
   ],
   variable: "--font-clash",
   display: "swap",
-  fallback: ["Georgia", "serif"],
+  // Clash is a SANS display face, so the swap fallback must also be sans —
+  // a serif fallback (e.g. Georgia) mismatches the metrics and shifts the
+  // large hero H1 on swap. Arial-based metric adjustment keeps CLS at ~0.
+  fallback: ["Arial", "Helvetica", "sans-serif"],
+  adjustFontFallback: "Arial",
   preload: true,
 });
 
