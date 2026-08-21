@@ -45,5 +45,8 @@ export const satoshi = localFont({
     "Roboto",
     "sans-serif",
   ],
-  preload: true,
+  // Body face: swap on a strong system fallback rather than preloading all
+  // weights — keeps the LCP (display-face heading) critical chain lean without
+  // any visible FOUT on the body copy.
+  preload: false,
 });

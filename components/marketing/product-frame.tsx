@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { BrowserChrome } from "@/components/marketing/browser-chrome";
 
 /**
  * PRODUCT-PROOF FRAME — honest, TEMPORARY placeholder.
@@ -31,20 +32,7 @@ export function ProductFrame({
       className={`overflow-hidden rounded-cf border border-white/10 bg-navy-850 shadow-cf ring-1 ring-inset ring-white/[0.04] ${className}`}
       {...(isPlaceholder ? { "data-proof": "placeholder" } : {})}
     >
-      {/* Browser chrome */}
-      <div
-        aria-hidden="true"
-        className="flex items-center gap-2 border-b border-white/10 bg-navy-800 px-3.5 py-2.5"
-      >
-        <span className="flex gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
-          <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
-          <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
-        </span>
-        <span className="ml-2 truncate rounded-md bg-navy-950/60 px-2.5 py-1 font-mono text-[11px] text-ink-dim">
-          {url}
-        </span>
-      </div>
+      <BrowserChrome url={url} />
 
       {children ? (
         // Real seeded screenshot goes here (light UI).

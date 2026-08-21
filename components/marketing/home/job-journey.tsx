@@ -1,5 +1,6 @@
 import Image from "next/image";
 import { CoordTag } from "@/components/marketing/setting-out";
+import { BrowserChrome } from "@/components/marketing/browser-chrome";
 import { Reveal } from "@/components/marketing/reveal";
 
 /**
@@ -77,19 +78,7 @@ const STAGES: Stage[] = [
 function Frame({ url, src, alt, priority }: { url: string; src: string; alt: string; priority: boolean }) {
   return (
     <figure className="overflow-hidden rounded-cf border border-white/10 bg-navy-850 shadow-cf ring-1 ring-inset ring-white/[0.04]">
-      <div
-        aria-hidden="true"
-        className="flex items-center gap-2 border-b border-white/10 bg-navy-800 px-3.5 py-2.5"
-      >
-        <span className="flex gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
-          <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
-          <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
-        </span>
-        <span className="ml-2 truncate rounded-md bg-navy-950/60 px-2.5 py-1 font-mono text-[11px] text-ink-dim">
-          {url}
-        </span>
-      </div>
+      <BrowserChrome url={url} />
       <div className="bg-[#F7F9FC]">
         <Image
           src={src}
