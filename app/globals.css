@@ -25,7 +25,7 @@
  */
 @layer components {
   .legal-prose h2 {
-    @apply mt-8 text-base font-semibold text-slate-900;
+    @apply mt-8 font-display text-base font-semibold text-ink;
   }
   .legal-prose h2:first-of-type {
     @apply mt-0;
@@ -37,13 +37,13 @@
     @apply mt-3 list-disc space-y-1.5 pl-6;
   }
   .legal-prose li > strong {
-    @apply text-slate-900;
+    @apply text-ink;
   }
   .legal-prose a {
-    @apply font-medium text-slate-900 underline underline-offset-2 hover:text-slate-700;
+    @apply font-medium text-gold-500 underline underline-offset-2 hover:text-gold-400;
   }
   .legal-prose code {
-    @apply rounded bg-slate-100 px-1 py-0.5 font-mono text-[12px] text-slate-900;
+    @apply rounded bg-navy-800 px-1 py-0.5 font-mono text-[12px] text-ink;
   }
 }
 

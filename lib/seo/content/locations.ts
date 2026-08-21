@@ -21,7 +21,7 @@ export const LOCATIONS: LocationPage[] = [
     eyebrow: "Belfast",
     h1: "Construction software built in Belfast, for construction companies everywhere",
     intro:
-      "CrewFlow is built in Belfast, by people who know the local trade. It's the all-in-one operating system for construction companies — quotes, jobs, crews, invoices, payroll and tax in one place.\n\nFor Belfast firms, that means software made on your doorstep that understands UK tax, UK invoicing and how a real building business runs.",
+      "CrewFlow is built in Belfast, by people who know the local trade. It's the operating system for construction companies — quotes, jobs, crews, invoices, payroll and tax in one place.\n\nFor Belfast firms, that means software made on your doorstep that understands UK tax, UK invoicing and how a real building business runs.",
     localContext:
       "Belfast's construction scene runs from residential refurb and extensions to commercial fit-out and a deep base of trade SMEs across Greater Belfast. CrewFlow is built here for exactly those businesses — small and growing construction firms that want one system instead of a drawer of apps.",
     faqs: [

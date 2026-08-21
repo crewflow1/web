@@ -52,7 +52,7 @@ export const SITE = {
   /** One-liner used as the global default description + Organization.description. */
   tagline: "The operating system for UK construction companies.",
   description:
-    "CrewFlow is the all-in-one operating system for UK construction companies. Leads, quotes, jobs, scheduling, staff, timesheets, invoices, payments, profitability, payroll and tax — every part of your construction business in one place.",
+    "CrewFlow is the operating system for UK construction companies. Leads, quotes, jobs, scheduling, staff, timesheets, invoices, payments, profitability, payroll and tax — every part of your construction business in one place.",
   email: "hello@crewflow.uk",
   /** Accurate per the homepage footer — "Built in Belfast, Northern Ireland". */
   location: {

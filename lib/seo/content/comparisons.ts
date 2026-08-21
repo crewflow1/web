@@ -28,13 +28,13 @@ export const COMPARISONS: ComparisonPage[] = [
     },
     title: "CrewFlow vs Procore",
     metaDescription:
-      "Procore is enterprise construction software for large contractors. CrewFlow is the all-in-one operating system for UK construction SMEs. Here's an honest comparison.",
+      "Procore is enterprise construction software for large contractors. CrewFlow is the operating system for UK construction SMEs. Here's an honest comparison.",
     eyebrow: "Comparison",
     h1: "CrewFlow vs Procore: which fits a UK construction SME?",
     intro:
       "Procore is one of the biggest names in construction software — and it's built for big construction. If you're a UK SME running quotes, jobs, crews and invoices, the honest question isn't 'which is better', it's 'which is built for you'.",
     positioning:
-      "Procore is an enterprise platform priced and designed for large general contractors managing complex commercial projects with many stakeholders. CrewFlow is the all-in-one operating system for UK construction companies running roughly 1–30 people who want one tool for the whole business — from the first enquiry to the Corporation Tax return.",
+      "Procore is an enterprise platform priced and designed for large general contractors managing complex commercial projects with many stakeholders. CrewFlow is the operating system for UK construction companies running roughly 1–30 people who want one tool for the whole business — from the first enquiry to the Corporation Tax return.",
     rows: [
       { feature: "Built for", crewflow: "UK construction SMEs (1–30 staff)", competitor: "Large enterprise contractors" },
       { feature: "UK tax (VAT, PAYE, Corp Tax)", crewflow: "Built in", competitor: "Not a UK tax tool" },
@@ -58,7 +58,7 @@ export const COMPARISONS: ComparisonPage[] = [
       "If you're a large contractor running complex commercial jobs, Procore is built for that world. If you're a UK construction SME who wants the whole business in one place without enterprise pricing or implementation, CrewFlow is built for you.",
     faqs: [
       { q: "Is CrewFlow a Procore alternative?", a: "For UK construction SMEs, yes. Procore targets large enterprise contractors; CrewFlow targets smaller UK construction companies who want one affordable system covering operations, finance, payroll and tax." },
-      { q: "Is CrewFlow cheaper than Procore?", a: "CrewFlow has transparent pricing (£1,000 setup + £500/mo) aimed at SMEs, whereas Procore uses enterprise quote-based pricing. For a small UK firm, CrewFlow is built to be the affordable, all-in-one option." },
+      { q: "Is CrewFlow cheaper than Procore?", a: "CrewFlow has transparent pricing (£1,000 setup + £500/mo) aimed at SMEs, whereas Procore uses enterprise quote-based pricing. For a small UK firm, CrewFlow is built to be the affordable, complete option." },
       { q: "Can CrewFlow handle UK tax where Procore can't?", a: "Yes. CrewFlow tracks VAT, PAYE, NI and Corporation Tax natively for UK construction, which a US-origin enterprise platform like Procore isn't built to do." },
     ],
     related: ["crewflow-vs-buildertrend", "crewflow-vs-jobber", "crewflow-vs-simpro"],
@@ -76,7 +76,7 @@ export const COMPARISONS: ComparisonPage[] = [
     },
     title: "CrewFlow vs Buildertrend",
     metaDescription:
-      "Buildertrend is built for US home builders and remodelers. CrewFlow is the all-in-one operating system for UK construction companies, with UK tax built in. Compare.",
+      "Buildertrend is built for US home builders and remodelers. CrewFlow is the operating system for UK construction companies, with UK tax built in. Compare.",
     eyebrow: "Comparison",
     h1: "CrewFlow vs Buildertrend: built for the UK, or built for the US?",
     intro:

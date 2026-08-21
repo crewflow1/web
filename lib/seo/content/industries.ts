@@ -13,7 +13,7 @@ export const INDUSTRIES: IndustryPage[] = [
     secondaryKeywords: ["builders software", "general builder software", "construction software for builders"],
     title: "Software for Builders",
     metaDescription:
-      "CrewFlow is the all-in-one software for UK builders — quotes, jobs, crews, invoices, payroll and tax in one place. Run the whole build from one screen. Book a demo.",
+      "CrewFlow is the complete software for UK builders — quotes, jobs, crews, invoices, payroll and tax in one place. Run the whole build from one screen. Book a demo.",
     eyebrow: "For builders",
     h1: "Software for builders that runs the whole business, not just the job",
     intro:

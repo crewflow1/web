@@ -36,6 +36,7 @@ export default {
         },
         gold: {
           100: "rgb(var(--cf-gold-100) / <alpha-value>)",
+          400: "rgb(var(--cf-gold-400) / <alpha-value>)",
           500: "rgb(var(--cf-gold-500) / <alpha-value>)",
           600: "rgb(var(--cf-gold-600) / <alpha-value>)",
           DEFAULT: "rgb(var(--cf-gold-500) / <alpha-value>)",

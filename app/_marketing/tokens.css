@@ -21,6 +21,7 @@
 
   /* gold — the single accent */
   --cf-gold-100: 246 228 180; /* #F6E4B4 */
+  --cf-gold-400: 241 197 96; /* #F1C560 lighter gold — link/hover brighten */
   --cf-gold-500: 234 178 60; /* #EAB23C primary accent */
   --cf-gold-600: 214 155 42; /* #D69B2A hover/pressed */
 
