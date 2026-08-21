@@ -75,26 +75,4 @@
       transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
   }
 
-  /*
-   * Signature "one job" scrollytelling — cross-fade the active product frame and
-   * fill the setting-out line to the active stage. Motion is opacity/height only.
-   * Reduced-motion falls back to instant swaps: the base .jj-frame opacity rules
-   * below stay in force, so the active frame is always shown, just not animated.
-   */
-  .jj-frame {
-    transition: opacity 0.5s ease;
-  }
-  .jj-fill {
-    transition: height 0.55s cubic-bezier(0.4, 0, 0.1, 1);
-  }
-}
-
-/* Base (always — incl. reduced-motion / no-JS): only the active signature frame
-   is shown, and the first stage is active on first paint, so the frame is never
-   blank even before hydration. */
-.jj-frame {
-  opacity: 0;
-}
-.jj-frame.jj-on {
-  opacity: 1;
 }
