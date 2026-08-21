@@ -9,15 +9,14 @@ const OUT = "public/product-shots";
 const EMAIL = "demo@brightwork.example";
 const PASSWORD = "DemoPass123!";
 
+// Only screens seeded with realistic data, each clipped to its content (no
+// trailing whitespace / onboarding banner). quotes/RAMS aren't seeded, so we
+// don't capture them (an empty screen is worse than none).
 const SHOTS = [
-  // Dashboard hero: clip to the topbar + "Good morning" attention cards,
-  // above the onboarding-progress banner (cleaner, more focused hero frame).
   { path: "/dashboard", name: "dashboard", wait: 1600, clip: { x: 0, y: 0, width: 1440, height: 620 } },
-  { path: "/jobs", name: "jobs", wait: 1400 },
-  { path: "/invoices", name: "invoices", wait: 1400 },
-  { path: "/quotes", name: "quotes", wait: 1400 },
-  { path: "/customers", name: "customers", wait: 1400 },
-  { path: "/health-safety", name: "health-safety", wait: 1400 },
+  { path: "/jobs", name: "jobs", wait: 1400, clip: { x: 0, y: 0, width: 1440, height: 640 } },
+  { path: "/invoices", name: "invoices", wait: 1400, clip: { x: 0, y: 0, width: 1440, height: 540 } },
+  { path: "/customers", name: "customers", wait: 1400, clip: { x: 0, y: 0, width: 1440, height: 600 } },
 ];
 
 fs.mkdirSync(OUT, { recursive: true });

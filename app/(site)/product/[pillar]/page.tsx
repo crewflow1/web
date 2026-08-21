@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import { PILLARS, pillarBySlug } from "@/lib/marketing/pillars";
 import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
+import { ProductFrame } from "@/components/marketing/product-frame";
 
 export const dynamicParams = false;
 
@@ -61,6 +63,28 @@ export default async function PillarPage({
           </div>
         </div>
       </section>
+
+      {/* Real product screenshot (when available for this pillar) */}
+      {p.shot ? (
+        <section className="border-b border-white/10 bg-navy-900">
+          <div className="mx-auto max-w-cf px-5 py-14 sm:px-7 sm:py-16">
+            <ProductFrame
+              screen={p.shot.screen}
+              url={p.shot.url}
+              className="mx-auto max-w-5xl"
+            >
+              <Image
+                src={p.shot.src}
+                alt={p.shot.alt}
+                width={p.shot.w}
+                height={p.shot.h}
+                sizes="(max-width: 1024px) 100vw, 1024px"
+                className="h-auto w-full"
+              />
+            </ProductFrame>
+          </div>
+        </section>
+      ) : null}
 
       {/* Capabilities */}
       <section className="mx-auto max-w-cf px-5 py-16 sm:px-7 sm:py-20">

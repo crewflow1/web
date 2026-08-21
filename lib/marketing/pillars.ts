@@ -18,6 +18,8 @@ export type Pillar = {
   headline: string;
   summary: string;
   capabilities: Capability[];
+  /** Optional real product screenshot (light UI) for the pillar page frame. */
+  shot?: { src: string; alt: string; screen: string; url: string; w: number; h: number };
 };
 
 export const PILLARS: Pillar[] = [
@@ -36,6 +38,14 @@ export const PILLARS: Pillar[] = [
       { name: "Follow-ups", note: "Reminders so a quiet quote gets chased while the job's still warm." },
       { name: "Customer records", note: "Full history — quotes, jobs, invoices, payments — per customer." },
     ],
+    shot: {
+      src: "/product-shots/customers.png",
+      alt: "The CrewFlow customer list for a construction company — customers with contact details and site postcodes across Yorkshire.",
+      screen: "Customers",
+      url: "app.crewflow.uk/customers",
+      w: 1440,
+      h: 600,
+    },
   },
   {
     slug: "run-jobs",
@@ -53,6 +63,14 @@ export const PILLARS: Pillar[] = [
       { name: "Job documents & photos", note: "Attach site photos and files from a phone." },
       { name: "Customer portal", note: "Quotes, progress and what's left to pay — one tidy link." },
     ],
+    shot: {
+      src: "/product-shots/jobs.png",
+      alt: "The CrewFlow jobs list — live jobs with status (new, in-progress, blocked, completed), customer, site address and scheduled dates.",
+      screen: "Jobs",
+      url: "app.crewflow.uk/jobs",
+      w: 1440,
+      h: 640,
+    },
   },
   {
     slug: "site-safety",
@@ -86,6 +104,14 @@ export const PILLARS: Pillar[] = [
       { name: "CIS & tax figures", note: "CIS deductions and statements; VAT and Corp Tax ready for your accountant." },
       { name: "POs & supplier bills", note: "Purchase orders with 3-way matching against deliveries and bills." },
     ],
+    shot: {
+      src: "/product-shots/invoices.png",
+      alt: "The CrewFlow invoices list — invoices with status, due date and a full net / VAT / total breakdown, plus CSV, Xero and Sage export.",
+      screen: "Invoices",
+      url: "app.crewflow.uk/invoices",
+      w: 1440,
+      h: 540,
+    },
   },
   {
     slug: "people-assets",
