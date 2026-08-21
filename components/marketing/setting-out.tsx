@@ -9,9 +9,13 @@ import type { ReactNode } from "react";
  * and the thing that makes CrewFlow's dark environment feel *engineered*.
  */
 
-/** ① Datum grid — faint blueprint grid + optional margin grid references. */
+/**
+ * ① Datum grid — a whisper-faint blueprint texture, no margin coordinates.
+ * Deliberately restrained: a single subtle atmosphere, never a "technical
+ * drawing" laid over the whole page. The `refs` prop is retained (ignored) so
+ * older callers don't break; margin coordinate letters were removed.
+ */
 export function DatumGrid({
-  refs = false,
   className = "",
 }: {
   refs?: boolean;
@@ -26,32 +30,23 @@ export function DatumGrid({
         className="absolute inset-0"
         style={{
           backgroundImage:
-            "linear-gradient(rgb(var(--cf-blueprint) / 0.10) 1px, transparent 1px), linear-gradient(90deg, rgb(var(--cf-blueprint) / 0.10) 1px, transparent 1px)",
-          backgroundSize: "72px 72px",
+            "linear-gradient(rgb(var(--cf-blueprint) / 0.05) 1px, transparent 1px), linear-gradient(90deg, rgb(var(--cf-blueprint) / 0.05) 1px, transparent 1px)",
+          backgroundSize: "104px 104px",
           maskImage:
-            "radial-gradient(120% 90% at 50% 0%, black 30%, transparent 78%)",
+            "radial-gradient(120% 80% at 50% 0%, black 12%, transparent 68%)",
           WebkitMaskImage:
-            "radial-gradient(120% 90% at 50% 0%, black 30%, transparent 78%)",
+            "radial-gradient(120% 80% at 50% 0%, black 12%, transparent 68%)",
         }}
       />
-      {refs && (
-        <div className="absolute inset-0 mx-auto hidden max-w-cf px-2 font-mono text-[10px] uppercase tracking-widest text-ink-dim/50 lg:block">
-          {["A", "B", "C", "D"].map((c, i) => (
-            <span
-              key={c}
-              className="absolute top-2"
-              style={{ left: `${12 + i * 25}%` }}
-            >
-              {c}
-            </span>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
-/** ④ Coordinate / revision title-block tag (eyebrows + frame captions). */
+/**
+ * ④ Section label — a quiet, refined eyebrow. Body face (not monospace), no
+ * bracket mark: a small-caps kicker used sparingly for context, not a
+ * decorative "coordinate tag". Kept the CoordTag name for call-site stability.
+ */
 export function CoordTag({
   children,
   className = "",
@@ -61,9 +56,8 @@ export function CoordTag({
 }) {
   return (
     <span
-      className={`inline-flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-gold-500 ${className}`}
+      className={`inline-block text-[13px] font-semibold uppercase tracking-[0.14em] text-gold-500 ${className}`}
     >
-      <span aria-hidden="true" className="inline-block h-2 w-2 border border-gold-500/60" />
       {children}
     </span>
   );

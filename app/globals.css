@@ -19,6 +19,13 @@
     color-scheme: dark;
   }
 
+  /* Clash Display ships a narrow space glyph, so large display headings fuse
+     their words ("wholejob"). Open the word gaps a touch on marketing display
+     type — letters stay tight, words breathe. */
+  [data-marketing] .font-display {
+    word-spacing: 0.07em;
+  }
+
   body {
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;

@@ -1,163 +1,88 @@
 import Image from "next/image";
-import { CoordTag } from "@/components/marketing/setting-out";
-import { BrowserChrome } from "@/components/marketing/browser-chrome";
-import { Reveal } from "@/components/marketing/reveal";
 
 /**
- * Signature moment — "One job, end to end."
- *
- * One real job travels the CrewFlow spine across five stages, each a genuine,
- * large product crop set as the "built object" beside its narrative. The
- * setting-out line runs down the left (blueprint → gold), the job progressing
- * as you descend; each stage rises into view once as you reach it.
- *
- * Composed-by-construction: every stage is a complete row (text + frame) so the
- * section always reads, at any scroll position, on any width — no sticky-scroll
- * runway to look empty. Reveal is one-shot + default-visible (no-JS/reduced-
- * motion safe). Desktop = text beside a wide frame; mobile = text above it.
+ * "Watch it run a real job." — a few large, deliberately distinct product
+ * moments instead of a six-step thumbnail ladder. The end-to-end arc is
+ * compressed into one dense step ribbon; then three genuinely different screens
+ * (pipeline, safety matrix, money) carry the weight at full size. The interface
+ * is the visual — no decoration, no fake chrome, no zig-zag.
  */
 
-type Stage = {
-  n: string;
-  tag: string;
+const ARC = ["Lead", "Quote", "Job", "RAMS", "Invoice", "Paid"];
+
+type Moment = {
   label: string;
   note: string;
   src: string;
   alt: string;
-  url: string;
 };
 
-const STAGES: Stage[] = [
+const MOMENTS: Moment[] = [
   {
-    n: "01",
-    tag: "REV A",
-    label: "Catch the enquiry",
-    note: "Every call, form and referral lands in one pipeline, scored hot to cold so you chase the work worth winning first.",
+    label: "Every enquiry in one pipeline.",
+    note: "Calls, forms and referrals land in one place, scored hot to cold — so you chase the work worth winning first.",
     src: "/product-shots/journey/leads.png",
-    alt: "CrewFlow leads pipeline — enquiries on a kanban board with source, service, estimated value and a hot / warm / cold priority score.",
-    url: "app.crewflow.uk/leads",
+    alt: "CrewFlow leads pipeline — enquiries on a board with source, service, estimated value and a hot / warm / cold priority score.",
   },
   {
-    n: "02",
-    tag: "REV B",
-    label: "Price it",
-    note: "A line-item quote with full VAT, out the door in minutes — not a night at the kitchen table.",
-    src: "/product-shots/journey/quotes.png",
-    alt: "CrewFlow quotes list — line-item quotes for construction jobs with customer, status, valid-until date and VAT-inclusive totals.",
-    url: "app.crewflow.uk/quotes",
-  },
-  {
-    n: "03",
-    tag: "REV C",
-    label: "Win it",
-    note: "The customer signs the quote by name and it becomes a live job — costs, schedule and site details already attached. Nothing re-keyed.",
-    src: "/product-shots/journey/jobs.png",
-    alt: "CrewFlow jobs list — live jobs with status (new, in-progress, blocked, completed), customer, site address and scheduled dates.",
-    url: "app.crewflow.uk/jobs",
-  },
-  {
-    n: "04",
-    tag: "REV D",
-    label: "Prove it's safe",
-    note: "Issue the RAMS before anyone lifts a tool — every hazard scored on a 5×5 matrix, signed off, and frozen as the record for the site.",
+    label: "Prove it's safe before a tool is lifted.",
+    note: "Issue the RAMS with every hazard scored on a 5×5 matrix, signed off, and frozen as the record for the site.",
     src: "/product-shots/journey/rams.png",
     alt: "CrewFlow health & safety register — issued RAMS with hazard counts, risk ratings, and an alert for active jobs with no current risk assessment.",
-    url: "app.crewflow.uk/health-safety",
   },
   {
-    n: "05",
-    tag: "REV E",
-    label: "Bill the work",
-    note: "Stage valuations and applications for payment as the job runs, then invoices that chase themselves — day 3, 7, 14, 21 — until the money lands.",
+    label: "Invoices that chase themselves.",
+    note: "Applications for payment as the job runs, then reminders on day 3, 7, 14 and 21 until the money actually lands.",
     src: "/product-shots/journey/invoices.png",
     alt: "CrewFlow invoices list — invoices with status, due date and a full net / VAT / total breakdown, plus CSV, Xero and Sage export.",
-    url: "app.crewflow.uk/invoices",
-  },
-  {
-    n: "06",
-    tag: "REV F",
-    label: "See the whole company",
-    note: "Every job feeds one screen — what's late, what's owed, what's making money. The morning brief that used to take an afternoon.",
-    src: "/product-shots/journey/dashboard.png",
-    alt: "CrewFlow dashboard — a morning brief flagging an active job without a current RAMS, an overdue invoice and money due from customers this week.",
-    url: "app.crewflow.uk/dashboard",
   },
 ];
 
-function Frame({ url, src, alt, priority }: { url: string; src: string; alt: string; priority: boolean }) {
-  return (
-    <figure className="overflow-hidden rounded-cf border border-white/10 bg-navy-850 shadow-cf ring-1 ring-inset ring-white/[0.04]">
-      <BrowserChrome url={url} />
-      <div className="bg-[#F7F9FC]">
-        <Image
-          src={src}
-          alt={alt}
-          width={1440}
-          height={600}
-          priority={priority}
-          sizes="(max-width: 1023px) 100vw, 740px"
-          className="h-auto w-full"
-        />
-      </div>
-    </figure>
-  );
-}
-
 export function JobJourney() {
   return (
-    <section className="relative border-t border-white/5 bg-navy-950">
-      <div className="mx-auto max-w-cf px-5 pt-20 sm:px-7 sm:pt-28">
-        <CoordTag>Example job · Kitchen extension, Belfast</CoordTag>
-        <h2 className="mt-5 max-w-2xl font-display text-[clamp(1.9rem,3.4vw,2.9rem)] font-bold leading-[1.04] tracking-[-0.02em] text-ink">
-          One job, end to end.
+    <section className="border-t border-white/5 bg-navy-950">
+      <div className="mx-auto max-w-cf px-5 pt-28 sm:px-7 sm:pt-40">
+        <h2 className="max-w-[15ch] font-display text-[clamp(2.1rem,4.6vw,3.75rem)] font-bold leading-[1.0] tracking-[-0.02em] text-ink">
+          Watch it run a real job
         </h2>
-        <p className="mt-4 max-w-xl text-lg leading-relaxed text-ink-mut">
-          You enter it once. Follow a single job down through CrewFlow — from the
-          first call to the last payment, with the site and commercial work that
-          wins bigger jobs built into the middle.
+        <p className="mt-6 max-w-lg text-lg leading-relaxed text-ink-mut">
+          You enter a job once. Winning it, keeping it safe and getting paid all
+          happen in the same place, with nothing re-keyed in between.
         </p>
+        {/* The whole arc, compressed to one dense line. */}
+        <div className="mt-10 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm font-medium text-ink-dim">
+          {ARC.map((step, i) => (
+            <span key={step} className="inline-flex items-center gap-3">
+              <span className={i === ARC.length - 1 ? "text-gold-500" : ""}>{step}</span>
+              {i < ARC.length - 1 && <span aria-hidden="true" className="text-ink-dim/40">→</span>}
+            </span>
+          ))}
+        </div>
       </div>
 
-      <ol className="relative mx-auto mt-14 max-w-cf px-5 sm:mt-16 sm:px-7">
-        {/* Structural setting-out line: blueprint at the top, gold by the end. */}
-        <span
-          aria-hidden="true"
-          className="absolute bottom-10 left-[calc(1.25rem+7px)] top-2 w-px bg-gradient-to-b from-blueprint via-blueprint to-gold-500 sm:left-[calc(1.75rem+7px)]"
-        />
-        {STAGES.map((s, i) => {
-          const last = i === STAGES.length - 1;
-          return (
-            <li key={s.n} className="relative pb-14 pl-10 last:pb-0 sm:pb-16">
-              <span
-                aria-hidden="true"
-                className={`absolute left-0 top-1.5 h-3.5 w-3.5 rounded-full border-2 ${
-                  last ? "border-gold-500 bg-gold-500" : "border-blueprint bg-navy-950"
-                }`}
+      <div className="mx-auto mt-16 max-w-cf space-y-20 px-5 sm:mt-24 sm:space-y-28 sm:px-7">
+        {MOMENTS.map((m) => (
+          <figure key={m.src}>
+            <figcaption className="mb-7 max-w-2xl">
+              <h3 className="font-display text-[clamp(1.6rem,3vw,2.4rem)] font-bold leading-tight tracking-[-0.015em] text-ink">
+                {m.label}
+              </h3>
+              <p className="mt-3 max-w-lg text-lg leading-relaxed text-ink-mut">{m.note}</p>
+            </figcaption>
+            <div className="overflow-hidden rounded-2xl bg-[#F7F9FC] shadow-[0_40px_120px_-30px_rgba(0,0,0,0.7)] ring-1 ring-white/10">
+              <Image
+                src={m.src}
+                alt={m.alt}
+                width={1440}
+                height={600}
+                priority={false}
+                sizes="(max-width: 1400px) 100vw, 1360px"
+                className="h-auto w-full"
               />
-              <Reveal>
-                <div className="grid items-center gap-6 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)] lg:gap-12">
-                  <div>
-                    <span className="flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.18em] text-ink-dim">
-                      <span className="text-gold-500">{s.n}</span>
-                      <span className="text-ink-dim/50">·</span>
-                      <span>{s.tag}</span>
-                    </span>
-                    <h3 className="mt-2.5 font-display text-2xl font-bold tracking-[-0.02em] text-ink">
-                      {s.label}
-                    </h3>
-                    <p className="mt-3 max-w-md text-[15px] leading-relaxed text-ink-mut">
-                      {s.note}
-                    </p>
-                  </div>
-                  <Frame url={s.url} src={s.src} alt={s.alt} priority={false} />
-                </div>
-              </Reveal>
-            </li>
-          );
-        })}
-      </ol>
-
-      <div className="h-20 sm:h-28" />
+            </div>
+          </figure>
+        ))}
+      </div>
     </section>
   );
 }

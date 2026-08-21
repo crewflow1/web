@@ -3,15 +3,12 @@ import Link from "next/link";
 import Image from "next/image";
 import { buildMetadata } from "@/lib/seo/metadata";
 import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
-import { DatumGrid, CoordTag } from "@/components/marketing/setting-out";
-import { ProductFrame } from "@/components/marketing/product-frame";
 import { JobJourney } from "@/components/marketing/home/job-journey";
 import { Differentiation } from "@/components/marketing/home/differentiation";
 import { SwitchTrust } from "@/components/marketing/home/switch-trust";
 import { PricingBlock } from "@/components/marketing/home/pricing-block";
 import { Faq } from "@/components/marketing/home/faq";
 import { PillarsIndex } from "@/components/marketing/home/pillars-index";
-import { Reveal } from "@/components/marketing/reveal";
 
 export const metadata: Metadata = buildMetadata({
   title: "CrewFlow — the operating system for UK construction companies",
@@ -32,165 +29,94 @@ export const metadata: Metadata = buildMetadata({
 export default function HomePage() {
   return (
     <>
-      {/* Beat 1 — Hero: extreme restraint on the setting-out board */}
-      <section className="relative isolate overflow-hidden">
-        <DatumGrid refs />
-        <div className="relative mx-auto max-w-cf px-5 pb-14 pt-20 sm:px-7 sm:pb-20 sm:pt-28">
-          <CoordTag>The operating system for UK construction</CoordTag>
-          <h1 className="mt-6 max-w-[15ch] font-display text-[clamp(2.4rem,6.4vw,4.75rem)] font-bold leading-[0.98] tracking-[-0.03em] text-ink">
-            Run the whole job. From the first call to{" "}
-            <span className="text-gold-500">the last payment.</span>
-          </h1>
-          <p className="mt-7 max-w-xl text-lg leading-relaxed text-ink-mut">
-            Leads, quotes, site paperwork, CIS and VAT — one system
-            built for how UK construction actually gets paid.
-          </p>
-          <div className="mt-9 flex flex-wrap items-center gap-3">
-            <BookDemoButton className="inline-flex h-12 items-center rounded-lg bg-gold-500 px-6 text-base font-semibold text-navy-950 shadow-cf-gold transition-colors hover:bg-gold-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">
-              Book a demo
-            </BookDemoButton>
-            <Link
-              href="/product"
-              className="inline-flex h-12 items-center gap-1.5 rounded-lg border border-white/12 px-6 text-base font-medium text-ink transition-colors hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
-            >
-              Explore the platform <span aria-hidden="true">→</span>
-            </Link>
-          </div>
-          <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-ink-dim">
-            <span className="inline-flex items-center gap-2">
-              <Tick /> Set up in days
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <Tick /> Built in the UK
-            </span>
-            <span className="inline-flex items-center gap-2">
-              <Tick /> No card fees, no lock-in
-            </span>
-          </div>
+      {/* Hero — one idea, stated with confidence. Headline, a line of copy,
+          one clear action, then the product itself. No decoration. */}
+      <section className="mx-auto max-w-cf px-5 pt-20 sm:px-7 sm:pt-28">
+        <h1 className="max-w-[16ch] font-display text-[clamp(2.7rem,7vw,5.5rem)] font-bold leading-[0.95] tracking-[-0.015em] text-ink">
+          Run the whole job. From the first call to{" "}
+          <span className="text-gold-500">the last payment.</span>
+        </h1>
+        <p className="mt-8 max-w-xl text-xl leading-relaxed text-ink-mut">
+          Leads, quotes, site paperwork, CIS and VAT — one system built for how
+          UK construction actually gets paid.
+        </p>
+        <div className="mt-10 flex flex-wrap items-center gap-x-7 gap-y-4">
+          <BookDemoButton className="inline-flex h-12 items-center rounded-xl bg-gold-500 px-7 text-base font-semibold text-navy-950 transition-colors hover:bg-gold-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">
+            Book a demo
+          </BookDemoButton>
+          <Link
+            href="/product"
+            className="group inline-flex items-center gap-2 text-base font-medium text-ink transition-colors hover:text-gold-500 focus-visible:outline-none focus-visible:underline"
+          >
+            Explore the platform
+            <span aria-hidden="true" className="transition-transform group-hover:translate-x-0.5">→</span>
+          </Link>
         </div>
+        <p className="mt-9 text-sm text-ink-dim">
+          Built in the UK · set up in days · no card fees, no lock-in
+        </p>
       </section>
 
-      {/* Beat 2 — Product as hero: the light "built object" set into the board */}
-      <section className="relative border-t border-white/5 bg-navy-900">
-        <div className="mx-auto max-w-cf px-5 py-16 sm:px-7 sm:py-24">
-          <Reveal>
-            <ProductFrame
-              screen="Operations dashboard"
-              url="app.crewflow.uk/dashboard"
-              className="mx-auto max-w-5xl"
-            >
-              <Image
-                src="/product-shots/dashboard.png"
-                alt="The CrewFlow dashboard for Brightwork Construction: a morning brief flagging 3 active jobs without a current RAMS, £11,520 overdue across one invoice, and £55,440 due from customers this week."
-                width={1440}
-                height={620}
-                priority
-                sizes="(max-width: 1024px) 100vw, 1024px"
-                className="h-auto w-full"
-              />
-            </ProductFrame>
-          </Reveal>
-          <p className="mx-auto mt-7 max-w-md text-center text-[15px] leading-relaxed text-ink-dim">
-            One screen for what&apos;s on, what&apos;s late and what needs a look. The whole company at a glance.
-          </p>
+      {/* The product, full-width and large — the first real proof. */}
+      <section className="mx-auto max-w-cf px-5 pb-6 pt-16 sm:px-7 sm:pt-24">
+        <div className="overflow-hidden rounded-2xl bg-[#F7F9FC] shadow-[0_40px_120px_-30px_rgba(0,0,0,0.7)] ring-1 ring-white/10">
+          <Image
+            src="/product-shots/dashboard.png"
+            alt="The CrewFlow dashboard for Brightwork Construction: a morning brief flagging 3 active jobs without a current RAMS, £11,520 overdue across one invoice, and £55,440 due from customers this week."
+            width={1440}
+            height={620}
+            priority
+            sizes="(max-width: 1400px) 100vw, 1360px"
+            className="h-auto w-full"
+          />
         </div>
+        <p className="mt-6 max-w-lg text-[15px] leading-relaxed text-ink-dim">
+          One screen for what&apos;s on, what&apos;s late and what needs a look —
+          the whole company, first thing in the morning.
+        </p>
       </section>
 
-      {/* Beat 3 — Signature moment: one job, end to end (own scroll behaviour;
-          NOT wrapped in Reveal — a transformed ancestor would break sticky). */}
+      {/* One job, end to end — the signature product story. */}
       <JobJourney />
 
-      {/* Bridge CTA — at the point of maximum interest, after the journey. */}
-      <Reveal>
-        <div className="border-t border-white/5 bg-navy-950">
-          <div className="mx-auto max-w-cf px-5 py-14 text-center sm:px-7 sm:py-16">
-            <p className="mx-auto max-w-xl font-display text-xl font-bold tracking-[-0.02em] text-ink sm:text-2xl">
-              That&apos;s one job. You&apos;re running dozens.
-            </p>
-            <p className="mx-auto mt-2.5 max-w-md text-[15px] leading-relaxed text-ink-mut">
-              See CrewFlow carry yours, on a 30-minute demo with your own numbers.
-            </p>
-            <div className="mt-6 flex justify-center">
-              <BookDemoButton className="inline-flex h-12 items-center rounded-lg bg-gold-500 px-6 text-base font-semibold text-navy-950 shadow-cf-gold transition-colors hover:bg-gold-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">
-                Book a demo
-              </BookDemoButton>
-            </div>
-          </div>
-        </div>
-      </Reveal>
+      {/* Six parts of the business. */}
+      <PillarsIndex />
 
-      {/* Beat 4 — Six pillars (drawing register) */}
-      <Reveal>
-        <PillarsIndex />
-      </Reveal>
+      {/* What makes it different. */}
+      <Differentiation />
 
-      {/* Beat 5 — Differentiation */}
-      <Reveal>
-        <Differentiation />
-      </Reveal>
+      {/* Switching is easier than staying. */}
+      <SwitchTrust />
 
-      {/* Beat 6 — Switching & trust */}
-      <Reveal>
-        <SwitchTrust />
-      </Reveal>
+      {/* Pricing. */}
+      <PricingBlock />
 
-      {/* Beat 7 — Pricing / value */}
-      <Reveal>
-        <PricingBlock />
-      </Reveal>
-
-      {/* Beat 8 — Final CTA */}
-      <section className="relative overflow-hidden border-t border-white/5">
-        <DatumGrid />
-        <div className="relative mx-auto max-w-cf px-5 py-24 text-center sm:px-7 sm:py-32">
-          <h2 className="mx-auto max-w-3xl font-display text-[clamp(2rem,4.2vw,3.4rem)] font-bold leading-[1.02] tracking-[-0.025em] text-ink">
+      {/* Close. */}
+      <section className="border-t border-white/5 bg-navy-950">
+        <div className="mx-auto max-w-cf px-5 py-28 sm:px-7 sm:py-36">
+          <h2 className="max-w-[18ch] font-display text-[clamp(2.1rem,4.6vw,3.75rem)] font-bold leading-[1.0] tracking-[-0.02em] text-ink">
             Run your whole construction company from one place.
           </h2>
-          <p className="mx-auto mt-5 max-w-lg text-lg text-ink-mut">
+          <p className="mt-6 max-w-lg text-lg leading-relaxed text-ink-mut">
             A 30-minute demo, walked through with your own jobs and figures. No
-            slides.
+            slides. Your data stays yours — full export any time, no lock-in.
           </p>
-          <p className="mx-auto mt-6 max-w-xl text-sm leading-relaxed text-ink-dim">
-            Built and supported in the UK, by people who know construction. Your
-            data stays yours: full CSV export any time, daily backups, no lock-in.
-          </p>
-          <div className="mt-9 flex flex-wrap justify-center gap-3">
-            <BookDemoButton className="inline-flex h-12 items-center rounded-lg bg-gold-500 px-6 text-base font-semibold text-navy-950 shadow-cf-gold transition-colors hover:bg-gold-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">
+          <div className="mt-9 flex flex-wrap items-center gap-x-7 gap-y-4">
+            <BookDemoButton className="inline-flex h-12 items-center rounded-xl bg-gold-500 px-7 text-base font-semibold text-navy-950 transition-colors hover:bg-gold-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">
               Book a demo
             </BookDemoButton>
             <Link
               href="/product"
-              className="inline-flex h-12 items-center gap-1.5 rounded-lg border border-white/12 px-6 text-base font-medium text-ink transition-colors hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+              className="group inline-flex items-center gap-2 text-base font-medium text-ink transition-colors hover:text-gold-500 focus-visible:outline-none focus-visible:underline"
             >
-              Explore the platform <span aria-hidden="true">→</span>
+              Explore the platform
+              <span aria-hidden="true" className="transition-transform group-hover:translate-x-0.5">→</span>
             </Link>
           </div>
         </div>
       </section>
 
-      {/* Beat 9 — FAQ */}
       <Faq />
     </>
-  );
-}
-
-function Tick() {
-  return (
-    <svg
-      width="15"
-      height="15"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-      className="text-gold-500"
-    >
-      <path
-        d="M5 13l4 4L19 7"
-        stroke="currentColor"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
   );
 }

@@ -1,8 +1,8 @@
-import { CoordTag, DatumRule } from "@/components/marketing/setting-out";
-
 /**
- * Beat 5 — Differentiation. The site / commercial / UK-finance layer that trade
- * apps don't have and that wins bigger work. Every item is LIVE (product-truth).
+ * Differentiation — the site / commercial / UK-finance layer that trade apps
+ * don't have and that wins bigger work. Every item is LIVE (product-truth).
+ * Presented as three plain columns of real capability — no eyebrow, no
+ * decorative rules, no monospace.
  */
 const COLUMNS = [
   {
@@ -39,28 +39,25 @@ const COLUMNS = [
 
 export function Differentiation() {
   return (
-    <section className="relative border-t border-white/5 bg-navy-900">
-      <div className="mx-auto max-w-cf px-5 py-20 sm:px-7 sm:py-28">
-        <CoordTag>The layer that wins bigger jobs</CoordTag>
-        <h2 className="mt-5 max-w-2xl font-display text-[clamp(1.9rem,3.4vw,2.9rem)] font-bold leading-[1.04] tracking-[-0.02em] text-ink">
+    <section className="border-t border-white/5 bg-navy-900">
+      <div className="mx-auto max-w-cf px-5 py-28 sm:px-7 sm:py-36">
+        <h2 className="max-w-[18ch] font-display text-[clamp(2.1rem,4.6vw,3.75rem)] font-bold leading-[1.0] tracking-[-0.02em] text-ink">
           Not a job app. The whole construction business.
         </h2>
-        <p className="mt-4 max-w-xl text-lg leading-relaxed text-ink-mut">
+        <p className="mt-6 max-w-xl text-lg leading-relaxed text-ink-mut">
           The site, commercial and UK-finance work most trade apps don&apos;t
-          touch. The layer that gets you onto bigger tenders and keeps the
+          touch — the layer that gets you onto bigger tenders and keeps the
           margin you won.
         </p>
-        <div className="mt-14 grid gap-x-10 gap-y-12 md:grid-cols-3">
+        <div className="mt-16 grid gap-x-12 gap-y-14 border-t border-white/10 pt-14 md:grid-cols-3">
           {COLUMNS.map((c) => (
             <div key={c.tag}>
-              <DatumRule />
-              <h3 className="mt-5 font-mono text-xs font-semibold uppercase tracking-[0.16em] text-gold-500">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-gold-500">
                 {c.tag}
               </h3>
-              <ul className="mt-5 space-y-3.5">
+              <ul className="mt-6 space-y-4">
                 {c.items.map((it) => (
-                  <li key={it} className="flex gap-3 text-[15px] leading-snug text-ink-mut">
-                    <span aria-hidden="true" className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-blueprint" />
+                  <li key={it} className="text-[17px] leading-snug text-ink">
                     {it}
                   </li>
                 ))}

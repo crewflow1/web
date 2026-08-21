@@ -58,7 +58,9 @@ export default {
       },
       boxShadow: {
         cf: "0 1px 0 rgba(255,255,255,.03) inset, 0 10px 30px rgba(0,0,0,.35)",
-        "cf-gold": "0 8px 30px rgba(234,178,60,.18)",
+        // Flat, crisp CTAs — no gold "glow". Kept as a token so existing
+        // `shadow-cf-gold` class sites resolve to nothing rather than break.
+        "cf-gold": "none",
       },
       borderRadius: {
         cf: "16px",

@@ -5,7 +5,7 @@ import { buildMetadata } from "@/lib/seo/metadata";
 import { JsonLd } from "@/components/seo/json-ld";
 import { webPageSchema, breadcrumbSchema } from "@/lib/seo/schema";
 import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
-import { DatumGrid, CoordTag, DatumRule } from "@/components/marketing/setting-out";
+import { DatumGrid } from "@/components/marketing/setting-out";
 import { PILLARS } from "@/lib/marketing/pillars";
 
 const PATH = "/pricing";
@@ -81,18 +81,15 @@ export default function PricingPage() {
       />
 
       {/* Hero */}
-      <section className="relative overflow-hidden">
-        <DatumGrid refs />
-        <div className="relative mx-auto max-w-cf px-5 pb-10 pt-20 sm:px-7 sm:pt-28">
-          <CoordTag>Pricing</CoordTag>
-          <h1 className="mt-6 max-w-[16ch] font-display text-[clamp(2.4rem,6vw,4.25rem)] font-bold leading-[1.0] tracking-[-0.03em] text-ink">
-            One price. The whole{" "}
-            <span className="text-gold-500">operating system.</span>
+      <section>
+        <div className="mx-auto max-w-cf px-5 pb-10 pt-20 sm:px-7 sm:pt-28">
+          <h1 className="max-w-[16ch] font-display text-[clamp(2.6rem,6.5vw,4.75rem)] font-bold leading-[0.98] tracking-[-0.015em] text-ink">
+            One price for the whole operating system
           </h1>
-          <p className="mt-6 max-w-xl text-lg leading-relaxed text-ink-mut">
+          <p className="mt-7 max-w-xl text-lg leading-relaxed text-ink-mut">
             No per-seat fees, no per-feature tiers, no card-processing skim. One
-            setup, one monthly fee — everything from winning work to tax-ready figures.
-            We set you up properly and stay close.
+            setup, one monthly fee — everything from winning work to tax-ready
+            figures. We set you up properly and stay close.
           </p>
         </div>
       </section>
@@ -102,21 +99,21 @@ export default function PricingPage() {
         <div className="mx-auto max-w-cf px-5 py-16 sm:px-7 sm:py-20">
           <div className="grid gap-10 lg:grid-cols-[0.85fr_1.15fr] lg:items-start">
             {/* The card */}
-            <div className="rounded-cf border border-cfborder bg-navy-800 p-8 shadow-cf lg:sticky lg:top-24">
-              <p className="font-mono text-xs uppercase tracking-widest text-ink-dim">
-                CrewFlow — all-in
+            <div className="rounded-2xl border border-white/10 bg-navy-800 p-8 lg:sticky lg:top-24">
+              <p className="text-sm font-semibold uppercase tracking-[0.12em] text-gold-500">
+                CrewFlow, all in
               </p>
-              <div className="mt-4 flex items-baseline gap-2">
-                <span className="font-display text-6xl font-bold tabular-nums text-ink">
+              <div className="mt-4 flex items-baseline gap-3">
+                <span className="font-display text-[clamp(4rem,9vw,6.5rem)] font-bold leading-none tabular-nums tracking-[-0.02em] text-ink">
                   £{monthly}
                 </span>
-                <span className="text-ink-dim">/ month</span>
+                <span className="text-lg text-ink-mut">/ month</span>
               </div>
-              <p className="mt-2 text-sm text-ink-dim">
+              <p className="mt-3 text-sm text-ink-dim">
                 + £{setup} one-time setup &amp; migration
               </p>
               <div className="mt-7">
-                <BookDemoButton className="inline-flex h-12 w-full items-center justify-center rounded-lg bg-gold-500 px-6 text-base font-semibold text-navy-950 shadow-cf-gold transition-colors hover:bg-gold-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">
+                <BookDemoButton className="inline-flex h-12 w-full items-center justify-center rounded-xl bg-gold-500 px-6 text-base font-semibold text-navy-950 transition-colors hover:bg-gold-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">
                   Book a demo
                 </BookDemoButton>
               </div>
@@ -124,7 +121,7 @@ export default function PricingPage() {
                 See it on your own numbers before you commit.
               </p>
 
-              <DatumRule className="my-7" />
+              <div className="my-7 h-px bg-white/10" />
 
               <ul className="space-y-3 text-[15px] text-ink-mut">
                 {INCLUDED.map((item) => (
@@ -138,9 +135,8 @@ export default function PricingPage() {
 
             {/* Everything = the six pillars (kept in the dark system) */}
             <div>
-              <CoordTag>What &ldquo;everything&rdquo; means</CoordTag>
-              <h2 className="mt-5 max-w-xl font-display text-[clamp(1.8rem,3.2vw,2.6rem)] font-bold leading-[1.05] tracking-[-0.02em] text-ink">
-                Every part of the business. One price.
+              <h2 className="max-w-xl font-display text-[clamp(1.9rem,3.4vw,2.8rem)] font-bold leading-[1.04] tracking-[-0.02em] text-ink">
+                Every part of the business, included
               </h2>
               <p className="mt-4 max-w-lg text-lg leading-relaxed text-ink-mut">
                 Every module below is part of CrewFlow — not a premium tier, not
@@ -154,22 +150,15 @@ export default function PricingPage() {
                       href={`/product/${p.slug}`}
                       className="group grid grid-cols-[2.5rem_1fr] items-baseline gap-x-4 gap-y-2 rounded-lg border-b border-white/10 py-5 transition-colors hover:bg-white/[0.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-500"
                     >
-                      <span className="font-mono text-sm tabular-nums text-gold-500">
+                      <span className="text-sm font-semibold tabular-nums text-gold-500">
                         {p.n}
                       </span>
                       <span className="min-w-0">
                         <span className="font-display text-lg font-bold text-ink">
                           {p.label}
                         </span>
-                        <span className="mt-1.5 flex flex-wrap gap-1.5">
-                          {p.capabilities.map((c) => (
-                            <span
-                              key={c.name}
-                              className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-ink-dim"
-                            >
-                              {c.name}
-                            </span>
-                          ))}
+                        <span className="mt-1.5 block text-[14px] leading-relaxed text-ink-mut">
+                          {p.capabilities.map((c) => c.name).join("  ·  ")}
                         </span>
                       </span>
                     </Link>
@@ -184,9 +173,8 @@ export default function PricingPage() {
       {/* FAQ */}
       <section className="border-t border-white/5">
         <div className="mx-auto max-w-cf px-5 py-20 sm:px-7 sm:py-24">
-          <CoordTag>Pricing questions</CoordTag>
-          <h2 className="mt-5 font-display text-[clamp(1.9rem,3.4vw,2.9rem)] font-bold leading-[1.04] tracking-[-0.02em] text-ink">
-            Straight answers on cost.
+          <h2 className="font-display text-[clamp(1.9rem,3.4vw,2.9rem)] font-bold leading-[1.04] tracking-[-0.02em] text-ink">
+            Cost, answered plainly
           </h2>
           <div className="mt-10 max-w-3xl divide-y divide-white/10 border-y border-white/10">
             {FAQS.map((f) => (

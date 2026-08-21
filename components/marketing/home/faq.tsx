@@ -1,6 +1,4 @@
-import { CoordTag } from "@/components/marketing/setting-out";
-
-/** Beat 9 — FAQ. Native <details>, no-JS-safe. All answers product-truth-safe. */
+/** FAQ. Native <details>, no-JS-safe. All answers product-truth-safe. */
 const FAQS = [
   {
     q: "How long does setup take?",
@@ -35,12 +33,11 @@ const FAQS = [
 export function Faq() {
   return (
     <section className="border-t border-white/5">
-      <div className="mx-auto max-w-cf px-5 py-20 sm:px-7 sm:py-28">
-        <CoordTag>Common questions</CoordTag>
-        <h2 className="mt-5 font-display text-[clamp(1.9rem,3.4vw,2.9rem)] font-bold leading-[1.04] tracking-[-0.02em] text-ink">
-          Straight answers.
+      <div className="mx-auto max-w-cf px-5 py-28 sm:px-7 sm:py-36">
+        <h2 className="font-display text-[clamp(2.1rem,4.6vw,3.75rem)] font-bold leading-[1.0] tracking-[-0.02em] text-ink">
+          Questions, answered
         </h2>
-        <div className="mt-10 max-w-3xl divide-y divide-white/10 border-y border-white/10">
+        <div className="mt-12 max-w-3xl divide-y divide-white/10 border-y border-white/10">
           {FAQS.map((f) => (
             <details key={f.q} className="group py-5">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-4 font-display text-lg font-semibold text-ink [&::-webkit-details-marker]:hidden">

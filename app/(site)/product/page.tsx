@@ -3,7 +3,6 @@ import Link from "next/link";
 import { PILLARS } from "@/lib/marketing/pillars";
 import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
 import { buildMetadata } from "@/lib/seo/metadata";
-import { DatumGrid, CoordTag } from "@/components/marketing/setting-out";
 
 export const metadata: Metadata = buildMetadata({
   title: "The CrewFlow platform — one system for UK construction",
@@ -19,28 +18,27 @@ export default function ProductOverview() {
   return (
     <>
       {/* Hero */}
-      <section className="relative overflow-hidden border-b border-white/10">
-        <DatumGrid />
-        <div className="relative mx-auto max-w-cf px-5 py-20 sm:px-7 sm:py-28">
-          <CoordTag>The operating system for UK construction</CoordTag>
-          <h1 className="mt-5 max-w-4xl font-display text-4xl font-bold leading-[1.05] tracking-tight sm:text-6xl">
-            One system for the commercial, site and financial sides of your
-            business.
+      <section className="border-b border-white/10">
+        <div className="mx-auto max-w-cf px-5 py-20 sm:px-7 sm:py-28">
+          <h1 className="max-w-[18ch] font-display text-[clamp(2.6rem,6vw,4.75rem)] font-bold leading-[0.98] tracking-[-0.015em] text-ink">
+            The commercial, site and financial sides of your business, in one
+            place.
           </h1>
-          <p className="mt-6 max-w-2xl text-lg text-ink-mut">
+          <p className="mt-7 max-w-xl text-lg leading-relaxed text-ink-mut">
             CrewFlow connects the whole job — from the first enquiry to the last
             retention payment — so nothing lives in a spreadsheet, a WhatsApp
             thread, or your head.
           </p>
-          <div className="mt-8 flex flex-wrap gap-3">
-            <BookDemoButton className="inline-flex h-12 items-center rounded-lg bg-gold-500 px-6 text-base font-semibold text-navy-950 shadow-cf-gold transition-colors hover:bg-gold-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">
+          <div className="mt-9 flex flex-wrap items-center gap-x-7 gap-y-4">
+            <BookDemoButton className="inline-flex h-12 items-center rounded-xl bg-gold-500 px-7 text-base font-semibold text-navy-950 transition-colors hover:bg-gold-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">
               Book a demo
             </BookDemoButton>
             <a
               href="#pillars"
-              className="inline-flex h-12 items-center rounded-lg border border-white/15 px-6 text-base font-medium text-ink transition-colors hover:bg-white/5"
+              className="group inline-flex items-center gap-2 text-base font-medium text-ink transition-colors hover:text-gold-500"
             >
               See the six pillars
+              <span aria-hidden="true" className="transition-transform group-hover:translate-x-0.5">→</span>
             </a>
           </div>
         </div>
@@ -80,16 +78,9 @@ export default function ProductOverview() {
                 {p.label}
               </h3>
               <p className="mt-2 flex-1 text-sm text-ink-mut">{p.summary}</p>
-              <ul className="mt-4 flex flex-wrap gap-1.5">
-                {p.capabilities.slice(0, 4).map((c) => (
-                  <li
-                    key={c.name}
-                    className="rounded-full border border-white/10 px-2.5 py-1 text-xs text-ink-dim"
-                  >
-                    {c.name}
-                  </li>
-                ))}
-              </ul>
+              <p className="mt-4 text-[13px] leading-relaxed text-ink-dim">
+                {p.capabilities.slice(0, 4).map((c) => c.name).join("  ·  ")}
+              </p>
             </Link>
           ))}
         </div>
