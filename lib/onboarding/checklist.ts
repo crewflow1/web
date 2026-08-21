@@ -251,7 +251,7 @@ export type ChecklistProgress = {
   done: number;
   /** Required steps + optional steps the user hasn't dismissed. */
   total: number;
-  /** Integer 0–100. */
+  /** Integer 0 to 100. */
   pct: number;
   /** Whether the checklist should still render at all. */
   showChecklist: boolean;

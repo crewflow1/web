@@ -100,7 +100,7 @@ const DEEP_TOUCH_TYPES = new Set<string>([
 ]);
 
 export type RelationshipScore = {
-  /** 0–100, or null when there has been no contact at all. */
+  /** 0 to 100, or null when there has been no contact at all. */
   score: number | null;
   band: RelationshipBand;
   touches: number;
@@ -171,7 +171,7 @@ export function computeRelationshipScore(
       ? null
       : Math.max(0, Math.floor((nowMs - lastTouchMs) / 86_400_000));
 
-  // 0–40 recency · 0–25 frequency · 0–20 two-way · 0–15 depth.
+  // 0 to 40 recency · 0 to 25 frequency · 0 to 20 two-way · 0 to 15 depth.
   const recencyPts = daysSinceLastTouch == null ? 2 : recencyPoints(daysSinceLastTouch);
   const frequencyPts = Math.round((Math.min(touches, 10) / 10) * 25);
   const twoWayPts = inbound >= 3 ? 20 : inbound === 2 ? 15 : inbound === 1 ? 10 : 0;
@@ -201,7 +201,7 @@ export type FactorTone = "positive" | "neutral" | "negative";
 export type IntelligenceFactor = {
   key: string;
   label: string;
-  /** 0–100 value this signal contributed. */
+  /** 0 to 100 value this signal contributed. */
   value: number;
   /** Relative weight in the blend. */
   weight: number;
@@ -210,7 +210,7 @@ export type IntelligenceFactor = {
 };
 
 export type LikelihoodToBuy = {
-  /** 0–100 composite, or null when nothing is known yet. */
+  /** 0 to 100 composite, or null when nothing is known yet. */
   score: number | null;
   band: LikelihoodBand;
   factors: IntelligenceFactor[];
@@ -222,7 +222,7 @@ function toneFor(value: number): FactorTone {
   return "negative";
 }
 
-/** Pipeline stage → 0–100 momentum. Always present (status is never null). */
+/** Pipeline stage → 0 to 100 momentum. Always present (status is never null). */
 function pipelineMomentum(status: string): number {
   switch (status) {
     case "won":

@@ -8,7 +8,7 @@ import { HubHeader, Section, CtaSection } from "@/components/marketing/sections"
 const PATH = paths.blog();
 
 export const metadata = buildMetadata({
-  title: "The CrewFlow Blog — Guides for UK Construction Businesses",
+  title: "The CrewFlow Blog, Guides for UK Construction Businesses",
   description:
     "Practical guides for running a UK construction business: pricing jobs, getting paid faster, choosing software, and staying on top of tax and CIS. From the CrewFlow team.",
   path: PATH,
@@ -44,7 +44,7 @@ export default function BlogHubPage() {
         eyebrow="Blog"
         h1="Guides for running a UK construction business"
         intro={
-          "No fluff, no jargon — practical advice on pricing jobs, getting paid, choosing software and staying on top of tax. Written for owners who'd rather be on site."
+          "No fluff, no jargon, practical advice on pricing jobs, getting paid, choosing software and staying on top of tax. Written for owners who'd rather be on site."
         }
         breadcrumbs={crumbs}
       />

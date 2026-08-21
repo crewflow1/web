@@ -21,7 +21,7 @@ type SubmitResult =
   | { ok: false; error: string; fieldErrors?: Record<string, string> };
 
 /**
- * Book-demo modal — unified dark "Setting-Out" system.
+ * Book-demo modal, unified dark "Setting-Out" system.
  *
  * PRESENTATION + a11y only were reworked here; the booking logic is unchanged:
  * open via the global `crewflow:open-book-demo` event, POST the form to
@@ -143,7 +143,7 @@ export function BookDemoModal() {
           setFieldErrors(result.fieldErrors ?? {});
         }
       } catch (err) {
-        console.error("[demo] fetch threw — surfacing friendly error", err);
+        console.error("[demo] fetch threw, surfacing friendly error", err);
         setError(
           "We hit a network problem sending your request. Email hello@crewflow.uk and we will book you in directly.",
         );

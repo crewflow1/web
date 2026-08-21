@@ -76,7 +76,7 @@ export const REPORTED_PROGRESS_STATUSES = [
 export interface ProgressPoint {
   /** Europe/London calendar day, `YYYY-MM-DD`. The x value. */
   day: string;
-  /** 0–100 inclusive. The y value. */
+  /** 0 to 100 inclusive. The y value. */
   percent: number;
   source: ProgressSource;
   /** Primary key of the owning row (observation id / report id). */
@@ -115,7 +115,7 @@ export type SiteReportProgressRow = {
 const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * Coerce a stored percentage into an integer 0–100, or null.
+ * Coerce a stored percentage into an integer 0 to 100, or null.
  *
  * Mirrors the validation `site_reports.content.progress_percent` is written
  * through (lib/site-reports/schema.ts: coerce → int → min 0 → max 100), so a
@@ -391,7 +391,7 @@ export interface CurveOptions {
  * lines of coordinates; adding a library to draw it would repeat the 48 kB
  * animation-library rejection.
  *
- * Y IS ALWAYS THE FULL 0–100 DOMAIN, never auto-scaled to the data. Auto-scaling
+ * Y IS ALWAYS THE FULL 0 to 100 DOMAIN, never auto-scaled to the data. Auto-scaling
  * a percentage is a way to lie with a chart: a 58→61% fortnight would fill the
  * panel and read as a surge. The slope on screen is the slope in reality.
  *

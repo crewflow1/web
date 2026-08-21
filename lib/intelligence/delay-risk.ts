@@ -8,7 +8,7 @@ import { labelled, type LabelledMetric } from "./provenance";
  * ── NO BLENDED GRADE (the house doctrine, applied to risk) ──────────────────
  * A single "delay score" would need an exchange rate between "14 days behind
  * plan" and "21 days of silence on the progress series", and nothing in this
- * database knows it (lib/suppliers/performance.ts points 1–2; the
+ * database knows it (lib/suppliers/performance.ts points 1 to 2; the
  * lib/health/company-health.ts header). So this module NEVER emits one. Each job
  * carries a LIST of the factors that actually tripped, each with its own
  * severity and the threshold that fired, plus a COUNT of how many are `high` —

@@ -153,7 +153,7 @@ export async function computeActivitySummary(
   // `sent`, which (a) rendered "—" when quotes were accepted without a
   // recorded sent_at, and (b) could exceed 100% (QA observed 133%) when more
   // quotes were accepted than were marked sent. accepted ≤ accepted+declined
-  // by construction, so this is bounded to 0–100; Math.min is belt-and-braces.
+  // by construction, so this is bounded to 0 to 100; Math.min is belt-and-braces.
   const decided = accepted + declined;
   const quote_funnel: QuoteFunnel = {
     sent,

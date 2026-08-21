@@ -6,7 +6,7 @@ import type { Faq } from "@/lib/seo/content";
 import { CoordTag } from "@/components/marketing/setting-out";
 
 /*
- * Shared marketing section primitives — unified dark "Setting-Out" system.
+ * Shared marketing section primitives, unified dark "Setting-Out" system.
  * Every legacy page (compare / industries / features / locations / blog /
  * tools) renders through these, so restyling here re-themes the whole surface.
  * Tokens only (navy / ink / gold / blueprint / cfborder); no ad-hoc hexes,
@@ -41,7 +41,7 @@ export function Section({
   );
 }
 
-/** Legacy alias — the marketing eyebrow IS the CoordTag (consolidated). */
+/** Legacy alias, the marketing eyebrow IS the CoordTag (consolidated). */
 export function Eyebrow({ children }: { children: React.ReactNode }) {
   return <CoordTag>{children}</CoordTag>;
 }
@@ -224,7 +224,7 @@ export function OutcomeCards({
 }
 
 /* -------------------------------------------------------------------------- */
-/* FAQ — renders the accordion AND injects FAQPage JSON-LD                     */
+/* FAQ, renders the accordion AND injects FAQPage JSON-LD                     */
 /* -------------------------------------------------------------------------- */
 
 export function FaqSection({

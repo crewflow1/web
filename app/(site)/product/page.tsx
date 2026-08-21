@@ -5,10 +5,10 @@ import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
 import { buildMetadata } from "@/lib/seo/metadata";
 
 export const metadata: Metadata = buildMetadata({
-  title: "The CrewFlow platform — one system for UK construction",
+  title: "The CrewFlow platform, one system for UK construction",
   titleAbsolute: true,
   description:
-    "CRM, jobs, site & safety, money, people & assets and automation — the whole construction business in one system. Six connected pillars, one place.",
+    "CRM, jobs, site & safety, money, people & assets and automation, the whole construction business in one system. Six connected pillars, one place.",
   path: "/product",
   ogTitle: "One system. Six parts of the business.",
   ogEyebrow: "The platform",
@@ -25,8 +25,8 @@ export default function ProductOverview() {
             place.
           </h1>
           <p className="mt-7 max-w-xl text-lg leading-relaxed text-ink-mut">
-            CrewFlow connects the whole job — from the first enquiry to the last
-            retention payment — so nothing lives in a spreadsheet, a WhatsApp
+            CrewFlow connects the whole job, from the first enquiry to the last
+            retention payment, so nothing lives in a spreadsheet, a WhatsApp
             thread, or your head.
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-x-7 gap-y-4">
@@ -51,7 +51,7 @@ export default function ProductOverview() {
             Six pillars. One connected system.
           </h2>
           <p className="mt-3 text-ink-mut">
-            Enter something once and it flows through the rest — a quote becomes
+            Enter something once and it flows through the rest, a quote becomes
             a job, a job becomes an invoice, and the site paperwork is right
             there when you need to prove it.
           </p>

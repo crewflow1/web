@@ -17,7 +17,7 @@ import {
  * split. The BookDemoModal is mounted once here so every BookDemoButton works.
  *
  * Site-wide entity graph is injected here (scoped to the group); pages in the
- * (site) group get their own copy from that layout — no page double-emits.
+ * (site) group get their own copy from that layout, no page double-emits.
  */
 export default function MarketingLayout({
   children,

@@ -1,11 +1,11 @@
 import Image from "next/image";
 
 /**
- * "Watch it run a real job." — a few large, deliberately distinct product
+ * "Watch it run a real job.", a few large, deliberately distinct product
  * moments instead of a six-step thumbnail ladder. The end-to-end arc is
  * compressed into one dense step ribbon; then three genuinely different screens
  * (pipeline, safety matrix, money) carry the weight at full size. The interface
- * is the visual — no decoration, no fake chrome, no zig-zag.
+ * is the visual, no decoration, no fake chrome, no zig-zag.
  */
 
 const ARC = ["Lead", "Quote", "Job", "RAMS", "Invoice", "Paid"];
@@ -20,21 +20,21 @@ type Moment = {
 const MOMENTS: Moment[] = [
   {
     label: "Every enquiry in one pipeline.",
-    note: "Calls, forms and referrals land in one place, scored hot to cold — so you chase the work worth winning first.",
+    note: "Calls, forms and referrals land in one place, scored hot to cold, so you chase the work worth winning first.",
     src: "/product-shots/journey/leads.png",
-    alt: "CrewFlow leads pipeline — enquiries on a board with source, service, estimated value and a hot / warm / cold priority score.",
+    alt: "CrewFlow leads pipeline, enquiries on a board with source, service, estimated value and a hot / warm / cold priority score.",
   },
   {
     label: "Prove it's safe before a tool is lifted.",
     note: "Issue the RAMS with every hazard scored on a 5×5 matrix, signed off, and frozen as the record for the site.",
     src: "/product-shots/journey/rams.png",
-    alt: "CrewFlow health & safety register — issued RAMS with hazard counts, risk ratings, and an alert for active jobs with no current risk assessment.",
+    alt: "CrewFlow health & safety register, issued RAMS with hazard counts, risk ratings, and an alert for active jobs with no current risk assessment.",
   },
   {
     label: "Invoices that chase themselves.",
     note: "Applications for payment as the job runs, then reminders on day 3, 7, 14 and 21 until the money actually lands.",
     src: "/product-shots/journey/invoices.png",
-    alt: "CrewFlow invoices list — invoices with status, due date and a full net / VAT / total breakdown, plus CSV, Xero and Sage export.",
+    alt: "CrewFlow invoices list, invoices with status, due date and a full net / VAT / total breakdown, plus CSV, Xero and Sage export.",
   },
 ];
 

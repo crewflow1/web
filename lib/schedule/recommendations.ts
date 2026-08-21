@@ -53,7 +53,7 @@ import {
  *    ids that evidence it, and its EXACT contribution to the score. `score` is
  *    defined as the sum of those deltas and is asserted to be, so a factor that
  *    is not displayed cannot influence the ranking. "Suggest Dave" is useless;
- *    "Dave — free 09:00–18:00 Wed, no approved leave, nothing else on that day"
+ *    "Dave — free 09:00 to 18:00 Wed, no approved leave, nothing else on that day"
  *    is a decision a manager can accept or reject.
  *
  *    Positive claims cite row ids. A NEGATIVE claim ("no approved leave") is
@@ -249,7 +249,7 @@ export interface RecommendationInput extends ScheduleConflictInput {
 
 /** What has to become true for the conflict to be resolved. */
 export interface CoverageNeed {
-  /** One sentence stating the gap, e.g. "Someone needs to cover 09:00–18:00…". */
+  /** One sentence stating the gap, e.g. "Someone needs to cover 09:00 to 18:00…". */
   summary: string;
   /** The Europe/London day the slot falls on. */
   day: string;
@@ -337,7 +337,7 @@ export const MAX_RULED_OUT_SHOWN = 8;
 
 /**
  * The default shift the DATABASE itself writes when a job gains an assignee and
- * a date — 08:00–17:00 UTC, from `_tg_jobs_rota_sync`
+ * a date — 08:00 to 17:00 UTC, from `_tg_jobs_rota_sync`
  * (20260523000000_job_rota_unification.sql). A job-day gap has no shift of its
  * own to copy times from, so the product's own default is used rather than an
  * invented one. Stated in UTC because that is what the trigger stores.
@@ -369,7 +369,7 @@ function shiftInterval(row: RotaShiftRow): Interval | null {
   return { start, end };
 }
 
-/** "09:00–18:00 on Wed 12 Aug" — the phrase every clause is built from. */
+/** "09:00 to 18:00 on Wed 12 Aug" — the phrase every clause is built from. */
 function slotPhrase(iv: Interval, day: string): string {
   return `${formatConflictTime(iv.start)}–${formatConflictTime(iv.end)} on ${formatConflictDay(day)}`;
 }
@@ -454,7 +454,7 @@ function deriveNeed(
     // Two overlapping shifts for one person. Exactly one of them has to give.
     // The LATER-STARTING one is re-covered (a manager keeps the commitment
     // already under way); an exact tie — the shape the job-assignment trigger
-    // produces, two identical 08:00–17:00 shifts — breaks on the greater row
+    // produces, two identical 08:00 to 17:00 shifts — breaks on the greater row
     // id, so the choice is arbitrary but never varies between two runs.
     case "staff_double_booked": {
       const shifts = conflict.sourceIds

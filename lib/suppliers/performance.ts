@@ -231,9 +231,9 @@ export type PerfBillRow = SupplierBillRow & {
  * delivery on `expected_date + 3` is `days1to3`, and one on `+4` is `days4to7`.
  */
 export type LatenessBands = {
-  /** 1–3 days after the promised date. */
+  /** 1 to 3 days after the promised date. */
   days1to3: number;
-  /** 4–7 days after. */
+  /** 4 to 7 days after. */
   days4to7: number;
   /** 8 or more days after. */
   days8plus: number;
@@ -749,14 +749,14 @@ export function sampleCaveat(r: Ratio): string | null {
 }
 
 export const LATENESS_BAND_LABEL: Record<keyof LatenessBands, string> = {
-  days1to3: "1–3 days late",
-  days4to7: "4–7 days late",
+  days1to3: "1 to 3 days late",
+  days4to7: "4 to 7 days late",
   days8plus: "8+ days late",
 };
 
 export const SETTLEMENT_BAND_LABEL: Record<keyof SettlementSpeed["bands"], string> = {
   within7: "Within 7 days",
-  within30: "8–30 days",
-  within60: "31–60 days",
+  within30: "8 to 30 days",
+  within60: "31 to 60 days",
   over60: "Over 60 days",
 };

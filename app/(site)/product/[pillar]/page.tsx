@@ -22,7 +22,7 @@ export async function generateMetadata({
   const p = pillarBySlug(pillar);
   if (!p) return {};
   return buildMetadata({
-    title: `${p.label} — CrewFlow for UK construction`,
+    title: `${p.label}, CrewFlow for UK construction`,
     titleAbsolute: true,
     description: p.summary,
     path: `/product/${p.slug}`,
@@ -103,7 +103,7 @@ export default async function PillarPage({
           ))}
         </div>
         <p className="mt-6 max-w-2xl text-sm text-ink-dim">
-          Everything here is live today — no add-ons, no per-feature upsells,
+          Everything here is live today, no add-ons, no per-feature upsells,
           nothing you have to wait for.
         </p>
       </section>
@@ -115,7 +115,7 @@ export default async function PillarPage({
             Part of one connected system
           </h2>
           <p className="mt-3 max-w-2xl text-ink-mut">
-            {p.label} doesn&apos;t sit on its own — it feeds the rest of CrewFlow,
+            {p.label} doesn&apos;t sit on its own, it feeds the rest of CrewFlow,
             so you enter things once and they flow all the way through.
           </p>
           <div className="mt-10 flex flex-wrap gap-x-8 gap-y-4">

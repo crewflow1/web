@@ -4,7 +4,7 @@ import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
 /** Pricing / value. One transparent price; the price card is the one place a
  *  container genuinely earns its keep. No eyebrow, no monospace. */
 const INCLUDED = [
-  "Every feature — no tiers or add-ons",
+  "Every feature, no tiers or add-ons",
   "Full migration from Sage, Xero, spreadsheets or CSV",
   "Unlimited jobs, quotes, invoices & customers",
   "Mobile for every field-staff member",

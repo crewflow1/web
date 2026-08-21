@@ -66,7 +66,7 @@ export type QualificationTaskStatus =
   | "failed"
   | "cancelled";
 
-/** 0–1 progress for a smooth bar; the live phases advance monotonically. */
+/** 0 to 1 progress for a smooth bar; the live phases advance monotonically. */
 export function phaseProgress(phase: QualificationPhase): number {
   switch (phase) {
     case "queued":
@@ -250,7 +250,7 @@ export type QualificationCriterion = {
   label: string;
   /** Relative weight in the confidence blend. */
   weight: number;
-  /** 0–100 strength of this signal, or 0 when unknown. */
+  /** 0 to 100 strength of this signal, or 0 when unknown. */
   value: number;
   known: boolean;
   passed: boolean | null;
@@ -262,9 +262,9 @@ export type QualificationVerdict = {
   decision: QualificationDecision;
   /** Band of the underlying fit score (hot/warm/cool/cold/unscored). */
   tier: ScoreBand;
-  /** The fit score the verdict was made on (0–100), or null when unscored. */
+  /** The fit score the verdict was made on (0 to 100), or null when unscored. */
   score: number | null;
-  /** 0–100 share of criteria weight that was backed by real evidence. */
+  /** 0 to 100 share of criteria weight that was backed by real evidence. */
   confidence: number;
   /** All criteria, always present, in evaluation order. */
   criteria: QualificationCriterion[];

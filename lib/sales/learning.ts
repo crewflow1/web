@@ -110,7 +110,7 @@ export function learningStatusLabel(s: string): string {
 }
 
 // ---------------------------------------------------------------------
-// Confidence tone — maps a 0–100 belief to a pill colour token (the page
+// Confidence tone — maps a 0 to 100 belief to a pill colour token (the page
 // owns the classes). Mirrors calling.ts's CallTone vocabulary.
 // ---------------------------------------------------------------------
 
@@ -170,7 +170,7 @@ export type LearningStats = {
   totalUses: number;
   /** Total logged wins across all learnings. */
   totalWins: number;
-  /** Blended win rate — totalWins ÷ totalUses, 0–100 to 1 d.p. */
+  /** Blended win rate — totalWins ÷ totalUses, 0 to 100 to 1 d.p. */
   blendedWinRate: number;
   /** Learnings promoted into the company-wide Shared Memory engine. */
   promoted: number;

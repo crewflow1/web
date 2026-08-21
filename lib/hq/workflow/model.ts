@@ -279,7 +279,7 @@ export interface SagaProgress {
   failed: number;
   pending: number;
   skipped: number;
-  /** 0–100 integer share of steps that are `done`. */
+  /** 0 to 100 integer share of steps that are `done`. */
   donePct: number;
 }
 

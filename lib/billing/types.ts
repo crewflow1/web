@@ -16,7 +16,7 @@ export interface StageDraft {
   name: string;
   kind: StageKind;
   basis: StageBasis;
-  /** 0–100 when basis === "percent" (of the contract net); ignored for fixed. */
+  /** 0 to 100 when basis === "percent" (of the contract net); ignored for fixed. */
   percent?: number | null;
   /** Ex-VAT amount when basis === "fixed"; ignored for percent/balance. */
   amount?: number | null;

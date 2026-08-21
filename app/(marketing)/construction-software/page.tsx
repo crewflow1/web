@@ -9,7 +9,7 @@ const PATH = paths.locations();
 export const metadata = buildMetadata({
   title: "Construction Software Across the UK",
   description:
-    "CrewFlow is construction software for companies across the UK — built in Belfast, serving builders and trades in London, Manchester, Birmingham, Glasgow, Leeds and beyond.",
+    "CrewFlow is construction software for companies across the UK, built in Belfast, serving builders and trades in London, Manchester, Birmingham, Glasgow, Leeds and beyond.",
   path: PATH,
   keywords: ["construction software UK", "construction software near me", "UK construction software"],
   ogEyebrow: "Locations",
@@ -37,7 +37,7 @@ export default function LocationsHubPage() {
         eyebrow="Across the UK"
         h1="Construction software for UK companies, wherever you build"
         intro={
-          "CrewFlow is built in Belfast and used by construction companies across the United Kingdom. One operating system — leads to tax — made for UK construction and UK tax.\n\nFind your area below."
+          "CrewFlow is built in Belfast and used by construction companies across the United Kingdom. One operating system, leads to tax, made for UK construction and UK tax.\n\nFind your area below."
         }
         breadcrumbs={crumbs}
       />
@@ -45,7 +45,7 @@ export default function LocationsHubPage() {
         cards={LOCATIONS.map((l) => ({
           tag: l.region,
           title: l.location,
-          body: `Construction software for ${l.location} builders and trades — one system for quotes, jobs, payroll, invoices and tax.`,
+          body: `Construction software for ${l.location} builders and trades, one system for quotes, jobs, payroll, invoices and tax.`,
           href: paths.location(l.slug),
         }))}
       />

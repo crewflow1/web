@@ -97,9 +97,9 @@ export type WeatherReading = {
   readonly precipRateMmH?: number | null;
   /** Precipitation accumulated over this reading's interval, mm. */
   readonly precipTotalMm?: number | null;
-  /** Probability of precipitation, 0–100. */
+  /** Probability of precipitation, 0 to 100. */
   readonly precipProbPct?: number | null;
-  /** Relative humidity, 0–100. */
+  /** Relative humidity, 0 to 100. */
   readonly humidityPct?: number | null;
   /** Horizontal visibility, m. */
   readonly visibilityM?: number | null;

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { PILLARS } from "@/lib/marketing/pillars";
 
 /**
- * The six pillars, as a calm typographic index — name, one line, a link.
+ * The six pillars, as a calm typographic index, name, one line, a link.
  * No numbering furniture, no capability chips, no monospace: the breadth
  * speaks for itself when it is given room.
  */
@@ -14,7 +14,7 @@ export function PillarsIndex() {
           Six parts of the business
         </h2>
         <p className="mt-6 max-w-lg text-lg leading-relaxed text-ink-mut">
-          Enter something once and it flows through the rest — win the work, run
+          Enter something once and it flows through the rest, win the work, run
           the job, prove the site, get paid.
         </p>
 

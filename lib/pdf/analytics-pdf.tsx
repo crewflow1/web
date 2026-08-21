@@ -188,7 +188,7 @@ export function AnalyticsPdf({ data }: { data: AnalyticsPdfInput }) {
         <View style={styles.kpiGrid}>
           {[
             ["Healthy (≥70)", num(data.customer.healthy)],
-            ["At risk (40–69)", num(data.customer.atRisk)],
+            ["At risk (40 to 69)", num(data.customer.atRisk)],
             ["Critical (<40)", num(data.customer.critical)],
             ["Unscored", num(data.customer.unscored)],
             ["Avg migration %", pct(data.customer.migration.averagePct)],

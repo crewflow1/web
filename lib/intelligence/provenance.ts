@@ -6,7 +6,7 @@
  * ── THE DOCTRINE THIS MODULE ENFORCES ───────────────────────────────────────
  * Every figure the intelligence layer emits LABELS ITSELF. There is no opaque
  * composite score anywhere in lib/intelligence/** and none may be added —
- * lib/suppliers/performance.ts header points 1–2 are the house precedent (a
+ * lib/suppliers/performance.ts header points 1 to 2 are the house precedent (a
  * weight is an opinion wearing a number's clothes; no honest arithmetic
  * combines metrics with different denominators). A ratchet test greps this
  * directory for composite-score words.

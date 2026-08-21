@@ -69,7 +69,7 @@ export type ReceivingState = {
   totalRemaining: number;
   /** Receipt state from POSTED receipts only — matches po_receipt_state(). */
   status: PoReceiptStatus;
-  /** previouslyReceived / ordered as 0–100 (0 when nothing is ordered). */
+  /** previouslyReceived / ordered as 0 to 100 (0 when nothing is ordered). */
   pct: number;
   /** At least one line would exceed its ordered quantity. */
   hasOverReceipt: boolean;

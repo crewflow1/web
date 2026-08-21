@@ -32,7 +32,7 @@ export default function GlobalError({
           Something went wrong
         </h1>
         <p className="mt-3 max-w-md text-sm text-slate-600">
-          Sorry — CrewFlow hit an unexpected error. Try again, or email{" "}
+          Sorry, CrewFlow hit an unexpected error. Try again, or email{" "}
           <a className="underline" href="mailto:hello@crewflow.uk">
             hello@crewflow.uk
           </a>

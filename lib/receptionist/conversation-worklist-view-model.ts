@@ -7,7 +7,7 @@
 // status and a monotonic revision) and the transitions that move it. What a consumer holds is therefore RAW
 // STATE: a status enum, a nullable page of already-derived {@link WorklistEntry} records, an error string.
 // Nothing yet turned that raw read position into something a PRESENTATION surface can bind to directly — a
-// list of display rows, a "showing 1–10 of 25" summary, an is-this-empty / is-this-loading / did-this-fail
+// list of display rows, a "showing 1 to 10 of 25" summary, an is-this-empty / is-this-loading / did-this-fail
 // verdict with the message to show. R43 is the NEXT — the canonical Conversation Worklist VIEW MODEL: the
 // single authorised PRESENTATION MODEL over the Worklist Session. This module is its PURE CORE: the
 // presentation-ready {@link WorklistViewModel} and the total, deterministic derivations that compute it.

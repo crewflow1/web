@@ -161,7 +161,7 @@ export interface CustomerSuccessHealthInput {
   trialOrgs: number;
   /** Paying-or-trial orgs with health_score >= 70. */
   healthyCustomers: number;
-  /** Paying-or-trial orgs with health_score 40–69. */
+  /** Paying-or-trial orgs with health_score 40 to 69. */
   atRiskCustomers: number;
   /** Paying-or-trial orgs with health_score < 40. */
   criticalCustomers: number;
@@ -463,7 +463,7 @@ export function computeCustomerSuccessBoard(
         "At-risk customers",
         h.atRiskCustomers,
         "int",
-        "Paying-or-trial organisations with a health score of 40–69 — the at-risk watchlist.",
+        "Paying-or-trial organisations with a health score of 40 to 69 — the at-risk watchlist.",
       ),
       fact(
         "critical_customers",
@@ -490,7 +490,7 @@ export function computeCustomerSuccessBoard(
 
     healthSegments = [
       { key: "seg_healthy", label: "Healthy (70+)", value: h.healthyCustomers },
-      { key: "seg_at_risk", label: "At risk (40–69)", value: h.atRiskCustomers },
+      { key: "seg_at_risk", label: "At risk (40 to 69)", value: h.atRiskCustomers },
       { key: "seg_critical", label: "Critical (<40)", value: h.criticalCustomers },
       { key: "seg_unscored", label: "Unscored", value: h.unscoredCustomers },
     ];

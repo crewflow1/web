@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
  * The old "Setting-Out System" (datum grids, margin coordinates, datum-tick
  * rules, load-path lines) has been removed: the construction identity now lives
  * in the gold accent and the typography, not in decorative drawing furniture.
- * Only this small-caps kicker remains — used sparingly for context, never as a
+ * Only this small-caps kicker remains, used sparingly for context, never as a
  * technical mark. The `CoordTag` name is kept for call-site stability.
  */
 export function CoordTag({

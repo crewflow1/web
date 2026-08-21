@@ -30,7 +30,7 @@ import { labelled, type LabelledMetric } from "@/lib/intelligence/provenance";
  * The three measures have DIFFERENT DENOMINATORS (deliveries, PO-linked bills,
  * settled bills) and one of them measures OUR behaviour, not the subcontractor's,
  * so no honest arithmetic combines them (lib/suppliers/performance.ts header
- * points 1–2). Each subcontractor is listed with its three named ratios, each
+ * points 1 to 2). Each subcontractor is listed with its three named ratios, each
  * with its own sample size; the reader weighs them, because the reader is the one
  * who knows whether this trade is schedule-critical or margin-critical.
  *

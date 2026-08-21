@@ -13,7 +13,7 @@ import {
  * Dark shell for the redesigned marketing pages (the unified "Blueprint"
  * system). Applies the brand fonts (Clash + Satoshi) here so the whole group
  * uses them; provides the accessible global nav, dark footer, a skip link and
- * a single <main> landmark — the a11y foundation the old surface lacked.
+ * a single <main> landmark, the a11y foundation the old surface lacked.
  *
  * Lives in its own route group so it can go fully dark without disturbing the
  * legacy light (marketing) pages until they are migrated across.

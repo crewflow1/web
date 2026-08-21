@@ -5,7 +5,7 @@ import { JsonLd } from "@/components/seo/json-ld";
 import { webPageSchema, breadcrumbSchema } from "@/lib/seo/schema";
 import { PageHero, Section, FaqSection, RelatedLinks, CtaSection } from "@/components/marketing/sections";
 
-/** Metadata for a tool page — call from the page's `export const metadata`. */
+/** Metadata for a tool page, call from the page's `export const metadata`. */
 export function toolMetadata(slug: string): Metadata {
   const t = getTool(slug);
   if (!t) return {};
@@ -22,7 +22,7 @@ export function toolMetadata(slug: string): Metadata {
 /**
  * Server-rendered SEO shell wrapping the interactive calculator (passed as
  * children). Gives every tool consistent hero, schema, how-it-works, FAQ,
- * internal links and CTA — so the page is fully indexable and the maths is
+ * internal links and CTA, so the page is fully indexable and the maths is
  * the only per-tool client code.
  */
 export function ToolPageShell({
@@ -79,7 +79,7 @@ export function ToolPageShell({
             </ul>
           ) : null}
           <p className="mt-6 text-xs text-ink-dim">
-            Estimates are guidance only — always confirm critical figures against your own
+            Estimates are guidance only, always confirm critical figures against your own
             measurements, supplier quotes and, for tax, your accountant or HMRC.
           </p>
         </div>
@@ -94,7 +94,7 @@ export function ToolPageShell({
         ]}
       />
 
-      <CtaSection title="Quote, cost and get paid — without the spreadsheet." />
+      <CtaSection title="Quote, cost and get paid, without the spreadsheet." />
     </>
   );
 }

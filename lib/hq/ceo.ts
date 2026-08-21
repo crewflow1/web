@@ -189,7 +189,7 @@ export type DeptCard = {
   /** Optional period-over-period trend on the headline. */
   trend?: ExecTrend | null;
   health: DeptHealth;
-  /** Supporting figures (0–3). */
+  /** Supporting figures (0 to 3). */
   stats: DeptStat[];
 };
 

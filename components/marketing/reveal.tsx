@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 /**
  * One-shot scroll reveal.
  *
- * Default state is VISIBLE ("in"), so content is NEVER stuck hidden — no-JS,
+ * Default state is VISIBLE ("in"), so content is NEVER stuck hidden, no-JS,
  * reduced-motion, and IntersectionObserver-unsupported all leave it fully shown.
  * After mount, a block still below the fold is switched to "out" (hidden while
  * off-screen, so there's no visible flash) and transitioned "in" exactly ONCE

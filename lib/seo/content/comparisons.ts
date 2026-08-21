@@ -3,7 +3,7 @@ import type { ComparisonPage } from "./types";
 /**
  * Competitor comparison pages.
  *
- * Written to be HONEST, not just promotional — each includes a genuine
+ * Written to be HONEST, not just promotional, each includes a genuine
  * "where {competitor} is the better fit" section. That earns trust, satisfies
  * the search intent of someone genuinely comparing, and is exactly what
  * outranks thin "we win at everything" pages.
@@ -32,11 +32,11 @@ export const COMPARISONS: ComparisonPage[] = [
     eyebrow: "Comparison",
     h1: "CrewFlow vs Procore: which fits a UK construction SME?",
     intro:
-      "Procore is one of the biggest names in construction software — and it's built for big construction. If you're a UK SME running quotes, jobs, crews and invoices, the honest question isn't 'which is better', it's 'which is built for you'.",
+      "Procore is one of the biggest names in construction software, and it's built for big construction. If you're a UK SME running quotes, jobs, crews and invoices, the honest question isn't 'which is better', it's 'which is built for you'.",
     positioning:
-      "Procore is an enterprise platform priced and designed for large general contractors managing complex commercial projects with many stakeholders. CrewFlow is the operating system for UK construction companies running roughly 1–30 people who want one tool for the whole business — from the first enquiry to the tax figures your accountant files.",
+      "Procore is an enterprise platform priced and designed for large general contractors managing complex commercial projects with many stakeholders. CrewFlow is the operating system for UK construction companies running roughly 1 to 30 people who want one tool for the whole business, from the first enquiry to the tax figures your accountant files.",
     rows: [
-      { feature: "Built for", crewflow: "UK construction SMEs (1–30 staff)", competitor: "Large enterprise contractors" },
+      { feature: "Built for", crewflow: "UK construction SMEs (1 to 30 staff)", competitor: "Large enterprise contractors" },
       { feature: "UK tax (VAT, PAYE, Corp Tax)", crewflow: "Built in", competitor: "Not a UK tax tool" },
       { feature: "Payroll from clocked hours", crewflow: "Included", competitor: "Not the focus" },
       { feature: "Per-job profitability", crewflow: "From real clocked labour", competitor: "Enterprise cost controls" },
@@ -80,7 +80,7 @@ export const COMPARISONS: ComparisonPage[] = [
     eyebrow: "Comparison",
     h1: "CrewFlow vs Buildertrend: built for the UK, or built for the US?",
     intro:
-      "Buildertrend is a capable project-management platform with deep roots in the US residential building market. The question for a UK firm is whether a US-shaped tool fits how you actually run — and get taxed — over here.",
+      "Buildertrend is a capable project-management platform with deep roots in the US residential building market. The question for a UK firm is whether a US-shaped tool fits how you actually run, and get taxed, over here.",
     positioning:
       "Buildertrend focuses on residential construction project management and client communication, with its centre of gravity in the US market. CrewFlow is purpose-built for UK construction: it covers the same operational ground and adds UK-native finance, payroll and tax that a US platform isn't designed for.",
     rows: [
@@ -106,7 +106,7 @@ export const COMPARISONS: ComparisonPage[] = [
       "Buildertrend is a strong choice for US residential builders. For a UK construction company that wants one system speaking UK tax, UK payroll and UK payment habits, CrewFlow is the native fit.",
     faqs: [
       { q: "Does Buildertrend work in the UK?", a: "It can be used in the UK, but it's designed around the US residential construction market and isn't built for UK VAT, PAYE or Corporation Tax. CrewFlow is purpose-built for UK construction." },
-      { q: "What does CrewFlow add over Buildertrend for a UK firm?", a: "UK-native finance: VAT, PAYE and Corporation Tax tracking, weekly payroll from clocked hours, bank-transfer payment matching, and per-job profitability — all in the same system as your jobs and invoices." },
+      { q: "What does CrewFlow add over Buildertrend for a UK firm?", a: "UK-native finance: VAT, PAYE and Corporation Tax tracking, weekly payroll from clocked hours, bank-transfer payment matching, and per-job profitability, all in the same system as your jobs and invoices." },
     ],
     related: ["crewflow-vs-procore", "crewflow-vs-jobber", "crewflow-vs-tradify"],
     lastReviewed: REVIEWED,
@@ -127,7 +127,7 @@ export const COMPARISONS: ComparisonPage[] = [
     eyebrow: "Comparison",
     h1: "CrewFlow vs Jobber: field-service tool or construction operating system?",
     intro:
-      "Jobber is a polished, popular tool for home-service businesses — booking jobs, scheduling and invoicing. Construction shares some of that, but a building firm also lives or dies on job costing, payroll and UK tax, which is where the two diverge.",
+      "Jobber is a polished, popular tool for home-service businesses, booking jobs, scheduling and invoicing. Construction shares some of that, but a building firm also lives or dies on job costing, payroll and UK tax, which is where the two diverge.",
     positioning:
       "Jobber is built for field-service businesses and excels at the schedule-job-invoice loop. CrewFlow is built specifically for UK construction and adds the things a building business needs beyond field service: per-job profitability from clocked labour, weekly payroll, and UK VAT/PAYE/Corporation Tax.",
     rows: [
@@ -136,7 +136,7 @@ export const COMPARISONS: ComparisonPage[] = [
       { feature: "UK payroll (PAYE, NI)", crewflow: "Built in", competitor: "Not included" },
       { feature: "VAT & Corporation Tax", crewflow: "Built in", competitor: "Not a tax tool" },
       { feature: "Variations on jobs", crewflow: "Captured and billed", competitor: "Service-job oriented" },
-      { feature: "Market", crewflow: "United Kingdom", competitor: "North America–centric" },
+      { feature: "Market", crewflow: "United Kingdom", competitor: "North American" },
     ],
     whereCompetitorWins: [
       "Home-service businesses (landscaping, cleaning, appliance service) that want a slick scheduling-and-invoicing app.",
@@ -152,7 +152,7 @@ export const COMPARISONS: ComparisonPage[] = [
     verdict:
       "If you run a home-service business and want clean scheduling and invoicing, Jobber is excellent. If you run UK construction and need job costing, payroll and tax in one place, that's exactly what CrewFlow is built for.",
     faqs: [
-      { q: "Can I use Jobber for construction?", a: "You can, for the scheduling-and-invoicing part. But Jobber is built for home-service businesses, so you'd still need separate tools for per-job profitability, UK payroll and tax — which CrewFlow brings into one system." },
+      { q: "Can I use Jobber for construction?", a: "You can, for the scheduling-and-invoicing part. But Jobber is built for home-service businesses, so you'd still need separate tools for per-job profitability, UK payroll and tax, which CrewFlow brings into one system." },
       { q: "What does CrewFlow do that Jobber doesn't?", a: "Construction-specific job costing from clocked labour, weekly UK payroll, VAT/PAYE/Corporation Tax tracking, and line-item quoting with variations billed through to invoices." },
     ],
     related: ["crewflow-vs-tradify", "crewflow-vs-servicem8", "crewflow-vs-procore"],
@@ -170,13 +170,13 @@ export const COMPARISONS: ComparisonPage[] = [
     },
     title: "CrewFlow vs Tradify",
     metaDescription:
-      "Tradify handles quoting, scheduling and invoicing for small trades. CrewFlow goes further — payroll, profitability and UK tax in one construction operating system. Compare.",
+      "Tradify handles quoting, scheduling and invoicing for small trades. CrewFlow goes further, payroll, profitability and UK tax in one construction operating system. Compare.",
     eyebrow: "Comparison",
     h1: "CrewFlow vs Tradify: job-management app or full operating system?",
     intro:
-      "Tradify is a tidy job-management app that a lot of small trades like — quote, schedule, invoice, done. CrewFlow covers that same loop and keeps going into the parts of a construction business that usually still live in spreadsheets: payroll, profitability and tax.",
+      "Tradify is a tidy job-management app that a lot of small trades like, quote, schedule, invoice, done. CrewFlow covers that same loop and keeps going into the parts of a construction business that usually still live in spreadsheets: payroll, profitability and tax.",
     positioning:
-      "Tradify focuses on the core job-management workflow for trade businesses. CrewFlow is a broader operating system for UK construction — the same quote-job-invoice loop, plus weekly payroll from clocked hours, per-job profitability, bank-payment matching and UK tax — so fewer things end up back in a spreadsheet.",
+      "Tradify focuses on the core job-management workflow for trade businesses. CrewFlow is a broader operating system for UK construction, the same quote-job-invoice loop, plus weekly payroll from clocked hours, per-job profitability, bank-payment matching and UK tax, so fewer things end up back in a spreadsheet.",
     rows: [
       { feature: "Quote, schedule, invoice", crewflow: "Yes", competitor: "Yes" },
       { feature: "Per-job profitability", crewflow: "From real clocked labour", competitor: "Limited" },
@@ -197,9 +197,9 @@ export const COMPARISONS: ComparisonPage[] = [
       "Anyone who wants VAT, PAYE and Corporation Tax visible all year.",
     ],
     verdict:
-      "If you want a light job-management app and nothing more, Tradify does that well. If you want the whole construction business — operations, payroll, profitability and tax — in one system, CrewFlow is the broader fit.",
+      "If you want a light job-management app and nothing more, Tradify does that well. If you want the whole construction business, operations, payroll, profitability and tax, in one system, CrewFlow is the broader fit.",
     faqs: [
-      { q: "Is CrewFlow a Tradify alternative?", a: "Yes — and a broader one. CrewFlow covers the same quote-schedule-invoice workflow, then adds payroll, per-job profitability, bank reconciliation and UK tax that Tradify doesn't focus on." },
+      { q: "Is CrewFlow a Tradify alternative?", a: "Yes, and a broader one. CrewFlow covers the same quote-schedule-invoice workflow, then adds payroll, per-job profitability, bank reconciliation and UK tax that Tradify doesn't focus on." },
       { q: "Do I need CrewFlow if Tradify works for me?", a: "If you're a sole trader who only needs quoting and invoicing, Tradify may be enough. Once you've got staff to pay, margins to track and tax to stay on top of, CrewFlow brings all of that into one place." },
     ],
     related: ["crewflow-vs-jobber", "crewflow-vs-powered-now", "crewflow-vs-servicem8"],
@@ -221,9 +221,9 @@ export const COMPARISONS: ComparisonPage[] = [
     eyebrow: "Comparison",
     h1: "CrewFlow vs Simpro: power you'll use, or power you'll pay for?",
     intro:
-      "Simpro is a deep, capable platform — and with depth comes complexity and a longer road to value. For a UK construction SME, the question is whether you need that much machinery, or a system you can be live on in days.",
+      "Simpro is a deep, capable platform, and with depth comes complexity and a longer road to value. For a UK construction SME, the question is whether you need that much machinery, or a system you can be live on in days.",
     positioning:
-      "Simpro targets larger field-service and maintenance contractors that need extensive, configurable workflows. CrewFlow targets UK construction SMEs that want the essential operating system — leads to tax — without a heavy implementation or features they'll never switch on.",
+      "Simpro targets larger field-service and maintenance contractors that need extensive, configurable workflows. CrewFlow targets UK construction SMEs that want the essential operating system, leads to tax, without a heavy implementation or features they'll never switch on.",
     rows: [
       { feature: "Built for", crewflow: "UK construction SMEs", competitor: "Larger field-service contractors" },
       { feature: "Time to go live", crewflow: "Days", competitor: "Longer implementation" },
@@ -246,7 +246,7 @@ export const COMPARISONS: ComparisonPage[] = [
     verdict:
       "Simpro suits larger contractors who need deep, configurable workflows and have the resource to run them. CrewFlow suits UK construction SMEs who want the essential operating system, live fast, without the weight.",
     faqs: [
-      { q: "Is Simpro overkill for a small builder?", a: "It can be. Simpro is built for larger, complex field-service operations, which means more configuration and a longer road to value. CrewFlow gives a UK SME the essentials — leads to tax — and gets you live in days." },
+      { q: "Is Simpro overkill for a small builder?", a: "It can be. Simpro is built for larger, complex field-service operations, which means more configuration and a longer road to value. CrewFlow gives a UK SME the essentials, leads to tax, and gets you live in days." },
       { q: "Does CrewFlow handle UK tax better than Simpro?", a: "CrewFlow is UK-native: VAT, PAYE, NI and Corporation Tax are built in for construction. Simpro's focus is field-service workflow rather than UK tax." },
     ],
     related: ["crewflow-vs-procore", "crewflow-vs-jobber", "crewflow-vs-servicem8"],
@@ -270,7 +270,7 @@ export const COMPARISONS: ComparisonPage[] = [
     intro:
       "ServiceM8 is a neat, lightweight app a lot of micro trade businesses run their day on. CrewFlow is a heavier-duty proposition: a whole operating system for a construction business with staff, margins and UK tax to manage.",
     positioning:
-      "ServiceM8 is built for very small field-service operators and is well known for its iOS experience. CrewFlow is built for UK construction companies that need more than a job app — payroll, per-job profitability, bank reconciliation and UK tax in one place, on any device.",
+      "ServiceM8 is built for very small field-service operators and is well known for its iOS experience. CrewFlow is built for UK construction companies that need more than a job app, payroll, per-job profitability, bank reconciliation and UK tax in one place, on any device.",
     rows: [
       { feature: "Built for", crewflow: "UK construction companies", competitor: "Micro field-service businesses" },
       { feature: "Device", crewflow: "Any phone or computer (web)", competitor: "Strong iOS focus" },
@@ -311,13 +311,13 @@ export const COMPARISONS: ComparisonPage[] = [
     },
     title: "CrewFlow vs Buildxact",
     metaDescription:
-      "Buildxact shines at takeoff and estimating. CrewFlow is the broader UK construction operating system — quoting, jobs, payroll, profitability and tax. Compare.",
+      "Buildxact shines at takeoff and estimating. CrewFlow is the broader UK construction operating system, quoting, jobs, payroll, profitability and tax. Compare.",
     eyebrow: "Comparison",
     h1: "CrewFlow vs Buildxact: estimating depth or whole-business breadth?",
     intro:
-      "Buildxact has a reputation for serious estimating and takeoff — measuring off plans, building detailed estimates. CrewFlow takes a different shape: line-item quoting that's fast for everyday jobs, plus the rest of the business around it.",
+      "Buildxact has a reputation for serious estimating and takeoff, measuring off plans, building detailed estimates. CrewFlow takes a different shape: line-item quoting that's fast for everyday jobs, plus the rest of the business around it.",
     positioning:
-      "Buildxact leans into detailed estimating and takeoff for residential builders. CrewFlow covers practical line-item quoting and then extends across the whole business — jobs, staff, payroll, profitability, bank reconciliation and UK tax — rather than going deep on takeoff alone.",
+      "Buildxact leans into detailed estimating and takeoff for residential builders. CrewFlow covers practical line-item quoting and then extends across the whole business, jobs, staff, payroll, profitability, bank reconciliation and UK tax, rather than going deep on takeoff alone.",
     rows: [
       { feature: "Digital takeoff from plans", crewflow: "Practical line-item quoting", competitor: "Detailed takeoff focus" },
       { feature: "Whole-business scope", crewflow: "Leads to tax, one system", competitor: "Estimating + job management" },
@@ -358,13 +358,13 @@ export const COMPARISONS: ComparisonPage[] = [
     },
     title: "CrewFlow vs Powered Now",
     metaDescription:
-      "Powered Now is a handy UK trades app for quotes and invoices. CrewFlow is a full UK construction operating system — payroll, profitability and tax included. Compare.",
+      "Powered Now is a handy UK trades app for quotes and invoices. CrewFlow is a full UK construction operating system, payroll, profitability and tax included. Compare.",
     eyebrow: "Comparison",
     h1: "CrewFlow vs Powered Now: trades app or construction operating system?",
     intro:
       "Powered Now is a popular UK app for tradespeople who want quotes and invoices from their phone. CrewFlow is a bigger commitment for a bigger need: running an entire construction business, staff and finances included, from one system.",
     positioning:
-      "Powered Now serves UK sole traders and small trades who mainly want mobile quoting and invoicing. CrewFlow serves UK construction companies that need the full operating system — CRM, jobs, rota, timesheets, payroll, profitability, payments and tax — as the business grows past one or two people.",
+      "Powered Now serves UK sole traders and small trades who mainly want mobile quoting and invoicing. CrewFlow serves UK construction companies that need the full operating system, CRM, jobs, rota, timesheets, payroll, profitability, payments and tax, as the business grows past one or two people.",
     rows: [
       { feature: "Quotes & invoices", crewflow: "Yes", competitor: "Yes" },
       { feature: "Both UK-built", crewflow: "Yes", competitor: "Yes" },
@@ -387,8 +387,8 @@ export const COMPARISONS: ComparisonPage[] = [
     verdict:
       "Both are UK-built, which is a real advantage over US tools. Powered Now is great for a sole trader who wants mobile quotes and invoices. CrewFlow is for the construction firm that's outgrown that and needs the whole operation in one place.",
     faqs: [
-      { q: "Are CrewFlow and Powered Now both UK-built?", a: "Yes — both are UK products, which matters for VAT, invoicing conventions and support. The difference is scope: Powered Now focuses on quotes and invoices; CrewFlow is a full construction operating system." },
-      { q: "When should I move from Powered Now to CrewFlow?", a: "Typically when you take on staff and start needing rota, timesheets, weekly payroll and real per-job profitability — the point where a quoting-and-invoicing app stops being enough." },
+      { q: "Are CrewFlow and Powered Now both UK-built?", a: "Yes, both are UK products, which matters for VAT, invoicing conventions and support. The difference is scope: Powered Now focuses on quotes and invoices; CrewFlow is a full construction operating system." },
+      { q: "When should I move from Powered Now to CrewFlow?", a: "Typically when you take on staff and start needing rota, timesheets, weekly payroll and real per-job profitability, the point where a quoting-and-invoicing app stops being enough." },
     ],
     related: ["crewflow-vs-tradify", "crewflow-vs-servicem8", "crewflow-vs-jobber"],
     lastReviewed: REVIEWED,

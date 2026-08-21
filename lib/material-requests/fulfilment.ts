@@ -78,7 +78,7 @@ export type MaterialFulfilmentPosition = {
   totalOutstanding: number;
   /** Mirrors material_request_state(): none / partial / full. */
   state: MaterialFulfilmentState;
-  /** totalFulfilled / totalRequested as 0–100 (0 when nothing was requested). */
+  /** totalFulfilled / totalRequested as 0 to 100 (0 when nothing was requested). */
   pct: number;
   /** At least one line was over-issued. */
   hasOverIssue: boolean;

@@ -33,7 +33,7 @@ export type FeaturePage = {
   navLabel: string;
   /** <60 chars ideally. */
   title: string;
-  /** 150–160 chars. */
+  /** 150 to 160 chars. */
   metaDescription: string;
   eyebrow: string;
   h1: string;
@@ -68,11 +68,11 @@ export type ComparisonPage = {
   eyebrow: string;
   h1: string;
   intro: string;
-  /** Honest positioning — sets the frame fairly. */
+  /** Honest positioning, sets the frame fairly. */
   positioning: string;
   /** Comparison table. Value is a short string ("✓ Included", "Add-on", etc.). */
   rows: { feature: string; crewflow: string; competitor: string }[];
-  /** Honesty section — builds trust + E-E-A-T. */
+  /** Honesty section, builds trust + E-E-A-T. */
   whereCompetitorWins: string[];
   whereCrewflowWins: string[];
   verdict: string;

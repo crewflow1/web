@@ -66,9 +66,9 @@ function Block({ block }: { block: BlogBlock }) {
       );
     case "quote":
       return (
-        <blockquote className="mt-6 border-l-2 border-gold-500 bg-navy-900 py-3 pl-5 text-lg italic text-ink-mut">
+        <blockquote className="mt-6 rounded-2xl bg-navy-900 px-6 py-5 text-lg italic text-ink-mut">
           {block.text}
-          {block.cite ? <cite className="mt-2 block text-sm not-italic text-ink-dim">— {block.cite}</cite> : null}
+          {block.cite ? <cite className="mt-2 block text-sm not-italic text-ink-dim">{block.cite}</cite> : null}
         </blockquote>
       );
     case "cta":

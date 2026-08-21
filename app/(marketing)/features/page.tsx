@@ -7,7 +7,7 @@ import { HubHeader, CardGrid, CtaSection } from "@/components/marketing/sections
 const PATH = paths.features();
 
 export const metadata = buildMetadata({
-  title: "Features — One System for the Whole Construction Business",
+  title: "Features, One System for the Whole Construction Business",
   description:
     "Every CrewFlow feature in one place: CRM, quoting, job management, scheduling, timesheets, payroll, invoicing, payment tracking, job costing, tax, H&S and CIS. Book a demo.",
   path: PATH,
@@ -33,7 +33,7 @@ export default function FeaturesHubPage() {
           webPageSchema({
             name: "CrewFlow features",
             description:
-              "Every CrewFlow feature for UK construction companies — from CRM and quoting to payroll, profitability and tax.",
+              "Every CrewFlow feature for UK construction companies, from CRM and quoting to payroll, profitability and tax.",
             path: PATH,
           }),
           breadcrumbSchema(crumbs),

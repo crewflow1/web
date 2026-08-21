@@ -7,9 +7,9 @@ import { HubHeader, CardGrid, CtaSection } from "@/components/marketing/sections
 const PATH = paths.compare();
 
 export const metadata = buildMetadata({
-  title: "CrewFlow vs the Alternatives — Honest Comparisons",
+  title: "CrewFlow vs the Alternatives, Honest Comparisons",
   description:
-    "Honest comparisons of CrewFlow against Procore, Buildertrend, Jobber, Tradify, Simpro, ServiceM8, Buildxact and Powered Now — including where each is the better fit.",
+    "Honest comparisons of CrewFlow against Procore, Buildertrend, Jobber, Tradify, Simpro, ServiceM8, Buildxact and Powered Now, including where each is the better fit.",
   path: PATH,
   keywords: ["construction software comparison", "best construction software UK", "construction software alternatives"],
   ogEyebrow: "Compare",
@@ -39,7 +39,7 @@ export default function CompareHubPage() {
         eyebrow="Compare"
         h1="CrewFlow vs the alternatives, honestly"
         intro={
-          "We'd rather earn your trust than win every row in a table. Each comparison below includes where the other tool is genuinely the better fit — because the right software is the one that fits your business, not ours.\n\nPick a comparison to dig in."
+          "We'd rather earn your trust than win every row in a table. Each comparison below includes where the other tool is genuinely the better fit, because the right software is the one that fits your business, not ours.\n\nPick a comparison to dig in."
         }
         breadcrumbs={crumbs}
       />

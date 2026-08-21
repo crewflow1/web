@@ -12,8 +12,8 @@
  *   §7.4  diversify        — dedupe + MMR-style spread
  *
  * The SQL entry point hq_memory_recall (PR3) performs the permissioned,
- * indexed reads (stage 1–2); this module performs the deterministic maths
- * over the candidates it returns (stage 3–5). Keeping the maths here — pure
+ * indexed reads (stage 1 to 2); this module performs the deterministic maths
+ * over the candidates it returns (stage 3 to 5). Keeping the maths here — pure
  * and typed — is what lets the security gate prove "permission before
  * scoring" and the unit gate prove the ranking without a live pgvector.
  */
@@ -454,8 +454,8 @@ export type RankAndAssembleOptions = {
 /**
  * Rank → diversify → assemble the recall candidates into a budgeted manifest
  * (Volume X §7.3 → §7.4 → §8). Pure + DB-free by design: the SQL entry point
- * performs the permissioned reads (stage 1–2) and returns RAW signals; this
- * composes the three pure cores over them (stage 3–5). Keeping the
+ * performs the permissioned reads (stage 1 to 2) and returns RAW signals; this
+ * composes the three pure cores over them (stage 3 to 5). Keeping the
  * composition here — not in SQL, not in the server wrapper — is what lets the
  * unit gate prove the whole ranking deterministically without a live
  * database, and the security gate prove "permission before scoring" (the

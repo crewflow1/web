@@ -24,24 +24,24 @@ export const metadata: Metadata = buildMetadata({
 });
 
 const INCLUDED = [
-  "Every feature — no tiers, no add-ons",
+  "Every feature, no tiers, no add-ons",
   "Full migration from Sage, Xero, spreadsheets or CSV",
-  "Premium onboarding — live in days, not months",
+  "Premium onboarding, live in days, not months",
   "Unlimited jobs, quotes, invoices and customers",
   "Mobile for every field-staff member",
   "UK-based onboarding and support that knows construction",
-  "No card-processing fees — keep 100% of every invoice",
-  "No lock-in — export your data any time",
+  "No card-processing fees, keep 100% of every invoice",
+  "No lock-in, export your data any time",
 ];
 
 const FAQS = [
   {
     q: "What does the £1,000 setup cover?",
-    a: "Premium onboarding: we migrate your existing customers, invoices and finances, configure CrewFlow around how your firm actually works, and get you live — typically in days. You're not handed a login and left to it.",
+    a: "Premium onboarding: we migrate your existing customers, invoices and finances, configure CrewFlow around how your firm actually works, and get you live, typically in days. You're not handed a login and left to it.",
   },
   {
     q: "What's included in the £500 a month?",
-    a: "Everything. CRM, quoting, jobs, scheduling, timesheets, payroll, invoicing, payment tracking, job costing and tax figures — plus health & safety, CIS and site management, and support. No per-feature upsells.",
+    a: "Everything. CRM, quoting, jobs, scheduling, timesheets, payroll, invoicing, payment tracking, job costing and tax figures, plus health & safety, CIS and site management, and support. No per-feature upsells.",
   },
   {
     q: "Is it priced per user?",
@@ -72,7 +72,7 @@ export default function PricingPage() {
           webPageSchema({
             name: "CrewFlow pricing",
             description:
-              "Simple, transparent pricing for UK construction companies — one setup fee, one monthly fee, everything included.",
+              "Simple, transparent pricing for UK construction companies, one setup fee, one monthly fee, everything included.",
             path: PATH,
           }),
           breadcrumbSchema(crumbs),
@@ -87,7 +87,7 @@ export default function PricingPage() {
           </h1>
           <p className="mt-7 max-w-xl text-lg leading-relaxed text-ink-mut">
             No per-seat fees, no per-feature tiers, no card-processing skim. One
-            setup, one monthly fee — everything from winning work to tax-ready
+            setup, one monthly fee, everything from winning work to tax-ready
             figures. We set you up properly and stay close.
           </p>
         </div>
@@ -136,7 +136,7 @@ export default function PricingPage() {
                 Every part of the business, included
               </h2>
               <p className="mt-4 max-w-lg text-lg leading-relaxed text-ink-mut">
-                Every module below is part of CrewFlow — not a premium tier, not
+                Every module below is part of CrewFlow, not a premium tier, not
                 an add-on. Six parts of the company, in one system.
               </p>
 

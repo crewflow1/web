@@ -7,7 +7,7 @@ import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
 import { WordmarkDark } from "@/components/marketing/logo";
 
 /**
- * Global marketing navigation — dark "Blueprint" system.
+ * Global marketing navigation, dark "Blueprint" system.
  *
  * Fixes the pre-redesign defect where mobile had NO navigation (links were
  * `hidden md:inline-flex` with no replacement). Desktop gets a compact bar with
@@ -31,7 +31,7 @@ const PRODUCT: NavMenu = {
     { label: "Money", href: "/product/money", note: "Invoicing, CIS, retention, costing" },
     { label: "People & assets", href: "/product/people-assets", note: "Workforce, fleet, stock" },
     { label: "Automation & intelligence", href: "/product/automation", note: "Workflows, reminders, reporting" },
-    { label: "Features A–Z", href: "/features", note: "Every capability, one list" },
+    { label: "Features A to Z", href: "/features", note: "Every capability, one list" },
   ],
 };
 

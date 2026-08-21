@@ -9,16 +9,15 @@ const PATH = paths.tools();
 export const metadata = buildMetadata({
   title: "Free Construction Calculators & Tools",
   description:
-    "Free calculators for construction businesses — markup & margin, UK VAT, concrete and bricks. Quick, accurate, and built by the team behind CrewFlow.",
+    "Free calculators for construction businesses, markup & margin, UK VAT, concrete and bricks. Quick, accurate, and built by the team behind CrewFlow.",
   path: PATH,
   keywords: ["construction calculator", "free construction tools", "builder calculators uk", "construction markup calculator"],
   ogEyebrow: "Free tools",
 });
 
 function teaser(intro: string): string {
-  const s = intro.replace(/—/g, "—");
-  const i = s.indexOf(". ");
-  return i === -1 ? s : s.slice(0, i + 1);
+  const i = intro.indexOf(". ");
+  return i === -1 ? intro : intro.slice(0, i + 1);
 }
 
 export default function ToolsHubPage() {
@@ -43,7 +42,7 @@ export default function ToolsHubPage() {
         eyebrow="Free tools"
         h1="Free calculators for construction businesses"
         intro={
-          "Quick, accurate, no sign-up. Price jobs, check VAT and estimate materials in seconds — built by the team behind CrewFlow, the operating system for UK construction companies."
+          "Quick, accurate, no sign-up. Price jobs, check VAT and estimate materials in seconds, built by the team behind CrewFlow, the operating system for UK construction companies."
         }
         breadcrumbs={crumbs}
       />

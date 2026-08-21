@@ -15,7 +15,7 @@ import {
  * Calendar event-push adapter — the provider HTTP half of the one-way push.
  *
  * `buildEventPayload` maps a CrewFlow job (with its unified default rota shift of
- * 08:00–17:00 on the scheduled date, per the job↔rota unification) into a
+ * 08:00 to 17:00 on the scheduled date, per the job↔rota unification) into a
  * provider-neutral event shape; `buildRotaEventPayload` maps a standalone rota
  * shift, spanning its OWN starts_at/ends_at rather than a synthesised default, so
  * a shift with no backing job still lands on the calendar. `pushEventToProvider`
@@ -114,8 +114,8 @@ export type JobForEvent = {
  * month-arithmetic, which ROLLS FORWARD on day-of-month overflow (e.g. a Jan-31
  * anchor becomes Mar-3, then Apr-3, …). No single Google RRULE / Microsoft
  * recurrence reproduces that roll-forward — they either skip or clamp the missing
- * day. For an anchor on day 1–28 (every month has that day) there is NO overflow,
- * so `FREQ=MONTHLY` is byte-faithful; for an anchor on day 29–31 the two views
+ * day. For an anchor on day 1 to 28 (every month has that day) there is NO overflow,
+ * so `FREQ=MONTHLY` is byte-faithful; for an anchor on day 29 to 31 the two views
  * would DIVERGE, so we refuse to approximate and return `inexpressible`. Weekly /
  * biweekly are pure day arithmetic and always faithful.
  */
@@ -276,7 +276,7 @@ function toWallClockUtc(ts: string): string | null {
 
 /**
  * Map a rota shift into a provider-neutral event payload. Unlike a job (which
- * synthesises a fixed 08:00–17:00 default), a rota entry carries its OWN
+ * synthesises a fixed 08:00 to 17:00 default), a rota entry carries its OWN
  * starts_at / ends_at, so the event spans the real shift — the standalone-shift
  * gap the job-only push left uncovered. The shift is stored as an absolute instant
  * (timestamptz), so it is emitted as UTC wall-clock time. Pure — no I/O. Returns

@@ -99,7 +99,7 @@ export function isImportant(i: string): boolean {
   return i === "high" || i === "critical";
 }
 
-/** Human-friendly label for a 0–100 confidence score. */
+/** Human-friendly label for a 0 to 100 confidence score. */
 export function confidenceNote(c: number): string {
   if (c >= 90) return "Verified";
   if (c >= 75) return "High";

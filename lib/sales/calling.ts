@@ -320,7 +320,7 @@ export type CallStats = {
   dialled: number;
   /** Calls whose outcome was a productive connection. */
   connected: number;
-  /** connected ÷ dialled, 0–100 to 1 d.p. */
+  /** connected ÷ dialled, 0 to 100 to 1 d.p. */
   connectRate: number;
   totalTalkSeconds: number;
   /** Mean talk time over calls with a recorded duration, whole seconds. */

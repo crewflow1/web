@@ -1,7 +1,7 @@
 /**
- * Differentiation — the site / commercial / UK-finance layer that trade apps
+ * Differentiation, the site / commercial / UK-finance layer that trade apps
  * don't have and that wins bigger work. Every item is LIVE (product-truth).
- * Presented as three plain columns of real capability — no eyebrow, no
+ * Presented as three plain columns of real capability, no eyebrow, no
  * decorative rules, no monospace.
  */
 const COLUMNS = [
@@ -46,7 +46,7 @@ export function Differentiation() {
         </h2>
         <p className="mt-6 max-w-xl text-lg leading-relaxed text-ink-mut">
           The site, commercial and UK-finance work most trade apps don&apos;t
-          touch — the layer that gets you onto bigger tenders and keeps the
+          touch, the layer that gets you onto bigger tenders and keeps the
           margin you won.
         </p>
         <div className="mt-16 grid gap-x-12 gap-y-14 pt-2 md:grid-cols-3">

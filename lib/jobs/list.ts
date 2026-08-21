@@ -6,7 +6,7 @@
  *
  * The bug these guard against: /jobs used `.limit(200)` and printed
  * `rows.length` as the headline total, so an org with 640 jobs showed
- * "200 jobs" and rows 201–640 were unreachable. Worse, "Today's jobs" was
+ * "200 jobs" and rows 201 to 640 were unreachable. Worse, "Today's jobs" was
  * derived by filtering that same 200-row slice — under `scheduled_date ASC`
  * the upcoming/today rows sort LAST, so once an org passed 200 historical
  * jobs, today's work could fall off the slice entirely and field staff would

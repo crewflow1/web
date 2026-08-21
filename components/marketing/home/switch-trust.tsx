@@ -1,4 +1,4 @@
-/** Switching & trust — honest, product-truth-safe reassurance. No cards. */
+/** Switching & trust, honest, product-truth-safe reassurance. No cards. */
 const POINTS = [
   { t: "Runs alongside Xero", d: "Clean CSV export to Xero & Sage. No live sync to set up or break." },
   { t: "No card fees", d: "Bank transfer only. You keep 100% of every invoice." },
@@ -14,7 +14,7 @@ export function SwitchTrust() {
           Moving across is the easy part
         </h2>
         <p className="mt-6 max-w-2xl text-lg leading-relaxed text-ink-mut">
-          Keep your accountant. Keep Xero. We move you across by hand — customers,
+          Keep your accountant. Keep Xero. We move you across by hand, customers,
           jobs and finances brought over, checked, and shown to you in a preview
           before anything goes live.
         </p>

@@ -164,12 +164,12 @@ function extractEmail(text: string): string | null {
 }
 
 /** A UK phone number in free text: a `+44` international prefix or a leading-`0` national trunk, then
- *  8–11 further digits with optional human separators (spaces, dashes, brackets, dots). Conservative —
+ *  8 to 11 further digits with optional human separators (spaces, dashes, brackets, dots). Conservative —
  *  it matches only UK-prefixed shapes, so a bare run of digits (a house number, a quantity) is ignored. */
 const PHONE_RE = /(?:\+44\s?|\b0)(?:\d[\s().-]?){8,11}\d/;
 
 /** Extract the customer's phone: the first UK-shaped number, normalised to canonical E.164 (`+44…`) via
- *  the SAME {@link toE164} the SMS transport uses, or null. Validates the digit count (10–13, covering UK
+ *  the SAME {@link toE164} the SMS transport uses, or null. Validates the digit count (10 to 13, covering UK
  *  national and `+44` international forms) BEFORE normalising, so a too-short/too-long candidate is
  *  refused rather than coerced into a malformed `+44…` string. */
 function extractPhone(text: string): string | null {
@@ -180,7 +180,7 @@ function extractPhone(text: string): string | null {
   return toE164(m[0]);
 }
 
-/** A UK postcode in free text: outward code (1–2 letters, a digit, an optional letter/digit), an optional
+/** A UK postcode in free text: outward code (1 to 2 letters, a digit, an optional letter/digit), an optional
  *  space, then the inward code (a digit and two letters). Captures the two halves so they can be joined in
  *  the one canonical `OUTWARD INWARD` form. */
 const POSTCODE_RE = /\b([A-Za-z]{1,2}\d[A-Za-z\d]?)\s*(\d[A-Za-z]{2})\b/;

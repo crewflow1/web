@@ -6,7 +6,7 @@
  * box." So this module never returns a bare number. It returns the ten factors
  * the directive names — Revenue Fit, Company Size, Digital Maturity, Buying
  * Intent, Growth, Technology, Construction Type, Location, Decision Maker
- * Access, Engagement — each carrying its own 0–100 value, weight, plain-English
+ * Access, Engagement — each carrying its own 0 to 100 value, weight, plain-English
  * reasoning, and a `known` flag, plus the composite blended over the factors we
  * actually have evidence for.
  *
@@ -36,11 +36,11 @@ import type { CompanyIntelligence, DecisionMaker } from "./model";
 export type ResearchScoreFactor = IntelligenceFactor & { known: boolean };
 
 export type ResearchScore = {
-  /** 0–100 weighted over KNOWN factors, or null when nothing is known. */
+  /** 0 to 100 weighted over KNOWN factors, or null when nothing is known. */
   overall: number | null;
   band: ScoreBand;
   bandLabel: string;
-  /** 0–100 share of total weight that was backed by evidence. */
+  /** 0 to 100 share of total weight that was backed by evidence. */
   confidence: number;
   /** All ten factors, always present, in the directive's order. */
   factors: ResearchScoreFactor[];
@@ -54,7 +54,7 @@ export type ResearchScoreInput = {
   detectedTechnologies: ReadonlyArray<string>;
   /** Free-text company location/region from the CRM record, if any. */
   location: string | null;
-  /** 0–100 live relationship score from the timeline, or null (no contact). */
+  /** 0 to 100 live relationship score from the timeline, or null (no contact). */
   relationshipScore: number | null;
 };
 

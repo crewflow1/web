@@ -39,7 +39,7 @@ import {
  *   `asset_assignments` assigned_at timestamptz + actual_return_at timestamptz?,
  *                       i.e. a genuine custody interval per asset.
  *
- * A DB trigger auto-creates a default 08:00–17:00 UTC rota entry whenever
+ * A DB trigger auto-creates a default 08:00 to 17:00 UTC rota entry whenever
  * `jobs.assigned_to` and `jobs.scheduled_date` are both set. That trigger does
  * NOT run the rota form's write-time overlap guard, so assigning one person to
  * two jobs on the same date silently produces two exactly-overlapping shifts —
@@ -304,8 +304,8 @@ const UK_HHMM = new Intl.DateTimeFormat("en-GB", {
 
 /**
  * Exported because lib/schedule/recommendations.ts renders the SAME slots back
- * to the same reader: a conflict that says "09:00–18:00" and a proposal that
- * says "10:00–19:00" for one interval would be a bug nobody could see. One
+ * to the same reader: a conflict that says "09:00 to 18:00" and a proposal that
+ * says "10:00 to 19:00" for one interval would be a bug nobody could see. One
  * formatter, one answer.
  */
 export function formatConflictTime(ms: number): string {
@@ -434,7 +434,7 @@ function groupBy<T>(rows: readonly T[], keyOf: (row: T) => string): Map<string, 
  * only with those that begin before it ends. Cost is proportional to the number
  * of clashes found, so a clean fortnight is effectively linear.
  *
- * This is the flagship class. `jobs.assigned_to` writes a default 08:00–17:00
+ * This is the flagship class. `jobs.assigned_to` writes a default 08:00 to 17:00
  * shift through a DB trigger that bypasses the rota form's own overlap guard, so
  * one person assigned to two jobs on one date lands here — and nowhere else in
  * the product today.

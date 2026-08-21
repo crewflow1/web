@@ -9,7 +9,7 @@ const PATH = paths.industries();
 export const metadata = buildMetadata({
   title: "Construction Software by Trade",
   description:
-    "CrewFlow is built for your trade — software for builders, electricians, plumbers, roofers, joiners, groundworks, plasterers, landscapers, scaffolders and heating engineers.",
+    "CrewFlow is built for your trade, software for builders, electricians, plumbers, roofers, joiners, groundworks, plasterers, landscapers, scaffolders and heating engineers.",
   path: PATH,
   keywords: ["software for builders", "software for electricians", "plumbing software", "roofing software", "trade software UK"],
   ogEyebrow: "Industries",
@@ -43,7 +43,7 @@ export default function IndustriesHubPage() {
         eyebrow="Industries"
         h1="Construction software built for your trade"
         intro={
-          "Every trade runs differently — a roofer's day isn't a plasterer's, and a groundworks firm isn't a plumbing one. CrewFlow is one operating system that flexes to how your trade actually works.\n\nFind your trade below."
+          "Every trade runs differently, a roofer's day isn't a plasterer's, and a groundworks firm isn't a plumbing one. CrewFlow is one operating system that flexes to how your trade actually works.\n\nFind your trade below."
         }
         breadcrumbs={crumbs}
       />

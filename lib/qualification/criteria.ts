@@ -65,7 +65,7 @@ export const EVIDENCE_FLOOR = 25;
 export type QualificationInput = {
   /** The Research AI fit score (hq_sales_companies.ai_qualification_score). */
   score: number | null;
-  /** 0–100 share of the intelligence profile that is enriched, or null. */
+  /** 0 to 100 share of the intelligence profile that is enriched, or null. */
   evidence: number | null;
   /** Whether the company has been researched at all (last_researched_at set). */
   researched: boolean;

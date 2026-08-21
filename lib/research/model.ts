@@ -59,7 +59,7 @@ export type ResearchTaskStatus =
   | "failed"
   | "cancelled";
 
-/** 0–1 progress for a smooth bar; the live phases advance monotonically. */
+/** 0 to 1 progress for a smooth bar; the live phases advance monotonically. */
 export function phaseProgress(phase: ResearchPhase): number {
   switch (phase) {
     case "queued":
@@ -229,13 +229,13 @@ export type CompanyIntelligence = {
   growthIndicators: string[];
   recruitmentActivity: string | null;
   urgency: string | null;
-  /** 0–100 derived quality signals — null when there is not enough to judge. */
+  /** 0 to 100 derived quality signals — null when there is not enough to judge. */
   websiteQualityScore: number | null;
   marketingQualityScore: number | null;
   digitalMaturityScore: number | null;
   hiringActivityScore: number | null;
   growthScore: number | null;
-  /** The model's own 0–100 confidence in this profile. */
+  /** The model's own 0 to 100 confidence in this profile. */
   confidence: number | null;
 };
 
@@ -341,9 +341,9 @@ export type ResearchRunState = {
 /** Map an employee headcount estimate to an honest band label. */
 export function employeeBandLabel(n: number | null): string {
   if (n == null) return "Unknown";
-  if (n < 10) return "Micro (1–9)";
-  if (n < 50) return "Small (10–49)";
-  if (n < 250) return "Mid (50–249)";
+  if (n < 10) return "Micro (1 to 9)";
+  if (n < 50) return "Small (10 to 49)";
+  if (n < 250) return "Mid (50 to 249)";
   return "Large (250+)";
 }
 

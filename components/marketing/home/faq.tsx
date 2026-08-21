@@ -2,19 +2,19 @@
 const FAQS = [
   {
     q: "How long does setup take?",
-    a: "Setup usually takes 2–3 days. We import your customers, invoices and finances from a CSV or Excel export, show you a preview before we commit, and can roll back in one click.",
+    a: "Setup usually takes 2 to 3 days. We import your customers, invoices and finances from a CSV or Excel export, show you a preview before we commit, and can roll back in one click.",
   },
   {
-    q: "We already use Xero — do we have to ditch it?",
+    q: "We already use Xero, do we have to ditch it?",
     a: "No. CrewFlow is the operations layer; Xero stays your accountant's tool. Your numbers export cleanly to Xero and Sage when it's time to file.",
   },
   {
     q: "Does CrewFlow take card payments?",
-    a: "No. UK construction runs on bank transfer, so CrewFlow tracks payments rather than processing them — no gateway fee, and you keep 100% of every invoice.",
+    a: "No. UK construction runs on bank transfer, so CrewFlow tracks payments rather than processing them, no gateway fee, and you keep 100% of every invoice.",
   },
   {
     q: "My lads only have phones on site. Does that work?",
-    a: "Yes. The staff view is mobile-first in the browser — clock-in, today's rota and expected take-home. Built for someone standing in a van, not a CFO at a desk.",
+    a: "Yes. The staff view is mobile-first in the browser, clock-in, today's rota and expected take-home. Built for someone standing in a van, not a CFO at a desk.",
   },
   {
     q: "Is my data safe?",

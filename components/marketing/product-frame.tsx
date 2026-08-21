@@ -1,14 +1,14 @@
 import type { ReactNode } from "react";
 
 /**
- * PRODUCT-PROOF FRAME — honest, TEMPORARY placeholder.
+ * PRODUCT-PROOF FRAME, honest, TEMPORARY placeholder.
  *
  * The real CrewFlow app is a LIGHT UI; showing it inside the dark marketing
  * shell (browser-framed, light surface) is the intentional premium contrast.
  *
  * This is NOT a fake dashboard with invented metrics/customers. When no real
  * screenshot is supplied it renders a neutral, structured *schematic* of a
- * CrewFlow app screen (real app shape — sidebar, topbar, tiles, table — with
+ * CrewFlow app screen (real app shape, sidebar, topbar, tiles, table, with
  * ZERO fabricated data/numbers/names) plus a visible "Product preview" tag.
  * Every instance is marked `data-proof="placeholder"` so QA can grep the build
  * and confirm none ships pretending to be real. Drop a real seeded <Image> in
@@ -94,7 +94,7 @@ export function ProductFrame({
         </div>
       )}
       <figcaption className="sr-only">
-        CrewFlow {screen} — product preview{isPlaceholder ? " (placeholder schematic; real screenshot to follow)" : ""}.
+        CrewFlow {screen}, product preview{isPlaceholder ? " (placeholder schematic; real screenshot to follow)" : ""}.
       </figcaption>
     </figure>
   );

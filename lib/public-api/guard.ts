@@ -39,7 +39,7 @@ function isWriteScope(scope: Scope): boolean {
  *      mutation rather than admitting it (see DEFAULT_LIMITS.api_v1).
  *   5. AUDIT — once admitted, one metadata-only row is written to
  *      api_request_log (method, route pathname, status). Best-effort; never
- *      breaks the admitted request. Denials (1–4) write nothing (see
+ *      breaks the admitted request. Denials (1 to 4) write nothing (see
  *      lib/public-api/audit.ts).
  *
  * Returns the resolved key on success, or a Response to return immediately.

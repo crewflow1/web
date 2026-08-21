@@ -100,7 +100,7 @@ export default async function LocationPage({
               "Manage jobs, crews and schedules from one screen",
               "Invoice straight from the job and chase payment automatically",
               "Run weekly payroll from your crew's real clocked hours",
-              "See VAT, PAYE and Corporation Tax all year — no deadline panic",
+              "See VAT, PAYE and Corporation Tax all year, no deadline panic",
               "Know the real margin on every job",
             ]}
           />
