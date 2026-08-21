@@ -4,7 +4,7 @@ import "./globals.css";
 import "./_marketing/tokens.css";
 import { CookieConsent } from "@/app/_components/cookie-consent";
 
-// Boot-time env validation — throws if anything required is missing.
+// Boot-time env validation, throws if anything required is missing.
 import "@/lib/env";
 
 const inter = Inter({

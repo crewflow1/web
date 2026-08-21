@@ -7,13 +7,13 @@ import { INITIAL_FORM_STATE, type FormState } from "@/lib/forms/state";
 import { signInWithPassword, signUpWithPassword } from "./actions";
 
 /**
- * Email + password auth — ADDITIVE, rendered on /login alongside the existing
+ * Email + password auth, ADDITIVE, rendered on /login alongside the existing
  * Google + magic-link options (which are untouched).
  *
  * Two modes in one component: "Sign in" and "Create account". Both are
  * useActionState-driven so validation errors render inline and the typed email
  * is preserved. On success the action returns `redirectTo` and we navigate via
- * window.location.assign (a full-document nav — deliberately not router.push,
+ * window.location.assign (a full-document nav, deliberately not router.push,
  * per the app's deep-swap navigation rule).
  */
 

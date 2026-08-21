@@ -10,7 +10,7 @@ import { PILLARS } from "@/lib/marketing/pillars";
  * comparison, industry, location and blog post is included automatically the
  * moment it's added to lib/seo/content. No manual sitemap maintenance.
  *
- * Only public, indexable marketing URLs appear here — never the authenticated
+ * Only public, indexable marketing URLs appear here, never the authenticated
  * app, admin or portal routes (those are Disallow'd in robots.ts too).
  */
 export default function sitemap(): MetadataRoute.Sitemap {

@@ -3,7 +3,7 @@ import { type ReactNode } from "react";
 import { clashDisplay, satoshi } from "@/app/_marketing/fonts";
 
 /**
- * Shared shell for /privacy and /terms — dark "Setting-Out" system so the legal
+ * Shared shell for /privacy and /terms, dark "Setting-Out" system so the legal
  * pages stay visually coherent with the marketing footer that links to them.
  * Keeps its own minimal chrome (the site nav/modal aren't needed on a legal
  * page) but the same tokens, fonts and gold accent as the rest of the site.

@@ -12,7 +12,7 @@ export default function GlobalError({
 }) {
   useEffect(() => {
     // React error boundaries swallow client-side render errors, so Sentry's
-    // automatic (onRequestError) instrumentation never sees them — capture
+    // automatic (onRequestError) instrumentation never sees them, capture
     // explicitly. console.error is kept for local dev visibility.
     Sentry.captureException(error);
     console.error(error);
