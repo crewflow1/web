@@ -207,7 +207,7 @@ export const FEATURES: FeaturePage[] = [
       },
     ],
     outcomes: [
-      { stat: "22%", label: "more invoices paid on time", body: "Automatic day 3, 7, 14 and 21 reminders mean fewer overdue debts." },
+      { stat: "Day 3", label: "the chase starts on its own", body: "Automatic reminders on day 3, 7, 14 and 21 chase every overdue invoice, so you don't have to." },
       { label: "Zero chasing admin", body: "The system does the follow-up; you do the work." },
       { label: "HMRC-ready", body: "Sequential numbering and an audit trail on every invoice." },
     ],
