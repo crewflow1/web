@@ -11,6 +11,21 @@
     -webkit-text-size-adjust: 100%;
   }
 
+  /* Dark ground for the marketing/site surface: paint <html> so iOS overscroll
+     and first paint are navy, not the light product-app body. Scoped via :has()
+     to the dark wrappers so the light in-app surface is untouched. */
+  html:has([data-marketing]) {
+    background-color: rgb(var(--cf-navy-950));
+    color-scheme: dark;
+  }
+
+  /* Clash Display ships a narrow space glyph, so large display headings fuse
+     their words ("wholejob"). Open the word gaps a touch on marketing display
+     type — letters stay tight, words breathe. */
+  [data-marketing] .font-display {
+    word-spacing: 0.07em;
+  }
+
   body {
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
@@ -25,7 +40,7 @@
  */
 @layer components {
   .legal-prose h2 {
-    @apply mt-8 text-base font-semibold text-slate-900;
+    @apply mt-8 font-display text-base font-semibold text-ink;
   }
   .legal-prose h2:first-of-type {
     @apply mt-0;
@@ -37,12 +52,135 @@
     @apply mt-3 list-disc space-y-1.5 pl-6;
   }
   .legal-prose li > strong {
-    @apply text-slate-900;
+    @apply text-ink;
   }
   .legal-prose a {
-    @apply font-medium text-slate-900 underline underline-offset-2 hover:text-slate-700;
+    @apply font-medium text-gold-500 underline underline-offset-2 hover:text-gold-400;
   }
   .legal-prose code {
-    @apply rounded bg-slate-100 px-1 py-0.5 font-mono text-[12px] text-slate-900;
+    @apply rounded bg-navy-800 px-1 py-0.5 font-mono text-[12px] text-ink;
   }
+}
+
+/*
+ * Marketing scroll-reveal — one-shot, JS-gated (components/marketing/reveal.tsx).
+ * DEFAULT = fully visible (SSR / no-JS / reduced-motion), so content is NEVER
+ * stuck hidden. The Reveal component only hides a block AFTER mount while it's
+ * still below the fold, then transitions it in ONCE as it enters — it never
+ * reverses on scroll-up (the failure mode of a raw scroll timeline).
+ */
+@media (prefers-reduced-motion: no-preference) {
+  [data-reveal="out"] {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  [data-reveal="in"] {
+    opacity: 1;
+    transform: translateY(0);
+    transition:
+      opacity 0.6s ease,
+      transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+
+  /* ---------------------------------------------------------------------------
+   * Product-led motion. Three moments only (hero entrance, the connected-job
+   * scroll story, and the crossfade between product states). Transform/opacity/
+   * clip-path only; all gated here behind prefers-reduced-motion: no-preference.
+   * ------------------------------------------------------------------------ */
+
+  /* 1 — Hero product entrance: the real UI eases up with a soft upward reveal,
+   *     once, on load. The headline stays still. */
+  [data-cf-enter] {
+    animation: cf-enter 900ms cubic-bezier(0.22, 0.61, 0.24, 1) both;
+    animation-delay: 120ms;
+    will-change: transform, opacity, clip-path;
+  }
+  @keyframes cf-enter {
+    from {
+      opacity: 0;
+      transform: translateY(26px) scale(0.986);
+      clip-path: inset(0 0 14% 0 round 16px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+      clip-path: inset(0 0 0 0 round 16px);
+    }
+  }
+
+  /* 2 + 3 — Connected-job scroll story: the sticky product frame crossfades and
+   *     settles as the active stage changes; inactive stage text dims back. */
+  [data-cf-frame] {
+    opacity: 0;
+    transform: scale(0.985);
+    transition:
+      opacity 520ms cubic-bezier(0.4, 0, 0.2, 1),
+      transform 640ms cubic-bezier(0.22, 0.61, 0.24, 1);
+  }
+  [data-cf-frame="active"] {
+    opacity: 1;
+    transform: none;
+  }
+  [data-cf-stage] {
+    opacity: 0.34;
+    transition: opacity 400ms ease;
+  }
+  [data-cf-stage="active"] {
+    opacity: 1;
+  }
+  [data-cf-step] {
+    transition: color 320ms ease;
+  }
+
+  /* Micro-interactions — 160–240ms, immediate and quiet. */
+  details[open] [data-faq-answer] {
+    animation: cf-fade-in 240ms ease both;
+  }
+  @keyframes cf-fade-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: none; }
+  }
+  [data-cf-pop] {
+    animation: cf-pop 160ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+    transform-origin: top;
+  }
+  @keyframes cf-pop {
+    from { opacity: 0; transform: translateY(-6px) scale(0.985); }
+    to { opacity: 1; transform: none; }
+  }
+  [data-cf-drawer] {
+    animation: cf-drawer 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  @keyframes cf-drawer {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+/* Animated nav underline — the indicator itself is fine with reduced motion
+ * (it's a state marker), but the sweep only runs when motion is allowed. */
+.cf-navlink {
+  position: relative;
+}
+.cf-navlink::after {
+  content: "";
+  position: absolute;
+  left: 0.75rem;
+  right: 0.75rem;
+  bottom: 0.35rem;
+  height: 1.5px;
+  background: rgb(var(--cf-gold-500));
+  transform: scaleX(0);
+  transform-origin: left;
+  opacity: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cf-navlink::after {
+    transition: transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 200ms ease;
+  }
+}
+.cf-navlink:hover::after,
+.cf-navlink[data-open="true"]::after {
+  transform: scaleX(1);
+  opacity: 1;
 }

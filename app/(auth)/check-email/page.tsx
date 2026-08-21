@@ -8,7 +8,7 @@ type SearchParams = Promise<{ email?: string }>;
  *
  * Sprint A friction-removal: a "Resend link" button (only when we know
  * the email) calls the same `signInWithMagicLink` server action that
- * /login uses. No new endpoint, no new module — just a form posting
+ * /login uses. No new endpoint, no new module, just a form posting
  * the same email back.
  */
 export default async function CheckEmailPage({

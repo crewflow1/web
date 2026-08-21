@@ -15,7 +15,13 @@ import { resolve } from "node:path";
 const ROOT = resolve(__dirname, "..", "..");
 const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 
-const LANDING = read("app/page.tsx");
+// The 2026 website redesign moved the homepage to the (site) route group and
+// composed it from "beat" components; the entry-CTA is BookDemoButton and the
+// pricing copy lives in the pricing beat. The friction CONTRACT (no free tier,
+// book-a-demo entry, premium £1k/£500 positioning) is unchanged — only the
+// files it lives in moved.
+const LANDING = read("app/(site)/page.tsx");
+const PRICING_BLOCK = read("components/marketing/home/pricing-block.tsx");
 const ACCESS_PENDING = read("app/access-pending/page.tsx");
 const REFRESH_BUTTON = read("app/access-pending/_refresh-button.tsx");
 const ADMIN_ACTIONS = read("app/admin/actions.ts");
@@ -43,15 +49,16 @@ describe("Sprint A item 1 — landing positioning (CEO directive 2026-05-22)", (
   });
 
   it("landing leads with 'Book a demo' as the primary CTA", () => {
-    // BookDemoCta is the single entry-CTA component: import + nav + hero + pricing.
-    const matches = LANDING.match(/BookDemoCta/g) ?? [];
-    expect(matches.length).toBeGreaterThanOrEqual(3);
+    // Redesigned homepage: BookDemoButton in the hero + the final CTA beat.
+    expect(LANDING).toMatch(/BookDemoButton/);
+    const matches = LANDING.match(/Book a demo/g) ?? [];
+    expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("landing copy reflects premium £1k/£500-mo positioning", () => {
-    expect(LANDING).toMatch(/£1,000 one-time setup/);
-    expect(LANDING).toMatch(/£500/);
-    expect(LANDING).toMatch(/\/month/);
+  it("landing copy reflects premium £1k/£500-mo positioning (pricing beat)", () => {
+    expect(PRICING_BLOCK).toMatch(/£1,000 one-time setup/);
+    expect(PRICING_BLOCK).toMatch(/£500/);
+    expect(PRICING_BLOCK).toMatch(/month/);
   });
 });
 

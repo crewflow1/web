@@ -1,8 +1,7 @@
 import type { Faq } from "./types";
 
 /**
- * Free SEO tools (calculators). Each is an indexable, genuinely useful page —
- * the interactive maths lives in a client component; this is the SEO content
+ * Free SEO tools (calculators). Each is an indexable, genuinely useful page * the interactive maths lives in a client component; this is the SEO content
  * (copy, FAQs, links) that wraps it. Tools are classic link magnets.
  */
 export type ToolPage = {
@@ -37,9 +36,9 @@ export const TOOLS: ToolPage[] = [
     eyebrow: "Free tool",
     h1: "Construction Markup & Margin Calculator",
     intro:
-      "Markup and margin are the two most-confused numbers in construction pricing — and getting them mixed up is how jobs quietly lose money. Enter your cost and the margin or markup you want, and this tool gives you the price to quote, your profit, and the equivalent of whichever you didn't enter.",
+      "Markup and margin are the two most-confused numbers in construction pricing, and getting them mixed up is how jobs quietly lose money. Enter your cost and the margin or markup you want, and this tool gives you the price to quote, your profit, and the equivalent of whichever you didn't enter.",
     howItWorks: {
-      h2: "Markup vs margin — the difference that costs builders money",
+      h2: "Markup vs margin, the difference that costs builders money",
       body: "They are not the same. Markup is your profit as a percentage of cost; margin is your profit as a percentage of the price. A 50% markup is only a 33% margin. Pricing a job on 'add 20%' when you needed a 20% margin leaves money on the table on every single job.",
       bullets: [
         "Markup % = profit ÷ cost",
@@ -50,7 +49,7 @@ export const TOOLS: ToolPage[] = [
     },
     faqs: [
       { q: "What's the difference between markup and margin?", a: "Markup is profit as a percentage of your cost; margin is profit as a percentage of the price you charge. They're always different numbers: a 50% markup equals a 33.3% margin. Confusing the two is one of the most common construction pricing mistakes." },
-      { q: "What margin should a construction company aim for?", a: "It depends on your overheads and the type of work, so there's no universal figure — but you should set it deliberately to cover overheads and leave profit, not guess. This calculator helps you price from a target margin instead of a vague 'add a bit on top'." },
+      { q: "What margin should a construction company aim for?", a: "It depends on your overheads and the type of work, so there's no universal figure, but you should set it deliberately to cover overheads and leave profit, not guess. This calculator helps you price from a target margin instead of a vague 'add a bit on top'." },
       { q: "How do I convert markup to margin?", a: "Margin = markup ÷ (1 + markup). For example, a 25% markup is a 20% margin. This tool shows the equivalent automatically when you enter either one." },
     ],
     relatedFeatures: ["quoting-software", "job-costing-software"],
@@ -81,7 +80,7 @@ export const TOOLS: ToolPage[] = [
     faqs: [
       { q: "How do I add 20% VAT to a price?", a: "Multiply the net price by 1.2. For example, £1,000 net becomes £1,200 gross, of which £200 is VAT. Enter the net figure and choose 'Add VAT' to see it." },
       { q: "How do I work out the VAT in a gross figure?", a: "Divide the gross amount by 1.2 (for 20%) to get the net, then subtract to find the VAT. £1,200 gross ÷ 1.2 = £1,000 net, so the VAT is £200. Choose 'Remove VAT' to do this automatically." },
-      { q: "Does construction work always have 20% VAT?", a: "Not always — some construction work qualifies for reduced or zero rates, and the domestic reverse charge changes who accounts for the VAT on many B2B construction services. Check with your accountant or HMRC for your specific situation; this tool covers the standard, reduced and zero rates." },
+      { q: "Does construction work always have 20% VAT?", a: "Not always, some construction work qualifies for reduced or zero rates, and the domestic reverse charge changes who accounts for the VAT on many B2B construction services. Check with your accountant or HMRC for your specific situation; this tool covers the standard, reduced and zero rates." },
     ],
     relatedFeatures: ["invoicing-software", "tax-software"],
     relatedTools: ["markup-calculator", "concrete-calculator", "brick-calculator"],
@@ -109,9 +108,9 @@ export const TOOLS: ToolPage[] = [
       ],
     },
     faqs: [
-      { q: "How much concrete do I need for a slab?", a: "Multiply the slab's length × width × thickness (in metres) to get cubic metres. For a 5m × 3m slab at 100mm thick that's 1.5 m³. Always add ~10% for waste — this calculator does that for you." },
-      { q: "How many 20kg bags of concrete in a cubic metre?", a: "Roughly 105–110 bags of 20kg ready-mix per cubic metre, depending on the mix. This tool uses about 0.0095 m³ per bag. For anything more than around half a cubic metre, ready-mixed delivery is usually more economical." },
-      { q: "Should I add a waste allowance?", a: "Yes — always. Ground is rarely perfectly level and some concrete is lost to spillage and over-dig. A 10% allowance (included here) is a sensible default." },
+      { q: "How much concrete do I need for a slab?", a: "Multiply the slab's length × width × thickness (in metres) to get cubic metres. For a 5m × 3m slab at 100mm thick that's 1.5 m³. Always add ~10% for waste, this calculator does that for you." },
+      { q: "How many 20kg bags of concrete in a cubic metre?", a: "Roughly 105 to 110 bags of 20kg ready-mix per cubic metre, depending on the mix. This tool uses about 0.0095 m³ per bag. For anything more than around half a cubic metre, ready-mixed delivery is usually more economical." },
+      { q: "Should I add a waste allowance?", a: "Yes, always. Ground is rarely perfectly level and some concrete is lost to spillage and over-dig. A 10% allowance (included here) is a sensible default." },
     ],
     relatedFeatures: ["quoting-software", "expense-tracking"],
     relatedTools: ["brick-calculator", "markup-calculator", "vat-calculator"],
@@ -128,7 +127,7 @@ export const TOOLS: ToolPage[] = [
     eyebrow: "Free tool",
     h1: "Brick Calculator",
     intro:
-      "Estimate how many bricks you need for a wall. Enter the length and height, choose single or double skin, and get the brick count for standard UK bricks — including a 10% allowance for cuts and breakages.",
+      "Estimate how many bricks you need for a wall. Enter the length and height, choose single or double skin, and get the brick count for standard UK bricks, including a 10% allowance for cuts and breakages.",
     howItWorks: {
       h2: "How many bricks per square metre?",
       body: "For standard UK bricks (215 × 102.5 × 65mm) laid with 10mm mortar joints, you need about 60 bricks per square metre for a single-skin (half-brick) wall, and double that for a one-brick (double-skin) wall. We work out the wall area, apply 60 per m² per skin, and add 10% for waste.",
@@ -140,8 +139,8 @@ export const TOOLS: ToolPage[] = [
     },
     faqs: [
       { q: "How many bricks are in a square metre?", a: "About 60 standard UK bricks per square metre for a single-skin wall (215 × 102.5 × 65mm bricks with 10mm joints), or roughly 120 per m² for a double-skin wall. This calculator applies that automatically." },
-      { q: "Should I order extra bricks?", a: "Yes — always allow for waste from cuts, breakages and the odd reject. A 10% allowance is standard and is included in this calculator's total." },
-      { q: "Does this work for blocks too?", a: "This tool is set up for standard UK bricks at 60 per m². Concrete blocks are larger (around 10 per m² for standard 440×215mm blocks), so a brick count won't apply — but the wall-area figure is still useful." },
+      { q: "Should I order extra bricks?", a: "Yes, always allow for waste from cuts, breakages and the odd reject. A 10% allowance is standard and is included in this calculator's total." },
+      { q: "Does this work for blocks too?", a: "This tool is set up for standard UK bricks at 60 per m². Concrete blocks are larger (around 10 per m² for standard 440×215mm blocks), so a brick count won't apply, but the wall-area figure is still useful." },
     ],
     relatedFeatures: ["quoting-software", "job-costing-software"],
     relatedTools: ["concrete-calculator", "markup-calculator", "vat-calculator"],

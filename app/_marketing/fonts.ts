@@ -26,7 +26,11 @@ export const clashDisplay = localFont({
   ],
   variable: "--font-clash",
   display: "swap",
-  fallback: ["Georgia", "serif"],
+  // Clash is a SANS display face, so the swap fallback must also be sans —
+  // a serif fallback (e.g. Georgia) mismatches the metrics and shifts the
+  // large hero H1 on swap. Arial-based metric adjustment keeps CLS at ~0.
+  fallback: ["Arial", "Helvetica", "sans-serif"],
+  adjustFontFallback: "Arial",
   preload: true,
 });
 
@@ -45,5 +49,8 @@ export const satoshi = localFont({
     "Roboto",
     "sans-serif",
   ],
-  preload: true,
+  // Body face: swap on a strong system fallback rather than preloading all
+  // weights — keeps the LCP (display-face heading) critical chain lean without
+  // any visible FOUT on the body copy.
+  preload: false,
 });

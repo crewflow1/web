@@ -43,14 +43,14 @@ function fmtDate(iso: string): string {
 function Block({ block }: { block: BlogBlock }) {
   switch (block.type) {
     case "p":
-      return <p className="mt-5 text-lg leading-relaxed text-slate-700">{block.text}</p>;
+      return <p className="mt-5 text-lg leading-relaxed text-ink-mut">{block.text}</p>;
     case "h2":
-      return <h2 className="mt-12 text-2xl font-bold tracking-tight text-slate-900">{block.text}</h2>;
+      return <h2 className="mt-12 font-display text-2xl font-bold tracking-[-0.02em] text-ink">{block.text}</h2>;
     case "h3":
-      return <h3 className="mt-8 text-xl font-semibold text-slate-900">{block.text}</h3>;
+      return <h3 className="mt-8 font-display text-xl font-semibold text-ink">{block.text}</h3>;
     case "ul":
       return (
-        <ul className="mt-5 list-disc space-y-2 pl-6 text-lg text-slate-700">
+        <ul className="mt-5 list-disc space-y-2 pl-6 text-lg text-ink-mut marker:text-gold-500">
           {block.items.map((it, i) => (
             <li key={i}>{it}</li>
           ))}
@@ -58,7 +58,7 @@ function Block({ block }: { block: BlogBlock }) {
       );
     case "ol":
       return (
-        <ol className="mt-5 list-decimal space-y-2 pl-6 text-lg text-slate-700">
+        <ol className="mt-5 list-decimal space-y-2 pl-6 text-lg text-ink-mut marker:text-ink-dim">
           {block.items.map((it, i) => (
             <li key={i}>{it}</li>
           ))}
@@ -66,17 +66,19 @@ function Block({ block }: { block: BlogBlock }) {
       );
     case "quote":
       return (
-        <blockquote className="mt-6 border-l-4 border-amber-400 bg-slate-50 py-3 pl-5 text-lg italic text-slate-700">
+        <blockquote className="mt-6 rounded-2xl bg-navy-900 px-6 py-5 text-lg italic text-ink-mut">
           {block.text}
-          {block.cite ? <cite className="mt-2 block text-sm not-italic text-slate-500">— {block.cite}</cite> : null}
+          {block.cite ? <cite className="mt-2 block text-sm not-italic text-ink-dim">{block.cite}</cite> : null}
         </blockquote>
       );
     case "cta":
       return (
-        <div className="mt-8 rounded-2xl border border-slate-200 bg-slate-50 p-6 text-center">
-          <p className="text-base font-medium text-slate-800">{block.text}</p>
+        <div className="mt-8 rounded-cf border border-cfborder bg-navy-900 p-6 text-center">
+          <p className="text-base font-medium text-ink">{block.text}</p>
           <div className="mt-4 flex justify-center">
-            <BookDemoButton size="md">Book a demo</BookDemoButton>
+            <BookDemoButton className="inline-flex h-11 items-center rounded-lg bg-gold-500 px-5 text-sm font-semibold text-navy-950 shadow-cf-gold transition-colors hover:bg-gold-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">
+              Book a demo
+            </BookDemoButton>
           </div>
         </div>
       );
@@ -114,19 +116,19 @@ export default async function BlogPostPage({
         ]}
       />
 
-      <article className="border-b border-slate-200 bg-white">
-        <div className="container py-14 sm:py-16">
+      <article>
+        <div className="mx-auto max-w-cf px-5 py-16 sm:px-7">
           <div className="mx-auto max-w-3xl">
             <Breadcrumbs items={crumbs} />
-            <div className="flex items-center gap-3 text-xs font-semibold uppercase tracking-wide text-amber-700">
+            <div className="flex items-center gap-3 text-xs font-semibold uppercase tracking-[0.12em] text-gold-500">
               <span>{p.category}</span>
-              <span className="text-slate-300">·</span>
-              <span className="text-slate-500">{p.readMinutes} min read</span>
+              <span className="text-ink-dim/50">·</span>
+              <span className="text-ink-dim">{p.readMinutes} min read</span>
             </div>
-            <h1 className="mt-3 text-3xl font-bold leading-[1.15] tracking-tight text-slate-900 sm:text-4xl">
+            <h1 className="mt-3 font-display text-[clamp(2rem,4.5vw,3.25rem)] font-bold leading-[1.08] tracking-[-0.03em] text-ink">
               {p.h1}
             </h1>
-            <div className="mt-4 text-sm text-slate-500">
+            <div className="mt-4 text-sm text-ink-dim">
               Published {fmtDate(p.datePublished)} · By the CrewFlow team
             </div>
 

@@ -128,7 +128,7 @@ export async function updateSession(request: NextRequest, requestId?: string) {
     pathname.startsWith("/construction-software") ||
     pathname.startsWith("/tools") ||
     pathname.startsWith("/blog") ||
-    pathname.startsWith("/for/") ||
+    pathname.startsWith("/product") || // six-pillar product/solution pages (redesign)
     pathname.startsWith("/privacy") ||
     pathname.startsWith("/terms") ||
     pathname.startsWith("/q/") || // public per-quote view

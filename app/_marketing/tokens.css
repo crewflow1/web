@@ -1,0 +1,37 @@
+/* CrewFlow marketing design tokens — the ONE dark "Blueprint" system.
+ *
+ * Values are R G B channel triplets (not hex) so Tailwind can apply opacity
+ * via `rgb(var(--cf-x) / <alpha-value>)`. This file is the single source of
+ * truth for the marketing palette + text ramp; it mirrors the authority at
+ * ~/.claude/skills/crewflow-brand-design/references/design-tokens.md.
+ *
+ * Consumed by tailwind.config.ts (colors: navy/gold/blueprint/positive/danger/
+ * ink) and by any raw CSS. Defined on :root so the vars are always available.
+ * Named to avoid clobbering Tailwind's default slate/amber/emerald/red scales
+ * still used by the legacy light sub-pages during migration.
+ */
+:root {
+  /* graphite-navy ground ramp */
+  --cf-navy-950: 7 14 23; /* #070E17 deepest bg / footer */
+  --cf-navy-900: 11 22 34; /* #0B1622 primary dark ground */
+  --cf-navy-850: 15 30 46; /* #0F1E2E raised section */
+  --cf-navy-800: 20 38 56; /* #142638 card / panel */
+  --cf-navy-700: 28 51 72; /* #1C3348 hairline-lit panel */
+  --cf-border: 36 56 76; /* #24384C 1px borders / rules */
+
+  /* gold — the single accent */
+  --cf-gold-100: 246 228 180; /* #F6E4B4 */
+  --cf-gold-400: 241 197 96; /* #F1C560 lighter gold — link/hover brighten */
+  --cf-gold-500: 234 178 60; /* #EAB23C primary accent */
+  --cf-gold-600: 214 155 42; /* #D69B2A hover/pressed */
+
+  /* functional supports */
+  --cf-blueprint: 46 92 138; /* #2E5C8A structural/diagram lines */
+  --cf-positive: 28 158 111; /* #1C9E6F money-in / on-track */
+  --cf-danger: 214 83 60; /* #D6533C overdue / at-risk */
+
+  /* text ramp — all ≥AA on navy-900 */
+  --cf-text: 243 246 250; /* #F3F6FA primary */
+  --cf-text-mut: 174 190 205; /* #AEBECD secondary (~6.8:1) */
+  --cf-text-dim: 127 146 166; /* #7F92A6 captions (~5.7:1, still AA) */
+}

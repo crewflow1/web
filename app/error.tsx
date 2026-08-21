@@ -12,7 +12,7 @@ export default function GlobalError({
 }) {
   useEffect(() => {
     // React error boundaries swallow client-side render errors, so Sentry's
-    // automatic (onRequestError) instrumentation never sees them — capture
+    // automatic (onRequestError) instrumentation never sees them, capture
     // explicitly. console.error is kept for local dev visibility.
     Sentry.captureException(error);
     console.error(error);
@@ -22,7 +22,7 @@ export default function GlobalError({
     <main className="container flex min-h-screen flex-col items-center justify-center py-16 text-center">
       <h1 className="text-3xl font-bold text-slate-900">Something went wrong</h1>
       <p className="mt-3 max-w-md text-slate-600">
-        Sorry — we hit an error loading this page. Try again, or message us at{" "}
+        Sorry, we hit an error loading this page. Try again, or message us at{" "}
         <a className="underline" href="mailto:hello@crewflow.uk">
           hello@crewflow.uk
         </a>

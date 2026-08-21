@@ -4,7 +4,7 @@ import { ImageResponse } from "next/og";
  * Default Open Graph / Twitter share image (1200x630) for the whole site.
  *
  * Next.js auto-detects this file and injects <meta property="og:image"> +
- * <meta name="twitter:image"> pointing at the generated route — so shares
+ * <meta name="twitter:image"> pointing at the generated route, so shares
  * on LinkedIn / WhatsApp / Slack get a branded card instead of a blank
  * preview. Rendered with next/og (Satori); no remote fonts are fetched,
  * so the build can never fail on a font download.
@@ -17,7 +17,7 @@ import { ImageResponse } from "next/og";
  */
 
 export const alt =
-  "CrewFlow — the operating system for UK construction companies";
+  "CrewFlow, the operating system for UK construction companies";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 

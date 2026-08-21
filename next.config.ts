@@ -52,6 +52,21 @@ const config: NextConfig = {
     return [{ source: "/:path*", headers: buildSecurityHeaders() }];
   },
   /**
+   * Redesign: the AI-receptionist feature page was removed (the capability is
+   * built-dark — telephony/voice is not a live customer feature). 301 its
+   * indexed URL to the CRM page so search equity and any external links are
+   * preserved rather than 404'd.
+   */
+  async redirects() {
+    return [
+      {
+        source: "/features/ai-receptionist",
+        destination: "/features/construction-crm",
+        permanent: true,
+      },
+    ];
+  },
+  /**
    * pdf.js (the Blueprint interactive viewer, client-only + dynamically imported)
    * references an OPTIONAL Node `canvas` package it never needs in the browser.
    * Alias it away so Webpack doesn't try to resolve a native module. This is a

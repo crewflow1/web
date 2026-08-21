@@ -19,10 +19,10 @@ import { loadAnalyticsIfAllowed } from "@/lib/analytics/load";
  *
  * Behaviour:
  *   - Renders nothing on the server and on first client paint, then decides in
- *     an effect — so there is never a hydration mismatch.
+ *     an effect, so there is never a hydration mismatch.
  *   - Stays DORMANT unless product analytics are actually configured (a PostHog
  *     key is set). Today there is no key, so only essential cookies are set and
- *     this never appears — matching the privacy policy.
+ *     this never appears, matching the privacy policy.
  *   - Never mounts on the customer portal or public quote pages (first-party
  *     surfaces only), honouring the policy's "no tracking cookies for end
  *     customers" promise.

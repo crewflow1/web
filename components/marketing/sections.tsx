@@ -3,15 +3,24 @@ import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
 import { JsonLd } from "@/components/seo/json-ld";
 import { faqSchema } from "@/lib/seo/schema";
 import type { Faq } from "@/lib/seo/content";
+import { CoordTag } from "@/components/marketing/setting-out";
+
+/*
+ * Shared marketing section primitives, unified dark "Setting-Out" system.
+ * Every legacy page (compare / industries / features / locations / blog /
+ * tools) renders through these, so restyling here re-themes the whole surface.
+ * Tokens only (navy / ink / gold / blueprint / cfborder); no ad-hoc hexes,
+ * no glow. Headings use the display face (Clash) applied by the group layout.
+ */
 
 /* -------------------------------------------------------------------------- */
 /* Layout primitives                                                          */
 /* -------------------------------------------------------------------------- */
 
 const BG: Record<string, string> = {
-  white: "bg-white",
-  muted: "bg-slate-50/60",
-  dark: "bg-slate-900 text-white",
+  white: "bg-navy-950",
+  muted: "bg-navy-900",
+  dark: "bg-navy-850",
 };
 
 export function Section({
@@ -26,18 +35,15 @@ export function Section({
   id?: string;
 }) {
   return (
-    <section id={id} className={`border-b border-slate-200 ${BG[bg]}`}>
-      <div className={`container py-16 sm:py-20 ${className}`}>{children}</div>
+    <section id={id} className={BG[bg]}>
+      <div className={`mx-auto max-w-cf px-5 sm:px-7 py-20 sm:py-28 ${className}`}>{children}</div>
     </section>
   );
 }
 
+/** Legacy alias, the marketing eyebrow IS the CoordTag (consolidated). */
 export function Eyebrow({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">
-      {children}
-    </p>
-  );
+  return <CoordTag>{children}</CoordTag>;
 }
 
 /** Renders a multi-paragraph string (split on blank lines). */
@@ -45,7 +51,10 @@ export function Prose({ text, className = "" }: { text: string; className?: stri
   return (
     <>
       {text.split("\n\n").map((p, i) => (
-        <p key={i} className={`text-lg leading-relaxed text-slate-600 ${i > 0 ? "mt-4" : ""} ${className}`}>
+        <p
+          key={i}
+          className={`text-lg leading-relaxed text-ink-mut ${i > 0 ? "mt-4" : ""} ${className}`}
+        >
           {p}
         </p>
       ))}
@@ -61,15 +70,12 @@ export function CheckList({
   className?: string;
 }) {
   return (
-    <ul className={`space-y-3 text-sm text-slate-700 ${className}`}>
+    <ul className={`space-y-3.5 text-[15px] text-ink ${className}`}>
       {items.map((it, i) => (
         <li key={i} className="flex items-start gap-3">
-          <span
-            aria-hidden
-            className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-700"
-          >
-            ✓
-          </span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden className="mt-0.5 shrink-0 text-gold-500">
+            <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
           <span>{it}</span>
         </li>
       ))}
@@ -84,20 +90,20 @@ export function CheckList({
 export function Breadcrumbs({ items }: { items: { name: string; path: string }[] }) {
   return (
     <nav aria-label="Breadcrumb" className="mb-6">
-      <ol className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+      <ol className="flex flex-wrap items-center gap-1.5 text-xs text-ink-dim">
         {items.map((c, i) => (
           <li key={c.path} className="flex items-center gap-1.5">
             {i < items.length - 1 ? (
               <>
-                <Link href={c.path} className="hover:text-slate-800">
+                <Link href={c.path} className="transition-colors hover:text-ink">
                   {c.name}
                 </Link>
-                <span aria-hidden className="text-slate-300">
+                <span aria-hidden className="text-ink-dim/50">
                   /
                 </span>
               </>
             ) : (
-              <span className="font-medium text-slate-700" aria-current="page">
+              <span className="font-medium text-ink-mut" aria-current="page">
                 {c.name}
               </span>
             )}
@@ -128,42 +134,35 @@ export function PageHero({
   secondaryCta?: { label: string; href: string };
 }) {
   return (
-    <section className="relative overflow-hidden border-b border-slate-200 bg-white">
-      <div
-        aria-hidden
-        className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(251,191,36,0.08),transparent_55%)]"
-      />
-      <div className="container relative py-14 sm:py-20">
+    <section>
+      <div className="mx-auto max-w-cf px-5 sm:px-7 py-16 sm:py-24">
         {breadcrumbs ? <Breadcrumbs items={breadcrumbs} /> : null}
-        <div className="grid gap-10 lg:grid-cols-12">
+        <div className="grid gap-12 lg:grid-cols-12 lg:items-start">
           <div className={bullets ? "lg:col-span-7" : "lg:col-span-9"}>
-            <Eyebrow>{eyebrow}</Eyebrow>
-            <h1 className="mt-4 text-3xl font-bold leading-[1.1] tracking-tight text-slate-900 sm:text-4xl lg:text-5xl">
+            <h1 className="max-w-[20ch] font-display text-[clamp(2.4rem,5.5vw,4.25rem)] font-bold leading-[0.99] tracking-[-0.015em] text-ink">
               {h1}
             </h1>
-            <div className="mt-5 max-w-2xl">
+            <div className="mt-6 max-w-2xl">
               <Prose text={intro} />
             </div>
-            <div className="mt-8 flex flex-wrap items-center gap-3">
-              <BookDemoButton size="lg">Book demo</BookDemoButton>
+            <div className="mt-9 flex flex-wrap items-center gap-x-7 gap-y-4">
+              <BookDemoButton className="inline-flex h-12 items-center rounded-xl bg-gold-500 px-7 text-base font-semibold text-navy-950 transition-colors hover:bg-gold-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">
+                Book a demo
+              </BookDemoButton>
               {secondaryCta ? (
                 <Link
                   href={secondaryCta.href}
-                  className="rounded-md border border-slate-300 bg-white px-6 py-3 text-base font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                  className="group inline-flex items-center gap-2 text-base font-medium text-ink transition-colors hover:text-gold-500 focus-visible:outline-none focus-visible:underline"
                 >
                   {secondaryCta.label}
+                  <span aria-hidden="true" className="transition-transform group-hover:translate-x-0.5">→</span>
                 </Link>
               ) : null}
             </div>
           </div>
           {bullets ? (
-            <div className="lg:col-span-5">
-              <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-6 shadow-sm">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  What you get
-                </p>
-                <CheckList items={bullets} className="mt-4" />
-              </div>
+            <div className="lg:col-span-5 lg:pt-2">
+              <CheckList items={bullets} />
             </div>
           ) : null}
         </div>
@@ -186,10 +185,10 @@ export function ContentSections({
       <div className="mx-auto max-w-3xl space-y-12">
         {sections.map((s, i) => (
           <div key={i}>
-            <h2 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+            <h2 className="font-display text-2xl font-bold tracking-[-0.02em] text-ink sm:text-3xl">
               {s.h2}
             </h2>
-            <p className="mt-4 text-lg leading-relaxed text-slate-600">{s.body}</p>
+            <p className="mt-4 text-lg leading-relaxed text-ink-mut">{s.body}</p>
             {s.bullets ? <CheckList items={s.bullets} className="mt-6" /> : null}
           </div>
         ))}
@@ -205,19 +204,18 @@ export function OutcomeCards({
 }) {
   return (
     <Section bg="muted">
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-x-10 gap-y-12 sm:grid-cols-3">
         {items.map((o, i) => (
-          <div
-            key={i}
-            className="rounded-2xl border border-slate-200 bg-white p-7 text-center shadow-sm"
-          >
+          <div key={i}>
             {o.stat ? (
-              <div className="text-4xl font-bold tracking-tight text-slate-900">{o.stat}</div>
+              <div className="font-display text-[2.8rem] font-bold leading-none tabular-nums tracking-tight text-gold-500">
+                {o.stat}
+              </div>
             ) : null}
-            <div className={`text-sm font-semibold text-slate-900 ${o.stat ? "mt-2" : ""}`}>
+            <div className={`font-display text-lg font-semibold text-ink ${o.stat ? "mt-3" : ""}`}>
               {o.label}
             </div>
-            <p className="mt-3 text-sm leading-relaxed text-slate-600">{o.body}</p>
+            <p className="mt-2.5 text-[15px] leading-relaxed text-ink-mut">{o.body}</p>
           </div>
         ))}
       </div>
@@ -226,7 +224,7 @@ export function OutcomeCards({
 }
 
 /* -------------------------------------------------------------------------- */
-/* FAQ — renders the accordion AND injects FAQPage JSON-LD                     */
+/* FAQ, renders the accordion AND injects FAQPage JSON-LD                     */
 /* -------------------------------------------------------------------------- */
 
 export function FaqSection({
@@ -241,22 +239,22 @@ export function FaqSection({
     <Section bg="white">
       <JsonLd data={faqSchema(items)} />
       <div className="mx-auto max-w-3xl">
-        <h2 className="text-center text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+        <h2 className="text-center font-display text-2xl font-bold tracking-[-0.02em] text-ink sm:text-3xl">
           {title}
         </h2>
-        <div className="mt-10 space-y-3">
+        <div className="mt-10">
           {items.map((q) => (
-            <details
-              key={q.q}
-              className="group rounded-xl border border-slate-200 bg-slate-50/40 px-5 py-4 open:bg-white open:shadow-sm"
-            >
-              <summary className="flex cursor-pointer items-center justify-between text-base font-semibold text-slate-900 marker:hidden [&::-webkit-details-marker]:hidden">
+            <details key={q.q} className="group -mx-4 rounded-xl px-4 py-4 transition-colors open:bg-white/[0.02]">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 font-display text-lg font-semibold text-ink [&::-webkit-details-marker]:hidden">
                 {q.q}
-                <span aria-hidden className="ml-4 text-slate-500 transition group-open:rotate-45">
+                <span
+                  aria-hidden
+                  className="text-2xl font-light text-ink-dim transition-transform duration-200 group-open:rotate-45"
+                >
                   +
                 </span>
               </summary>
-              <p className="mt-3 text-sm leading-relaxed text-slate-600">{q.a}</p>
+              <p data-faq-answer className="mt-3 max-w-2xl text-[15px] leading-relaxed text-ink-mut">{q.a}</p>
             </details>
           ))}
         </div>
@@ -281,13 +279,16 @@ export function RelatedLinks({
       <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
         {visible.map((g) => (
           <div key={g.title}>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-ink-dim">
               {g.title}
             </h3>
             <ul className="mt-3 space-y-2 text-sm">
               {g.links.map((l) => (
                 <li key={l.href}>
-                  <Link href={l.href} className="font-medium text-slate-700 hover:text-amber-700">
+                  <Link
+                    href={l.href}
+                    className="font-medium text-ink-mut transition-colors hover:text-gold-500"
+                  >
                     {l.label} →
                   </Link>
                 </li>
@@ -313,23 +314,23 @@ export function ComparisonTable({
 }) {
   return (
     <Section bg="white">
-      <div className="mx-auto max-w-4xl overflow-hidden rounded-2xl border border-slate-200 shadow-sm">
+      <div className="mx-auto max-w-4xl overflow-x-auto rounded-cf border border-cfborder shadow-cf">
         <table className="w-full border-collapse text-sm">
           <thead>
-            <tr className="bg-slate-900 text-white">
+            <tr className="bg-navy-800 text-ink">
               <th className="px-4 py-4 text-left font-semibold">Feature</th>
               <th className="px-4 py-4 text-left font-semibold">
-                <span className="text-amber-400">CrewFlow</span>
+                <span className="text-gold-500">CrewFlow</span>
               </th>
               <th className="px-4 py-4 text-left font-semibold">{competitorName}</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r, i) => (
-              <tr key={r.feature} className={i % 2 === 0 ? "bg-white" : "bg-slate-50/60"}>
-                <td className="px-4 py-4 font-medium text-slate-900">{r.feature}</td>
-                <td className="px-4 py-4 text-slate-700">{r.crewflow}</td>
-                <td className="px-4 py-4 text-slate-500">{r.competitor}</td>
+              <tr key={r.feature} className={i % 2 === 0 ? "bg-navy-900" : "bg-navy-850"}>
+                <td className="px-4 py-4 font-medium text-ink">{r.feature}</td>
+                <td className="px-4 py-4 text-ink-mut">{r.crewflow}</td>
+                <td className="px-4 py-4 text-ink-dim">{r.competitor}</td>
               </tr>
             ))}
           </tbody>
@@ -354,26 +355,20 @@ export function VersusColumns({
 }) {
   return (
     <Section bg="muted">
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-7">
-          <h3 className="text-lg font-semibold text-emerald-900">Where CrewFlow is the better fit</h3>
-          <CheckList items={crewflowWins} className="mt-5" />
+      <div className="grid gap-x-12 gap-y-10 pt-2 lg:grid-cols-2">
+        <div>
+          <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-gold-500">
+            Where CrewFlow is the better fit
+          </h3>
+          <CheckList items={crewflowWins} className="mt-6" />
         </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-7">
-          <h3 className="text-lg font-semibold text-slate-900">
+        <div>
+          <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-ink-dim">
             Where {competitorName} is the better fit
           </h3>
-          <ul className="mt-5 space-y-3 text-sm text-slate-700">
+          <ul className="mt-6 space-y-3.5 text-[15px] text-ink-mut">
             {competitorWins.map((it, i) => (
-              <li key={i} className="flex items-start gap-3">
-                <span
-                  aria-hidden
-                  className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[10px] font-bold text-slate-600"
-                >
-                  →
-                </span>
-                <span>{it}</span>
-              </li>
+              <li key={i}>{it}</li>
             ))}
           </ul>
         </div>
@@ -394,20 +389,16 @@ export function CtaSection({
   body?: string;
 }) {
   return (
-    <section className="bg-white">
-      <div className="container py-16 sm:py-20">
-        <div className="relative overflow-hidden rounded-3xl bg-slate-900 px-8 py-16 text-center shadow-2xl sm:px-16">
-          <div
-            aria-hidden
-            className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.18),transparent_60%)]"
-          />
-          <div className="relative">
-            <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">{title}</h2>
-            <p className="mx-auto mt-4 max-w-xl text-base text-slate-300">{body}</p>
-            <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-              <BookDemoButton size="lg">Book demo</BookDemoButton>
-            </div>
-          </div>
+    <section className="bg-navy-950">
+      <div className="mx-auto max-w-cf px-5 py-24 text-center sm:px-7 sm:py-32">
+        <h2 className="mx-auto max-w-2xl font-display text-[clamp(2rem,4.4vw,3.4rem)] font-bold leading-[1.02] tracking-[-0.02em] text-ink">
+          {title}
+        </h2>
+        <p className="mx-auto mt-5 max-w-xl text-lg leading-relaxed text-ink-mut">{body}</p>
+        <div className="mt-9 flex justify-center">
+          <BookDemoButton className="inline-flex h-12 items-center rounded-xl bg-gold-500 px-7 text-base font-semibold text-navy-950 transition-colors hover:bg-gold-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">
+            Book a demo
+          </BookDemoButton>
         </div>
       </div>
     </section>
@@ -430,19 +421,22 @@ export function CardGrid({
           <Link
             key={c.href}
             href={c.href}
-            className="group rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-amber-300 hover:shadow-md"
+            className="group rounded-2xl bg-navy-900 p-6 transition-colors hover:bg-navy-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
           >
             {c.tag ? (
-              <span className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-gold-500">
                 {c.tag}
               </span>
             ) : null}
-            <h3 className="mt-1 text-lg font-semibold text-slate-900 group-hover:text-amber-800">
+            <h3 className="mt-1 font-display text-lg font-semibold text-ink">
               {c.title}
             </h3>
-            <p className="mt-2 text-sm leading-relaxed text-slate-600">{c.body}</p>
-            <span className="mt-4 inline-block text-sm font-semibold text-amber-700">
-              Learn more →
+            <p className="mt-2 text-sm leading-relaxed text-ink-mut">{c.body}</p>
+            <span className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-gold-500">
+              Learn more{" "}
+              <span aria-hidden className="transition-transform group-hover:translate-x-0.5">
+                →
+              </span>
             </span>
           </Link>
         ))}
@@ -463,14 +457,13 @@ export function HubHeader({
   breadcrumbs?: { name: string; path: string }[];
 }) {
   return (
-    <section className="border-b border-slate-200 bg-white">
-      <div className="container py-14 sm:py-20">
+    <section>
+      <div className="mx-auto max-w-cf px-5 sm:px-7 py-16 sm:py-24">
         {breadcrumbs ? <Breadcrumbs items={breadcrumbs} /> : null}
-        <Eyebrow>{eyebrow}</Eyebrow>
-        <h1 className="mt-4 max-w-3xl text-3xl font-bold leading-[1.1] tracking-tight text-slate-900 sm:text-4xl lg:text-5xl">
+        <h1 className="max-w-[20ch] font-display text-[clamp(2.4rem,5.5vw,4.25rem)] font-bold leading-[0.99] tracking-[-0.015em] text-ink">
           {h1}
         </h1>
-        <div className="mt-5 max-w-2xl">
+        <div className="mt-6 max-w-2xl">
           <Prose text={intro} />
         </div>
       </div>

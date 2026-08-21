@@ -4,14 +4,14 @@ import { isPublicApiJobsEnabled } from "@/lib/public-api/flag";
 import { buildOpenApiDocument } from "@/lib/public-api/openapi";
 
 /**
- * /developers — the rendered developer docs portal for the public API (v1).
+ * /developers, the rendered developer docs portal for the public API (v1).
  *
  * Renders the SAME openapi document served at /api/v1/openapi.json into human
  * docs (auth, scopes, rate limits, endpoints, request bodies, examples). It is
  * built from buildOpenApiDocument() so the page can never drift from the spec.
  *
  * DARK BY DEFAULT behind the SAME FEATURE_PUBLIC_API_JOBS flag as every other
- * v1 surface: while off, this page 404s — no point documenting endpoints that
+ * v1 surface: while off, this page 404s, no point documenting endpoints that
  * 404, and it would out the surface. force-dynamic so the env flag is read per
  * request, not baked at build.
  */
@@ -19,7 +19,7 @@ import { buildOpenApiDocument } from "@/lib/public-api/openapi";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "CrewFlow API — Developer docs",
+  title: "CrewFlow API, Developer docs",
   description:
     "Reference for the CrewFlow public API: authentication, scopes, rate limits, and every read and write endpoint.",
 };
@@ -120,7 +120,7 @@ function FieldTable({
                 {typeLabel(node)}
               </td>
               <td className="py-2 text-slate-600">
-                {required.has(name) ? "Yes" : "—"}
+                {required.has(name) ? "Yes" : "No"}
               </td>
             </tr>
           ))}
@@ -271,7 +271,7 @@ export default function DevelopersPage() {
         <h2 className="text-2xl font-semibold text-slate-900">Rate limits</h2>
         <p className="mt-3 text-slate-600">
           Requests are limited to <strong>120 per minute per key</strong>
-          (shared across every v1 endpoint, keyed by the API key — not by IP).
+          (shared across every v1 endpoint, keyed by the API key, not by IP).
           Over budget returns <code className="font-mono">429</code>.
         </p>
       </section>

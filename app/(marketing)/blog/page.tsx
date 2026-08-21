@@ -8,7 +8,7 @@ import { HubHeader, Section, CtaSection } from "@/components/marketing/sections"
 const PATH = paths.blog();
 
 export const metadata = buildMetadata({
-  title: "The CrewFlow Blog — Guides for UK Construction Businesses",
+  title: "The CrewFlow Blog, Guides for UK Construction Businesses",
   description:
     "Practical guides for running a UK construction business: pricing jobs, getting paid faster, choosing software, and staying on top of tax and CIS. From the CrewFlow team.",
   path: PATH,
@@ -44,7 +44,7 @@ export default function BlogHubPage() {
         eyebrow="Blog"
         h1="Guides for running a UK construction business"
         intro={
-          "No fluff, no jargon — practical advice on pricing jobs, getting paid, choosing software and staying on top of tax. Written for owners who'd rather be on site."
+          "No fluff, no jargon, practical advice on pricing jobs, getting paid, choosing software and staying on top of tax. Written for owners who'd rather be on site."
         }
         breadcrumbs={crumbs}
       />
@@ -54,18 +54,18 @@ export default function BlogHubPage() {
             <Link
               key={p.slug}
               href={paths.post(p.slug)}
-              className="group block rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-amber-300 hover:shadow-md"
+              className="group block rounded-cf border border-cfborder bg-navy-800 p-6 shadow-cf transition-colors hover:border-gold-500/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
             >
-              <div className="flex items-center gap-3 text-xs font-semibold uppercase tracking-wide text-amber-700">
+              <div className="flex items-center gap-3 font-mono text-xs font-semibold uppercase tracking-wide text-gold-500">
                 <span>{p.category}</span>
-                <span className="text-slate-300">·</span>
-                <span className="text-slate-500">{p.readMinutes} min read</span>
+                <span className="text-ink-dim/50">·</span>
+                <span className="text-ink-dim">{p.readMinutes} min read</span>
               </div>
-              <h2 className="mt-2 text-xl font-semibold text-slate-900 group-hover:text-amber-800">
+              <h2 className="mt-2 font-display text-xl font-semibold text-ink">
                 {p.title}
               </h2>
-              <p className="mt-2 text-sm leading-relaxed text-slate-600">{p.excerpt}</p>
-              <div className="mt-4 text-xs text-slate-500">{fmtDate(p.datePublished)}</div>
+              <p className="mt-2 text-sm leading-relaxed text-ink-mut">{p.excerpt}</p>
+              <div className="mt-4 text-xs text-ink-dim">{fmtDate(p.datePublished)}</div>
             </Link>
           ))}
         </div>
