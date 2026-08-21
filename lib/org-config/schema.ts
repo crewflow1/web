@@ -53,7 +53,7 @@ export type DayHours = { open: string; close: string };
  */
 export type WorkingHours = Record<Weekday, DayHours | null>;
 
-/** "HH:MM" 24-hour clock, 00:00 to 23:59. */
+/** "HH:MM" 24-hour clock, 00:00–23:59. */
 const TIME_RX = /^([01]\d|2[0-3]):[0-5]\d$/;
 const timeSchema = z.string().regex(TIME_RX, "Use a 24-hour time like 08:00");
 
@@ -75,7 +75,7 @@ export const workingHoursSchema = z.object(
   ) as Record<Weekday, z.ZodNullable<typeof dayHoursSchema>>,
 );
 
-/** Default working hours — Mon–Fri 08:00 to 17:00, weekend closed. */
+/** Default working hours — Mon–Fri 08:00–17:00, weekend closed. */
 export function defaultWorkingHours(): WorkingHours {
   const weekday: DayHours = { open: "08:00", close: "17:00" };
   return {
@@ -199,7 +199,7 @@ const FRS_SECTOR_MAX = 16.5;
 export const flatRateConfigSchema = z
   .object({
     enabled: z.coerce.boolean().default(false),
-    // Bare bound is generous (0 to 20); the enabled-only band is enforced below.
+    // Bare bound is generous (0–20); the enabled-only band is enforced below.
     sector_percent: z.coerce
       .number()
       .min(0, "Cannot be negative")

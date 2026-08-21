@@ -17,8 +17,8 @@ import type { AgeingLedger } from "@/lib/commercial/ageing";
  * payment terms and therefore no deadline to have missed. That migration adds
  * `suppliers.payment_terms_days`, so a bill's DUE DATE — `bill_date + terms` —
  * is now derivable, and this module ages from it. The result is a true overdue
- * listing: `1 to 30 days` here means "1 to 30 days PAST DUE", the same reading the
- * debtor side has always had (lib/invoices/overdue), not "1 to 30 days since raised".
+ * listing: `1–30 days` here means "1–30 days PAST DUE", the same reading the
+ * debtor side has always had (lib/invoices/overdue), not "1–30 days since raised".
  *
  * ── IT COMPOSES aged-creditors — IT ADDS NO MONEY MATHS ──────────────────────
  * The only thing this module changes is the DATE a bill is aged from. Everything

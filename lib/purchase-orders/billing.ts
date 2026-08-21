@@ -28,7 +28,7 @@ export type PoBilling = {
   billedGross: number;
   /** poTotal − billedGross (negative when over-billed). */
   remaining: number;
-  /** billedGross / poTotal, 0 to 100+ (0 when the PO total is 0). */
+  /** billedGross / poTotal, 0–100+ (0 when the PO total is 0). */
   pct: number;
   status: PoBillStatus;
   count: number;

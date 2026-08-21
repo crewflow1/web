@@ -100,7 +100,7 @@ export type SkippedInvoice = { invoiceNumber: string; reason: string };
  *
  * Keeping 401/403/404 as aborts also preserves the PRE-EXISTING behaviour for
  * those codes: the only behaviour this predicate CHANGES is for the codes that are
- * unambiguously a permanent verdict on one row's data (400, 402, 405 to 428, 430 to 499,
+ * unambiguously a permanent verdict on one row's data (400, 402, 405–428, 430–499,
  * and notably 422).
  */
 export function isPermanentRowRejection(status: number): boolean {

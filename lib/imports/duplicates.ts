@@ -10,7 +10,7 @@
 export type DuplicateMatch = {
   target_id: string;
   reason: string;
-  score: number; // 0 to 100
+  score: number; // 0–100
 };
 
 function norm(s: string | null | undefined): string {

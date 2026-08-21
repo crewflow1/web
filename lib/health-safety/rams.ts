@@ -20,8 +20,8 @@ export function riskRating(likelihood: number, severity: number): number {
 export type RiskBand = "low" | "medium" | "high" | "critical";
 
 /**
- * Band a 5×5 score (1 to 25). HSE-aligned construction convention:
- * 1 to 4 low · 5 to 9 medium · 10 to 15 high · 16 to 25 critical.
+ * Band a 5×5 score (1–25). HSE-aligned construction convention:
+ * 1–4 low · 5–9 medium · 10–15 high · 16–25 critical.
  */
 export function riskBand(rating: number): RiskBand {
   if (rating <= 4) return "low";
@@ -75,15 +75,15 @@ export function validateHazard(h: HazardInput): string[] {
   const errs: string[] = [];
   if (!h.hazard?.trim()) errs.push("Hazard is required.");
   if (!h.controlMeasures?.trim()) errs.push("At least one control measure is required.");
-  if (!intInRange(h.likelihood, LIKELIHOOD_MIN, LIKELIHOOD_MAX)) errs.push("Likelihood must be 1 to 5.");
-  if (!intInRange(h.severity, SEVERITY_MIN, SEVERITY_MAX)) errs.push("Severity must be 1 to 5.");
+  if (!intInRange(h.likelihood, LIKELIHOOD_MIN, LIKELIHOOD_MAX)) errs.push("Likelihood must be 1–5.");
+  if (!intInRange(h.severity, SEVERITY_MIN, SEVERITY_MAX)) errs.push("Severity must be 1–5.");
   const rl = h.residualLikelihood ?? null;
   const rs = h.residualSeverity ?? null;
   if ((rl === null) !== (rs === null)) {
     errs.push("Residual risk needs both a likelihood and a severity, or neither.");
   }
-  if (rl !== null && !intInRange(rl, LIKELIHOOD_MIN, LIKELIHOOD_MAX)) errs.push("Residual likelihood must be 1 to 5.");
-  if (rs !== null && !intInRange(rs, SEVERITY_MIN, SEVERITY_MAX)) errs.push("Residual severity must be 1 to 5.");
+  if (rl !== null && !intInRange(rl, LIKELIHOOD_MIN, LIKELIHOOD_MAX)) errs.push("Residual likelihood must be 1–5.");
+  if (rs !== null && !intInRange(rs, SEVERITY_MIN, SEVERITY_MAX)) errs.push("Residual severity must be 1–5.");
   // Controls should reduce risk, never increase it.
   if (rl !== null && rs !== null && riskRating(rl, rs) > riskRating(h.likelihood, h.severity)) {
     errs.push("Residual risk cannot be higher than the initial risk.");

@@ -93,7 +93,7 @@ function precipClause(summary: WeatherSummary): string | null {
  * `null` is returned when the window contributed no readings OR when every
  * metric was absent — in both cases the caller keeps the manual field. A
  * non-null result is a plain descriptive phrase (no "Weather:" prefix — it goes
- * straight into the weather field), e.g. "4 to 11°C, gusts to 30 mph, 3.2 mm rain".
+ * straight into the weather field), e.g. "4–11°C, gusts to 30 mph, 3.2 mm rain".
  */
 export function suggestWeatherText(
   summary: WeatherSummary,

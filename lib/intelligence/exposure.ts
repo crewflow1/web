@@ -98,7 +98,7 @@ export type AgedDebtSummary = {
   pastDue: number;
   /** The 90+ band — the debt most at risk of never arriving. */
   over90: number;
-  /** The 61 to 90 band. */
+  /** The 61–90 band. */
   d61to90: number;
   /** Owed with NO due date — cannot be late, cannot be chased on a date. */
   undated: number;

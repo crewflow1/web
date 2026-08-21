@@ -192,7 +192,7 @@ const CDM_2015_EXCAVATION =
 /**
  * The Beaufort scale (WMO). Used as the anchor for the wind bands because it is
  * the vocabulary UK trade guidance is written in: force 6 "strong breeze" is
- * 10.8 to 13.8 m/s (25 to 31 mph), force 8 "gale" is 17.2 to 20.7 m/s (39 to 46 mph).
+ * 10.8–13.8 m/s (25–31 mph), force 8 "gale" is 17.2–20.7 m/s (39–46 mph).
  */
 const BEAUFORT = "Beaufort wind force scale (WMO)";
 
@@ -314,7 +314,7 @@ export const WORK_TYPE_THRESHOLDS: Readonly<Record<WorkType, ReadonlyArray<Thres
       // CONFIGURABLE DEFAULT. Hot-weather concreting is a real problem — rapid
       // slump loss, plastic shrinkage cracking — but the published limits are on
       // the FRESH CONCRETE temperature (specifications commonly cap it at
-      // 30 to 35 °C), not on air temperature, and the relationship between the two
+      // 30–35 °C), not on air temperature, and the relationship between the two
       // depends on the mix and the haul. 30 °C ambient is this codebase's own
       // trigger for "get advice", not a published figure.
       id: "concrete.hot_weather",
@@ -326,7 +326,7 @@ export const WORK_TYPE_THRESHOLDS: Readonly<Record<WorkType, ReadonlyArray<Thres
       rule: "Hot weather accelerates slump loss and risks plastic shrinkage cracking. Check the fresh concrete temperature limit in the specification.",
       source:
         "Configurable default — no published limit on AMBIENT temperature exists; " +
-        "specifications cap FRESH CONCRETE temperature (commonly 30 to 35 °C) instead",
+        "specifications cap FRESH CONCRETE temperature (commonly 30–35 °C) instead",
       sourceKind: "configurable_default",
     },
     {
@@ -358,7 +358,7 @@ export const WORK_TYPE_THRESHOLDS: Readonly<Record<WorkType, ReadonlyArray<Thres
   // particular machine.
   crane_lift: [
     {
-      // SOURCE: Beaufort force 8 ("gale", 17.2 to 20.7 m/s) is the band in which
+      // SOURCE: Beaufort force 8 ("gale", 17.2–20.7 m/s) is the band in which
       // tower cranes are commonly stated to come out of service, and 20 m/s is
       // the figure most often quoted as a tower crane's in-service ceiling.
       // Above it, effectively no crane is working. The MANUFACTURER'S figure
@@ -376,7 +376,7 @@ export const WORK_TYPE_THRESHOLDS: Readonly<Record<WorkType, ReadonlyArray<Thres
     {
       // CONFIGURABLE DEFAULT. Mobile cranes on long booms, and any load with a
       // significant sail area, are routinely limited well below the tower-crane
-      // figure — 9 to 12 m/s is the range commonly cited in lift plans. 9 m/s is
+      // figure — 9–12 m/s is the range commonly cited in lift plans. 9 m/s is
       // our own caution trigger, chosen at the bottom of that range because the
       // consequence of being wrong is a swinging load.
       id: "lifting.wind_gust_sail_area",
@@ -387,7 +387,7 @@ export const WORK_TYPE_THRESHOLDS: Readonly<Record<WorkType, ReadonlyArray<Thres
       severity: "caution",
       rule: "Gusts above 9 m/s (about 20 mph) already restrict mobile cranes on long booms and any load with a large sail area. The lift plan's own limit governs.",
       source:
-        "Configurable default at the bottom of the 9 to 12 m/s range commonly cited " +
+        "Configurable default at the bottom of the 9–12 m/s range commonly cited " +
         `in lift plans. ${LOLER_BS7121}`,
       sourceKind: "configurable_default",
     },
@@ -413,7 +413,7 @@ export const WORK_TYPE_THRESHOLDS: Readonly<Record<WorkType, ReadonlyArray<Thres
   roofing: [
     {
       // SOURCE: HSG33 + NFRC — sheet material acts as a sail; force 6
-      // (10.8 to 13.8 m/s) is the commonly stated stopping point. 11 m/s is the
+      // (10.8–13.8 m/s) is the commonly stated stopping point. 11 m/s is the
       // bottom of force 6.
       id: "roofing.wind_sheet_handling",
       metric: "maxWindGustMs",
@@ -426,7 +426,7 @@ export const WORK_TYPE_THRESHOLDS: Readonly<Record<WorkType, ReadonlyArray<Thres
       sourceKind: "practice_guidance",
     },
     {
-      // CONFIGURABLE DEFAULT. Force 5 (8.0 to 10.7 m/s) as an early warning band.
+      // CONFIGURABLE DEFAULT. Force 5 (8.0–10.7 m/s) as an early warning band.
       // Our own banding, not a published stopping point.
       id: "roofing.wind_caution",
       metric: "maxWindGustMs",
@@ -459,7 +459,7 @@ export const WORK_TYPE_THRESHOLDS: Readonly<Record<WorkType, ReadonlyArray<Thres
   // ── WORKING AT HEIGHT / SCAFFOLDING ───────────────────────────────────────
   working_at_height: [
     {
-      // SOURCE: Beaufort force 7 (13.9 to 17.1 m/s) — scaffolding erection and
+      // SOURCE: Beaufort force 7 (13.9–17.1 m/s) — scaffolding erection and
       // dismantling is commonly suspended in this band (NASC SG4/TG20 practice),
       // and WAHR reg. 4(3) is the duty. 14 m/s is the bottom of force 7.
       id: "height.wind_blocking",

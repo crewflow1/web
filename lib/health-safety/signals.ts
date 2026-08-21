@@ -12,7 +12,7 @@ export type HsSnapshot = {
   permitsExpiringSoon: number; // live permits whose window closes within 24h
   permitsExpiredLive: number; // live permits already past valid_until (need closeout)
   activeJobsNoCurrentRams: number; // in-progress jobs with no issued RAMS
-  highResidualRams: number; // issued RAMS carrying a Critical (16 to 25) residual hazard
+  highResidualRams: number; // issued RAMS carrying a Critical (16–25) residual hazard
   toolboxAwaitingAck: number; // delivered (current) toolbox talks whose job crew hasn't fully acknowledged
 };
 
@@ -83,7 +83,7 @@ export function buildHealthSafetySignals(s: HsSnapshot): HsSignal[] {
       tone: "warn",
       count: s.highResidualRams,
       title: `${s.highResidualRams} issued RAMS with a critical residual risk`,
-      body: "A hazard still scores 16 to 25 after controls. Check the controls are adequate.",
+      body: "A hazard still scores 16–25 after controls. Check the controls are adequate.",
       href: "/health-safety",
     });
   }

@@ -40,7 +40,7 @@ export type ColumnMap = {
 export type DetectedSheet = {
   sheet: ParsedSheet;
   entity_type: EntityType | "unknown";
-  confidence: number; // 0 to 100
+  confidence: number; // 0–100
   column_map: ColumnMap;
   field_confidence: Record<string, number>; // per-field signal score
   // Set when the detector picked an entity but isn't confident enough to let

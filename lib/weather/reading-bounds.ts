@@ -67,7 +67,7 @@ export const WEATHER_METRIC_BOUNDS: Readonly<Record<WeatherMetricField, WeatherM
  *
  * Integer-column values are rounded first (the DB casts to int on insert), THEN
  * range-checked, so a value that rounds outside the CHECK (e.g. 100.6 → 101 for a
- * 0 to 100 field) is correctly rejected rather than silently stored. A null/undefined
+ * 0–100 field) is correctly rejected rather than silently stored. A null/undefined
  * or non-finite input passes straight through as null (the vendor's "not reported").
  */
 export function boundedMetric(

@@ -194,7 +194,7 @@ export const correctionFormSchema = z.object({
 /**
  * Translate a Postgres refusal into a sentence.
  *
- * The DATABASE is the enforcement boundary (20261063 to 65); this only decides
+ * The DATABASE is the enforcement boundary (20261063–65); this only decides
  * wording, so an unmapped code still fails loudly with a generic message rather
  * than silently. The RAISE messages from the stock RPCs are written for the
  * person standing in the yard, so the ones we own are surfaced nearly as-is;

@@ -84,7 +84,7 @@ export interface SupportBreakdown {
   label: string;
   /** Active tickets in this bucket. */
   count: number;
-  /** Percentage of active tickets in this bucket (0 to 100, one decimal). */
+  /** Percentage of active tickets in this bucket (0–100, one decimal). */
   share: number;
 }
 

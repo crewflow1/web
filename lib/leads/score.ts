@@ -303,7 +303,7 @@ export const LEAD_SCORE_FACTOR_SPECS: ReadonlyArray<FactorSpec> = [
  * The blend runs over KNOWN factors only. Because stage, source, contactability
  * and relationship are always known (their signals are required columns), the
  * known weight is never zero — every lead, including every pre-existing one,
- * gets a valid 0 to 100 score and a band. It never returns null and never throws.
+ * gets a valid 0–100 score and a band. It never returns null and never throws.
  */
 export function scoreLead(input: LeadScoreInput): LeadScore {
   const factors: LeadScoreFactor[] = [];

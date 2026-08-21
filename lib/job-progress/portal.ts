@@ -31,7 +31,7 @@ import type { ProgressSummary, ProgressTrend } from "@/lib/job-progress/series";
 export interface PortalProgressReading {
   /** `YYYY-MM-DD` (Europe/London day). */
   day: string;
-  /** 0 to 100. */
+  /** 0–100. */
   percent: number;
 }
 

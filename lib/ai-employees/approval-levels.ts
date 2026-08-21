@@ -1,5 +1,5 @@
 /**
- * CrewFlow HQ — the explicit 1 to 5 AI approval-level ladder (pure derivation).
+ * CrewFlow HQ — the explicit 1–5 AI approval-level ladder (pure derivation).
  *
  * The AI Employee spec mandates a GRADED approval ladder — Level 1 Observe, 2 Recommend,
  * 3 Draft, 4 Execute-with-approval, 5 Autonomous. The runtime already HAS every posture
@@ -43,7 +43,7 @@ export type ApprovalLevelKey =
 
 /** The static, human-readable definition of one rung on the ladder. */
 export interface ApprovalLevelDefinition {
-  /** The numeric level, 1 to 5. */
+  /** The numeric level, 1–5. */
   readonly level: ApprovalLevel;
   /** The stable machine key. */
   readonly key: ApprovalLevelKey;
@@ -113,7 +113,7 @@ const DEFINITION_BY_LEVEL: Readonly<Record<ApprovalLevel, ApprovalLevelDefinitio
     >,
   );
 
-/** The static definition for a level number (1 to 5). */
+/** The static definition for a level number (1–5). */
 export function approvalLevelDefinition(level: ApprovalLevel): ApprovalLevelDefinition {
   return DEFINITION_BY_LEVEL[level];
 }
@@ -184,7 +184,7 @@ export interface ApprovalLevelResult extends ApprovalLevelDefinition {
 }
 
 /**
- * Derive the explicit 1 to 5 approval level from an employee's served posture. TOTAL and
+ * Derive the explicit 1–5 approval level from an employee's served posture. TOTAL and
  * DETERMINISTIC: every combination of (`canExecute`, `requiresApproval`, tokens) maps to exactly
  * one level, with no I/O and no clock.
  *

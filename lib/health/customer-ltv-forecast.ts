@@ -28,7 +28,7 @@ import { labelled, type LabelledMetric } from "@/lib/intelligence/provenance";
  *
  * There is deliberately NO single opaque score, NO invented retention curve and
  * NO model. The reader sees the three inputs and the horizon, and can redo the
- * multiplication by hand. (lib/suppliers/performance.ts header points 1 to 2: a
+ * multiplication by hand. (lib/suppliers/performance.ts header points 1–2: a
  * weight is an opinion wearing a number's clothes — none is added here.)
  *
  * ── THE CHURN / AT-RISK SIGNAL ──────────────────────────────────────────────

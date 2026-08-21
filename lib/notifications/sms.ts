@@ -61,7 +61,7 @@ export function isSmsConfigured(): boolean {
 /**
  * Normalise a stored phone number to an E.164 string the transport can dial, or
  * null when it is not a usable number. Strips spaces/hyphens/parentheses, keeps a
- * leading `+`, and requires the canonical E.164 shape (`+` then 8 to 15 digits). A
+ * leading `+`, and requires the canonical E.164 shape (`+` then 8–15 digits). A
  * number that does not match is rejected rather than handed to Twilio to fail —
  * SMS never attempts an obviously-undeliverable send.
  */

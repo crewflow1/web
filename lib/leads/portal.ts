@@ -32,8 +32,8 @@ export type FutureWorkTiming = (typeof FUTURE_WORK_TIMINGS)[number];
 export const FUTURE_WORK_TIMING_LABELS: Record<FutureWorkTiming, string> = {
   asap: "As soon as possible",
   within_1_month: "Within a month",
-  "1_3_months": "In 1 to 3 months",
-  "3_6_months": "In 3 to 6 months",
+  "1_3_months": "In 1–3 months",
+  "3_6_months": "In 3–6 months",
   flexible: "I'm flexible",
 };
 

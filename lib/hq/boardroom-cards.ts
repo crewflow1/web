@@ -128,7 +128,7 @@ export type HealthLevel = "green" | "amber" | "red" | "insufficient";
 
 export interface ConfidenceCard {
   level: ConfidenceLevel;
-  /** 0 to 100 integer share of verified/passed among the judged tasks; null if insufficient. */
+  /** 0–100 integer share of verified/passed among the judged tasks; null if insufficient. */
   pct: number | null;
   passed: number;
   failed: number;

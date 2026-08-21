@@ -23,7 +23,7 @@ import { labelled, type LabelledMetric } from "./provenance";
  * re-derived — they are consumed.
  *
  * ── NO COMPOSITE SCORE, FOR THE SAME REASON THE LIB HAS NONE ─────────────────
- * lib/suppliers/performance.ts header points 1 to 2 refuse a single "supplier
+ * lib/suppliers/performance.ts header points 1–2 refuse a single "supplier
  * score": the groups have DIFFERENT DENOMINATORS (deliveries, orders, bills)
  * and measure DIFFERENT PARTIES (their punctuality vs OUR payment speed), so no
  * honest arithmetic combines them. That refusal survives the rollup unchanged:

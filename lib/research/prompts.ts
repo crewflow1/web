@@ -1,13 +1,13 @@
 /**
  * CrewFlow HQ — Research AI prompt + parse layer (CEO Directive 005,
- * Phases 2 to 5). Pure, server/client-safe (no Supabase, no SDK import).
+ * Phases 2–5). Pure, server/client-safe (no Supabase, no SDK import).
  *
  * The runner fetches REAL page content and lifts deterministic signals
  * (lib/research/extract.ts); this module turns that real evidence into two
  * tightly-scoped LLM calls and safely parses what comes back:
  *
- *   1. ANALYSIS  → CompanyIntelligence + DecisionMaker[]   (Phases 2 to 3)
- *   2. SALES PREP → SalesBrief + CommsDrafts               (Phases 4 to 5)
+ *   1. ANALYSIS  → CompanyIntelligence + DecisionMaker[]   (Phases 2–3)
+ *   2. SALES PREP → SalesBrief + CommsDrafts               (Phases 4–5)
  *
  * Splitting the work keeps each JSON small enough to come back whole inside a
  * single function invocation, and maps cleanly onto the lifecycle (Analysing →
@@ -51,7 +51,7 @@ export const CREWFLOW_MODULES = [
 
 const CREWFLOW_CONTEXT = `CrewFlow is a UK-built operations platform for construction and field-service businesses (builders, contractors, trades, maintenance and plant firms). It replaces spreadsheets, paper and disconnected apps with one system covering: ${CREWFLOW_MODULES.join(
   ", ",
-)}. It is pitched at SMB construction firms (roughly 5 to 250 staff) who are growing and feeling the pain of manual admin, missed jobs, slow invoicing, compliance risk and poor visibility across crews and vehicles.`;
+)}. It is pitched at SMB construction firms (roughly 5–250 staff) who are growing and feeling the pain of manual admin, missed jobs, slow invoicing, compliance risk and poor visibility across crews and vehicles.`;
 
 // ---------------------------------------------------------------------
 // JSON extraction — strip fences, parse, regex-fallback.
@@ -132,7 +132,7 @@ function asPosNumber(x: unknown): number | null {
   return n;
 }
 
-/** 0 to 100 integer, else null. */
+/** 0–100 integer, else null. */
 function asScore(x: unknown): number | null {
   const n = asPosNumber(x);
   if (n == null) return null;

@@ -6,7 +6,7 @@
  *
  * The bug these guard against: the list page used `.limit(200)` and printed
  * `rows.length` as the headline total, so an org with 598 imported customers
- * showed "200 customers" and rows 201 to 598 were unreachable. The page now
+ * showed "200 customers" and rows 201–598 were unreachable. The page now
  * fetches an EXACT count and paginates with `.range()`, and search runs
  * server-side across the whole table — name/email/phone AND the structured
  * address columns (line1/2, city, county, postcode), so a tradesperson can

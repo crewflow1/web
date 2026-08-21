@@ -359,7 +359,7 @@ export interface RotaPlan {
 // ── The default job shift the DATABASE writes ────────────────────────────────
 
 /**
- * 08:00 to 17:00 UTC — the shift `_tg_jobs_rota_sync` writes when a job gains an
+ * 08:00–17:00 UTC — the shift `_tg_jobs_rota_sync` writes when a job gains an
  * assignee and a date (20260523000000_job_rota_unification.sql). A job-day gap
  * has no shift of its own to copy times from, so the product's own default is
  * used rather than an invented one. UTC because that is what the trigger stores
@@ -410,7 +410,7 @@ function approvedLeaveInterval(row: LeaveRow): Interval | null {
   return { start, end };
 }
 
-/** "09:00 to 18:00 on Wed 12 Aug" — the phrase every clause is built from. */
+/** "09:00–18:00 on Wed 12 Aug" — the phrase every clause is built from. */
 const UK_HHMM = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Europe/London",
   hour: "2-digit",
@@ -896,7 +896,7 @@ export function generateRota(input: RotaPlanInput): RotaPlan {
   const needs = deriveNeeds(input, jobById);
 
   const notes: string[] = [
-    "Every job is given the database's default 08:00 to 17:00 UTC shift, the same one the rota writes when a job gains an assignee. Change the times on the rota form before confirming if the job needs different hours.",
+    "Every job is given the database's default 08:00–17:00 UTC shift, the same one the rota writes when a job gains an assignee. Change the times on the rota form before confirming if the job needs different hours.",
   ];
   if (!input.jobDistricts) {
     notes.push(

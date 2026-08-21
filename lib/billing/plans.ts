@@ -14,7 +14,7 @@
  *
  * Feature ENTITLEMENT keys name capabilities other code can gate on via
  * lib/billing/entitlements.ts. This is the gate DEFINITION; wiring is deliberate
- * and sparse (1 to 2 example call sites), NOT a retrofit of every feature.
+ * and sparse (1–2 example call sites), NOT a retrofit of every feature.
  */
 
 export const PLAN_KEYS = ["trial", "starter", "pro", "enterprise"] as const;

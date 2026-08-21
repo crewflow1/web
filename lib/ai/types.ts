@@ -55,7 +55,7 @@ export type QuoteFunnel = {
   declined: number;
   /**
    * Win rate among decided quotes: accepted / (accepted + declined), as a
-   * 0 to 100 integer. null when no quotes have been decided yet. Matches the
+   * 0–100 integer. null when no quotes have been decided yet. Matches the
    * dashboard's definition; bounded to ≤100 (L3).
    */
   conversion_pct: number | null;
@@ -127,7 +127,7 @@ export type LeadInsightsResponse = {
     lost: number;
     job_booked: number;
   };
-  /** Overall lead-conversion percentage. 0 to 100 int or null. */
+  /** Overall lead-conversion percentage. 0–100 int or null. */
   conversion_pct: number | null;
   source_close_rates: SourceCloseRate[];
   /** Sum of estimated_value across leads in open stages. */

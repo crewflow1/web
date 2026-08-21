@@ -331,7 +331,7 @@ export function likelihoodLabel(b: string): string {
   return LIKELIHOOD_LABELS[b as LikelihoodBand] ?? b;
 }
 
-/** Map a 0 to 100 fit score to a likelihood band. */
+/** Map a 0–100 fit score to a likelihood band. */
 export function likelihoodBandFromScore(score: number | null): LikelihoodBand {
   if (score == null) return "unknown";
   if (score >= 80) return "very_high";
@@ -476,7 +476,7 @@ export const CHANNEL_STATUSES = ["active", "inactive", "invalid"] as const;
 export type ChannelStatus = (typeof CHANNEL_STATUSES)[number];
 
 // ---------------------------------------------------------------------
-// Scoring — CRM score + AI qualification score share one 0 to 100 banding.
+// Scoring — CRM score + AI qualification score share one 0–100 banding.
 // ---------------------------------------------------------------------
 
 export const SCORE_BANDS = ["hot", "warm", "cool", "cold", "unscored"] as const;
@@ -502,7 +502,7 @@ export function scoreBandLabel(score: number | null | undefined): string {
   return SCORE_BAND_LABELS[scoreBand(score)];
 }
 
-/** Clamp arbitrary input to a valid 0 to 100 integer score, or null. */
+/** Clamp arbitrary input to a valid 0–100 integer score, or null. */
 export function clampScore(n: unknown): number | null {
   if (n == null || n === "") return null;
   const v = Math.round(Number(n));
@@ -522,11 +522,11 @@ export type EmployeeBand = {
 };
 
 export const EMPLOYEE_BANDS: readonly EmployeeBand[] = [
-  { key: "micro", label: "1 to 10", min: 1, max: 10 },
-  { key: "small", label: "11 to 50", min: 11, max: 50 },
-  { key: "medium", label: "51 to 200", min: 51, max: 200 },
-  { key: "large", label: "201 to 500", min: 201, max: 500 },
-  { key: "xlarge", label: "501 to 1000", min: 501, max: 1000 },
+  { key: "micro", label: "1–10", min: 1, max: 10 },
+  { key: "small", label: "11–50", min: 11, max: 50 },
+  { key: "medium", label: "51–200", min: 51, max: 200 },
+  { key: "large", label: "201–500", min: 201, max: 500 },
+  { key: "xlarge", label: "501–1000", min: 501, max: 1000 },
   { key: "enterprise", label: "1000+", min: 1001, max: null },
 ];
 
@@ -719,7 +719,7 @@ export type SalesCompanyListItem = Omit<
   | "enrichment"
 >;
 
-/** The Company Intelligence 0 to 100 score signals (reuse scoreBand colours). */
+/** The Company Intelligence 0–100 score signals (reuse scoreBand colours). */
 export type IntelligenceScoreKey =
   | "growth_score"
   | "website_quality_score"

@@ -61,9 +61,9 @@ export type SiteSignals = {
   https: boolean;
   /** True when the page advertises recruitment (careers / "we're hiring"). */
   hiring: boolean;
-  /** 0 to 100 deterministic quality of the page itself. */
+  /** 0–100 deterministic quality of the page itself. */
   websiteQualityScore: number;
-  /** 0 to 100 deterministic digital maturity from the detected stack. */
+  /** 0–100 deterministic digital maturity from the detected stack. */
   digitalMaturityScore: number;
 };
 
@@ -158,7 +158,7 @@ export function extractPhones(html: string): string[] {
   for (const m of html.matchAll(/tel:([+\d][\d\s().-]{7,})/gi)) {
     if (m[1]) push(m[1]);
   }
-  // Bare UK numbers: +44… or 0… with 9 to 12 following digits/separators.
+  // Bare UK numbers: +44… or 0… with 9–12 following digits/separators.
   for (const m of html.matchAll(
     /(?:\+44\s?|\b0)(?:\d[\s().-]?){8,11}\d/g,
   )) {
@@ -352,7 +352,7 @@ type QualityInput = {
   socials: SocialLinks;
 };
 
-/** 0 to 100 quality of the page itself: does it present like a maintained,
+/** 0–100 quality of the page itself: does it present like a maintained,
  *  professional site? Each component is an observable fact, summed. */
 export function assessWebsiteQuality(s: QualityInput): number {
   let score = 0;
@@ -372,7 +372,7 @@ export function assessWebsiteQuality(s: QualityInput): number {
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
-/** 0 to 100 digital maturity from the detected stack: more categories present,
+/** 0–100 digital maturity from the detected stack: more categories present,
  *  and the presence of analytics/marketing/chat, signals a business investing
  *  in its digital channel. */
 export function assessDigitalMaturity(tech: ReadonlyArray<DetectedTech>): number {

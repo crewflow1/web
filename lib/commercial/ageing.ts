@@ -43,12 +43,12 @@ import { round2, sumMoney } from "@/lib/money";
  * Buckets count WHOLE DAYS PAST the ageing date and are CLOSED on the right:
  *
  *      ageDays ≤ 0  or null  →  current      (not yet due / undated)
- *      1  … 30               →  1 to 30 days
- *      31 … 60               →  31 to 60 days
- *      61 … 90               →  61 to 90 days
+ *      1  … 30               →  1–30 days
+ *      31 … 60               →  31–60 days
+ *      61 … 90               →  61–90 days
  *      91 +                  →  90+ days
  *
- * So EXACTLY 30 days past due sits in the "1 to 30" column, not "31 to 60": the 30-day
+ * So EXACTLY 30 days past due sits in the "1–30" column, not "31–60": the 30-day
  * column means "up to and including thirty days late", which is how a UK
  * aged-debtor listing is read at a credit-control meeting. Due TODAY is
  * `current`, matching `isInvoiceOverdue` (`due_date < today`, strictly) — an
@@ -70,9 +70,9 @@ export const PAST_DUE_BUCKETS = ["d1_30", "d31_60", "d61_90", "d91_plus"] as con
 
 export const AGEING_BUCKET_LABEL: Record<AgeingBucket, string> = {
   current: "Current",
-  d1_30: "1 to 30 days",
-  d31_60: "31 to 60 days",
-  d61_90: "61 to 90 days",
+  d1_30: "1–30 days",
+  d31_60: "31–60 days",
+  d61_90: "61–90 days",
   d91_plus: "90+ days",
 };
 

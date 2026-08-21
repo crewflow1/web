@@ -21,7 +21,7 @@ import type { EvidenceRef, SignalKind } from "@/lib/intelligence/provenance";
  * directory. That ratchet exists because a single blended
  * "health score" is a lie with a denominator — it decides that one late supplier
  * is worth N days of overdue debt, and nothing in this database knows that
- * exchange rate (lib/suppliers/performance.ts header points 1 to 2). This module
+ * exchange rate (lib/suppliers/performance.ts header points 1–2). This module
  * honours that doctrine rather than evading it: it sits in a sibling directory
  * precisely so it CANNOT reach for a blended number, and it never computes one.
  * There is NO overall band, NO score, NO weighting anywhere below — only five

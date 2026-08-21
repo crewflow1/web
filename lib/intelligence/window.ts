@@ -6,7 +6,7 @@ import type { DayWindow } from "./provenance";
  * Trailing Europe/London windows for the intelligence layer. PURE.
  *
  * NO `toISOString()` DAY MATHS ANYWHERE. A UTC day key and a London day key
- * disagree for an hour a night in winter and for 23:00 to 00:00 every summer
+ * disagree for an hour a night in winter and for 23:00–00:00 every summer
  * night, and the repo has just had a BST month-end incident. Day keys come
  * from `formatDayKeyUK` (the established instant → London-day idiom) and the
  * instants bounding a day come from `ukDayStartMs`/`ukDayEndMs`

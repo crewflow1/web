@@ -20,7 +20,7 @@
  *     inherited from the destination table, not re-implemented here.
  *
  * Every hazard below is authored to satisfy `validateHazard` (lib/health-safety/
- * rams.ts): likelihood/severity in 1 to 5, residual present as a matched pair, and
+ * rams.ts): likelihood/severity in 1–5, residual present as a matched pair, and
  * residual risk never higher than the initial risk (controls reduce risk). The
  * unit test asserts this for the whole catalogue so a bad template can't ship.
  *
@@ -32,14 +32,14 @@
 export type TemplateHazard = {
   hazard: string;
   whoAtRisk: string;
-  /** Initial (uncontrolled) likelihood, 1 to 5. */
+  /** Initial (uncontrolled) likelihood, 1–5. */
   likelihood: number;
-  /** Initial (uncontrolled) severity, 1 to 5. */
+  /** Initial (uncontrolled) severity, 1–5. */
   severity: number;
   controlMeasures: string;
-  /** Residual (post-control) likelihood, 1 to 5. */
+  /** Residual (post-control) likelihood, 1–5. */
   residualLikelihood: number;
-  /** Residual (post-control) severity, 1 to 5. */
+  /** Residual (post-control) severity, 1–5. */
   residualSeverity: number;
 };
 
@@ -119,7 +119,7 @@ export const RAMS_TEMPLATES: readonly RamsTemplate[] = [
         likelihood: 3,
         severity: 4,
         controlMeasures:
-          "Daily weather check; stop work in high winds (per MEWP/scaffold limits, typically 17 to 23 mph); no work on icy or slippery platforms until cleared and gritted.",
+          "Daily weather check; stop work in high winds (per MEWP/scaffold limits, typically 17–23 mph); no work on icy or slippery platforms until cleared and gritted.",
         residualLikelihood: 2,
         residualSeverity: 3,
       },
