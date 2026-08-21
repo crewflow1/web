@@ -38,6 +38,7 @@ export function BookDemoModal() {
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [showMore, setShowMore] = useState(false);
   const [pending, startTransition] = useTransition();
   const dialogRef = useRef<HTMLDivElement>(null);
   const firstFieldRef = useRef<HTMLInputElement>(null);
@@ -52,6 +53,7 @@ export function BookDemoModal() {
       setDone(false);
       setError(null);
       setFieldErrors({});
+      setShowMore(false);
     }
     window.addEventListener("crewflow:open-book-demo", onOpen);
     return () => window.removeEventListener("crewflow:open-book-demo", onOpen);
@@ -238,12 +240,6 @@ export function BookDemoModal() {
                 <Field name="email" label="Email" error={fieldErrors.email}>
                   <input name="email" type="email" required autoComplete="email" className={INPUT} />
                 </Field>
-                <Field name="phone" label="Phone (optional)" error={fieldErrors.phone}>
-                  <input name="phone" type="tel" autoComplete="tel" className={INPUT} />
-                </Field>
-              </Row>
-
-              <Row>
                 <Field name="employees" label="Employees" error={fieldErrors.employees}>
                   <select name="employees" required defaultValue="" className={INPUT}>
                     <option value="" disabled>
@@ -256,35 +252,48 @@ export function BookDemoModal() {
                     ))}
                   </select>
                 </Field>
-                <Field name="turnover_range" label="Turnover" error={fieldErrors.turnover_range}>
-                  <select name="turnover_range" defaultValue="" className={INPUT}>
-                    <option value="">Prefer not to say</option>
-                    {TURNOVER_RANGES.filter((r) => r !== "prefer_not_say").map((r) => (
-                      <option key={r} value={r}>
-                        {TURNOVER_LABELS[r]}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
               </Row>
 
-              <Field name="current_systems" label="Current systems" error={fieldErrors.current_systems}>
-                <input
-                  name="current_systems"
-                  placeholder="e.g. Xero + WhatsApp + paper diary"
-                  maxLength={500}
-                  className={INPUT}
-                />
-              </Field>
-
-              <Field name="preferred_demo_time" label="Preferred demo time" error={fieldErrors.preferred_demo_time}>
-                <input
-                  name="preferred_demo_time"
-                  placeholder="e.g. weekday mornings, this week"
-                  maxLength={200}
-                  className={INPUT}
-                />
-              </Field>
+              {/* The four optional fields collapse behind a toggle so the form
+                  reads as four fields, not eight. Auto-expands if the server
+                  ever returns an error against one of them. */}
+              {showMore ||
+              fieldErrors.phone ||
+              fieldErrors.turnover_range ||
+              fieldErrors.current_systems ||
+              fieldErrors.preferred_demo_time ? (
+                <>
+                  <Row>
+                    <Field name="phone" label="Phone (optional)" error={fieldErrors.phone}>
+                      <input name="phone" type="tel" autoComplete="tel" className={INPUT} />
+                    </Field>
+                    <Field name="turnover_range" label="Turnover (optional)" error={fieldErrors.turnover_range}>
+                      <select name="turnover_range" defaultValue="" className={INPUT}>
+                        <option value="">Prefer not to say</option>
+                        {TURNOVER_RANGES.filter((r) => r !== "prefer_not_say").map((r) => (
+                          <option key={r} value={r}>
+                            {TURNOVER_LABELS[r]}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </Row>
+                  <Field name="current_systems" label="Current systems (optional)" error={fieldErrors.current_systems}>
+                    <input name="current_systems" placeholder="e.g. Xero + WhatsApp + paper diary" maxLength={500} className={INPUT} />
+                  </Field>
+                  <Field name="preferred_demo_time" label="Preferred demo time (optional)" error={fieldErrors.preferred_demo_time}>
+                    <input name="preferred_demo_time" placeholder="e.g. weekday mornings, this week" maxLength={200} className={INPUT} />
+                  </Field>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowMore(true)}
+                  className="rounded text-sm font-medium text-gold-500 transition-colors hover:text-gold-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+                >
+                  + Add phone, turnover &amp; timing (optional)
+                </button>
+              )}
 
               <div className="flex items-center justify-end gap-3 pt-1">
                 <button

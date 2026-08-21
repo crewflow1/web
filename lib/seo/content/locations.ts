@@ -5,7 +5,11 @@ import type { LocationPage } from "./types";
  *
  * Location pages are the highest thin-content risk in programmatic SEO, so:
  *   (1) this is a curated set of REAL UK construction hubs, not 200 spun towns;
- *   (2) each has genuine, qualitative local context (no fabricated statistics);
+ *   (2) each carries genuinely non-swappable local context — regional market
+ *       character plus a TRUE, verifiable local factor where one exists
+ *       (Scotland's building-warrant system, Wales's devolved building regs,
+ *       NI cross-border trade, London's ULEZ, city Clean Air Zones). No
+ *       fabricated statistics, no invented local proof, no overclaimed feature;
  *   (3) Belfast / Northern Ireland are weighted as the home market.
  * Scaling guidance + guardrails live in docs/seo/10-programmatic-seo.md.
  */
@@ -21,9 +25,9 @@ export const LOCATIONS: LocationPage[] = [
     eyebrow: "Belfast",
     h1: "Construction software built in Belfast, for construction companies everywhere",
     intro:
-      "CrewFlow is built in Belfast, by people who know the local trade. It's the operating system for construction companies — quotes, jobs, crews, invoices, payroll and tax in one place.\n\nFor Belfast firms, that means software made on your doorstep that understands UK tax, UK invoicing and how a real building business runs.",
+      "CrewFlow is built in Belfast, by people who know the local trade — the operating system construction companies use to run quotes, jobs, crews, invoices, payroll and tax in one place.\n\nFor Belfast firms that means software made on your doorstep, not a faceless overseas vendor, that speaks UK tax and understands how a real building business runs.",
     localContext:
-      "Belfast's construction scene runs from residential refurb and extensions to commercial fit-out and a deep base of trade SMEs across Greater Belfast. CrewFlow is built here for exactly those businesses — small and growing construction firms that want one system instead of a drawer of apps.",
+      "Belfast's construction scene runs from residential refurb and extensions to commercial fit-out, carried by a deep base of owner-run trade SMEs across Greater Belfast. Being built here means we know that market first-hand — and because we're local, a demo is a genuine conversation about your business, not a call-centre script.",
     faqs: [
       { q: "Is CrewFlow a local Belfast company?", a: "Yes. CrewFlow is built in Belfast, Northern Ireland, for UK construction companies. Being local means we understand the trade here and you're not dealing with a faceless overseas vendor." },
       { q: "Can Belfast builders get a demo?", a: "Yes. Book a demo and we'll walk through your existing numbers and show what your dashboard would look like — we're on your doorstep." },
@@ -41,12 +45,13 @@ export const LOCATIONS: LocationPage[] = [
     eyebrow: "Northern Ireland",
     h1: "Construction software made in Northern Ireland for NI construction firms",
     intro:
-      "CrewFlow is built in Northern Ireland for construction companies across the province. It brings leads, quotes, jobs, rota, timesheets, invoices, payments, payroll and tax into one operating system.\n\nLocal software for local firms — that speaks UK tax and understands how NI construction businesses actually run.",
+      "CrewFlow is built in Northern Ireland for construction companies across the province — one operating system for leads, quotes, jobs, rota, timesheets, invoices, payments, payroll and tax.\n\nLocal software for local firms, that speaks UK tax and understands how NI construction businesses actually run.",
     localContext:
-      "Northern Ireland's construction sector is built on owner-run SMEs — builders, electricians, plumbers, groundworks and fit-out firms across Belfast, Derry/Londonderry, Newry, Lisburn and the wider province. CrewFlow is made here for exactly those businesses.",
+      "Northern Ireland's construction sector is built on owner-run SMEs — builders, electricians, plumbers, groundworks and fit-out firms across Belfast, Derry/Londonderry, Newry, Lisburn and the wider province. Many also take work across the border into the Republic, so keeping each job's costs, invoices and paperwork straight in one place matters more here than most.",
     faqs: [
       { q: "Is CrewFlow built in Northern Ireland?", a: "Yes — CrewFlow is built in Belfast for UK construction companies, with Northern Ireland firms as our home market." },
       { q: "Does it handle UK tax for NI businesses?", a: "Yes. VAT, PAYE, NI and Corporation Tax are tracked as you go, built for how UK and NI construction businesses are taxed." },
+      { q: "We take work across the border — does that matter?", a: "CrewFlow keeps every job's costs, quotes and invoices in one place whichever side of the border the work is on, with the figures ready for your accountant to handle the VAT treatment." },
     ],
     related: ["belfast", "lisburn", "newry"],
   },
@@ -63,7 +68,7 @@ export const LOCATIONS: LocationPage[] = [
     intro:
       "CrewFlow gives Lisburn construction firms one system for the whole business — from the first enquiry to the final invoice and the tax that follows. Built just up the road in Belfast, it's local software that understands the trade.",
     localContext:
-      "Lisburn and the surrounding area have a strong base of building, electrical, plumbing and groundworks firms serving both residential and commercial work across the Belfast travel-to-work area. CrewFlow is built nearby, for exactly these businesses.",
+      "Lisburn sits inside the Belfast travel-to-work area, with a strong base of building, electrical, plumbing and groundworks firms working across the city and the surrounding towns. CrewFlow is built minutes away for exactly these firms — close enough that support is a local conversation, not a ticket in a queue.",
     faqs: [
       { q: "Is CrewFlow suitable for Lisburn trade businesses?", a: "Yes. From sole traders to growing firms, CrewFlow brings quoting, jobs, scheduling, invoicing, payroll and tax into one local, UK-built system." },
     ],
@@ -80,11 +85,12 @@ export const LOCATIONS: LocationPage[] = [
     eyebrow: "Newry",
     h1: "Construction software for Newry builders and contractors",
     intro:
-      "CrewFlow gives Newry construction businesses one operating system for leads, quotes, jobs, crews, invoices, payroll and tax. Built in Northern Ireland, it's local software that speaks UK tax and understands how a building business runs.",
+      "CrewFlow gives Newry construction businesses one operating system for leads, quotes, jobs, crews, invoices, payroll and tax. Built in Belfast, it's local software that understands a border-region building business.",
     localContext:
-      "Newry sits at the heart of a busy border-region construction economy, with general builders, groundworks and trade contractors serving both sides of the area. CrewFlow is built in NI for exactly this kind of owner-run firm.",
+      "Newry sits on the border, and many firms here work on both sides of it — general builders, groundworks and trade contractors serving Northern Ireland and the Republic. That makes keeping every job's costs, invoices and paperwork in one clear place especially valuable, whichever side of the border the work is on.",
     faqs: [
       { q: "Can Newry construction firms use CrewFlow?", a: "Yes. CrewFlow is built for UK construction SMEs and made in Northern Ireland, so Newry firms get local, UK-tax-native software for the whole business." },
+      { q: "Does CrewFlow suit firms working across the border?", a: "Yes — every job's costs, quotes and invoices live in one place regardless of which side of the border the work is on. CrewFlow keeps the figures straight; your accountant handles the VAT treatment." },
     ],
     related: ["belfast", "northern-ireland", "lisburn"],
   },
@@ -99,9 +105,9 @@ export const LOCATIONS: LocationPage[] = [
     eyebrow: "London",
     h1: "Construction software for London builders and contractors",
     intro:
-      "London construction firms juggle high job volumes, tight margins and demanding clients. CrewFlow brings the whole business into one system — leads, quotes, jobs, crews, invoices, payroll and tax — so a busy London firm can see exactly what's going on and where the money is.",
+      "London construction firms juggle high job volumes, tight margins and demanding clients. CrewFlow brings the whole business into one system — leads, quotes, jobs, crews, invoices, payroll and tax — so a busy firm can see exactly what's on and where the money is.",
     localContext:
-      "London's construction market is vast and varied — from high-end residential refurb and basement digs to commercial fit-out and a huge population of subcontractors and trade SMEs. CrewFlow gives those firms one operating system instead of five disconnected tools.",
+      "London's construction market is vast and varied — high-end residential refurb, basement digs, commercial fit-out and one of the country's densest populations of subcontractors and trade SMEs. With the ULEZ now covering every borough, running older vans is one more cost pressure on already-tight margins — another reason to see true, job-by-job profitability in one place rather than across five disconnected tools.",
     faqs: [
       { q: "Is CrewFlow suitable for London construction firms?", a: "Yes. CrewFlow is built for UK construction SMEs, and London firms benefit from having quoting, jobs, payroll, invoicing and tax in one system rather than juggling separate apps." },
       { q: "Does CrewFlow handle the volume of a busy London firm?", a: "Yes. CrewFlow is built to keep multiple live jobs, crews and invoices in one place, with automatic invoice chasing to keep cash moving on tight London margins." },
@@ -121,9 +127,9 @@ export const LOCATIONS: LocationPage[] = [
     intro:
       "Manchester's construction boom means more work and more admin. CrewFlow gives Greater Manchester firms one operating system for the whole business — quote faster, schedule crews, track real margins and get paid, with payroll and tax built in.",
     localContext:
-      "Greater Manchester has one of the UK's most active construction economies, from city-centre development to residential refurb and a dense network of trade subcontractors. CrewFlow helps those SMEs run the operation from one place.",
+      "Greater Manchester is one of the UK's most active construction economies, from city-centre high-rise residential and regeneration to a dense network of trade subcontractors across the ten boroughs. CrewFlow helps those SMEs keep a high volume of live jobs moving from one place, so nothing slips between the site and the office.",
     faqs: [
-      { q: "Can Manchester firms get a CrewFlow demo?", a: "Yes. Book a demo and we'll show how CrewFlow brings quoting, jobs, payroll, invoicing and tax into one system for your Manchester firm." },
+      { q: "Can Manchester firms get a CrewFlow demo?", a: "Yes. Book a demo and we'll show how CrewFlow brings quoting, jobs, payroll, invoicing and tax into one system for your Greater Manchester jobs." },
     ],
     related: ["leeds", "sheffield"],
   },
@@ -140,7 +146,7 @@ export const LOCATIONS: LocationPage[] = [
     intro:
       "Birmingham and the wider West Midlands are a construction heartland. CrewFlow gives firms there one operating system for leads, quotes, jobs, crews, invoices, payroll and tax — so the admin stops eating into the work.",
     localContext:
-      "The West Midlands has a deep base of construction SMEs and subcontractors serving major regeneration, residential and commercial work. CrewFlow brings the whole operation into one place for those owner-run firms.",
+      "The West Midlands has a deep base of construction SMEs and subcontractors serving major regeneration, residential and commercial work. Birmingham's Clean Air Zone also charges non-compliant vans in the city centre, so keeping a tight grip on vehicle and job costs matters — and that's exactly the picture CrewFlow puts in one place.",
     faqs: [
       { q: "Is CrewFlow right for a Birmingham construction business?", a: "Yes. CrewFlow is built for UK construction SMEs, giving Birmingham firms quoting, jobs, payroll, invoicing and tax in a single system." },
     ],
@@ -157,11 +163,12 @@ export const LOCATIONS: LocationPage[] = [
     eyebrow: "Glasgow",
     h1: "Construction software for Glasgow builders and trades",
     intro:
-      "Glasgow construction firms get the whole business in one place with CrewFlow — quotes, jobs, crews, invoices, payroll and tax. Built for UK construction, it handles the operations and the money side so owners can focus on the work.",
+      "Glasgow construction firms get the whole business in one place with CrewFlow — quotes, jobs, crews, invoices, payroll and tax — built for UK construction and the way Scottish firms work.",
     localContext:
-      "Glasgow and the west of Scotland have a strong construction base spanning residential refurb, commercial work and a large population of trade SMEs. CrewFlow gives those firms one operating system for the lot.",
+      "Glasgow and the west of Scotland span residential refurb, commercial work and a large population of trade SMEs. Building work in Scotland runs on the building-warrant system rather than England's building control, and warranted jobs carry their own drawings, conditions and completion certificates — CrewFlow keeps that site paperwork, the RAMS and the certificates in one place against the job they belong to.",
     faqs: [
       { q: "Does CrewFlow work for Scottish construction firms?", a: "Yes. CrewFlow is built for UK construction companies, including Scotland, with UK VAT, PAYE and Corporation Tax handled as you go." },
+      { q: "Does CrewFlow submit building warrants?", a: "No — building warrants go through your local authority. But CrewFlow keeps the drawings, site paperwork and certificates for the job together, so nothing is lost when your building-standards team needs it." },
     ],
     related: ["edinburgh", "manchester", "newcastle"],
   },
@@ -176,11 +183,12 @@ export const LOCATIONS: LocationPage[] = [
     eyebrow: "Edinburgh",
     h1: "Construction software for Edinburgh builders and contractors",
     intro:
-      "Edinburgh's mix of heritage refurb and new development keeps construction firms busy. CrewFlow gives them one operating system for quotes, jobs, crews, invoices, payroll and tax — so the office side keeps pace with the site.",
+      "Edinburgh's mix of heritage refurb and new development keeps construction firms busy. CrewFlow gives them one operating system for quotes, jobs, crews, invoices, payroll and tax — so the office keeps pace with the site.",
     localContext:
-      "Edinburgh construction spans listed-building and heritage refurbishment, high-end residential and commercial fit-out, supported by a network of specialist trade SMEs. CrewFlow brings the whole operation into one place.",
+      "Edinburgh construction spans listed-building and heritage refurbishment, high-end residential and commercial fit-out. As across Scotland, work runs on the building-warrant system, and heritage jobs in particular carry extra drawings, conditions and certificates — CrewFlow keeps all of that site paperwork in one place against the job, so nothing goes missing between visits.",
     faqs: [
       { q: "Can Edinburgh firms use CrewFlow?", a: "Yes. CrewFlow is built for UK construction SMEs, giving Edinburgh firms quoting, jobs, payroll, invoicing and tax in one UK-native system." },
+      { q: "Does CrewFlow suit heritage and listed-building work?", a: "Yes. Jobs with extra conditions, drawings and certificates keep all their paperwork in one place in CrewFlow, so the records for a listed or warranted job stay together." },
     ],
     related: ["glasgow", "london", "newcastle"],
   },
@@ -197,7 +205,7 @@ export const LOCATIONS: LocationPage[] = [
     intro:
       "Leeds and West Yorkshire firms use CrewFlow to run the whole business from one screen — quotes, jobs, crews, invoices, payroll and tax. Less admin, more visibility, and cash that keeps moving thanks to automatic invoice chasing.",
     localContext:
-      "Leeds anchors a busy West Yorkshire construction economy, with residential, commercial and a strong subcontractor base. CrewFlow gives those SMEs one operating system instead of disconnected tools.",
+      "Leeds anchors a busy West Yorkshire construction economy — South Bank regeneration, commercial development and a strong residential and subcontractor base. CrewFlow gives those firms one operating system so a growing book of jobs doesn't turn into a drawer of disconnected apps.",
     faqs: [
       { q: "Is CrewFlow suitable for Leeds construction businesses?", a: "Yes. CrewFlow is built for UK construction SMEs, bringing quoting, jobs, payroll, invoicing and tax together for Leeds and West Yorkshire firms." },
     ],
@@ -216,7 +224,7 @@ export const LOCATIONS: LocationPage[] = [
     intro:
       "Bristol and the South West keep construction firms busy across refurb, new build and commercial work. CrewFlow brings the whole business into one operating system — quotes, jobs, crews, invoices, payroll and tax — so owners spend less time on admin and more on the work.",
     localContext:
-      "Bristol's construction market spans residential refurb, sustainable new build and commercial development, with a healthy base of trade SMEs across the South West. CrewFlow gives those firms one system for the whole operation.",
+      "Bristol's construction market leans into sustainable and retrofit new build alongside residential refurb and commercial development across the South West. The city's Clean Air Zone charges older commercial vehicles in the centre, so keeping vehicle and job costs in one clear view helps protect margins — which is exactly what CrewFlow is for.",
     faqs: [
       { q: "Can Bristol firms get a demo of CrewFlow?", a: "Yes. Book a demo and we'll show how CrewFlow brings the whole business — quotes, jobs, payroll, invoicing and tax — into one system for your Bristol firm." },
     ],
@@ -233,11 +241,12 @@ export const LOCATIONS: LocationPage[] = [
     eyebrow: "Cardiff",
     h1: "Construction software for Cardiff builders and trades",
     intro:
-      "Cardiff and South Wales construction firms use CrewFlow to run leads, quotes, jobs, crews, invoices, payroll and tax from one place. Built for UK construction, it keeps the operations and the money in sync.",
+      "Cardiff and South Wales construction firms use CrewFlow to run leads, quotes, jobs, crews, invoices, payroll and tax from one place — built for UK construction and how Welsh firms work.",
     localContext:
-      "Cardiff and the South Wales valleys have a strong construction base of builders, trades and contractors serving residential and commercial work. CrewFlow brings the whole operation into one UK-native system.",
+      "Cardiff and the South Wales valleys have a strong base of builders, trades and contractors across residential and commercial work. Building regulations are devolved in Wales and differ in places from England's, so CrewFlow keeps the site paperwork, RAMS and certificates for each job in one place — ready for whatever your building-control body needs.",
     faqs: [
       { q: "Does CrewFlow work for Welsh construction firms?", a: "Yes. CrewFlow is built for UK construction companies, including Wales, with UK VAT, PAYE and Corporation Tax handled as you go." },
+      { q: "Building regs are devolved in Wales — does CrewFlow cope?", a: "Yes. CrewFlow isn't a building-control submission tool, but it keeps every job's drawings, site records, RAMS and certificates together, so the paperwork is ready whichever body signs the work off." },
     ],
     related: ["bristol", "london", "birmingham"],
   },
@@ -254,7 +263,7 @@ export const LOCATIONS: LocationPage[] = [
     intro:
       "Newcastle and the North East have a hard-working construction base, and CrewFlow gives those firms one operating system for the whole business — quotes, jobs, crews, invoices, payroll and tax. Less admin, clearer margins, faster cash.",
     localContext:
-      "The North East construction economy spans residential refurb, regeneration and commercial work, with a strong network of trade SMEs across Tyne and Wear. CrewFlow brings the whole operation into one UK-native system.",
+      "The North East runs on regeneration, riverside development along the Tyne and a strong network of trade SMEs across Tyne and Wear. CrewFlow brings that whole operation into one place, so owners spend less time chasing paper between the site and the office.",
     faqs: [
       { q: "Is CrewFlow suitable for North East construction firms?", a: "Yes. CrewFlow is built for UK construction SMEs, giving Newcastle and North East firms quoting, jobs, payroll, invoicing and tax in one system." },
     ],
@@ -273,7 +282,7 @@ export const LOCATIONS: LocationPage[] = [
     intro:
       "Sheffield and South Yorkshire construction firms use CrewFlow to run the whole business from one screen — quotes, jobs, crews, invoices, payroll and tax. Built for UK construction, it keeps the site and the office in sync.",
     localContext:
-      "Sheffield anchors a busy South Yorkshire construction economy of builders, trades and contractors across residential and commercial work. CrewFlow gives those SMEs one operating system instead of disconnected tools.",
+      "Sheffield anchors a South Yorkshire construction economy shaped by post-industrial regeneration, university and commercial development and a strong trade-contractor base. CrewFlow gives those SMEs one operating system instead of juggling separate tools for quoting, jobs, invoicing and payroll.",
     faqs: [
       { q: "Can Sheffield firms get a CrewFlow demo?", a: "Yes. Book a demo and we'll show how CrewFlow brings quoting, jobs, payroll, invoicing and tax into one system for your Sheffield firm." },
     ],

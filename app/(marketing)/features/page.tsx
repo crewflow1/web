@@ -44,7 +44,7 @@ export default function FeaturesHubPage() {
         eyebrow="Features"
         h1="Every part of your construction business, in one system"
         intro={
-          "CrewFlow replaces the five tools that don't talk to each other. From the first enquiry to the Corporation Tax return, every feature connects to the next — so nothing is re-keyed and nothing slips.\n\nExplore each capability below."
+          "CrewFlow replaces the five tools that don't talk to each other. From the first enquiry to the tax figures your accountant files, every feature connects to the next, so nothing is re-keyed and nothing slips.\n\nExplore each capability below."
         }
         breadcrumbs={crumbs}
       />
