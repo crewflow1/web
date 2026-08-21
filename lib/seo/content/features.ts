@@ -194,7 +194,7 @@ export const FEATURES: FeaturePage[] = [
       },
       {
         h2: "Reminders that chase so you don't have to",
-        body: "CrewFlow sends payment reminders automatically at day 3, 7, 14 and 21. The customer who 'forgot' gets a nudge before it becomes a problem. Owners who switch this on consistently report materially more invoices paid on time.",
+        body: "CrewFlow sends payment reminders automatically at day 3, 7, 14 and 21. The customer who 'forgot' gets a nudge before it becomes a problem — so the invoice that would have drifted to 60 or 90 days gets chased while it's still fresh.",
         bullets: [
           "Automatic escalation at 3, 7, 14 and 21 days",
           "Polite, professional wording that protects the relationship",
