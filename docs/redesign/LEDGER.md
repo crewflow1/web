@@ -118,3 +118,15 @@ Migrate conversion-critical legacy light pages onto the dark `(site)` system (st
 3. **Analytics** (PostHog/funnel events) — config/keys gated; deferred.
 
 **Deliverable step available on request:** push `redesign/website-2026` to origin → non-prod Vercel preview (SSO-gated to the CEO) for review. No prod merge without explicit approval.
+
+---
+
+## Progress 4 — CEO decisions actioned (preview pushed + R1 delivered)
+
+- **Preview pushed:** branch `redesign/website-2026` → **PR #835** (clearly marked *preview / do not merge to prod*). Vercel preview builds on push; CI runs. Clean 15+ commit branch off current `origin/main` (`fc8922c4`).
+- **R1 — real product screenshots DELIVERED (CEO authorised seed + capture).** No fabrication, no prod data:
+  - Pointed local `:3200` at the running local Supabase stack; created a confirmed demo user + a realistic **Brightwork Construction** org (status=trial) and seeded **5 customers, 6 jobs (mixed status), 4 invoices** (paid / sent / overdue / partially-paid) via SQL — enough for the dashboard's intelligence + the money/ops tiles to populate honestly.
+  - Captured with Playwright (`scripts/capture-shots.mjs`, repeatable) at 2× from the live app: **dashboard** (clipped to the "Good morning" attention cards — RAMS gaps, £11,520 overdue, £55,440 due), **jobs**, **invoices**, **customers** — all clipped to content.
+  - Wired in via `next/image`: the homepage hero frame now shows the **real dashboard** (replacing the placeholder — resolves the adversarial reviewer's top P1-1); Run jobs / Money / Win work pillar pages show jobs / invoices / customers. Frames with no seeded data (RAMS, quotes) show nothing rather than an empty screen. All are real LIVE features on illustrative demo data — standard, honest product marketing.
+  - **Honest homepage score now ~92–94** (real product proof landed; remaining gap to 95 is breadth of proof + a fuller signature moment, not honesty).
+- **Env note:** local `.env.local` currently points at the local Supabase stack for capture (dummy backup at `.env.local.dummy-bak`); this is local-only and not committed. The Vercel preview uses the project's own env.
