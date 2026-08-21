@@ -34,7 +34,7 @@ export const COMPARISONS: ComparisonPage[] = [
     intro:
       "Procore is one of the biggest names in construction software — and it's built for big construction. If you're a UK SME running quotes, jobs, crews and invoices, the honest question isn't 'which is better', it's 'which is built for you'.",
     positioning:
-      "Procore is an enterprise platform priced and designed for large general contractors managing complex commercial projects with many stakeholders. CrewFlow is the operating system for UK construction companies running roughly 1–30 people who want one tool for the whole business — from the first enquiry to the Corporation Tax return.",
+      "Procore is an enterprise platform priced and designed for large general contractors managing complex commercial projects with many stakeholders. CrewFlow is the operating system for UK construction companies running roughly 1–30 people who want one tool for the whole business — from the first enquiry to the tax figures your accountant files.",
     rows: [
       { feature: "Built for", crewflow: "UK construction SMEs (1–30 staff)", competitor: "Large enterprise contractors" },
       { feature: "UK tax (VAT, PAYE, Corp Tax)", crewflow: "Built in", competitor: "Not a UK tax tool" },
@@ -52,7 +52,7 @@ export const COMPARISONS: ComparisonPage[] = [
       "UK SMEs who want one system for leads, quotes, jobs, staff, invoices, payroll and tax.",
       "Owners who want transparent pricing, not an enterprise sales process.",
       "Teams who need to be live in days, not after a multi-week implementation.",
-      "Businesses that want UK VAT, PAYE and Corporation Tax handled natively.",
+      "Businesses that want UK VAT, PAYE and Corporation Tax figures tracked natively.",
     ],
     verdict:
       "If you're a large contractor running complex commercial jobs, Procore is built for that world. If you're a UK construction SME who wants the whole business in one place without enterprise pricing or implementation, CrewFlow is built for you.",
@@ -97,7 +97,7 @@ export const COMPARISONS: ComparisonPage[] = [
       "Teams already embedded in the US construction software ecosystem.",
     ],
     whereCrewflowWins: [
-      "UK firms that need VAT, PAYE and Corporation Tax handled natively.",
+      "UK firms that need VAT, PAYE and Corporation Tax figures tracked natively.",
       "Businesses that run on bank transfer and don't want card-processing baked into the model.",
       "Owners who want payroll and per-job profitability in the same system as jobs and invoices.",
       "Anyone who prefers transparent GBP pricing over USD tiers.",
@@ -146,7 +146,7 @@ export const COMPARISONS: ComparisonPage[] = [
     whereCrewflowWins: [
       "Construction firms that need true per-job margin from real clocked labour.",
       "Anyone who wants weekly UK payroll in the same system as timesheets.",
-      "UK businesses that need VAT, PAYE and Corporation Tax handled natively.",
+      "UK businesses that need VAT, PAYE and Corporation Tax figures tracked natively.",
       "Builders who quote line-item jobs, capture variations and bill from them.",
     ],
     verdict:

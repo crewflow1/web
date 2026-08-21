@@ -31,6 +31,7 @@ const PRODUCT: NavMenu = {
     { label: "Money", href: "/product/money", note: "Invoicing, CIS, retention, costing" },
     { label: "People & assets", href: "/product/people-assets", note: "Workforce, fleet, stock" },
     { label: "Automation & intelligence", href: "/product/automation", note: "Workflows, reminders, reporting" },
+    { label: "Features A–Z", href: "/features", note: "Every capability, one list" },
   ],
 };
 

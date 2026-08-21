@@ -3,7 +3,7 @@ import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
 import { JsonLd } from "@/components/seo/json-ld";
 import { faqSchema } from "@/lib/seo/schema";
 import type { Faq } from "@/lib/seo/content";
-import { DatumGrid } from "@/components/marketing/setting-out";
+import { DatumGrid, CoordTag } from "@/components/marketing/setting-out";
 
 /*
  * Shared marketing section primitives — unified dark "Setting-Out" system.
@@ -41,13 +41,9 @@ export function Section({
   );
 }
 
+/** Legacy alias — the marketing eyebrow IS the CoordTag (consolidated). */
 export function Eyebrow({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="inline-flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-gold-500">
-      <span aria-hidden className="inline-block h-2 w-2 border border-gold-500/60" />
-      {children}
-    </p>
-  );
+  return <CoordTag>{children}</CoordTag>;
 }
 
 /** Renders a multi-paragraph string (split on blank lines). */

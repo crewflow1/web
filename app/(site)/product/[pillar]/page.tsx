@@ -5,6 +5,7 @@ import Image from "next/image";
 import { PILLARS, pillarBySlug } from "@/lib/marketing/pillars";
 import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
 import { ProductFrame } from "@/components/marketing/product-frame";
+import { buildMetadata } from "@/lib/seo/metadata";
 
 export const dynamicParams = false;
 
@@ -20,11 +21,14 @@ export async function generateMetadata({
   const { pillar } = await params;
   const p = pillarBySlug(pillar);
   if (!p) return {};
-  return {
+  return buildMetadata({
     title: `${p.label} — CrewFlow for UK construction`,
+    titleAbsolute: true,
     description: p.summary,
-    alternates: { canonical: `/product/${p.slug}` },
-  };
+    path: `/product/${p.slug}`,
+    ogTitle: p.headline,
+    ogEyebrow: p.eyebrow,
+  });
 }
 
 export default async function PillarPage({

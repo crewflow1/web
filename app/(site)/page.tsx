@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
+import { buildMetadata } from "@/lib/seo/metadata";
 import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
 import { DatumGrid, CoordTag } from "@/components/marketing/setting-out";
 import { ProductFrame } from "@/components/marketing/product-frame";
@@ -12,12 +13,21 @@ import { Faq } from "@/components/marketing/home/faq";
 import { PillarsIndex } from "@/components/marketing/home/pillars-index";
 import { Reveal } from "@/components/marketing/reveal";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = buildMetadata({
   title: "CrewFlow — the operating system for UK construction companies",
+  titleAbsolute: true,
   description:
     "Run the whole job, from the first call to the last payment. Leads, quotes, site paperwork, CIS and VAT — one system built for how UK construction actually gets paid.",
-  alternates: { canonical: "/" },
-};
+  path: "/",
+  ogTitle: "Run the whole job. From the first call to the last payment.",
+  ogEyebrow: "The operating system for UK construction",
+  keywords: [
+    "construction software UK",
+    "construction management software",
+    "construction ERP UK",
+    "job management software",
+  ],
+});
 
 export default function HomePage() {
   return (
@@ -81,8 +91,7 @@ export default function HomePage() {
             </ProductFrame>
           </Reveal>
           <p className="mx-auto mt-7 max-w-md text-center text-[15px] leading-relaxed text-ink-dim">
-            One screen for what&apos;s on, what&apos;s late and what needs a
-            look — the whole company at a glance.
+            One screen for what&apos;s on, what&apos;s late and what needs a look. The whole company at a glance.
           </p>
         </div>
       </section>
@@ -90,6 +99,25 @@ export default function HomePage() {
       {/* Beat 3 — Signature moment: one job, end to end (own scroll behaviour;
           NOT wrapped in Reveal — a transformed ancestor would break sticky). */}
       <JobJourney />
+
+      {/* Bridge CTA — at the point of maximum interest, after the journey. */}
+      <Reveal>
+        <div className="border-t border-white/5 bg-navy-950">
+          <div className="mx-auto max-w-cf px-5 py-14 text-center sm:px-7 sm:py-16">
+            <p className="mx-auto max-w-xl font-display text-xl font-bold tracking-[-0.02em] text-ink sm:text-2xl">
+              That&apos;s one job. You&apos;re running dozens.
+            </p>
+            <p className="mx-auto mt-2.5 max-w-md text-[15px] leading-relaxed text-ink-mut">
+              See CrewFlow carry yours, on a 30-minute demo with your own numbers.
+            </p>
+            <div className="mt-6 flex justify-center">
+              <BookDemoButton className="inline-flex h-12 items-center rounded-lg bg-gold-500 px-6 text-base font-semibold text-navy-950 shadow-cf-gold transition-colors hover:bg-gold-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">
+                Book a demo
+              </BookDemoButton>
+            </div>
+          </div>
+        </div>
+      </Reveal>
 
       {/* Beat 4 — Six pillars (drawing register) */}
       <Reveal>
@@ -121,6 +149,10 @@ export default function HomePage() {
           <p className="mx-auto mt-5 max-w-lg text-lg text-ink-mut">
             A 30-minute demo, walked through with your own jobs and figures. No
             slides.
+          </p>
+          <p className="mx-auto mt-6 max-w-xl text-sm leading-relaxed text-ink-dim">
+            Built and supported in the UK, by people who know construction. Your
+            data stays yours: full CSV export any time, daily backups, no lock-in.
           </p>
           <div className="mt-9 flex flex-wrap justify-center gap-3">
             <BookDemoButton className="inline-flex h-12 items-center rounded-lg bg-gold-500 px-6 text-base font-semibold text-navy-950 shadow-cf-gold transition-colors hover:bg-gold-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">

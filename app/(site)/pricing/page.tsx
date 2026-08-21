@@ -20,6 +20,7 @@ export const metadata: Metadata = buildMetadata({
     "CrewFlow pricing",
     "construction software cost UK",
   ],
+  ogTitle: "One price. The whole operating system.",
   ogEyebrow: "Pricing",
 });
 
@@ -90,7 +91,7 @@ export default function PricingPage() {
           </h1>
           <p className="mt-6 max-w-xl text-lg leading-relaxed text-ink-mut">
             No per-seat fees, no per-feature tiers, no card-processing skim. One
-            setup, one monthly fee — everything from winning work to filing tax.
+            setup, one monthly fee — everything from winning work to tax-ready figures.
             We set you up properly and stay close.
           </p>
         </div>

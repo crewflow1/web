@@ -6,6 +6,7 @@ const COLS = [
   {
     title: "Solutions",
     links: [
+      { label: "Features A–Z", href: "/features" },
       { label: "Compare CrewFlow", href: "/compare" },
       { label: "By trade", href: "/industries" },
       { label: "By location", href: "/construction-software" },

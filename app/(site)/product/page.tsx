@@ -2,32 +2,27 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { PILLARS } from "@/lib/marketing/pillars";
 import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
+import { buildMetadata } from "@/lib/seo/metadata";
+import { DatumGrid, CoordTag } from "@/components/marketing/setting-out";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = buildMetadata({
   title: "The CrewFlow platform — one system for UK construction",
+  titleAbsolute: true,
   description:
     "CRM, jobs, site & safety, money, people & assets and automation — the whole construction business in one system. Six connected pillars, one place.",
-  alternates: { canonical: "/product" },
-};
+  path: "/product",
+  ogTitle: "One system. Six parts of the business.",
+  ogEyebrow: "The platform",
+});
 
 export default function ProductOverview() {
   return (
     <>
       {/* Hero */}
       <section className="relative overflow-hidden border-b border-white/10">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 opacity-[0.5] [mask-image:radial-gradient(ellipse_at_top_right,black,transparent_70%)]"
-          style={{
-            backgroundImage:
-              "linear-gradient(rgba(46,92,138,.14) 1px,transparent 1px),linear-gradient(90deg,rgba(46,92,138,.14) 1px,transparent 1px)",
-            backgroundSize: "46px 46px",
-          }}
-        />
+        <DatumGrid />
         <div className="relative mx-auto max-w-cf px-5 py-20 sm:px-7 sm:py-28">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gold-500">
-            The operating system for UK construction
-          </p>
+          <CoordTag>The operating system for UK construction</CoordTag>
           <h1 className="mt-5 max-w-4xl font-display text-4xl font-bold leading-[1.05] tracking-tight sm:text-6xl">
             One system for the commercial, site and financial sides of your
             business.

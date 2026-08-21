@@ -26,7 +26,7 @@ export function DatumGrid({
         className="absolute inset-0"
         style={{
           backgroundImage:
-            "linear-gradient(rgba(46,92,138,0.10) 1px, transparent 1px), linear-gradient(90deg, rgba(46,92,138,0.10) 1px, transparent 1px)",
+            "linear-gradient(rgb(var(--cf-blueprint) / 0.10) 1px, transparent 1px), linear-gradient(90deg, rgb(var(--cf-blueprint) / 0.10) 1px, transparent 1px)",
           backgroundSize: "72px 72px",
           maskImage:
             "radial-gradient(120% 90% at 50% 0%, black 30%, transparent 78%)",

@@ -31,6 +31,15 @@ const STAGES: Stage[] = [
   {
     n: "01",
     tag: "REV A",
+    label: "Catch the enquiry",
+    note: "Every call, form and referral lands in one pipeline, scored hot to cold so you chase the work worth winning first.",
+    src: "/product-shots/journey/leads.png",
+    alt: "CrewFlow leads pipeline — enquiries on a kanban board with source, service, estimated value and a hot / warm / cold priority score.",
+    url: "app.crewflow.uk/leads",
+  },
+  {
+    n: "02",
+    tag: "REV B",
     label: "Price it",
     note: "A line-item quote with full VAT, out the door in minutes — not a night at the kitchen table.",
     src: "/product-shots/journey/quotes.png",
@@ -38,8 +47,8 @@ const STAGES: Stage[] = [
     url: "app.crewflow.uk/quotes",
   },
   {
-    n: "02",
-    tag: "REV B",
+    n: "03",
+    tag: "REV C",
     label: "Win it",
     note: "The customer signs the quote by name and it becomes a live job — costs, schedule and site details already attached. Nothing re-keyed.",
     src: "/product-shots/journey/jobs.png",
@@ -47,8 +56,8 @@ const STAGES: Stage[] = [
     url: "app.crewflow.uk/jobs",
   },
   {
-    n: "03",
-    tag: "REV C",
+    n: "04",
+    tag: "REV D",
     label: "Prove it's safe",
     note: "Issue the RAMS before anyone lifts a tool — every hazard scored on a 5×5 matrix, signed off, and frozen as the record for the site.",
     src: "/product-shots/journey/rams.png",
@@ -56,8 +65,8 @@ const STAGES: Stage[] = [
     url: "app.crewflow.uk/health-safety",
   },
   {
-    n: "04",
-    tag: "REV D",
+    n: "05",
+    tag: "REV E",
     label: "Bill the work",
     note: "Stage valuations and applications for payment as the job runs, then invoices that chase themselves — day 3, 7, 14, 21 — until the money lands.",
     src: "/product-shots/journey/invoices.png",
@@ -65,8 +74,8 @@ const STAGES: Stage[] = [
     url: "app.crewflow.uk/invoices",
   },
   {
-    n: "05",
-    tag: "REV E",
+    n: "06",
+    tag: "REV F",
     label: "See the whole company",
     note: "Every job feeds one screen — what's late, what's owed, what's making money. The morning brief that used to take an afternoon.",
     src: "/product-shots/journey/dashboard.png",
@@ -104,7 +113,7 @@ export function JobJourney() {
         </h2>
         <p className="mt-4 max-w-xl text-lg leading-relaxed text-ink-mut">
           You enter it once. Follow a single job down through CrewFlow — from the
-          first price to the last payment, with the site and commercial work that
+          first call to the last payment, with the site and commercial work that
           wins bigger jobs built into the middle.
         </p>
       </div>
