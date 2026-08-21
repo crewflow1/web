@@ -36,7 +36,7 @@ export function Section({
 }) {
   return (
     <section id={id} className={`border-b border-white/5 ${BG[bg]}`}>
-      <div className={`container py-16 sm:py-20 ${className}`}>{children}</div>
+      <div className={`mx-auto max-w-cf px-5 sm:px-7 py-16 sm:py-20 ${className}`}>{children}</div>
     </section>
   );
 }
@@ -143,7 +143,7 @@ export function PageHero({
   return (
     <section className="relative overflow-hidden border-b border-white/5">
       <DatumGrid />
-      <div className="container relative py-14 sm:py-20">
+      <div className="mx-auto max-w-cf px-5 sm:px-7 relative py-14 sm:py-20">
         {breadcrumbs ? <Breadcrumbs items={breadcrumbs} /> : null}
         <div className="grid gap-10 lg:grid-cols-12">
           <div className={bullets ? "lg:col-span-7" : "lg:col-span-9"}>
@@ -217,21 +217,23 @@ export function OutcomeCards({
 }) {
   return (
     <Section bg="muted">
-      <div className="grid gap-4 md:grid-cols-3">
+      {/* A measured "outcomes schedule" — joined by hairlines like a drawing
+          schedule, not three floating stat cards. */}
+      <div className="grid gap-px overflow-hidden rounded-cf border border-cfborder bg-cfborder sm:grid-cols-3">
         {items.map((o, i) => (
-          <div
-            key={i}
-            className="rounded-cf border border-cfborder bg-navy-800 p-7 text-center shadow-cf"
-          >
+          <div key={i} className="bg-navy-800 p-7">
+            <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-ink-dim">
+              {String(i + 1).padStart(2, "0")}
+            </span>
             {o.stat ? (
-              <div className="font-display text-4xl font-bold tabular-nums tracking-tight text-ink">
+              <div className="mt-3 font-display text-[2.6rem] font-bold leading-none tabular-nums tracking-tight text-gold-500">
                 {o.stat}
               </div>
             ) : null}
-            <div className={`text-sm font-semibold text-ink ${o.stat ? "mt-2" : ""}`}>
+            <div className={`font-display text-base font-semibold text-ink ${o.stat ? "mt-3" : "mt-2"}`}>
               {o.label}
             </div>
-            <p className="mt-3 text-sm leading-relaxed text-ink-mut">{o.body}</p>
+            <p className="mt-2.5 text-sm leading-relaxed text-ink-mut">{o.body}</p>
           </div>
         ))}
       </div>
@@ -414,7 +416,7 @@ export function CtaSection({
 }) {
   return (
     <section className="bg-navy-950">
-      <div className="container py-16 sm:py-20">
+      <div className="mx-auto max-w-cf px-5 sm:px-7 py-16 sm:py-20">
         <div className="relative overflow-hidden rounded-cf border border-cfborder bg-navy-900 px-8 py-16 text-center shadow-cf sm:px-16">
           <DatumGrid />
           <div className="relative">
@@ -488,7 +490,7 @@ export function HubHeader({
   return (
     <section className="relative overflow-hidden border-b border-white/5">
       <DatumGrid />
-      <div className="container relative py-14 sm:py-20">
+      <div className="mx-auto max-w-cf px-5 sm:px-7 relative py-14 sm:py-20">
         {breadcrumbs ? <Breadcrumbs items={breadcrumbs} /> : null}
         <Eyebrow>{eyebrow}</Eyebrow>
         <h1 className="mt-5 max-w-3xl font-display text-[clamp(2.2rem,5vw,3.5rem)] font-bold leading-[1.03] tracking-[-0.03em] text-ink">

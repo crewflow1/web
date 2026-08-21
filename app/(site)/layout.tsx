@@ -21,6 +21,7 @@ import {
 export default function SiteLayout({ children }: { children: React.ReactNode }) {
   return (
     <div
+      data-marketing="true"
       className={`${clashDisplay.variable} ${satoshi.variable} flex min-h-screen flex-col bg-navy-950 font-body text-ink`}
     >
       <JsonLd

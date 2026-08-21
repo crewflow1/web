@@ -21,6 +21,7 @@ export function LegalShell({
 }) {
   return (
     <div
+      data-marketing="true"
       className={`${clashDisplay.variable} ${satoshi.variable} min-h-screen bg-navy-950 font-body text-ink`}
     >
       <header className="border-b border-white/10 bg-navy-900">

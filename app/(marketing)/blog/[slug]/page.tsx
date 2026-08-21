@@ -119,7 +119,7 @@ export default async function BlogPostPage({
 
       <article className="relative overflow-hidden border-b border-white/5">
         <DatumGrid />
-        <div className="container relative py-14 sm:py-16">
+        <div className="mx-auto max-w-cf px-5 sm:px-7 relative py-14 sm:py-16">
           <div className="mx-auto max-w-3xl">
             <Breadcrumbs items={crumbs} />
             <div className="flex items-center gap-3 font-mono text-xs font-semibold uppercase tracking-wide text-gold-500">

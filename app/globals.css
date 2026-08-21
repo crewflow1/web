@@ -11,6 +11,14 @@
     -webkit-text-size-adjust: 100%;
   }
 
+  /* Dark ground for the marketing/site surface: paint <html> so iOS overscroll
+     and first paint are navy, not the light product-app body. Scoped via :has()
+     to the dark wrappers so the light in-app surface is untouched. */
+  html:has([data-marketing]) {
+    background-color: rgb(var(--cf-navy-950));
+    color-scheme: dark;
+  }
+
   body {
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
