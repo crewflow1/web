@@ -20,6 +20,14 @@ import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
  * operator opts in this is a single cheap RPC. The run's `cron_runs` row records the
  * backfill progress (per-source status + counters) alongside what it drained.
  *
+ * SCHEDULE: hourly, not per-minute. This is a ONE-TIME historical replay, and every
+ * registered source in `hq_backfill_state` reached status='done' on 2026-08-16 — after
+ * which a per-minute schedule spent ~1,440 runs a day (688 ms each) re-confirming that
+ * a finished job was still finished. Hourly keeps the resume path for a newly
+ * registered source without paying for a minute-resolution clock the work does not
+ * need. The LIVE delivery path is /api/cron/spine-drain, which stays per-minute and is
+ * deliberately untouched — this change moves a completed backfill, never a consumer.
+ *
  * Auth: Bearer CRON_SECRET (lib/cron/auth). Returns 401 otherwise.
  */
 

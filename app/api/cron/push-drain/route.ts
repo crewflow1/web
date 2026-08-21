@@ -3,6 +3,7 @@ import { isCronAuthorised } from "@/lib/cron/auth";
 import {
   drainPushQueue,
   cleanupOldPushDeliveries,
+  isPushConfigured,
 } from "@/lib/notifications/push";
 import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
 
@@ -17,10 +18,19 @@ import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
  * pruning any that the push service reports gone (404/410). Transient failures
  * reschedule via exponential backoff in lib/notifications/push.ts.
  *
- * DARK-safe: with no VAPID keys configured, the drain marks the batch 'skipped'
- * (refuse-before-send) rather than attempting a send that can only fail.
+ * DARK GATE (SWITCH 1) — checked immediately after the Bearer gate, before any
+ * admin client is built or any row is read, so a dark deploy costs ZERO database
+ * work. This mirrors /api/cron/webhook-dispatch, the reference pattern.
  *
- * Once a day this also prunes settled rows older than 30 days.
+ * Why this is safe rather than merely cheap: `enqueuePushForNotifications`
+ * short-circuits on the SAME predicate (`if (!isPushConfigured()) return 0`), so
+ * while the channel is dark nothing can enter push_deliveries in the first
+ * place. The drain and the enqueue are gated by one switch, so an early return
+ * here can never strand a queue — there is nothing to strand. The daily
+ * `cleanupOldPushDeliveries` pass is likewise a no-op against a table that
+ * cannot have grown.
+ *
+ * Once a day (when configured) this also prunes settled rows older than 30 days.
  *
  * Auth: Bearer CRON_SECRET (lib/cron/auth). Returns 401 otherwise.
  */
@@ -32,6 +42,13 @@ export async function GET(request: Request): Promise<NextResponse> {
   if (!isCronAuthorised(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+
+  // Dark gate — zero DB work, and no telemetry row, before the switch flips.
+  // No body on a 204.
+  if (!isPushConfigured()) {
+    return new NextResponse(null, { status: 204 });
+  }
+
   const url = new URL(request.url);
   const skipCleanup = url.searchParams.get("skip_cleanup") === "1";
 
