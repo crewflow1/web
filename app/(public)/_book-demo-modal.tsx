@@ -1,39 +1,37 @@
 "use client";
 
 import {
+  cloneElement,
+  isValidElement,
   useEffect,
   useRef,
   useState,
   useTransition,
   type FormEvent,
+  type ReactElement,
 } from "react";
 import {
   EMPLOYEE_RANGES,
   TURNOVER_LABELS,
   TURNOVER_RANGES,
 } from "@/lib/demo/schema";
-import { buttonClass } from "@/components/ui/button";
 
 type SubmitResult =
   | { ok: true; deduped?: boolean }
   | { ok: false; error: string; fieldErrors?: Record<string, string> };
 
 /**
- * Premium book-demo modal. Submitted form goes to the server action,
- * which inserts demo_requests + (optionally) an internal-org lead +
- * emails hello@crewflow.uk.
+ * Book-demo modal — unified dark "Setting-Out" system.
  *
- * Behaviours:
- *   - Open/close via the global custom event `crewflow:open-book-demo`
- *     dispatched by buttons across the landing.
- *   - Inline field errors from the server action.
- *   - Pending state on the submit button.
- *   - Esc to close, click-outside to close.
- *   - Success screen with reassurance + close.
+ * PRESENTATION + a11y only were reworked here; the booking logic is unchanged:
+ * open via the global `crewflow:open-book-demo` event, POST the form to
+ * /api/demo, inline field errors, pending → success. The dialog now has a real
+ * focus trap, returns focus to the trigger on close, locks body scroll, and is
+ * a bottom sheet on mobile / centred on desktop.
  */
 
 const INPUT =
-  "mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm transition focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10";
+  "mt-1.5 block w-full rounded-md border border-cfborder bg-navy-950 px-3 py-2 text-sm text-ink outline-none transition placeholder:text-ink-dim focus:border-gold-500 focus:ring-2 focus:ring-gold-500/25";
 
 export function BookDemoModal() {
   const [open, setOpen] = useState(false);
@@ -43,9 +41,13 @@ export function BookDemoModal() {
   const [pending, startTransition] = useTransition();
   const dialogRef = useRef<HTMLDivElement>(null);
   const firstFieldRef = useRef<HTMLInputElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     function onOpen() {
+      // Remember what to return focus to (the button that dispatched the event).
+      returnFocusRef.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setOpen(true);
       setDone(false);
       setError(null);
@@ -55,14 +57,49 @@ export function BookDemoModal() {
     return () => window.removeEventListener("crewflow:open-book-demo", onOpen);
   }, []);
 
+  // Scroll-lock + focus trap + Esc + restore focus on close.
   useEffect(() => {
     if (!open) return;
-    setTimeout(() => firstFieldRef.current?.focus(), 30);
+    const dialog = dialogRef.current;
+    const restoreTo = returnFocusRef.current;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const t = setTimeout(() => firstFieldRef.current?.focus(), 30);
+
+    const focusables = () =>
+      Array.from(
+        dialog?.querySelectorAll<HTMLElement>(
+          'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      ).filter((el) => el.offsetParent !== null);
+
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        setOpen(false);
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const items = focusables();
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (!first || !last) return;
+      const activeEl = document.activeElement as HTMLElement | null;
+      const outside = !dialog?.contains(activeEl);
+      if (e.shiftKey && (activeEl === first || outside)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (activeEl === last || outside)) {
+        e.preventDefault();
+        first.focus();
+      }
     }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+      restoreTo?.focus();
+    };
   }, [open]);
 
   function onSubmit(e: FormEvent<HTMLFormElement>) {
@@ -72,8 +109,6 @@ export function BookDemoModal() {
     setError(null);
     setFieldErrors({});
 
-    // Convert FormData → plain object so the API route's Zod schema can
-    // validate it directly. Empty optional fields become undefined.
     const payload: Record<string, string> = {};
     formData.forEach((value, key) => {
       if (typeof value === "string" && value.trim() !== "") {
@@ -120,105 +155,96 @@ export function BookDemoModal() {
       role="dialog"
       aria-modal="true"
       aria-labelledby="book-demo-title"
-      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 px-4 py-6 sm:items-center"
-      onClick={(e) => {
+      aria-describedby="book-demo-desc"
+      className="fixed inset-0 z-[80] flex items-end justify-center bg-navy-950/80 p-0 backdrop-blur-sm sm:items-center sm:p-6"
+      onMouseDown={(e) => {
         if (e.target === e.currentTarget) setOpen(false);
       }}
     >
       <div
         ref={dialogRef}
-        className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+        className="relative max-h-[92vh] w-full overflow-y-auto rounded-t-cf border border-cfborder bg-navy-900 shadow-cf sm:max-w-lg sm:rounded-cf"
       >
         <button
           type="button"
           onClick={() => setOpen(false)}
           aria-label="Close"
-          className="absolute right-3 top-3 rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+          className="absolute right-3.5 top-3.5 rounded-md p-1.5 text-ink-dim transition-colors hover:bg-white/5 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
         >
-          ✕
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
         </button>
 
         {done ? (
-          <div className="px-8 py-10 text-center">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-green-100">
-              <span aria-hidden className="text-2xl">✓</span>
+          <div className="px-8 py-12 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-positive/15">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-positive">
+                <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </div>
-            <h2 className="mt-4 text-xl font-semibold text-slate-900">
+            <h2 className="mt-5 font-display text-2xl font-bold tracking-[-0.02em] text-ink">
               We&apos;ll be in touch.
             </h2>
-            <p className="mt-2 text-sm text-slate-600">
-              Your demo request is in. Someone from CrewFlow will reach out
-              within one working day to confirm a time.
+            <p className="mx-auto mt-3 max-w-sm text-[15px] leading-relaxed text-ink-mut">
+              Your demo request is in. Someone from CrewFlow will reach out within
+              one working day to confirm a time.
             </p>
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className={buttonClass("primary", "md", "mt-6")}
+              className="mt-7 inline-flex h-11 items-center rounded-lg bg-gold-500 px-6 text-sm font-semibold text-navy-950 shadow-cf-gold transition-colors hover:bg-gold-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100"
             >
               Done
             </button>
           </div>
         ) : (
-          <div className="px-6 py-6 sm:px-8 sm:py-8">
-            <h2 id="book-demo-title" className="text-xl font-semibold text-slate-900">
-              Book a CrewFlow demo
+          <div className="px-6 py-7 sm:px-8 sm:py-8">
+            <p className="inline-flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-gold-500">
+              <span aria-hidden="true" className="inline-block h-2 w-2 border border-gold-500/60" />
+              Book a demo
+            </p>
+            <h2
+              id="book-demo-title"
+              className="mt-3 font-display text-2xl font-bold tracking-[-0.02em] text-ink"
+            >
+              See CrewFlow on your own numbers.
             </h2>
-            <p className="mt-1 text-sm text-slate-600">
-              30 minutes on a call. We&apos;ll walk through your existing
-              numbers so you see exactly what CrewFlow would change.
+            <p id="book-demo-desc" className="mt-2 text-[15px] leading-relaxed text-ink-mut">
+              30 minutes on a call. We&apos;ll walk through your existing jobs and
+              figures so you see exactly what would change. No slides.
             </p>
 
             {error ? (
-              <div role="alert" className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              <div
+                role="alert"
+                className="mt-5 rounded-lg border border-danger/40 bg-danger/[0.08] px-3.5 py-2.5 text-sm text-danger"
+              >
                 {error}
               </div>
             ) : null}
 
-            <form onSubmit={onSubmit} className="mt-5 space-y-4">
+            <form onSubmit={onSubmit} className="mt-6 space-y-4">
               <Row>
-                <Field label="Your name" error={fieldErrors.name}>
-                  <input
-                    ref={firstFieldRef}
-                    name="name"
-                    required
-                    maxLength={120}
-                    autoComplete="name"
-                    className={INPUT}
-                  />
+                <Field name="name" label="Your name" error={fieldErrors.name}>
+                  <input ref={firstFieldRef} name="name" required maxLength={120} autoComplete="name" className={INPUT} />
                 </Field>
-                <Field label="Company" error={fieldErrors.company}>
-                  <input
-                    name="company"
-                    required
-                    maxLength={160}
-                    autoComplete="organization"
-                    className={INPUT}
-                  />
+                <Field name="company" label="Company" error={fieldErrors.company}>
+                  <input name="company" required maxLength={160} autoComplete="organization" className={INPUT} />
                 </Field>
               </Row>
 
               <Row>
-                <Field label="Email" error={fieldErrors.email}>
-                  <input
-                    name="email"
-                    type="email"
-                    required
-                    autoComplete="email"
-                    className={INPUT}
-                  />
+                <Field name="email" label="Email" error={fieldErrors.email}>
+                  <input name="email" type="email" required autoComplete="email" className={INPUT} />
                 </Field>
-                <Field label="Phone (optional)" error={fieldErrors.phone}>
-                  <input
-                    name="phone"
-                    type="tel"
-                    autoComplete="tel"
-                    className={INPUT}
-                  />
+                <Field name="phone" label="Phone (optional)" error={fieldErrors.phone}>
+                  <input name="phone" type="tel" autoComplete="tel" className={INPUT} />
                 </Field>
               </Row>
 
               <Row>
-                <Field label="Employees" error={fieldErrors.employees}>
+                <Field name="employees" label="Employees" error={fieldErrors.employees}>
                   <select name="employees" required defaultValue="" className={INPUT}>
                     <option value="" disabled>
                       Pick a range
@@ -230,7 +256,7 @@ export function BookDemoModal() {
                     ))}
                   </select>
                 </Field>
-                <Field label="Turnover" error={fieldErrors.turnover_range}>
+                <Field name="turnover_range" label="Turnover" error={fieldErrors.turnover_range}>
                   <select name="turnover_range" defaultValue="" className={INPUT}>
                     <option value="">Prefer not to say</option>
                     {TURNOVER_RANGES.filter((r) => r !== "prefer_not_say").map((r) => (
@@ -242,7 +268,7 @@ export function BookDemoModal() {
                 </Field>
               </Row>
 
-              <Field label="Current systems" error={fieldErrors.current_systems}>
+              <Field name="current_systems" label="Current systems" error={fieldErrors.current_systems}>
                 <input
                   name="current_systems"
                   placeholder="e.g. Xero + WhatsApp + paper diary"
@@ -251,7 +277,7 @@ export function BookDemoModal() {
                 />
               </Field>
 
-              <Field label="Preferred demo time" error={fieldErrors.preferred_demo_time}>
+              <Field name="preferred_demo_time" label="Preferred demo time" error={fieldErrors.preferred_demo_time}>
                 <input
                   name="preferred_demo_time"
                   placeholder="e.g. weekday mornings, this week"
@@ -260,22 +286,26 @@ export function BookDemoModal() {
                 />
               </Field>
 
-              <div className="mt-2 flex items-center justify-end gap-3">
+              <div className="flex items-center justify-end gap-3 pt-1">
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
-                  className={buttonClass("ghost", "md")}
+                  className="inline-flex h-11 items-center rounded-lg px-4 text-sm font-medium text-ink-mut transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={pending}
-                  className={buttonClass("primary", "md")}
+                  aria-busy={pending}
+                  className="inline-flex h-11 items-center rounded-lg bg-gold-500 px-6 text-sm font-semibold text-navy-950 shadow-cf-gold transition-colors hover:bg-gold-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100 disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   {pending ? "Sending…" : "Request demo"}
                 </button>
               </div>
+              <p className="pt-1 text-center text-xs text-ink-dim">
+                We&apos;ll only use this to book your demo.
+              </p>
             </form>
           </div>
         )}
@@ -289,34 +319,45 @@ function Row({ children }: { children: React.ReactNode }) {
 }
 
 function Field({
+  name,
   label,
   error,
   children,
 }: {
+  name: string;
   label: string;
   error?: string;
-  children: React.ReactNode;
+  children: ReactElement;
 }) {
+  const errId = error ? `${name}-err` : undefined;
+  const control =
+    error && isValidElement(children)
+      ? cloneElement(children as ReactElement<Record<string, unknown>>, {
+          "aria-invalid": true,
+          "aria-describedby": errId,
+        })
+      : children;
   return (
-    <label className="block text-xs font-medium text-slate-700">
+    <label className="block text-xs font-medium text-ink-mut">
       {label}
-      {children}
-      {error ? <span className="mt-1 block text-[11px] font-normal text-red-700">{error}</span> : null}
+      {control}
+      {error ? (
+        <span id={errId} className="mt-1 block text-[11px] font-normal text-danger">
+          {error}
+        </span>
+      ) : null}
     </label>
   );
 }
 
 /**
- * A button that opens the modal. Render anywhere on the landing.
+ * A button that opens the modal. Render anywhere on the site. Callers pass the
+ * full (dark) button styling via `className`; the default is a minimal fallback.
  */
 export function BookDemoButton({
-  size = "lg",
-  variant = "primary",
   children = "Book a demo",
-  className,
+  className = "inline-flex h-11 items-center rounded-lg bg-gold-500 px-5 text-sm font-semibold text-navy-950 shadow-cf-gold transition-colors hover:bg-gold-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100",
 }: {
-  size?: "sm" | "md" | "lg";
-  variant?: "primary" | "secondary" | "ghost";
   children?: React.ReactNode;
   className?: string;
 }) {
@@ -324,7 +365,7 @@ export function BookDemoButton({
     <button
       type="button"
       onClick={() => window.dispatchEvent(new Event("crewflow:open-book-demo"))}
-      className={buttonClass(variant, size, className)}
+      className={className}
     >
       {children}
     </button>
