@@ -114,6 +114,12 @@ export type LocationPage = {
   intro: string;
   /** Genuine, non-fabricated local context (qualitative). */
   localContext: string;
+  /**
+   * One genuine, non-swappable sentence about what running a construction
+   * business in THIS place actually involves. Frames the "one system" section
+   * so it is not byte-identical across locations.
+   */
+  localAngle: string;
   faqs: Faq[];
   related: string[]; // other location slugs
 };

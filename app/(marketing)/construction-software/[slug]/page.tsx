@@ -92,10 +92,7 @@ export default async function LocationPage({
           <h2 className="font-display text-2xl font-bold tracking-[-0.02em] text-ink sm:text-3xl">
             One system for the whole business
           </h2>
-          <p className="mt-4 text-lg leading-relaxed text-ink-mut">
-            Whether you&apos;re a sole trader or a growing firm in {l.location}, CrewFlow brings
-            every part of the business into one place:
-          </p>
+          <p className="mt-4 text-lg leading-relaxed text-ink-mut">{l.localAngle}</p>
           <CheckList
             className="mt-6"
             items={[
