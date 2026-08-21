@@ -40,7 +40,7 @@ const MOMENTS: Moment[] = [
 
 export function JobJourney() {
   return (
-    <section className="border-t border-white/5 bg-navy-950">
+    <section className=" bg-navy-950">
       <div className="mx-auto max-w-cf px-5 pt-28 sm:px-7 sm:pt-40">
         <h2 className="max-w-[15ch] font-display text-[clamp(2.1rem,4.6vw,3.75rem)] font-bold leading-[1.0] tracking-[-0.02em] text-ink">
           Watch it run a real job

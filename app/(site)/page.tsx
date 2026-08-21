@@ -92,7 +92,7 @@ export default function HomePage() {
       <PricingBlock />
 
       {/* Close. */}
-      <section className="border-t border-white/5 bg-navy-950">
+      <section className=" bg-navy-950">
         <div className="mx-auto max-w-cf px-5 py-28 sm:px-7 sm:py-36">
           <h2 className="max-w-[18ch] font-display text-[clamp(2.1rem,4.6vw,3.75rem)] font-bold leading-[1.0] tracking-[-0.02em] text-ink">
             Run your whole construction company from one place.

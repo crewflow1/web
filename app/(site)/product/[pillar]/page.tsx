@@ -44,7 +44,7 @@ export default async function PillarPage({
   return (
     <>
       {/* Hero */}
-      <section className="border-b border-white/10">
+      <section>
         <div className="mx-auto max-w-cf px-5 py-16 sm:px-7 sm:py-24">
           <nav aria-label="Breadcrumb" className="text-sm text-ink-dim">
             <Link href="/product" className="hover:text-ink">
@@ -53,10 +53,7 @@ export default async function PillarPage({
             <span aria-hidden="true">/</span>{" "}
             <span className="text-ink-mut">{p.label}</span>
           </nav>
-          <p className="mt-6 text-xs font-semibold uppercase tracking-[0.2em] text-gold-500">
-            {p.eyebrow}
-          </p>
-          <h1 className="mt-4 max-w-4xl font-display text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl">
+          <h1 className="mt-6 max-w-[20ch] font-display text-[clamp(2.4rem,5.5vw,4.25rem)] font-bold leading-[0.99] tracking-[-0.015em] text-ink">
             {p.headline}
           </h1>
           <p className="mt-6 max-w-2xl text-lg text-ink-mut">{p.summary}</p>
@@ -70,8 +67,8 @@ export default async function PillarPage({
 
       {/* Real product screenshot (when available for this pillar) */}
       {p.shot ? (
-        <section className="border-b border-white/10 bg-navy-900">
-          <div className="mx-auto max-w-cf px-5 py-14 sm:px-7 sm:py-16">
+        <section className="bg-navy-900">
+          <div className="mx-auto max-w-cf px-5 py-16 sm:px-7 sm:py-24">
             <ProductFrame
               screen={p.shot.screen}
               url={p.shot.url}
@@ -95,13 +92,13 @@ export default async function PillarPage({
         <h2 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
           What&apos;s inside
         </h2>
-        <div className="mt-8 grid gap-px overflow-hidden rounded-cf border border-cfborder bg-cfborder sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-10 grid gap-x-10 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
           {p.capabilities.map((c) => (
-            <div key={c.name} className="bg-navy-800 p-6">
-              <h3 className="font-display text-base font-bold text-ink">
+            <div key={c.name}>
+              <h3 className="font-display text-lg font-bold text-ink">
                 {c.name}
               </h3>
-              <p className="mt-2 text-sm text-ink-mut">{c.note}</p>
+              <p className="mt-2 text-[15px] leading-relaxed text-ink-mut">{c.note}</p>
             </div>
           ))}
         </div>
@@ -112,8 +109,8 @@ export default async function PillarPage({
       </section>
 
       {/* Part of one system */}
-      <section className="border-t border-white/10 bg-navy-900">
-        <div className="mx-auto max-w-cf px-5 py-16 sm:px-7">
+      <section className="bg-navy-900">
+        <div className="mx-auto max-w-cf px-5 py-20 sm:px-7 sm:py-28">
           <h2 className="font-display text-2xl font-bold tracking-tight">
             Part of one connected system
           </h2>
@@ -121,19 +118,15 @@ export default async function PillarPage({
             {p.label} doesn&apos;t sit on its own — it feeds the rest of CrewFlow,
             so you enter things once and they flow all the way through.
           </p>
-          <div className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="mt-10 flex flex-wrap gap-x-8 gap-y-4">
             {others.map((o) => (
               <Link
                 key={o.slug}
                 href={`/product/${o.slug}`}
-                className="rounded-lg border border-cfborder bg-navy-800 p-4 transition-colors hover:border-gold-500/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
+                className="group inline-flex items-center gap-2 text-lg font-medium text-ink transition-colors hover:text-gold-500 focus-visible:outline-none focus-visible:underline"
               >
-                <span className="font-display text-xs font-semibold text-gold-500">
-                  {o.n}
-                </span>
-                <span className="mt-1 block text-sm font-medium text-ink">
-                  {o.label}
-                </span>
+                {o.label}
+                <span aria-hidden="true" className="text-ink-dim transition-transform group-hover:translate-x-0.5">→</span>
               </Link>
             ))}
           </div>
@@ -141,8 +134,8 @@ export default async function PillarPage({
       </section>
 
       {/* CTA */}
-      <section className="border-t border-white/10">
-        <div className="mx-auto max-w-cf px-5 py-16 text-center sm:px-7">
+      <section>
+        <div className="mx-auto max-w-cf px-5 py-24 text-center sm:px-7 sm:py-32">
           <h2 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
             See {p.label.toLowerCase()} on your own jobs.
           </h2>

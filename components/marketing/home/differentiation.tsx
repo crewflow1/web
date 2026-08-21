@@ -39,7 +39,7 @@ const COLUMNS = [
 
 export function Differentiation() {
   return (
-    <section className="border-t border-white/5 bg-navy-900">
+    <section className=" bg-navy-900">
       <div className="mx-auto max-w-cf px-5 py-28 sm:px-7 sm:py-36">
         <h2 className="max-w-[18ch] font-display text-[clamp(2.1rem,4.6vw,3.75rem)] font-bold leading-[1.0] tracking-[-0.02em] text-ink">
           Not a job app. The whole construction business.
@@ -49,7 +49,7 @@ export function Differentiation() {
           touch — the layer that gets you onto bigger tenders and keeps the
           margin you won.
         </p>
-        <div className="mt-16 grid gap-x-12 gap-y-14 border-t border-white/10 pt-14 md:grid-cols-3">
+        <div className="mt-16 grid gap-x-12 gap-y-14 pt-2 md:grid-cols-3">
           {COLUMNS.map((c) => (
             <div key={c.tag}>
               <h3 className="text-sm font-semibold uppercase tracking-[0.12em] text-gold-500">

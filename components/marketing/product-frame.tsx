@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { BrowserChrome } from "@/components/marketing/browser-chrome";
 
 /**
  * PRODUCT-PROOF FRAME — honest, TEMPORARY placeholder.
@@ -17,26 +16,24 @@ import { BrowserChrome } from "@/components/marketing/browser-chrome";
  */
 export function ProductFrame({
   screen,
-  url,
   children,
   className = "",
 }: {
   screen: string;
-  url: string;
+  /** Kept for call-site compatibility; no longer rendered (no fake chrome). */
+  url?: string;
   children?: ReactNode;
   className?: string;
 }) {
   const isPlaceholder = !children;
   return (
     <figure
-      className={`overflow-hidden rounded-cf border border-white/10 bg-navy-850 shadow-cf ring-1 ring-inset ring-white/[0.04] ${className}`}
+      className={`overflow-hidden rounded-2xl bg-[#F7F9FC] shadow-[0_40px_120px_-30px_rgba(0,0,0,0.7)] ring-1 ring-white/10 ${className}`}
       {...(isPlaceholder ? { "data-proof": "placeholder" } : {})}
     >
-      <BrowserChrome url={url} />
-
       {children ? (
         // Real seeded screenshot goes here (light UI).
-        <div className="bg-[#F7F9FC]">{children}</div>
+        children
       ) : (
         // Neutral structured schematic of a light CrewFlow screen (no data).
         <div aria-hidden="true" className="flex bg-[#F7F9FC]">

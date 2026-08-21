@@ -5,7 +5,6 @@ import { buildMetadata } from "@/lib/seo/metadata";
 import { JsonLd } from "@/components/seo/json-ld";
 import { webPageSchema, breadcrumbSchema } from "@/lib/seo/schema";
 import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
-import { DatumGrid } from "@/components/marketing/setting-out";
 import { PILLARS } from "@/lib/marketing/pillars";
 
 const PATH = "/pricing";
@@ -95,7 +94,7 @@ export default function PricingPage() {
       </section>
 
       {/* Price card + what "everything" means */}
-      <section className="relative border-t border-white/5 bg-navy-900">
+      <section className=" bg-navy-900">
         <div className="mx-auto max-w-cf px-5 py-16 sm:px-7 sm:py-20">
           <div className="grid gap-10 lg:grid-cols-[0.85fr_1.15fr] lg:items-start">
             {/* The card */}
@@ -121,9 +120,7 @@ export default function PricingPage() {
                 See it on your own numbers before you commit.
               </p>
 
-              <div className="my-7 h-px bg-white/10" />
-
-              <ul className="space-y-3 text-[15px] text-ink-mut">
+              <ul className="mt-9 space-y-3.5 text-[15px] text-ink">
                 {INCLUDED.map((item) => (
                   <li key={item} className="flex gap-3">
                     <Check />
@@ -143,12 +140,12 @@ export default function PricingPage() {
                 an add-on. Six parts of the company, in one system.
               </p>
 
-              <ol className="mt-9 border-t border-white/10">
+              <ol className="mt-8 flex flex-col gap-1">
                 {PILLARS.map((p) => (
                   <li key={p.slug}>
                     <Link
                       href={`/product/${p.slug}`}
-                      className="group grid grid-cols-[2.5rem_1fr] items-baseline gap-x-4 gap-y-2 rounded-lg border-b border-white/10 py-5 transition-colors hover:bg-white/[0.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-500"
+                      className="group -mx-4 grid grid-cols-[2.5rem_1fr] items-baseline gap-x-4 gap-y-2 rounded-xl px-4 py-4 transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-500"
                     >
                       <span className="text-sm font-semibold tabular-nums text-gold-500">
                         {p.n}
@@ -171,14 +168,14 @@ export default function PricingPage() {
       </section>
 
       {/* FAQ */}
-      <section className="border-t border-white/5">
+      <section className="">
         <div className="mx-auto max-w-cf px-5 py-20 sm:px-7 sm:py-24">
           <h2 className="font-display text-[clamp(1.9rem,3.4vw,2.9rem)] font-bold leading-[1.04] tracking-[-0.02em] text-ink">
             Cost, answered plainly
           </h2>
-          <div className="mt-10 max-w-3xl divide-y divide-white/10 border-y border-white/10">
+          <div className="mt-10 max-w-3xl">
             {FAQS.map((f) => (
-              <details key={f.q} className="group py-5">
+              <details key={f.q} className="group -mx-4 rounded-xl px-4 py-4 transition-colors open:bg-white/[0.02]">
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-4 font-display text-lg font-semibold text-ink [&::-webkit-details-marker]:hidden">
                   {f.q}
                   <span
@@ -198,18 +195,17 @@ export default function PricingPage() {
       </section>
 
       {/* CTA */}
-      <section className="relative overflow-hidden border-t border-white/5">
-        <DatumGrid />
-        <div className="relative mx-auto max-w-cf px-5 py-24 text-center sm:px-7 sm:py-28">
-          <h2 className="mx-auto max-w-2xl font-display text-[clamp(2rem,4vw,3.2rem)] font-bold leading-[1.03] tracking-[-0.025em] text-ink">
-            See it on your own numbers.
+      <section>
+        <div className="mx-auto max-w-cf px-5 py-24 text-center sm:px-7 sm:py-32">
+          <h2 className="mx-auto max-w-2xl font-display text-[clamp(2rem,4.4vw,3.4rem)] font-bold leading-[1.02] tracking-[-0.02em] text-ink">
+            See it on your own numbers
           </h2>
-          <p className="mx-auto mt-5 max-w-lg text-lg text-ink-mut">
+          <p className="mx-auto mt-5 max-w-lg text-lg leading-relaxed text-ink-mut">
             A 30-minute demo, walked through with your own jobs and figures. No
             slides, no obligation.
           </p>
           <div className="mt-9 flex justify-center">
-            <BookDemoButton className="inline-flex h-12 items-center rounded-lg bg-gold-500 px-6 text-base font-semibold text-navy-950 shadow-cf-gold transition-colors hover:bg-gold-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">
+            <BookDemoButton className="inline-flex h-12 items-center rounded-xl bg-gold-500 px-7 text-base font-semibold text-navy-950 transition-colors hover:bg-gold-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">
               Book a demo
             </BookDemoButton>
           </div>

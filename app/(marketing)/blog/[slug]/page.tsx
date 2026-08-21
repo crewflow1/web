@@ -6,7 +6,6 @@ import { ogImageUrl } from "@/lib/seo/metadata";
 import { JsonLd } from "@/components/seo/json-ld";
 import { articleSchema, breadcrumbSchema } from "@/lib/seo/schema";
 import { Breadcrumbs, FaqSection, RelatedLinks, CtaSection } from "@/components/marketing/sections";
-import { DatumGrid } from "@/components/marketing/setting-out";
 import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
 
 export const dynamicParams = false;
@@ -117,12 +116,11 @@ export default async function BlogPostPage({
         ]}
       />
 
-      <article className="relative overflow-hidden border-b border-white/5">
-        <DatumGrid />
-        <div className="mx-auto max-w-cf px-5 sm:px-7 relative py-14 sm:py-16">
+      <article>
+        <div className="mx-auto max-w-cf px-5 py-16 sm:px-7">
           <div className="mx-auto max-w-3xl">
             <Breadcrumbs items={crumbs} />
-            <div className="flex items-center gap-3 font-mono text-xs font-semibold uppercase tracking-wide text-gold-500">
+            <div className="flex items-center gap-3 text-xs font-semibold uppercase tracking-[0.12em] text-gold-500">
               <span>{p.category}</span>
               <span className="text-ink-dim/50">·</span>
               <span className="text-ink-dim">{p.readMinutes} min read</span>

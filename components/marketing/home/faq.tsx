@@ -32,14 +32,14 @@ const FAQS = [
 
 export function Faq() {
   return (
-    <section className="border-t border-white/5">
+    <section className="">
       <div className="mx-auto max-w-cf px-5 py-28 sm:px-7 sm:py-36">
         <h2 className="font-display text-[clamp(2.1rem,4.6vw,3.75rem)] font-bold leading-[1.0] tracking-[-0.02em] text-ink">
           Questions, answered
         </h2>
-        <div className="mt-12 max-w-3xl divide-y divide-white/10 border-y border-white/10">
+        <div className="mt-10 max-w-3xl">
           {FAQS.map((f) => (
-            <details key={f.q} className="group py-5">
+            <details key={f.q} className="group -mx-4 rounded-xl px-4 py-4 transition-colors open:bg-white/[0.02]">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-4 font-display text-lg font-semibold text-ink [&::-webkit-details-marker]:hidden">
                 {f.q}
                 <span
@@ -49,7 +49,7 @@ export function Faq() {
                   +
                 </span>
               </summary>
-              <p className="mt-3 text-[15px] leading-relaxed text-ink-mut">{f.a}</p>
+              <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-ink-mut">{f.a}</p>
             </details>
           ))}
         </div>

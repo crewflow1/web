@@ -13,7 +13,7 @@ const INCLUDED = [
 
 export function PricingBlock() {
   return (
-    <section className="border-t border-white/5 bg-navy-900">
+    <section className=" bg-navy-900">
       <div className="mx-auto max-w-cf px-5 py-28 sm:px-7 sm:py-36">
         <div className="grid items-center gap-14 lg:grid-cols-[1.1fr_0.9fr]">
           <div>
