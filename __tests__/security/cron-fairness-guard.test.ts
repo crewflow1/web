@@ -132,6 +132,8 @@ const ALLOWLIST: Record<string, string> = {
     "LIMIT-bounded (≤200) per pass, ordered by expires_at ASC (stalest deadline first); expiry is a TERMINAL transition, so a processed approval leaves the due set — a stable order cannot re-service the same head.",
   "automation-schedules-drain":
     "LIMIT-bounded (≤1000) and ordered by next_run_at ASC (a recency cursor); each fired schedule advances next_run_at via an optimistic claim, rotating it to the back. Work is a light claim+advance, not a multi-round-trip external feed.",
+  "cron-runs-prune":
+    "Bounded (p_max_rows, default 50k) batched DELETE of aged ops telemetry, entirely in-database — no external per-item I/O, no pagination over a vendor feed. Cannot starve a tail because the candidate set STRICTLY SHRINKS: a deleted row can never re-enter it, so every pass makes permanent forward progress and a truncated pass resumes exactly where it stopped. Ordering is irrelevant for the same reason — there is no head to re-service.",
   "compliance-expiry":
     "Bounded to docs expiring within a 31-day horizon; each reminder stage is guarded by a reminded_*_at marker (self-excluding). Per-item work is an internal notification insert, no external per-item I/O.",
   "health-recompute":

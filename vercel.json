@@ -99,7 +99,7 @@
     },
     {
       "path": "/api/cron/spine-backfill",
-      "schedule": "* * * * *"
+      "schedule": "5 * * * *"
     },
     {
       "path": "/api/cron/memory-embed",
@@ -176,6 +176,10 @@
     {
       "path": "/api/cron/weather-delay-detect",
       "schedule": "50 1 * * *"
+    },
+    {
+      "path": "/api/cron/cron-runs-prune",
+      "schedule": "25 4 * * *"
     }
   ]
 }
