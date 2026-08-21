@@ -8,17 +8,28 @@ export const metadata: Metadata = buildMetadata({
   title: "The CrewFlow platform, one system for UK construction",
   titleAbsolute: true,
   description:
-    "CRM, jobs, site & safety, money, people & assets and automation, the whole construction business in one system. Six connected pillars, one place.",
+    "The whole construction business in one connected system: win work, run jobs, prove the site is safe, control the money, manage people and plant, and automate the chasing. Six pillars, forty-odd capabilities, one place.",
   path: "/product",
-  ogTitle: "One system. Six parts of the business.",
+  ogTitle: "One connected system. Six parts of the business.",
   ogEyebrow: "The platform",
 });
+
+// The lifecycle a single job travels — the spine of the "it all connects" story.
+const FLOW = [
+  "Lead",
+  "Quote",
+  "Job",
+  "Site & safety",
+  "People & materials",
+  "Money",
+  "Reporting",
+];
 
 export default function ProductOverview() {
   return (
     <>
       {/* Hero */}
-      <section className="border-b border-white/10">
+      <section>
         <div className="mx-auto max-w-cf px-5 py-20 sm:px-7 sm:py-28">
           <h1 className="max-w-[18ch] font-display text-[clamp(2.6rem,6vw,4.75rem)] font-bold leading-[0.98] tracking-[-0.015em] text-ink">
             The commercial, site and financial sides of your business, in one
@@ -37,67 +48,88 @@ export default function ProductOverview() {
               href="#pillars"
               className="group inline-flex items-center gap-2 text-base font-medium text-ink transition-colors hover:text-gold-500"
             >
-              See the six pillars
+              See the whole platform
               <span aria-hidden="true" className="transition-transform group-hover:translate-x-0.5">→</span>
             </a>
           </div>
         </div>
       </section>
 
-      {/* Pillars */}
-      <section id="pillars" className="mx-auto max-w-cf px-5 py-20 sm:px-7">
-        <div className="max-w-2xl">
-          <h2 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
-            Six pillars. One connected system.
+      {/* The connected story — this is the point, not the feature count. */}
+      <section className="bg-navy-900">
+        <div className="mx-auto max-w-cf px-5 py-24 sm:px-7 sm:py-32">
+          <h2 className="max-w-[20ch] font-display text-[clamp(2rem,4.4vw,3.4rem)] font-bold leading-[1.02] tracking-[-0.02em] text-ink">
+            One connected system, not five tools that don&apos;t talk.
           </h2>
-          <p className="mt-3 text-ink-mut">
-            Enter something once and it flows through the rest, a quote becomes
-            a job, a job becomes an invoice, and the site paperwork is right
-            there when you need to prove it.
+          <p className="mt-6 max-w-2xl text-lg leading-relaxed text-ink-mut">
+            Enter a job once and it carries itself. A lead becomes a quote; the
+            quote becomes a job with its costs, schedule and crew already
+            attached; the site paperwork, materials and variations hang off that
+            same job; and the work turns into valuations, invoices, payments and
+            the tax figures your accountant files. You see the whole lifecycle,
+            not six apps that each know a fraction of it.
           </p>
-        </div>
-        <div className="mt-10 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {PILLARS.map((p) => (
-            <Link
-              key={p.slug}
-              href={`/product/${p.slug}`}
-              className="group flex flex-col rounded-cf border border-cfborder bg-navy-800 p-6 shadow-cf transition-colors hover:border-gold-500/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500"
-            >
-              <div className="flex items-baseline justify-between">
-                <span className="font-display text-sm font-semibold text-gold-500">
-                  {p.n}
-                </span>
-                <span
-                  aria-hidden="true"
-                  className="text-ink-dim transition-transform group-hover:translate-x-0.5"
-                >
-                  →
-                </span>
-              </div>
-              <h3 className="mt-3 font-display text-xl font-bold text-ink">
-                {p.label}
-              </h3>
-              <p className="mt-2 flex-1 text-sm text-ink-mut">{p.summary}</p>
-              <p className="mt-4 text-[13px] leading-relaxed text-ink-dim">
-                {p.capabilities.slice(0, 4).map((c) => c.name).join("  ·  ")}
-              </p>
-            </Link>
-          ))}
+          <div className="mt-10 flex flex-wrap items-center gap-x-3 gap-y-3 text-sm font-medium text-ink-dim">
+            {FLOW.map((step, i) => (
+              <span key={step} className="inline-flex items-center gap-3">
+                <span className={i === FLOW.length - 1 ? "text-gold-500" : "text-ink-mut"}>{step}</span>
+                {i < FLOW.length - 1 && <span aria-hidden="true" className="text-ink-dim/40">→</span>}
+              </span>
+            ))}
+          </div>
         </div>
       </section>
 
+      {/* The complete capability map — every pillar, every live capability. */}
+      <div id="pillars">
+        {PILLARS.map((p, i) => (
+          <section key={p.slug} className={i % 2 === 0 ? "bg-navy-950" : "bg-navy-900"}>
+            <div className="mx-auto max-w-cf px-5 py-20 sm:px-7 sm:py-28">
+              <div className="grid gap-10 lg:grid-cols-[0.8fr_1.2fr] lg:gap-16">
+                <div>
+                  <div className="font-display text-2xl font-bold tabular-nums text-gold-500">
+                    {p.n}
+                  </div>
+                  <h2 className="mt-4 font-display text-[clamp(1.9rem,3.4vw,2.8rem)] font-bold leading-[1.02] tracking-[-0.02em] text-ink">
+                    {p.label}
+                  </h2>
+                  <p className="mt-4 max-w-md text-lg leading-relaxed text-ink-mut">
+                    {p.summary}
+                  </p>
+                  <Link
+                    href={`/product/${p.slug}`}
+                    className="group mt-7 inline-flex items-center gap-2 text-base font-medium text-ink transition-colors hover:text-gold-500 focus-visible:outline-none focus-visible:underline"
+                  >
+                    Explore {p.label.toLowerCase()}
+                    <span aria-hidden="true" className="transition-transform group-hover:translate-x-0.5">→</span>
+                  </Link>
+                </div>
+                <ul className="grid gap-x-10 gap-y-7 sm:grid-cols-2">
+                  {p.capabilities.map((c) => (
+                    <li key={c.name}>
+                      <div className="font-display text-lg font-bold text-ink">{c.name}</div>
+                      <div className="mt-1.5 text-[15px] leading-relaxed text-ink-mut">{c.note}</div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </section>
+        ))}
+      </div>
+
       {/* CTA */}
-      <section className="border-t border-white/10 bg-navy-900">
-        <div className="mx-auto max-w-cf px-5 py-16 text-center sm:px-7">
-          <h2 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
-            See it on your own numbers.
+      <section className="bg-navy-950">
+        <div className="mx-auto max-w-cf px-5 py-24 text-center sm:px-7 sm:py-32">
+          <h2 className="mx-auto max-w-2xl font-display text-[clamp(2rem,4.4vw,3.4rem)] font-bold leading-[1.02] tracking-[-0.02em] text-ink">
+            See the whole thing on your own numbers.
           </h2>
-          <p className="mx-auto mt-3 max-w-xl text-ink-mut">
+          <p className="mx-auto mt-5 max-w-xl text-lg leading-relaxed text-ink-mut">
             A 30-minute demo, walked through with your real jobs and figures. No
             slides.
           </p>
-          <div className="mt-6 flex justify-center">
-            <BookDemoButton className="inline-flex h-12 items-center rounded-lg bg-gold-500 px-6 text-base font-semibold text-navy-950 shadow-cf-gold transition-colors hover:bg-gold-600">
+          <div className="mt-9 flex justify-center">
+            <BookDemoButton className="inline-flex h-12 items-center rounded-xl bg-gold-500 px-7 text-base font-semibold text-navy-950 transition-colors hover:bg-gold-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100">
               Book a demo
             </BookDemoButton>
           </div>

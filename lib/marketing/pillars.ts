@@ -1,11 +1,18 @@
 /**
  * The six-pillar product model for the redesigned marketing site.
  *
- * Every capability listed here is LIVE and customer-usable today, checked
- * against the product-truth authority
- * (~/.claude/skills/crewflow-brand-design/references/product-truth.md).
- * NOTHING built-dark appears here: no generative AI, no telephony/receptionist,
- * no live accounting sync, no HMRC filing, no card payments, no public API.
+ * Reconciled against the CURRENT product navigation (app/(app)/_components/
+ * sidebar.tsx) and the routes behind it. Every capability listed here is LIVE
+ * and reachable by a normal org user today.
+ *
+ * DELIBERATELY EXCLUDED because they ship dark / unconfigured (must NOT be
+ * marketed as available): the weather forecast (no provider connected), AI
+ * insights (null with no provider), the AI voice receptionist / call & message
+ * auto-capture (no telephony provider — the Inbox itself is live for enquiries
+ * and conversations, but nothing here claims the AI answers your phone), and
+ * any generative "AI quote writer". Also honest by omission: no live two-way
+ * accounting sync (CSV export only), no HMRC filing (figures only), no card
+ * processing (payments are tracked, not taken).
  */
 
 export type Capability = { name: string; note: string };
@@ -32,11 +39,12 @@ export const PILLARS: Pillar[] = [
     summary:
       "Every lead, quote and customer in one pipeline, so nothing slips while you're on site and every quote can become a job in one step.",
     capabilities: [
-      { name: "CRM & leads", note: "Every enquiry in one pipeline, tagged by source and value." },
-      { name: "Quotes & estimates", note: "Line-item quotes with full VAT and a branded PDF." },
-      { name: "Online acceptance", note: "Customers sign off by name, an accepted quote becomes a job." },
-      { name: "Follow-ups", note: "Reminders so a quiet quote gets chased while the job's still warm." },
-      { name: "Customer records", note: "Full history, quotes, jobs, invoices, payments, per customer." },
+      { name: "CRM & leads", note: "Every enquiry in one pipeline, scored hot to cold so you chase the right work first." },
+      { name: "Quotes & estimates", note: "Line-item quotes with full VAT and a branded PDF, out the door in minutes." },
+      { name: "Price book", note: "Reusable rates, materials and labour so every quote is fast and consistent." },
+      { name: "Online acceptance", note: "Customers sign off by name, and an accepted quote becomes a job in one step." },
+      { name: "Customer records", note: "Full history per customer: quotes, jobs, invoices and payments." },
+      { name: "Reviews", note: "Automated review-request emails once a job's signed off, to build your reputation." },
     ],
     shot: {
       src: "/product-shots/customers.png",
@@ -59,9 +67,10 @@ export const PILLARS: Pillar[] = [
       { name: "Job management", note: "Stages, costs-vs-quote and who's on site, per job." },
       { name: "Scheduling & calendar", note: "Plan the week; clashes flagged before they cost you." },
       { name: "Operations command centre", note: "One screen for what's on, late, or needs a look." },
-      { name: "Variations & EoT", note: "Capture variations and extensions of time against the job." },
-      { name: "Job documents & photos", note: "Attach site photos and files from a phone." },
-      { name: "Customer portal", note: "Quotes, progress and what's left to pay, one tidy link." },
+      { name: "Programme & critical path", note: "Critical-path scheduling with per-task float, dependencies and baseline revisions." },
+      { name: "Variations, delays & EoT", note: "Capture variations, log delays and build the extension-of-time record against the job." },
+      { name: "Drawings & documents", note: "Versioned drawings with pins and markup, plus every job document in one place." },
+      { name: "Customer portal", note: "Quotes, progress and what's left to pay, on one tidy link." },
     ],
     shot: {
       src: "/product-shots/jobs.png",
@@ -77,16 +86,17 @@ export const PILLARS: Pillar[] = [
     n: "03",
     label: "Site & safety",
     eyebrow: "Site & safety",
-    headline: "RAMS, permits, diaries and drawings, audit-ready, in one place",
+    headline: "RAMS, permits, diaries and sign-off, audit-ready, in one place",
     summary:
-      "The compliance layer that wins you bigger work: risk assessments, permits, toolbox talks, site diaries and versioned drawings, with worker sign-off you can prove.",
+      "The compliance layer that wins you bigger work: risk assessments, permits, toolbox talks, site diaries and inductions, with worker sign-off you can prove.",
     capabilities: [
       { name: "RAMS", note: "Risk assessments scored on a 5×5 matrix, issued and revision-tracked." },
       { name: "Permits & toolbox talks", note: "Permit-to-work and toolbox talks with attendance and PDFs." },
-      { name: "Worker H&S sign-off", note: "Site workers sign RAMS and permits by secure link, no login." },
-      { name: "Site diaries & reports", note: "Daily diary and client-ready progress reports (PDF)." },
-      { name: "Snags & quality (ITP)", note: "Snag lists and inspection & test plans with hold points." },
-      { name: "Blueprint centre", note: "Drawing viewer with pins, markup, version compare and offline." },
+      { name: "Worker sign-off", note: "Site workers sign RAMS and permits by secure link, no login needed." },
+      { name: "Site diaries & reports", note: "Daily diary and client-ready progress reports as PDF." },
+      { name: "Snagging & quality (ITP)", note: "Snag lists and inspection & test plans with hold points and NCRs." },
+      { name: "Completion certificates", note: "Auto-numbered practical-completion certificates, issued and published to the customer portal." },
+      { name: "Inductions & muster", note: "Induct operatives, sign visitors in and out, and pull a live fire-muster roll." },
     ],
     shot: {
       src: "/product-shots/health-safety.png",
@@ -106,12 +116,14 @@ export const PILLARS: Pillar[] = [
     summary:
       "Invoicing that chases itself, real per-job margin, and the UK-specific money work, CIS, retention, staged valuations, VAT and Corporation Tax, built in.",
     capabilities: [
-      { name: "Invoicing", note: "Raise from a finished job; reminders go out on day 3, 7, 14, 21." },
-      { name: "Staged valuations", note: "Interim valuations / applications for payment, certified, then turned into an invoice." },
+      { name: "Cash position", note: "Money in and money out, and exactly where you net out, on one screen." },
+      { name: "Invoicing", note: "Raise from a finished job; reminders chase on day 3, 7, 14 and 21." },
+      { name: "Valuations & applications", note: "Interim valuations and applications for payment, certified, then turned into an invoice." },
       { name: "Retention & aged debt", note: "Track retention release and who owes what, when." },
-      { name: "Job costing", note: "Revenue minus materials and clocked labour, real margin, live." },
-      { name: "CIS & tax figures", note: "CIS deductions and statements; VAT and Corp Tax ready for your accountant." },
+      { name: "Expenses", note: "Capture receipts and costs from the field, against the job they belong to." },
+      { name: "Job costing", note: "Revenue minus materials and clocked labour: real margin, live." },
       { name: "POs & supplier bills", note: "Purchase orders with 3-way matching against deliveries and bills." },
+      { name: "CIS & tax figures", note: "CIS deductions and statements; VAT and Corporation Tax figures ready for your accountant." },
     ],
     shot: {
       src: "/product-shots/cash.png",
@@ -127,31 +139,34 @@ export const PILLARS: Pillar[] = [
     n: "05",
     label: "People & assets",
     eyebrow: "People & assets",
-    headline: "Your crew, vehicles and stock, organised and legal",
+    headline: "Your crew, plant and stock, organised and legal",
     summary:
-      "Rota, timesheets and payroll for the team; MOT, insurance and inspections for the fleet; stock, suppliers and material requests for the stores.",
+      "Rota, timesheets and payroll for the team; MOT, insurance and inspections for the fleet; stock, materials and your own yards for the stores.",
     capabilities: [
       { name: "Workforce", note: "Staff, rota, leave and timesheets with GPS clock-in." },
-      { name: "Payroll", note: "Pay runs from clocked hours, PAYE/NI estimates, payslips, CSV export." },
-      { name: "Fleet compliance", note: "MOT, tax, insurance and fuel, expiries flagged before they lapse." },
-      { name: "Assets", note: "Register, inspections, service/calibration schedules and QR labels." },
+      { name: "Payroll", note: "Pay runs from clocked hours, PAYE/NI estimates, payslips and CSV export." },
+      { name: "Fleet", note: "MOT, tax, insurance and inspections, with expiries flagged before they lapse." },
+      { name: "Assets & maintenance", note: "Plant register, inspections, service and calibration schedules, QR labels." },
       { name: "Stock & warehouses", note: "Stock items, locations and balances across the business." },
-      { name: "Materials & suppliers", note: "Site material requests fulfilled from stock; supplier records." },
+      { name: "Materials & suppliers", note: "Site material requests fulfilled from stock, with supplier records." },
+      { name: "Sites & yards", note: "Your own depots, yards and lock-ups, the reference data behind the estate." },
+      { name: "Compliance library", note: "Company insurance, certificates and expiries, all in one place." },
     ],
   },
   {
     slug: "automation",
     n: "06",
-    label: "Automation & intelligence",
-    eyebrow: "Automation & intelligence",
+    label: "Connect & automate",
+    eyebrow: "Connect & automate",
     headline: "The quiet work that happens without being asked",
     summary:
-      "CrewFlow keeps watch on the things that quietly cost money when they're missed, and flags them before they do. Reliable, rule-based, and always yours to decide on.",
+      "One inbox for every enquiry, clean export to your accountant, and the reminders and rules that keep the business moving without manual chasing.",
     capabilities: [
+      { name: "Inbox", note: "One shared place for every enquiry and conversation, so nothing gets missed." },
       { name: "Automatic reminders", note: "Overdue invoices, expiring certs and due inspections chased on their own." },
       { name: "Clash & risk signals", note: "Double-booked staff and cold quotes surfaced before they bite." },
-      { name: "Company health", note: "Where the business stands, on one screen." },
-      { name: "Reporting", note: "Profit, cashflow, utilisation and pipeline, on screen and as PDF/CSV." },
+      { name: "Reporting & company health", note: "Profit, cashflow, utilisation and pipeline, on screen and as PDF or CSV." },
+      { name: "Accounting export", note: "Clean CSV export to Xero and Sage when it's time to file." },
       { name: "Built-in workflows", note: "Event-driven rules that move work along without manual chasing." },
     ],
   },

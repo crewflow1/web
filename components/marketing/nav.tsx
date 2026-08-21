@@ -30,7 +30,7 @@ const PRODUCT: NavMenu = {
     { label: "Site & safety", href: "/product/site-safety", note: "RAMS, permits, diaries, drawings" },
     { label: "Money", href: "/product/money", note: "Invoicing, CIS, retention, costing" },
     { label: "People & assets", href: "/product/people-assets", note: "Workforce, fleet, stock" },
-    { label: "Automation & intelligence", href: "/product/automation", note: "Workflows, reminders, reporting" },
+    { label: "Connect & automate", href: "/product/automation", note: "Inbox, reminders, reporting, export" },
     { label: "Features A to Z", href: "/features", note: "Every capability, one list" },
   ],
 };
