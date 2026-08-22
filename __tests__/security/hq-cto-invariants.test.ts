@@ -125,6 +125,6 @@ describe("CTO AI — the pure layer is clock- and Supabase-free", () => {
 
 describe("CTO AI — wired into the HQ nav", () => {
   it("the admin nav links to /admin/cto-ai", () => {
-    expect(LAYOUT).toMatch(/href:\s*"\/admin\/cto-ai"/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href:\s*"\/admin\/cto-ai"/);
   });
 });

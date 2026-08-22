@@ -894,7 +894,7 @@ describe("the HQ cost view is gated and privilege-honest", () => {
 
   it("it lives under app/admin/** and is reachable from the HQ nav", () => {
     expect(existsSync(resolve(ROOT, HQ_PAGE))).toBe(true);
-    expect(read("app/admin/layout.tsx")).toContain('href: "/admin/ai-costs"');
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toContain('href: "/admin/ai-costs"');
   });
 
   it("the snapshot is service-role only and never takes a tenant client", () => {

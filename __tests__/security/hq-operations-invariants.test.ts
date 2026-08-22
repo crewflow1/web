@@ -126,6 +126,6 @@ describe("Operations AI — the pure layer is clock- and Supabase-free", () => {
 
 describe("Operations AI — wired into the HQ nav", () => {
   it("the admin nav links to /admin/operations-ai", () => {
-    expect(LAYOUT).toMatch(/href:\s*"\/admin\/operations-ai"/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href:\s*"\/admin\/operations-ai"/);
   });
 });

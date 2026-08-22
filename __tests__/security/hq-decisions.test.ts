@@ -261,6 +261,6 @@ describe("decision centre — ai_debate + reasons render inert (never interprete
 
 describe("decision centre — registered in the HQ nav", () => {
   it("the layout links to /admin/decisions", () => {
-    expect(read(LAYOUT)).toMatch(/href:\s*"\/admin\/decisions"/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href:\s*"\/admin\/decisions"/);
   });
 });

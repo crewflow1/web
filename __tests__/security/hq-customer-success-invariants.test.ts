@@ -160,6 +160,6 @@ describe("Customer-Success AI — the pure layer is clock- and Supabase-free", (
 
 describe("Customer-Success AI — wired into the HQ nav", () => {
   it("the admin nav links to /admin/customer-success-ai", () => {
-    expect(LAYOUT).toMatch(/href:\s*"\/admin\/customer-success-ai"/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href:\s*"\/admin\/customer-success-ai"/);
   });
 });

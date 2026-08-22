@@ -269,7 +269,7 @@ describe("approval console — history read model and nav registration", () => {
 
   it("both pages are registered in the HQ nav", () => {
     const layout = read(LAYOUT);
-    expect(layout).toMatch(/href:\s*"\/admin\/approvals"/);
-    expect(layout).toMatch(/href:\s*"\/admin\/executor-shadow"/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href:\s*"\/admin\/approvals"/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href:\s*"\/admin\/executor-shadow"/);
   });
 });

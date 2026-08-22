@@ -138,6 +138,6 @@ describe("Executive-Assistant AI — the pure layer is clock- and Supabase-free"
 
 describe("Executive-Assistant AI — wired into the HQ nav", () => {
   it("the admin nav links to /admin/executive-assistant-ai", () => {
-    expect(LAYOUT).toMatch(/href:\s*"\/admin\/executive-assistant-ai"/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href:\s*"\/admin\/executive-assistant-ai"/);
   });
 });

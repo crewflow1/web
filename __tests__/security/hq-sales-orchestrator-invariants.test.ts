@@ -154,6 +154,6 @@ describe("Sales-Orchestrator AI — the pure layer is clock- and Supabase-free",
 
 describe("Sales-Orchestrator AI — wired into the HQ nav", () => {
   it("the admin nav links to /admin/sales-orchestrator-ai", () => {
-    expect(LAYOUT).toMatch(/href:\s*"\/admin\/sales-orchestrator-ai"/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href:\s*"\/admin\/sales-orchestrator-ai"/);
   });
 });
