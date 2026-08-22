@@ -251,8 +251,10 @@ describe("Phase 1 — /admin/ops page", () => {
   });
 
   it("HQ nav exposes /admin/ops", () => {
-    expect(ADMIN_LAYOUT).toMatch(/href:\s*"\/admin\/ops"/);
-    expect(ADMIN_LAYOUT).toMatch(/label:\s*"Ops"/);
+    // Nav moved to the grouped model; /admin/ops lives under Systems (labelled
+    // "System status" now — reachability is asserted by stable href).
+    const model = read("app/admin/_nav/hq-nav-model.ts");
+    expect(model).toMatch(/href:\s*"\/admin\/ops"/);
   });
 });
 

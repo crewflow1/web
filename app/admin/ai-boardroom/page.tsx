@@ -243,8 +243,26 @@ export default async function AiBoardroomPage({
             ) : null}
           </div>
         ) : (
-          <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {filtered.map((e) => {
+          <div className="space-y-8">
+            {DEPARTMENTS.filter((d) =>
+              filtered.some((e) => e.department === d),
+            ).map((d) => {
+              const deptItems = filtered.filter((e) => e.department === d);
+              return (
+                <section key={d}>
+                  {/* Product UX rebuild: the roster is grouped by department
+                      instead of one flat grid, so the 32-strong workforce reads
+                      as an org. */}
+                  <div className="mb-3 flex items-baseline gap-2 border-b border-slate-800 pb-2">
+                    <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-200">
+                      {DEPARTMENT_LABELS[d]}
+                    </h2>
+                    <span className="text-xs text-slate-500">
+                      {deptItems.length}
+                    </span>
+                  </div>
+                  <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {deptItems.map((e) => {
               const accent = accentClasses(e.accent);
               const stats = statsForEmployee(workforce, e.id);
               const level = approvalLevels.get(e.id);
@@ -343,7 +361,11 @@ export default async function AiBoardroomPage({
                 </li>
               );
             })}
-          </ul>
+                  </ul>
+                </section>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>

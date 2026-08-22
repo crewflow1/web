@@ -259,9 +259,10 @@ describe("AI Receptionist — HQ UI", () => {
   });
 
   it("HQ nav lists AI Receptionist setups", () => {
-    const layout = read("app/admin/layout.tsx");
+    // Nav moved to the grouped model; AI Receptionist lives under Growth.
+    const layout = read("app/admin/_nav/hq-nav-model.ts");
     expect(layout).toMatch(/\/admin\/ai-receptionist/);
-    expect(layout).toMatch(/AI Receptionist setups/);
+    expect(layout).toMatch(/AI Receptionist/);
   });
 
   it("HQ list page shows company / phone / channels / status / checklist columns", () => {

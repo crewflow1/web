@@ -70,7 +70,7 @@ describe("Phase 8 — /admin/launch-checklist page", () => {
   });
 
   it("HQ_NAV exposes /admin/launch-checklist", () => {
-    expect(LAYOUT).toMatch(/href: "\/admin\/launch-checklist"/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href: "\/admin\/launch-checklist"/);
   });
 
   it("references the lifecycle script in the page footer", () => {
@@ -106,27 +106,30 @@ describe("Phase 8 — every readiness artefact exists on disk", () => {
 // =====================================================================
 
 describe("Phase 8 — HQ_NAV completeness", () => {
-  const labels = [
-    "Overview",
-    "Demos CRM",
-    "Customers",
-    "Onboarding & migration",
-    "Billing",
-    "Support queue",
-    "Notifications",
-    "Alerts",
-    "Analytics",
-    "Impersonation log",
-    "Internal notes",
-    "Customer health",
-    "Ops",
-    "Automations",
-    "Launch checklist",
-    "Settings",
+  // Nav moved to the grouped model; assert coverage by stable href (labels were
+  // intentionally refreshed in the rebuild, e.g. "Ops" → "System status").
+  const HQ_MODEL = read("app/admin/_nav/hq-nav-model.ts");
+  const hrefs = [
+    "/admin/overview",
+    "/admin/demos",
+    "/admin/customers",
+    "/admin/onboarding",
+    "/admin/billing",
+    "/admin/support",
+    "/admin/notifications",
+    "/admin/alerts",
+    "/admin/analytics",
+    "/admin/impersonation",
+    "/admin/notes",
+    "/admin/health",
+    "/admin/ops",
+    "/admin/automations",
+    "/admin/launch-checklist",
+    "/admin/settings",
   ];
-  for (const label of labels) {
-    it(`HQ_NAV includes "${label}"`, () => {
-      expect(LAYOUT).toMatch(new RegExp(`label:\\s*"${label}"`));
+  for (const href of hrefs) {
+    it(`HQ nav includes ${href}`, () => {
+      expect(HQ_MODEL).toMatch(new RegExp(`href: "${href.replace(/\//g, "\\/")}"`));
     });
   }
 });

@@ -166,3 +166,75 @@ container instead of overflowing the page. Overflow re-verified clean at
 - **Reachability**: 109 capabilities; desktop-reachable = all non-intentional;
   mobile-reachable = all non-intentional (P0 closed); orphaned major = 0
   (valuations + timesheet fixed; marketplace/qa/asset-QR intentional).
+
+---
+
+# Milestone 2 — Performance hardening + HQ UX rebuild
+
+## Part A — Performance (measure-first)
+
+**Method:** production build (`next build`+`start`), local, no tunnel. Playwright
+harness for client-nav + Cmd+K + mobile; per-render Supabase query counts via the
+Kong access log; static audit (`perf-audit.md`).
+
+**Root causes (honest):**
+1. The dominant perceived slowness in the CEO's review was the **Cloudflare review
+   tunnel itself** — every request (and, with the tunnel Supabase URL, every
+   server query) round-tripped through Cloudflare; a job page's ~51 reads × tunnel
+   latency = seconds. Local/prod has none of this.
+2. Local app is already fast: TTFB ~105-250ms on every route; Cmd+K open 30-43ms;
+   mobile menu 25ms (a Playwright actionability artifact showed a false 5s — a DOM
+   click proved 25ms). Per-page `goto` timings are dominated by local Docker-
+   Supabase variance (a different random subset was "slow" each run) — not a code
+   signal.
+3. The static audit's predicted "8-10× requireOrgContext per render" does **not**
+   occur at runtime: measured **2** `/auth/v1/user` + **4** memberships + **1**
+   organizations per job render, identical before/after the cache — `@supabase/ssr`
+   already dedupes `getUser`, and the query volume is modest.
+
+**Fixes (safe; no money/RLS/domain logic touched):**
+- `experimental.staleTimes.dynamic=30` — soft-nav revisits serve the cached RSC
+  (instant) instead of re-rendering. Safe: org switch already `revalidatePath("/",
+  "layout")` purges the router cache; writes navigate full-document.
+- Job Overview's 13 self-fetching sections wrapped in one `<Suspense>` — shell +
+  commercial overview paint before the heavy sections stream (static fallback, so
+  the axe settle-gate is never held open).
+- Dashboard milestone-notification WRITE moved off the render path via `after()`.
+- Job page: 3 independent reads (`time_entries`, hourly pay, stock COGS)
+  parallelised.
+- `React.cache()` on `getUser`/`requireOrgContext` — request-scoped memoisation;
+  correct best-practice and protective, though measured no local delta (see cause 3).
+  Kept, honestly reported.
+
+**Consciously NOT done** (risk > measured benefit locally): deep parallelisation of
+the dashboard's independent await-groups and the job body waterfall — the money
+pages, where a reorder risks a mis-report for a gain the noisy local env can't
+verify. Recommended as a separately-reviewed follow-up.
+
+## Part B — HQ IA rebuild
+
+- **Audit** (`hq-audit.md`): 76 routes, flat 46-link emoji nav, 5 rival "home"
+  dashboards, 32 AI employees split across boardroom + 14 cockpits.
+- **IA (7 areas):** `Home · Decisions · Workforce · Growth · Customers ·
+  Governance · Systems` in one `app/admin/_nav/hq-nav-model.ts` (the audit's 6,
+  with Operations split into its two named lanes for balance). Every one of the 46
+  surfaces keeps a home; cockpits grouped by the domain their work serves.
+- **Shell:** client `HqSidebar` (grouped, progressive disclosure, active state,
+  live Support/Notifications badges) + grouped mobile drawer. Emoji → calm line
+  icons. `HQ_NAV` kept as a flat projection for back-compat tests.
+- **Workforce (B4):** AI Boardroom roster grouped by department (Executive /
+  Engineering / Growth / Customer / …), not a flat grid. Honesty banner + Fact/
+  Insufficient badges preserved.
+- **Governance (B6):** kernel (`server/sdk/*`) untouched — only surfaces regrouped.
+- HQ tests updated to assert reachability against the model by href (nav genuinely
+  moved + relabelled); no test weakened.
+
+**HQ deferred (clearly scoped follow-ups):** a single merged executive Home *page*
+(the 5 dashboards are consolidated at the IA/nav level, not yet one page); the
+Decision-state unification UI (B5 — grouped at nav level); HQ-context Cmd+K (B7 —
+assessed, not built); re-skinning the Boardroom cards from the existing dark/glow
+to the operational light system (B8 — the new nav is already operational).
+
+## Tests (milestone 2)
+Typecheck PASS · Lint PASS (0 errors) · Unit PASS (628 files / 10,852). HQ suite
+1104 green. Integration/e2e/security to run on the single preview-push CI.
