@@ -13,7 +13,7 @@ import { getActiveImpersonation } from "@/server/services/impersonation";
 import { endImpersonation } from "@/app/admin/impersonation/actions";
 import { Sidebar } from "./_components/sidebar";
 import { OrgSwitcher } from "./_components/org-switcher";
-import { BottomNav } from "./_components/bottom-nav";
+import { MobileNav } from "./_components/mobile-nav";
 import { NotificationsBell, type Notification } from "./_components/notifications";
 import { SearchPalette } from "./_components/search-palette";
 
@@ -94,7 +94,7 @@ export default async function AppLayout({
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            <SearchPalette />
+            <SearchPalette role={ctx.membership.role} />
             <NotificationsBell initial={notifications} />
             <span className="hidden text-xs text-slate-500 md:inline">
               {user.email}
@@ -122,7 +122,7 @@ export default async function AppLayout({
           {children}
         </main>
       </div>
-      <BottomNav role={ctx.membership.role} locale={locale} />
+      <MobileNav role={ctx.membership.role} locale={locale} />
       <OfflineIdentityMarker userId={user.id} orgId={ctx.org.id} />
       {/* Keeps the device's offline READ cache warm (jobs, customers, invoice
           headers, diary, snags) so pages still render with no signal. Identity is
