@@ -715,7 +715,7 @@ describe("nav wiring", () => {
     expect(SHELL_LAYOUT).toMatch(/NotificationsBell/);
   });
   it("HQ_NAV has /admin/notifications without shipsIn", () => {
-    expect(HQ_LAYOUT).toMatch(/href: "\/admin\/notifications", label: "Notifications" \}/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href: "\/admin\/notifications"/);
     expect(HQ_LAYOUT).not.toMatch(/href: "\/admin\/notifications"[^}]*shipsIn:/);
   });
   it("HQ_NAV badge wired to getUnreadCountForHq", () => {

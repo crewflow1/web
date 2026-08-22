@@ -1,0 +1,162 @@
+[
+  {
+    "flow": "Home (dashboard)",
+    "ms": 955,
+    "ttfbMs": 132,
+    "status": 200,
+    "requests": 20,
+    "duplicated": [
+      "/dashboard×2"
+    ]
+  },
+  {
+    "flow": "Sales → Leads",
+    "ms": 939,
+    "ttfbMs": 118,
+    "status": 200,
+    "requests": 21,
+    "duplicated": [
+      "/leads×2"
+    ]
+  },
+  {
+    "flow": "Sales → Customers",
+    "ms": 939,
+    "ttfbMs": 124,
+    "status": 200,
+    "requests": 20,
+    "duplicated": [
+      "/customers×2"
+    ]
+  },
+  {
+    "flow": "Projects → Jobs",
+    "ms": 179,
+    "ttfbMs": 124,
+    "status": 200,
+    "requests": 18,
+    "duplicated": []
+  },
+  {
+    "flow": "Projects → Calendar",
+    "ms": 992,
+    "ttfbMs": 188,
+    "status": 200,
+    "requests": 25,
+    "duplicated": []
+  },
+  {
+    "flow": "Site & safety → RAMS",
+    "ms": 165,
+    "ttfbMs": 120,
+    "status": 200,
+    "requests": 18,
+    "duplicated": []
+  },
+  {
+    "flow": "People → Staff",
+    "ms": 979,
+    "ttfbMs": 181,
+    "status": 200,
+    "requests": 21,
+    "duplicated": []
+  },
+  {
+    "flow": "Money → Invoices",
+    "ms": 129,
+    "ttfbMs": 105,
+    "status": 200,
+    "requests": 18,
+    "duplicated": []
+  },
+  {
+    "flow": "Money → Cash position",
+    "ms": 272,
+    "ttfbMs": 249,
+    "status": 200,
+    "requests": 22,
+    "duplicated": [
+      "/cash×2"
+    ]
+  },
+  {
+    "flow": "Operations → Fleet",
+    "ms": 1034,
+    "ttfbMs": 227,
+    "status": 200,
+    "requests": 23,
+    "duplicated": [
+      "/cash×2"
+    ]
+  },
+  {
+    "flow": "Operations → Stock",
+    "ms": 145,
+    "ttfbMs": 116,
+    "status": 200,
+    "requests": 18,
+    "duplicated": []
+  },
+  {
+    "flow": "Inbox",
+    "ms": 941,
+    "ttfbMs": 138,
+    "status": 200,
+    "requests": 22,
+    "duplicated": [
+      "/inbox×2"
+    ]
+  },
+  {
+    "flow": "Settings",
+    "ms": 932,
+    "ttfbMs": 116,
+    "status": 200,
+    "requests": 21,
+    "duplicated": [
+      "/settings×2"
+    ]
+  },
+  {
+    "flow": "CLIENT nav: Home → Projects/Jobs",
+    "ms": 854,
+    "requests": 5,
+    "duplicated": []
+  },
+  {
+    "flow": "Open a job",
+    "ms": 457,
+    "requests": 0,
+    "duplicated": []
+  },
+  {
+    "flow": "Job tab → Commercial",
+    "ms": 541,
+    "requests": 3,
+    "duplicated": []
+  },
+  {
+    "flow": "Cmd+K open",
+    "ms": 43,
+    "requests": 0,
+    "duplicated": []
+  },
+  {
+    "flow": "Cmd+K entity search (type)",
+    "ms": 714,
+    "requests": 1,
+    "duplicated": []
+  },
+  {
+    "flow": "Mobile Menu open",
+    "ms": 5054,
+    "requests": 0,
+    "duplicated": []
+  },
+  {
+    "flow": "Mobile drill-down",
+    "ms": 330,
+    "requests": 1,
+    "duplicated": []
+  }
+]

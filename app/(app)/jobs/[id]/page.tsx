@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -248,29 +249,34 @@ export default async function EditJobPage({
   // (see loadHourlyPayForWorkers) — no PostgREST embed, which would PGRST201 the
   // whole query. time_entries is paged — a long, well-staffed job can cross the
   // 1000-row cap.
-  const teRes = await fetchAllRows((from, to) =>
-    supabase
-      .from("time_entries")
-      .select("id, user_id, job_id, started_at, ended_at, breaks")
-      .eq("org_id", ctx.org.id)
-      .eq("job_id", job.id)
-      .order("id", { ascending: true })
-      .range(from, to),
-  );
-  if (teRes.error) throw readFailure("job summary: time entries", teRes.error);
-  const jobTimeEntries = (teRes.data ?? []) as unknown as TimeEntry[];
-  const hourlyByUser = await loadOrgHourlyPay(supabase, ctx.org.id);
+  // PERF (product UX rebuild): these three reads are mutually independent — time
+  // entries, org hourly pay, and stock COGS share no input beyond org.id/job.id
+  // (both known here). They were three serial network hops; run them in parallel.
+  // Each keeps its exact query + LOUD error semantics unchanged.
+  //
   // Stock COGS: the weighted-average cost of stock issued to THIS job from
   // inventory, an allocation stream disjoint from `finances` (stock issues post no
   // `finances` row), so the job's material cost enters its margin exactly once —
   // the same stream the dashboard, commercial page, reports and company-health
   // compose. The COGS fold runs over the whole org ledger (a correction reversing
   // an issue is a job-less row), then narrows to this job's rows.
-  const stockCogs = await loadStockCogsCostRows(
-    supabase as unknown as StockClient,
-    ctx.org.id,
-    { jobId: job.id },
-  );
+  const [teRes, hourlyByUser, stockCogs] = await Promise.all([
+    fetchAllRows((from, to) =>
+      supabase
+        .from("time_entries")
+        .select("id, user_id, job_id, started_at, ended_at, breaks")
+        .eq("org_id", ctx.org.id)
+        .eq("job_id", job.id)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    loadOrgHourlyPay(supabase, ctx.org.id),
+    loadStockCogsCostRows(supabase as unknown as StockClient, ctx.org.id, {
+      jobId: job.id,
+    }),
+  ]);
+  if (teRes.error) throw readFailure("job summary: time entries", teRes.error);
+  const jobTimeEntries = (teRes.data ?? []) as unknown as TimeEntry[];
   const costInput = buildJobCostInput({
     finances: finRows.map((f) => ({ job_id: f.job_id, amount: f.amount, category: f.category })),
     timeEntries: jobTimeEntries,
@@ -941,6 +947,20 @@ export default async function EditJobPage({
         documents). Each panel is org_id-pinned as well as RLS-scoped and
         degrades to empty on a read failure, so none of them can break this page.
       */}
+      {/* PERF (product UX rebuild): the Job Site Hub sections are independent,
+          self-fetching async components. Streaming them behind one Suspense
+          boundary lets the shell + the commercial overview above paint
+          immediately instead of blocking on the slowest section. Static (not
+          animated) fallback so the axe settle-gate is never held open. */}
+      <Suspense
+        fallback={
+          <div className="space-y-6" aria-hidden>
+            <div className="h-40 rounded-xl border border-slate-200 bg-slate-50" />
+            <div className="h-40 rounded-xl border border-slate-200 bg-slate-50" />
+          </div>
+        }
+      >
+        <div className="space-y-6">
       <JobProgressSection jobId={job.id} orgId={ctx.membership.org_id} />
 
       {/* Programme baseline — sits directly under progress: the planned line
@@ -986,6 +1006,8 @@ export default async function EditJobPage({
       <AttachmentsPanel targetTable="jobs" targetId={job.id} />
 
       <SiteTimelineSection jobId={job.id} orgId={ctx.membership.org_id} />
+        </div>
+      </Suspense>
 
       {job.status === "completed" && job.customer_id ? (
         <section className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">

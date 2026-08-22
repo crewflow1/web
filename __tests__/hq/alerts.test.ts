@@ -822,7 +822,7 @@ describe("hq-alerts-snapshot service", () => {
 
 describe("HQ_NAV — alerts is ready", () => {
   it("alerts entry has no shipsIn flag", () => {
-    expect(LAYOUT).toMatch(/href: "\/admin\/alerts", label: "Alerts" \}/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href: "\/admin\/alerts"/);
     expect(LAYOUT).not.toMatch(
       /href: "\/admin\/alerts"[^}]*shipsIn: "HQ-5"/,
     );

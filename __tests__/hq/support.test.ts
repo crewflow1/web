@@ -562,7 +562,7 @@ describe("Customer sidebar", () => {
 
 describe("HQ_NAV — support is ready + badge wired", () => {
   it("support entry has no shipsIn flag", () => {
-    expect(HQ_LAYOUT).toMatch(/href: "\/admin\/support", label: "Support queue" \}/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href: "\/admin\/support"/);
     expect(HQ_LAYOUT).not.toMatch(/href: "\/admin\/support"[^}]*shipsIn:/);
   });
 
@@ -575,7 +575,13 @@ describe("HQ_NAV — support is ready + badge wired", () => {
     expect(HQ_LAYOUT).toMatch(/\.catch\(\(\) => 0\)/);
   });
 
-  it("NavLink renders badge prop for the support entry", () => {
-    expect(HQ_LAYOUT).toMatch(/badge=\{[^}]*supportBadge/);
+  it("the support badge is wired into the grouped nav (desktop + mobile)", () => {
+    // Rebuild: the flat NavLink is gone; the layout passes the live supportBadge
+    // to the grouped HqSidebar + HqNavMobile, which render it on the /admin/support
+    // child (badge: "support" in the model).
+    expect(HQ_LAYOUT).toMatch(/supportBadge=\{supportBadge\}/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(
+      /href: "\/admin\/support"[^}]*badge: "support"/,
+    );
   });
 });

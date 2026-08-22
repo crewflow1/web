@@ -376,11 +376,11 @@ describe("/admin/onboarding — list view", () => {
 
 describe("HQ_NAV — billing + onboarding are ready", () => {
   it("/admin/billing has no shipsIn", () => {
-    expect(LAYOUT).toMatch(/href: "\/admin\/billing", label: "Billing" \}/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href: "\/admin\/billing"/);
     expect(LAYOUT).not.toMatch(/href: "\/admin\/billing"[^}]*shipsIn:/);
   });
   it("/admin/onboarding has no shipsIn", () => {
-    expect(LAYOUT).toMatch(/href: "\/admin\/onboarding", label: "Onboarding & migration" \}/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href: "\/admin\/onboarding"/);
     expect(LAYOUT).not.toMatch(/href: "\/admin\/onboarding"[^}]*shipsIn:/);
   });
 });

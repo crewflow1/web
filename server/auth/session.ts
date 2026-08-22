@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
@@ -62,13 +63,18 @@ const ACTIVE_ORG_COOKIE = "active_org_id";
  * Best-effort user lookup. Returns null if unauthenticated.
  * Use in layouts/pages where you want to render different UI for guests.
  */
-export async function getUser(): Promise<User | null> {
+export const getUser = cache(async function getUser(): Promise<User | null> {
+  // PERF (product UX rebuild): request-scoped memoisation. `auth.getUser()` is a
+  // network round-trip; before this it ran 8-10× per render (every requireUser /
+  // requireOrgContext / direct caller). React.cache() dedupes it to ONCE per
+  // request. Safe: the cache lives for a single server request only, so it never
+  // leaks a session/user across requests — the auth boundary is unchanged.
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   return user;
-}
+});
 
 /**
  * Require an authenticated user. Redirects to /login if absent.
@@ -245,10 +251,18 @@ export async function listOrgsForUser(userId: string): Promise<OrgSummary[]> {
  * use `requireUser()` + `getOrgForUser()` directly so they don't trip
  * the access-gate redirect loop.
  */
-export async function requireOrgContext(): Promise<{
+export const requireOrgContext = cache(async function requireOrgContext(): Promise<{
   user: User;
   ctx: OrgContext;
 }> {
+  // PERF (product UX rebuild): request-scoped memoisation. This is THE chokepoint
+  // every (app) surface funnels through, and it was re-executing 8-10× per render
+  // (layout, job layout, page, and every async section — e.g. job-documents calls
+  // it ~9×), each time redoing auth.getUser() + memberships + organizations reads.
+  // React.cache() collapses that to ONE execution per request. Safe by
+  // construction: the cache is per-request, so the super-admin bounce, the
+  // active-org pin, the access-gate redirect and the MFA policy all resolve
+  // exactly as before — just once instead of 8-10×.
   const user = await requireUser();
 
   // HQ super-admins must NEVER be dropped into a customer workspace — or the
@@ -290,7 +304,7 @@ export async function requireOrgContext(): Promise<{
   await enforceMfaPolicy(user, ctx);
 
   return { user, ctx };
-}
+});
 
 /**
  * The enrol/challenge destinations MUST stay reachable at aal1, or a gated

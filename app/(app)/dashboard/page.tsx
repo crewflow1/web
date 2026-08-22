@@ -15,6 +15,7 @@ import {
   gatherVatQuarterInputs,
   type VatInputsDb,
 } from "@/server/services/vat-quarter-inputs";
+import { after } from "next/server";
 import { ensureMilestoneNotifications } from "@/server/services/retention-milestones";
 import { RetentionPanel } from "./_retention";
 import { DailyBriefing } from "./_daily-briefing";
@@ -423,10 +424,17 @@ export default async function DashboardPage() {
   // effects for any newly-crossed milestones. Best-effort; idempotent
   // via onboarding_state.notified_milestones. Errors are swallowed
   // so a transient DB blip can't break the dashboard.
-  await ensureMilestoneNotifications(ctx.org.id, retentionSnapshot, {
-    id: user.id,
-    email: user.email ?? null,
-  });
+  // PERF (product UX rebuild): a best-effort, idempotent side-effect
+  // (notifications + audit-log inserts) whose result the render never reads. Run
+  // it via after() so it fires once the response has streamed, off the landing
+  // page's critical path. Semantics unchanged — still every load, still
+  // idempotent via onboarding_state.notified_milestones, still error-swallowing.
+  after(() =>
+    ensureMilestoneNotifications(ctx.org.id, retentionSnapshot, {
+      id: user.id,
+      email: user.email ?? null,
+    }),
+  );
 
   // First-run state: the org has nothing yet. Show a welcome screen with CTAs.
   if (

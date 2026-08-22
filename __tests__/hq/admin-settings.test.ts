@@ -290,8 +290,9 @@ describe("app/admin/settings/page.tsx", () => {
 
 describe("admin layout", () => {
   it("Settings nav entry has no shipsIn badge", () => {
-    expect(LAYOUT).toMatch(
-      /\{ href: "\/admin\/settings", label: "Settings" \}/,
-    );
+    // Nav moved to the grouped model; Settings is a live destination (no stub).
+    const model = read("app/admin/_nav/hq-nav-model.ts");
+    expect(model).toMatch(/href: "\/admin\/settings"/);
+    expect(model).not.toMatch(/shipsIn/);
   });
 });

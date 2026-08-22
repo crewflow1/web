@@ -330,7 +330,7 @@ describe("impersonation — modal + action wiring (HQ-10 full session swap)", ()
 
 describe("HQ_NAV — customers is ready (no shipsIn)", () => {
   it("layout marks /admin/customers as a normal ready nav item", () => {
-    expect(LAYOUT).toMatch(/href: "\/admin\/customers", label: "Customers" \}/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href: "\/admin\/customers"/);
     expect(LAYOUT).not.toMatch(/href: "\/admin\/customers"[^}]*shipsIn:/);
   });
 });

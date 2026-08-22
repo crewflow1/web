@@ -29,6 +29,9 @@ const ROOT = resolve(__dirname, "..", "..");
 const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 
 const LAYOUT = read("app/admin/layout.tsx");
+// Product UX rebuild: the HQ nav is a grouped model; reachability is asserted
+// against that source of truth, and there are no stubs any more.
+const HQ_MODEL = read("app/admin/_nav/hq-nav-model.ts");
 const OVERVIEW = read("app/admin/overview/page.tsx");
 const COMING_SOON = read("app/admin/_coming-soon.tsx");
 
@@ -229,27 +232,18 @@ describe("HQ layout — auth gate", () => {
     expect(LAYOUT).toMatch(/export const HQ_NAV/);
   });
 
-  it("HQ_NAV covers every directive section (12 directive entries + the post-HQ-8 notifications module = 13)", () => {
-    const navEntries = (LAYOUT.match(/href:\s*"\/admin\/[^"]+"/g) ?? []).length;
-    // 12 sections from the original directive + /admin/notifications
-    // added in HQ-8. The count grows monotonically as new modules
-    // ship — never shrinks.
+  it("HQ_NAV covers every directive section (>= 13 destinations across the grouped model)", () => {
+    // Nav destinations now live in the grouped model. The count grows
+    // monotonically as modules ship — never shrinks.
+    const navEntries = (HQ_MODEL.match(/href:\s*"\/admin\/[^"]+"/g) ?? []).length;
     expect(navEntries).toBeGreaterThanOrEqual(13);
   });
 
-  it("each non-overview section is annotated with the sprint it ships in (no silent stubs)", () => {
-    // Sections still on the roadmap carry a shipsIn annotation. As each
-    // sprint flips a section to ready, the annotation drops. Phase 4
-    // shipped /admin/settings — every nav entry now points to a real
-    // page, so shipsIn is allowed to be 0. Any FUTURE roadmap entry
-    // must reintroduce the annotation rather than silently stubbing.
-    const shipsInCount = (LAYOUT.match(/shipsIn:/g) ?? []).length;
-    expect(shipsInCount).toBeGreaterThanOrEqual(0);
-    // Defence: if anyone reintroduces a stub, they MUST also keep the
-    // `shipsIn` field on the NavItem type — guarded here by string
-    // search rather than a runtime check so a refactor that drops the
-    // optional field is caught.
-    expect(LAYOUT).toMatch(/shipsIn\?:/);
+  it("no silent stubs — every HQ nav destination is a live page", () => {
+    // The rebuild retired the shipsIn/stub concept: every destination in the
+    // grouped model points at a real page. A future roadmap surface must ship a
+    // real page, not a silent stub — asserted by the absence of any stub marker.
+    expect(HQ_MODEL).not.toMatch(/shipsIn/);
   });
 });
 
