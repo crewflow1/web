@@ -92,12 +92,15 @@ export function Sidebar({
             const open = hasChildren && isOpen(area);
             return (
               <li key={area.id}>
-                <div className="group relative flex items-center">
+                {/* Row: the area link (flex-1) + a non-overlapping toggle. The
+                    toggle is a full 36px target (WCAG 2.5.8) and a sibling, not
+                    an overlay, so adjacent targets never collide. */}
+                <div className="group flex items-center gap-0.5">
                   <Link
                     href={area.href}
                     aria-current={areaActive && !hasChildren ? "page" : undefined}
                     className={[
-                      "flex flex-1 items-center gap-2.5 rounded-md px-3 py-2 text-sm transition",
+                      "flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-3 py-2 text-sm transition",
                       areaActive
                         ? "font-semibold text-slate-900"
                         : "font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900",
@@ -120,10 +123,10 @@ export function Sidebar({
                       onClick={() => setOpen(area.id, !open)}
                       aria-label={`${open ? "Collapse" : "Expand"} ${label(area.labelKey, area.label)}`}
                       aria-expanded={open}
-                      className="absolute right-1 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
                     >
                       <ChevronDown
-                        className={`h-3.5 w-3.5 transition-transform ${open ? "" : "-rotate-90"}`}
+                        className={`h-4 w-4 transition-transform ${open ? "" : "-rotate-90"}`}
                         aria-hidden
                       />
                     </button>
