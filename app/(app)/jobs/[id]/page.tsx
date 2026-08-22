@@ -453,7 +453,7 @@ export default async function EditJobPage({
       </div>
 
       <header>
-        <h1 className="text-2xl font-bold text-slate-900">Edit job</h1>
+        <h1 className="text-2xl font-bold text-slate-900">Overview</h1>
       </header>
 
       {/* H2-CASH — get-paid billing plan (deposit / staged invoicing). */}

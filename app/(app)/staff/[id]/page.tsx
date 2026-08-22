@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ButtonLink } from "@/components/ui";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import {
@@ -165,13 +166,19 @@ export default async function StaffDetailPage({
         </span>
       </div>
 
-      <header>
-        <h1 className="text-2xl font-bold text-slate-900">
-          {user?.full_name ?? user?.email}
-        </h1>
-        <p className="mt-1 text-sm text-slate-600">
-          {user?.email} · role: <strong>{row.role}</strong>
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold text-slate-900">
+            {user?.full_name ?? user?.email}
+          </h1>
+          <p className="mt-1 text-sm text-slate-600">
+            {user?.email} · role: <strong>{row.role}</strong>
+          </p>
+        </div>
+        {/* De-orphan: the per-person weekly timesheet had no inbound link. */}
+        <ButtonLink href={`/staff/${id}/timesheet`} variant="secondary" size="sm">
+          View timesheet
+        </ButtonLink>
       </header>
 
       {errorMessage ? (

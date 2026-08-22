@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { utilityForRole } from "@/app/(app)/_nav/nav-model";
 import { resolve } from "node:path";
 import {
   SUPPORT_STATUSES,
@@ -63,7 +64,9 @@ const HQ_DETAIL = read("app/admin/support/[id]/page.tsx");
 // gated behind a confirm. Tests that pinned reply-form internals
 // now read the dedicated file.
 const HQ_DETAIL_REPLY = read("app/admin/support/[id]/_reply-form.tsx");
-const SIDEBAR = read("app/(app)/_components/sidebar.tsx");
+// Product UX rebuild: nav destinations live in the shared model; Support is a
+// child of the demoted Help area (visible to all roles).
+const SIDEBAR = read("app/(app)/_nav/nav-model.ts");
 const HQ_LAYOUT = read("app/admin/layout.tsx");
 
 // =====================================================================
@@ -541,15 +544,19 @@ describe("HQ page wiring", () => {
 // =====================================================================
 
 describe("Customer sidebar", () => {
-  it("carries a /support link in ADMIN_LINKS", () => {
-    // Labels are now i18n message keys (nav.support) resolved through the
-    // translator; the /support href + its key are pinned here.
-    expect(SIDEBAR).toMatch(/href: "\/support", labelKey: "nav\.support"/);
+  it("carries a /support link with its i18n key", () => {
+    // Labels are i18n message keys (nav.support) resolved through the translator;
+    // the /support href + its key live in the shared nav model.
+    expect(SIDEBAR).toMatch(/href: "\/support"/);
+    expect(SIDEBAR).toMatch(/labelKey: "nav\.support"/);
   });
   it("also offers Support to staff role", () => {
-    // Both link arrays expose /support so even staff can raise tickets.
-    const supportCount = (SIDEBAR.match(/"\/support"/g) ?? []).length;
-    expect(supportCount).toBeGreaterThanOrEqual(2);
+    // Support sits under the Help area, which is visible to every role, so even
+    // staff can raise tickets.
+    const staffHrefs = utilityForRole("staff").flatMap((a) =>
+      a.children.map((c) => c.href),
+    );
+    expect(staffHrefs).toContain("/support");
   });
 });
 
