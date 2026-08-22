@@ -136,7 +136,33 @@ permissions & all server authorities · every existing route.
 - Deep per-tab job-workspace consolidation; object workspaces for customer /
   employee / asset / supplier.
 
-## Tests / gates
+## Responsive fix (shell)
 
-(Updated as run.) Typecheck: PASS. Lint/unit/integration/e2e/security + browser
-QA + reachability audit: pending end-of-wave run.
+`<main>` lacked `min-w-0`, so a wide table forced the flex content column wider
+than its track and pushed the whole page sideways at 768/320 (a flex `min-width:
+auto` trap, pre-existing; the `w-56→w-60` sidebar nudged more pages over the
+line). Added `min-w-0` to `<main>` — content now scrolls within its own
+container instead of overflowing the page. Overflow re-verified clean at
+1440/1280/1024/768/430/390/320.
+
+## Tests / gates (end of Wave 1)
+
+- **Typecheck**: PASS.
+- **Lint**: PASS (0 errors; 92 pre-existing warnings, unchanged baseline).
+- **Unit** (`vitest run`): PASS — 628 files / 10,852 tests. Includes the new
+  `__tests__/nav/reachability.test.ts` (68) and the updated nav-placement tests
+  (ui-phases, polish-batch, support, notifications).
+- **Security / trust boundaries** (`test:security`): PASS — 306 files / 8,140
+  tests (operations-active-org-scoping updated to assert role visibility via the
+  model). No boundary weakened.
+- **Integration / e2e** (real Postgres / Playwright): to run in CI on the single
+  preview push — these exercise server/DB logic this wave does not touch; run
+  locally they would mutate the seeded demo org, so they are deferred to CI.
+- **Browser QA**: desktop 1440/1280/1024 + mobile 768/430/390/320 — 0 horizontal
+  overflow, 0 console errors; deep-link into `/jobs/[id]/valuations` (fresh),
+  refresh on `/jobs/[id]/commercial`, and back/forward all correct.
+- **Role QA**: owner sees all 8 areas; staff sees My day · Projects · Site &
+  safety · People · Settings · Help (no Money/Sales/Operations/Inbox).
+- **Reachability**: 109 capabilities; desktop-reachable = all non-intentional;
+  mobile-reachable = all non-intentional (P0 closed); orphaned major = 0
+  (valuations + timesheet fixed; marketplace/qa/asset-QR intentional).

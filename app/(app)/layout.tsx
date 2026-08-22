@@ -118,7 +118,10 @@ export default async function AppLayout({
       <div className="flex">
         <Sidebar role={ctx.membership.role} locale={locale} />
         {/* Bottom-padding reserves room for the mobile bottom-nav (md:hidden). */}
-        <main className="container flex-1 py-6 pb-24 sm:py-10 md:pb-10">
+        {/* min-w-0 lets the content column shrink below its content's intrinsic
+            width so wide tables scroll within their own container instead of
+            pushing the whole page sideways (flex children default to min-w:auto). */}
+        <main className="container flex-1 min-w-0 py-6 pb-24 sm:py-10 md:pb-10">
           {children}
         </main>
       </div>

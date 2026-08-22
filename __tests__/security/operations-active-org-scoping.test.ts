@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { navForRole } from "@/app/(app)/_nav/nav-model";
 
 /**
  * Active-org scoping — the OPERATIONS command centre must pin every read to
@@ -167,13 +168,20 @@ describe("the page hands the active org in and stays read-only", () => {
 });
 
 describe("the Operations route is reachable and correctly placed", () => {
-  it("is in the admin sidebar and not the staff one", () => {
-    const SIDEBAR = src("app/(app)/_components/sidebar.tsx");
-    const admin = SIDEBAR.slice(SIDEBAR.indexOf("ADMIN_LINKS"), SIDEBAR.indexOf("STAFF_LINKS"));
-    const staff = SIDEBAR.slice(SIDEBAR.indexOf("STAFF_LINKS"));
-    // Labels are now i18n message keys resolved through the translator.
-    expect(admin).toMatch(/\{ href: "\/operations", labelKey: "nav\.operations" \}/);
-    expect(staff).not.toMatch(/\/operations/);
+  it("is in the admin nav and not the staff one", () => {
+    // Product UX rebuild: nav is defined in the shared model, filtered by role.
+    // Operations is an owner/admin area; staff never see it (they get the field
+    // areas only). This mirrors the guard that /operations serves admin data.
+    const adminHrefs = navForRole("owner").flatMap((a) => [
+      a.href,
+      ...a.children.map((c) => c.href),
+    ]);
+    const staffHrefs = navForRole("staff").flatMap((a) => [
+      a.href,
+      ...a.children.map((c) => c.href),
+    ]);
+    expect(adminHrefs).toContain("/operations");
+    expect(staffHrefs).not.toContain("/operations");
   });
 
   it("ships a route-level skeleton so the heaviest read never blanks the shell", () => {
