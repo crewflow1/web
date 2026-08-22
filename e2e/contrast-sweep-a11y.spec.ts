@@ -262,19 +262,24 @@ test.describe("slate-tone contrast sweep — accessibility", () => {
   });
 
   // Third element: color-contrast candidacy floor (see e2e/_axe-canary.ts).
-  // App-shell routes: a shell-only under-scan evaluates ~40 nodes and every
-  // seeded route guarantees ≥12 content nodes on a fresh DB → 50. The portal
-  // shell is far thinner (~8 nodes) with ≥12 seeded report nodes → 15.
+  // App-shell routes: the grouped-nav shell (product UX rebuild) is a legitimate
+  // slim-down of the old flat 44-item sidebar — its progressive disclosure means
+  // a shell-only under-scan now evaluates ~24-29 nodes (was ~40). Content-rich
+  // routes still clear 50; the four THINNEST app-shell routes are recalibrated to
+  // 34 — safely above the slimmer shell-only count (so a genuine under-scan that
+  // skipped <main> still fails loudly) yet comfortably below their seeded 38-44
+  // (measured in CI). The portal shell is far thinner (~8 nodes) → 15.
+  const SLIM = 34; // thin app-shell routes, post grouped-nav recalibration
   for (const [name, path, floor] of [
     ["site reports register (superseded + archived chips)", "/site-reports", 50],
     ["site report detail (superseded)", "DETAIL_SR", 50],
     ["asset templates register (superseded + archived faces)", "/assets/templates", 50],
-    ["asset template detail (superseded + archived versions)", "DETAIL_TPL", 50],
+    ["asset template detail (superseded + archived versions)", "DETAIL_TPL", SLIM],
     ["asset detail (chips + paused schedules + cancelled case)", "DETAIL_ASSET", 50],
-    ["asset holdings (due-back chips + since text)", "/assets/holdings", 50],
+    ["asset holdings (due-back chips + since text)", "/assets/holdings", SLIM],
     ["job hub (withdrawn RAMS, closed permit, withdrawn talk)", "JOB_HUB", 50],
-    ["toolbox register (withdrawn talk chip)", "/toolbox", 50],
-    ["purchase orders register (cancelled chip)", "/purchase-orders", 50],
+    ["toolbox register (withdrawn talk chip)", "/toolbox", SLIM],
+    ["purchase orders register (cancelled chip)", "/purchase-orders", SLIM],
     ["purchase order detail (cancelled)", "DETAIL_PO", 50],
     ["fleet vehicles table (Next due + unplated row)", "/fleet/vehicles", 50],
     ["onboarding setup (skipped step dot)", "/onboarding/setup", 50],
