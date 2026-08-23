@@ -39,17 +39,23 @@ import {
  * every such query pins `org_id` explicitly (honouring the active-org rule,
  * #456). The admin client is never used to read a tax document.
  *
- * ── IDEMPOTENCY, AND ITS ZERO-MIGRATION LIMIT ───────────────────────────────
- * A statement is emailed at most once: the queue row's `subject` carries the
- * statement number (unique per org, immutable, changes on reissue), and we skip
- * any statement whose subject is already queued for the org. The maintenance-
- * reminder engine gets a HARD guarantee from a dedicated log table with a unique
- * index + an advisory-lock claim RPC; this train is ZERO-MIGRATION, so we cannot
- * add that index here. The check-then-insert therefore has a small residual race
- * for two truly-simultaneous admin clicks (both could miss the other's insert
- * and double-queue one statement). It is bounded to that window, this is an
- * admin-triggered action rather than a high-fan-out cron, and the honest fix is
- * a follow-up migration adding a unique index on a per-statement queue key.
+ * ── IDEMPOTENCY: ONE EMAIL PER STATEMENT, ENFORCED BY THE DATABASE ───────────
+ * A statement is emailed at most once, and that is now a DATABASE invariant, not
+ * just an application check. Each queued row carries the statement number in a
+ * dedicated `cis_statement_key` column (unique per org, immutable, changes on
+ * reissue — so a corrected statement is a new number and is correctly emailed
+ * again), and the unique index `notification_email_queue_cis_statement_uniq`
+ * (migration 20261217000000) forbids a second queued row for the same
+ * (org_id, statement number). The insert is an `upsert ... ON CONFLICT DO
+ * NOTHING`, so two truly-simultaneous admin clicks — or a retried server action —
+ * settle to exactly one queued email with no error surfaced to the caller: the
+ * loser's row is silently ignored and counted as already-queued.
+ *
+ * The pre-insert `subject` read below is kept only as a fast path so re-running
+ * over an unchanged month reports accurate skip reasons without attempting
+ * inserts; correctness no longer depends on it (see the count reconciliation at
+ * the return). NULL `cis_statement_key` (every non-CIS email) is exempt from the
+ * index by Postgres NULLS-DISTINCT semantics, so no other email flow is touched.
  */
 
 export type QueueStatementEmailsResult = {
@@ -80,7 +86,18 @@ type LooseInsert = {
         like: (k: string, v: string) => LooseQ;
       };
     };
-    insert: (rows: unknown) => PromiseLike<{ error: { message: string } | null }>;
+    /**
+     * The race-proof write: `ON CONFLICT (org_id, cis_statement_key) DO NOTHING`
+     * against the unique index (20261217000000). `.select("id")` returns ONLY the
+     * rows actually inserted — the ignored (already-queued) rows are omitted — so
+     * the caller can report the true newly-queued count under concurrency.
+     */
+    upsert: (
+      rows: unknown,
+      opts: { onConflict: string; ignoreDuplicates: boolean },
+    ) => {
+      select: (c: string) => PromiseLike<Res<{ id: string }[]>>;
+    };
   };
 };
 
@@ -188,6 +205,13 @@ export async function queueCisStatementEmails(input: {
   //    hatch for a transactional email outside the in-app notification system
   //    (20260611000000) — a subcontractor is not a CrewFlow user, so this must
   //    NOT create an in-app notification.
+  //    The write is idempotent at the DATABASE: `cis_statement_key` carries the
+  //    per-statement key and the unique index (20261217000000) makes a second
+  //    queued row for the same (org, statement) impossible. `ON CONFLICT DO
+  //    NOTHING` (upsert + ignoreDuplicates) means a concurrent duplicate is
+  //    silently dropped rather than erroring the caller; `.select("id")` returns
+  //    only the rows that were actually inserted, so `queued` is the TRUE count.
+  let insertedCount = 0;
   if (plan.toQueue.length > 0) {
     const now = new Date().toISOString();
     const rows = plan.toQueue.map((q) => ({
@@ -197,6 +221,7 @@ export async function queueCisStatementEmails(input: {
       to_email: q.toEmail,
       reply_to_email: null,
       subject: q.subject,
+      cis_statement_key: q.statementNumber,
       body_text: q.body,
       body_html: null,
       status: "queued" as const,
@@ -206,16 +231,23 @@ export async function queueCisStatementEmails(input: {
       provider_message_id: null,
       scheduled_for: now,
     }));
-    const { error: insertErr } = await admin.from("notification_email_queue").insert(rows);
+    const { data: inserted, error: insertErr } = await admin
+      .from("notification_email_queue")
+      .upsert(rows, { onConflict: "org_id,cis_statement_key", ignoreDuplicates: true })
+      .select("id");
     if (insertErr) throw readFailure("cis: queue statement emails", insertErr);
+    insertedCount = inserted?.length ?? 0;
   }
 
   const count = (reason: string) => plan.skipped.filter((s) => s.reason === reason).length;
+  // Any planned row NOT inserted lost the ON CONFLICT race to a concurrent run —
+  // its email is already queued by the winner, so it belongs with already-queued.
+  const raced = plan.toQueue.length - insertedCount;
   return {
     ok: true,
     taxMonthEnd,
-    queued: plan.toQueue.length,
-    alreadyQueued: count("already_queued"),
+    queued: insertedCount,
+    alreadyQueued: count("already_queued") + raced,
     noEmail: count("no_email"),
     notStatutory: count("not_statutory"),
     notIssued: count("not_issued"),
