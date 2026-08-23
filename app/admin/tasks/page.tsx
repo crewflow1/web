@@ -1,5 +1,4 @@
 import {
-  Radar,
   Activity,
   CheckCircle2,
   XCircle,
@@ -14,6 +13,12 @@ import {
   type TaskQueueRow,
 } from "@/server/services/hq-task-queue";
 import { RELATIVE_TIME_PRESETS, relativeTime } from "@/lib/time/relative";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatTile } from "@/components/ui/stat-tile";
+import { Badge } from "@/components/ui/badge";
+import type { Tone } from "@/components/ui/tokens";
+import { presentTaskState } from "@/lib/hq/presentation-state";
+import { DecisionStateBadge } from "@/app/admin/_components/decision-state";
 
 /**
  * AI Task Queue — the unified operator read model for the Generic Task Engine
@@ -22,12 +27,13 @@ import { RELATIVE_TIME_PRESETS, relativeTime } from "@/lib/time/relative";
  * One screen for the whole autonomous workforce on the shared queue: engine-wide
  * totals up top, a per-employee breakdown of recent load, and a live feed of the
  * newest tasks across every type. It renders whatever the engine holds — no task
- * type is named here, so a newly migrated employee shows up automatically. This
- * is the architectural health metric made visible: the operating system is the
- * thing that grows, not the employee.
+ * type is named here, so a newly migrated employee shows up automatically.
  *
- * Read-only + HQ-gated by app/admin/layout.tsx (requireHqPage). The data comes
- * from hq-task-queue.ts, which only ever SELECTs hq_ai_tasks.
+ * Product UX rebuild (HQ phase): re-skinned off the old dark island onto the
+ * light operational system, and the live feed now speaks the ONE HQ decision
+ * language (lib/hq/presentation-state) so a task's state reads the same word as
+ * an approval or a saga. Read-only + HQ-gated by app/admin/layout.tsx; the data
+ * comes from hq-task-queue.ts, which only ever SELECTs hq_ai_tasks.
  */
 
 export const dynamic = "force-dynamic";
@@ -42,14 +48,15 @@ const BUCKET_LABEL: Record<QueueBucket, string> = {
   cancelled: "Cancelled",
 };
 
-const BUCKET_PILL: Record<QueueBucket, string> = {
-  queued: "bg-slate-700/40 text-slate-300 ring-slate-500/30",
-  active: "bg-indigo-500/15 text-indigo-300 ring-indigo-400/30",
-  waiting_approval: "bg-amber-500/15 text-amber-300 ring-amber-400/30",
-  completed: "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30",
-  failed: "bg-red-500/15 text-red-300 ring-red-400/30",
-  blocked: "bg-orange-500/15 text-orange-300 ring-orange-400/30",
-  cancelled: "bg-slate-700/30 text-slate-400 ring-slate-600/30",
+/** Count-chip tone per bucket (light, AA-verified tones). */
+const BUCKET_TONE: Record<QueueBucket, Tone> = {
+  queued: "slate",
+  active: "indigo",
+  waiting_approval: "amber",
+  completed: "emerald",
+  failed: "red",
+  blocked: "amber",
+  cancelled: "slate",
 };
 
 // The buckets surfaced in the per-employee breakdown, in operator-priority order.
@@ -66,119 +73,71 @@ export default async function TaskQueuePage() {
   const { totals, byType, recent, windowSize, windowCap } = overview;
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 shadow-xl">
-      {/* Header */}
-      <div className="relative border-b border-slate-800 px-5 py-6 sm:px-7">
-        <div
-          className="pointer-events-none absolute inset-0 opacity-60"
-          style={{
-            background:
-              "radial-gradient(60% 120% at 15% 0%, rgba(99,102,241,0.18), transparent 60%), radial-gradient(50% 120% at 90% 0%, rgba(16,185,129,0.12), transparent 55%)",
-          }}
-          aria-hidden
-        />
-        <div className="relative flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
-              <Radar className="h-6 w-6" strokeWidth={1.75} aria-hidden />
-            </span>
-            <div>
-              <h1 className="text-xl font-bold tracking-tight text-white">AI Task Queue</h1>
-              <p className="mt-0.5 max-w-xl text-sm text-slate-400">
-                The Generic Task Engine — one durable queue every AI employee runs
-                on. Each task is leased, heart-beated and traced on the event spine.
-                Employees come and go; this surface stays the same.
-              </p>
-            </div>
-          </div>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
+    <div className="space-y-6">
+      <PageHeader
+        title="AI Task Queue"
+        description="The Generic Task Engine — one durable queue every AI employee runs on. Each task is leased, heart-beated and traced on the event spine. Employees come and go; this surface stays the same."
+        actions={
+          <Badge tone="emerald" className="gap-1.5 px-3 py-1">
             <ShieldCheck className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
             Read-only · service-role · every action audited
+          </Badge>
+        }
+      />
+
+      {/* Engine-wide totals (exact) */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <StatTile label="Total tasks" value={totals.total.toLocaleString()} tone="indigo" />
+        <StatTile label="Queued" value={totals.queued.toLocaleString()} hint="waiting to run" />
+        <StatTile label="Active" value={totals.active.toLocaleString()} hint="leased right now" />
+        <StatTile label="Awaiting approval" value={totals.waitingApproval.toLocaleString()} tone="amber" />
+        <StatTile label="Completed" value={totals.completed.toLocaleString()} tone="emerald" />
+        <StatTile label="Failed" value={totals.failed.toLocaleString()} tone="red" />
+      </div>
+
+      {/* Per-employee breakdown (recent-activity window) */}
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Activity className="h-4 w-4 text-slate-400" aria-hidden />
+            <h2 className="text-sm font-semibold text-slate-900">Workforce on the engine</h2>
+          </div>
+          <span className="text-[11px] text-slate-500">
+            {windowSize >= windowCap
+              ? `latest ${windowCap.toLocaleString()} tasks`
+              : `all ${windowSize.toLocaleString()} task${windowSize === 1 ? "" : "s"}`}
           </span>
         </div>
-      </div>
+        {byType.length === 0 ? (
+          <EmptyState>
+            No tasks on the engine yet. As soon as an AI employee enqueues work, its
+            task type appears here.
+          </EmptyState>
+        ) : (
+          <ul className="space-y-2">
+            {byType.map((t) => (
+              <EmployeeRow key={t.taskType} summary={t} />
+            ))}
+          </ul>
+        )}
+      </section>
 
-      <div className="space-y-6 p-5 sm:p-7">
-        {/* Engine-wide totals (exact) */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <Tile label="Total tasks" value={totals.total} accent />
-          <Tile label="Queued" value={totals.queued} sub="waiting to run" />
-          <Tile label="Active" value={totals.active} sub="leased right now" />
-          <Tile label="Awaiting approval" value={totals.waitingApproval} />
-          <Tile label="Completed" value={totals.completed} />
-          <Tile label="Failed" value={totals.failed} />
+      {/* Live feed */}
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-3 flex items-center gap-2">
+          <Clock3 className="h-4 w-4 text-slate-400" aria-hidden />
+          <h2 className="text-sm font-semibold text-slate-900">Most recent tasks</h2>
         </div>
-
-        {/* Per-employee breakdown (recent-activity window) */}
-        <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Activity className="h-4 w-4 text-slate-400" aria-hidden />
-              <h2 className="text-sm font-semibold text-white">Workforce on the engine</h2>
-            </div>
-            <span className="text-[11px] text-slate-500">
-              {windowSize >= windowCap
-                ? `latest ${windowCap.toLocaleString()} tasks`
-                : `all ${windowSize.toLocaleString()} task${windowSize === 1 ? "" : "s"}`}
-            </span>
-          </div>
-          {byType.length === 0 ? (
-            <EmptyState>
-              No tasks on the engine yet. As soon as an AI employee enqueues work,
-              its task type appears here.
-            </EmptyState>
-          ) : (
-            <ul className="space-y-2">
-              {byType.map((t) => (
-                <EmployeeRow key={t.taskType} summary={t} />
-              ))}
-            </ul>
-          )}
-        </section>
-
-        {/* Live feed */}
-        <section className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5">
-          <div className="mb-3 flex items-center gap-2">
-            <Clock3 className="h-4 w-4 text-slate-400" aria-hidden />
-            <h2 className="text-sm font-semibold text-white">Most recent tasks</h2>
-          </div>
-          {recent.length === 0 ? (
-            <EmptyState>The queue is quiet — nothing has run yet.</EmptyState>
-          ) : (
-            <ul className="divide-y divide-slate-800/70">
-              {recent.map((task) => (
-                <TaskRow key={task.id} task={task} />
-              ))}
-            </ul>
-          )}
-        </section>
-      </div>
-    </div>
-  );
-}
-
-function Tile({
-  label,
-  value,
-  sub,
-  accent,
-}: {
-  label: string;
-  value: number;
-  sub?: string;
-  accent?: boolean;
-}) {
-  return (
-    <div
-      className={`rounded-xl border p-4 ${
-        accent
-          ? "border-indigo-400/30 bg-indigo-500/[0.07] ring-1 ring-inset ring-indigo-400/20"
-          : "border-slate-800 bg-slate-900/60"
-      }`}
-    >
-      <p className="text-2xl font-bold tabular-nums text-white">{value.toLocaleString()}</p>
-      <p className="mt-0.5 text-xs font-medium text-slate-300">{label}</p>
-      {sub ? <p className="mt-0.5 text-[11px] text-slate-500">{sub}</p> : null}
+        {recent.length === 0 ? (
+          <EmptyState>The queue is quiet — nothing has run yet.</EmptyState>
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {recent.map((task) => (
+              <TaskRow key={task.id} task={task} />
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }
@@ -187,14 +146,14 @@ function EmployeeRow({ summary }: { summary: EmployeeQueueSummary }) {
   const title = summary.employee?.name ?? humaniseType(summary.taskType);
   const dept = summary.employee?.department;
   return (
-    <li className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/60 px-4 py-3">
+    <li className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
       <div className="min-w-0">
-        <p className="flex items-center gap-2 text-sm font-semibold text-white">
+        <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
           {title}
           {dept ? (
-            <span className="rounded-full bg-slate-700/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-400">
+            <Badge tone="slate" className="text-[10px] uppercase tracking-wide">
               {dept}
-            </span>
+            </Badge>
           ) : null}
         </p>
         <p className="mt-0.5 font-mono text-[11px] text-slate-500">{summary.taskType}</p>
@@ -202,13 +161,9 @@ function EmployeeRow({ summary }: { summary: EmployeeQueueSummary }) {
       <div className="flex flex-wrap items-center gap-1.5">
         {SUMMARY_BUCKETS.map((b) =>
           summary.buckets[b] > 0 ? (
-            <span
-              key={b}
-              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${BUCKET_PILL[b]}`}
-            >
-              <span className="tabular-nums">{summary.buckets[b]}</span>
-              {BUCKET_LABEL[b]}
-            </span>
+            <Badge key={b} tone={BUCKET_TONE[b]}>
+              <span className="tabular-nums">{summary.buckets[b]}</span> {BUCKET_LABEL[b]}
+            </Badge>
           ) : null,
         )}
         {summary.lastActivityAt ? (
@@ -228,19 +183,15 @@ function TaskRow({ task }: { task: TaskQueueRow }) {
   return (
     <li className="flex items-center justify-between gap-3 py-3">
       <div className="min-w-0">
-        <p className="flex items-center gap-2 text-sm font-medium text-white">
-          <span
-            className={`rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${BUCKET_PILL[task.bucket]}`}
-          >
-            {task.status}
-          </span>
+        <p className="flex items-center gap-2 text-sm font-medium text-slate-900">
+          <DecisionStateBadge badge={presentTaskState(task.status)} />
           <span className="truncate">{who}</span>
         </p>
         <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-500">
           <span className="font-mono">{task.taskType}</span>
           {task.subjectKind !== "none" ? <span>· {task.subjectKind}</span> : null}
           {retrying ? (
-            <span className="text-amber-400/80">
+            <span className="text-amber-700">
               · retry {task.retryCount}/{task.maxRetries}
             </span>
           ) : null}
@@ -263,21 +214,21 @@ function BucketGlyph({ bucket }: { bucket: QueueBucket }) {
   const cls = "h-4 w-4";
   switch (bucket) {
     case "completed":
-      return <CheckCircle2 className={`${cls} text-emerald-400`} aria-hidden />;
+      return <CheckCircle2 className={`${cls} text-emerald-600`} aria-hidden />;
     case "failed":
-      return <XCircle className={`${cls} text-red-400`} aria-hidden />;
+      return <XCircle className={`${cls} text-red-600`} aria-hidden />;
     case "active":
-      return <Activity className={`${cls} text-indigo-400`} aria-hidden />;
+      return <Activity className={`${cls} text-indigo-600`} aria-hidden />;
     case "waiting_approval":
-      return <Hourglass className={`${cls} text-amber-400`} aria-hidden />;
+      return <Hourglass className={`${cls} text-amber-600`} aria-hidden />;
     default:
-      return <Clock3 className={`${cls} text-slate-500`} aria-hidden />;
+      return <Clock3 className={`${cls} text-slate-400`} aria-hidden />;
   }
 }
 
 function EmptyState({ children }: { children: React.ReactNode }) {
   return (
-    <p className="rounded-lg border border-dashed border-slate-800 bg-slate-900/40 px-4 py-8 text-center text-sm text-slate-500">
+    <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
       {children}
     </p>
   );

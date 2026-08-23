@@ -1,6 +1,20 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Lock, ShieldOff, Plus } from "lucide-react";
+import {
+  Lock,
+  ShieldOff,
+  Plus,
+  ChevronDown,
+  Target,
+  Activity,
+  CheckCircle2,
+  Inbox,
+  AlertTriangle,
+  KeyRound,
+  BarChart3,
+  Wrench,
+  type LucideIcon,
+} from "lucide-react";
 import {
   loadAiEmployeeBySlug,
   resolveEmployeeApprovalLevel,
@@ -8,7 +22,6 @@ import {
 import {
   AI_EMPLOYEE_STATUSES,
   STATUS_LABELS,
-  STATUS_PULSE,
   MEMORY_SCOPES,
   MEMORY_SCOPE_LABELS,
   MEMORY_SCOPE_HELP,
@@ -22,7 +35,7 @@ import {
 } from "@/lib/ai-employees/model";
 import { computeEmployeeStats, formatRate } from "@/lib/ai-employees/stats";
 import { getBoardroomCardsForEmployee } from "@/server/services/hq-task-pipeline";
-import { statusStyle, taskStatusPill, accentClasses } from "../_styles";
+import { accentClasses } from "../_styles";
 import { EmployeeIcon } from "../_icon";
 import {
   BoardroomCardPanel,
@@ -43,18 +56,24 @@ import {
 } from "@/server/services/hq-memory";
 import { resolveServedCapabilityView } from "@/server/sdk/registry-parity";
 import { MemoryCard, buildTypeMap } from "../../memory/_components";
+import { PageHeader, Badge, StatTile, buttonClass, type Tone } from "@/components/ui";
+import type { AiEmployeeTask } from "@/lib/ai-employees/model";
 
 /**
  * AI Boardroom — employee detail (CEO Directive 001, Phase 1).
  *
- * Profile · role · prompt · allowed tools · permissions · current task ·
- * memory scope · task history · memory entries · activity/audit log ·
- * configuration panel.
+ * Product UX rebuild (HQ phase): re-skinned onto the LIGHT operational design
+ * system and reorganised so an executive reads the answers first — what this
+ * employee is responsible for, what it's doing now, what it recently produced,
+ * what is waiting on a human, what failed, and what authority it holds — before
+ * any operator-grade editor. Implementation noise (system prompt, capability
+ * tokens, memory-scope editor, raw scopes, audit log) is collapsed behind an
+ * intentional "Technical detail" toggle.
  *
- * FRAMEWORK ONLY. The configuration panel edits SAFE descriptive fields
- * (status, role, description, planned model, memory scope, current task,
- * system prompt). Execution is locked: the served approval stance is shown
- * read-only and there is no action anywhere that enables it.
+ * FRAMEWORK ONLY. Execution is locked. `current_task`, `last_activity_at` and
+ * the task/memory rows are HUMAN-AUTHORED configured state on this surface —
+ * they are labelled as configured/logged state, never as autonomous AI output.
+ * The served approval stance is shown read-only; nothing here enables execution.
  */
 
 type Params = Promise<{ slug: string }>;
@@ -74,20 +93,16 @@ export default async function AiEmployeeDetailPage({
 
   const { employee: e, tasks, memory, activity } = detail;
   const accent = accentClasses(e.accent);
-  const pulse = (STATUS_PULSE as Record<string, boolean>)[e.status] ?? false;
-  const st = statusStyle(e.status);
 
-  // Workforce telemetry — derived from the task + memory history already
-  // loaded above (no extra query). Architecture only: read + derive.
+  // Workforce telemetry — derived from the task + memory history already loaded
+  // above (no extra query). Architecture only: read + derive.
   const stats = computeEmployeeStats(tasks, memory);
 
-  // The SERVED capability authority (Directive #015 / D-05, LR5.2 — the Read Migration Rule).
-  // The capability editor + permissions panel below read what the runtime SERVES from the
-  // now-SOLE-authoritative Capability Registry — with the default-deny floor as the automatic
-  // fail-safe (LR5.4B removed the legacy ai_employees.tools_allowed / permissions columns the
-  // page used to read). Resolved alongside the read-only shared-memory feed (CEO Directive 002),
-  // a permission-aware slice this employee may READ; both are best-effort and degrade to a safe
-  // default rather than breaking the profile.
+  // The SERVED capability authority (Directive #015 / D-05, LR5.2 — the Read
+  // Migration Rule). The authority summary + technical editor read what the
+  // runtime SERVES from the now-SOLE-authoritative Capability Registry, with the
+  // default-deny floor as the automatic fail-safe. Resolved alongside the
+  // read-only shared-memory feed (CEO Directive 002).
   const now = new Date();
   const [served, approvalLevel, memoryFeed, memoryTypes, boardroomCards] =
     await Promise.all([
@@ -97,7 +112,7 @@ export default async function AiEmployeeDetailPage({
       listMemoryTypes(),
       getBoardroomCardsForEmployee(e.id, now),
     ]);
-  // The complete served token set seeds the registry-native authoring editor (one token/line).
+  // The complete served token set seeds the registry-native authoring editor.
   const capabilityTokens = [...served.tokens];
   const memoryTypeMap = buildTypeMap(memoryTypes);
   const feedGroups = [
@@ -108,199 +123,617 @@ export default async function AiEmployeeDetailPage({
   ];
   const hasFeed = feedGroups.some((g) => g.items.length > 0);
 
+  // Exec-facing task slices — the full history lives in Configure below.
+  const completedTasks = tasks.filter((t) => t.status === "completed");
+  const waitingTasks = tasks.filter((t) => t.status === "waiting_approval");
+  const failedTasks = tasks.filter((t) => t.status === "failed");
+  const health = boardroomCards.health;
+  const showHealthReasons =
+    (health.level === "amber" || health.level === "red") &&
+    health.reasons.length > 0;
+  const failuresClean = failedTasks.length === 0 && !showHealthReasons;
+
   const saved = sp.saved ? prettySaved(sp.saved) : null;
   const errorMsg = sp.error ? decodeURIComponent(sp.error) : null;
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 shadow-xl">
-      <div className="space-y-5 p-5 sm:p-7">
-        {/* Breadcrumb */}
-        <p className="text-sm text-slate-500">
-          <Link href="/admin/ai-boardroom" className="hover:text-slate-300">
-            AI Boardroom
-          </Link>{" "}
-          / <span className="text-slate-300">{e.name}</span>
-        </p>
-
-        {/* Identity header */}
-        <header className="relative overflow-hidden rounded-xl border border-slate-800 bg-slate-900/60 p-5">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="flex min-w-0 items-start gap-4">
-              <span
-                className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-xl ${accent.icon}`}
-              >
-                <EmployeeIcon icon={e.icon} className="h-7 w-7" />
-              </span>
-              <div className="min-w-0">
-                <h1 className="text-2xl font-bold tracking-tight text-white">
-                  {e.name}
-                </h1>
-                <p className="mt-0.5 text-sm text-slate-400">{e.role}</p>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span
-                    className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${st.pill}`}
-                  >
-                    <span className="relative flex h-1.5 w-1.5">
-                      {pulse ? (
-                        <span
-                          className={`absolute inline-flex h-full w-full animate-ping rounded-full ${st.dot} opacity-75`}
-                          aria-hidden
-                        />
-                      ) : null}
-                      <span
-                        className={`relative inline-flex h-1.5 w-1.5 rounded-full ${st.dot}`}
-                        aria-hidden
-                      />
-                    </span>
-                    {statusLabel(e.status)}
-                  </span>
-                  <Chip>{departmentLabel(e.department)}</Chip>
-                  <Chip>{memoryScopeLabel(e.memory_scope)} memory</Chip>
-                  <ApprovalLevelBadge result={approvalLevel} />
-                </div>
-              </div>
-            </div>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1 text-[11px] font-medium text-amber-300 ring-1 ring-inset ring-amber-400/30">
+    <div className="space-y-6">
+      {/* 1 · Header ---------------------------------------------------------- */}
+      <PageHeader
+        breadcrumb={[
+          { label: "AI Boardroom", href: "/admin/ai-boardroom" },
+          { label: e.name },
+        ]}
+        title={
+          <span className="flex items-center gap-3">
+            <span
+              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${accent.icon}`}
+            >
+              <EmployeeIcon icon={e.icon} className="h-6 w-6" />
+            </span>
+            <span className="min-w-0 truncate">{e.name}</span>
+          </span>
+        }
+        description={`${e.role} · ${departmentLabel(e.department)}`}
+        actions={
+          <>
+            <Badge tone={statusTone(e.status)}>{statusLabel(e.status)}</Badge>
+            <ApprovalLevelBadge result={approvalLevel} />
+            <Badge tone="amber" className="gap-1.5 px-3 py-1">
               <ShieldOff className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
               Framework mode
-            </span>
-          </div>
-        </header>
+            </Badge>
+          </>
+        }
+      />
 
-        {/* Banners */}
-        {errorMsg ? (
-          <div
-            role="alert"
-            className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300"
-          >
-            {errorMsg}
-          </div>
-        ) : null}
-        {saved ? (
-          <div
-            role="status"
-            className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-300"
-          >
-            {saved}
-          </div>
-        ) : null}
+      {/* Banners */}
+      {errorMsg ? (
+        <div
+          role="alert"
+          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+        >
+          {errorMsg}
+        </div>
+      ) : null}
+      {saved ? (
+        <div
+          role="status"
+          className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
+        >
+          {saved}
+        </div>
+      ) : null}
 
-        {/* Overview tiles */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <Tile label="Status" value={statusLabel(e.status)} />
-          <Tile label="Department" value={departmentLabel(e.department)} />
-          <Tile label="Memory scope" value={memoryScopeLabel(e.memory_scope)} />
-          <Tile label="Last activity" value={relativeTime(e.last_activity_at)} />
-          <Tile
-            label="Planned model"
-            value={e.model_name ?? "—"}
-            sub={e.model_provider ?? "not connected"}
-          />
-          <Tile label="Execution" value="Locked" locked />
+      {/* 2 · Responsibility -------------------------------------------------- */}
+      <Section
+        icon={Target}
+        title="Responsibility"
+        hint="What this employee is responsible for."
+      >
+        <p className="text-base font-medium text-slate-900">{e.role}</p>
+        <p className="mt-2 text-sm leading-relaxed text-slate-600">
+          {e.description || (
+            <span className="text-slate-500">No mandate configured yet.</span>
+          )}
+        </p>
+      </Section>
+
+      {/* 3 · Now ------------------------------------------------------------- */}
+      <Section
+        icon={Activity}
+        title="Now"
+        hint="What this employee is set to work on — configured state on this framework surface, not autonomous output."
+      >
+        <div className="grid gap-4 sm:grid-cols-3">
+          <div>
+            <Band>Current focus</Band>
+            <p className="mt-1 text-sm text-slate-900">
+              {e.current_task ?? (
+                <span className="text-slate-500">No focus configured</span>
+              )}
+            </p>
+          </div>
+          <div>
+            <Band>Status</Band>
+            <p className="mt-1">
+              <Badge tone={statusTone(e.status)}>{statusLabel(e.status)}</Badge>
+            </p>
+          </div>
+          <div>
+            <Band>Logged activity</Band>
+            <p className="mt-1 text-sm text-slate-900">
+              {relativeTime(e.last_activity_at)}
+            </p>
+          </div>
         </div>
 
-        {/* Workforce telemetry (CEO Directive 004, Phase 3) */}
-        <Section
-          title="Workforce telemetry"
-          subtitle="Derived live from this employee's task & memory history. Architecture only — no autonomous execution."
-        >
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            <Tile
-              label="Tasks today"
-              value={String(stats.tasksToday)}
-              sub={`${stats.tasksTotal} recent`}
-            />
-            <Tile
-              label="Success rate"
-              value={formatRate(stats.successRatePct)}
-              sub={`${stats.completed} done · ${stats.failed} failed`}
-            />
-            <Tile
-              label="Avg completion"
-              value={stats.avgCompletionLabel}
-              sub="per completed task"
-            />
-            <Tile
-              label="Last completed"
-              value={stats.lastCompletedTitle ?? "—"}
-              sub={relativeTime(stats.lastCompletedAt)}
-            />
-            <Tile
-              label="Knowledge"
-              value={`v${stats.knowledgeVersion}`}
-              sub={`${stats.memoryEntries} entries`}
-            />
-            <Tile
-              label="Memory usage"
-              value={stats.memoryUsageLabel}
-              sub={`${stats.memoryChars.toLocaleString("en-GB")} chars`}
-            />
-          </div>
-        </Section>
-
-        {/* Confidence / ETA / Health + the product pipeline — the mandated boardroom
-            cards, derived deterministically from this employee's durable task queue. */}
-        <Section
-          title="Delivery outlook"
-          subtitle="Confidence, ETA, and Health derived from the durable task queue (verification, deadlines, lease/heartbeat, retries). Honest — insufficient data never reads as green."
-        >
+        <div className="mt-5">
+          <p className="mb-2 text-xs leading-relaxed text-slate-500">
+            Confidence, ETA and Health are derived deterministically from the
+            configured task queue; insufficient data never reads as green.
+          </p>
           <BoardroomCardPanel cards={boardroomCards} now={now} />
           <div className="mt-4">
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-              Product pipeline
-            </p>
-            <PipelineStageStrip pipeline={boardroomCards.pipeline} />
+            <Band>Product pipeline</Band>
+            <div className="mt-2">
+              <PipelineStageStrip pipeline={boardroomCards.pipeline} />
+            </div>
           </div>
-        </Section>
+        </div>
+      </Section>
 
-        {/* Current task + description */}
-        <Section title="Profile">
-          <dl className="space-y-3 text-sm">
-            <div>
-              <dt className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                Current task
-              </dt>
-              <dd className="mt-0.5 text-slate-200">
-                {e.current_task ?? (
-                  <span className="text-slate-500">No active task</span>
-                )}
-              </dd>
+      {/* 4 · Recent output --------------------------------------------------- */}
+      <Section
+        icon={CheckCircle2}
+        title="Recent output"
+        hint="Most recently produced work, from the configured task log."
+      >
+        {completedTasks.length === 0 ? (
+          <Empty>No completed work logged yet.</Empty>
+        ) : (
+          <div className="space-y-3">
+            {stats.lastCompletedTitle ? (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                <Band>Last completed</Band>
+                <p className="mt-1 text-sm font-medium text-slate-900">
+                  {stats.lastCompletedTitle}
+                </p>
+                <p className="mt-0.5 text-[11px] text-slate-500">
+                  {relativeTime(stats.lastCompletedAt)}
+                </p>
+              </div>
+            ) : null}
+            <ol className="space-y-2">
+              {completedTasks.slice(0, 5).map((t) => (
+                <TaskRow key={t.id} t={t} />
+              ))}
+            </ol>
+          </div>
+        )}
+      </Section>
+
+      {/* 5 · Waiting on you -------------------------------------------------- */}
+      <Section
+        icon={Inbox}
+        title="Waiting on you"
+        hint="Items that need a human decision before anything proceeds."
+      >
+        {served.requiresApproval ? (
+          <p className="mb-3 text-xs leading-relaxed text-slate-500">
+            This employee&apos;s served posture requires human approval before
+            any action.
+          </p>
+        ) : null}
+        {waitingTasks.length === 0 ? (
+          <Empty>
+            Nothing is waiting on you right now. Approval routing isn&apos;t wired
+            yet — items appear here only when logged manually below.
+          </Empty>
+        ) : (
+          <ol className="space-y-2">
+            {waitingTasks.map((t) => (
+              <TaskRow key={t.id} t={t} />
+            ))}
+          </ol>
+        )}
+      </Section>
+
+      {/* 6 · What failed ----------------------------------------------------- */}
+      <Section
+        icon={AlertTriangle}
+        title="What failed"
+        hint="Failures and health warnings for this employee."
+      >
+        {failuresClean ? (
+          <Empty>No failures on record.</Empty>
+        ) : (
+          <div className="space-y-3">
+            {showHealthReasons ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <Band>Health warnings</Band>
+                <ul className="mt-1.5 space-y-1 text-xs text-slate-700">
+                  {health.reasons.map((r) => (
+                    <li key={r} className="flex gap-2">
+                      <span
+                        className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-amber-500"
+                        aria-hidden
+                      />
+                      <span>{r}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {failedTasks.length > 0 ? (
+              <ol className="space-y-2">
+                {failedTasks.map((t) => (
+                  <TaskRow key={t.id} t={t} />
+                ))}
+              </ol>
+            ) : null}
+          </div>
+        )}
+      </Section>
+
+      {/* 7 · Authority ------------------------------------------------------- */}
+      <Section
+        icon={KeyRound}
+        title="Authority"
+        hint="What this employee can and cannot do."
+      >
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <Band>Granted capabilities</Band>
+              <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900">
+                {served.tokens.length}
+              </p>
+              <p className="mt-0.5 text-[11px] text-slate-500">
+                {served.toolsAllowed.length} tool · {served.scopes.length} scope
+                {served.scopes.length === 1 ? "" : "s"}
+              </p>
             </div>
-            <div>
-              <dt className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                Description
-              </dt>
-              <dd className="mt-0.5 leading-relaxed text-slate-300">
-                {e.description || (
-                  <span className="text-slate-500">No description</span>
-                )}
-              </dd>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <Band>Execution</Band>
+              <p className="mt-1.5">
+                <Badge tone="red">
+                  <Lock className="h-3.5 w-3.5" aria-hidden />
+                  Disabled (framework mode)
+                </Badge>
+              </p>
+              <p className="mt-1.5 text-[11px] text-slate-500">
+                No executor is wired to these labels.
+              </p>
             </div>
-          </dl>
-        </Section>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <Band>Requires approval</Band>
+              <p className="mt-1.5">
+                <Badge tone={served.requiresApproval ? "amber" : "slate"}>
+                  {served.requiresApproval ? "Yes" : "No"}
+                </Badge>
+              </p>
+              <p className="mt-1.5 text-[11px] text-slate-500">
+                Before any future action.
+              </p>
+            </div>
+          </div>
+          <p className="text-xs leading-relaxed text-slate-500">
+            A readable summary of the capability tokens the Registry serves —
+            capability labels only, no executor is wired to them. This classifies
+            current authority: it grants nothing, and execution stays locked, with
+            the default-deny floor applied whenever the Registry is silent. The
+            raw token set and scopes are editable under Technical detail.
+          </p>
+          <div className="border-t border-slate-200 pt-4">
+            <ApprovalLevelPanel result={approvalLevel} />
+          </div>
+        </div>
+      </Section>
 
-        {/* Approval level — the explicit 1–5 ladder, derived from the served posture */}
-        <Section
-          title="Approval level"
-          subtitle="The explicit 1–5 autonomy rung, derived deterministically from the posture the Capability Registry serves. A classification of current authority — it grants nothing; execution stays locked."
-        >
-          <ApprovalLevelPanel result={approvalLevel} />
-        </Section>
+      {/* 8 · Telemetry tiles ------------------------------------------------- */}
+      <Section
+        icon={BarChart3}
+        title="Telemetry"
+        hint="Derived from this employee's configured task & memory history."
+      >
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <StatTile
+            label="Tasks today"
+            value={String(stats.tasksToday)}
+            hint={`${stats.tasksTotal} recent`}
+          />
+          <StatTile
+            label="Success rate"
+            value={formatRate(stats.successRatePct)}
+            hint={`${stats.completed} done · ${stats.failed} failed`}
+            tone={rateTone(stats.successRatePct)}
+          />
+          <StatTile
+            label="Avg completion"
+            value={stats.avgCompletionLabel}
+            hint="per completed task"
+          />
+          <StatTile
+            label="Knowledge"
+            value={`v${stats.knowledgeVersion}`}
+            hint={`${stats.memoryEntries} entries`}
+          />
+          <StatTile
+            label="Memory usage"
+            value={stats.memoryUsageLabel}
+            hint={`${stats.memoryChars.toLocaleString("en-GB")} chars`}
+          />
+        </div>
+      </Section>
 
-        {/* Tools + permissions */}
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <Section
-            title="Capabilities"
-            subtitle="Authored at the Capability Registry. Edits are audit-logged; execution stays locked."
-          >
-            <p className="mb-3 text-xs text-slate-500">
-              The complete capability token set this employee holds — one token per
-              line, as SERVED by the Capability Registry (the single source of
-              authority). Saving authors the set at the registry; tool permissions and
-              scopes are split automatically by the catalogue. Capability labels only —
-              no executor is wired to them.
+      {/* 9 · Configure (lower-emphasis operator zone) ------------------------ */}
+      <div className="border-t border-slate-200 pt-6">
+        <div className="mb-4 flex items-center gap-2.5">
+          <Wrench className="h-4 w-4 shrink-0 text-slate-400" strokeWidth={2} aria-hidden />
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Configure
+            </h2>
+            <p className="text-xs text-slate-500">
+              Operator tools — log work, capture memory, review shared knowledge.
             </p>
-            <form action={authorAiEmployeeCapabilities} className="space-y-3">
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          {/* Task history + add-task form */}
+          <Section
+            title="Task history"
+            hint="Manually logged for now. The structure is ready for automated entries later."
+          >
+            {tasks.length === 0 ? (
+              <Empty>No tasks logged yet.</Empty>
+            ) : (
+              <ol className="space-y-2">
+                {tasks.map((t) => (
+                  <TaskRow key={t.id} t={t} />
+                ))}
+              </ol>
+            )}
+
+            <form
+              action={addAiEmployeeTask}
+              className="mt-4 space-y-3 border-t border-slate-200 pt-4"
+            >
+              <input type="hidden" name="ai_employee_id" value={e.id} />
+              <input type="hidden" name="slug" value={e.slug} />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="sm:col-span-2">
+                  <Field label="New task title">
+                    <input
+                      name="title"
+                      type="text"
+                      required
+                      maxLength={300}
+                      placeholder="e.g. Draft Q3 outbound sequence"
+                      className={inputCls}
+                    />
+                  </Field>
+                </div>
+                <Field label="Status">
+                  <select name="status" defaultValue="pending" className={selectCls}>
+                    {TASK_STATUSES.map((s) => (
+                      <option key={s} value={s}>
+                        {TASK_STATUS_LABELS[s]}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <Field label="Summary" hint="optional">
+                <textarea
+                  name="summary"
+                  rows={2}
+                  maxLength={8000}
+                  className={inputCls}
+                />
+              </Field>
+              <button type="submit" className={buttonClass("secondary")}>
+                <Plus className="h-3.5 w-3.5" aria-hidden />
+                Log task
+              </button>
+            </form>
+          </Section>
+
+          {/* Memory list + add-memory form */}
+          <Section
+            title="Memory"
+            hint={`Scope: ${memoryScopeLabel(e.memory_scope)} — ${MEMORY_SCOPE_HELP[e.memory_scope as keyof typeof MEMORY_SCOPE_HELP] ?? ""}`}
+          >
+            {memory.length === 0 ? (
+              <Empty>No memory entries yet.</Empty>
+            ) : (
+              <ul className="space-y-2">
+                {memory.map((m) => (
+                  <li
+                    key={m.id}
+                    className="rounded-lg border border-slate-200 bg-white p-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="min-w-0 font-mono text-xs font-medium text-slate-700">
+                        {m.mem_key ?? "untitled"}
+                      </p>
+                      <Badge tone="slate" variant="soft">
+                        {memoryScopeLabel(m.scope)}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-slate-600">
+                      {m.content}
+                    </p>
+                    <p className="mt-1.5 text-[11px] text-slate-500">
+                      {fmtStamp(m.created_at)}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <form
+              action={addAiEmployeeMemory}
+              className="mt-4 space-y-3 border-t border-slate-200 pt-4"
+            >
+              <input type="hidden" name="ai_employee_id" value={e.id} />
+              <input type="hidden" name="slug" value={e.slug} />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <Field label="Key" hint="optional">
+                  <input
+                    name="mem_key"
+                    type="text"
+                    maxLength={200}
+                    placeholder="e.g. tone_of_voice"
+                    className={inputCls}
+                  />
+                </Field>
+                <Field label="Scope">
+                  <select
+                    name="scope"
+                    defaultValue={e.memory_scope}
+                    className={selectCls}
+                  >
+                    {MEMORY_SCOPES.map((s) => (
+                      <option key={s} value={s}>
+                        {MEMORY_SCOPE_LABELS[s]}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <Field label="Content">
+                <textarea
+                  name="content"
+                  rows={3}
+                  required
+                  maxLength={20_000}
+                  placeholder="A fact or instruction this employee should remember."
+                  className={inputCls}
+                />
+              </Field>
+              <button type="submit" className={buttonClass("secondary")}>
+                <Plus className="h-3.5 w-3.5" aria-hidden />
+                Add memory
+              </button>
+            </form>
+          </Section>
+
+          {/* Shared memory feed (read-only) — CEO Directive 002 */}
+          <Section
+            title="Shared memory"
+            hint="Permission-aware slice from the company knowledge engine. Read-only — this employee reads memory; it never writes."
+          >
+            {!hasFeed ? (
+              <p className="text-sm text-slate-500">
+                No shared memory is visible to this employee yet.{" "}
+                <Link
+                  href="/admin/memory"
+                  className="font-medium text-slate-900 underline underline-offset-2 hover:text-slate-700"
+                >
+                  Open Shared Memory →
+                </Link>
+              </p>
+            ) : (
+              <div className="space-y-5">
+                {feedGroups.map((group) =>
+                  group.items.length === 0 ? null : (
+                    <div key={group.label}>
+                      <Band>{group.label}</Band>
+                      <ul className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        {group.items.map((mItem) => (
+                          <li key={mItem.id}>
+                            <MemoryCard memory={mItem} typeMap={memoryTypeMap} />
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ),
+                )}
+              </div>
+            )}
+          </Section>
+        </div>
+      </div>
+
+      {/* 10 · Technical detail (collapsed by default; native <details>) ------ */}
+      <details className="group rounded-xl border border-slate-200 bg-white shadow-sm">
+        <summary className="flex cursor-pointer select-none items-center justify-between gap-2 px-5 py-4 text-sm font-semibold text-slate-900 [&::-webkit-details-marker]:hidden">
+          <span className="flex items-center gap-2">
+            <Wrench className="h-4 w-4 text-slate-400" strokeWidth={2} aria-hidden />
+            Technical detail
+          </span>
+          <ChevronDown
+            className="h-4 w-4 text-slate-400 transition group-open:rotate-180"
+            aria-hidden
+          />
+        </summary>
+        <div className="space-y-6 border-t border-slate-200 p-5">
+          <p className="text-xs leading-relaxed text-slate-500">
+            Operator-grade configuration and audit — system prompt, capability
+            tokens, memory scope, raw scopes and the audit log. Editing here is
+            audit-logged; execution stays locked.
+          </p>
+
+          {/* Configuration (safe fields, incl. system prompt) */}
+          <div>
+            <Band>Configuration</Band>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Safe fields only — no execution toggle. Edits are audit-logged.
+            </p>
+            <form action={updateAiEmployeeConfig} className="mt-3 space-y-4">
+              <input type="hidden" name="id" value={e.id} />
+              <input type="hidden" name="slug" value={e.slug} />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <Field label="Status">
+                  <select name="status" defaultValue={e.status} className={selectCls}>
+                    {AI_EMPLOYEE_STATUSES.map((s) => (
+                      <option key={s} value={s}>
+                        {STATUS_LABELS[s]}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Planned provider">
+                  <input
+                    name="model_provider"
+                    type="text"
+                    maxLength={60}
+                    defaultValue={e.model_provider ?? ""}
+                    placeholder="e.g. anthropic"
+                    className={inputCls}
+                  />
+                </Field>
+                <Field label="Planned model">
+                  <input
+                    name="model_name"
+                    type="text"
+                    maxLength={120}
+                    defaultValue={e.model_name ?? ""}
+                    placeholder="e.g. claude-opus-4-7"
+                    className={inputCls}
+                  />
+                </Field>
+              </div>
+              <Field label="Role">
+                <input
+                  name="role"
+                  type="text"
+                  maxLength={200}
+                  defaultValue={e.role}
+                  className={inputCls}
+                />
+              </Field>
+              <Field label="Current task" hint="optional">
+                <input
+                  name="current_task"
+                  type="text"
+                  maxLength={500}
+                  defaultValue={e.current_task ?? ""}
+                  placeholder="What is this employee focused on right now?"
+                  className={inputCls}
+                />
+              </Field>
+              <Field label="Description" hint="optional">
+                <textarea
+                  name="description"
+                  rows={2}
+                  maxLength={4000}
+                  defaultValue={e.description}
+                  className={inputCls}
+                />
+              </Field>
+              <Field
+                label="System prompt"
+                hint="defines the role; not yet sent to any model"
+              >
+                <textarea
+                  name="system_prompt"
+                  rows={6}
+                  maxLength={20_000}
+                  defaultValue={e.system_prompt}
+                  className={`${inputCls} font-mono text-xs leading-relaxed`}
+                />
+              </Field>
+              <button type="submit" className={buttonClass("primary")}>
+                Save configuration
+              </button>
+            </form>
+          </div>
+
+          {/* Capabilities — registry-native authoring editor */}
+          <div className="border-t border-slate-200 pt-6">
+            <Band>Capabilities</Band>
+            <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
+              The complete capability token set this employee holds — one token
+              per line, as SERVED by the Capability Registry (the single source of
+              authority). Saving authors the set at the registry; tool permissions
+              and scopes are split automatically by the catalogue. Capability
+              labels only — no executor is wired to them; execution stays locked.
+            </p>
+            <form action={authorAiEmployeeCapabilities} className="mt-3 space-y-3">
               <input type="hidden" name="id" value={e.id} />
               <input type="hidden" name="slug" value={e.slug} />
               <textarea
@@ -311,494 +744,226 @@ export default async function AiEmployeeDetailPage({
                 spellCheck={false}
                 className={`${inputCls} font-mono text-xs leading-relaxed`}
               />
-              <div className="flex justify-end">
-                <button
-                  type="submit"
-                  className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500"
-                >
-                  Save capabilities
-                </button>
-              </div>
+              <button type="submit" className={buttonClass("primary")}>
+                Save capabilities
+              </button>
             </form>
-          </Section>
+          </div>
 
-          <Section title="Permissions">
-            <ul className="space-y-2.5 text-sm">
-              <li className="flex items-center justify-between gap-3">
-                <span className="flex items-center gap-1.5 text-slate-300">
-                  <Lock className="h-3.5 w-3.5 text-red-400" aria-hidden />
-                  Execution
-                </span>
-                <span className="inline-flex items-center rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-medium text-red-300 ring-1 ring-inset ring-red-400/30">
-                  Disabled (framework mode)
-                </span>
-              </li>
-              <li className="flex items-center justify-between gap-3">
-                <span className="text-slate-300">Requires approval</span>
-                <span className="inline-flex items-center rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
-                  {served.requiresApproval ? "Yes" : "No"}
-                </span>
-              </li>
-              <li>
-                <span className="text-slate-300">Scopes</span>
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {served.scopes.length === 0 ? (
-                    <span className="text-xs text-slate-500">None</span>
-                  ) : (
-                    served.scopes.map((s) => (
-                      <span
-                        key={s}
-                        className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[11px] text-slate-300 ring-1 ring-inset ring-slate-700"
-                      >
-                        {s}
-                      </span>
-                    ))
-                  )}
-                </div>
-              </li>
-            </ul>
-            <p className="mt-3 border-t border-slate-800 pt-3 text-[11px] leading-relaxed text-slate-500">
-              Execution cannot be enabled from this panel. Connecting a model
-              provider and granting run permissions is a later, separately
-              gated phase.
+          {/* Memory scope — registry-native authoring */}
+          <div className="border-t border-slate-200 pt-6">
+            <Band>Memory scope</Band>
+            <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
+              How widely this employee may read shared memory. Saving authors the
+              scope at the registry and deterministically mirrors it to the legacy
+              model in one atomic write — the legacy column is never edited
+              directly (the Mirror Integrity Rule).{" "}
+              {MEMORY_SCOPE_HELP[e.memory_scope as keyof typeof MEMORY_SCOPE_HELP] ?? ""}
             </p>
-          </Section>
-        </div>
-
-        {/* Memory scope — registry-native authoring (Directive #015 / D-05, LR2) */}
-        <Section
-          title="Memory scope"
-          subtitle="Authored at the Capability Registry. The grant is authoritative; the legacy model is a derived mirror (Mirror Integrity Rule)."
-        >
-          <p className="mb-3 text-xs text-slate-500">
-            How widely this employee may read shared memory. Saving authors the
-            scope at the registry and deterministically mirrors it to the legacy
-            model in one atomic write — the legacy column is never edited directly.{" "}
-            {MEMORY_SCOPE_HELP[e.memory_scope as keyof typeof MEMORY_SCOPE_HELP] ?? ""}
-          </p>
-          <form
-            action={authorAiEmployeeMemoryScope}
-            className="flex flex-wrap items-end gap-3"
-          >
-            <input type="hidden" name="id" value={e.id} />
-            <input type="hidden" name="slug" value={e.slug} />
-            <div className="min-w-[12rem] flex-1 sm:max-w-xs">
-              <Field label="Memory scope">
-                <select
-                  name="memory_scope"
-                  defaultValue={e.memory_scope}
-                  className={selectCls}
-                >
-                  {MEMORY_SCOPES.map((s) => (
-                    <option key={s} value={s}>
-                      {MEMORY_SCOPE_LABELS[s]}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-            <button
-              type="submit"
-              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500"
+            <form
+              action={authorAiEmployeeMemoryScope}
+              className="mt-3 flex flex-wrap items-end gap-3"
             >
-              Save memory scope
-            </button>
-          </form>
-        </Section>
-
-        {/* Configuration panel (safe fields) */}
-        <Section title="Configuration" subtitle="Edits are audit-logged. Safe fields only — no execution toggle.">
-          <form action={updateAiEmployeeConfig} className="space-y-4">
-            <input type="hidden" name="id" value={e.id} />
-            <input type="hidden" name="slug" value={e.slug} />
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <Field label="Status">
-                <select
-                  name="status"
-                  defaultValue={e.status}
-                  className={selectCls}
-                >
-                  {AI_EMPLOYEE_STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {STATUS_LABELS[s]}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Planned provider">
-                <input
-                  name="model_provider"
-                  type="text"
-                  maxLength={60}
-                  defaultValue={e.model_provider ?? ""}
-                  placeholder="e.g. anthropic"
-                  className={inputCls}
-                />
-              </Field>
-              <Field label="Planned model">
-                <input
-                  name="model_name"
-                  type="text"
-                  maxLength={120}
-                  defaultValue={e.model_name ?? ""}
-                  placeholder="e.g. claude-opus-4-7"
-                  className={inputCls}
-                />
-              </Field>
-            </div>
-            <Field label="Role">
-              <input
-                name="role"
-                type="text"
-                maxLength={200}
-                defaultValue={e.role}
-                className={inputCls}
-              />
-            </Field>
-            <Field label="Current task" hint="optional">
-              <input
-                name="current_task"
-                type="text"
-                maxLength={500}
-                defaultValue={e.current_task ?? ""}
-                placeholder="What is this employee focused on right now?"
-                className={inputCls}
-              />
-            </Field>
-            <Field label="Description" hint="optional">
-              <textarea
-                name="description"
-                rows={2}
-                maxLength={4000}
-                defaultValue={e.description}
-                className={inputCls}
-              />
-            </Field>
-            <Field label="System prompt" hint="defines the role; not yet sent to any model">
-              <textarea
-                name="system_prompt"
-                rows={6}
-                maxLength={20_000}
-                defaultValue={e.system_prompt}
-                className={`${inputCls} font-mono text-xs leading-relaxed`}
-              />
-            </Field>
-            <button
-              type="submit"
-              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500"
-            >
-              Save configuration
-            </button>
-          </form>
-        </Section>
-
-        {/* Task history */}
-        <Section
-          title="Task history"
-          subtitle="Manually logged for now. The structure is ready for automated entries later."
-        >
-          {tasks.length === 0 ? (
-            <p className="text-sm text-slate-500">No tasks logged yet.</p>
-          ) : (
-            <ol className="space-y-2">
-              {tasks.map((t) => (
-                <li
-                  key={t.id}
-                  className="rounded-lg border border-slate-800 bg-slate-900/40 p-3"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <p className="min-w-0 font-medium text-slate-200">
-                      {t.title}
-                    </p>
-                    <span
-                      className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${taskStatusPill(t.status)}`}
-                    >
-                      {taskStatusLabel(t.status)}
-                    </span>
-                  </div>
-                  {t.summary ? (
-                    <p className="mt-1 text-xs leading-relaxed text-slate-400">
-                      {t.summary}
-                    </p>
-                  ) : null}
-                  <p className="mt-1.5 text-[11px] text-slate-500">
-                    {t.created_by_email ? `${t.created_by_email} · ` : ""}
-                    {t.created_at.slice(0, 16).replace("T", " ")}
-                  </p>
-                </li>
-              ))}
-            </ol>
-          )}
-
-          <form
-            action={addAiEmployeeTask}
-            className="mt-4 space-y-3 border-t border-slate-800 pt-4"
-          >
-            <input type="hidden" name="ai_employee_id" value={e.id} />
-            <input type="hidden" name="slug" value={e.slug} />
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div className="sm:col-span-2">
-                <Field label="New task title">
-                  <input
-                    name="title"
-                    type="text"
-                    required
-                    maxLength={300}
-                    placeholder="e.g. Draft Q3 outbound sequence"
-                    className={inputCls}
-                  />
+              <input type="hidden" name="id" value={e.id} />
+              <input type="hidden" name="slug" value={e.slug} />
+              <div className="min-w-[12rem] flex-1 sm:max-w-xs">
+                <Field label="Memory scope">
+                  <select
+                    name="memory_scope"
+                    defaultValue={e.memory_scope}
+                    className={selectCls}
+                  >
+                    {MEMORY_SCOPES.map((s) => (
+                      <option key={s} value={s}>
+                        {MEMORY_SCOPE_LABELS[s]}
+                      </option>
+                    ))}
+                  </select>
                 </Field>
               </div>
-              <Field label="Status">
-                <select name="status" defaultValue="pending" className={selectCls}>
-                  {TASK_STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {TASK_STATUS_LABELS[s]}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-            <Field label="Summary" hint="optional">
-              <textarea
-                name="summary"
-                rows={2}
-                maxLength={8000}
-                className={inputCls}
-              />
-            </Field>
-            <button
-              type="submit"
-              className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
-            >
-              <Plus className="h-3.5 w-3.5" aria-hidden />
-              Log task
-            </button>
-          </form>
-        </Section>
+              <button type="submit" className={buttonClass("primary")}>
+                Save memory scope
+              </button>
+            </form>
+          </div>
 
-        {/* Memory */}
-        <Section
-          title="Memory"
-          subtitle={`Scope: ${memoryScopeLabel(e.memory_scope)} — ${MEMORY_SCOPE_HELP[e.memory_scope as keyof typeof MEMORY_SCOPE_HELP] ?? ""}`}
-        >
-          {memory.length === 0 ? (
-            <p className="text-sm text-slate-500">No memory entries yet.</p>
-          ) : (
-            <ul className="space-y-2">
-              {memory.map((m) => (
-                <li
-                  key={m.id}
-                  className="rounded-lg border border-slate-800 bg-slate-900/40 p-3"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <p className="min-w-0 font-mono text-xs font-medium text-slate-300">
-                      {m.mem_key ?? "untitled"}
-                    </p>
-                    <Chip>{memoryScopeLabel(m.scope)}</Chip>
-                  </div>
-                  <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-slate-400">
-                    {m.content}
-                  </p>
-                  <p className="mt-1.5 text-[11px] text-slate-500">
-                    {m.created_at.slice(0, 16).replace("T", " ")}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <form
-            action={addAiEmployeeMemory}
-            className="mt-4 space-y-3 border-t border-slate-800 pt-4"
-          >
-            <input type="hidden" name="ai_employee_id" value={e.id} />
-            <input type="hidden" name="slug" value={e.slug} />
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <Field label="Key" hint="optional">
-                <input
-                  name="mem_key"
-                  type="text"
-                  maxLength={200}
-                  placeholder="e.g. tone_of_voice"
-                  className={inputCls}
-                />
-              </Field>
-              <Field label="Scope">
-                <select
-                  name="scope"
-                  defaultValue={e.memory_scope}
-                  className={selectCls}
-                >
-                  {MEMORY_SCOPES.map((s) => (
-                    <option key={s} value={s}>
-                      {MEMORY_SCOPE_LABELS[s]}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-            <Field label="Content">
-              <textarea
-                name="content"
-                rows={3}
-                required
-                maxLength={20_000}
-                placeholder="A fact or instruction this employee should remember."
-                className={inputCls}
-              />
-            </Field>
-            <button
-              type="submit"
-              className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
-            >
-              <Plus className="h-3.5 w-3.5" aria-hidden />
-              Add memory
-            </button>
-          </form>
-        </Section>
-
-        {/* Shared memory feed (read-only) — CEO Directive 002 */}
-        <Section
-          title="Shared memory"
-          subtitle="Permission-aware slice from the company knowledge engine. Read-only — this employee reads memory; it never writes."
-        >
-          {!hasFeed ? (
-            <p className="text-sm text-slate-500">
-              No shared memory is visible to this employee yet.{" "}
-              <Link
-                href="/admin/memory"
-                className="font-medium text-indigo-400 hover:text-indigo-300"
-              >
-                Open Shared Memory →
-              </Link>
-            </p>
-          ) : (
-            <div className="space-y-5">
-              {feedGroups.map((group) =>
-                group.items.length === 0 ? null : (
-                  <div key={group.label}>
-                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                      {group.label}
-                    </p>
-                    <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      {group.items.map((mItem) => (
-                        <li key={mItem.id}>
-                          <MemoryCard memory={mItem} typeMap={memoryTypeMap} />
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ),
+          {/* Raw scopes list */}
+          <div className="border-t border-slate-200 pt-6">
+            <Band>Served scopes (raw)</Band>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {served.scopes.length === 0 ? (
+                <span className="text-xs text-slate-500">None</span>
+              ) : (
+                served.scopes.map((s) => (
+                  <span
+                    key={s}
+                    className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700 ring-1 ring-inset ring-slate-200"
+                  >
+                    {s}
+                  </span>
+                ))
               )}
             </div>
-          )}
-        </Section>
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+              Execution cannot be enabled from this panel. Connecting a model
+              provider and granting run permissions is a later, separately gated
+              phase.
+            </p>
+          </div>
 
-        {/* Activity / audit log */}
-        <Section
-          title="Activity & audit log"
-          subtitle="Every configuration change and logged action lands here."
-        >
-          {activity.length === 0 ? (
-            <p className="text-sm text-slate-500">No activity recorded yet.</p>
-          ) : (
-            <ol className="divide-y divide-slate-800">
-              {activity.map((a) => (
-                <li
-                  key={a.id}
-                  className="flex items-start gap-3 py-2.5 text-sm"
-                >
-                  <span
-                    className="mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full bg-indigo-400"
-                    aria-hidden
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium text-slate-200">
-                      {prettyAction(a.action)}
-                    </p>
-                    {a.actor_email ? (
-                      <p className="mt-0.5 text-[11px] text-slate-500">
-                        by {a.actor_email}
+          {/* Activity / audit log */}
+          <div className="border-t border-slate-200 pt-6">
+            <Band>Activity &amp; audit log</Band>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Every configuration change and logged action lands here.
+            </p>
+            {activity.length === 0 ? (
+              <p className="mt-3 text-sm text-slate-500">
+                No activity recorded yet.
+              </p>
+            ) : (
+              <ol className="mt-3 divide-y divide-slate-200">
+                {activity.map((a) => (
+                  <li key={a.id} className="flex items-start gap-3 py-2.5 text-sm">
+                    <span
+                      className="mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full bg-slate-400"
+                      aria-hidden
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-slate-900">
+                        {prettyAction(a.action)}
                       </p>
-                    ) : null}
-                  </div>
-                  <span className="shrink-0 text-[11px] text-slate-500">
-                    {a.created_at.slice(0, 16).replace("T", " ")}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          )}
-        </Section>
-      </div>
+                      {a.actor_email ? (
+                        <p className="mt-0.5 text-[11px] text-slate-500">
+                          by {a.actor_email}
+                        </p>
+                      ) : null}
+                    </div>
+                    <span className="shrink-0 text-[11px] text-slate-500">
+                      {fmtStamp(a.created_at)}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        </div>
+      </details>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------
-// Local presentation helpers
+// Local presentation helpers (light operational system)
 // ---------------------------------------------------------------------
 
 const inputCls =
-  "mt-1 block w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-sm text-slate-100 placeholder-slate-500 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+  "mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-300";
 const selectCls =
-  "mt-1 block w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100";
+  "mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-300";
+
+/** Status → design-system tone (no orange tone; blocked maps to amber). */
+function statusTone(status: string): Tone {
+  switch (status) {
+    case "working":
+      return "emerald";
+    case "waiting_approval":
+    case "blocked":
+      return "amber";
+    case "error":
+      return "red";
+    default:
+      return "slate"; // idle, disabled
+  }
+}
+
+/** Task status → design-system tone. */
+function taskTone(status: string): Tone {
+  switch (status) {
+    case "in_progress":
+      return "blue";
+    case "waiting_approval":
+      return "amber";
+    case "completed":
+      return "emerald";
+    case "failed":
+      return "red";
+    default:
+      return "slate"; // pending, cancelled
+  }
+}
+
+/** Success-rate → tone (honest: null reads neutral, low reads red). */
+function rateTone(pct: number | null): Tone {
+  if (pct === null) return "slate";
+  if (pct >= 80) return "emerald";
+  if (pct >= 50) return "amber";
+  return "red";
+}
+
+/** Compact "YYYY-MM-DD HH:MM" from an ISO stamp — the shipped idiom. */
+function fmtStamp(iso: string): string {
+  return iso.slice(0, 16).replace("T", " ");
+}
 
 function Section({
   title,
-  subtitle,
+  hint,
+  icon: Icon,
   children,
 }: {
   title: string;
-  subtitle?: string;
+  hint?: string;
+  icon?: LucideIcon;
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
-      <h2 className="text-base font-semibold text-white">{title}</h2>
-      {subtitle ? (
-        <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>
-      ) : null}
+    <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-start gap-2.5">
+        {Icon ? (
+          <Icon
+            className="mt-0.5 h-4 w-4 shrink-0 text-slate-400"
+            strokeWidth={2}
+            aria-hidden
+          />
+        ) : null}
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+          {hint ? <p className="mt-0.5 text-sm text-slate-600">{hint}</p> : null}
+        </div>
+      </div>
       <div className="mt-4">{children}</div>
     </section>
   );
 }
 
-function Tile({
-  label,
-  value,
-  sub,
-  locked,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  locked?: boolean;
-}) {
+function Band({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-        {label}
-      </p>
-      <p
-        className={`mt-1 flex items-center gap-1.5 text-sm font-bold ${
-          locked ? "text-red-300" : "text-white"
-        }`}
-      >
-        {locked ? <Lock className="h-3.5 w-3.5" aria-hidden /> : null}
-        <span className="truncate">{value}</span>
-      </p>
-      {sub ? <p className="mt-0.5 truncate text-[10px] text-slate-500">{sub}</p> : null}
-    </div>
+    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+      {children}
+    </p>
   );
 }
 
-function Chip({ children }: { children: React.ReactNode }) {
+function Empty({ children }: { children: React.ReactNode }) {
+  return <p className="text-sm text-slate-500">{children}</p>;
+}
+
+function TaskRow({ t }: { t: AiEmployeeTask }) {
   return (
-    <span className="inline-flex items-center rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-medium text-slate-300 ring-1 ring-inset ring-slate-700">
-      {children}
-    </span>
+    <li className="rounded-lg border border-slate-200 bg-white p-3">
+      <div className="flex items-start justify-between gap-3">
+        <p className="min-w-0 text-sm font-medium text-slate-900">{t.title}</p>
+        <Badge tone={taskTone(t.status)}>{taskStatusLabel(t.status)}</Badge>
+      </div>
+      {t.summary ? (
+        <p className="mt-1 text-xs leading-relaxed text-slate-600">{t.summary}</p>
+      ) : null}
+      <p className="mt-1.5 text-[11px] text-slate-500">
+        {t.created_by_email ? `${t.created_by_email} · ` : ""}
+        {fmtStamp(t.created_at)}
+      </p>
+    </li>
   );
 }
 
@@ -812,9 +977,9 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <label className="block text-[11px] font-medium text-slate-400">
+    <label className="block text-xs font-medium text-slate-600">
       {label}
-      {hint ? <span className="ml-1 text-slate-600">{hint}</span> : null}
+      {hint ? <span className="ml-1 text-slate-400">{hint}</span> : null}
       {children}
     </label>
   );

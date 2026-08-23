@@ -71,6 +71,20 @@ export function HqSidebar({
         <p className="mt-0.5 truncate text-xs text-slate-500">{email}</p>
       </div>
 
+      {/* Search / command trigger — opens the HQ palette (also on ⌘K). */}
+      <button
+        type="button"
+        onClick={() => window.dispatchEvent(new Event("cf:hq-command-open"))}
+        className="flex w-full items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-500 hover:bg-white hover:text-slate-700"
+        aria-label="Search HQ (⌘K)"
+      >
+        <span aria-hidden>🔎</span>
+        <span className="flex-1 text-left">Search HQ</span>
+        <kbd className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-mono text-slate-500">
+          ⌘K
+        </kbd>
+      </button>
+
       <ul className="space-y-0.5">
         {HQ_AREAS.map((area) => {
           const areaActive = area.id === activeId;

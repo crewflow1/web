@@ -1,13 +1,5 @@
 import Link from "next/link";
-import {
-  Activity,
-  BrainCircuit,
-  CheckCircle2,
-  Search,
-  ShieldOff,
-  Timer,
-  Users,
-} from "lucide-react";
+import { Search, ShieldOff } from "lucide-react";
 import {
   listAiEmployees,
   resolveApprovalLevelsByEmployeeId,
@@ -19,11 +11,11 @@ import {
 import {
   AI_EMPLOYEE_STATUSES,
   STATUS_LABELS,
-  STATUS_PULSE,
   DEPARTMENTS,
   DEPARTMENT_LABELS,
   departmentLabel,
   statusLabel,
+  relativeTime,
   countByStatus,
 } from "@/lib/ai-employees/model";
 import {
@@ -31,25 +23,40 @@ import {
   formatRate,
   type WorkforceSummary,
 } from "@/lib/ai-employees/stats";
-import { getBoardroomCards } from "@/server/services/hq-task-pipeline";
-import { deriveEmployeeCards } from "@/lib/hq/boardroom-cards";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatTile } from "@/components/ui/stat-tile";
+import { Badge } from "@/components/ui/badge";
+import { buttonClass } from "@/components/ui/button";
 import { statusStyle, accentClasses } from "./_styles";
 import { EmployeeIcon } from "./_icon";
-import { BoardroomCardTrio, PipelineStagePill, ApprovalLevelBadge } from "./_cards";
+import { ApprovalLevelBadge } from "./_cards";
 
 /**
  * AI Boardroom — roster grid (CEO Directive 001, Phase 1).
  *
- * Premium dark surface inside the (light) HQ shell. Shows the AI
- * employee roster as status-aware cards with per-status summary
- * counts, search, and department/status filters. URL params drive
- * search + filters so refresh and shared links keep state.
+ * Product UX rebuild (HQ phase): re-skinned off the old dark/neon surface onto
+ * the light operational system (Stripe/Linear clarity, not "AI magic"). The
+ * roster stays grouped by department; each card now communicates only the seven
+ * things a leader reads at a glance — name, role, status, current focus, last
+ * activity, approval rung, and whether it needs approval — with the deeper
+ * Confidence/ETA/Health cards moved into the employee workspace where they
+ * belong (and off the roster's hot read path).
  *
- * FRAMEWORK ONLY — every card is configuration + history. No employee
- * runs anything; the banner makes that explicit.
+ * FRAMEWORK ONLY — every card is configuration + logged history. No employee
+ * runs anything; the banner makes that explicit and honest.
  */
 
 type SP = Promise<{ q?: string; dept?: string; status?: string }>;
+
+/** Status → design-system tone. `blocked` (no orange tone) reads as amber "attention". */
+const STATUS_TONE: Record<string, "slate" | "emerald" | "amber" | "red"> = {
+  idle: "slate",
+  working: "emerald",
+  waiting_approval: "amber",
+  blocked: "amber",
+  error: "red",
+  disabled: "slate",
+};
 
 function buildHref(params: { q: string; dept: string; status: string }): string {
   const sp = new URLSearchParams();
@@ -66,11 +73,9 @@ export default async function AiBoardroomPage({
   searchParams: SP;
 }) {
   const sp = await searchParams;
-  const now = new Date();
-  const [employees, workforce, boardroomCards] = await Promise.all([
+  const [employees, workforce] = await Promise.all([
     listAiEmployees(),
     getAiWorkforceStats(),
-    getBoardroomCards(now),
   ]);
   // The explicit 1–5 approval level per employee, derived from the served posture the Capability
   // Registry resolves (deterministic classification — no new authority; see approval-levels.ts).
@@ -100,402 +105,255 @@ export default async function AiBoardroomPage({
   const hasFilters = Boolean(q || dept || status);
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 shadow-xl">
-      {/* Header with subtle glow */}
-      <div className="relative border-b border-slate-800 px-5 py-6 sm:px-7">
-        <div
-          className="pointer-events-none absolute inset-0 opacity-60"
-          style={{
-            background:
-              "radial-gradient(60% 120% at 15% 0%, rgba(99,102,241,0.18), transparent 60%), radial-gradient(50% 120% at 90% 0%, rgba(16,185,129,0.12), transparent 55%)",
-          }}
-          aria-hidden
-        />
-        <div className="relative flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
-              <BrainCircuit className="h-6 w-6" strokeWidth={1.75} aria-hidden />
-            </span>
-            <div>
-              <h1 className="text-xl font-bold tracking-tight text-white">
-                AI Boardroom
-              </h1>
-              <p className="mt-0.5 max-w-xl text-sm text-slate-400">
-                Your AI employee roster — roles, prompts, permissions, and
-                activity history. Configure each one; a human always approves.
-              </p>
-            </div>
-          </div>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1 text-[11px] font-medium text-amber-300 ring-1 ring-inset ring-amber-400/30">
+    <div className="space-y-6">
+      <PageHeader
+        title="AI Boardroom"
+        description="Your AI employee roster — roles, permissions, and logged activity. Configure each one; a human always approves."
+        actions={
+          <Badge tone="amber" className="gap-1.5 px-3 py-1">
             <ShieldOff className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
             Framework mode · no autonomous execution
-          </span>
-        </div>
+          </Badge>
+        }
+      />
+
+      {/* Workforce telemetry — roster-level framework figures (configured +
+          logged, under the framework banner; not live autonomous activity). */}
+      <WorkforceStrip summary={summary} />
+
+      {/* Status summary cards double as quick status filters. */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        {AI_EMPLOYEE_STATUSES.map((s) => {
+          const active = status === s;
+          const st = statusStyle(s);
+          return (
+            <Link
+              key={s}
+              href={buildHref({ q, dept, status: active ? "" : s })}
+              aria-pressed={active}
+              className={`rounded-xl border p-3 transition ${
+                active
+                  ? "border-slate-400 bg-slate-100"
+                  : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className={`inline-block h-2 w-2 rounded-full ${st.dot}`} aria-hidden />
+                <span className="text-2xl font-bold tabular-nums text-slate-900">
+                  {counts[s]}
+                </span>
+              </div>
+              <p className="mt-1 text-[11px] font-medium text-slate-500">
+                {STATUS_LABELS[s]}
+              </p>
+            </Link>
+          );
+        })}
       </div>
 
-      <div className="space-y-5 p-5 sm:p-7">
-        {/* Workforce telemetry — headline KPIs across the whole roster */}
-        <WorkforceStrip summary={summary} />
-
-        {/* Status summary cards (also act as quick status filters) */}
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-          {AI_EMPLOYEE_STATUSES.map((s) => {
-            const active = status === s;
-            const st = statusStyle(s);
-            return (
-              <Link
-                key={s}
-                href={buildHref({ q, dept, status: active ? "" : s })}
-                aria-pressed={active}
-                className={`rounded-xl border p-3 transition duration-200 ${
-                  active
-                    ? "border-slate-600 bg-slate-800"
-                    : "border-slate-800 bg-slate-900/50 hover:-translate-y-0.5 hover:border-slate-700 hover:bg-slate-900"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span
-                    className={`inline-block h-2 w-2 rounded-full ${st.dot}`}
-                    aria-hidden
-                  />
-                  <span className="text-2xl font-bold tabular-nums text-white">
-                    {counts[s]}
-                  </span>
-                </div>
-                <p className="mt-1 text-[11px] font-medium text-slate-400">
-                  {STATUS_LABELS[s]}
-                </p>
-              </Link>
-            );
-          })}
-        </div>
-
-        {/* Search + department filter */}
-        <form
-          method="GET"
-          action="/admin/ai-boardroom"
-          className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-3"
-        >
-          <input type="hidden" name="status" value={status} />
-          <label className="min-w-[200px] flex-1 text-[11px] font-medium text-slate-400">
-            Search
-            <div className="relative mt-1">
-              <Search
-                className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
-                aria-hidden
-              />
-              <input
-                type="search"
-                name="q"
-                defaultValue={sp.q ?? ""}
-                placeholder="Name, role, description…"
-                className="block w-full rounded-md border border-slate-700 bg-slate-950 py-1.5 pl-8 pr-3 text-sm text-slate-100 placeholder-slate-500 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              />
-            </div>
-          </label>
-          <label className="text-[11px] font-medium text-slate-400">
-            Department
-            <select
-              name="dept"
-              defaultValue={dept}
-              className="mt-1 block rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"
-            >
-              <option value="">All departments</option>
-              {DEPARTMENTS.map((d) => (
-                <option key={d} value={d}>
-                  {DEPARTMENT_LABELS[d]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="submit"
-            className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-indigo-500"
+      {/* Search + department filter */}
+      <form
+        method="GET"
+        action="/admin/ai-boardroom"
+        className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm"
+      >
+        <input type="hidden" name="status" value={status} />
+        <label className="min-w-[200px] flex-1 text-[11px] font-medium text-slate-500">
+          Search
+          <div className="relative mt-1">
+            <Search
+              className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+              aria-hidden
+            />
+            <input
+              type="search"
+              name="q"
+              defaultValue={sp.q ?? ""}
+              placeholder="Name, role, description…"
+              className="block w-full rounded-md border border-slate-300 bg-white py-1.5 pl-8 pr-3 text-sm text-slate-900 placeholder-slate-400 shadow-sm focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-300"
+            />
+          </div>
+        </label>
+        <label className="text-[11px] font-medium text-slate-500">
+          Department
+          <select
+            name="dept"
+            defaultValue={dept}
+            className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-300"
           >
-            Apply
-          </button>
+            <option value="">All departments</option>
+            {DEPARTMENTS.map((d) => (
+              <option key={d} value={d}>
+                {DEPARTMENT_LABELS[d]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" className={buttonClass("primary", "sm")}>
+          Apply
+        </button>
+        {hasFilters ? (
+          <Link href="/admin/ai-boardroom" className={buttonClass("secondary", "sm")}>
+            Reset
+          </Link>
+        ) : null}
+        <p className="ml-auto text-[11px] text-slate-500">
+          {filtered.length} of {employees.length} shown
+        </p>
+      </form>
+
+      {/* Employee grid, grouped by department */}
+      {filtered.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center">
+          <p className="text-sm text-slate-500">
+            No AI employees match the current filters.
+          </p>
           {hasFilters ? (
             <Link
               href="/admin/ai-boardroom"
-              className="rounded-md border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-slate-800"
+              className="mt-2 inline-block text-xs font-medium text-slate-700 underline hover:text-slate-900"
             >
-              Reset
+              Clear filters
             </Link>
           ) : null}
-          <p className="ml-auto text-[11px] text-slate-500">
-            {filtered.length} of {employees.length} shown
-          </p>
-        </form>
-
-        {/* Employee grid */}
-        {filtered.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/40 px-6 py-16 text-center">
-            <p className="text-sm text-slate-400">
-              No AI employees match the current filters.
-            </p>
-            {hasFilters ? (
-              <Link
-                href="/admin/ai-boardroom"
-                className="mt-2 inline-block text-xs font-medium text-indigo-400 hover:text-indigo-300"
-              >
-                Clear filters
-              </Link>
-            ) : null}
-          </div>
-        ) : (
-          <div className="space-y-8">
-            {DEPARTMENTS.filter((d) =>
-              filtered.some((e) => e.department === d),
-            ).map((d) => {
-              const deptItems = filtered.filter((e) => e.department === d);
-              return (
-                <section key={d}>
-                  {/* Product UX rebuild: the roster is grouped by department
-                      instead of one flat grid, so the 32-strong workforce reads
-                      as an org. */}
-                  <div className="mb-3 flex items-baseline gap-2 border-b border-slate-800 pb-2">
-                    <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-200">
-                      {DEPARTMENT_LABELS[d]}
-                    </h2>
-                    <span className="text-xs text-slate-500">
-                      {deptItems.length}
-                    </span>
-                  </div>
-                  <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {deptItems.map((e) => {
-              const accent = accentClasses(e.accent);
-              const stats = statsForEmployee(workforce, e.id);
-              const level = approvalLevels.get(e.id);
-              const cards =
-                boardroomCards.byEmployee.get(e.id) ?? deriveEmployeeCards([], now);
-              return (
-                <li key={e.id}>
-                  <Link
-                    href={`/admin/ai-boardroom/${e.slug}`}
-                    className={`group relative flex h-full flex-col rounded-xl border border-slate-800 bg-slate-900/60 p-4 shadow-lg ring-1 ring-inset ring-white/5 transition duration-200 hover:-translate-y-0.5 hover:bg-slate-900 hover:shadow-xl ${accent.ring} ${accent.glow}`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span
-                          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${accent.icon}`}
+        </div>
+      ) : (
+        <div className="space-y-8">
+          {DEPARTMENTS.filter((d) => filtered.some((e) => e.department === d)).map((d) => {
+            const deptItems = filtered.filter((e) => e.department === d);
+            return (
+              <section key={d}>
+                {/* Grouped by department so the 32-strong workforce reads as an org. */}
+                <div className="mb-3 flex items-baseline gap-2 border-b border-slate-200 pb-2">
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+                    {DEPARTMENT_LABELS[d]}
+                  </h2>
+                  <span className="text-xs text-slate-400">{deptItems.length}</span>
+                </div>
+                <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  {deptItems.map((e) => {
+                    const accent = accentClasses(e.accent);
+                    const stats = statsForEmployee(workforce, e.id);
+                    const level = approvalLevels.get(e.id);
+                    const needsApproval = e.status === "waiting_approval";
+                    return (
+                      <li key={e.id}>
+                        <Link
+                          href={`/admin/ai-boardroom/${e.slug}`}
+                          className="group flex h-full flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow"
                         >
-                          <EmployeeIcon icon={e.icon} className="h-5 w-5" />
-                        </span>
-                        <div className="min-w-0">
-                          <p className="truncate font-semibold text-white">
-                            {e.name}
-                          </p>
-                          <p className="truncate text-xs text-slate-400">
-                            {e.role}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 flex-col items-end gap-1.5">
-                        <StatusPill status={e.status} />
-                        {level ? <ApprovalLevelBadge result={level} /> : null}
-                      </div>
-                    </div>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <span
+                                className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${accent.icon}`}
+                              >
+                                <EmployeeIcon icon={e.icon} className="h-5 w-5" />
+                              </span>
+                              <div className="min-w-0">
+                                <p className="truncate font-semibold text-slate-900">
+                                  {e.name}
+                                </p>
+                                <p className="truncate text-xs text-slate-500">{e.role}</p>
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 flex-col items-end gap-1.5">
+                              <StatusPill status={e.status} />
+                              {level ? <ApprovalLevelBadge result={level} /> : null}
+                            </div>
+                          </div>
 
-                    <p className="mt-3 line-clamp-2 text-xs leading-relaxed text-slate-400">
-                      {e.description}
-                    </p>
+                          {/* Current focus (configured) */}
+                          <div className="mt-3 min-w-0">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                              Current focus
+                            </p>
+                            <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-slate-600">
+                              {e.current_task ?? "—"}
+                            </p>
+                          </div>
 
-                    {/* Confidence / ETA / Health — the mandated boardroom cards,
-                        derived deterministically from the durable task queue. */}
-                    <div className="mt-3">
-                      <BoardroomCardTrio cards={cards} now={now} />
-                    </div>
-                    {cards.pipeline.current ? (
-                      <div className="mt-2">
-                        <PipelineStagePill pipeline={cards.pipeline} />
-                      </div>
-                    ) : null}
+                          {/* Needs-approval flag — the honest per-card signal. */}
+                          {needsApproval ? (
+                            <div className="mt-3">
+                              <Badge tone="amber" variant="soft">
+                                Needs your approval
+                              </Badge>
+                            </div>
+                          ) : null}
 
-                    {/* Live workforce telemetry */}
-                    <div className="mt-3 grid grid-cols-3 gap-2">
-                      <CardStat
-                        label="Today"
-                        value={String(stats.tasksToday)}
-                        accent={accent.text}
-                      />
-                      <CardStat
-                        label="Success"
-                        value={formatRate(stats.successRatePct)}
-                        accent={accent.text}
-                      />
-                      <CardStat
-                        label="Avg time"
-                        value={stats.avgCompletionLabel}
-                        accent={accent.text}
-                      />
-                    </div>
-
-                    <dl className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
-                      <div className="min-w-0">
-                        <dt className="text-slate-500">Current task</dt>
-                        <dd className="truncate text-slate-300">
-                          {e.current_task ?? "—"}
-                        </dd>
-                      </div>
-                      <div className="min-w-0">
-                        <dt className="text-slate-500">Last completed</dt>
-                        <dd className="truncate text-slate-300">
-                          {stats.lastCompletedTitle ?? "—"}
-                        </dd>
-                      </div>
-                    </dl>
-
-                    <div className="mt-3 flex items-center justify-between border-t border-slate-800 pt-3">
-                      <span className="inline-flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
-                        {departmentLabel(e.department)}
-                        <span className="text-slate-700">·</span>
-                        <span className="normal-case text-slate-500">
-                          v{stats.knowledgeVersion} · {stats.memoryUsageLabel}
-                        </span>
-                      </span>
-                      <span className="text-xs font-medium text-slate-400 transition group-hover:text-white">
-                        Open →
-                      </span>
-                    </div>
-                  </Link>
-                </li>
-              );
-            })}
-                  </ul>
-                </section>
-              );
-            })}
-          </div>
-        )}
-      </div>
+                          <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-[11px] text-slate-500">
+                            <span className="inline-flex items-center gap-1.5 font-medium uppercase tracking-wide">
+                              {departmentLabel(e.department)}
+                            </span>
+                            <span className="normal-case">
+                              {stats.lastCompletedTitle
+                                ? `Last: ${relativeTime(e.last_activity_at)}`
+                                : `Active ${relativeTime(e.last_activity_at)}`}
+                            </span>
+                          </div>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
+/** Status pill — the design-system Badge, with a solid dot that keeps the six
+ *  statuses distinguishable (incl. blocked/orange) beyond the tone alone. */
 function StatusPill({ status }: { status: string }) {
   const st = statusStyle(status);
-  const pulse = (STATUS_PULSE as Record<string, boolean>)[status] ?? false;
   return (
-    <span
-      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium ${st.pill}`}
-    >
-      <span className="relative flex h-1.5 w-1.5">
-        {pulse ? (
-          <span
-            className={`absolute inline-flex h-full w-full animate-ping rounded-full ${st.dot} opacity-75`}
-            aria-hidden
-          />
-        ) : null}
-        <span
-          className={`relative inline-flex h-1.5 w-1.5 rounded-full ${st.dot}`}
-          aria-hidden
-        />
-      </span>
+    <Badge tone={STATUS_TONE[status] ?? "slate"} className="gap-1.5 text-[10px]">
+      <span className={`inline-block h-1.5 w-1.5 rounded-full ${st.dot}`} aria-hidden />
       {statusLabel(status)}
-    </span>
+    </Badge>
   );
 }
 
-/** Headline workforce KPIs across the whole roster (CEO Directive 004, P3). */
+/**
+ * Headline workforce KPIs across the whole roster. These are the FRAMEWORK's
+ * configured + logged figures (task notes are authored on this surface), shown
+ * under the framework-mode banner — not a claim of live autonomous work.
+ */
 function WorkforceStrip({ summary }: { summary: WorkforceSummary }) {
-  const tiles: Array<{
-    label: string;
-    value: string;
-    sub: string;
-    icon: typeof Users;
-    chip: string;
-    value_cls: string;
-  }> = [
-    {
-      label: "Active now",
-      value: String(summary.activeWorkers),
-      sub: `of ${summary.totalEmployees} employees`,
-      icon: Users,
-      chip: "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30",
-      value_cls: "text-emerald-300",
-    },
-    {
-      label: "Tasks today",
-      value: String(summary.tasksToday),
-      sub: `${summary.tasksInProgress} in progress`,
-      icon: Activity,
-      chip: "bg-sky-500/15 text-sky-300 ring-sky-400/30",
-      value_cls: "text-sky-300",
-    },
-    {
-      label: "Success rate",
-      value: formatRate(summary.successRatePct),
-      sub: `${summary.completedTotal} done · ${summary.failedTotal} failed`,
-      icon: CheckCircle2,
-      chip: "bg-indigo-500/15 text-indigo-300 ring-indigo-400/30",
-      value_cls: "text-indigo-300",
-    },
-    {
-      label: "Avg completion",
-      value: summary.avgCompletionLabel,
-      sub: `${summary.totalMemoryEntries} memories · ${summary.memoryUsageLabel}`,
-      icon: Timer,
-      chip: "bg-amber-500/15 text-amber-300 ring-amber-400/30",
-      value_cls: "text-amber-300",
-    },
-  ];
   return (
     <section>
       <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
         AI workforce
       </p>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {tiles.map((t) => {
-          const Icon = t.icon;
-          return (
-            <div
-              key={t.label}
-              className="relative overflow-hidden rounded-xl border border-slate-800 bg-slate-900/60 p-4 shadow-lg ring-1 ring-inset ring-white/5"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                  {t.label}
-                </p>
-                <span
-                  className={`flex h-7 w-7 items-center justify-center rounded-lg ring-1 ring-inset ${t.chip}`}
-                >
-                  <Icon className="h-4 w-4" strokeWidth={1.75} aria-hidden />
-                </span>
-              </div>
-              <p
-                className={`mt-2 text-2xl font-bold tabular-nums ${t.value_cls}`}
-              >
-                {t.value}
-              </p>
-              <p className="mt-0.5 truncate text-[11px] text-slate-500">
-                {t.sub}
-              </p>
-            </div>
-          );
-        })}
+        <StatTile
+          label="Active now"
+          value={String(summary.activeWorkers)}
+          hint={`of ${summary.totalEmployees} employees`}
+          tone="emerald"
+        />
+        <StatTile
+          label="Tasks today"
+          value={String(summary.tasksToday)}
+          hint={`${summary.tasksInProgress} in progress`}
+          tone="blue"
+        />
+        <StatTile
+          label="Success rate"
+          value={formatRate(summary.successRatePct)}
+          hint={`${summary.completedTotal} done · ${summary.failedTotal} failed`}
+          tone="indigo"
+        />
+        <StatTile
+          label="Avg completion"
+          value={summary.avgCompletionLabel}
+          hint={`${summary.totalMemoryEntries} memories · ${summary.memoryUsageLabel}`}
+          tone="amber"
+        />
       </div>
     </section>
-  );
-}
-
-/** Compact per-employee telemetry cell used inside a roster card. */
-function CardStat({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string;
-  accent: string;
-}) {
-  return (
-    <div className="rounded-lg border border-slate-800 bg-slate-950/40 px-2 py-1.5">
-      <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-500">
-        {label}
-      </p>
-      <p className={`mt-0.5 truncate text-sm font-bold tabular-nums ${accent}`}>
-        {value}
-      </p>
-    </div>
   );
 }

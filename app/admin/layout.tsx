@@ -4,8 +4,10 @@ import { countOpenSupportTicketsForHq } from "@/server/services/hq-support-snaps
 import { badgeText } from "@/lib/hq/support";
 import { getUnreadCountForHq } from "@/server/services/notifications-service";
 import { badgeText as notifBadgeText } from "@/lib/notifications/sort";
+import { listAiEmployees } from "@/server/services/ai-employees";
 import { HqNavMobile } from "./_nav-mobile";
 import { HqSidebar } from "./_components/hq-sidebar";
+import { HqCommandPalette } from "./_components/hq-command-palette";
 import { HQ_AREAS, flatHqNav } from "./_nav/hq-nav-model";
 
 /**
@@ -46,8 +48,23 @@ export default async function AdminLayout({
   const unreadNotifs = await getUnreadCountForHq().catch(() => 0);
   const notifBadge = notifBadgeText(unreadNotifs);
 
+  // Roster for HQ Cmd+K employee search — a small, HQ-only, in-memory list.
+  // listAiEmployees already degrades to [] on read failure.
+  const roster = (await listAiEmployees()).map((e) => ({
+    slug: e.slug,
+    name: e.name,
+    role: e.role,
+    department: e.department,
+    status: e.status,
+  }));
+
   return (
     <div className="min-h-screen bg-slate-50">
+      {/* HQ command palette — Cmd+K, the sidebar pill, or the mobile search
+          button. Rendered only here (behind requireHqPage) so customers never
+          receive HQ commands. */}
+      <HqCommandPalette employees={roster} />
+
       {/* Mobile top bar + grouped drawer */}
       <HqNavMobile
         email={user.email ?? ""}

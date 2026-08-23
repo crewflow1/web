@@ -6,11 +6,18 @@ import type {
 import type { ApprovalLevelKey } from "@/lib/ai-employees/approval-levels";
 
 /**
- * AI Boardroom — dark-theme presentation classes.
+ * AI Boardroom — presentation classes (light operational system).
  *
- * Lives under app/ so Tailwind's JIT scanner (which only globs
- * app / components / emails) generates these utility classes. The
- * pure data + labels live in lib/ai-employees/model.ts.
+ * Product UX rebuild (HQ phase): the Boardroom used to be a dark island —
+ * `bg-slate-950`, `text-*-300` blended pills, neon accent glows, `animate-ping`.
+ * It now renders on the SAME light system as the product: solid `-100`/`-800`
+ * pills (AA-verified in components/ui/tokens.ts), slate chrome, no glow, no
+ * opacity fills. These strings are spelled in full so Tailwind's JIT scanner
+ * (which globs app / components / emails) generates them; the pure data + labels
+ * live in lib/ai-employees/model.ts.
+ *
+ * Colour never carries meaning alone — every pill is rendered beside a text
+ * label at the call site.
  */
 
 export type StatusStyle = { dot: string; pill: string };
@@ -18,27 +25,27 @@ export type StatusStyle = { dot: string; pill: string };
 export const STATUS_STYLE: Record<AiEmployeeStatus, StatusStyle> = {
   idle: {
     dot: "bg-slate-400",
-    pill: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
+    pill: "bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200",
   },
   working: {
-    dot: "bg-emerald-400",
-    pill: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
+    dot: "bg-emerald-500",
+    pill: "bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-200",
   },
   waiting_approval: {
-    dot: "bg-amber-400",
-    pill: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
+    dot: "bg-amber-500",
+    pill: "bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200",
   },
   blocked: {
-    dot: "bg-orange-400",
-    pill: "bg-orange-500/15 text-orange-300 ring-1 ring-inset ring-orange-400/30",
+    dot: "bg-orange-500",
+    pill: "bg-orange-100 text-orange-800 ring-1 ring-inset ring-orange-200",
   },
   error: {
-    dot: "bg-red-400",
-    pill: "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30",
+    dot: "bg-red-500",
+    pill: "bg-red-100 text-red-800 ring-1 ring-inset ring-red-200",
   },
   disabled: {
-    dot: "bg-slate-600",
-    pill: "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40",
+    dot: "bg-slate-300",
+    pill: "bg-slate-100 text-slate-500 ring-1 ring-inset ring-slate-200",
   },
 };
 
@@ -47,14 +54,12 @@ export function statusStyle(status: string): StatusStyle {
 }
 
 export const TASK_STATUS_PILL: Record<TaskStatus, string> = {
-  pending: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
-  in_progress: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-  waiting_approval:
-    "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-  completed:
-    "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-  failed: "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30",
-  cancelled: "bg-slate-700/40 text-slate-400 ring-1 ring-inset ring-slate-600/40",
+  pending: "bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200",
+  in_progress: "bg-blue-100 text-blue-800 ring-1 ring-inset ring-blue-200",
+  waiting_approval: "bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200",
+  completed: "bg-emerald-100 text-emerald-800 ring-1 ring-inset ring-emerald-200",
+  failed: "bg-red-100 text-red-800 ring-1 ring-inset ring-red-200",
+  cancelled: "bg-slate-100 text-slate-500 ring-1 ring-inset ring-slate-200",
 };
 
 export function taskStatusPill(status: string): string {
@@ -62,83 +67,34 @@ export function taskStatusPill(status: string): string {
 }
 
 export type AccentClasses = {
-  /** Icon tile background + text + ring. */
+  /** Icon tile background + text. */
   icon: string;
-  /** Card hover ring colour. */
+  /** Card hover ring colour (retired — kept as an empty string for API parity). */
   ring: string;
-  /** Soft glow shadow on hover. */
+  /** Soft glow shadow on hover (retired — kept as an empty string for API parity). */
   glow: string;
   /** Accent text colour. */
   text: string;
 };
 
+/**
+ * A gentle, light department accent: a `-100` icon tile with `-700` glyph. The
+ * old neon `hover:shadow-*-500/20` glow + `hover:ring-*-400/40` are RETIRED
+ * (empty strings) — the light card gets its definition from a plain slate
+ * border + shadow-sm, like every product card.
+ */
 export const ACCENT_CLASSES: Record<Accent, AccentClasses> = {
-  violet: {
-    icon: "bg-violet-500/15 text-violet-300 ring-1 ring-inset ring-violet-400/30",
-    ring: "hover:ring-violet-400/40",
-    glow: "hover:shadow-violet-500/20",
-    text: "text-violet-300",
-  },
-  sky: {
-    icon: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
-    ring: "hover:ring-sky-400/40",
-    glow: "hover:shadow-sky-500/20",
-    text: "text-sky-300",
-  },
-  emerald: {
-    icon: "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30",
-    ring: "hover:ring-emerald-400/40",
-    glow: "hover:shadow-emerald-500/20",
-    text: "text-emerald-300",
-  },
-  pink: {
-    icon: "bg-pink-500/15 text-pink-300 ring-1 ring-inset ring-pink-400/30",
-    ring: "hover:ring-pink-400/40",
-    glow: "hover:shadow-pink-500/20",
-    text: "text-pink-300",
-  },
-  fuchsia: {
-    icon: "bg-fuchsia-500/15 text-fuchsia-300 ring-1 ring-inset ring-fuchsia-400/30",
-    ring: "hover:ring-fuchsia-400/40",
-    glow: "hover:shadow-fuchsia-500/20",
-    text: "text-fuchsia-300",
-  },
-  amber: {
-    icon: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
-    ring: "hover:ring-amber-400/40",
-    glow: "hover:shadow-amber-500/20",
-    text: "text-amber-300",
-  },
-  cyan: {
-    icon: "bg-cyan-500/15 text-cyan-300 ring-1 ring-inset ring-cyan-400/30",
-    ring: "hover:ring-cyan-400/40",
-    glow: "hover:shadow-cyan-500/20",
-    text: "text-cyan-300",
-  },
-  indigo: {
-    icon: "bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30",
-    ring: "hover:ring-indigo-400/40",
-    glow: "hover:shadow-indigo-500/20",
-    text: "text-indigo-300",
-  },
-  green: {
-    icon: "bg-green-500/15 text-green-300 ring-1 ring-inset ring-green-400/30",
-    ring: "hover:ring-green-400/40",
-    glow: "hover:shadow-green-500/20",
-    text: "text-green-300",
-  },
-  blue: {
-    icon: "bg-blue-500/15 text-blue-300 ring-1 ring-inset ring-blue-400/30",
-    ring: "hover:ring-blue-400/40",
-    glow: "hover:shadow-blue-500/20",
-    text: "text-blue-300",
-  },
-  slate: {
-    icon: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
-    ring: "hover:ring-slate-400/40",
-    glow: "hover:shadow-slate-500/20",
-    text: "text-slate-300",
-  },
+  violet: { icon: "bg-violet-100 text-violet-700", ring: "", glow: "", text: "text-violet-700" },
+  sky: { icon: "bg-sky-100 text-sky-700", ring: "", glow: "", text: "text-sky-700" },
+  emerald: { icon: "bg-emerald-100 text-emerald-700", ring: "", glow: "", text: "text-emerald-700" },
+  pink: { icon: "bg-pink-100 text-pink-700", ring: "", glow: "", text: "text-pink-700" },
+  fuchsia: { icon: "bg-fuchsia-100 text-fuchsia-700", ring: "", glow: "", text: "text-fuchsia-700" },
+  amber: { icon: "bg-amber-100 text-amber-700", ring: "", glow: "", text: "text-amber-700" },
+  cyan: { icon: "bg-cyan-100 text-cyan-700", ring: "", glow: "", text: "text-cyan-700" },
+  indigo: { icon: "bg-indigo-100 text-indigo-700", ring: "", glow: "", text: "text-indigo-700" },
+  green: { icon: "bg-green-100 text-green-700", ring: "", glow: "", text: "text-green-700" },
+  blue: { icon: "bg-blue-100 text-blue-700", ring: "", glow: "", text: "text-blue-700" },
+  slate: { icon: "bg-slate-100 text-slate-700", ring: "", glow: "", text: "text-slate-700" },
 };
 
 export function accentClasses(accent: string): AccentClasses {
@@ -150,7 +106,7 @@ export function accentClasses(accent: string): AccentClasses {
 // The pure data + labels live in lib/ai-employees/approval-levels.ts; the
 // Tailwind class strings live here so the JIT scanner generates them. Colour
 // climbs with autonomy — neutral at Observe, warm/alert at Autonomous — so the
-// rung reads at a glance without relying on the number alone.
+// rung reads at a glance without relying on the number alone. Light system.
 // ---------------------------------------------------------------------
 
 export type ApprovalLevelStyle = { dot: string; pill: string };
@@ -158,23 +114,23 @@ export type ApprovalLevelStyle = { dot: string; pill: string };
 export const APPROVAL_LEVEL_STYLE: Record<ApprovalLevelKey, ApprovalLevelStyle> = {
   observe: {
     dot: "bg-slate-400",
-    pill: "bg-slate-500/15 text-slate-300 ring-1 ring-inset ring-slate-400/30",
+    pill: "bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200",
   },
   recommend: {
-    dot: "bg-sky-400",
-    pill: "bg-sky-500/15 text-sky-300 ring-1 ring-inset ring-sky-400/30",
+    dot: "bg-blue-500",
+    pill: "bg-blue-100 text-blue-800 ring-1 ring-inset ring-blue-200",
   },
   draft: {
-    dot: "bg-indigo-400",
-    pill: "bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30",
+    dot: "bg-indigo-500",
+    pill: "bg-indigo-100 text-indigo-800 ring-1 ring-inset ring-indigo-200",
   },
   execute_with_approval: {
-    dot: "bg-amber-400",
-    pill: "bg-amber-500/15 text-amber-300 ring-1 ring-inset ring-amber-400/30",
+    dot: "bg-amber-500",
+    pill: "bg-amber-100 text-amber-800 ring-1 ring-inset ring-amber-200",
   },
   autonomous: {
-    dot: "bg-red-400",
-    pill: "bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-400/30",
+    dot: "bg-red-500",
+    pill: "bg-red-100 text-red-800 ring-1 ring-inset ring-red-200",
   },
 };
 

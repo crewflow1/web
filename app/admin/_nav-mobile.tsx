@@ -47,15 +47,25 @@ export function HqNavMobile({
           </p>
           <p className="text-xs text-slate-700">{email}</p>
         </div>
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700"
-          aria-label="Open HQ navigation"
-          aria-expanded={open}
-        >
-          Menu
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new Event("cf:hq-command-open"))}
+            className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-700"
+            aria-label="Search HQ"
+          >
+            🔎
+          </button>
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700"
+            aria-label="Open HQ navigation"
+            aria-expanded={open}
+          >
+            Menu
+          </button>
+        </div>
       </div>
 
       {open ? (

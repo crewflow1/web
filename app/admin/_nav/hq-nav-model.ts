@@ -43,8 +43,12 @@ export const HQ_AREAS: HqNavArea[] = [
     id: "home",
     label: "Home",
     icon: "LayoutDashboard",
-    href: "/admin/command-centre",
+    // The new executive front door (app/admin/page.tsx). Longest-match active
+    // resolution means "/admin" only wins for the exact path; every deeper
+    // route resolves to its own (longer) area href.
+    href: "/admin",
     children: [
+      { href: "/admin", label: "Home" },
       { href: "/admin/command-centre", label: "Command centre" },
       { href: "/admin/ceo", label: "CEO board" },
       { href: "/admin/ceo/briefings", label: "Morning briefings" },

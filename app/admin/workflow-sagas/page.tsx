@@ -5,6 +5,8 @@ import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { listSagas, SAGA_TEMPLATES, type SagaRow } from "@/server/services/hq-workflow";
 import { relativeTime } from "@/lib/time/relative";
+import { presentSagaState } from "@/lib/hq/presentation-state";
+import { DecisionStateBadge } from "@/app/admin/_components/decision-state";
 import { createSagaAction } from "./actions";
 
 /**
@@ -27,14 +29,6 @@ const SAVED_LABEL: Record<string, string> = {
   created: "Saga planned — its step graph is ready to dispatch.",
   advanced: "Step advanced — its task state is now reflected.",
   abandoned: "Saga abandoned — recorded in the permanent history.",
-};
-
-const STATUS_STYLE: Record<SagaRow["status"], string> = {
-  planned: "bg-slate-100 text-slate-700",
-  running: "bg-blue-100 text-blue-700",
-  blocked: "bg-amber-100 text-amber-800",
-  done: "bg-emerald-100 text-emerald-700",
-  abandoned: "bg-slate-200 text-slate-500",
 };
 
 export default async function WorkflowSagasPage({ searchParams }: { searchParams: SP }) {
@@ -186,9 +180,7 @@ function SagaCard({ row }: { row: SagaRow }) {
       className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-indigo-300 hover:shadow"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_STYLE[row.status]}`}>
-          {row.status}
-        </span>
+        <DecisionStateBadge badge={presentSagaState(row.status)} />
         <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">{row.title}</h3>
         <span className="text-[11px] text-slate-400">{relativeTime(row.updated_at)}</span>
       </div>
