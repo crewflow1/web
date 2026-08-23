@@ -124,7 +124,22 @@ fix, and it is consistent with the CEO-approved "Money area is admin-only" IA.
 `/valuations` (applications for payment) and `/billing` (customer invoicing) are
 **pay-independent** (no correctness issue) and their staff-visibility is a real
 product decision the code makes explicitly (view-all). I did NOT change their
-authorization. **CEO decision needed:** should field staff see a job's valuations
+authorization.
+
+**Field-level verification (why this is safe to leave, not an unclosed hole):**
+I read both pages + their loud-read services to confirm they expose NO Phase-1
+data. `/valuations` (`buildJobValuationsView`) renders only revenue-side figures —
+`gross_valuation`, `variations_total`, `previous_certified_gross`,
+`net_certified_this`, `retention_percent` and the derived retention position; its
+`isAdmin` prop gates only the submit/certify **actions**, not the figures.
+`/billing` (`loadJobBilling`) renders only accounts-receivable — contract,
+billed-to-date, received, collectable, outstanding, overdue, retention-held, cash
+outlook. **Neither surface reads `staff_compensation`, `hourly_pay`, labour cost,
+profit or margin.** So the labour-cost boundary from Phase 1 is fully closed on
+these routes; what remains is purely "should field staff see customer revenue?" —
+a policy question, correctly left to the CEO rather than guessed.
+
+**CEO decision needed:** should field staff see a job's valuations
 / customer-billing / commercial-cash strip, or are those management-only like the
 Money area? If management-only, gate `/valuations` + `/billing` + the overview cash
 strip to owner/admin the same way (a small, mechanical follow-up).
