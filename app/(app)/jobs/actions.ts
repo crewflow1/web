@@ -127,13 +127,11 @@ export async function createJob(
       p_job_id: data.id,
       p_org_id: ctx.org.id,
       p_template_id: result.data.template_id,
-      // `p_anchor_date date` has no DEFAULT, so supabase-gen-types types it as a
-      // non-null `string` — but the function body explicitly handles NULL
-      // (`if p_anchor_date is not null …`, 20261132000001) and the member path
-      // (no scheduled date) legitimately passes null. Narrow cast bridges that
-      // generator gap; the DB accepts and handles the null. (Follow-up: give the
-      // param `default null` so the generated type is nullable.)
-      p_anchor_date: (result.data.scheduled_date ?? null) as string,
+      // `p_anchor_date` now has `default null` (20261216000000), so gen-types
+      // makes it optional — the member path (no scheduled date) simply omits it,
+      // and the DB treats an omitted/NULL anchor identically (skips the
+      // admin-only baseline; see clone_job_template, 20261132000001).
+      p_anchor_date: result.data.scheduled_date ?? undefined,
     });
     if (cloneError) {
       console.error("[jobs] template clone failed", cloneError);

@@ -14392,6 +14392,7 @@ export type Database = {
         Row: {
           body_html: string | null
           body_text: string
+          cis_statement_key: string | null
           created_at: string
           failed_at: string | null
           id: string
@@ -14413,6 +14414,7 @@ export type Database = {
         Insert: {
           body_html?: string | null
           body_text: string
+          cis_statement_key?: string | null
           created_at?: string
           failed_at?: string | null
           id?: string
@@ -14434,6 +14436,7 @@ export type Database = {
         Update: {
           body_html?: string | null
           body_text?: string
+          cis_statement_key?: string | null
           created_at?: string
           failed_at?: string | null
           id?: string
@@ -21802,6 +21805,14 @@ export type Database = {
           parent: string
         }[]
       }
+      _introspect_client_table_grants: {
+        Args: { p_tables: string[] }
+        Returns: {
+          grantee: string
+          privilege_type: string
+          table_name: string
+        }[]
+      }
       _introspect_org_scoped_tables: {
         Args: never
         Returns: {
@@ -22063,7 +22074,7 @@ export type Database = {
       }
       clone_job_template: {
         Args: {
-          p_anchor_date: string
+          p_anchor_date?: string
           p_job_id: string
           p_org_id: string
           p_template_id: string
