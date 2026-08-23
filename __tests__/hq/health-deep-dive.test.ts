@@ -282,7 +282,7 @@ describe("/admin/health page", () => {
 
 describe("HQ_NAV — health is ready", () => {
   it("/admin/health no shipsIn", () => {
-    expect(HQ_LAYOUT).toMatch(/href: "\/admin\/health", label: "Customer health" \}/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href: "\/admin\/health"/);
     expect(HQ_LAYOUT).not.toMatch(/href: "\/admin\/health"[^}]*shipsIn:/);
   });
 });

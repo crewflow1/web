@@ -49,6 +49,10 @@ export {
 export { Badge, badgeClass } from "./badge";
 export { StatTile } from "./stat-tile";
 
+// Shell chrome (server components — safe in the barrel, no client boundary).
+export { PageHeader } from "./page-header";
+export { Breadcrumb, type Crumb } from "./breadcrumb";
+
 // Table chrome. Server components, so this re-export costs nothing:
 // /sites is 501 B / 171 kB after adoption, byte-identical to origin/main.
 export {

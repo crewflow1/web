@@ -19,6 +19,8 @@ import { listAiEmployees } from "@/server/services/ai-employees";
 import { legalActions, type ApprovalState } from "@/lib/approvals/state";
 import { effectivePayload, formatPayloadForDisplay } from "@/lib/approvals/payload";
 import { relativeTime } from "@/lib/time/relative";
+import { presentApprovalState } from "@/lib/hq/presentation-state";
+import { DecisionStateBadge } from "@/app/admin/_components/decision-state";
 import {
   approveApprovalAction,
   editApprovalAction,
@@ -48,14 +50,6 @@ import {
 export const dynamic = "force-dynamic";
 
 type SP = Promise<{ tab?: string; saved?: string; error?: string }>;
-
-const STATE_PILL: Record<ApprovalState, string> = {
-  pending: "bg-amber-100 text-amber-800 ring-amber-300",
-  escalated: "bg-orange-100 text-orange-800 ring-orange-300",
-  approved: "bg-emerald-100 text-emerald-800 ring-emerald-300",
-  rejected: "bg-red-100 text-red-800 ring-red-300",
-  expired: "bg-slate-200 text-slate-600 ring-slate-300",
-};
 
 const SAVED_LABEL: Record<string, string> = {
   approved: "Approved — the engine marked it granted.",
@@ -196,13 +190,10 @@ function EmptyState({ label }: { label: string }) {
 }
 
 function StatePill({ state }: { state: ApprovalState }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ring-inset ${STATE_PILL[state]}`}
-    >
-      {state}
-    </span>
-  );
+  // The ONE HQ decision language: pending/escalated → "Needs approval",
+  // approved → "Ready" (granted; the executor is dark, nothing has run),
+  // rejected → "Rejected", expired keeps its own honest name.
+  return <DecisionStateBadge badge={presentApprovalState(state)} />;
 }
 
 /**

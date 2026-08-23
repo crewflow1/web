@@ -313,7 +313,7 @@ describe("customer detail page wires the real action", () => {
 
 describe("HQ_NAV — impersonation is ready", () => {
   it("/admin/impersonation no shipsIn", () => {
-    expect(HQ_LAYOUT).toMatch(/href: "\/admin\/impersonation", label: "Impersonation log" \}/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href: "\/admin\/impersonation"/);
     expect(HQ_LAYOUT).not.toMatch(/href: "\/admin\/impersonation"[^}]*shipsIn:/);
   });
 });

@@ -150,6 +150,6 @@ describe("Marketing AI — the pure layer is clock- and Supabase-free", () => {
 
 describe("Marketing AI — wired into the HQ nav", () => {
   it("the admin nav links to /admin/marketing-ai", () => {
-    expect(LAYOUT).toMatch(/href:\s*"\/admin\/marketing-ai"/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href:\s*"\/admin\/marketing-ai"/);
   });
 });

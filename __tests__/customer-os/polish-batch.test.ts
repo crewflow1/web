@@ -241,7 +241,10 @@ describe("/insights tenant route", () => {
   });
 
   it("sidebar exposes the AI insights entry to admin/owner", () => {
-    const sidebar = read("app/(app)/_components/sidebar.tsx");
+    // Product UX rebuild: the nav is now defined in one model consumed by the
+    // sidebar, mobile nav and command palette. Assert the destination lives in
+    // that source of truth (the invariant — AI insights is reachable — holds).
+    const sidebar = read("app/(app)/_nav/nav-model.ts");
     expect(sidebar).toMatch(/href: "\/insights"/);
     // Labels are now i18n message keys resolved through the translator; the
     // rendered text still comes from the en-GB catalogue value.

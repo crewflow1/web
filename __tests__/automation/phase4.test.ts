@@ -216,8 +216,10 @@ describe("Phase 4 — /admin/automations page", () => {
   });
 
   it("HQ nav exposes /admin/automations", () => {
-    expect(LAYOUT).toMatch(/href:\s*"\/admin\/automations"/);
-    expect(LAYOUT).toMatch(/label:\s*"Automations"/);
+    // Nav moved to the grouped model; Automations lives under Governance.
+    const model = read("app/admin/_nav/hq-nav-model.ts");
+    expect(model).toMatch(/href:\s*"\/admin\/automations"/);
+    expect(model).toMatch(/label:\s*"Automations"/);
   });
 });
 

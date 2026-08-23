@@ -5,6 +5,24 @@ import { buildSecurityHeaders } from "./lib/security/headers";
 const config: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  /**
+   * PERF (product UX rebuild): client Router Cache lifetimes. Next 15 defaults
+   * `staleTimes.dynamic` to 0, so EVERY soft navigation to a dynamic segment
+   * (all our (app) routes) re-hits the server — revisiting a page you just left,
+   * or back/forward, always paid a fresh render. A modest dynamic window makes
+   * "clicking around" instant while staying fresh:
+   *   - dynamic 30s: a page revisited within 30s serves the cached RSC payload.
+   *   - static 180s: rarely-changing segments cached longer.
+   * Safe by construction — this only reuses an ALREADY-RENDERED, RLS-correct
+   * payload for the SAME org: (a) org switch calls revalidatePath("/","layout")
+   * which purges the whole router cache, so no cross-org staleness; (b) writes
+   * navigate via full-document window.location.assign, which bypasses the cache,
+   * so post-write freshness is preserved. Net: snappier read-navigation, no
+   * correctness change.
+   */
+  experimental: {
+    staleTimes: { dynamic: 30, static: 180 },
+  },
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "*.supabase.co" },

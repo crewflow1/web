@@ -183,7 +183,7 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
+      <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold text-slate-900">{t("jobs.title")}</h1>

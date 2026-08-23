@@ -1,5 +1,6 @@
 import { Suspense } from "react";
-import { Inbox, Sparkles, CheckSquare, Scale, Satellite, Bell } from "lucide-react";
+import Link from "next/link";
+import { Sparkles, CheckSquare, Scale, Satellite, Bell, ArrowRight } from "lucide-react";
 import { requireHqPage } from "@/server/auth/hq";
 import { loadExecutiveAssistantBoard } from "@/server/services/hq-executive-assistant";
 import {
@@ -12,9 +13,13 @@ import {
   type HumanActionItem,
   type HumanUrgency,
 } from "@/lib/hq/executive-assistant";
+import { PageHeader } from "@/components/ui/page-header";
+import { Badge } from "@/components/ui/badge";
+import type { Tone } from "@/components/ui/tokens";
+import { DecisionStateLegend } from "@/app/admin/_components/decision-state";
 
 /**
- * CrewFlow HQ — Executive-Assistant AI (super-admin surface).
+ * CrewFlow HQ — "What needs you" (super-admin surface).
  *
  * The single "what needs the human right now" digest — a pure cross-board
  * projection that composes the open Approval queue, the pending/delayed Decision
@@ -23,6 +28,9 @@ import {
  * Insufficient data) and a one-line basis. An empty-but-readable queue reads as a
  * true "all clear"; a queue that could NOT be read reads as "Insufficient data",
  * and the headline verdict never shows all-clear over a failed read.
+ *
+ * Each digest row deep-links to the source's own HQ surface — this is the one
+ * place that tells you what needs you, so it must also route you to the thing.
  *
  * The executive-assistant narrative is DARK: it populates only once a model tier is
  * bound behind the governor. Until then the empty state says so.
@@ -33,22 +41,31 @@ import {
 
 export const dynamic = "force-dynamic";
 
-const KIND_BADGE: Record<ExecutiveAssistantMetricKind, string> = {
-  fact: "bg-emerald-500/10 text-emerald-300 ring-emerald-400/30",
-  derived: "bg-sky-500/10 text-sky-300 ring-sky-400/30",
-  insufficient: "bg-slate-700/40 text-slate-400 ring-slate-600/40",
+/** Where each digest row routes — the source queue's own HQ surface. */
+const SOURCE_HREF: Record<HumanActionItem["source"], string> = {
+  approvals: "/admin/approvals",
+  decisions: "/admin/decisions",
+  tasks: "/admin/tasks",
+  alerts: "/admin/alerts",
 };
 
-const STATUS_STYLE: Record<ExecutiveAssistantStatus, { pill: string; label: string }> = {
-  all_clear: { pill: "bg-emerald-500/10 text-emerald-300 ring-emerald-400/30", label: "All clear" },
-  attention: { pill: "bg-amber-500/10 text-amber-300 ring-amber-400/30", label: "Attention needed" },
-  insufficient: { pill: "bg-slate-700/40 text-slate-400 ring-slate-600/40", label: "Partial read" },
+/** Provenance badge tone: a fact is good/solid, a derived figure is informational. */
+const KIND_TONE: Record<ExecutiveAssistantMetricKind, Tone> = {
+  fact: "emerald",
+  derived: "blue",
+  insufficient: "slate",
 };
 
-const URGENCY_STYLE: Record<HumanUrgency, { pill: string; label: string }> = {
-  critical: { pill: "bg-red-500/10 text-red-300 ring-red-400/30", label: "Critical" },
-  high: { pill: "bg-amber-500/10 text-amber-300 ring-amber-400/30", label: "High" },
-  normal: { pill: "bg-slate-600/30 text-slate-300 ring-slate-500/30", label: "Normal" },
+const STATUS_TONE: Record<ExecutiveAssistantStatus, { tone: Tone; label: string }> = {
+  all_clear: { tone: "emerald", label: "All clear" },
+  attention: { tone: "amber", label: "Attention needed" },
+  insufficient: { tone: "slate", label: "Partial read" },
+};
+
+const URGENCY_TONE: Record<HumanUrgency, { tone: Tone; label: string }> = {
+  critical: { tone: "red", label: "Critical" },
+  high: { tone: "amber", label: "High" },
+  normal: { tone: "slate", label: "Normal" },
 };
 
 function formatEa(value: number | null, format: ExecutiveAssistantFormat): string {
@@ -65,43 +82,25 @@ function formatEa(value: number | null, format: ExecutiveAssistantFormat): strin
 export default async function ExecutiveAssistantAiPage() {
   await requireHqPage();
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 shadow-xl">
-      <Header />
-      <div className="space-y-8 p-5 sm:p-7">
-        <Suspense fallback={<BoardSkeleton />}>
-          <Body />
-        </Suspense>
-      </div>
-    </div>
-  );
-}
-
-function Header() {
-  return (
-    <div className="relative border-b border-slate-800 px-5 py-6 sm:px-7">
-      <div
-        className="pointer-events-none absolute inset-0 opacity-60"
-        style={{
-          background:
-            "radial-gradient(60% 120% at 15% 0%, rgba(129,140,248,0.18), transparent 60%), radial-gradient(50% 120% at 90% 0%, rgba(16,185,129,0.12), transparent 55%)",
-        }}
-        aria-hidden
-      />
-      <div className="relative flex items-start gap-3">
-        <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
-          <Inbox className="h-6 w-6" strokeWidth={1.75} aria-hidden />
-        </span>
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-white">Executive-Assistant AI</h1>
-          <p className="mt-0.5 max-w-xl text-sm text-slate-400">
+    <div>
+      <PageHeader
+        title="What needs you"
+        description={
+          <>
             The one &quot;what needs the human right now&quot; digest — the open
             approval queue, pending and delayed decisions, overdue and stalled AI
             tasks, and the current alert load, composed into one prioritised list.
             Every figure is labelled Fact, Derived, or Insufficient data. An empty
             readable queue is a true &quot;all clear&quot;; a queue that could not be
             read says so, and the verdict never shows all-clear over a failed read.
-          </p>
-        </div>
+          </>
+        }
+      />
+      <div className="space-y-8">
+        <Suspense fallback={<BoardSkeleton />}>
+          <Body />
+        </Suspense>
+        <DecisionStateLegend />
       </div>
     </div>
   );
@@ -120,7 +119,7 @@ async function Body() {
       </div>
       <MetricGrid board={board} />
       <NarrativePanel narrative={narrative} />
-      <p className="text-center text-[11px] text-slate-600">
+      <p className="text-center text-[11px] text-slate-500">
         {board.periodLabel} · generated {new Date(generatedAt).toLocaleString("en-GB")} ·
         every figure sourced from HQ queues or marked insufficient
       </p>
@@ -133,16 +132,14 @@ function DigestPanel({ board }: { board: ExecutiveAssistantBoard }) {
   return (
     <section>
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold text-white">What needs the human now</h2>
-        <span
-          className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset ${STATUS_STYLE[summary.status].pill}`}
-        >
-          {STATUS_STYLE[summary.status].label}
-        </span>
+        <h2 className="text-sm font-semibold text-slate-900">What needs the human now</h2>
+        <Badge tone={STATUS_TONE[summary.status].tone} className="font-semibold">
+          {STATUS_TONE[summary.status].label}
+        </Badge>
       </div>
-      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         {needsHuman.length === 0 ? (
-          <div className="text-[13px] leading-relaxed text-slate-300">
+          <div className="text-[13px] leading-relaxed text-slate-600">
             {summary.status === "all_clear" ? (
               <>
                 Nothing is waiting on a human right now — every queue was read and is
@@ -158,7 +155,7 @@ function DigestPanel({ board }: { board: ExecutiveAssistantBoard }) {
           </div>
         ) : (
           <>
-            <p className="mb-3 text-[12px] text-slate-400">
+            <p className="mb-3 text-[12px] text-slate-500">
               {summary.itemsNeedingHuman} item
               {summary.itemsNeedingHuman === 1 ? "" : "s"} across{" "}
               {needsHuman.length} categor{needsHuman.length === 1 ? "y" : "ies"} —
@@ -180,26 +177,35 @@ function DigestPanel({ board }: { board: ExecutiveAssistantBoard }) {
 
 function ActionRow({ item }: { item: HumanActionItem }) {
   return (
-    <li className="flex items-start justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/40 p-3">
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-white">{item.label}</span>
-          <span
-            className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${URGENCY_STYLE[item.urgency].pill}`}
-          >
-            {URGENCY_STYLE[item.urgency].label}
-          </span>
+    <li>
+      <Link
+        href={SOURCE_HREF[item.source]}
+        className="group flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3 transition hover:border-slate-300 hover:bg-slate-50"
+      >
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-slate-900">{item.label}</span>
+            <Badge tone={URGENCY_TONE[item.urgency].tone} className="font-semibold">
+              {URGENCY_TONE[item.urgency].label}
+            </Badge>
+          </div>
+          <p className="mt-1 text-[12px] leading-relaxed text-slate-600">{item.detail}</p>
+          {item.oldestAgeDays != null && (
+            <p className="mt-1 text-[11px] text-slate-500">
+              Oldest open {item.oldestAgeDays} day{item.oldestAgeDays === 1 ? "" : "s"}.
+            </p>
+          )}
         </div>
-        <p className="mt-1 text-[12px] leading-relaxed text-slate-400">{item.detail}</p>
-        {item.oldestAgeDays != null && (
-          <p className="mt-1 text-[11px] text-slate-600">
-            Oldest open {item.oldestAgeDays} day{item.oldestAgeDays === 1 ? "" : "s"}.
-          </p>
-        )}
-      </div>
-      <span className="shrink-0 rounded-full bg-slate-800 px-2.5 py-1 text-sm font-bold tabular-nums text-indigo-300">
-        {item.count}
-      </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-sm font-bold tabular-nums text-indigo-700">
+            {item.count}
+          </span>
+          <ArrowRight
+            className="h-4 w-4 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-slate-600"
+            aria-hidden
+          />
+        </div>
+      </Link>
     </li>
   );
 }
@@ -219,14 +225,14 @@ function LoadPanel({
     <section>
       <div className="mb-3 flex items-center gap-2">
         {icon}
-        <h2 className="text-sm font-semibold text-white">{title}</h2>
+        <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
       </div>
       {unavailable ? (
-        <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/30 p-4 text-xs text-slate-500">
+        <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-xs text-slate-500">
           This source could not be read this cycle — not shown as &quot;all clear&quot;.
         </div>
       ) : (
-        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">{children}</div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">{children}</div>
       )}
     </section>
   );
@@ -239,23 +245,13 @@ function CountPill({
 }: {
   label: string;
   count: number;
-  tone: "red" | "amber" | "blue" | "slate";
+  tone: Tone;
 }) {
-  const pill =
-    tone === "red"
-      ? "bg-red-500/10 text-red-300 ring-red-400/30"
-      : tone === "amber"
-        ? "bg-amber-500/10 text-amber-300 ring-amber-400/30"
-        : tone === "blue"
-          ? "bg-blue-500/10 text-blue-300 ring-blue-400/30"
-          : "bg-slate-600/30 text-slate-300 ring-slate-500/30";
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset ${pill}`}
-    >
+    <Badge tone={tone} className="font-semibold">
       <span className="tabular-nums">{count}</span>
       {label}
-    </span>
+    </Badge>
   );
 }
 
@@ -266,7 +262,7 @@ function ApprovalLoadPanel({
 }) {
   return (
     <LoadPanel
-      icon={<CheckSquare className="h-4 w-4 text-slate-400" aria-hidden />}
+      icon={<CheckSquare className="h-4 w-4 text-slate-500" aria-hidden />}
       title="Approval queue"
       unavailable={approvalLoad == null}
     >
@@ -276,7 +272,7 @@ function ApprovalLoadPanel({
             <CountPill label="Escalated" count={approvalLoad.escalated} tone="red" />
             <CountPill label="Pending" count={approvalLoad.pending} tone="amber" />
           </div>
-          <p className="mt-3 text-[12px] leading-relaxed text-slate-400">
+          <p className="mt-3 text-[12px] leading-relaxed text-slate-600">
             {approvalLoad.total === 0
               ? "No approvals are waiting on a human right now."
               : `${approvalLoad.total} open approval${approvalLoad.total === 1 ? "" : "s"} awaiting a decision.`}
@@ -296,7 +292,7 @@ function DecisionLoadPanel({
 }) {
   return (
     <LoadPanel
-      icon={<Scale className="h-4 w-4 text-slate-400" aria-hidden />}
+      icon={<Scale className="h-4 w-4 text-slate-500" aria-hidden />}
       title="Decision queue"
       unavailable={decisionLoad == null}
     >
@@ -307,7 +303,7 @@ function DecisionLoadPanel({
             <CountPill label="Delayed" count={decisionLoad.delayed} tone="slate" />
             <CountPill label="Now due" count={decisionLoad.delayedDue} tone="red" />
           </div>
-          <p className="mt-3 text-[12px] leading-relaxed text-slate-400">
+          <p className="mt-3 text-[12px] leading-relaxed text-slate-600">
             {decisionLoad.total === 0
               ? "No decisions are pending a human call."
               : `${decisionLoad.awaiting} awaiting a call, ${decisionLoad.delayed} parked (${decisionLoad.delayedDue} now due to revisit).`}
@@ -323,7 +319,7 @@ function DecisionLoadPanel({
 function TaskLoadPanel({ taskLoad }: { taskLoad: ExecutiveAssistantBoard["taskLoad"] }) {
   return (
     <LoadPanel
-      icon={<Satellite className="h-4 w-4 text-slate-400" aria-hidden />}
+      icon={<Satellite className="h-4 w-4 text-slate-500" aria-hidden />}
       title="AI task attention"
       unavailable={taskLoad == null}
     >
@@ -333,7 +329,7 @@ function TaskLoadPanel({ taskLoad }: { taskLoad: ExecutiveAssistantBoard["taskLo
             <CountPill label="Stalled" count={taskLoad.stalled} tone="red" />
             <CountPill label="Overdue" count={taskLoad.overdue} tone="amber" />
           </div>
-          <p className="mt-3 text-[12px] leading-relaxed text-slate-400">
+          <p className="mt-3 text-[12px] leading-relaxed text-slate-600">
             {taskLoad.total === 0
               ? "No AI tasks are overdue or stalled right now."
               : `${taskLoad.overdue} overdue against deadline, ${taskLoad.stalled} with a stalled worker.`}
@@ -343,13 +339,10 @@ function TaskLoadPanel({ taskLoad }: { taskLoad: ExecutiveAssistantBoard["taskLo
           {taskLoad.byStage.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-1.5">
               {taskLoad.byStage.map((s) => (
-                <span
-                  key={s.stage}
-                  className="inline-flex items-center gap-1 rounded-md bg-slate-800/60 px-2 py-0.5 text-[10px] font-medium text-slate-400 ring-1 ring-inset ring-slate-700/50"
-                >
-                  <span className="tabular-nums text-slate-300">{s.count}</span>
+                <Badge key={s.stage} tone="slate" variant="soft">
+                  <span className="tabular-nums font-semibold">{s.count}</span>
                   {s.label}
-                </span>
+                </Badge>
               ))}
             </div>
           )}
@@ -362,7 +355,7 @@ function TaskLoadPanel({ taskLoad }: { taskLoad: ExecutiveAssistantBoard["taskLo
 function AlertLoadPanel({ alertLoad }: { alertLoad: ExecutiveAssistantBoard["alertLoad"] }) {
   return (
     <LoadPanel
-      icon={<Bell className="h-4 w-4 text-slate-400" aria-hidden />}
+      icon={<Bell className="h-4 w-4 text-slate-500" aria-hidden />}
       title="Alert load"
       unavailable={alertLoad == null}
     >
@@ -373,14 +366,14 @@ function AlertLoadPanel({ alertLoad }: { alertLoad: ExecutiveAssistantBoard["ale
             <CountPill label="Warning" count={alertLoad.warning} tone="amber" />
             <CountPill label="Info" count={alertLoad.info} tone="blue" />
           </div>
-          <p className="mt-3 text-[12px] leading-relaxed text-slate-400">
+          <p className="mt-3 text-[12px] leading-relaxed text-slate-600">
             {alertLoad.total === 0
               ? "No open alerts across the estate right now."
               : `${alertLoad.critical + alertLoad.warning} of ${alertLoad.total} open alert${alertLoad.total === 1 ? "" : "s"} need attention.`}
             {alertLoad.oldestAgeDays != null &&
               ` Oldest has been open ${alertLoad.oldestAgeDays} day${alertLoad.oldestAgeDays === 1 ? "" : "s"}.`}
           </p>
-          <p className="mt-3 text-[11px] text-slate-600">
+          <p className="mt-3 text-[11px] text-slate-500">
             From the deterministic HQ alerts rules engine; resolved and snoozed
             alerts are excluded.
           </p>
@@ -394,7 +387,7 @@ function MetricGrid({ board }: { board: ExecutiveAssistantBoard }) {
   return (
     <section>
       <div className="mb-3">
-        <h2 className="text-sm font-semibold text-white">Digest metrics</h2>
+        <h2 className="text-sm font-semibold text-slate-900">Digest metrics</h2>
         <p className="mt-0.5 text-xs text-slate-500">
           Deterministic figures for {board.periodLabel} — each card states exactly
           how it is (or cannot be) computed
@@ -413,8 +406,8 @@ function MetricCard({ metric }: { metric: ExecutiveAssistantMetric }) {
   const insufficient = metric.kind === "insufficient";
   return (
     <div
-      className={`relative flex h-full flex-col overflow-hidden rounded-xl border p-4 shadow-lg ring-1 ring-inset ring-white/5 ${
-        insufficient ? "border-slate-800 bg-slate-900/30" : "border-slate-800 bg-slate-900/60"
+      className={`flex h-full flex-col rounded-xl border p-4 shadow-sm ${
+        insufficient ? "border-dashed border-slate-300 bg-slate-50" : "border-slate-200 bg-white"
       }`}
     >
       <div className="flex items-start justify-between gap-2">
@@ -425,7 +418,7 @@ function MetricCard({ metric }: { metric: ExecutiveAssistantMetric }) {
       </div>
       <p
         className={`mt-2 text-2xl font-bold tabular-nums ${
-          insufficient ? "text-slate-600" : "text-indigo-300"
+          insufficient ? "text-slate-400" : "text-slate-900"
         }`}
       >
         {formatEa(metric.value, metric.format)}
@@ -436,32 +429,26 @@ function MetricCard({ metric }: { metric: ExecutiveAssistantMetric }) {
 }
 
 function KindBadge({ kind }: { kind: ExecutiveAssistantMetricKind }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset ${KIND_BADGE[kind]}`}
-    >
-      {EXECUTIVE_ASSISTANT_KIND_LABEL[kind]}
-    </span>
-  );
+  return <Badge tone={KIND_TONE[kind]}>{EXECUTIVE_ASSISTANT_KIND_LABEL[kind]}</Badge>;
 }
 
 function NarrativePanel({ narrative }: { narrative: string | null }) {
   return (
     <section>
       <div className="mb-3">
-        <h2 className="text-sm font-semibold text-white">Executive-assistant narrative</h2>
+        <h2 className="text-sm font-semibold text-slate-900">Executive-assistant narrative</h2>
       </div>
       {narrative ? (
-        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-sm leading-relaxed text-slate-300">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm leading-relaxed text-slate-700 shadow-sm">
           {narrative}
         </div>
       ) : (
-        <div className="flex items-start gap-3 rounded-xl border border-dashed border-slate-800 bg-slate-900/30 p-4">
-          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-800/60 text-slate-400 ring-1 ring-inset ring-slate-700/50">
+        <div className="flex items-start gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-slate-500 ring-1 ring-inset ring-slate-200">
             <Sparkles className="h-4 w-4" aria-hidden />
           </span>
           <div>
-            <p className="text-sm font-medium text-slate-300">
+            <p className="text-sm font-medium text-slate-900">
               Executive-assistant narrative populates once a model tier is bound
             </p>
             <p className="mt-1 text-xs text-slate-500">
@@ -481,31 +468,31 @@ function NarrativePanel({ narrative }: { narrative: string | null }) {
 function BoardSkeleton() {
   return (
     <div className="space-y-8">
-      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-        <div className="h-4 w-40 animate-pulse rounded bg-slate-800" />
-        <div className="mt-3 h-3 w-full animate-pulse rounded bg-slate-800" />
-        <div className="mt-2 h-3 w-2/3 animate-pulse rounded bg-slate-800" />
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="h-4 w-40 animate-pulse rounded bg-slate-200" />
+        <div className="mt-3 h-3 w-full animate-pulse rounded bg-slate-200" />
+        <div className="mt-2 h-3 w-2/3 animate-pulse rounded bg-slate-200" />
       </div>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-            <div className="h-5 w-24 animate-pulse rounded-full bg-slate-800" />
-            <div className="mt-3 h-3 w-full animate-pulse rounded bg-slate-800" />
-            <div className="mt-2 h-3 w-2/3 animate-pulse rounded bg-slate-800" />
+          <div key={i} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="h-5 w-24 animate-pulse rounded-full bg-slate-200" />
+            <div className="mt-3 h-3 w-full animate-pulse rounded bg-slate-200" />
+            <div className="mt-2 h-3 w-2/3 animate-pulse rounded bg-slate-200" />
           </div>
         ))}
       </div>
       <div>
-        <div className="mb-3 h-4 w-32 animate-pulse rounded bg-slate-800" />
+        <div className="mb-3 h-4 w-32 animate-pulse rounded bg-slate-200" />
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 16 }).map((_, i) => (
-            <div key={i} className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+            <div key={i} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex items-center justify-between">
-                <div className="h-3 w-16 animate-pulse rounded bg-slate-800" />
-                <div className="h-4 w-14 animate-pulse rounded-full bg-slate-800" />
+                <div className="h-3 w-16 animate-pulse rounded bg-slate-200" />
+                <div className="h-4 w-14 animate-pulse rounded-full bg-slate-200" />
               </div>
-              <div className="mt-3 h-7 w-24 animate-pulse rounded bg-slate-800" />
-              <div className="mt-3 h-3 w-full animate-pulse rounded bg-slate-800" />
+              <div className="mt-3 h-7 w-24 animate-pulse rounded bg-slate-200" />
+              <div className="mt-3 h-3 w-full animate-pulse rounded bg-slate-200" />
             </div>
           ))}
         </div>

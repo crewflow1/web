@@ -93,14 +93,28 @@ describe("2-member org — the approval panel must see the caller's own role", (
 // ---------------------------------------------------------------------------
 
 describe("getOrgForUser — the guarantee that makes ctx.membership.role safe", () => {
-  it("reads memberships filtered to the caller's user_id", () => {
+  it("resolves membership from a read filtered to the caller's user_id", () => {
     const SRC = src("server/auth/session.ts");
-    const start = SRC.indexOf("export async function getOrgForUser");
-    expect(start, "getOrgForUser not found").toBeGreaterThan(-1);
-    const end = SRC.indexOf("\nexport ", start + 1);
-    const body = SRC.slice(start, end === -1 ? undefined : end);
-    expect(body).toMatch(/\.from\("memberships"\)/);
-    expect(body).toMatch(/\.eq\("user_id", userId\)/);
+    // The membership+organizations read is consolidated in the request-cached
+    // `loadMembershipsWithOrgs` (one read shared by getOrgForUser + the header
+    // switcher, replacing the former two). The security guarantee is UNCHANGED:
+    // it is filtered to the caller's own user_id, and getOrgForUser derives
+    // ctx.membership from ONLY that result.
+    const readStart = SRC.indexOf("const loadMembershipsWithOrgs");
+    expect(readStart, "loadMembershipsWithOrgs not found").toBeGreaterThan(-1);
+    const readEnd = SRC.indexOf("\nexport ", readStart + 1);
+    const readBody = SRC.slice(readStart, readEnd === -1 ? undefined : readEnd);
+    expect(readBody).toMatch(/\.from\("memberships"\)/);
+    expect(readBody).toMatch(/\.eq\("user_id", userId\)/);
+
+    // getOrgForUser derives ctx.membership from that filtered read, and issues no
+    // memberships query of its own (which could be unfiltered).
+    const goStart = SRC.indexOf("export async function getOrgForUser");
+    expect(goStart, "getOrgForUser not found").toBeGreaterThan(-1);
+    const goEnd = SRC.indexOf("\nexport ", goStart + 1);
+    const goBody = SRC.slice(goStart, goEnd === -1 ? undefined : goEnd);
+    expect(goBody).toMatch(/loadMembershipsWithOrgs\(userId\)/);
+    expect(goBody).not.toMatch(/\.from\("memberships"\)/);
   });
 });
 

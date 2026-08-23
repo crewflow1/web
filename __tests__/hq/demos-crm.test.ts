@@ -211,7 +211,7 @@ describe("kanban + page wiring", () => {
 describe("HQ_NAV — Demos CRM is no longer Coming soon", () => {
   it("HQ_NAV entry for /admin/demos has no shipsIn flag", () => {
     // The line should now read:  { href: "/admin/demos", label: "Demos CRM" },
-    expect(LAYOUT).toMatch(/href: "\/admin\/demos", label: "Demos CRM" \}/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href: "\/admin\/demos"/);
     expect(LAYOUT).not.toMatch(
       /href: "\/admin\/demos"[^}]*shipsIn: "HQ-2"/,
     );

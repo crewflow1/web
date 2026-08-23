@@ -26,32 +26,36 @@ import { approvalLevelStyle } from "./_styles";
  * Presentation only, over the DETERMINISTIC read-model in lib/hq/boardroom-cards.
  * Every card is HONEST: an "Insufficient data" state renders in a neutral slate tone,
  * never a green that absent data cannot support. The product pipeline stage is surfaced
- * where present. Matches the boardroom's premium dark surface.
+ * where present.
+ *
+ * Product UX rebuild (HQ phase): re-skinned from the old dark/neon surface onto
+ * the light operational system — solid `-100`/`-800` pills (AA-verified in
+ * components/ui/tokens.ts), never the blended `text-*-300` opacity fills.
  */
 
 // ---------------------------------------------------------------------
 // Tone maps — one place, so a level always paints the same way.
 // ---------------------------------------------------------------------
 
-const NEUTRAL = "bg-slate-800/60 text-slate-400 ring-slate-700";
+const NEUTRAL = "bg-slate-100 text-slate-700 ring-slate-200";
 
 const CONFIDENCE_TONE: Record<ConfidenceCard["level"], string> = {
-  high: "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30",
-  medium: "bg-amber-500/15 text-amber-300 ring-amber-400/30",
-  low: "bg-red-500/15 text-red-300 ring-red-400/30",
+  high: "bg-emerald-100 text-emerald-800 ring-emerald-200",
+  medium: "bg-amber-100 text-amber-800 ring-amber-200",
+  low: "bg-red-100 text-red-800 ring-red-200",
   insufficient: NEUTRAL,
 };
 
 const ETA_TONE: Record<EtaCard["level"], string> = {
-  scheduled: "bg-sky-500/15 text-sky-300 ring-sky-400/30",
-  overdue: "bg-red-500/15 text-red-300 ring-red-400/30",
+  scheduled: "bg-blue-100 text-blue-800 ring-blue-200",
+  overdue: "bg-red-100 text-red-800 ring-red-200",
   insufficient: NEUTRAL,
 };
 
 const HEALTH_TONE: Record<HealthCard["level"], string> = {
-  green: "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30",
-  amber: "bg-amber-500/15 text-amber-300 ring-amber-400/30",
-  red: "bg-red-500/15 text-red-300 ring-red-400/30",
+  green: "bg-emerald-100 text-emerald-800 ring-emerald-200",
+  amber: "bg-amber-100 text-amber-800 ring-amber-200",
+  red: "bg-red-100 text-red-800 ring-red-200",
   insufficient: NEUTRAL,
 };
 
@@ -151,11 +155,11 @@ export function BoardroomCardTrio({ cards, now }: { cards: EmployeeCards; now: D
 export function PipelineStagePill({ pipeline }: { pipeline: PipelineSummary }) {
   if (!pipeline.current) return null;
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-indigo-500/10 px-2 py-0.5 text-[10px] font-medium text-indigo-300 ring-1 ring-inset ring-indigo-400/30">
+    <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-800 ring-1 ring-inset ring-indigo-200">
       <GitBranch className="h-3 w-3" strokeWidth={2} aria-hidden />
       {PIPELINE_STAGE_LABELS[pipeline.current]}
       {pipeline.staged > 1 ? (
-        <span className="text-indigo-400/70">+{pipeline.staged - 1}</span>
+        <span className="text-indigo-500">+{pipeline.staged - 1}</span>
       ) : null}
     </span>
   );
@@ -257,10 +261,10 @@ export function PipelineStageStrip({ pipeline }: { pipeline: PipelineSummary }) 
             key={stage}
             className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium ring-1 ring-inset ${
               isCurrent
-                ? "bg-indigo-500/20 text-indigo-200 ring-indigo-400/40"
+                ? "bg-indigo-100 text-indigo-800 ring-indigo-300"
                 : active
-                  ? "bg-slate-800 text-slate-300 ring-slate-700"
-                  : "bg-slate-900/40 text-slate-600 ring-slate-800"
+                  ? "bg-slate-100 text-slate-700 ring-slate-200"
+                  : "bg-white text-slate-400 ring-slate-200"
             }`}
           >
             {PIPELINE_STAGE_LABELS[stage]}
@@ -327,10 +331,10 @@ export function ApprovalLevelPanel({ result }: { result: ApprovalLevelResult }) 
         <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
           Why this level
         </p>
-        <ul className="space-y-1 text-xs text-slate-400">
+        <ul className="space-y-1 text-xs text-slate-600">
           {result.evidence.map((line) => (
             <li key={line} className="flex gap-2">
-              <span className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-slate-600" aria-hidden />
+              <span className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-slate-400" aria-hidden />
               <span>{line}</span>
             </li>
           ))}
@@ -350,19 +354,19 @@ export function ApprovalLevelPanel({ result }: { result: ApprovalLevelResult }) 
                 key={def.key}
                 className={`flex items-start gap-2.5 rounded-lg border px-3 py-2 ${
                   active
-                    ? "border-slate-600 bg-slate-800/60"
-                    : "border-slate-800 bg-slate-900/40"
+                    ? "border-slate-300 bg-slate-50"
+                    : "border-slate-200 bg-white"
                 }`}
               >
                 <span
                   className={`mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
-                    active ? rung.pill : "bg-slate-800 text-slate-500 ring-1 ring-inset ring-slate-700"
+                    active ? rung.pill : "bg-slate-100 text-slate-500 ring-1 ring-inset ring-slate-200"
                   }`}
                 >
                   {def.level}
                 </span>
                 <div className="min-w-0">
-                  <p className={`text-xs font-semibold ${active ? "text-white" : "text-slate-400"}`}>
+                  <p className={`text-xs font-semibold ${active ? "text-slate-900" : "text-slate-600"}`}>
                     {def.label}
                   </p>
                   <p className="text-[11px] leading-relaxed text-slate-500">{def.summary}</p>

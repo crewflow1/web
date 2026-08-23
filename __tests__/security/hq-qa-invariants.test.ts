@@ -131,6 +131,6 @@ describe("QA AI — the pure layer is clock- and Supabase-free", () => {
 
 describe("QA AI — wired into the HQ nav", () => {
   it("the admin nav links to /admin/qa-ai", () => {
-    expect(LAYOUT).toMatch(/href:\s*"\/admin\/qa-ai"/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href:\s*"\/admin\/qa-ai"/);
   });
 });

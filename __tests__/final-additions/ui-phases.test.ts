@@ -25,7 +25,10 @@ const read = (rel: string) => readFileSync(resolve(root, rel), "utf-8");
 
 describe("Sidebar lists every new operator surface", () => {
   it("includes Inbox / Suppliers / Expenses / Compliance / Reviews", () => {
-    const src = read("app/(app)/_components/sidebar.tsx");
+    // Product UX rebuild: nav destinations now live in the shared nav model
+    // (consumed by sidebar + mobile nav + command palette). The reachability
+    // invariant is asserted against that single source of truth.
+    const src = read("app/(app)/_nav/nav-model.ts");
     expect(src).toMatch(/href: "\/inbox"/);
     expect(src).toMatch(/href: "\/suppliers"/);
     expect(src).toMatch(/href: "\/expenses"/);

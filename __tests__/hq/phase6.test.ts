@@ -20,6 +20,9 @@ const exists = (p: string) => existsSync(resolve(ROOT, p));
 const ACTIONS = read("app/admin/customers/actions.ts");
 const CUSTOMER_PAGE = read("app/admin/customers/[id]/page.tsx");
 const LAYOUT = read("app/admin/layout.tsx");
+// Product UX rebuild: the HQ nav moved to a grouped model. Reachability of a
+// surface is now asserted by href against that single source of truth.
+const HQ_MODEL = read("app/admin/_nav/hq-nav-model.ts");
 
 // =====================================================================
 // Step 1 — HQ overview
@@ -31,7 +34,7 @@ describe("Phase 6 — Step 1: HQ overview", () => {
   });
 
   it("HQ_NAV exposes Overview", () => {
-    expect(LAYOUT).toMatch(/href: "\/admin\/overview", label: "Overview"/);
+    expect(HQ_MODEL).toMatch(/href: "\/admin\/overview"/);
   });
 });
 
@@ -185,26 +188,29 @@ describe("Phase 6 — Step 6: billing OS (CrewFlow-side, not client)", () => {
 // =====================================================================
 
 describe("Phase 6 — HQ_NAV covers every directive section", () => {
-  const labels = [
-    "Overview",
-    "Demos CRM",
-    "Customers",
-    "Onboarding & migration",
-    "Billing",
-    "Support queue",
-    "Notifications",
-    "Alerts",
-    "Analytics",
-    "Impersonation log",
-    "Internal notes",
-    "Customer health",
-    "Ops",
-    "Automations",
-    "Settings",
+  // Every directive section is still reachable — asserted by stable href against
+  // the grouped nav model (labels are presentation and were intentionally
+  // refreshed in the rebuild, e.g. "Ops" → "System status").
+  const hrefs = [
+    "/admin/overview",
+    "/admin/demos",
+    "/admin/customers",
+    "/admin/onboarding",
+    "/admin/billing",
+    "/admin/support",
+    "/admin/notifications",
+    "/admin/alerts",
+    "/admin/analytics",
+    "/admin/impersonation",
+    "/admin/notes",
+    "/admin/health",
+    "/admin/ops",
+    "/admin/automations",
+    "/admin/settings",
   ];
-  for (const label of labels) {
-    it(`HQ_NAV includes "${label}"`, () => {
-      expect(LAYOUT).toMatch(new RegExp(`label:\\s*"${label}"`));
+  for (const href of hrefs) {
+    it(`HQ nav includes ${href}`, () => {
+      expect(HQ_MODEL).toMatch(new RegExp(`href: "${href.replace(/\//g, "\\/")}"`));
     });
   }
 });

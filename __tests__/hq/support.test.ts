@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { utilityForRole } from "@/app/(app)/_nav/nav-model";
 import { resolve } from "node:path";
 import {
   SUPPORT_STATUSES,
@@ -63,7 +64,9 @@ const HQ_DETAIL = read("app/admin/support/[id]/page.tsx");
 // gated behind a confirm. Tests that pinned reply-form internals
 // now read the dedicated file.
 const HQ_DETAIL_REPLY = read("app/admin/support/[id]/_reply-form.tsx");
-const SIDEBAR = read("app/(app)/_components/sidebar.tsx");
+// Product UX rebuild: nav destinations live in the shared model; Support is a
+// child of the demoted Help area (visible to all roles).
+const SIDEBAR = read("app/(app)/_nav/nav-model.ts");
 const HQ_LAYOUT = read("app/admin/layout.tsx");
 
 // =====================================================================
@@ -541,21 +544,25 @@ describe("HQ page wiring", () => {
 // =====================================================================
 
 describe("Customer sidebar", () => {
-  it("carries a /support link in ADMIN_LINKS", () => {
-    // Labels are now i18n message keys (nav.support) resolved through the
-    // translator; the /support href + its key are pinned here.
-    expect(SIDEBAR).toMatch(/href: "\/support", labelKey: "nav\.support"/);
+  it("carries a /support link with its i18n key", () => {
+    // Labels are i18n message keys (nav.support) resolved through the translator;
+    // the /support href + its key live in the shared nav model.
+    expect(SIDEBAR).toMatch(/href: "\/support"/);
+    expect(SIDEBAR).toMatch(/labelKey: "nav\.support"/);
   });
   it("also offers Support to staff role", () => {
-    // Both link arrays expose /support so even staff can raise tickets.
-    const supportCount = (SIDEBAR.match(/"\/support"/g) ?? []).length;
-    expect(supportCount).toBeGreaterThanOrEqual(2);
+    // Support sits under the Help area, which is visible to every role, so even
+    // staff can raise tickets.
+    const staffHrefs = utilityForRole("staff").flatMap((a) =>
+      a.children.map((c) => c.href),
+    );
+    expect(staffHrefs).toContain("/support");
   });
 });
 
 describe("HQ_NAV — support is ready + badge wired", () => {
   it("support entry has no shipsIn flag", () => {
-    expect(HQ_LAYOUT).toMatch(/href: "\/admin\/support", label: "Support queue" \}/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href: "\/admin\/support"/);
     expect(HQ_LAYOUT).not.toMatch(/href: "\/admin\/support"[^}]*shipsIn:/);
   });
 
@@ -568,7 +575,13 @@ describe("HQ_NAV — support is ready + badge wired", () => {
     expect(HQ_LAYOUT).toMatch(/\.catch\(\(\) => 0\)/);
   });
 
-  it("NavLink renders badge prop for the support entry", () => {
-    expect(HQ_LAYOUT).toMatch(/badge=\{[^}]*supportBadge/);
+  it("the support badge is wired into the grouped nav (desktop + mobile)", () => {
+    // Rebuild: the flat NavLink is gone; the layout passes the live supportBadge
+    // to the grouped HqSidebar + HqNavMobile, which render it on the /admin/support
+    // child (badge: "support" in the model).
+    expect(HQ_LAYOUT).toMatch(/supportBadge=\{supportBadge\}/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(
+      /href: "\/admin\/support"[^}]*badge: "support"/,
+    );
   });
 });

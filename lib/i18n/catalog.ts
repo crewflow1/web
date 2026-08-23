@@ -120,6 +120,23 @@ export const enGB: MessageCatalogue = {
   "nav.my_day": "My day",
   "nav.leave": "Leave",
 
+  // ── App-shell PRIMARY-AREA labels (product UX rebuild — grouped IA) ──────
+  // The eight workflow areas that group the destinations above. Additive: the
+  // existing per-destination keys are unchanged, so en-GB stays byte-identical.
+  "nav.sales": "Sales",
+  "nav.projects": "Projects",
+  "nav.people": "People",
+  "nav.money": "Money",
+  "nav.site_safety": "Site & safety",
+  // Second-level destinations that did not previously have a nav key.
+  "nav.calendar": "Calendar",
+  "nav.job_templates": "Job templates",
+  "nav.permits": "Permits",
+  "nav.rota": "Rota",
+  "nav.conversations": "Conversations",
+  "nav.review_queue": "Review queue",
+  "nav.delivery_audit": "Delivery audit",
+
   // ── Settings page — headings / section labels (real page surface) ────────
   "settings.title": "Settings",
   "settings.subtitle": "Your profile, your organisation, and the people in it.",

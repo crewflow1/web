@@ -760,7 +760,7 @@ describe("snapshot service", () => {
 
 describe("HQ_NAV — analytics is ready", () => {
   it("analytics entry has no shipsIn flag", () => {
-    expect(LAYOUT).toMatch(/href: "\/admin\/analytics", label: "Analytics" \}/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href: "\/admin\/analytics"/);
     expect(LAYOUT).not.toMatch(/href: "\/admin\/analytics"[^}]*shipsIn:/);
   });
 });

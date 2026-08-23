@@ -152,6 +152,6 @@ describe("Product AI — the lean signal reader exposes NO PII", () => {
 
 describe("Product AI — wired into the HQ nav", () => {
   it("the admin nav links to /admin/product-ai", () => {
-    expect(LAYOUT).toMatch(/href:\s*"\/admin\/product-ai"/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href:\s*"\/admin\/product-ai"/);
   });
 });

@@ -316,7 +316,7 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE job's retention releases (.eq('job_id').eq('org_id')) — feeds the committed/forecast retention figure for a single job; retention is released in 1-2 tranches per job, never near 1000. (Surfaced once C66-B de-vacuumed the cast-form windowing; the read is org-pinned per C66-A's cross-org money-injection fix. Moved 176→177 when the stock-COGS wave added one import line above it.)",
   "app/(app)/jobs/[id]/commercial/page.tsx:182":
     "bounded: ONE job's purchase orders (.eq('job_id')) — feeds the committed-costs tile for a single job; a job has a handful to dozens of POs, never near 1000. (Moved 181→182 when the stock-COGS wave added one import line above it.)",
-  "app/(app)/jobs/[id]/page.tsx:330":
+  "app/(app)/jobs/[id]/page.tsx:336":
     "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap. (Moved 315→317 when the P3 span column + checklist import were added above it; then 317→330 when the stock-COGS wave added an import line + the loadStockCogsCostRows composition block above it.)",
   "app/(app)/jobs/retention-actions.ts:163":
     "bounded: ONE job's invoices (.eq('job_id')) — folded into the retention position for a single job; a job's invoices are a handful",
@@ -418,10 +418,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE org's members (.eq('org_id')) — the rota staff list + assign-form labels; bounded by the org's headcount",
   "app/customer-portal/_warranties.ts:133":
     "bounded: completion_certificates for the customer's OWN warranty job set (.eq('org_id').eq('status','issued').in('job_id', <de-duped set from the customer's visible warranties>)) — one issued cert per job, bounded by the customer's warranties, not a cross-tenant scan",
-  "server/auth/session.ts:122":
-    "bounded: ONE user's memberships (.eq('user_id')) — org resolution / active-org fallback; a user belongs to a handful of orgs, never near 1000",
-  "server/auth/session.ts:220":
-    "bounded: ONE user's memberships (.eq('user_id')) — the header org switcher (listOrgsForUser); a user belongs to a handful of orgs",
+  "server/auth/session.ts:147":
+    "bounded: ONE user's memberships (.eq('user_id')) — loadMembershipsWithOrgs, the single cached membership+org read now shared by BOTH org resolution (getOrgForUser) and the header switcher (listOrgsForUser); a user belongs to a handful of orgs, never near 1000. (Consolidated from the former two reads at :128/:226 in the product-UX perf pass.)",
   "lib/email/send-leave.ts:60":
     "bounded: ONE org's owner/admin recipients (.eq('org_id').in('role', ['owner','admin'])) — a handful of privileged users per org, far below 1000",
   "lib/email/send-material-request.ts:110":

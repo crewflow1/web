@@ -71,7 +71,9 @@ const CUSTOMER_PAGE = read("app/(app)/notifications/page.tsx");
 const HQ_PAGE = read("app/admin/notifications/page.tsx");
 const CUSTOMER_ACTIONS = read("app/(app)/notifications/actions.ts");
 const HQ_ACTIONS = read("app/admin/notifications/actions.ts");
-const SIDEBAR = read("app/(app)/_components/sidebar.tsx");
+// Product UX rebuild: notifications moved from a per-role sidebar item to the
+// shell header bell (rendered unconditionally for every role).
+const SHELL_LAYOUT = read("app/(app)/layout.tsx");
 const HQ_LAYOUT = read("app/admin/layout.tsx");
 const SUPPORT_HQ = read("app/admin/support/actions.ts");
 const SUPPORT_CUSTOMER = read("app/(app)/support/actions.ts");
@@ -707,13 +709,13 @@ describe("HQ page wiring", () => {
 // =====================================================================
 
 describe("nav wiring", () => {
-  it("customer sidebar has /notifications for both roles", () => {
-    expect(SIDEBAR).toMatch(/href: "\/notifications"/);
-    const occurrences = (SIDEBAR.match(/"\/notifications"/g) ?? []).length;
-    expect(occurrences).toBeGreaterThanOrEqual(2);
+  it("notifications reachable via the shell header bell for both roles", () => {
+    // The NotificationsBell renders unconditionally in the app shell header, so
+    // every role reaches notifications regardless of the grouped nav.
+    expect(SHELL_LAYOUT).toMatch(/NotificationsBell/);
   });
   it("HQ_NAV has /admin/notifications without shipsIn", () => {
-    expect(HQ_LAYOUT).toMatch(/href: "\/admin\/notifications", label: "Notifications" \}/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href: "\/admin\/notifications"/);
     expect(HQ_LAYOUT).not.toMatch(/href: "\/admin\/notifications"[^}]*shipsIn:/);
   });
   it("HQ_NAV badge wired to getUnreadCountForHq", () => {

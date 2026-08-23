@@ -1,133 +1,43 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { ChevronDown } from "lucide-react";
 import { createTranslator } from "@/lib/i18n";
+import {
+  navForRole,
+  utilityForRole,
+  activeAreaId,
+  areaLandingHref,
+  isHrefActive,
+  type NavArea,
+  type NavRole,
+} from "../_nav/nav-model";
+import { NavIcon } from "../_nav/icons";
 
 /**
- * App sidebar navigation.
+ * App sidebar — the grouped, hierarchical primary navigation (product UX
+ * rebuild, Wave 1A). Replaces the previous flat ~44-item list.
  *
- * Client component because we read pathname to highlight the active link.
- * Mobile: hidden behind the header (md:block).
+ * Reads the single nav model (../_nav/nav-model.ts) so this, the mobile nav and
+ * the command palette can never drift. Progressive disclosure: eight small
+ * first-level areas; the active area's second-level destinations expand beneath
+ * it, and any area can be toggled. The current area + page are always obvious.
  *
- * Role scoping (Wave 4): staff see a slim nav focused on their day —
- * My day / Jobs / Leave. Owners/admins see the full business surface.
+ * Calm by construction: icons only at the area level, text-only children, one
+ * subtle active treatment, no badges/gradients/shadows. Client component only
+ * because it reads the pathname and remembers which areas are expanded.
  *
- * i18n: labels are message KEYS resolved through a translator built from the
- * negotiated `locale` prop (server → layout → here). The translator is pure and
- * isomorphic, so it runs client-side; for en-GB every key resolves to the exact
- * prior English label (byte-identical). A non-en-GB locale renders any overridden
- * key from its catalogue and falls back to en-GB per key.
+ * i18n: labels resolve through the negotiated locale, falling back to the
+ * model's en-GB label when a key is not yet in the catalogue.
  */
 
-const ADMIN_LINKS = [
-  { href: "/dashboard", labelKey: "nav.dashboard" },
-  // Renamed from "Get paid" when /cash gained the money-OUT side and a net
-  // position: the page now answers "where do we stand", not just "who owes us".
-  { href: "/cash", labelKey: "nav.cash" },
-  // One inbox: the /inbox area now carries a tab bar (enquiries · conversations
-  // · review queue · delivery audit), so the sidebar needs a single entry rather
-  // than one per surface.
-  { href: "/inbox", labelKey: "nav.inbox" },
-  { href: "/leads", labelKey: "nav.leads" },
-  { href: "/jobs", labelKey: "nav.jobs" },
-  { href: "/snags", labelKey: "nav.snagging" },
-  { href: "/diary", labelKey: "nav.site_diary" },
-  { href: "/toolbox", labelKey: "nav.toolbox" },
-  { href: "/health-safety", labelKey: "nav.health_safety" },
-  // Works quality (ITPs) sits beside H&S, not under Snagging: snags are defects
-  // FOUND after the fact, an ITP is the plan that proves the works were built
-  // right in the first place. Different question, opposite direction.
-  { href: "/quality", labelKey: "nav.quality" },
-  // Delays & EOT sits beside quality: both are contemporaneous-record
-  // registers — one proves the works were built right, the other proves what
-  // stopped them. The evidence log behind any extension-of-time claim.
-  { href: "/delays", labelKey: "nav.delays" },
-  // Weather sits with health & safety, not with the estate: the limits it
-  // applies are wind/frost/rain limits from WAHR 2005, LOLER 1998 and CDM 2015,
-  // and the question it answers ("can this work happen safely today") is the
-  // same question the surfaces above it answer. Ships DARK — no provider is
-  // connected, and the page says so rather than showing a forecast it has not got.
-  { href: "/weather", labelKey: "nav.weather" },
-  { href: "/site-reports", labelKey: "nav.site_reports" },
-  // The drawing register across every job (the Blueprint Centre). The full
-  // viewer/compare/markup experience stays job-scoped at /jobs/[id]/blueprints;
-  // this top-level entry is the org-wide index into it. Sits with the other
-  // document-shaped surfaces (site reports, documents).
-  { href: "/blueprints", labelKey: "nav.drawings" },
-  // Org-wide document home: aggregates per-job documents + the universal
-  // attachment store into one searchable list. Sits after Site reports (the
-  // other document-shaped surface) and before the commercial group.
-  { href: "/documents", labelKey: "nav.documents" },
-  { href: "/customers", labelKey: "nav.customers" },
-  { href: "/quotes", labelKey: "nav.quotes" },
-  { href: "/price-book", labelKey: "nav.price_book" },
-  { href: "/suppliers", labelKey: "nav.suppliers" },
-  { href: "/purchase-orders", labelKey: "nav.purchase_orders" },
-  { href: "/expenses", labelKey: "nav.expenses" },
-  { href: "/finances", labelKey: "nav.finances" },
-  { href: "/invoices", labelKey: "nav.invoices" },
-  { href: "/payments", labelKey: "nav.payments" },
-  { href: "/payroll", labelKey: "nav.payroll" },
-  { href: "/cis", labelKey: "nav.cis" },
-  { href: "/tax", labelKey: "nav.tax" },
-  { href: "/staff", labelKey: "nav.staff" },
-  // Operations heads the estate group: the cross-cutting "what needs me" view,
-  // then the registers it reads from.
-  { href: "/operations", labelKey: "nav.operations" },
-  { href: "/assets", labelKey: "nav.assets" },
-  { href: "/fleet", labelKey: "nav.fleet" },
-  // Stock sits with the estate, between the registers of THINGS (assets, fleet)
-  // and the register of PLACES (sites) — it is the one that joins them: a
-  // quantity of a thing, at a place. Not under Purchase orders: buying and
-  // holding are different questions, and the stock you hold outlives the order
-  // it arrived on.
-  { href: "/stock", labelKey: "nav.stock" },
-  { href: "/materials/requests", labelKey: "nav.material_requests" },
-  // The company's own places (depots, yards, lock-ups) — reference data both
-  // registers above point at. NOT customer job sites, which live on the job.
-  { href: "/sites", labelKey: "nav.sites" },
-  // Per-site inductions, visitor log and live fire-muster roll. Sits by Sites
-  // (the register of places) because it operates ON those places, and by H&S in
-  // spirit — the gate that puts a worker onto a site and accounts for everyone
-  // on it. Distinct from /compliance (the org's insurance/certificate library).
-  { href: "/site-compliance", labelKey: "nav.site_compliance" },
-  { href: "/compliance", labelKey: "nav.compliance" },
-  { href: "/reviews", labelKey: "nav.reviews" },
-  { href: "/imports", labelKey: "nav.migrate_data" },
-  { href: "/reports", labelKey: "nav.reports" },
-  { href: "/insights", labelKey: "nav.ai_insights" },
-  { href: "/notifications", labelKey: "nav.notifications" },
-  { href: "/help", labelKey: "nav.help" },
-  { href: "/support", labelKey: "nav.support" },
-  { href: "/settings", labelKey: "nav.settings" },
-];
+const STORAGE_KEY = "cf-nav-expanded";
 
-const STAFF_LINKS = [
-  { href: "/me", labelKey: "nav.my_day" },
-  { href: "/jobs", labelKey: "nav.jobs" },
-  { href: "/snags", labelKey: "nav.snagging" },
-  { href: "/diary", labelKey: "nav.site_diary" },
-  { href: "/toolbox", labelKey: "nav.toolbox" },
-  // Site staff read drawings on site (view / compare revisions / mark up), so the
-  // register belongs in the slim nav too. Links to the org-wide index; the viewer
-  // itself stays job-scoped.
-  { href: "/blueprints", labelKey: "nav.drawings" },
-  // Site staff run the gate: they induct operatives, sign visitors in/out and
-  // pull the muster when the alarm goes. This is site work, so it is in the slim
-  // nav too.
-  { href: "/site-compliance", labelKey: "nav.site_compliance" },
-  // Staff need this: the person signing off a hold point on site IS site staff.
-  { href: "/quality", labelKey: "nav.quality" },
-  // ...and the person standing in the rain when work stops is the one who
-  // should log it the same day. Recording delays is site work.
-  { href: "/delays", labelKey: "nav.delays" },
-  { href: "/staff/leave", labelKey: "nav.leave" },
-  { href: "/notifications", labelKey: "nav.notifications" },
-  { href: "/help", labelKey: "nav.help" },
-  { href: "/support", labelKey: "nav.support" },
-  { href: "/settings", labelKey: "nav.settings" },
-];
+function coerceRole(role: string): NavRole {
+  return role === "staff" || role === "admin" || role === "owner" ? role : "owner";
+}
 
 export function Sidebar({
   role = "owner",
@@ -137,36 +47,163 @@ export function Sidebar({
   locale?: string;
 }) {
   const pathname = usePathname();
-  const { t } = createTranslator(locale);
-  const LINKS = role === "staff" ? STAFF_LINKS : ADMIN_LINKS;
+  const tr = createTranslator(locale);
+  const label = (key: string | undefined, fallback: string) =>
+    key && tr.has(key) ? tr.t(key) : fallback;
+
+  const navRole = coerceRole(role);
+  const areas = navForRole(navRole);
+  const utility = utilityForRole(navRole);
+  const activeId = activeAreaId(pathname);
+
+  // Expand state: explicit user toggles override the default (active area open).
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) setOverrides(JSON.parse(raw));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const setOpen = (id: string, open: boolean) => {
+    setOverrides((prev) => {
+      const next = { ...prev, [id]: open };
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+  const isOpen = (area: NavArea) =>
+    overrides[area.id] ?? area.id === activeId;
 
   return (
     <nav
       aria-label="Primary"
-      className="hidden md:block w-56 shrink-0 border-r border-slate-200 bg-white px-3 py-4"
+      className="hidden md:flex md:flex-col w-60 shrink-0 border-r border-slate-200 bg-white"
     >
-      <ul className="space-y-1">
-        {LINKS.map((link) => {
-          // active if pathname matches exactly OR is a nested route under it
-          const isActive =
-            pathname === link.href || pathname.startsWith(`${link.href}/`);
-          return (
-            <li key={link.href}>
-              <Link
-                href={link.href}
-                aria-current={isActive ? "page" : undefined}
-                className={
-                  isActive
-                    ? "block rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white"
-                    : "block rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
-                }
-              >
-                {t(link.labelKey)}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
+      <div className="flex-1 overflow-y-auto px-3 py-4">
+        <ul className="space-y-0.5">
+          {areas.map((area) => {
+            const areaActive = area.id === activeId;
+            const hasChildren = area.children.length > 0;
+            const open = hasChildren && isOpen(area);
+            return (
+              <li key={area.id}>
+                {/* Row: the area link (flex-1) + a non-overlapping toggle. The
+                    toggle is a full 36px target (WCAG 2.5.8) and a sibling, not
+                    an overlay, so adjacent targets never collide. */}
+                <div className="group flex items-center gap-0.5">
+                  <Link
+                    href={areaLandingHref(area)}
+                    aria-current={areaActive && !hasChildren ? "page" : undefined}
+                    className={[
+                      "flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-3 py-2 text-sm transition",
+                      areaActive
+                        ? "font-semibold text-slate-900"
+                        : "font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+                      areaActive && !hasChildren ? "bg-slate-100" : "",
+                    ].join(" ")}
+                  >
+                    <NavIcon
+                      name={area.icon}
+                      className={
+                        areaActive
+                          ? "h-[18px] w-[18px] shrink-0 text-slate-900"
+                          : "h-[18px] w-[18px] shrink-0 text-slate-400 group-hover:text-slate-600"
+                      }
+                    />
+                    <span className="truncate">{label(area.labelKey, area.label)}</span>
+                  </Link>
+                  {hasChildren ? (
+                    <button
+                      type="button"
+                      onClick={() => setOpen(area.id, !open)}
+                      aria-label={`${open ? "Collapse" : "Expand"} ${label(area.labelKey, area.label)}`}
+                      aria-expanded={open}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                    >
+                      <ChevronDown
+                        className={`h-4 w-4 transition-transform ${open ? "" : "-rotate-90"}`}
+                        aria-hidden
+                      />
+                    </button>
+                  ) : null}
+                </div>
+
+                {open ? (
+                  <ul className="mb-1 mt-0.5 space-y-0.5">
+                    {area.children.map((child) => {
+                      const childActive =
+                        isHrefActive(pathname, child.href) &&
+                        // only mark the longest match active (avoid /jobs marking
+                        // when on /jobs/calendar which is its own child)
+                        !area.children.some(
+                          (o) =>
+                            o !== child &&
+                            o.href.length > child.href.length &&
+                            isHrefActive(pathname, o.href),
+                        );
+                      return (
+                        <li key={child.href}>
+                          <Link
+                            href={child.href}
+                            aria-current={childActive ? "page" : undefined}
+                            className={[
+                              "block rounded-md py-1.5 pl-[38px] pr-3 text-[13px] transition",
+                              childActive
+                                ? "bg-slate-100 font-semibold text-slate-900"
+                                : "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+                            ].join(" ")}
+                          >
+                            {label(child.labelKey, child.label)}
+                          </Link>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+
+      {/* Utility — demoted from the daily areas, pinned at the foot. */}
+      <div className="border-t border-slate-200 px-3 py-3">
+        <ul className="space-y-0.5">
+          {utility.map((area) => {
+            const areaActive = area.id === activeId;
+            return (
+              <li key={area.id}>
+                <Link
+                  href={area.href}
+                  aria-current={areaActive ? "page" : undefined}
+                  className={[
+                    "group flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition",
+                    areaActive
+                      ? "bg-slate-100 font-semibold text-slate-900"
+                      : "font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+                  ].join(" ")}
+                >
+                  <NavIcon
+                    name={area.icon}
+                    className={
+                      areaActive
+                        ? "h-[18px] w-[18px] shrink-0 text-slate-900"
+                        : "h-[18px] w-[18px] shrink-0 text-slate-400 group-hover:text-slate-600"
+                    }
+                  />
+                  <span className="truncate">{label(area.labelKey, area.label)}</span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
     </nav>
   );
 }

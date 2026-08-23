@@ -88,6 +88,6 @@ describe("Finance AI — absent sources are honest literal nulls (no fabricated 
 
 describe("Finance AI — wired into the HQ nav", () => {
   it("the admin nav links to /admin/finance", () => {
-    expect(LAYOUT).toMatch(/href:\s*"\/admin\/finance"/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href:\s*"\/admin\/finance"/);
   });
 });

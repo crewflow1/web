@@ -381,7 +381,7 @@ describe("customer-detail internal-notes panel", () => {
 
 describe("HQ_NAV — internal notes is ready", () => {
   it("/admin/notes has no shipsIn flag", () => {
-    expect(HQ_LAYOUT).toMatch(/href: "\/admin\/notes", label: "Internal notes" \}/);
+    expect(read("app/admin/_nav/hq-nav-model.ts")).toMatch(/href: "\/admin\/notes"/);
     expect(HQ_LAYOUT).not.toMatch(/href: "\/admin\/notes"[^}]*shipsIn:/);
   });
 });

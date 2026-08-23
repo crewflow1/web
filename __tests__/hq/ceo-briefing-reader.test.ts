@@ -227,8 +227,12 @@ describe("reader page — admin-gated & untrusted-safe (source contract)", () =>
     expect(page).not.toMatch(/\.insert\(|\.update\(|\.delete\(|hq_record_ceo_briefing/);
   });
 
-  it("is registered in the HQ nav under the CEO Dashboard", () => {
-    const layout = readFileSync(resolve(ROOT, "app/admin/layout.tsx"), "utf8");
-    expect(layout).toMatch(/\/admin\/ceo\/briefings/);
+  it("is registered in the HQ nav under Home", () => {
+    // Nav moved to the grouped model; Morning briefings lives under the Home area.
+    const model = readFileSync(
+      resolve(ROOT, "app/admin/_nav/hq-nav-model.ts"),
+      "utf8",
+    );
+    expect(model).toMatch(/\/admin\/ceo\/briefings/);
   });
 });
