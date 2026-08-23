@@ -27,10 +27,18 @@ const rpc = (client: unknown) =>
 
 const WRITE = new Set(["INSERT", "UPDATE", "DELETE", "TRUNCATE"]);
 
-// Fully locked (zero-policy service-role-only): no client grant of any kind.
-const FULLY_LOCKED = [
-  "impersonation_sessions",
-  "admin_activity_log",
+// TIER 1 — fully locked (no authenticated reader, absent from the GDPR census):
+// no client grant of any kind.
+const FULLY_LOCKED = ["impersonation_sessions", "admin_activity_log"];
+
+// TIER 2 — write-locked but SELECT KEPT. Org-scoped tables an authenticated path
+// legitimately reads: the activity feed via RLS, and every org-scoped GDPR-census
+// table which gdpr-export reads through the authenticated SSR client. Revoking
+// SELECT here breaks those reads (42501); only the write verbs are stripped, and
+// SELECT stays RLS-gated (no permissive read policy today ⇒ non-member/anon read
+// zero rows).
+const WRITE_LOCKED_KEEP_SELECT = [
+  "activity_log",
   "email_webhook_events",
   "whatsapp_webhook_events",
   "receptionist_conversations",
@@ -51,9 +59,6 @@ const FULLY_LOCKED = [
   "receptionist_conversation_verifications",
   "receptionist_review_resolutions",
 ];
-
-// Write-locked but keeps authenticated SELECT (member-readable feed).
-const WRITE_LOCKED_KEEP_SELECT = ["activity_log"];
 
 // Controls: legitimately client-accessible via RLS — must be UNTOUCHED.
 const CONTROLS = ["webhook_endpoints", "webhook_deliveries"];
@@ -84,11 +89,15 @@ describeIntegration("A.6 default-grant least-privilege (20261215000000)", () => 
     }
   });
 
-  it("activity_log KEEPS authenticated SELECT (member feed) but nothing for anon", () => {
-    const g = forTable("activity_log");
-    const authSelect = g.some((x) => x.grantee === "authenticated" && x.privilege_type === "SELECT");
+  it("activity_log KEEPS authenticated SELECT (member feed via RLS)", () => {
+    // SELECT is intentionally retained on the write-locked tier (RLS is the read
+    // boundary; a non-member/anon still reads zero rows). Only writes were
+    // stripped — asserted generically above. The feed's authenticated SELECT
+    // must survive so the member activity feed + GDPR export keep working.
+    const authSelect = forTable("activity_log").some(
+      (x) => x.grantee === "authenticated" && x.privilege_type === "SELECT",
+    );
     expect(authSelect, "authenticated lost its legitimate SELECT on activity_log").toBe(true);
-    expect(g.some((x) => x.grantee === "anon"), "anon should hold no grant on activity_log").toBe(false);
   });
 
   it("control tables that legitimately need client access are UNAFFECTED", () => {

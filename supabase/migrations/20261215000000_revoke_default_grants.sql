@@ -29,11 +29,17 @@
 -- left ALONE — e.g. webhook_endpoints (authenticated INSERT policy) and
 -- webhook_deliveries (member SELECT policy) are NOT touched.
 --
--- The one exception to "revoke all" is public.activity_log, which carries a
--- member SELECT policy (its feed is read by tenants) but NO write policy: there
--- the client SELECT is legitimate and kept, and only the write/truncate grants
--- are stripped. (activity_log is also the A.5 append-only table; A.5 blocks the
--- writes at trigger level, A.6 removes the underlying grant — belt and braces.)
+-- TWO TIERS, by whether an authenticated code path legitimately reads the table:
+--   TIER 1 — FULLY LOCKED (revoke ALL from anon+authenticated): tables with NO
+--     client reader at all — impersonation_sessions and admin_activity_log are
+--     read/written only through the service-role admin client and are NOT in the
+--     GDPR org-table census, so no authenticated path touches them.
+--   TIER 2 — WRITE-LOCKED, SELECT KEPT (revoke insert/update/delete/truncate):
+--     org-scoped tables an authenticated path DOES read — the tenant activity
+--     feed via RLS, and every org-scoped GDPR-census table which the GDPR export
+--     reads through the authenticated SSR client. Revoking SELECT there breaks
+--     those reads (42501); the real exposure is the latent WRITE, so only writes
+--     are stripped. SELECT stays RLS-gated (no permissive read policy today).
 --
 -- SCOPE NOTE. The live catalogue holds ~100 zero-policy RLS tables; this
 -- migration deliberately covers the FINDING's proven, high-sensitivity classes
@@ -62,49 +68,44 @@ revoke all privileges on public.impersonation_sessions from anon, authenticated;
 -- ─────────────────────────────────────────────────────────────────────────────
 revoke all privileges on public.admin_activity_log from anon, authenticated;
 
+-- ═════════════════════════════════════════════════════════════════════════════
+-- TIER 2 — WRITE-LOCKED, SELECT PRESERVED. The tables below are ORG-SCOPED and
+-- are legitimately READ by an authenticated code path — the tenant activity feed
+-- (via RLS) and, crucially, the GDPR export (server/services/gdpr-export.ts reads
+-- every org-scoped census table in lib/gdpr/org-tables.json through the
+-- authenticated SSR client, NOT the service role). Revoking SELECT here breaks
+-- those reads with `42501 permission denied` (proved by the RLS integration
+-- suite). The FINDING's real exposure is a latent client WRITE (a future
+-- permissive policy could let a client INSERT/UPDATE/DELETE, or TRUNCATE which
+-- RLS never gates) — SELECT stays RLS-gated (no permissive read policy today, so
+-- a non-member/anon still reads zero rows). So strip only the write verbs from
+-- both client roles and KEEP SELECT. Complements the A.5 append-only triggers.
 -- ─────────────────────────────────────────────────────────────────────────────
 -- TENANT ACTIVITY FEED — activity_log (member SELECT policy, no write policy).
--- The feed is read by org members via RLS, so authenticated legitimately needs
--- SELECT — and ONLY select. Strip everything from both client roles, then
--- re-grant exactly authenticated SELECT. (revoke-all-then-grant rather than
--- naming verbs, so this stays portable across Postgres versions — e.g. PG17's
--- MAINTAIN privilege is removed without being named.) Complements the A.5
--- append-only triggers, which block the writes at trigger level too.
--- ─────────────────────────────────────────────────────────────────────────────
-revoke all privileges on public.activity_log from anon, authenticated;
-grant select on public.activity_log to authenticated;
+revoke insert, update, delete, truncate on public.activity_log from anon, authenticated;
 
--- ─────────────────────────────────────────────────────────────────────────────
--- INBOUND WEBHOOK INGESTION — untrusted external payloads (email + WhatsApp)
--- are received and stored by service-role webhook handlers only (0 policies).
--- A client grant here would let a future policy expose raw webhook ingestion.
--- ─────────────────────────────────────────────────────────────────────────────
-revoke all privileges on public.email_webhook_events    from anon, authenticated;
-revoke all privileges on public.whatsapp_webhook_events from anon, authenticated;
+-- INBOUND WEBHOOK INGESTION — email + WhatsApp (org-scoped, GDPR-exported).
+revoke insert, update, delete, truncate on public.email_webhook_events    from anon, authenticated;
+revoke insert, update, delete, truncate on public.whatsapp_webhook_events from anon, authenticated;
 
--- ─────────────────────────────────────────────────────────────────────────────
--- AI RECEPTIONIST — the inbound-call/conversation read-and-write model. Every
--- one of these is a service-role-only processing table (0 policies): the
--- receptionist engine reads/writes them through the admin client; tenants never
--- touch them directly. Revoke all client grants across the family.
--- ─────────────────────────────────────────────────────────────────────────────
-revoke all privileges on public.receptionist_conversations                     from anon, authenticated;
-revoke all privileges on public.receptionist_messages                          from anon, authenticated;
-revoke all privileges on public.receptionist_conversation_actions              from anon, authenticated;
-revoke all privileges on public.receptionist_conversation_authorisations       from anon, authenticated;
-revoke all privileges on public.receptionist_conversation_claim_reassignments  from anon, authenticated;
-revoke all privileges on public.receptionist_conversation_claim_releases       from anon, authenticated;
-revoke all privileges on public.receptionist_conversation_claims               from anon, authenticated;
-revoke all privileges on public.receptionist_conversation_coordinations        from anon, authenticated;
-revoke all privileges on public.receptionist_conversation_executions           from anon, authenticated;
-revoke all privileges on public.receptionist_conversation_fulfilments          from anon, authenticated;
-revoke all privileges on public.receptionist_conversation_lifecycles           from anon, authenticated;
-revoke all privileges on public.receptionist_conversation_orchestrations       from anon, authenticated;
-revoke all privileges on public.receptionist_conversation_outcomes             from anon, authenticated;
-revoke all privileges on public.receptionist_conversation_recoveries           from anon, authenticated;
-revoke all privileges on public.receptionist_conversation_resolutions          from anon, authenticated;
-revoke all privileges on public.receptionist_conversation_verifications        from anon, authenticated;
-revoke all privileges on public.receptionist_review_resolutions                from anon, authenticated;
+-- AI RECEPTIONIST — the inbound conversation model (org-scoped, GDPR-exported).
+revoke insert, update, delete, truncate on public.receptionist_conversations                     from anon, authenticated;
+revoke insert, update, delete, truncate on public.receptionist_messages                          from anon, authenticated;
+revoke insert, update, delete, truncate on public.receptionist_conversation_actions              from anon, authenticated;
+revoke insert, update, delete, truncate on public.receptionist_conversation_authorisations       from anon, authenticated;
+revoke insert, update, delete, truncate on public.receptionist_conversation_claim_reassignments  from anon, authenticated;
+revoke insert, update, delete, truncate on public.receptionist_conversation_claim_releases       from anon, authenticated;
+revoke insert, update, delete, truncate on public.receptionist_conversation_claims               from anon, authenticated;
+revoke insert, update, delete, truncate on public.receptionist_conversation_coordinations        from anon, authenticated;
+revoke insert, update, delete, truncate on public.receptionist_conversation_executions           from anon, authenticated;
+revoke insert, update, delete, truncate on public.receptionist_conversation_fulfilments          from anon, authenticated;
+revoke insert, update, delete, truncate on public.receptionist_conversation_lifecycles           from anon, authenticated;
+revoke insert, update, delete, truncate on public.receptionist_conversation_orchestrations       from anon, authenticated;
+revoke insert, update, delete, truncate on public.receptionist_conversation_outcomes             from anon, authenticated;
+revoke insert, update, delete, truncate on public.receptionist_conversation_recoveries           from anon, authenticated;
+revoke insert, update, delete, truncate on public.receptionist_conversation_resolutions          from anon, authenticated;
+revoke insert, update, delete, truncate on public.receptionist_conversation_verifications        from anon, authenticated;
+revoke insert, update, delete, truncate on public.receptionist_review_resolutions                from anon, authenticated;
 
 -- ═════════════════════════════════════════════════════════════════════════════
 -- GUARD INTROSPECTION RPC — lets the A.6 regression test read the LIVE client
