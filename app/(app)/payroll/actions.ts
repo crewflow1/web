@@ -151,13 +151,13 @@ export async function createPayrollRun(
   // unique per membership row within an org; `id` added as a defensive tiebreak).
   type MemberRow = {
     user_id: string;
-    user: { id: string; full_name: string | null; hourly_pay: number | null } | null;
+    user: { id: string; full_name: string | null } | null;
   };
   const { data: members, error: membersError } = await fetchAllRows<MemberRow>(
     (from, to) =>
       supabase
         .from("memberships")
-        .select("user_id, user:users ( id, full_name, hourly_pay )")
+        .select("user_id, user:users ( id, full_name )")
         .eq("org_id", ctx.org.id)
         .order("user_id", { ascending: true })
         .order("id", { ascending: true })
@@ -169,6 +169,33 @@ export async function createPayrollRun(
   // A failed read here would write a £0 run and report success — payroll
   // mismatches are RED, so fail loud instead.
   if (membersError) throw readFailure("payroll create: members", membersError);
+
+  // Per-user pay from staff_compensation (20261218) — payroll is admin-only, so
+  // the self-or-admin RLS admits every member's rate here (identical values to the
+  // former users.hourly_pay embed). LOUD: a failed pay read must not write a £0
+  // run, so it throws rather than defaulting rates to nothing.
+  const payMemberIds = [...new Set((members ?? []).map((m) => (m as { user_id: string }).user_id))];
+  const payByUser = new Map<string, number>();
+  if (payMemberIds.length > 0) {
+    const { data: compRows, error: compErr } = await fetchAllRows<{
+      user_id: string;
+      hourly_pay: number | string | null;
+    }>((from, to) =>
+      supabase
+        .from("staff_compensation")
+        .select("user_id, hourly_pay")
+        .in("user_id", payMemberIds)
+        .order("user_id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: { user_id: string; hourly_pay: number | string | null }[] | null;
+        error: unknown;
+      }>,
+    );
+    if (compErr) throw readFailure("payroll create: compensation", compErr);
+    for (const c of compRows ?? []) {
+      if (c.hourly_pay != null) payByUser.set(c.user_id, Number(c.hourly_pay));
+    }
+  }
   // ACTIVE-org pin — this is the hours source for every line in the run, and
   // the single most expensive omission in this file. `time_entries_select` is
   // `org_id in current_org_ids()`, which admits EVERY org the caller belongs
@@ -274,7 +301,7 @@ export async function createPayrollRun(
   const lines: PayrollLineInsert[] = [];
   for (const m of members ?? []) {
     const uid = (m as { user_id: string }).user_id;
-    const u = (m as { user?: { id: string; full_name: string | null; hourly_pay: number | null } }).user;
+    const u = (m as { user?: { id: string; full_name: string | null } }).user;
     const hours = hoursByU.get(uid) ?? 0;
     const profile = taxProfiles.get(uid);
     const hoursPerDay = standardHoursPerDayFromStoredProfile(profile);
@@ -291,7 +318,7 @@ export async function createPayrollRun(
     const leaveHours = Math.round(leaveDays * hoursPerDay * 100) / 100;
     // A worker with ONLY holiday (no clocked hours) is still paid — do not skip.
     if (hours === 0 && leaveHours === 0) continue;
-    const hourlyPay = Number(u?.hourly_pay ?? 0);
+    const hourlyPay = Number(payByUser.get(uid) ?? 0);
     // Overtime defaults to 0 at generation; an admin records it on the draft line
     // afterwards (audited). Holiday hours are baked into gross here.
     const extras: PayrollExtras = { leaveHours };

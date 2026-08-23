@@ -214,10 +214,16 @@ function seedTwoOrgs() {
     { org_id: ORG_A, user_id: "user-a" },
     { org_id: ORG_B, user_id: "user-b" },
   ];
-  // GLOBAL table — no org_id column; reachable only via the membership ids.
+  // GLOBAL tables — no org_id column; reachable only via the membership ids.
   h.tables.users = [
-    { id: "user-a", full_name: "Alice", hourly_pay: 20 },
-    { id: "user-b", full_name: "Bob", hourly_pay: 30 },
+    { id: "user-a", full_name: "Alice" },
+    { id: "user-b", full_name: "Bob" },
+  ];
+  // Pay moved to staff_compensation (20261218, self-or-admin RLS). Also a global
+  // table scoped by member ids — same documented exception as users.
+  h.tables.staff_compensation = [
+    { user_id: "user-a", hourly_pay: 20 },
+    { user_id: "user-b", hourly_pay: 30 },
   ];
   h.tables.rota_entries = [
     // Org A: one 8-hour shift for Alice (meets the coverage sample floor).
@@ -317,24 +323,32 @@ describe("dual-org: every table read is pinned to the active org", () => {
     // 2 concentration reads + 5 CVR reads + 2 materials reads + 1 snags read.
     expect(h.reads.length).toBeGreaterThanOrEqual(14);
     for (const r of h.reads) {
-      if (r.table === "users") continue; // asserted separately below
+      // users + staff_compensation are the documented GLOBAL tables (no org_id) —
+      // asserted separately below; every other read must pin org_id.
+      if (r.table === "users" || r.table === "staff_compensation") continue;
       const orgEq = r.eqs.find(([c]) => c === "org_id");
       expect(orgEq, `${r.table} read is not org-pinned`).toBeDefined();
       expect(orgEq?.[1], `${r.table} read is pinned to the wrong org`).toBe(ORG_A);
     }
   });
 
-  it("every users read — the documented exception — is scoped by this org's membership ids", async () => {
+  it("every global-table read (users + staff_compensation) is scoped by this org's membership ids", async () => {
     await loadCompanySignals(ORG_A, NOW);
+    // users (names) is read via .in('id', memberIds); staff_compensation (pay,
+    // 20261218) via .in('user_id', memberIds). BOTH are reached ONLY through this
+    // org's membership ids — never a raw table scan, never another org's worker.
     const usersReads = h.reads.filter((r) => r.table === "users");
-    // Two documented global-table reads: utilisation (member rates for the
-    // utilisation view) and CVR labour cost (member rates for job cost). BOTH are
-    // reached ONLY through this org's membership ids — never a raw table scan,
-    // never another org's worker.
-    expect(usersReads.length).toBe(2);
+    expect(usersReads.length).toBeGreaterThanOrEqual(1);
     for (const ur of usersReads) {
       const idIn = ur.ins.find(([c]) => c === "id");
       expect(idIn, "users must be reached through .in('id', memberIds)").toBeDefined();
+      expect(idIn?.[1]).toEqual(["user-a"]); // org A's members only — never Bob
+    }
+    const compReads = h.reads.filter((r) => r.table === "staff_compensation");
+    expect(compReads.length).toBeGreaterThanOrEqual(1);
+    for (const cr of compReads) {
+      const idIn = cr.ins.find(([c]) => c === "user_id");
+      expect(idIn, "staff_compensation must be reached through .in('user_id', memberIds)").toBeDefined();
       expect(idIn?.[1]).toEqual(["user-a"]); // org A's members only — never Bob
     }
   });
@@ -540,6 +554,13 @@ describe("source pins — the read layer is read-only and pinned", () => {
     for (const { table, chain } of FROM_BLOCKS) {
       if (table === "users") {
         expect(chain, "users must be scoped by membership ids").toContain('.in("id", memberIds)');
+        continue;
+      }
+      if (table === "staff_compensation") {
+        // Global pay table (20261218) — scoped by member ids, never org-pinned.
+        expect(chain, "staff_compensation must be scoped by membership ids").toContain(
+          '.in("user_id", memberIds)',
+        );
         continue;
       }
       expect(chain, `${table} chain must pin org_id`).toContain('.eq("org_id", orgId)');

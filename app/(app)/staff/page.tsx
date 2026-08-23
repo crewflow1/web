@@ -31,7 +31,6 @@ type MemberRow = {
     email: string;
     phone: string | null;
     employment_type: string | null;
-    hourly_pay: number | null;
     start_date: string | null;
   } | null;
 };
@@ -57,12 +56,29 @@ export default async function StaffPage({
     .select(
       `
         user_id, role,
-        user:users ( id, full_name, email, phone, employment_type, hourly_pay, start_date )
+        user:users ( id, full_name, email, phone, employment_type, start_date )
       `,
     )
     .eq("org_id", ctx.org.id)
     .order("role", { ascending: true });
   if (membersError) throw readFailure("staff: members register", membersError);
+
+  // Pay is in staff_compensation (20261218) behind self-or-admin RLS: an admin
+  // reads every member's rate (full roster), a non-admin who reaches this page by
+  // URL reads only their OWN — so a co-worker's pay renders as "—", never leaked.
+  const memberIds = [...new Set((membersRaw ?? []).map((m) => m.user_id))];
+  const payByUser = new Map<string, number>();
+  if (memberIds.length > 0) {
+    const { data: compRows, error: compError } = await supabase
+      .from("staff_compensation")
+      .select("user_id, hourly_pay")
+      .in("user_id", memberIds);
+    if (compError) throw readFailure("staff: compensation", compError);
+    for (const c of compRows ?? []) {
+      const row = c as { user_id: string; hourly_pay: number | string | null };
+      if (row.hourly_pay != null) payByUser.set(row.user_id, Number(row.hourly_pay));
+    }
+  }
 
   const members = (membersRaw ?? []) as MemberRow[];
 
@@ -204,8 +220,8 @@ export default async function StaffPage({
                     </td>
                     <td className="px-6 py-2 text-slate-600">{m.user?.employment_type ?? "—"}</td>
                     <td className="px-6 py-2 text-right text-slate-600">
-                      {m.user?.hourly_pay != null
-                        ? `£${Number(m.user.hourly_pay).toFixed(2)}`
+                      {payByUser.has(m.user_id)
+                        ? `£${payByUser.get(m.user_id)!.toFixed(2)}`
                         : "—"}
                     </td>
                     <td className="px-6 py-2 text-slate-600">{m.user?.start_date ?? "—"}</td>

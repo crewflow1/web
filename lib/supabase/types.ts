@@ -19332,6 +19332,45 @@ export type Database = {
           },
         ]
       }
+      staff_compensation: {
+        Row: {
+          emergency_contact: Json | null
+          hourly_pay: number | null
+          updated_at: string
+          updated_by: string | null
+          user_id: string
+        }
+        Insert: {
+          emergency_contact?: Json | null
+          hourly_pay?: number | null
+          updated_at?: string
+          updated_by?: string | null
+          user_id: string
+        }
+        Update: {
+          emergency_contact?: Json | null
+          hourly_pay?: number | null
+          updated_at?: string
+          updated_by?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "staff_compensation_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "staff_compensation_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       staff_qualifications: {
         Row: {
           created_at: string
@@ -20603,10 +20642,8 @@ export type Database = {
           avatar_url: string | null
           created_at: string
           email: string
-          emergency_contact: Json | null
           employment_type: string | null
           full_name: string | null
-          hourly_pay: number | null
           id: string
           phone: string | null
           start_date: string | null
@@ -20616,10 +20653,8 @@ export type Database = {
           avatar_url?: string | null
           created_at?: string
           email: string
-          emergency_contact?: Json | null
           employment_type?: string | null
           full_name?: string | null
-          hourly_pay?: number | null
           id: string
           phone?: string | null
           start_date?: string | null
@@ -20629,10 +20664,8 @@ export type Database = {
           avatar_url?: string | null
           created_at?: string
           email?: string
-          emergency_contact?: Json | null
           employment_type?: string | null
           full_name?: string | null
-          hourly_pay?: number | null
           id?: string
           phone?: string | null
           start_date?: string | null
@@ -22036,6 +22069,11 @@ export type Database = {
           org_id: string
           should_alert: boolean
         }[]
+      }
+      can_read_compensation: { Args: { target_user: string }; Returns: boolean }
+      can_write_compensation: {
+        Args: { target_user: string }
+        Returns: boolean
       }
       cancel_stocktake_session: {
         Args: { p_org_id: string; p_reason?: string; p_session_id: string }

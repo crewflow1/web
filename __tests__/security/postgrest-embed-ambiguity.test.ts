@@ -351,6 +351,11 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   // an embed, so no query is ambiguous.
   "site_visitors → users",
   "snags → users",
+  // staff_compensation (20261218): user_id (the employee) + updated_by (the admin
+  // who set the rate) both → users. Reviewed: every reader selects scalar columns
+  // only (user_id, hourly_pay, emergency_contact) and NEVER embeds users(...), so
+  // no PGRST201 ambiguity can arise.
+  "staff_compensation → users",
   "staff_secrets → users",
   // stocktake_sessions: opened_by + posted_by + cancelled_by all → users. The
   // stocktake service resolves actor names by explicit reads, never a users(...)

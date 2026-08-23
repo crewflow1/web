@@ -183,19 +183,22 @@ async function buildProfitDocument(
   ];
   const hourlyByUser = new Map<string, number>();
   if (memberIds.length > 0) {
-    const payRes = await fetchAllRows<{ id: string; hourly_pay: number | string | null }>(
+    const payRes = await fetchAllRows<{ user_id: string; hourly_pay: number | string | null }>(
       (from, to) =>
         client
-          .from("users")
-          .select("id, hourly_pay")
-          .in("id", memberIds)
-          .order("id", { ascending: true })
+          // staff_compensation (20261218): hourly_pay behind self-or-admin RLS.
+          // Admin/report context reads every org member's rate — identical map to
+          // the former users.hourly_pay read.
+          .from("staff_compensation")
+          .select("user_id, hourly_pay")
+          .in("user_id", memberIds)
+          .order("user_id", { ascending: true })
           .range(from, to),
     );
     if (payRes.error) throw readFailure("reports: profit user pay", payRes.error);
     for (const u of payRes.data ?? []) {
-      if (!u.id) continue;
-      hourlyByUser.set(String(u.id), Number(u.hourly_pay ?? 0));
+      if (!u.user_id) continue;
+      hourlyByUser.set(String(u.user_id), Number(u.hourly_pay ?? 0));
     }
   }
 

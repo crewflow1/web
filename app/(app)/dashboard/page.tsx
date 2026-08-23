@@ -6,6 +6,7 @@ import { readFailure } from "@/lib/supabase/read-failure";
 import { getRequestI18n } from "@/server/i18n/request";
 import { computeReceivables } from "@/lib/invoices/receivables";
 import { computeRetentionDueRollup } from "@/lib/retentions/rollup";
+import { loadOrgHourlyPay } from "@/lib/profitability/labour-rates";
 import { ActivityFeed } from "./_activity-feed";
 import type { ActivityRow } from "@/lib/activity/render";
 import { InsightsSection } from "./_insights";
@@ -315,10 +316,10 @@ export default async function DashboardPage() {
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    supabase
-      .from("memberships")
-      .select("user_id, role, user:users ( id, hourly_pay )")
-      .eq("org_id", ctx.org.id),
+    // Per-user hourly pay for the payroll tiles — via the shared reader, now
+    // sourced from staff_compensation (20261218, self-or-admin RLS). Owner/admin
+    // dashboard context reads every member's rate → identical map as before.
+    loadOrgHourlyPay(supabase, ctx.org.id),
   ]);
 
   // Contract retention "due back" (Programme C) — held retention + what's due for
@@ -357,7 +358,7 @@ export default async function DashboardPage() {
   const [
     [jobsRes, invoicesRes, financesRes, leadsRecentRes, membersRes, quotesRes, leadsAllRes, activityRes],
     [paymentsRes, unmatchedRes, allPaymentsRes],
-    [{ data: timeEntriesRaw }, { data: payableMembers }],
+    [{ data: timeEntriesRaw }, payHourlyByUser],
     [retentionJobsRes, retentionReleasesRes],
     [activityInsights, leadInsights, onboardingSnapshot, retentionSnapshot],
   ] = await Promise.all([coreWave, paymentsWave, timeWave, retentionWave, insightsWave]);
@@ -572,13 +573,9 @@ export default async function DashboardPage() {
   const teamHoursWeek = hoursInWindow(timeEntries, weekStartDate, weekEndDate);
   const teamHoursMonth = hoursInWindow(timeEntries, monthStartDate, monthEndDate);
 
-  // Per-user hourly rate for the labour cost roll-up.
-  const hourlyByUser = new Map<string, number>();
-  for (const m of payableMembers ?? []) {
-    const uid = (m as { user_id: string }).user_id;
-    const u = (m as { user?: { hourly_pay: number | null } }).user;
-    hourlyByUser.set(uid, Number(u?.hourly_pay ?? 0));
-  }
+  // Per-user hourly rate for the labour cost roll-up (from staff_compensation via
+  // loadOrgHourlyPay — same Map<userId, rate> as the former memberships→users read).
+  const hourlyByUser = payHourlyByUser;
   // Per-user annual salary sacrifice (£) — outside the employer NI + pension base, so
   // it lowers the TRUE cost of employment. Empty map ⇒ no sacrifice, figures unchanged.
   const taxProfiles = await getPayrollTaxProfilesForOrg(ctx.org.id);

@@ -89,7 +89,7 @@ export type InviteStaffResult =
  *     pre-fill payload in user_metadata; /onboarding/join hydrates it.
  */
 export async function inviteStaff(formData: FormData): Promise<InviteStaffResult> {
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   requireAdmin(ctx);
 
   const parsed = inviteStaffSchema.safeParse({
@@ -123,7 +123,7 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
   const supabase = await createClient();
   const { data: existing } = await supabase
     .from("users")
-    .select("id, email, full_name, phone, hourly_pay, employment_type, emergency_contact")
+    .select("id, email, full_name, phone, employment_type")
     .eq("email", data.email)
     .maybeSingle();
 
@@ -195,26 +195,38 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
   }
 
   // Pre-fill profile fields ONLY where the user currently has nothing —
-  // never overwrite a user's existing data.
-  type UserUpdate = {
-    full_name?: string;
-    phone?: string;
-    hourly_pay?: number;
-    employment_type?: string;
-    emergency_contact?: { name: string | null; phone: string | null; relationship: string | null };
-  };
-  const profileUpdates: UserUpdate = {};
-  if (!existing.full_name && data.full_name) profileUpdates.full_name = data.full_name;
-  if (!existing.phone && data.phone) profileUpdates.phone = data.phone;
-  if (existing.hourly_pay === null && data.hourly_pay !== undefined)
-    profileUpdates.hourly_pay = data.hourly_pay;
+  // never overwrite a user's existing data. Pay + emergency contact live in
+  // staff_compensation (20261218, self-or-admin RLS); the rest on users. Both
+  // writes go through the service-role admin client (this action is admin-gated).
+  const admin = createAdminClient();
+  type UserUpdate = { full_name?: string; phone?: string; employment_type?: string };
+  const userUpdates: UserUpdate = {};
+  if (!existing.full_name && data.full_name) userUpdates.full_name = data.full_name;
+  if (!existing.phone && data.phone) userUpdates.phone = data.phone;
   if (!existing.employment_type && data.employment_type)
-    profileUpdates.employment_type = data.employment_type;
-  if (!existing.emergency_contact && emergencyContact)
-    profileUpdates.emergency_contact = emergencyContact;
-  if (Object.keys(profileUpdates).length > 0) {
-    const admin = createAdminClient();
-    await admin.from("users").update(profileUpdates).eq("id", existing.id);
+    userUpdates.employment_type = data.employment_type;
+  if (Object.keys(userUpdates).length > 0) {
+    await admin.from("users").update(userUpdates).eq("id", existing.id);
+  }
+
+  // Read the CURRENT compensation to preserve the "never overwrite existing" rule.
+  const { data: existingComp } = await admin
+    .from("staff_compensation")
+    .select("hourly_pay, emergency_contact")
+    .eq("user_id", existing.id)
+    .maybeSingle();
+  const comp = existingComp as
+    | { hourly_pay: number | null; emergency_contact: unknown | null }
+    | null;
+  const compUpdates: { hourly_pay?: number; emergency_contact?: typeof emergencyContact } = {};
+  if ((comp?.hourly_pay ?? null) === null && data.hourly_pay !== undefined)
+    compUpdates.hourly_pay = data.hourly_pay;
+  if (!comp?.emergency_contact && emergencyContact)
+    compUpdates.emergency_contact = emergencyContact;
+  if (Object.keys(compUpdates).length > 0) {
+    await admin
+      .from("staff_compensation")
+      .upsert({ user_id: existing.id, ...compUpdates, updated_by: user.id }, { onConflict: "user_id" });
   }
 
   revalidatePath("/staff");
@@ -355,7 +367,7 @@ export async function updateStaffProfile(
   _prevState: FormState<Record<string, unknown>>,
   formData: FormData,
 ): Promise<FormState<Record<string, unknown>>> {
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   requireAdmin(ctx);
   if (!uuid.safeParse(userId).success) {
     return formError("Invalid staff id.");
@@ -391,16 +403,36 @@ export async function updateStaffProfile(
     .update({
       full_name: result.data.full_name ?? null,
       phone: result.data.phone ?? null,
-      hourly_pay: result.data.hourly_pay ?? null,
       employment_type: result.data.employment_type ?? null,
       start_date: result.data.start_date ?? null,
-      emergency_contact: emergency,
     })
     .eq("id", userId);
   if (error) {
     console.error("[staff] profile update failed", error);
     return formError(
       "Couldn't save changes. Try again.",
+      result.data as Record<string, unknown>,
+    );
+  }
+
+  // Pay + emergency contact live in staff_compensation (20261218). The admin-write
+  // RLS admits this admin (target is a member of an org they own/admin); a
+  // non-admin can never reach this action (requireAdmin above) nor pass the policy.
+  const { error: compErr } = await supabase
+    .from("staff_compensation")
+    .upsert(
+      {
+        user_id: userId,
+        hourly_pay: result.data.hourly_pay ?? null,
+        emergency_contact: emergency,
+        updated_by: user.id,
+      },
+      { onConflict: "user_id" },
+    );
+  if (compErr) {
+    console.error("[staff] compensation update failed", compErr);
+    return formError(
+      "Couldn't save pay/emergency details. Try again.",
       result.data as Record<string, unknown>,
     );
   }
