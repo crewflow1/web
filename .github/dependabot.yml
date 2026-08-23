@@ -1,0 +1,48 @@
+version: 2
+
+# Dependency-update policy. Two goals held together:
+#   1. Stay patched (security fixes land without a human polling upstream).
+#   2. Keep PR noise AND CI spend low — weekly (not daily) cadence, minor/patch
+#      grouped into ONE PR per ecosystem, and low open-PR caps. Each PR runs the
+#      free GitHub Actions gates; none triggers a Vercel production build, so the
+#      metered cost is unaffected.
+#
+# Major npm bumps are intentionally NOT grouped: they can carry breaking
+# changes and deserve individual review (a launch-freeze consideration).
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/London"
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/London"
+    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "chore(ci)"

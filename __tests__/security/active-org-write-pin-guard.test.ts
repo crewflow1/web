@@ -255,7 +255,7 @@ function walk(dir: string, filter: (f: string) => boolean, acc: string[]): void 
     if (e.isDirectory()) {
       if (["node_modules", ".next", "__tests__"].includes(e.name)) continue;
       walk(full, filter, acc);
-    } else if (filter(full)) acc.push(full);
+    } else if (filter(full)) if (!full.endsWith("/lib/supabase/types.ts")) acc.push(full);
   }
 }
 

@@ -362,11 +362,13 @@ export async function prepareVatReturn(params: {
 
   // Output VAT is CASH — every payment received in the quarter (the
   // invoice_payments LEDGER), so a partial payment on a still-open invoice
-  // counts on the day the cash landed. Input VAT is ACCRUAL (finance rows logged
-  // in the quarter). Domestic reverse-charge VAT (S55A) is self-accounted into
-  // boxes 1 AND 4 (net-neutral) with its net value in box 7. Same predicates the
-  // tax page and quarterly PDF use, so the prepared record matches what the org
-  // sees. All three inputs come from the ONE paged read layer.
+  // counts on the day the cash landed. Input VAT (box 4) + net purchases (box 7)
+  // follow the org's basis (CF-1): CASH from the supplier-payment ledger under the
+  // cash scheme (bills actually PAID in the window), ACCRUAL from finance rows under
+  // standard. Domestic reverse-charge VAT (S55A) is self-accounted into boxes 1 AND
+  // 4 (net-neutral) with its net value in box 7, on the tax-point basis. Same
+  // predicates the tax page and quarterly PDF use, so the prepared record matches
+  // what the org sees. All inputs come from the ONE paged read layer.
   //
   // PAGED (F-1). computeVatQuarter SUMs by iterating every row: the ledger and
   // reverse-charge reads page under the 1000-row cap (see gatherVatQuarterInputs)
@@ -409,6 +411,11 @@ export async function prepareVatReturn(params: {
     scheme,
     accrualInvoices: inputs.accrualInvoices,
     flatRate,
+    // CF-1: on the cash scheme, box 4 (input VAT) AND box 7 (net purchases) come
+    // from the supplier-payment ledger (bills actually PAID in the window), with RC
+    // net threaded on its tax-point basis. Undefined under standard ⇒ accrual.
+    supplierPayments: inputs.supplierPayments,
+    reverseChargeNet: inputs.reverseCharge.net,
   };
 
   const vat = computeVatQuarter(

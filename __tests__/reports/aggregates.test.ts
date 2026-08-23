@@ -209,13 +209,15 @@ describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
     expect(total).toBe(N * 10);
   });
 
-  it("vatPerQuarter sums CASH-BASIS output VAT (invoice_payments ledger) + input VAT across full paged reads", async () => {
-    // OUTPUT VAT is now cash-basis from the invoice_payments LEDGER via the
-    // single VAT authority, NOT `invoices.status='paid'`. Seed N payments, EACH
-    // £100 against its own £100-total invoice carrying £5 VAT, so each payment
-    // apportions 100×(5/100)=£5. Distinct parent invoices force BOTH the payment
-    // window read (>1000) AND the id-keyed invoice `.in(...)` chunking to page —
-    // if either truncated, output would fall short of N×5.
+  it("vatPerQuarter sums CASH-BASIS output VAT (invoice_payments ledger) + input VAT (supplier-payment ledger) across full paged reads", async () => {
+    // OUTPUT VAT is cash-basis from the invoice_payments LEDGER via the single VAT
+    // authority, NOT `invoices.status='paid'`. Seed N payments, EACH £100 against
+    // its own £100-total invoice carrying £5 VAT → each apportions 100×(5/100)=£5.
+    // INPUT VAT (box 4) is cash-basis too (CF-1) from the supplier_payment
+    // allocations LEDGER: seed N supplier payments, each fully settling its own
+    // £23-gross bill (net £20 + £3 VAT) → each apportions 23×(3/23)=£3. Distinct
+    // parents force BOTH the window reads (>1000) AND the id-keyed `.in(...)`
+    // chunking (invoices, bills) to page — if any read truncated, a total falls short.
     const N = 1600;
     h.tables.invoice_payments = Array.from({ length: N }, (_, i) => ({
       id: `pay-${String(i).padStart(6, "0")}`,
@@ -250,6 +252,7 @@ describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
       total: 999999,
       vat_total: 999999,
     });
+    // The bills (finances rows) — each net £20 + £3 VAT = £23 gross.
     h.tables.finances = Array.from({ length: N }, (_, i) => ({
       id: `fin-${String(i).padStart(6, "0")}`,
       org_id: ORG,
@@ -257,6 +260,45 @@ describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
       amount: 20,
       created_at: daysAgoIso((i % 180) + 1),
     }));
+    // The supplier payments that SETTLE those bills (the cash-basis box-4 source).
+    h.tables.supplier_payments = Array.from({ length: N }, (_, i) => ({
+      id: `sp-${String(i).padStart(6, "0")}`,
+      org_id: ORG,
+      voided_at: null,
+      paid_at: daysAgoIso((i % 180) + 1),
+    }));
+    h.tables.supplier_payment_allocations = Array.from({ length: N }, (_, i) => ({
+      id: `spa-${String(i).padStart(6, "0")}`,
+      org_id: ORG,
+      payment_id: `sp-${String(i).padStart(6, "0")}`,
+      finance_id: `fin-${String(i).padStart(6, "0")}`,
+      amount: 23, // full gross settlement → VAT share 23×(3/23)=3
+      cis_reverse_charge_vat: 0,
+      cis_vat_treatment: null,
+    }));
+    // A supplier payment in ANOTHER org must never leak into this org's input VAT.
+    h.tables.supplier_payments.push({
+      id: "sp-other",
+      org_id: OTHER_ORG,
+      voided_at: null,
+      paid_at: daysAgoIso(3),
+    });
+    h.tables.supplier_payment_allocations.push({
+      id: "spa-other",
+      org_id: OTHER_ORG,
+      payment_id: "sp-other",
+      finance_id: "fin-other",
+      amount: 999999,
+      cis_reverse_charge_vat: 0,
+      cis_vat_treatment: null,
+    });
+    h.tables.finances.push({
+      id: "fin-other",
+      org_id: OTHER_ORG,
+      vat_total: 999999,
+      amount: 999999,
+      created_at: daysAgoIso(3),
+    });
 
     const rows = await vatPerQuarter(ORG, 4);
     const output = rows.reduce((s, r) => s + r.output_vat, 0);
@@ -732,6 +774,9 @@ describe("vatPerQuarter reconciles EXACTLY with the single VAT authority", () =>
     ];
     h.tables.supplier_payments = [
       { id: "sp-1", org_id: ORG, voided_at: null, paid_at: daysAgoIso(2) },
+      // CF-1: fin-1 (a normal purchase) is actually PAID this quarter, so under the
+      // cash scheme its £4 input VAT is reclaimable — 24 gross × (4/24) = £4.
+      { id: "sp-2", org_id: ORG, voided_at: null, paid_at: daysAgoIso(2) },
     ];
     h.tables.supplier_payment_allocations = [
       {
@@ -743,10 +788,21 @@ describe("vatPerQuarter reconciles EXACTLY with the single VAT authority", () =>
         cis_reverse_charge_vat: 6,
         cis_vat_treatment: "reverse_charge",
       },
+      {
+        id: "spa-2",
+        org_id: ORG,
+        payment_id: "sp-2",
+        finance_id: "fin-1",
+        amount: 24, // full gross settlement of fin-1 (net 20 + VAT 4)
+        cis_reverse_charge_vat: 0,
+        cis_vat_treatment: null,
+      },
     ];
 
     // Independently recompute the current quarter via the AUTHORITY, over the
-    // same bounded window /reports uses for that slot.
+    // same bounded window /reports uses for that slot — using the SAME cash-basis
+    // inputs vatPerQuarter feeds it (CF-1: supplier-payment ledger + RC net), so any
+    // re-divergence between /reports and the authority fails CI.
     const qStart = startOfQuarterIso();
     const qEnd = endOfQuarterExclusiveIso(qStart);
     const inputs = await gatherVatQuarterInputs(
@@ -766,6 +822,10 @@ describe("vatPerQuarter reconciles EXACTLY with the single VAT authority", () =>
       qStart,
       qEnd,
       inputs.reverseCharge.vat,
+      {
+        supplierPayments: inputs.supplierPayments,
+        reverseChargeNet: inputs.reverseCharge.net,
+      },
     );
 
     const rows = await vatPerQuarter(ORG, 4);
@@ -778,9 +838,9 @@ describe("vatPerQuarter reconciles EXACTLY with the single VAT authority", () =>
     expect(slot!.net_vat).toBe(expected.net_payable);
 
     // And the concrete figures, so the pin also documents the contract:
-    //   output = 10 (partial apportion) + 6 (reverse charge) = 16
-    //   input  = 4 (finance) + 6 (reverse charge)            = 10
-    //   net    = 16 − 10                                     = 6
+    //   output = 10 (partial apportion) + 6 (reverse charge)     = 16
+    //   input  = 4 (fin-1 cash-paid, box 4) + 6 (reverse charge) = 10
+    //   net    = 16 − 10                                         = 6
     expect(slot!.output_vat).toBeCloseTo(16, 5);
     expect(slot!.input_vat).toBeCloseTo(10, 5);
     expect(slot!.net_vat).toBeCloseTo(6, 5);

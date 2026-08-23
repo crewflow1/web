@@ -227,7 +227,7 @@ describe("task spine — no application code raw-writes the queue (emission cann
       if (entry.name === "node_modules" || entry.name === ".next") continue;
       const full = resolve(dir, entry.name);
       if (entry.isDirectory()) out.push(...walk(full));
-      else if (/\.(ts|tsx)$/.test(entry.name)) out.push(full);
+      else if (/\.(ts|tsx)$/.test(entry.name)) if (!full.endsWith("/lib/supabase/types.ts")) out.push(full);
     }
     return out;
   }

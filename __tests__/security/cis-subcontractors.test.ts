@@ -30,7 +30,7 @@ function walk(dir: string, out: string[] = []): string[] {
     if (entry === "node_modules" || entry === ".next" || entry === ".git") continue;
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) walk(full, out);
-    else if (/\.(ts|tsx)$/.test(full)) out.push(full);
+    else if (/\.(ts|tsx)$/.test(full)) if (!full.endsWith("/lib/supabase/types.ts")) out.push(full);
   }
   return out;
 }

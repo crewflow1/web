@@ -5,6 +5,7 @@ import { readFailure } from "@/lib/supabase/read-failure";
 import type {
   AccrualInvoiceRow,
   InvoicePaymentRow,
+  SupplierPaymentLedgerRow,
   VatScheme,
 } from "@/lib/tax/compute";
 
@@ -64,6 +65,15 @@ const IN_CHUNK = 500;
 export type ReverseChargeQuarterTotals = {
   /** Σ frozen cis_reverse_charge_vat — the notional VAT (→ BOX 1 and BOX 4). */
   vat: number;
+  /**
+   * Σ NET of the reverse-charge purchase BILLS in the window (each bill counted
+   * once, on its `finances.created_at` tax point) — the RC contribution to BOX 7.
+   * The `cash` box-7 path bypasses the accrual finances loop, so it uses this to
+   * carry RC purchase net exactly once, on the SAME tax-point basis as `vat`
+   * (RC is outside cash accounting — VAT Notice 731 §5.1). The `standard` path
+   * ignores it (RC net is already in the finances sum).
+   */
+  net: number;
 };
 
 /**
@@ -88,6 +98,16 @@ export type VatQuarterInputs = {
    * cash-basis org pays no extra query and sees no change.
    */
   accrualInvoices: AccrualInvoiceRow[];
+  /**
+   * NON reverse-charge supplier-payment allocations PAID in the window (enriched
+   * with each bill's VAT figures) — the CASH-basis INPUT source for boxes 4 and 7
+   * (CF-1). `undefined` for the `standard` scheme (input stays accrual, so this read
+   * is skipped and no extra query runs); an array (possibly empty) for `cash`, so a
+   * cash-basis org with unpaid purchases correctly reclaims £0 rather than falling
+   * back to the accrual sum. Pass straight into `computeVatQuarter` /
+   * `computeVatNetTotals` as `opts.supplierPayments`.
+   */
+  supplierPayments: SupplierPaymentLedgerRow[] | undefined;
 };
 
 /** The minimal, read-only PostgREST surface this module needs (real client or cast). */
@@ -113,7 +133,24 @@ type RawInvoice = {
 };
 type RawAllocation = {
   payment_id: string;
+  finance_id: string | null;
   cis_reverse_charge_vat: number | string | null;
+  cis_vat_treatment: string | null;
+};
+
+/** True when an allocation belongs to a domestic-reverse-charge supply. */
+function isReverseChargeAllocation(a: {
+  cis_reverse_charge_vat: number | string | null;
+  cis_vat_treatment: string | null;
+}): boolean {
+  return a.cis_vat_treatment === "reverse_charge" || Number(a.cis_reverse_charge_vat ?? 0) > 0;
+}
+
+type RawSupplierPayment = { id: string; paid_at: string | null };
+type RawBill = {
+  id: string;
+  vat_total: number | string | null;
+  amount: number | string | null;
 };
 
 /**
@@ -194,8 +231,9 @@ async function gatherInvoicePaymentLedger(
  * COUNTED ONCE. Each allocation carries its INCREMENTAL frozen
  * `cis_reverse_charge_vat` (the cumulative method in lib/cis/deduction.ts), so Σ
  * over a bill's LIVE (non-voided) allocations is exactly that bill's settled RC
- * VAT — no double-count (the C69 box-7 lesson: we still sum notional VAT only for
- * boxes 1/4 here; box 7's net comes from the finances loop in computeVatNetTotals).
+ * VAT — no double-count. The RC NET (→ box 7) is the RC BILLS' `finances.amount`,
+ * each bill counted ONCE on its tax point — used only by the cash box-7 path, which
+ * bypasses the accrual finances loop that otherwise carries RC net.
  */
 async function gatherReverseChargeQuarter(
   db: VatInputsDb,
@@ -203,43 +241,46 @@ async function gatherReverseChargeQuarter(
   quarterStartIso: string,
   quarterEndExclusiveIso: string,
 ): Promise<ReverseChargeQuarterTotals> {
-  // 1. The reverse-charge BILLS whose tax point (finances.created_at) is in the
-  //    window. PAGED (F-1): finances is high-value; a bare select truncates at the
-  //    1000-row cap. Order by the unique (created_at, id) so no page-edge row is
-  //    dropped. This is the SAME window/column boxes 4 and 7 use.
-  const { data: finRows, error: finErr } = await fetchAllRows<{ id: string }>((from, to) =>
+  // 1. The BILLS whose tax point (finances.created_at) is in the window, WITH their
+  //    net so RC bills can contribute to box 7. PAGED (F-1): finances is high-value;
+  //    a bare select truncates at the 1000-row cap. Order by the unique
+  //    (created_at, id) so no page-edge row is dropped. Same window/column boxes 4/7 use.
+  const { data: finRows, error: finErr } = await fetchAllRows<RawBill>((from, to) =>
     db
       .from("finances")
-      .select("id")
+      .select("id, amount, vat_total")
       .eq("org_id", orgId)
       .gte("created_at", quarterStartIso)
       .lt("created_at", quarterEndExclusiveIso)
       .order("created_at", { ascending: true })
       .order("id", { ascending: true })
-      .range(from, to) as unknown as PromiseLike<{ data: { id: string }[] | null; error: unknown }>,
+      .range(from, to) as unknown as PromiseLike<{ data: RawBill[] | null; error: unknown }>,
   );
   if (finErr) throw readFailure("vat inputs: reverse-charge bills (finances)", finErr);
-  const financeIds = (finRows ?? []).map((f) => f.id);
-  if (financeIds.length === 0) return { vat: 0 };
+  const bills = finRows ?? [];
+  const financeIds = bills.map((f) => f.id);
+  const netByFinanceId = new Map<string, number>();
+  for (const b of bills) netByFinanceId.set(b.id, Number(b.amount ?? 0));
+  if (financeIds.length === 0) return { vat: 0, net: 0 };
 
   // 2. The allocations against those in-window bills, each carrying its frozen
-  //    notional VAT and the payment it belongs to (for the void filter). CHUNKED
-  //    (F-1): the finance-id set can exceed the cap in a busy quarter, so a single
-  //    `.in(...)` would truncate; each chunk is ≤ IN_CHUNK unique PKs. Standard
-  //    (non-RC) allocations carry cis_reverse_charge_vat = 0 (M3 CHECK), so summing
-  //    the whole set naturally yields only the RC total.
+  //    notional VAT, its finance_id + treatment (to identify RC bills) and the
+  //    payment it belongs to (for the void filter). CHUNKED (F-1): the finance-id
+  //    set can exceed the cap in a busy quarter, so a single `.in(...)` would
+  //    truncate; each chunk is ≤ IN_CHUNK unique PKs. Standard (non-RC) allocations
+  //    carry cis_reverse_charge_vat = 0 (M3 CHECK), so summing yields only the RC total.
   const allocations: RawAllocation[] = [];
   for (let i = 0; i < financeIds.length; i += IN_CHUNK) {
     const chunk = financeIds.slice(i, i + IN_CHUNK);
     const { data, error } = await db
       .from("supplier_payment_allocations")
-      .select("payment_id, cis_reverse_charge_vat")
+      .select("payment_id, finance_id, cis_reverse_charge_vat, cis_vat_treatment")
       .eq("org_id", orgId)
       .in("finance_id", chunk);
     if (error) throw readFailure("vat inputs: reverse-charge allocations", error);
     for (const a of (data ?? []) as RawAllocation[]) allocations.push(a);
   }
-  if (allocations.length === 0) return { vat: 0 };
+  if (allocations.length === 0) return { vat: 0, net: 0 };
 
   // 3. Exclude VOIDED payments (KEEP the void exclusion). A voided payment's
   //    allocations survive as the record of what the voided payment claimed, but
@@ -261,11 +302,18 @@ async function gatherReverseChargeQuarter(
   }
 
   let vat = 0;
+  // The distinct RC BILLS (identified by a live RC allocation) — their net enters
+  // box 7 ONCE each, on the bill's tax point.
+  const rcFinanceIds = new Set<string>();
   for (const a of allocations) {
     if (!livePaymentIds.has(a.payment_id)) continue;
     vat += Number(a.cis_reverse_charge_vat ?? 0);
+    if (isReverseChargeAllocation(a) && a.finance_id) rcFinanceIds.add(a.finance_id);
   }
-  return { vat: Math.round(vat * 100) / 100 };
+  let net = 0;
+  for (const fid of rcFinanceIds) net += netByFinanceId.get(fid) ?? 0;
+
+  return { vat: Math.round(vat * 100) / 100, net: Math.round(net * 100) / 100 };
 }
 
 type RawAccrualInvoice = {
@@ -315,12 +363,110 @@ export async function gatherAccrualInvoices(
 }
 
 /**
+ * The NON reverse-charge supplier-payment ledger for the window — the CASH-basis
+ * INPUT source for boxes 4 and 7 (CF-1). Each row is a supplier_payment_allocation
+ * belonging to a LIVE (non-voided) payment whose `paid_at` is in the window,
+ * enriched with the parent bill's `vat_total` and GROSS (`amount` net + `vat_total`)
+ * so the pure authority can apportion the VAT/net on the cash actually paid.
+ *
+ * REVERSE-CHARGE allocations are EXCLUDED: RC supplies sit outside cash accounting
+ * (VAT Notice 731 §5.1), so their notional VAT (boxes 1/4) and net (box 7) stay on
+ * the tax-point basis via `gatherReverseChargeQuarter` — this keeps the C73-A
+ * one-quarter reconciliation intact and avoids double-counting RC net in box 7.
+ *
+ * ORG-PINNED + LOUD + PAGED/CHUNKED (F-1), mirroring the invoice-payment ledger:
+ * an unpinned read would blend two companies' VAT, and a failed read must throw
+ * rather than silently become £0 of reclaimed input VAT on an HMRC-facing figure.
+ */
+async function gatherSupplierPaymentLedger(
+  db: VatInputsDb,
+  orgId: string,
+  quarterStartIso: string,
+  quarterEndExclusiveIso: string,
+): Promise<SupplierPaymentLedgerRow[]> {
+  // 1. LIVE supplier payments whose cash date (paid_at) is in the window. PAGED
+  //    (F-1). Order by the unique (paid_at, id) so no page-edge row is dropped.
+  const { data: payRows, error: payErr } = await fetchAllRows<RawSupplierPayment>((from, to) =>
+    db
+      .from("supplier_payments")
+      .select("id, paid_at")
+      .eq("org_id", orgId)
+      .is("voided_at", null)
+      .gte("paid_at", quarterStartIso)
+      .lt("paid_at", quarterEndExclusiveIso)
+      .order("paid_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to) as unknown as PromiseLike<{ data: RawSupplierPayment[] | null; error: unknown }>,
+  );
+  if (payErr) throw readFailure("vat inputs: supplier payments (cash input)", payErr);
+  const payments = payRows ?? [];
+  if (payments.length === 0) return [];
+  const paidAtByPaymentId = new Map<string, string | null>();
+  for (const p of payments) paidAtByPaymentId.set(p.id, p.paid_at);
+
+  // 2. The allocations for those live payments. CHUNKED (F-1): each chunk is
+  //    ≤ IN_CHUNK unique payment PKs. Reverse-charge allocations are dropped here.
+  const paymentIds = payments.map((p) => p.id);
+  const allocations: RawAllocation[] = [];
+  for (let i = 0; i < paymentIds.length; i += IN_CHUNK) {
+    const chunk = paymentIds.slice(i, i + IN_CHUNK);
+    const { data, error } = await db
+      .from("supplier_payment_allocations")
+      .select("payment_id, finance_id, amount, cis_reverse_charge_vat, cis_vat_treatment")
+      .eq("org_id", orgId)
+      .in("payment_id", chunk);
+    if (error) throw readFailure("vat inputs: supplier payment allocations (cash input)", error);
+    for (const a of (data ?? []) as Array<RawAllocation & { amount: number | string | null }>) {
+      if (isReverseChargeAllocation(a)) continue; // RC is outside cash accounting
+      allocations.push(a);
+    }
+  }
+  if (allocations.length === 0) return [];
+
+  // 3. Parent bills for those allocations — each bill's VAT and net so the pure
+  //    function can apportion. CHUNKED (F-1) on the distinct finance-id set.
+  const financeIds = [
+    ...new Set(allocations.map((a) => a.finance_id).filter((id): id is string => !!id)),
+  ];
+  const billById = new Map<string, RawBill>();
+  for (let i = 0; i < financeIds.length; i += IN_CHUNK) {
+    const chunk = financeIds.slice(i, i + IN_CHUNK);
+    const { data, error } = await db
+      .from("finances")
+      .select("id, vat_total, amount")
+      .eq("org_id", orgId)
+      .in("id", chunk);
+    if (error) throw readFailure("vat inputs: cash-input parent bills", error);
+    for (const b of (data ?? []) as RawBill[]) billById.set(b.id, b);
+  }
+
+  const out: SupplierPaymentLedgerRow[] = [];
+  for (const a of allocations as Array<RawAllocation & { amount: number | string | null }>) {
+    const bill = a.finance_id ? billById.get(a.finance_id) : undefined;
+    // A bill we could not read leaves bill_total null ⇒ the pure function's
+    // divide-by-zero guard skips it. Better a dropped row than an invented reclaim.
+    const billTotal =
+      bill == null ? null : Number(bill.amount ?? 0) + Number(bill.vat_total ?? 0);
+    out.push({
+      amount: a.amount,
+      paid_at: paidAtByPaymentId.get(a.payment_id) ?? null,
+      bill_vat_total: bill?.vat_total ?? null,
+      bill_total: billTotal,
+    });
+  }
+  return out;
+}
+
+/**
  * Gather the VAT-authority inputs for one org over `[quarterStartIso,
  * quarterEndExclusiveIso)`. Pass the result straight into computeVatQuarter /
  * computeVatNetTotals so the tile, PDF and frozen return reconcile.
  *
- * `scheme` (default `cash`) decides whether the ACCRUAL invoice source is read: it
- * is skipped entirely for cash-basis orgs, so the common path pays no extra query.
+ * `scheme` decides which basis-specific sources are read, so a scheme pays only for
+ * what it needs: `standard` reads the ACCRUAL invoice source (and leaves
+ * `supplierPayments` undefined ⇒ input VAT stays accrual); `cash` reads the
+ * supplier-payment ledger (so boxes 4/7 are payment-based — CF-1) and skips the
+ * accrual invoices.
  */
 export async function gatherVatQuarterInputs(
   db: VatInputsDb,
@@ -329,12 +475,15 @@ export async function gatherVatQuarterInputs(
   quarterEndExclusiveIso: string,
   scheme: VatScheme = "cash",
 ): Promise<VatQuarterInputs> {
-  const [invoicePayments, reverseCharge, accrualInvoices] = await Promise.all([
+  const [invoicePayments, reverseCharge, accrualInvoices, supplierPayments] = await Promise.all([
     gatherInvoicePaymentLedger(db, orgId, quarterStartIso, quarterEndExclusiveIso),
     gatherReverseChargeQuarter(db, orgId, quarterStartIso, quarterEndExclusiveIso),
     scheme === "standard"
       ? gatherAccrualInvoices(db, orgId, quarterStartIso, quarterEndExclusiveIso)
       : Promise.resolve<AccrualInvoiceRow[]>([]),
+    scheme === "cash"
+      ? gatherSupplierPaymentLedger(db, orgId, quarterStartIso, quarterEndExclusiveIso)
+      : Promise.resolve<SupplierPaymentLedgerRow[] | undefined>(undefined),
   ]);
-  return { invoicePayments, reverseCharge, accrualInvoices };
+  return { invoicePayments, reverseCharge, accrualInvoices, supplierPayments };
 }

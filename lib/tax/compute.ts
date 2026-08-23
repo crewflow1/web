@@ -103,6 +103,40 @@ export type InvoicePaymentRow = {
   reverse_charge?: boolean;
 };
 
+/**
+ * One row of the supplier_payment_allocations LEDGER — a single payment
+ * ALLOCATION against a supplier bill (a `finances` row), carrying the parent
+ * bill's VAT-relevant figures (resolved by the caller).
+ *
+ * This is the CASH-BASIS INPUT-VAT source (CF-1). Under the UK VAT Cash
+ * Accounting Scheme input tax, like output tax, is accounted for on the basis of
+ * PAYMENTS — you may only reclaim input VAT on a purchase invoice once you have
+ * actually PAID it. Reading the allocation ledger captures the VAT on the cash
+ * you paid, on the date it left, exactly mirroring how `InvoicePaymentRow`
+ * captures output VAT on the cash you received. The apportionment denominator is
+ * the bill's GROSS (net + VAT), so a partial settlement reclaims the VAT on the
+ * cash actually paid — not £0 and not the whole bill.
+ *
+ * The caller MUST pass only allocations belonging to LIVE (non-voided) payments,
+ * enriched with the parent bill's `vat_total` and gross `total` — the same
+ * discipline `InvoicePaymentRow` requires on the sales side.
+ */
+export type SupplierPaymentLedgerRow = {
+  /**
+   * supplier_payment_allocations.amount — the GROSS (VAT-inclusive) value this
+   * payment settled against the bill. CIS withholding NEVER reduces it (a bill is
+   * settled in full even when part of the cash was withheld for HMRC), so a
+   * settled CIS bill correctly reclaims its full input VAT.
+   */
+  amount: number | string | null;
+  /** supplier_payments.paid_at — the date the cash was paid (the cash-basis date). */
+  paid_at: string | null;
+  /** The parent bill's vat_total — whole-bill input VAT. */
+  bill_vat_total: number | string | null;
+  /** The parent bill's GROSS value (finances.amount net + vat_total); the apportionment denominator. */
+  bill_total: number | string | null;
+};
+
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 // ===========================================================================
@@ -118,8 +152,19 @@ const round2 = (n: number): number => Math.round(n * 100) / 100;
 //                       byte unchanged.
 //        • "standard" — output VAT falls due at the invoice TAX POINT (accrual):
 //                       every ISSUED invoice dated in the window, whether or not it
-//                       has been paid. INPUT VAT is accrual under BOTH schemes
-//                       (unchanged) — only the output leg moves.
+//                       has been paid.
+//
+//      INPUT VAT (box 4) mirrors the output basis (CF-1):
+//        • "standard" — input VAT is ACCRUAL: the VAT on every logged cost
+//                       (`finances`) whose tax point (created_at) is in the window.
+//        • "cash"     — input VAT is CASH: the VAT on bills actually PAID in the
+//                       window, read from the supplier_payment_allocations ledger
+//                       (`VatComputeOptions.supplierPayments`). UK Cash Accounting
+//                       accounts for BOTH legs on payments, so an unpaid purchase
+//                       invoice may NOT be reclaimed early. When no supplier-payment
+//                       ledger is supplied the cash path FALLS BACK to the accrual
+//                       `finances` sum, so an existing caller that has not yet wired
+//                       the ledger is byte-for-byte unchanged (never silently £0).
 //
 //   2. FLAT RATE SCHEME (`FlatRateApplied`). When FRS is in force for the period
 //      the box-1 VAT is NOT the sum of per-line output VAT; it is a single flat
@@ -202,6 +247,30 @@ export type VatComputeOptions = {
   accrualInvoices?: AccrualInvoiceRow[];
   /** When present and `applies`, box 1 is the flat calculation and box 4 drops the input reclaim. */
   flatRate?: FlatRateApplied;
+  /**
+   * Supplier-payment ALLOCATION ledger for the window (LIVE payments only, NON
+   * reverse-charge, enriched with each parent bill's VAT figures). Under the `cash`
+   * scheme this is the cash-basis INPUT source: box 4 (VAT) and box 7 (net) become
+   * the values on bills actually PAID in the window (CF-1). Ignored under `standard`
+   * (input stays accrual) and under FRS (box 4 = 0, box 7 = 0). When `undefined`
+   * under `cash`, box 4/7 FALL BACK to the accrual `finances` sums — so an unwired
+   * caller is unchanged, never silently £0.
+   *
+   * REVERSE CHARGE IS EXCLUDED from this ledger: RC supplies sit OUTSIDE the cash
+   * accounting scheme (VAT Notice 731 §5.1), so their notional VAT (boxes 1/4, via
+   * `reverseChargeVat`) and net (box 7, via `reverseChargeNet`) stay on the invoice
+   * tax-point basis — keeping the C73-A "one quarter" reconciliation intact.
+   */
+  supplierPayments?: SupplierPaymentLedgerRow[];
+  /**
+   * The reverse-charge PURCHASE net (box 7) for the window, on the tax-point
+   * (`finances.created_at`) basis — the RC counterpart of `reverseChargeVat`. Used
+   * ONLY on the `cash` box-7 path (where the accrual `finances` loop that would
+   * otherwise carry RC net is bypassed) so reverse-charge purchases still reach box
+   * 7 exactly once, on the SAME basis as their notional VAT. Ignored under
+   * `standard` (RC net is already in the `finances` sum) and FRS (box 7 = 0).
+   */
+  reverseChargeNet?: number;
 };
 
 // --- FRS rate constants (HMRC VAT Notice 733) ------------------------------
@@ -408,10 +477,75 @@ function accumulateSales(
   return { outputVat, grossTurnover, netSales };
 }
 
+/** Accumulated purchase figures for one window under a given scheme (pre-rounding). */
+type PurchaseAccumulation = {
+  /** Σ input VAT (box 4 before FRS/RC). */
+  inputVat: number;
+  /** Σ NET (ex-VAT) purchases (box 7 before FRS). */
+  inputNet: number;
+};
+
 /**
- * The single VAT authority — CASH-basis output VAT from the invoice_payments
- * LEDGER, ACCRUAL-basis input VAT from logged finance rows, over the quarter
- * `[quarterStartIso, quarterEndIso)`.
+ * Accumulate INPUT VAT (box 4) AND net purchases (box 7) for the window on the
+ * chosen basis (CF-1). This is the ONE place the input/purchase basis branches, so
+ * boxes 4 and 7 are ALWAYS computed from the identical row set and window and
+ * therefore reconcile:
+ *   • standard — ACCRUAL: every logged cost (`finances`) whose tax point
+ *                (created_at) is in the window, whether or not it is paid.
+ *   • cash     — CASH: when a supplier-payment ledger is supplied, the apportioned
+ *                VAT and net on the bills actually PAID in the window (a partial
+ *                settlement counts only the VAT/net on the cash paid). Per row the
+ *                VAT share and net share sum back to the gross cash paid, so
+ *                box 4 + box 7 = gross paid on one window. When no ledger is supplied
+ *                the cash path FALLS BACK to the accrual `finances` sums, so an
+ *                existing caller that has not yet wired the ledger is byte-for-byte
+ *                unchanged rather than silently dropping to £0.
+ *
+ * Domestic reverse charge is NOT handled here — its notional VAT is threaded onto
+ * boxes 1/4 by the caller via `reverseChargeVat`, and RC bills carry vat_total = 0
+ * so their VAT share is 0 (no double count) while their NET still lands in box 7.
+ */
+function accumulatePurchases(
+  scheme: VatScheme,
+  finances: FinanceRow[],
+  supplierPayments: SupplierPaymentLedgerRow[] | undefined,
+  inPeriod: (iso: string) => boolean,
+): PurchaseAccumulation {
+  // CASH basis with a wired ledger: VAT + net on bills PAID in the window,
+  // apportioned per payment exactly like the output-VAT cash basis above.
+  if (scheme === "cash" && supplierPayments !== undefined) {
+    let inputVat = 0;
+    let inputNet = 0;
+    for (const p of supplierPayments) {
+      if (!p.paid_at || !inPeriod(p.paid_at)) continue;
+      const total = Number(p.bill_total ?? 0);
+      if (!Number.isFinite(total) || total <= 0) continue; // divide-by-zero / credit-note guard (mirrors sales side)
+      const amount = Number(p.amount ?? 0);
+      const vatShare = amount * (Number(p.bill_vat_total ?? 0) / total);
+      inputVat += vatShare;
+      inputNet += amount - vatShare; // net share = gross cash paid − its VAT share
+    }
+    return { inputVat, inputNet };
+  }
+  // ACCRUAL basis (standard scheme, OR cash with no ledger wired): VAT and net on
+  // all logged costs by tax point (finances.created_at). UNCHANGED legacy behaviour.
+  let inputVat = 0;
+  let inputNet = 0;
+  for (const f of finances) {
+    if (inPeriod(f.created_at)) {
+      inputVat += Number(f.vat_total ?? 0);
+      inputNet += Number(f.amount ?? 0);
+    }
+  }
+  return { inputVat, inputNet };
+}
+
+/**
+ * The single VAT authority over the quarter `[quarterStartIso, quarterEndIso)`.
+ * Output VAT (box 1) and input VAT (box 4) share the org's chosen basis (CF-1):
+ * under `cash` both legs are payment-driven (output from the invoice_payments
+ * ledger, input from the supplier_payment_allocations ledger); under `standard`
+ * both are accrual (invoice tax points / logged finance rows).
  *
  * The lower bound is INCLUSIVE; the optional upper bound is EXCLUSIVE. ALWAYS
  * pass the exclusive end (start of the next quarter — see
@@ -425,7 +559,8 @@ function accumulateSales(
  * window it adds `amount × (invoice.vat_total / invoice.total)` — the payment's
  * proportional share of the invoice's VAT — so a partial payment contributes the
  * VAT on the cash actually received, not £0 and not the whole invoice. INPUT VAT
- * (box 4) is ACCRUAL (all logged costs).
+ * (box 4) follows the SAME basis: CASH (VAT on bills actually paid, apportioned
+ * per supplier payment) under `cash`, ACCRUAL (all logged costs) under `standard`.
  *
  * DOMESTIC REVERSE CHARGE (S55A VATA94). When the org is the contractor/recipient
  * of a CIS domestic reverse-charge supply it self-accounts the notional VAT: the
@@ -456,13 +591,11 @@ export function computeVatQuarter(
   // plus the gross turnover the FRS flat calculation needs.
   const sales = accumulateSales(scheme, invoicePayments, opts?.accrualInvoices, inPeriod);
 
-  // Box 4 — input VAT on all logged costs in the window (ACCRUAL under both schemes).
-  let inputVat = 0;
-  for (const f of finances) {
-    if (inPeriod(f.created_at)) {
-      inputVat += Number(f.vat_total ?? 0);
-    }
-  }
+  // Box 4 — input VAT on the chosen basis (CF-1): ACCRUAL (logged costs by tax
+  // point) under `standard`, CASH (bills actually paid, from the supplier-payment
+  // ledger) under `cash`. The cash path falls back to the accrual sum when no
+  // ledger is wired, so an existing caller is unchanged.
+  let inputVat = accumulatePurchases(scheme, finances, opts?.supplierPayments, inPeriod).inputVat;
 
   // Domestic reverse charge: the notional VAT is BOTH output and input, so the
   // net (box 5) is unchanged. Under FRS it is accounted OUTSIDE the flat scheme
@@ -485,9 +618,10 @@ export function computeVatQuarter(
     };
   }
 
-  // STANDARD/CASH: box 1 is the accumulated output VAT; box 4 the logged input VAT.
-  // Reverse charge is THREADED (added to both legs), never re-derived — the frozen
-  // ledger total enters output AND input so box 5 stays net-neutral.
+  // STANDARD/CASH: box 1 is the accumulated output VAT; box 4 the input VAT on the
+  // matching basis (accrual finances for `standard`, cash supplier-payment ledger for
+  // `cash`). Reverse charge is THREADED (added to both legs), never re-derived — the
+  // frozen ledger total enters output AND input so box 5 stays net-neutral.
   let outputVat = sales.outputVat;
   outputVat += rc;
   inputVat += rc;
@@ -510,11 +644,12 @@ export function computeVatQuarter(
  *     `amount × (invoice.amount / invoice.total)` from the invoice_payments
  *     ledger — the CASH-basis net that backs box 1. Reverse-charge purchases are
  *     PURCHASES, not sales, so they never enter box 6.
- *   • BOX 7 (purchases) sums the net `amount` of the finance rows whose
- *     `vat_total` feeds box 4 (ACCRUAL basis). A domestic reverse-charge purchase
- *     bill IS one of those finance rows (its net is `amount`, its `vat_total` is 0
- *     because the supplier charges no VAT), so the finances loop ALREADY carries
- *     its net value into box 7 — exactly once. HMRC includes reverse-charge
+ *   • BOX 7 (purchases) sums the net purchases whose VAT feeds box 4, on the SAME
+ *     basis as box 4 (CF-1): ACCRUAL (the net `amount` of the logged finance rows)
+ *     under `standard`, CASH (the apportioned net of the supplier payments actually
+ *     made in the window) under `cash`. A domestic reverse-charge purchase bill has
+ *     `vat_total` 0 (the supplier charges no VAT), so its VAT share is 0 while its
+ *     NET still lands in box 7 — exactly once. HMRC includes reverse-charge
  *     purchases in box 7 but EXCLUDES them from box 6 (a purchase is never a sale).
  *
  * So the reported net totals reconcile with the VAT boxes — same set, same
@@ -536,13 +671,20 @@ export function computeVatNetTotals(
 
   const sales = accumulateSales(scheme, invoicePayments, opts?.accrualInvoices, inPeriod);
 
-  let purchases = 0;
-  for (const f of finances) {
-    if (inPeriod(f.created_at)) {
-      // Net of VAT. Reverse-charge purchase bills are finance rows too, so their
-      // net enters box 7 HERE — once — with every other purchase. No separate add.
-      purchases += Number(f.amount ?? 0);
-    }
+  // Box 7 net purchases share box 4's basis (CF-1): accrual finances under
+  // `standard`, cash supplier-payment ledger under `cash` (falling back to accrual
+  // finances when no ledger is wired). Same set + window as box 4, so box 4 + box 7
+  // reconcile to the cash paid.
+  const cashLedgerActive = scheme === "cash" && opts?.supplierPayments !== undefined;
+  let purchases = accumulatePurchases(scheme, finances, opts?.supplierPayments, inPeriod).inputNet;
+  // On the cash-ledger path the accrual `finances` loop (which would otherwise carry
+  // reverse-charge purchase net) is bypassed, so add the RC net back on its own
+  // tax-point basis — once — mirroring how `reverseChargeVat` feeds boxes 1/4. Under
+  // standard/fallback the RC net is already inside the finances sum, so nothing is
+  // added (no double count). RC is excluded from cash accounting (VAT Notice 731 §5.1).
+  if (cashLedgerActive) {
+    const rcNet = Number.isFinite(opts?.reverseChargeNet) ? Number(opts?.reverseChargeNet) : 0;
+    purchases += rcNet;
   }
 
   const frs = opts?.flatRate;

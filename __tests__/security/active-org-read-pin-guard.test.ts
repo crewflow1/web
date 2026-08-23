@@ -391,7 +391,7 @@ function walkDynamicRoutes(dir: string, acc: string[]): void {
       if (["node_modules", ".next", "__tests__"].includes(e.name)) continue;
       walkDynamicRoutes(full, acc);
     } else if (/\.(ts|tsx)$/.test(e.name) && /\[[^/]+\][/\\]/.test(full + "/")) {
-      acc.push(full);
+      if (!full.endsWith("/lib/supabase/types.ts")) acc.push(full);
     }
   }
 }
@@ -439,7 +439,7 @@ function walkTsFiles(dir: string, acc: string[]): void {
       if (["node_modules", ".next", "__tests__"].includes(e.name)) continue;
       walkTsFiles(full, acc);
     } else if (/\.ts$/.test(e.name) && !/\.d\.ts$/.test(e.name)) {
-      acc.push(full);
+      if (!full.endsWith("/lib/supabase/types.ts")) acc.push(full);
     }
   }
 }

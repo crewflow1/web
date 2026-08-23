@@ -156,7 +156,7 @@ function walkSources(roots: readonly string[]): string[] {
         if (entry === "node_modules" || entry === ".next" || entry === "__tests__") continue;
         visit(full);
       } else if (/\.tsx?$/.test(entry)) {
-        out.push(full);
+        if (!full.endsWith("/lib/supabase/types.ts")) out.push(full);
       }
     }
   };

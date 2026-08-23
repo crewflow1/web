@@ -252,21 +252,25 @@ const ALLOWLIST: Record<string, string> = {
   // above). Prefer fetchAllRows/.limit only if this ever stops being chunked.
   "server/services/cis-statements.ts:169":
     "bounded: chunked .in('id', slice(≤500 unique PKs)) — ≤500 rows, analyser can't see the slice bound",
-  // The VAT-authority read layer (server/services/vat-quarter-inputs.ts). All
-  // three lines are CHUNKED id-keyed lookups whose parent set is itself fully
+  // The VAT-authority read layer (server/services/vat-quarter-inputs.ts). Every
+  // line below is a CHUNKED id-keyed lookup whose parent set is itself fully
   // PAGED via fetchAllRows in the same file, so each `.in(...)` returns
   // ≤ IN_CHUNK=500 rows (< the 1000 cap) — the analyser cannot see the slice
-  // bound. Same class as cis-statements.ts:169. (C73-A moved the reverse-charge
-  // window from supplier_payments.paid_at onto the bill's finances.created_at so
-  // boxes 1/4/7 reconcile in one quarter: the RC path now pages the finances
-  // window, chunks the allocations by finance_id, then chunks the void filter by
-  // supplier_payments.id — lines 194→224/243.)
-  "server/services/vat-quarter-inputs.ts:155":
-    "bounded: chunked .in('id', slice(≤IN_CHUNK=500 unique invoice PKs)) — parent invoice_payments read is fully paged; ≤500 rows per call. (Lines moved +11 when the standard-scheme accrual-invoice source + imports were added.)",
-  "server/services/vat-quarter-inputs.ts:235":
-    "bounded: chunked .in('finance_id', slice(≤IN_CHUNK=500 unique finance PKs)) — parent finances window read is fully paged (fetchAllRows); ≤500 rows per call",
-  "server/services/vat-quarter-inputs.ts:254":
-    "bounded: chunked .in('id', slice(≤IN_CHUNK=500 unique payment PKs)) — the void filter; the payment-id set is drawn from the already-chunked allocations, supplier_payments.id is unique so ≤500 rows per call",
+  // bound. Same class as cis-statements.ts:169. Line numbers moved when the CF-1
+  // cash-input wiring added the supplier-payment ledger (box-4/7 on payment) and
+  // the standard-scheme accrual-invoice source; the fully-paged reads
+  // (invoice_payments:171, finances:250, invoices:343, supplier_payments:391)
+  // need no entry — only these chunked `.in(...)` enrichments do.
+  "server/services/vat-quarter-inputs.ts:192":
+    "bounded: chunked .in('id', slice(≤IN_CHUNK=500 unique invoice PKs)) — parent invoice_payments read is fully paged; ≤500 rows per call",
+  "server/services/vat-quarter-inputs.ts:276":
+    "bounded: chunked .in('finance_id', slice(≤IN_CHUNK=500 unique finance PKs)) — reverse-charge allocations; parent finances window is fully paged (fetchAllRows); ≤500 rows per call",
+  "server/services/vat-quarter-inputs.ts:295":
+    "bounded: chunked .in('id', slice(≤IN_CHUNK=500 unique payment PKs)) — reverse-charge void filter; the payment-id set is drawn from the already-chunked allocations, supplier_payments.id is unique so ≤500 rows per call",
+  "server/services/vat-quarter-inputs.ts:414":
+    "bounded: chunked .in('payment_id', slice(≤IN_CHUNK=500 unique payment PKs)) — CF-1 cash-input allocations; parent supplier_payments window is fully paged (fetchAllRows); ≤500 rows per call",
+  "server/services/vat-quarter-inputs.ts:435":
+    "bounded: chunked .in('id', slice(≤IN_CHUNK=500 unique finance PKs)) — CF-1 cash-input parent bills; the finance-id set is drawn from the already-chunked allocations; ≤500 rows per call",
   // Surfaced only once quote_line_items joined HIGH_VALUE_TABLES. This line is an
   // INSERT (`.from('quote_line_items').insert(rows)`), NOT a read — it cannot
   // truncate. It trips solely as a region artifact: the AFTER window bleeds into
