@@ -226,10 +226,12 @@ export async function vatPerQuarter(
   // invoice_payments ledger + frozen reverse-charge totals, PAGED + loud) then
   // the pure `computeVatQuarter` — so the fourth VAT surface reconciles exactly.
   //
-  // Input VAT (box 4) is ACCRUAL on logged finance rows: computeVatQuarter sums
-  // `finances.vat_total` in-window itself, so finances are read ONCE over the
-  // whole span (PAGED + loud) and each window's compute re-gates them on
-  // created_at — no separate summing, no double-count, no drop.
+  // Input VAT (box 4) follows the org's basis (CF-1): CASH from the supplier-payment
+  // ledger (per window, from gatherVatQuarterInputs) under the cash scheme, ACCRUAL
+  // on logged finance rows under standard. For the accrual path, finances are read
+  // ONCE over the whole span (PAGED + loud) and each window's compute re-gates them
+  // on created_at; the cash path ignores this finances arg (box 4/7 come from the
+  // ledger) — no separate summing, no double-count, no drop.
   const finRes = await fetchAllRows<{
     created_at: string;
     vat_total: number | null;
@@ -286,6 +288,10 @@ export async function vatPerQuarter(
           scheme: orgSettings.vat_scheme,
           accrualInvoices: inputs.accrualInvoices,
           flatRate: resolveFlatRateForPeriod(orgSettings.flat_rate_config, quarterStartIso),
+          // CF-1: cash-scheme box 4 is payment-based (supplier-payment ledger);
+          // undefined under standard ⇒ accrual.
+          supplierPayments: inputs.supplierPayments,
+          reverseChargeNet: inputs.reverseCharge.net,
         },
       );
       return {

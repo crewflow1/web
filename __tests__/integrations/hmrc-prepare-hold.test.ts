@@ -213,10 +213,32 @@ describe("prepareVatReturnAction — composes + inserts a prepared record", () =
     // reads `finances` FIRST. An empty RC-gather page → no reverse-charge bills →
     // it returns £0 without touching allocations/payments. The box-4/7 finances
     // page follows in the same FIFO queue.
+    // CF-1: the org default scheme is CASH, so box 4 (input VAT) comes from the
+    // supplier-payment LEDGER — a bill £40 VAT (net £200, gross £240) actually PAID
+    // in-quarter → apportioned 240 × (40/240) = £40. The finances reads below are:
+    // (1) the RC-gather window (empty — no RC bills), (2) the ledger's parent-bill
+    // lookup [fin-1], (3) the boxes-4/7 accrual finances read (IGNORED on the cash
+    // path, so left empty). The supplier-payment ledger drives box 4, not accrual.
     mock.enqueue("finances", { data: [], error: null }); // RC-gather window: no RC bills
     mock.enqueue("finances", {
-      // £40 input VAT on a finance row inside the quarter (accrual basis)
-      data: [{ id: "fin-1", vat_total: 40, created_at: "2026-08-15T00:00:00.000Z" }],
+      data: [{ id: "fin-1", vat_total: 40, amount: 200 }], // ledger parent-bill lookup
+      error: null,
+    });
+    mock.enqueue("finances", { data: [], error: null }); // boxes 4/7 accrual (ignored on cash)
+    mock.enqueue("supplierPayments", {
+      data: [{ id: "sp-1", paid_at: "2026-08-15" }], // the payment that settles fin-1
+      error: null,
+    });
+    mock.enqueue("spAllocations", {
+      data: [
+        {
+          payment_id: "sp-1",
+          finance_id: "fin-1",
+          amount: 240, // gross settled (net 200 + VAT 40)
+          cis_reverse_charge_vat: 0,
+          cis_vat_treatment: null,
+        },
+      ],
       error: null,
     });
     mock.enqueue("connSelect", { data: null, error: null }); // no connection yet
@@ -258,16 +280,29 @@ describe("prepareVatReturnAction — paginates a >1000-row quarter (F-1)", () =>
     // too little VAT. Each enqueued entry is one page; fetchAllRows keeps paging
     // while a page is full (500), so a full+full+short sequence proves it read
     // past the first page rather than stopping at it.
-    // Each payment fully settles a £1 invoice carrying £1 of VAT (total 1, vat 1),
-    // so its apportioned output VAT is 1 × (1/1) = 1. All reference the SAME
-    // invoice id, so the chunked parent lookup returns one row.
+    //
+    // Box 1 (output): each payment fully settles a £1 invoice carrying £1 VAT
+    // (total 1, vat 1) → apportioned 1 × (1/1) = 1. Box 4 (input) under the CASH
+    // scheme (CF-1) now comes from the SUPPLIER-PAYMENT LEDGER, so the F-1 paging
+    // guard covers that NEW read: each supplier payment settles a £1 bill carrying
+    // £1 VAT → apportioned 1 × (1/1) = 1. Both paged reads must sum past page 1.
     const payPage = (n: number) =>
       Array.from({ length: n }, () => ({ invoice_id: "inv-1", amount: 1, paid_at: "2026-08-15" }));
-    const finPage = (n: number) =>
-      Array.from({ length: n }, () => ({ vat_total: 1, created_at: "2026-08-15T00:00:00.000Z" }));
+    // A page of supplier payments, ids sp-{start..start+n-1}, all paid in-quarter.
+    const supPage = (start: number, n: number) =>
+      Array.from({ length: n }, (_, i) => ({ id: `sp-${start + i}`, paid_at: "2026-08-15" }));
+    // The matching allocations for that id range — each settling £1 of bill-1 gross.
+    const allocPage = (start: number, n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        payment_id: `sp-${start + i}`,
+        finance_id: "bill-1",
+        amount: 1,
+        cis_reverse_charge_vat: 0,
+        cis_vat_treatment: null,
+      }));
 
     mock.enqueue("subFind", { data: [], error: null }); // no existing record
-    // 1200 payments → £1200 output VAT (pages 500 + 500 + 200) — proves paging.
+    // 1200 payments → £1200 output VAT (pages 500 + 500 + 200) — proves box-1 paging.
     mock.enqueue("invoicePayments", { data: payPage(500), error: null });
     mock.enqueue("invoicePayments", { data: payPage(500), error: null });
     mock.enqueue("invoicePayments", { data: payPage(200), error: null });
@@ -275,14 +310,24 @@ describe("prepareVatReturnAction — paginates a >1000-row quarter (F-1)", () =>
       data: [{ id: "inv-1", number: "INV-1", vat_total: 1, amount: 0, total: 1 }],
       error: null,
     });
-    // C73-A: gatherReverseCharge reads `finances` first (windowed on the bill's
-    // created_at). An empty RC-gather page → £0 reverse charge, no allocation/
-    // payment reads. The box-4/7 finance pages follow in the FIFO queue.
-    mock.enqueue("finances", { data: [], error: null }); // RC-gather window: no RC bills
-    // 1100 finance rows → £1100 input VAT (pages 500 + 500 + 100).
-    mock.enqueue("finances", { data: finPage(500), error: null });
-    mock.enqueue("finances", { data: finPage(500), error: null });
-    mock.enqueue("finances", { data: finPage(100), error: null });
+    // finances FIFO order: (1) RC-gather window (empty → £0 RC, no allocation/payment
+    // reads), (2) the ledger's parent-bill lookup [bill-1], (3) boxes-4/7 accrual
+    // finances (IGNORED on the cash path → empty).
+    mock.enqueue("finances", { data: [], error: null }); // (1) RC-gather window
+    mock.enqueue("finances", {
+      data: [{ id: "bill-1", vat_total: 1, amount: 0 }], // (2) ledger parent-bill lookup
+      error: null,
+    });
+    mock.enqueue("finances", { data: [], error: null }); // (3) boxes 4/7 accrual (ignored on cash)
+    // 1100 supplier payments → £1100 input VAT (pages 500 + 500 + 100) — proves the
+    // NEW cash-ledger read pages past the 1000-row cap.
+    mock.enqueue("supplierPayments", { data: supPage(0, 500), error: null });
+    mock.enqueue("supplierPayments", { data: supPage(500, 500), error: null });
+    mock.enqueue("supplierPayments", { data: supPage(1000, 100), error: null });
+    // Allocations are CHUNKED by payment id (IN_CHUNK 500): 1100 ids → 3 chunk reads.
+    mock.enqueue("spAllocations", { data: allocPage(0, 500), error: null });
+    mock.enqueue("spAllocations", { data: allocPage(500, 500), error: null });
+    mock.enqueue("spAllocations", { data: allocPage(1000, 100), error: null });
     mock.enqueue("connSelect", { data: { id: "conn-1" }, error: null });
     mock.enqueue("subInsert", { data: { id: "sub-big", status: "prepared" }, error: null });
 
@@ -291,10 +336,10 @@ describe("prepareVatReturnAction — paginates a >1000-row quarter (F-1)", () =>
     const sub = mock.inserts.find((i) => i.table === "hmrc_submissions");
     expect(sub, "a hmrc_submissions row must be inserted").toBeDefined();
     const payload = sub!.payload.payload as Record<string, number>;
-    // If the reads had truncated at 1000, box 1 would be 1000 and box 4 would be
-    // 1000 (or the first page's 500). Full pagination yields the true totals.
+    // If the reads had truncated at 1000, box 1 would be 1000 (or 500) and box 4
+    // 1000 (or 500). Full pagination yields the true totals.
     expect(payload.vatDueSales).toBe(1200); // box 1 — ALL 1200 paid invoices
-    expect(payload.vatReclaimedCurrPeriod).toBe(1100); // box 4 — ALL 1100 finances
+    expect(payload.vatReclaimedCurrPeriod).toBe(1100); // box 4 — ALL 1100 paid bills (cash ledger)
     expect(payload.netVatDue).toBe(100); // |1200 − 1100|
   });
 });
@@ -330,6 +375,7 @@ describe("prepareVatReturnAction — admin gate + org scope", () => {
     // reads `finances` for boxes 4/7 (also empty here). Two finances pops.
     mock.enqueue("finances", { data: [], error: null }); // RC-gather window
     mock.enqueue("finances", { data: [], error: null }); // boxes 4/7
+    mock.enqueue("supplierPayments", { data: [], error: null }); // CF-1 cash ledger: none in-window
     mock.enqueue("connSelect", { data: { id: "conn-9" }, error: null });
     mock.enqueue("subInsert", { data: { id: "sub-9", status: "prepared" }, error: null });
 

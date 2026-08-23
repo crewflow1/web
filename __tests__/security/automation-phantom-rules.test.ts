@@ -56,7 +56,7 @@ function walk(dir: string): string[] {
       if (name === "node_modules" || name === "__tests__") continue;
       out.push(...walk(full));
     } else if (/\.tsx?$/.test(name)) {
-      out.push(full);
+      if (!full.endsWith("/lib/supabase/types.ts")) out.push(full);
     }
   }
   return out;

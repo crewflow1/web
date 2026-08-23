@@ -153,6 +153,10 @@ export async function GET(request: NextRequest) {
       scheme: orgSettings.vat_scheme,
       accrualInvoices: inputs.accrualInvoices,
       flatRate,
+      // CF-1: cash-scheme box 4 is payment-based (supplier-payment ledger); undefined
+      // under standard ⇒ accrual.
+      supplierPayments: inputs.supplierPayments,
+      reverseChargeNet: inputs.reverseCharge.net,
     },
   );
 

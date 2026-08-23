@@ -28,7 +28,8 @@ import type {
  *   2. billing_invoices for those org ids (status in open/recent set)
  *   3. imports for those org ids (most-recent slice)
  *   4. import_rows.MAX(updated_at) per org for stalled detection
- *   5. demo_requests recently touched (linked by org_id when present)
+ *   5. demo_requests recently touched (linked to an org via linked_org_id when present;
+ *      demo_requests is a GLOBAL marketing funnel with no org_id of its own)
  *   6. admin_alert_state for those org ids (state overlay)
  *
  * Health scores are computed in-memory using computeHealthScore —
@@ -120,12 +121,17 @@ type ImportRow = {
 
 type DemoRow = {
   id: string;
+  // demo_requests has NO org_id; it links to an org via linked_org_id once a demo
+  // is converted. We alias linked_org_id -> org_id in the select so the rest of the
+  // pipeline (bucketing by org, toAlertDemo) is unchanged.
   org_id: string | null;
   email: string | null;
   company: string;
   status: string;
   created_at: string;
-  updated_at: string | null;
+  // demo_requests has NO updated_at; approved_at is the real row-level "actioned"
+  // stamp used as the booked-at proxy.
+  approved_at: string | null;
 };
 
 type AlertStateRow = {
@@ -256,9 +262,10 @@ export async function buildAlertsSnapshot(): Promise<AlertsSnapshotResult> {
   const demoRes = await fetchAllRows<DemoRow>(
     (from, to) =>
       untypedAdminTable("demo_requests")
-        .select("id, org_id, email, company, status, created_at, updated_at")
-        .in("org_id", orgIds)
-        .order("updated_at", { ascending: false })
+        // linked_org_id is the real column; alias it to org_id for the row shape.
+        .select("id, org_id:linked_org_id, email, company, status, created_at, approved_at")
+        .in("linked_org_id", orgIds)
+        .order("created_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to) as unknown as PromiseLike<PageResult<DemoRow>>,
   );
@@ -450,10 +457,10 @@ function toAlertImport(raw: ImportRow, lastRowActivity: string | null): AlertImp
 }
 
 function toAlertDemo(raw: DemoRow): AlertDemo {
-  // We approximate booked_at as updated_at when the demo is in the
+  // We approximate booked_at as approved_at when the demo is in the
   // demo_booked column — the actual stamp lives in admin_activity_log
-  // but for the rules engine the row-level updated_at is a fine proxy.
-  const bookedAt = raw.status === "demo_booked" ? raw.updated_at : null;
+  // but for the rules engine the row-level approved_at is a fine proxy.
+  const bookedAt = raw.status === "demo_booked" ? raw.approved_at : null;
   return {
     id: raw.id,
     org_id: raw.org_id,

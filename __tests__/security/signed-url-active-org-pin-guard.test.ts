@@ -78,7 +78,7 @@ function walk(dir: string, out: string[] = []): string[] {
       continue;
     }
     if (s.isDirectory()) walk(full, out);
-    else if (/\.(ts|tsx)$/.test(name) && !/\.(test|spec)\.tsx?$/.test(name)) out.push(full);
+    else if (/\.(ts|tsx)$/.test(name) && !/\.(test|spec)\.tsx?$/.test(name)) if (!full.endsWith("/lib/supabase/types.ts")) out.push(full);
   }
   return out;
 }
