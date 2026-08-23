@@ -59,6 +59,102 @@ export type OrgSummary = {
 
 const ACTIVE_ORG_COOKIE = "active_org_id";
 
+/** The organizations columns every OrgContext needs — incl. the cast-only
+ *  access-gate (status/plan/trial) + i18n columns. Selected once, via the
+ *  memberships→organizations embed, so the shell never reads organizations
+ *  separately. */
+const ORG_CONTEXT_COLS =
+  "id, name, slug, onboarding_state, status, plan, trial_ends_at, created_at, require_mfa, country, locale, currency, timezone, tax_jurisdiction, phone_region";
+
+type OrgRow = {
+  id: string;
+  name: string;
+  slug: string;
+  onboarding_state: Record<string, unknown>;
+  status: OrgStatus | null;
+  plan: string | null;
+  trial_ends_at: string | null;
+  created_at: string;
+  require_mfa: boolean | null;
+  country: string | null;
+  locale: string | null;
+  currency: string | null;
+  timezone: string | null;
+  tax_jurisdiction: string | null;
+  phone_region: string | null;
+};
+
+/** Map a raw organizations row → the OrgContext['org'] shape, applying the
+ *  status/plan/MFA/i18n defaults. Shared by the membership path and the
+ *  impersonation path so the two can never drift. */
+function mapOrgRow(row: OrgRow): OrgContext["org"] {
+  return {
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    onboarding_state: row.onboarding_state,
+    // Pre-migration rows (or any backfill miss) fall through as "active" so we
+    // don't accidentally lock out existing customers if the column isn't present.
+    status: (row.status ?? "active") as OrgStatus,
+    plan: row.plan ?? "trial",
+    trial_ends_at: row.trial_ends_at,
+    created_at: row.created_at,
+    // Default OFF — a null (pre-migration / backfill miss) must never turn
+    // enforcement ON and lock out an org that never opted in.
+    require_mfa: row.require_mfa ?? false,
+    // Normalise the six i18n dimensions; a null/absent column degrades to the
+    // UK default (en-GB / GBP / Europe/London / UK / GB), the pre-wave value.
+    i18n: normalizeOrgI18n({
+      country: row.country,
+      locale: row.locale,
+      currency: row.currency,
+      timezone: row.timezone,
+      tax_jurisdiction: row.tax_jurisdiction,
+      phone_region: row.phone_region,
+    }),
+  };
+}
+
+type MembershipWithOrg = {
+  org_id: string;
+  role: string;
+  created_at: string;
+  id: string;
+  org: OrgRow | null;
+};
+
+/**
+ * PERF (product UX finalisation): ONE request-scoped read of the user's
+ * memberships WITH their organizations embedded.
+ *
+ * Before this, the (app) shell read `memberships` TWICE per render
+ * (getOrgForUser for active-org resolution + listOrgsForUser for the switcher)
+ * plus a SEPARATE organizations single() — on every route. Both callers now
+ * derive from this one cached read, so a render pays a single
+ * memberships+organizations query. React.cache() scopes it to the request only
+ * (no cross-request/session leak), and the org-selection + RLS semantics are
+ * unchanged: a user still reads only their own memberships and the orgs they
+ * belong to (the same access listOrgsForUser's embed already relied on).
+ */
+const loadMembershipsWithOrgs = cache(async function loadMembershipsWithOrgs(
+  userId: string,
+): Promise<MembershipWithOrg[]> {
+  const supabase = await createClient();
+  // Deterministic order: memberships[0] is the default org when there's no
+  // (valid) active_org_id cookie. Order by the membership's created_at
+  // (earliest-joined = their default org) with id as a stable tiebreaker.
+  const { data, error } = await supabase
+    .from("memberships")
+    .select(
+      `org_id, role, created_at, id, org:organizations ( ${ORG_CONTEXT_COLS} )` as never,
+    )
+    .eq("user_id", userId)
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
+  if (error || !data) return [];
+  return data as unknown as MembershipWithOrg[];
+});
+
 /**
  * Best-effort user lookup. Returns null if unauthenticated.
  * Use in layouts/pages where you want to render different UI for guests.
@@ -101,8 +197,6 @@ export async function getOrgForUser(
   userId: string,
   options: { currentEmail?: string | null } = {},
 ): Promise<OrgContext | null> {
-  const supabase = await createClient();
-
   // HQ-10: impersonation override. If the current user is a
   // super-admin AND has an active impersonation session, return
   // the TARGET org's context regardless of their actual
@@ -119,19 +213,12 @@ export async function getOrgForUser(
     }
   }
 
-  // Deterministic order: the fallback below picks memberships[0] when there's
-  // no (valid) active_org_id cookie. Without an explicit ORDER BY, Postgres row
-  // order is undefined, so a multi-org user could resolve to a *different* org
-  // between requests. Order by created_at (earliest-joined = their default org)
-  // with id as a stable tiebreaker.
-  const { data: memberships, error: memErr } = await supabase
-    .from("memberships")
-    .select("org_id, role")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: true })
-    .order("id", { ascending: true });
-
-  if (memErr || !memberships || memberships.length === 0) return null;
+  // ONE cached read (memberships + embedded organizations); the fallback picks
+  // memberships[0] (earliest-joined default org) when there's no valid
+  // active_org_id cookie — loadMembershipsWithOrgs already applies the
+  // deterministic created_at,id order a multi-org user's default depends on.
+  const memberships = await loadMembershipsWithOrgs(userId);
+  if (memberships.length === 0) return null;
 
   const cookieStore = await cookies();
   const activeOrgId = cookieStore.get(ACTIVE_ORG_COOKIE)?.value;
@@ -139,67 +226,11 @@ export async function getOrgForUser(
   const preferred =
     (activeOrgId && memberships.find((m) => m.org_id === activeOrgId)) ||
     memberships[0];
-  if (!preferred) return null;
-
-  // status / plan / trial_ends_at were added in migration 20260602000000
-  // (access gate). They aren't in the generated Supabase types yet — we
-  // pull them via a cast.
-  const { data: org, error: orgErr } = await supabase
-    .from("organizations")
-    .select(
-      "id, name, slug, onboarding_state, status, plan, trial_ends_at, created_at, require_mfa, country, locale, currency, timezone, tax_jurisdiction, phone_region" as never,
-    )
-    .eq("id", preferred.org_id)
-    .single();
-
-  if (orgErr || !org) return null;
-
-  const row = org as unknown as {
-    id: string;
-    name: string;
-    slug: string;
-    onboarding_state: Record<string, unknown>;
-    status: OrgStatus | null;
-    plan: string | null;
-    trial_ends_at: string | null;
-    created_at: string;
-    require_mfa: boolean | null;
-    country: string | null;
-    locale: string | null;
-    currency: string | null;
-    timezone: string | null;
-    tax_jurisdiction: string | null;
-    phone_region: string | null;
-  };
+  if (!preferred || !preferred.org) return null;
 
   return {
-    membership: preferred,
-    org: {
-      id: row.id,
-      name: row.name,
-      slug: row.slug,
-      onboarding_state: row.onboarding_state,
-      // Pre-migration rows (or any backfill miss) fall through as
-      // "active" so we don't accidentally lock out existing customers
-      // if the column isn't yet present.
-      status: (row.status ?? "active") as OrgStatus,
-      plan: row.plan ?? "trial",
-      trial_ends_at: row.trial_ends_at,
-      created_at: row.created_at,
-      // Default OFF — a null (pre-migration / backfill miss) must never turn
-      // enforcement ON and lock out an org that never opted in.
-      require_mfa: row.require_mfa ?? false,
-      // Normalise the six i18n dimensions; a null/absent column degrades to the
-      // UK default (en-GB / GBP / Europe/London / UK / GB), the pre-wave value.
-      i18n: normalizeOrgI18n({
-        country: row.country,
-        locale: row.locale,
-        currency: row.currency,
-        timezone: row.timezone,
-        tax_jurisdiction: row.tax_jurisdiction,
-        phone_region: row.phone_region,
-      }),
-    },
+    membership: { org_id: preferred.org_id, role: preferred.role },
+    org: mapOrgRow(preferred.org),
   };
 }
 
@@ -221,14 +252,11 @@ export function orgHasActiveAccess(status: OrgStatus): boolean {
  * Returns [] for users with no memberships.
  */
 export async function listOrgsForUser(userId: string): Promise<OrgSummary[]> {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("memberships")
-    .select("role, org:organizations ( id, name, slug )")
-    .eq("user_id", userId);
-  if (error || !data) return [];
+  // Derives from the same cached membership+org read as getOrgForUser — the
+  // header switcher no longer costs a second memberships query per render.
+  const rows = await loadMembershipsWithOrgs(userId);
   const out: OrgSummary[] = [];
-  for (const m of data) {
+  for (const m of rows) {
     if (m.org) {
       out.push({ id: m.org.id, name: m.org.name, slug: m.org.slug, role: m.role });
     }
@@ -389,30 +417,12 @@ async function loadOrgContextForImpersonation(
   const supabase = await createClient();
   const { data: org, error } = await supabase
     .from("organizations")
-    .select(
-      "id, name, slug, onboarding_state, status, plan, trial_ends_at, created_at, require_mfa, country, locale, currency, timezone, tax_jurisdiction, phone_region" as never,
-    )
+    .select(ORG_CONTEXT_COLS as never)
     .eq("id", orgId)
     .maybeSingle();
   if (error) throw readFailure("session: impersonation org context", error);
   if (!org) return null;
-  const row = org as unknown as {
-    id: string;
-    name: string;
-    slug: string;
-    onboarding_state: Record<string, unknown>;
-    status: OrgStatus | null;
-    plan: string | null;
-    trial_ends_at: string | null;
-    created_at: string;
-    require_mfa: boolean | null;
-    country: string | null;
-    locale: string | null;
-    currency: string | null;
-    timezone: string | null;
-    tax_jurisdiction: string | null;
-    phone_region: string | null;
-  };
+  const row = org as unknown as OrgRow;
   return {
     // The HQ user is rendered with role='owner' so the workspace
     // shows them the full surface (sidebar + sensitive screens).
@@ -424,24 +434,6 @@ async function loadOrgContextForImpersonation(
     // rejects most tenant reads, which is why HQ-side use of
     // impersonation is read-only-ish from the DB's perspective.
     membership: { org_id: row.id, role: "owner" },
-    org: {
-      id: row.id,
-      name: row.name,
-      slug: row.slug,
-      onboarding_state: row.onboarding_state,
-      status: (row.status ?? "active") as OrgStatus,
-      plan: row.plan ?? "trial",
-      trial_ends_at: row.trial_ends_at,
-      created_at: row.created_at,
-      require_mfa: row.require_mfa ?? false,
-      i18n: normalizeOrgI18n({
-        country: row.country,
-        locale: row.locale,
-        currency: row.currency,
-        timezone: row.timezone,
-        tax_jurisdiction: row.tax_jurisdiction,
-        phone_region: row.phone_region,
-      }),
-    },
+    org: mapOrgRow(row),
   };
 }

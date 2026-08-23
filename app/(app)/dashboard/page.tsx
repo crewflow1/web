@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/paginate";
@@ -158,90 +159,119 @@ export default async function DashboardPage() {
   // profitability, pipeline value, team, payroll cost — the SUM of both of a
   // dual-org owner's companies. Each read below is pinned to the ACTIVE org.
   const ACTIVITY_PAGE_SIZE = 25;
-  const [jobsRes, invoicesRes, financesRes, leadsRecentRes, membersRes, quotesRes, leadsAllRes, activityRes] =
-    await Promise.all([
-      fetchAllRows((from, to) =>
-        supabase
-          .from("jobs")
-          .select(
-            "id, status, scheduled_date, photos, assigned_to, created_at, customer:customers ( id, name )",
-          )
-          .eq("org_id", ctx.org.id)
-          .order("created_at", { ascending: false })
-          .order("id", { ascending: true })
-          .range(from, to),
-      ),
-      fetchAllRows((from, to) =>
-        supabase
-          .from("invoices")
-          .select(
-            "id, number, status, amount, vat_total, total, due_date, paid_at, created_at, job_id",
-          )
-          .eq("org_id", ctx.org.id)
-          .order("created_at", { ascending: false })
-          .order("id", { ascending: true })
-          .range(from, to),
-      ),
-      fetchAllRows((from, to) =>
-        supabase
-          .from("finances")
-          .select("id, amount, vat_total, created_at, category, job_id")
-          .eq("org_id", ctx.org.id)
-          .gte("created_at", sixMonthsAgoIso)
-          .order("created_at", { ascending: false })
-          .order("id", { ascending: true })
-          .range(from, to),
-      ),
+  const thirtyDaysAgoIso = new Date(Date.now() - 30 * 86_400_000).toISOString();
+
+  // Retention read types — declared up-front so the concurrent retention wave
+  // below can reference them. The `jobs` retention columns + retention_releases
+  // aren't in the generated Supabase types yet; the reads cast through these.
+  type RetTermsRow = {
+    id: string;
+    retention_percent: number | string | null;
+    practical_completion_date: string | null;
+    defects_liability_months: number | string | null;
+    retention_first_release_pct: number | string | null;
+  };
+  type RetRelRow = { job_id: string | null; amount: number | string | null };
+  type Paged<T> = {
+    eq: (k: string, v: unknown) => Paged<T>;
+    order: (k: string, o: { ascending: boolean }) => {
+      range: (f: number, t: number) => PromiseLike<{ data: T[] | null; error: unknown }>;
+    };
+  };
+
+  // PERF (product UX finalisation): every read wave fires CONCURRENTLY.
+  //
+  // RLS is the OUTER boundary, not the scope: `current_org_ids()` returns EVERY
+  // org the viewer belongs to, so each read below is pinned to the ACTIVE org
+  // (else a dual-org owner's tiles would SUM both companies). These five waves
+  // have NO data dependency on one another — each needs only ctx.org.id + a date
+  // bound — so we START them all, then await them together. That collapses what
+  // were FIVE sequential Supabase round-trip waves (the dashboard's dominant
+  // real-world latency: 80+ queries × per-query RTT, cheap locally but seconds on
+  // Vercel↔Supabase) into ONE overlapped wave. Every downstream figure — cash,
+  // receivables, VAT inputs, retention — is computed from the SAME rows as
+  // before, just fetched in parallel: no value changes, nothing cached, money/VAT
+  // stay live. PAGED + LOUD (F-1) money reads still THROW on error (checked below).
+  const coreWave = Promise.all([
+    fetchAllRows((from, to) =>
+      supabase
+        .from("jobs")
+        .select(
+          "id, status, scheduled_date, photos, assigned_to, created_at, customer:customers ( id, name )",
+        )
+        .eq("org_id", ctx.org.id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("invoices")
+        .select(
+          "id, number, status, amount, vat_total, total, due_date, paid_at, created_at, job_id",
+        )
+        .eq("org_id", ctx.org.id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("finances")
+        .select("id, amount, vat_total, created_at, category, job_id")
+        .eq("org_id", ctx.org.id)
+        .gte("created_at", sixMonthsAgoIso)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    supabase
+      .from("leads")
+      .select(
+        "id, source, urgency, service, postcode, created_at, customer:customers ( id, name )",
+      )
+      .eq("org_id", ctx.org.id)
+      .order("created_at", { ascending: false })
+      .limit(5),
+    supabase
+      .from("memberships")
+      .select("user_id, role, user:users ( id, full_name, email )")
+      .eq("org_id", ctx.org.id),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("quotes")
+        .select("id, status, total, accepted_at, created_at, approved_at")
+        .eq("org_id", ctx.org.id)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
       supabase
         .from("leads")
-        .select(
-          "id, source, urgency, service, postcode, created_at, customer:customers ( id, name )",
-        )
+        .select("id, status, source, estimated_value, created_at")
         .eq("org_id", ctx.org.id)
         .order("created_at", { ascending: false })
-        .limit(5),
-      supabase
-        .from("memberships")
-        .select("user_id, role, user:users ( id, full_name, email )")
-        .eq("org_id", ctx.org.id),
-      fetchAllRows((from, to) =>
-        supabase
-          .from("quotes")
-          .select("id, status, total, accepted_at, created_at, approved_at")
-          .eq("org_id", ctx.org.id)
-          .order("created_at", { ascending: false })
-          .order("id", { ascending: true })
-          .range(from, to),
-      ),
-      fetchAllRows((from, to) =>
-        supabase
-          .from("leads")
-          .select("id, status, source, estimated_value, created_at")
-          .eq("org_id", ctx.org.id)
-          .order("created_at", { ascending: false })
-          .order("id", { ascending: true })
-          .range(from, to),
-      ),
-      supabase
-        .from("activity_log")
-        .select(
-          "id, actor_id, actor_name, action, target_table, target_id, metadata, created_at",
-          { count: "exact" },
-        )
-        .eq("org_id", ctx.org.id)
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: false })
-        .range(0, ACTIVITY_PAGE_SIZE - 1),
-    ]);
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    supabase
+      .from("activity_log")
+      .select(
+        "id, actor_id, actor_name, action, target_table, target_id, metadata, created_at",
+        { count: "exact" },
+      )
+      .eq("org_id", ctx.org.id)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(0, ACTIVITY_PAGE_SIZE - 1),
+  ]);
 
-  // Wave 3 — payment + reconciliation rollups. PAGED + LOUD (F-1): the cash-in
-  // tile SUMS every payment this month and the reconciliation tile COUNTS every
-  // suggested bank line — a bare `.select()` truncates at the 1000-row cap, so a
-  // busy month's cash-in would silently under-report. Every sibling read on this
-  // page already pages through `fetchAllRows`; these two were the holdouts. On
-  // error they THROW (not `?? []`): an errored money/reconciliation read must
-  // never render as a reassuring low number.
-  const [paymentsRes, unmatchedRes, allPaymentsRes] = await Promise.all([
+  // Payment + reconciliation rollups. The cash-in tile SUMS every payment this
+  // month; the reconciliation tile COUNTS every suggested bank line; the
+  // receivables tiles NET each invoice (total − Σ payments) so they need the
+  // WHOLE payment ledger, not a monthly slice. All PAGED (fetchAllRows) + LOUD.
+  const paymentsWave = Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("invoice_payments")
@@ -262,11 +292,6 @@ export default async function DashboardPage() {
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    // ALL payments (not just this month): the Outstanding / Overdue / Due-this-week
-    // / Expected-incoming tiles NET each invoice's balance (total − Σ payments) via
-    // the shared receivables authority. A partial payment lands whenever it lands,
-    // so netting needs the WHOLE ledger, not a monthly slice. PAGED + LOUD (F-1):
-    // an errored money read must never render as a reassuring low Outstanding.
     fetchAllRows((from, to) =>
       supabase
         .from("invoice_payments")
@@ -277,6 +302,68 @@ export default async function DashboardPage() {
         .range(from, to),
     ),
   ]);
+
+  // Time + payroll rollups (last 30 days of time entries covers the week/month tiles).
+  const timeWave = Promise.all([
+    fetchAllRows((from, to) =>
+      supabase
+        .from("time_entries")
+        .select("id, user_id, job_id, started_at, ended_at, breaks")
+        .eq("org_id", ctx.org.id)
+        .gte("started_at", thirtyDaysAgoIso)
+        .order("started_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    supabase
+      .from("memberships")
+      .select("user_id, role, user:users ( id, hourly_pay )")
+      .eq("org_id", ctx.org.id),
+  ]);
+
+  // Contract retention "due back" (Programme C) — held retention + what's due for
+  // release, PAGED + cast (retention columns not yet in the generated types).
+  // Order by the UNIQUE primary key so fetchAllRows has a stable total order.
+  const retentionWave = Promise.all([
+    fetchAllRows<RetTermsRow>((from, to) =>
+      (supabase.from("jobs" as never) as unknown as { select: (c: string) => Paged<RetTermsRow> })
+        .select("id, retention_percent, practical_completion_date, defects_liability_months, retention_first_release_pct")
+        .eq("org_id", ctx.org.id)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    fetchAllRows<RetRelRow>((from, to) =>
+      (supabase.from("retention_releases" as never) as unknown as { select: (c: string) => Paged<RetRelRow> })
+        .select("job_id, amount")
+        .eq("org_id", ctx.org.id)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+  ]);
+
+  // Deterministic insight payloads + the onboarding snapshot (built ONCE and
+  // shared with the retention snapshot, de-duping an org-row fetch + 5 counts).
+  // LLM prose lands later when a model key is added to Vercel.
+  const onboardingSnapshotPromise = buildOnboardingSnapshot(ctx.org.id);
+  const insightsWave = Promise.all([
+    computeActivitySummary(ctx.org.id, 7),
+    computeLeadInsights(ctx.org.id, 30),
+    onboardingSnapshotPromise,
+    buildRetentionSnapshot(ctx.org.id, { onboarding: onboardingSnapshotPromise }),
+  ]);
+
+  // ONE overlapped await — every wave is already in flight; Promise.all here just
+  // collects them, so a rejection in any wave is still awaited (no orphan).
+  const [
+    [jobsRes, invoicesRes, financesRes, leadsRecentRes, membersRes, quotesRes, leadsAllRes, activityRes],
+    [paymentsRes, unmatchedRes, allPaymentsRes],
+    [{ data: timeEntriesRaw }, { data: payableMembers }],
+    [retentionJobsRes, retentionReleasesRes],
+    [activityInsights, leadInsights, onboardingSnapshot, retentionSnapshot],
+  ] = await Promise.all([coreWave, paymentsWave, timeWave, retentionWave, insightsWave]);
+
+  // Money reads are LOUD: an errored payment/reconciliation read must never
+  // render as a reassuring low number — throw rather than `?? []`.
   if (paymentsRes.error)
     throw readFailure("dashboard: invoice payments (cash-in)", paymentsRes.error);
   if (unmatchedRes.error)
@@ -295,26 +382,6 @@ export default async function DashboardPage() {
       (paidByInvoice.get(row.invoice_id) ?? 0) + Number(row.amount ?? 0),
     );
   }
-
-  // Wave 4 — time + payroll rollups (last 30 days of time entries is plenty
-  // for "this week" + "this month" tiles).
-  const thirtyDaysAgoIso = new Date(Date.now() - 30 * 86_400_000).toISOString();
-  const [{ data: timeEntriesRaw }, { data: payableMembers }] = await Promise.all([
-    fetchAllRows((from, to) =>
-      supabase
-        .from("time_entries")
-        .select("id, user_id, job_id, started_at, ended_at, breaks")
-        .eq("org_id", ctx.org.id)
-        .gte("started_at", thirtyDaysAgoIso)
-        .order("started_at", { ascending: false })
-        .order("id", { ascending: true })
-        .range(from, to),
-    ),
-    supabase
-      .from("memberships")
-      .select("user_id, role, user:users ( id, hourly_pay )")
-      .eq("org_id", ctx.org.id),
-  ]);
 
   const jobs = jobsRes.data ?? [];
   // Cast: job_id is in the 20260520150000 migration but not yet in
@@ -346,45 +413,9 @@ export default async function DashboardPage() {
   const quotes = quotesRes.data ?? [];
   const allLeads = leadsAllRes.data ?? [];
 
-  // Contract retention "due back" (Programme C extension) — the portfolio view
-  // of held retention + what's due for release. Read on the TENANT client (RLS)
-  // and PAGED (never a truncated `.select()`); the rollup reuses the same
-  // per-job derivation as the job page so the numbers agree. The `jobs`
-  // retention columns aren't in the generated types yet — cast the reads.
-  type RetTermsRow = {
-    id: string;
-    retention_percent: number | string | null;
-    practical_completion_date: string | null;
-    defects_liability_months: number | string | null;
-    retention_first_release_pct: number | string | null;
-  };
-  type RetRelRow = { job_id: string | null; amount: number | string | null };
-  type Paged<T> = {
-    eq: (k: string, v: unknown) => Paged<T>;
-    order: (k: string, o: { ascending: boolean }) => {
-      range: (f: number, t: number) => PromiseLike<{ data: T[] | null; error: unknown }>;
-    };
-  };
-  const [retentionJobsRes, retentionReleasesRes] = await Promise.all([
-    fetchAllRows<RetTermsRow>((from, to) =>
-      (supabase.from("jobs" as never) as unknown as { select: (c: string) => Paged<RetTermsRow> })
-        .select("id, retention_percent, practical_completion_date, defects_liability_months, retention_first_release_pct")
-        .eq("org_id", ctx.org.id)
-        .order("id", { ascending: true })
-        .range(from, to),
-    ),
-    fetchAllRows<RetRelRow>((from, to) =>
-      (supabase.from("retention_releases" as never) as unknown as { select: (c: string) => Paged<RetRelRow> })
-        .select("job_id, amount")
-        .eq("org_id", ctx.org.id)
-        // Order by the UNIQUE primary key, not the non-unique job_id: fetchAllRows
-        // needs a stable total order or rows sharing a sort-key value can be
-        // dropped/duplicated at a 500-row page boundary (the F-1 truncation class).
-        // The rollup groups by job_id in JS, so the order only has to be stable.
-        .order("id", { ascending: true })
-        .range(from, to),
-    ),
-  ]);
+  // Retention rollup reuses the same per-job derivation as the job page so the
+  // numbers agree; it needs `invoices` (above), hence it's computed here rather
+  // than inside the wave.
   const retentionRollup = computeRetentionDueRollup({
     jobs: (retentionJobsRes.data ?? []).map((j) => ({
       id: j.id,
@@ -399,26 +430,6 @@ export default async function DashboardPage() {
   const activity = (activityRes.data ?? []) as unknown as ActivityRow[];
   const activityTotal = activityRes.count ?? 0;
   const activityHasMore = activity.length < activityTotal;
-
-  // Slice 6 — deterministic insight payloads. Run in parallel so the
-  // page-render fan-out doesn't grow linearly. LLM prose lands later
-  // when ANTHROPIC_API_KEY / OPENAI_API_KEY is added to Vercel.
-  //
-  // The onboarding snapshot is fetched alongside so the SetupChecklist
-  // card has live data without an extra round-trip waterfall. We build it
-  // ONCE and hand the in-flight promise to the retention snapshot, which
-  // also needs it — that de-dupes an org-row fetch + 5 count queries that
-  // were previously run twice per dashboard load.
-  const onboardingSnapshotPromise = buildOnboardingSnapshot(ctx.org.id);
-  const [activityInsights, leadInsights, onboardingSnapshot, retentionSnapshot] =
-    await Promise.all([
-      computeActivitySummary(ctx.org.id, 7),
-      computeLeadInsights(ctx.org.id, 30),
-      onboardingSnapshotPromise,
-      buildRetentionSnapshot(ctx.org.id, {
-        onboarding: onboardingSnapshotPromise,
-      }),
-    ]);
 
   // Phase 2 — fire the milestone notification + audit-log side
   // effects for any newly-crossed milestones. Best-effort; idempotent
@@ -857,8 +868,26 @@ export default async function DashboardPage() {
       {/* Daily Briefing — the first thing an owner sees: "what needs you today".
           Composes existing live signals (money · safety · operations · sales)
           into a ranked, deep-linked, per-user-dismissible attention feed.
-          Additive + best-effort: never blocks the rest of the dashboard. */}
-      <DailyBriefing orgId={ctx.org.id} userId={user.id} />
+          PERF (product UX finalisation): it fans out ~50 reads, so it now STREAMS
+          behind Suspense — its cost no longer blocks the KPI grid's first paint.
+          The static skeleton reserves its space so nothing below it shifts. */}
+      <Suspense
+        fallback={
+          <div
+            className="rounded-lg border border-slate-200 bg-white p-4"
+            aria-hidden
+          >
+            <div className="mb-3 h-4 w-44 rounded bg-slate-100" />
+            <div className="space-y-2">
+              <div className="h-14 rounded-md bg-slate-50" />
+              <div className="h-14 rounded-md bg-slate-50" />
+              <div className="h-14 rounded-md bg-slate-50" />
+            </div>
+          </div>
+        }
+      >
+        <DailyBriefing orgId={ctx.org.id} userId={user.id} />
+      </Suspense>
 
       {/* Onboarding checklist — pinned at the top until setup is 100% */}
       <SetupChecklist snapshot={onboardingSnapshot} />
