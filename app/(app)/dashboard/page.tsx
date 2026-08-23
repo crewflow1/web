@@ -870,7 +870,10 @@ export default async function DashboardPage() {
           into a ranked, deep-linked, per-user-dismissible attention feed.
           PERF (product UX finalisation): it fans out ~50 reads, so it now STREAMS
           behind Suspense — its cost no longer blocks the KPI grid's first paint.
-          The static skeleton reserves its space so nothing below it shifts. */}
+          The skeleton reserves an approximate footprint; the real briefing height
+          varies (calm all-clear ~120px, a full feed 300px+), so there is a small,
+          bounded layout shift when it streams in — the accepted trade for painting
+          the KPI grid without waiting on the briefing. */}
       <Suspense
         fallback={
           <div

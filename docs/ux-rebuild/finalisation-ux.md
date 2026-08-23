@@ -21,23 +21,35 @@ for every area), staff now land on Toolbox talks / Leave. Applied to the desktop
 sidebar header, the mobile drawer "overview" link, and the mobile quick-bar
 (hardcoded `/health-safety` → `/toolbox`).
 
-### Money terminology (Phase 7)
-The CEO's two hypotheses were both risky as literally stated, so — with the
-delegated latitude — the safe, accurate alternatives were chosen:
-- **Finances → "Costs"** (NOT "Ledger": `/finances` is a cost/spend log — categories
-  are all cost types, no journals/income/GL — so "Ledger" would over-promise
-  bookkeeping). Fixes the "Finances = the whole area / = a ledger" ambiguity.
-- **Expenses → "Receipts"** (it's the receipt-capture/approval inbox). Together they
-  read as one legible pipeline: **Receipts → (approve) → Costs**, the app's biggest
-  confusable pair.
-- **Payments** left as-is (renaming to "Bank reconciliation" would name only half —
-  it also records customer receipts).
-- **One name per route:** the aged-debtors page called `/cash` "Get paid"; it now
-  says "Cash position" (its canonical name).
-Touch points were label-only (nav-model, i18n catalog, the two page `<h1>`s + the
-`/finances` subtitle, the activity-log filter labels, the i18n snapshot test); the
-old terms are retained as **search keywords** so `⌘K` for "expenses"/"finances"
-still finds them. No calculation, RLS, route, or domain logic changed.
+### Money — the one unambiguous fix (kept)
+**One name per route:** the aged-debtors page linked to `/cash` calling it "Get
+paid" while the page's canonical name is "Cash position"; the link now says "Cash
+position". Reviewer-confirmed to read correctly. Label-only.
+
+### Money terminology rename (Phase 7) — HELD for CEO decision, not shipped
+The audit proposed **Finances → "Costs"** and **Expenses → "Receipts"** (the CEO's
+own examples, Finances→Ledger / Payments→Bank-rec, were shown to be inaccurate).
+I implemented it, then the adversarial UX reviewer found two decisive problems, so
+I **reverted it** rather than ship a contested, user-facing relabel live without
+CEO sight:
+1. **It was only half-applied.** ~13 hardcoded surfaces still said "Finances" /
+   "Expenses" (the approve-a-receipt flow "post to Finances", breadcrumbs, the
+   dashboard activity-log filter via `lib/activity/render.ts`, tax/company-health
+   drill-throughs, `/finances/new`). A half-rename is worse than none.
+2. **"Receipts" is actively wrong.** In bookkeeping "receipts" = money *received*;
+   sitting beside Invoices + Payments it reads as money-IN, but `/expenses` is the
+   money-OUT capture inbox. It also collides with goods-receipts/GRN (Operations →
+   Purchase orders) and billing receipts (settings/billing). "Costs" is defensible
+   ("the safer half" per the reviewer) but collides with job-costing "Costs" and
+   still needs the full ~13-surface sweep.
+
+**Recommendation for the CEO** (a clean, reviewed decision to approve, not a live
+surprise): rename **Finances → "Costs"** ONLY, applied to ALL ~13 surfaces at once
+(nav, catalog, every `/finances*` `<h1>`/breadcrumb/button, the approve-flow copy,
+`lib/activity/render.ts`, the tax + company-health drill-throughs); keep
+**Expenses** as-is (do NOT adopt "Receipts"); accept the minor job-costing "Costs"
+overlap. This is a byte-identical-guarded nav change (`__tests__/i18n/i18n-wiring`),
+so it should land as its own reviewed slice. Full surface list in the review notes.
 
 ## Prioritised backlog (audit-found, deliberately deferred — not churn-shipped live)
 
@@ -72,3 +84,33 @@ Ranked; each is a real improvement but either opinion-sensitive or larger than a
 7. **Deeper Money reconciliation.** The job-level Billing-vs-Commercial "Outstanding"
    duplication and the money-OUT/AP side living under Operations (not Money) — both
    are structural, beyond a label fix.
+
+## Pre-existing items surfaced by the adversarial security review (NOT caused by this branch)
+
+Flagged for a SEPARATE security audit / product decision — this branch neither
+introduced nor weakened them, and they do not gate this deploy:
+
+- **Staff can read co-workers' `hourly_pay` by direct URL.** The RLS policy
+  "members can read profiles of co-workers" (migration 20260515170000) grants
+  row-level SELECT on `public.users`, and `/staff` selects `hourly_pay` on the
+  user-JWT client. The R1 nav change removes the UI path for staff, but the real
+  fix is column-level / a `hourly_pay`-excluding view. **Recommend a dedicated
+  audit** — this is a genuine pre-existing data exposure.
+- **Job workspace shows Commercial / Valuations / Billing tabs + contextual Cmd+K
+  commands to the staff role.** Consistent with the pre-existing design (any org
+  member can VIEW job figures; role gates only WRITE actions — budget edit, submit,
+  certify). Only Valuations is net-new (de-orphaned). For IA consistency with
+  "staff avoid Money," optionally role-gate these tabs/commands to owner/admin; the
+  deeper question — should staff see job commercial *figures* at all — is a
+  pre-existing product decision needing a server-side display gate, out of scope
+  for a UX/perf pass.
+
+## Adversarial review outcome (Phase 15)
+- **Performance:** no blocker/major — auth consolidation behavior-preserving,
+  dashboard wave-merge byte-identical output, no orphaned rejections. One MINOR
+  (an over-claiming Suspense comment) fixed.
+- **Security/domain:** SAFE TO DEPLOY — no RLS/permission/audit/financial weakening,
+  no dark activation, no migration; the membership-role guard was strengthened.
+- **UX/IA:** the Money rename was half-applied and "Receipts" was conceptually wrong
+  → the rename was **reverted/held** for a CEO decision; the role-correct nav landing
+  and the `/cash` drift fix were confirmed sound and kept.
