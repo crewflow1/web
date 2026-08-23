@@ -131,3 +131,53 @@ strip to owner/admin the same way (a small, mechanical follow-up).
 
 No server access boundary was weakened; the leak-relevant surface (labour cost via
 pay) is closed.
+
+---
+
+## Phase 3 — adjacent sensitive-field sweep (same co-worker-`users` pattern) — CLEAN
+
+After Phase 1, `public.users` (the co-worker-readable row) holds only: id, email,
+full_name, phone, avatar_url, employment_type, start_date, created_at, updated_at.
+The sensitive financial/identity fields are all OFF it — ni_number → staff_secrets
+(20260529), hourly_pay + emergency_contact → staff_compensation (20261218).
+Remaining fields are contact/identity (intended co-worker visibility) + low-
+sensitivity HR (employment_type, start_date).
+
+The other staff-PII tables carry their OWN self-or-admin RLS (verified, real
+Postgres): `payroll_tax_profiles` + `pension_enrolments` SELECT =
+`(user_id = auth.uid() AND org_id IN current_org_ids()) OR is_org_admin(org_id)` —
+a co-worker CANNOT read another's tax code or pension. staff_secrets (NI) is admin-
+only; staff_compensation is self-or-admin. **No further BLOCKER/MAJOR exposure via
+this pattern.** (employment_type/start_date co-worker visibility = MINOR/accepted.)
+
+---
+
+## Phase 4 — UX closeout
+
+### 4A — Finances → "Costs" (SHIPPED, complete atomic sweep)
+`/finances` is a cost/spend log (not a ledger); "Costs" is accurate. Renamed EVERY
+user-visible occurrence tied to that surface, in one pass: nav label + i18n
+`nav.finances`, the `/finances` page h1 + subtitle, `/finances/new` breadcrumb + h1
+("New cost entry"), the approve-receipt flow ("posted to Costs" toast + "post to
+Costs" copy + the "Costs" link), the Tax page "Costs" link, the activity-log filter
+label + phrasing ("added a cost"), the dashboard "Add cost" CTA, and the i18n
+snapshot test. "Expenses" is UNCHANGED (the reviewed decision — "Receipts" was
+rejected). Old term "finances" kept as a ⌘K search keyword. Route path stays
+`/finances` (URL≠label; renaming the route is out of scope). No calc/RLS/logic
+touched; typecheck + i18n/nav/activity green.
+
+### 4B — thin area landings (People `/staff`, Site & safety `/health-safety`) — DEFERRED, documented
+A genuinely useful "what needs me here" hub needs NEW data composition (pending-
+leave count, rota-conflict detection, payroll-due, expiring certifications). The
+data exists (`/staff/rota/conflicts`, `/staff/leave`, `/payroll`, the H&S snapshot),
+but composing it is feature-build work, not the "cheap + safe" bar this closeout
+sets — and rule #8 forbids a cosmetic redesign programme here. RECOMMEND as its own
+small UX slice with CEO sign-off; left unchanged for now.
+
+### 4C — design-system drift — DEFERRED, documented
+The prior audit found the feared decorative excess ABSENT; the real drift is low-
+severity (raw `<button>` vs Button, hand-rolled pills vs Badge, 0/184 PageHeader,
+breadcrumbs on 16/184). Fixing it well is a broad, multi-file sweep — exactly the
+"churn for its own sake" rule #8 excludes from a security closeout. RECOMMEND a
+targeted PageHeader+Breadcrumb wayfinding slice (object `[id]` routes) as separate
+UX work; not churned in here.

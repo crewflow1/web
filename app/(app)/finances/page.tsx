@@ -158,9 +158,10 @@ export default async function FinancesPage({
     <div className="space-y-6">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Finances</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Costs</h1>
           <p className="mt-1 text-sm text-slate-600">
-            Track receipts, earnings, and VAT.
+            Your cost log — every expense with its category, VAT and receipt.
+            Approved receipts land here.
           </p>
         </div>
         <div className="flex items-center gap-3">

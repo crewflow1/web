@@ -128,7 +128,7 @@ export default async function ExpenseDraftPage({
           <h1 className="text-2xl font-bold text-slate-900">Expense draft</h1>
           <p className="mt-1 text-sm text-slate-600">
             Review the values the AI pulled from the receipt. Approve to
-            post to Finances; nothing has been recorded yet.
+            post to Costs; nothing has been recorded yet.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -167,7 +167,7 @@ export default async function ExpenseDraftPage({
             href={`/finances`}
             className="font-medium underline hover:text-emerald-900"
           >
-            Finances
+            Costs
           </Link>
           .
         </div>
@@ -288,7 +288,7 @@ export default async function ExpenseDraftPage({
               type="submit"
               className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
             >
-              Approve + post to Finances
+              Approve + post to Costs
             </button>
             <Link
               href="/expenses"

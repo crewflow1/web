@@ -53,7 +53,7 @@ const WIRED_NAV: Record<string, string> = {
   "nav.suppliers": "Suppliers",
   "nav.purchase_orders": "Purchase orders",
   "nav.expenses": "Expenses",
-  "nav.finances": "Finances",
+  "nav.finances": "Costs",
   "nav.invoices": "Invoices",
   "nav.payments": "Payments",
   "nav.payroll": "Payroll",

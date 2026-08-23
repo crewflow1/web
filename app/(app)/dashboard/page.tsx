@@ -1605,7 +1605,7 @@ function FirstRun({ userEmail, orgName }: { userEmail: string; orgName: string }
           n={3}
           title="Log your first expense"
           href="/finances/new"
-          cta="Add finance entry"
+          cta="Add cost"
         >
           Receipts, materials, fuel, labour. VAT is computed automatically.
         </FirstRunStep>

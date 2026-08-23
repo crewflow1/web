@@ -38,7 +38,7 @@ type DraftRow = {
 };
 
 const SAVED_MAP: Record<string, string> = {
-  approved: "Expense approved and posted to Finances.",
+  approved: "Expense approved and posted to Costs.",
   rejected: "Draft rejected.",
 };
 
