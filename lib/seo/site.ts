@@ -24,7 +24,7 @@ export function abs(path = "/"): string {
  * Social / off-site profiles.
  *
  * These are the CANONICAL handles for the brand. Some are not yet claimed
- * — claiming exactly these handles is tracked in docs/seo/09-social-seo.md
+ *, claiming exactly these handles is tracked in docs/seo/09-social-seo.md
  * and docs/seo/06-brand-serp-domination.md. They are emitted in the
  * Organization `sameAs` array (the entity-graph signal Google uses to tie
  * every profile back to one company), so the handles must match what gets
@@ -52,9 +52,9 @@ export const SITE = {
   /** One-liner used as the global default description + Organization.description. */
   tagline: "The operating system for UK construction companies.",
   description:
-    "CrewFlow is the all-in-one operating system for UK construction companies. Leads, quotes, jobs, scheduling, staff, timesheets, invoices, payments, profitability, payroll and tax — every part of your construction business in one place.",
+    "CrewFlow is the operating system for UK construction companies. Leads, quotes, jobs, scheduling, staff, timesheets, invoices, payments, profitability, payroll and tax, every part of your construction business in one place.",
   email: "hello@crewflow.uk",
-  /** Accurate per the homepage footer — "Built in Belfast, Northern Ireland". */
+  /** Accurate per the homepage footer, "Built in Belfast, Northern Ireland". */
   location: {
     locality: "Belfast",
     region: "Northern Ireland",

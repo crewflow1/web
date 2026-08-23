@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { UpdatePasswordForm } from "./_update-form";
 
 /**
- * Set a new password. Requires a live session — reached either from a recovery
+ * Set a new password. Requires a live session, reached either from a recovery
  * link (the /auth/callback established a recovery session and forwarded here)
  * or by an already-signed-in user changing their password. No session → back
  * to the reset request page rather than a silent dead-end.

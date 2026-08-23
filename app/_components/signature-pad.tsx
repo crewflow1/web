@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * A finger/mouse/stylus canvas that serialises to a PNG data-URL held in a
  * hidden <input>, so it drops straight into any plain server-action <form>
  * (public quote acceptance, H&S sign-off) with no client-side submit wiring.
- * The drawn signature is OPTIONAL by default — a blank pad submits an empty
+ * The drawn signature is OPTIONAL by default, a blank pad submits an empty
  * value and the server keeps the typed-name record unchanged.
  *
  * Pointer Events cover mouse + touch + stylus with one code path; the canvas

@@ -1,9 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import "./_marketing/tokens.css";
 import { CookieConsent } from "@/app/_components/cookie-consent";
 
-// Boot-time env validation — throws if anything required is missing.
+// Boot-time env validation, throws if anything required is missing.
 import "@/lib/env";
 
 const inter = Inter({
@@ -54,7 +55,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0F172A",
+  themeColor: "#0B1622",
   width: "device-width",
   initialScale: 1,
   maximumScale: 5,

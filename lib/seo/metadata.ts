@@ -1,5 +1,5 @@
 /**
- * `buildMetadata()` — the one helper every marketing page uses to produce a
+ * `buildMetadata()`, the one helper every marketing page uses to produce a
  * complete, consistent Next.js `Metadata` object: self-referencing canonical,
  * OpenGraph, Twitter card, a dynamically-generated OG image, and robots.
  *
@@ -32,7 +32,7 @@ export type BuildMetadataInput = {
   ogEyebrow?: string;
   image?: string;
   type?: "website" | "article";
-  /** ISO date — only used for article OG type. */
+  /** ISO date, only used for article OG type. */
   publishedTime?: string;
   modifiedTime?: string;
   noindex?: boolean;

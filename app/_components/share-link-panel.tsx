@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
  * Reusable "send this link to your client" panel.
  *
  * Rendered on the quote detail (/quotes/[id]) and customer detail
- * (/customers/[id]) pages. The actual link is built upstream — this
+ * (/customers/[id]) pages. The actual link is built upstream, this
  * component just gives the operator every reasonable way to push it
  * out:
  *
@@ -22,11 +22,11 @@ import { useCallback, useEffect, useState } from "react";
  */
 
 type Props = {
-  /** Heading text — defaults to the CEO-directive copy. */
+  /** Heading text, defaults to the CEO-directive copy. */
   title?: string;
   /** Short helper line under the heading. */
   hint?: string;
-  /** Fully qualified URL — must be absolute (https://...) for share targets. */
+  /** Fully qualified URL, must be absolute (https://...) for share targets. */
   url: string;
   /** Used in the email subject + WhatsApp body. */
   subject?: string;
@@ -44,7 +44,7 @@ export function ShareLinkPanel({
   const [copied, setCopied] = useState(false);
   const [canShare, setCanShare] = useState(false);
 
-  // navigator.share is only present in secure contexts on mobile — feature-
+  // navigator.share is only present in secure contexts on mobile, feature-
   // detect after mount to avoid an SSR/hydration mismatch.
   useEffect(() => {
     setCanShare(
@@ -69,7 +69,7 @@ export function ShareLinkPanel({
     try {
       await navigator.share({ title: subject, text: bodyText ?? "", url });
     } catch {
-      // User cancelled or share failed — silently ignore. The other
+      // User cancelled or share failed, silently ignore. The other
       // buttons are still available.
     }
   }, [canShare, subject, bodyText, url]);

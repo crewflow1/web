@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 /**
  * Privacy policy.
  *
- * Static, server-rendered. Plain English over legalese — the audience is
+ * Static, server-rendered. Plain English over legalese, the audience is
  * UK trades operators, not their solicitors. Substantive but not a
  * substitute for legal advice; we point operators at hello@crewflow.uk
  * for clarifications.
@@ -29,7 +29,7 @@ export default function PrivacyPage() {
         software for UK construction companies to manage leads, quotes, jobs,
         staff, payroll, invoices, and payments. When this policy says
         &ldquo;we&rdquo; or &ldquo;CrewFlow&rdquo;, that&apos;s us. When it
-        says &ldquo;you&rdquo;, it means anyone using the product — owners,
+        says &ldquo;you&rdquo;, it means anyone using the product, owners,
         admins, staff, and the customers our users send quotes or invoices
         to.
       </p>
@@ -37,24 +37,24 @@ export default function PrivacyPage() {
       <h2>What we collect</h2>
       <ul>
         <li>
-          <strong>Account data</strong> — your email, name, phone (optional),
+          <strong>Account data</strong>: your email, name, phone (optional),
           and the organisation you belong to. Stored when you sign up or are
           invited to a CrewFlow workspace.
         </li>
         <li>
-          <strong>Business data you enter</strong> — customers, leads, jobs,
+          <strong>Business data you enter</strong>: customers, leads, jobs,
           quotes, invoices, payments, time entries, payroll runs, and any
           notes or files you attach. This is your data; we hold it to
           provide the service.
         </li>
         <li>
-          <strong>Customer-facing data</strong> — when an end customer opens
+          <strong>Customer-facing data</strong>: when an end customer opens
           a quote link or signs in to the customer portal, we record the
           fact that the link was opened (timestamp + a hashed IP for audit).
           We do not sell or share this with anyone.
         </li>
         <li>
-          <strong>Operational telemetry</strong> — error reports and
+          <strong>Operational telemetry</strong>: error reports and
           performance traces via Sentry, used to keep the product reliable.
           These contain technical diagnostics (stack traces, timings), not
           your business records, and we never use them for advertising. We do
@@ -93,7 +93,7 @@ export default function PrivacyPage() {
         organisation can&apos;t see another&apos;s rows. Customer-facing
         share links (the <code>/q/&lt;token&gt;</code> quote portal and the{" "}
         <code>/customer-portal/&lt;token&gt;</code> hub) use long random
-        tokens — anyone with the token sees the data; the contractor can
+        tokens, anyone with the token sees the data; the contractor can
         rotate the token to revoke access at any time.
       </p>
       <p>
@@ -163,7 +163,7 @@ export default function PrivacyPage() {
       <h2>Contact</h2>
       <p>
         Email <a href="mailto:hello@crewflow.uk">hello@crewflow.uk</a>{" "}
-        for anything — data requests, complaints, or questions.
+        for anything, data requests, complaints, or questions.
       </p>
     </LegalShell>
   );

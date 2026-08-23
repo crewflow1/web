@@ -80,22 +80,19 @@ export default async function LocationPage({
 
       <Section bg="muted">
         <div className="mx-auto max-w-3xl">
-          <h2 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+          <h2 className="font-display text-2xl font-bold tracking-[-0.02em] text-ink sm:text-3xl">
             Built for construction in {l.location}
           </h2>
-          <p className="mt-4 text-lg leading-relaxed text-slate-600">{l.localContext}</p>
+          <p className="mt-4 text-lg leading-relaxed text-ink-mut">{l.localContext}</p>
         </div>
       </Section>
 
       <Section bg="white">
         <div className="mx-auto max-w-3xl">
-          <h2 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+          <h2 className="font-display text-2xl font-bold tracking-[-0.02em] text-ink sm:text-3xl">
             One system for the whole business
           </h2>
-          <p className="mt-4 text-lg leading-relaxed text-slate-600">
-            Whether you&apos;re a sole trader or a growing firm in {l.location}, CrewFlow brings
-            every part of the business into one place:
-          </p>
+          <p className="mt-4 text-lg leading-relaxed text-ink-mut">{l.localAngle}</p>
           <CheckList
             className="mt-6"
             items={[
@@ -103,7 +100,7 @@ export default async function LocationPage({
               "Manage jobs, crews and schedules from one screen",
               "Invoice straight from the job and chase payment automatically",
               "Run weekly payroll from your crew's real clocked hours",
-              "See VAT, PAYE and Corporation Tax all year — no deadline panic",
+              "See VAT, PAYE and Corporation Tax all year, no deadline panic",
               "Know the real margin on every job",
             ]}
           />

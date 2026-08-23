@@ -6,7 +6,7 @@ import { SITE_URL } from "@/lib/seo/site";
  *
  * Public marketing surface (/, /features/*, /compare/*, /industries/*,
  * /construction-software/*, /pricing, /blog/*, /privacy, /terms) is fully
- * crawlable. Everything authenticated or transactional is disallowed — it's
+ * crawlable. Everything authenticated or transactional is disallowed, it's
  * already behind the auth gate, but an explicit Disallow stops crawl-budget
  * waste and keeps login/portal URLs out of the index.
  *

@@ -2,7 +2,7 @@ import type { IndustryPage } from "./types";
 
 /**
  * Trade / industry pages. Each frames CrewFlow for a specific trade with
- * genuinely trade-specific pain points and workflow — not a find-replace of
+ * genuinely trade-specific pain points and workflow, not a find-replace of
  * the trade name. featuredModules link into the real /features pages.
  */
 export const INDUSTRIES: IndustryPage[] = [
@@ -13,11 +13,11 @@ export const INDUSTRIES: IndustryPage[] = [
     secondaryKeywords: ["builders software", "general builder software", "construction software for builders"],
     title: "Software for Builders",
     metaDescription:
-      "CrewFlow is the all-in-one software for UK builders — quotes, jobs, crews, invoices, payroll and tax in one place. Run the whole build from one screen. Book a demo.",
+      "CrewFlow is the complete software for UK builders, quotes, jobs, crews, invoices, payroll and tax in one place. Run the whole build from one screen. Book a demo.",
     eyebrow: "For builders",
     h1: "Software for builders that runs the whole business, not just the job",
     intro:
-      "General building is a juggling act: multiple jobs, multiple crews, materials on order, customers wanting updates, and a VAT bill you'd rather not think about. CrewFlow puts the whole lot in one place so a busy builder can actually see what's going on.\n\nFrom the first enquiry to the final invoice — and the tax that follows — it's one system instead of five apps and three spreadsheets.",
+      "General building is a juggling act: multiple jobs, multiple crews, materials on order, customers wanting updates, and a VAT bill you'd rather not think about. CrewFlow puts the whole lot in one place so a busy builder can actually see what's going on.\n\nFrom the first enquiry to the final invoice, and the tax that follows, it's one system instead of five apps and three spreadsheets.",
     painPoints: [
       "Quotes sent late or forgotten while you're on site",
       "No real idea which finished jobs actually made money",
@@ -32,12 +32,12 @@ export const INDUSTRIES: IndustryPage[] = [
       },
       {
         h2: "Know the margin before you bid the next one",
-        body: "CrewFlow shows real per-job profit — revenue minus materials minus actual clocked labour. So when you quote the next extension, you're pricing from what the last one really made, not a number you hope works out.",
+        body: "CrewFlow shows real per-job profit, revenue minus materials minus actual clocked labour. So when you quote the next extension, you're pricing from what the last one really made, not a number you hope works out.",
       },
     ],
     featuredModules: ["job-management-software", "quoting-software", "job-costing-software", "payroll-software", "invoicing-software"],
     faqs: [
-      { q: "Is CrewFlow good for a small building firm?", a: "Yes — it's built for UK construction companies of roughly 1–30 people. A small builder gets quoting, jobs, crews, invoices, payroll and tax in one system rather than juggling separate apps." },
+      { q: "Is CrewFlow good for a small building firm?", a: "Yes, it's built for UK construction companies of roughly 1 to 30 people. A small builder gets quoting, jobs, crews, invoices, payroll and tax in one system rather than juggling separate apps." },
       { q: "Can it handle multiple jobs and crews at once?", a: "That's the point. CrewFlow shows every live job and ties crews to jobs through the rota, flagging clashes before two teams turn up to the same site." },
       { q: "Does it deal with VAT and payroll?", a: "Yes. VAT, PAYE, NI and Corporation Tax are tracked as you go, and weekly or monthly payroll runs from your crews' clocked hours." },
     ],
@@ -50,11 +50,11 @@ export const INDUSTRIES: IndustryPage[] = [
     secondaryKeywords: ["electrical contractor software", "electrician CRM", "electrical business software UK"],
     title: "Software for Electricians",
     metaDescription:
-      "CrewFlow helps UK electricians quote faster, schedule jobs, capture variations and get paid — with payroll and tax built in. One system for the whole job. Book a demo.",
+      "CrewFlow helps UK electricians quote faster, schedule jobs, capture variations and get paid, with payroll and tax built in. One system for the whole job. Book a demo.",
     eyebrow: "For electricians",
     h1: "Software for electricians that gets you paid faster and quoting smarter",
     intro:
-      "Electrical work swings between quick call-outs and big rewire and contract jobs — and the admin for both lands on the same desk. CrewFlow lets electricians quote on the spot, schedule the team, capture every variation and chase every invoice automatically.\n\nWith payroll and tax in the same system, the office side stops eating your evenings.",
+      "Electrical work swings between quick call-outs and big rewire and contract jobs, and the admin for both lands on the same desk. CrewFlow lets electricians quote on the spot, schedule the team, capture every variation and chase every invoice automatically.\n\nWith payroll and tax in the same system, the office side stops eating your evenings.",
     painPoints: [
       "Small call-outs that never get invoiced",
       "Variations on bigger jobs done and never charged",
@@ -65,7 +65,7 @@ export const INDUSTRIES: IndustryPage[] = [
     sections: [
       {
         h2: "Quote on site, win it before you've left",
-        body: "Build a line-item quote with full VAT and send it as a branded PDF before you're back in the van. The customer accepts online and the job's created automatically — so the rewire you quoted at 10am is on the schedule by lunch.",
+        body: "Build a line-item quote with full VAT and send it as a branded PDF before you're back in the van. The customer accepts online and the job's created automatically, so the rewire you quoted at 10am is on the schedule by lunch.",
       },
       {
         h2: "Track real engineer hours, cost every job properly",
@@ -75,8 +75,8 @@ export const INDUSTRIES: IndustryPage[] = [
     featuredModules: ["quoting-software", "scheduling-software", "timesheet-software", "invoicing-software", "job-costing-software"],
     faqs: [
       { q: "Can electricians send quotes from site?", a: "Yes. Build a line-item quote with VAT and send it as a branded PDF from your phone. The customer can accept online, which creates the job automatically." },
-      { q: "Does it track engineer time on each job?", a: "Yes — GPS-stamped clock-in records real hours per job, which flows into both payroll and per-job profitability." },
-      { q: "Will it help me get the small call-outs invoiced?", a: "Yes. Raising an invoice from a job is a click, and automatic reminders chase payment at day 3, 7, 14 and 21 — so the small jobs don't slip through unbilled." },
+      { q: "Does it track engineer time on each job?", a: "Yes, GPS-stamped clock-in records real hours per job, which flows into both payroll and per-job profitability." },
+      { q: "Will it help me get the small call-outs invoiced?", a: "Yes. Raising an invoice from a job is a click, and automatic reminders chase payment at day 3, 7, 14 and 21, so the small jobs don't slip through unbilled." },
     ],
     related: ["plumbers", "heating-engineers", "builders"],
   },
@@ -87,11 +87,11 @@ export const INDUSTRIES: IndustryPage[] = [
     secondaryKeywords: ["software for plumbers", "plumbing CRM", "plumber business software"],
     title: "Plumbing Software (UK)",
     metaDescription:
-      "CrewFlow is plumbing software for UK firms — quote jobs, schedule engineers, track call-outs and get paid, with payroll and tax built in. One system. Book a demo.",
+      "CrewFlow is plumbing software for UK firms, quote jobs, schedule engineers, track call-outs and get paid, with payroll and tax built in. One system. Book a demo.",
     eyebrow: "For plumbers",
     h1: "Plumbing software that turns call-outs into cash, not admin",
     intro:
-      "Plumbing is call-outs, quotes, parts and emergencies — often all before lunch. CrewFlow gives plumbing firms one place to capture the job, schedule the engineer, track the hours and invoice the customer, with the money side handled automatically.\n\nNo more lost dockets, no more 'did we invoice that one?'.",
+      "Plumbing is call-outs, quotes, parts and emergencies, often all before lunch. CrewFlow gives plumbing firms one place to capture the job, schedule the engineer, track the hours and invoice the customer, with the money side handled automatically.\n\nNo more lost dockets, no more 'did we invoice that one?'.",
     painPoints: [
       "Emergency call-outs that never make it onto an invoice",
       "Parts and materials not costed to the job",
@@ -102,17 +102,17 @@ export const INDUSTRIES: IndustryPage[] = [
     sections: [
       {
         h2: "Capture the job before the next one comes in",
-        body: "Log the enquiry, quote it, schedule the engineer — all in one place. The AI receptionist can even catch the calls you miss while you're under a sink, so a busy day doesn't mean lost work.",
+        body: "Log the enquiry, quote it, schedule the engineer, all in one place, so a busy day under a sink doesn't mean lost work. Every enquiry you take is captured against the customer, ready to quote and follow up.",
       },
       {
         h2: "Parts, hours and margin, all on the job",
         body: "Materials get logged against the job, engineer hours come from clock-in, and CrewFlow shows you the real margin. Suddenly you know whether your call-out pricing actually covers your costs.",
       },
     ],
-    featuredModules: ["construction-crm", "ai-receptionist", "scheduling-software", "invoicing-software", "expense-tracking"],
+    featuredModules: ["construction-crm", "scheduling-software", "invoicing-software", "expense-tracking", "job-costing-software"],
     faqs: [
-      { q: "Is CrewFlow suitable for a plumbing business?", a: "Yes. It handles call-outs, quotes, scheduling, parts, timesheets, invoicing and tax in one system — built for UK trade businesses including plumbing firms." },
-      { q: "Can it catch calls I miss on a job?", a: "Yes. The AI receptionist captures enquiries when you can't pick up and drops them into your pipeline as leads, so busy days don't cost you work." },
+      { q: "Is CrewFlow suitable for a plumbing business?", a: "Yes. It handles call-outs, quotes, scheduling, parts, timesheets, invoicing and tax in one system, built for UK trade businesses including plumbing firms." },
+      { q: "Will an enquiry get lost if I'm on a job?", a: "Every enquiry you log, phone, web form or referral, lands in one pipeline with follow-up reminders, so a busy day under a sink doesn't cost you the work." },
       { q: "Will it show me which jobs make money?", a: "Yes. With parts logged to the job and engineer hours from clock-in, CrewFlow shows real per-job margin so you can price call-outs properly." },
     ],
     related: ["heating-engineers", "electricians", "builders"],
@@ -124,7 +124,7 @@ export const INDUSTRIES: IndustryPage[] = [
     secondaryKeywords: ["roofing business software", "software for roofers", "roofing CRM"],
     title: "Roofing Software (UK)",
     metaDescription:
-      "CrewFlow is roofing software for UK firms — quote from the ground, schedule crews, capture site photos and variations, and get paid. Payroll and tax included. Book a demo.",
+      "CrewFlow is roofing software for UK firms, quote from the ground, schedule crews, capture site photos and variations, and get paid. Payroll and tax included. Book a demo.",
     eyebrow: "For roofers",
     h1: "Roofing software that captures every job, every variation, every photo",
     intro:
@@ -139,7 +139,7 @@ export const INDUSTRIES: IndustryPage[] = [
     sections: [
       {
         h2: "Variations and photos that protect your margin",
-        body: "Capture every extra against the job the moment it's agreed, with a value, so it's billed not absorbed. Attach the site photos to the same job — proof of completion for the customer and a portfolio for the next quote.",
+        body: "Capture every extra against the job the moment it's agreed, with a value, so it's billed not absorbed. Attach the site photos to the same job, proof of completion for the customer and a portfolio for the next quote.",
       },
       {
         h2: "Schedule crews around the weather, not the whiteboard",
@@ -148,7 +148,7 @@ export const INDUSTRIES: IndustryPage[] = [
     ],
     featuredModules: ["quoting-software", "job-management-software", "scheduling-software", "job-costing-software", "invoicing-software"],
     faqs: [
-      { q: "Can I capture variations on roofing jobs?", a: "Yes — log each extra against the job with its own value the moment it's agreed, so the 'while we're up here' work is billed rather than done for free." },
+      { q: "Can I capture variations on roofing jobs?", a: "Yes, log each extra against the job with its own value the moment it's agreed, so the 'while we're up here' work is billed rather than done for free." },
       { q: "Where do site photos go?", a: "Straight onto the job. Before/after photos from any phone attach to the right job, giving you proof of completion and a portfolio for future quotes." },
       { q: "Does it help when weather disrupts the schedule?", a: "Yes. The rota ties crews to jobs and flags clashes and leave, so reshuffling a rained-off week is a couple of clicks rather than a redo." },
     ],
@@ -161,11 +161,11 @@ export const INDUSTRIES: IndustryPage[] = [
     secondaryKeywords: ["software for joiners", "carpentry business software", "joinery business software"],
     title: "Joinery & Carpentry Software",
     metaDescription:
-      "CrewFlow is software for joiners and carpenters — quote bespoke work, manage jobs, track materials and labour, and get paid. With payroll and tax built in. Book a demo.",
+      "CrewFlow is software for joiners and carpenters, quote bespoke work, manage jobs, track materials and labour, and get paid. With payroll and tax built in. Book a demo.",
     eyebrow: "For joiners & carpenters",
     h1: "Joinery software that prices bespoke work and protects your margin",
     intro:
-      "Bespoke joinery is hard to price and easy to lose money on — every job is different, materials vary, and the hours always run over the estimate. CrewFlow helps joiners and carpenters quote properly, track materials and labour against each job, and see the real margin so the next quote is sharper.",
+      "Bespoke joinery is hard to price and easy to lose money on, every job is different, materials vary, and the hours always run over the estimate. CrewFlow helps joiners and carpenters quote properly, track materials and labour against each job, and see the real margin so the next quote is sharper.",
     painPoints: [
       "Bespoke jobs underquoted because every one is different",
       "Timber and materials not costed back to the job",
@@ -180,13 +180,13 @@ export const INDUSTRIES: IndustryPage[] = [
       },
       {
         h2: "Keep the customer informed on long jobs",
-        body: "Bespoke work has lead times, and customers get nervous. The customer portal lets them see their quote, job status and invoices without calling you — so you look organised and keep your workshop time for work.",
+        body: "Bespoke work has lead times, and customers get nervous. The customer portal lets them see their quote, job status and invoices without calling you, so you look organised and keep your workshop time for work.",
       },
     ],
     featuredModules: ["quoting-software", "job-costing-software", "customer-portal", "expense-tracking", "invoicing-software"],
     faqs: [
       { q: "Can CrewFlow handle bespoke joinery quotes?", a: "Yes. Build detailed line-item quotes covering materials, workshop time and fitting with full VAT, then send them as branded PDFs the customer can accept online." },
-      { q: "Will it show me the real margin on a job?", a: "Yes. With materials logged to the job and hours from clock-in, CrewFlow shows real per-job profit — so you can spot the bespoke jobs that quietly lose money." },
+      { q: "Will it show me the real margin on a job?", a: "Yes. With materials logged to the job and hours from clock-in, CrewFlow shows real per-job profit, so you can spot the bespoke jobs that quietly lose money." },
       { q: "How do I keep customers updated on long jobs?", a: "The customer portal lets customers check their quote, job status and invoices themselves, which cuts the 'any update?' calls on long lead-time work." },
     ],
     related: ["builders", "electricians", "plasterers"],
@@ -198,11 +198,11 @@ export const INDUSTRIES: IndustryPage[] = [
     secondaryKeywords: ["groundwork software", "groundworks management software", "civils software UK"],
     title: "Groundworks Software",
     metaDescription:
-      "CrewFlow is groundworks software for UK firms — manage plant and crews, track labour and materials, capture variations and cost every job. Payroll and tax included. Book a demo.",
+      "CrewFlow is groundworks software for UK firms, manage plant and crews, track labour and materials, capture variations and cost every job. Payroll and tax included. Book a demo.",
     eyebrow: "For groundworks",
     h1: "Groundworks software that tracks plant, labour and margin on every job",
     intro:
-      "Groundworks is heavy on plant, labour and subcontractors, and thin on margin if you don't watch it. CrewFlow helps groundworks firms schedule crews and plant, capture day-works and variations, and cost every job from real clocked hours — so a tight-margin trade stays in the black.",
+      "Groundworks is heavy on plant, labour and subcontractors, and thin on margin if you don't watch it. CrewFlow helps groundworks firms schedule crews and plant, capture day-works and variations, and cost every job from real clocked hours, so a tight-margin trade stays in the black.",
     painPoints: [
       "Day-works and variations not captured, so not paid for",
       "Plant and crews scheduled on a whiteboard that's always wrong",
@@ -223,7 +223,7 @@ export const INDUSTRIES: IndustryPage[] = [
     featuredModules: ["job-management-software", "scheduling-software", "timesheet-software", "job-costing-software", "payroll-software"],
     faqs: [
       { q: "Does CrewFlow handle day-works and variations?", a: "Yes. Day-works and variations are captured against the job with their own value the moment they're agreed, so site extras get billed rather than absorbed." },
-      { q: "Can it cost jobs from real labour?", a: "Yes. GPS-stamped clock-in records real crew hours per job, which feeds per-job profitability — essential for a labour-heavy, tight-margin trade." },
+      { q: "Can it cost jobs from real labour?", a: "Yes. GPS-stamped clock-in records real crew hours per job, which feeds per-job profitability, essential for a labour-heavy, tight-margin trade." },
       { q: "Will it run weekly payroll for a site crew?", a: "Yes. Payroll runs weekly from clocked hours, which suits a fluctuating site crew far better than monthly office payroll tools." },
     ],
     related: ["builders", "roofers", "scaffolding"],
@@ -235,11 +235,11 @@ export const INDUSTRIES: IndustryPage[] = [
     secondaryKeywords: ["software for plasterers", "plastering business software"],
     title: "Plastering Software",
     metaDescription:
-      "CrewFlow helps plastering firms quote by the job, schedule the team, track materials and get paid — with payroll and tax built in. One simple system. Book a demo.",
+      "CrewFlow helps plastering firms quote by the job, schedule the team, track materials and get paid, with payroll and tax built in. One simple system. Book a demo.",
     eyebrow: "For plasterers",
     h1: "Plastering software that keeps the jobs flowing and the invoices paid",
     intro:
-      "Plastering is fast-turnover work — lots of jobs, quick quotes, materials by the bag. CrewFlow keeps plastering firms on top of the flow: quote quickly, schedule the team across jobs, track materials, and chase every invoice automatically so cash keeps moving.",
+      "Plastering is fast-turnover work, lots of jobs, quick quotes, materials by the bag. CrewFlow keeps plastering firms on top of the flow: quote quickly, schedule the team across jobs, track materials, and chase every invoice automatically so cash keeps moving.",
     painPoints: [
       "High job volume that's hard to keep track of",
       "Quick quotes done verbally and disputed later",
@@ -250,7 +250,7 @@ export const INDUSTRIES: IndustryPage[] = [
     sections: [
       {
         h2: "Quote quickly, but on the record",
-        body: "Even fast jobs deserve a proper quote. Build one in moments, send a branded PDF, and have it accepted online — so there's no dispute later about what was agreed, and the job's logged the moment it's won.",
+        body: "Even fast jobs deserve a proper quote. Build one in moments, send a branded PDF, and have it accepted online, so there's no dispute later about what was agreed, and the job's logged the moment it's won.",
       },
       {
         h2: "Keep cash moving across a busy schedule",
@@ -259,7 +259,7 @@ export const INDUSTRIES: IndustryPage[] = [
     ],
     featuredModules: ["quoting-software", "scheduling-software", "invoicing-software", "expense-tracking"],
     faqs: [
-      { q: "Is CrewFlow worth it for high-volume plastering work?", a: "Yes — high volume is exactly where things slip. Fast quoting, job scheduling and automatic invoice chasing keep a busy plastering firm on top of cash and customers." },
+      { q: "Is CrewFlow worth it for high-volume plastering work?", a: "Yes, high volume is exactly where things slip. Fast quoting, job scheduling and automatic invoice chasing keep a busy plastering firm on top of cash and customers." },
       { q: "Can I quote quickly but still have a record?", a: "Yes. Build a proper line-item quote in moments and send it as a branded PDF the customer accepts online, so there's a clear record of what was agreed." },
     ],
     related: ["joiners", "builders", "electricians"],
@@ -271,7 +271,7 @@ export const INDUSTRIES: IndustryPage[] = [
     secondaryKeywords: ["landscaping business software", "software for landscapers", "garden landscaping software"],
     title: "Landscaping Software (UK)",
     metaDescription:
-      "CrewFlow is landscaping software for UK firms — quote designs and maintenance, schedule crews, track materials and labour, and get paid. Payroll and tax built in. Book a demo.",
+      "CrewFlow is landscaping software for UK firms, quote designs and maintenance, schedule crews, track materials and labour, and get paid. Payroll and tax built in. Book a demo.",
     eyebrow: "For landscapers",
     h1: "Landscaping software for design-build and maintenance crews alike",
     intro:
@@ -290,7 +290,7 @@ export const INDUSTRIES: IndustryPage[] = [
       },
       {
         h2: "Track the margin on every project",
-        body: "Plants, materials and labour get costed to the job, so you can see the real margin on a landscaping project — not just the invoice total. Price the next design-build from what the last one actually made.",
+        body: "Plants, materials and labour get costed to the job, so you can see the real margin on a landscaping project, not just the invoice total. Price the next design-build from what the last one actually made.",
       },
     ],
     featuredModules: ["quoting-software", "scheduling-software", "job-costing-software", "invoicing-software", "expense-tracking"],
@@ -307,11 +307,11 @@ export const INDUSTRIES: IndustryPage[] = [
     secondaryKeywords: ["scaffolding management software", "software for scaffolders", "scaffold hire software"],
     title: "Scaffolding Software",
     metaDescription:
-      "CrewFlow is scaffolding software for UK firms — quote erect/dismantle and hire, schedule crews, track jobs and inspections, and get paid. Payroll and tax built in. Book a demo.",
+      "CrewFlow is scaffolding software for UK firms, quote erect/dismantle and hire, schedule crews, track jobs and inspections, and get paid. Payroll and tax built in. Book a demo.",
     eyebrow: "For scaffolding",
     h1: "Scaffolding software that keeps erect, hire and dismantle in order",
     intro:
-      "Scaffolding has a rhythm — quote, erect, hire period, inspect, dismantle — and money leaks at every handover if it's tracked on paper. CrewFlow gives scaffolding firms one place to quote the job, schedule crews to erect and strike, keep the paperwork on the job, and invoice the hire so nothing's forgotten.",
+      "Scaffolding has a rhythm, quote, erect, hire period, inspect, dismantle, and money leaks at every handover if it's tracked on paper. CrewFlow gives scaffolding firms one place to quote the job, schedule crews to erect and strike, keep the paperwork on the job, and invoice the hire so nothing's forgotten.",
     painPoints: [
       "Hire periods that run on without being billed",
       "Erect and dismantle crews scheduled by guesswork",
@@ -326,13 +326,13 @@ export const INDUSTRIES: IndustryPage[] = [
       },
       {
         h2: "Keep the paperwork on the job",
-        body: "Attach inspection records and site photos to the job, so the documentation that keeps you compliant and protects you in a dispute is exactly where it should be — not in a folder in the van.",
+        body: "Attach inspection records and site photos to the job, so the documentation that keeps you compliant and protects you in a dispute is exactly where it should be, not in a folder in the van.",
       },
     ],
     featuredModules: ["quoting-software", "scheduling-software", "job-management-software", "invoicing-software"],
     faqs: [
       { q: "Can CrewFlow track hire periods?", a: "Yes. Quote and invoice erect, hire and dismantle as line items on the job, so hire periods get billed rather than quietly running on for free." },
-      { q: "Where do inspection records go?", a: "Onto the job, alongside site photos — so compliance documentation is attached to the right job and easy to find when you need it." },
+      { q: "Where do inspection records go?", a: "Onto the job, alongside site photos, so compliance documentation is attached to the right job and easy to find when you need it." },
     ],
     related: ["groundworks", "roofers", "builders"],
   },
@@ -343,11 +343,11 @@ export const INDUSTRIES: IndustryPage[] = [
     secondaryKeywords: ["gas engineer software", "heating business software UK", "HVAC software for trades"],
     title: "Software for Heating & Gas Engineers",
     metaDescription:
-      "CrewFlow helps heating and gas engineers manage call-outs, quote installs, schedule jobs and get paid — with payroll and tax built in. One system. Book a demo.",
+      "CrewFlow helps heating and gas engineers manage call-outs, quote installs, schedule jobs and get paid, with payroll and tax built in. One system. Book a demo.",
     eyebrow: "For heating & gas engineers",
     h1: "Software for heating engineers that runs call-outs and installs alike",
     intro:
-      "Heating and gas work mixes quick service call-outs with bigger boiler and system installs — different jobs, same overloaded admin. CrewFlow gives heating engineers one place to capture call-outs, quote installs, schedule the day and get paid, with the money and compliance paperwork kept in order.",
+      "Heating and gas work mixes quick service call-outs with bigger boiler and system installs, different jobs, same overloaded admin. CrewFlow gives heating engineers one place to capture call-outs, quote installs, schedule the day and get paid, with the money and compliance paperwork kept in order.",
     painPoints: [
       "Service call-outs that don't get invoiced",
       "Install quotes that take too long to send",
@@ -358,17 +358,17 @@ export const INDUSTRIES: IndustryPage[] = [
     sections: [
       {
         h2: "Capture call-outs, quote the installs",
-        body: "Log service call-outs fast and build proper line-item quotes for installs with full VAT. The AI receptionist catches the calls you miss on a job, so a busy day of breakdowns doesn't cost you the next install.",
+        body: "Log service call-outs fast and build proper line-item quotes for installs with full VAT. Every enquiry lands in one pipeline with follow-up reminders, so a busy day of breakdowns doesn't cost you the next install.",
       },
       {
         h2: "Get paid and keep the records straight",
         body: "Invoice from the job in a click, with automatic reminders chasing payment. Job photos and documents attach to the job, so the paperwork a customer or compliance check needs is in one place.",
       },
     ],
-    featuredModules: ["ai-receptionist", "quoting-software", "scheduling-software", "invoicing-software", "timesheet-software"],
+    featuredModules: ["construction-crm", "quoting-software", "scheduling-software", "invoicing-software", "timesheet-software"],
     faqs: [
-      { q: "Does CrewFlow work for gas and heating engineers?", a: "Yes. It handles the mix of quick service call-outs and bigger installs — capturing jobs, quoting, scheduling, tracking time and parts, and invoicing, with payroll and tax in the same system." },
-      { q: "Can it catch call-outs I miss on a job?", a: "Yes. The AI receptionist captures enquiries when you can't answer and creates leads in your pipeline, so breakdown-heavy days don't cost you new work." },
+      { q: "Does CrewFlow work for gas and heating engineers?", a: "Yes. It handles the mix of quick service call-outs and bigger installs, capturing jobs, quoting, scheduling, tracking time and parts, and invoicing, with payroll and tax in the same system." },
+      { q: "Will a call-out enquiry get lost if I'm on a job?", a: "Every enquiry you log lands in your pipeline with follow-up reminders, so breakdown-heavy days don't cost you new work." },
     ],
     related: ["plumbers", "electricians", "builders"],
   },

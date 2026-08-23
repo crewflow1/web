@@ -5,7 +5,7 @@ import { JsonLd } from "@/components/seo/json-ld";
 import { webPageSchema, breadcrumbSchema } from "@/lib/seo/schema";
 import { PageHero, Section, FaqSection, RelatedLinks, CtaSection } from "@/components/marketing/sections";
 
-/** Metadata for a tool page — call from the page's `export const metadata`. */
+/** Metadata for a tool page, call from the page's `export const metadata`. */
 export function toolMetadata(slug: string): Metadata {
   const t = getTool(slug);
   if (!t) return {};
@@ -22,7 +22,7 @@ export function toolMetadata(slug: string): Metadata {
 /**
  * Server-rendered SEO shell wrapping the interactive calculator (passed as
  * children). Gives every tool consistent hero, schema, how-it-works, FAQ,
- * internal links and CTA — so the page is fully indexable and the maths is
+ * internal links and CTA, so the page is fully indexable and the maths is
  * the only per-tool client code.
  */
 export function ToolPageShell({
@@ -62,15 +62,15 @@ export function ToolPageShell({
 
       <Section bg="white">
         <div className="mx-auto max-w-3xl">
-          <h2 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+          <h2 className="font-display text-2xl font-bold tracking-[-0.02em] text-ink sm:text-3xl">
             {t.howItWorks.h2}
           </h2>
-          <p className="mt-4 text-lg leading-relaxed text-slate-600">{t.howItWorks.body}</p>
+          <p className="mt-4 text-lg leading-relaxed text-ink-mut">{t.howItWorks.body}</p>
           {t.howItWorks.bullets ? (
-            <ul className="mt-6 space-y-2 rounded-xl border border-slate-200 bg-slate-50/60 p-5 text-sm text-slate-700">
+            <ul className="mt-6 space-y-2 rounded-cf border border-cfborder bg-navy-900 p-5 text-[15px] text-ink-mut">
               {t.howItWorks.bullets.map((b, i) => (
                 <li key={i} className="flex items-start gap-2">
-                  <span aria-hidden className="mt-0.5 text-amber-600">
+                  <span aria-hidden className="mt-0.5 text-gold-500">
                     ›
                   </span>
                   <span>{b}</span>
@@ -78,8 +78,8 @@ export function ToolPageShell({
               ))}
             </ul>
           ) : null}
-          <p className="mt-6 text-xs text-slate-500">
-            Estimates are guidance only — always confirm critical figures against your own
+          <p className="mt-6 text-xs text-ink-dim">
+            Estimates are guidance only, always confirm critical figures against your own
             measurements, supplier quotes and, for tax, your accountant or HMRC.
           </p>
         </div>
@@ -94,7 +94,7 @@ export function ToolPageShell({
         ]}
       />
 
-      <CtaSection title="Quote, cost and get paid — without the spreadsheet." />
+      <CtaSection title="Quote, cost and get paid, without the spreadsheet." />
     </>
   );
 }

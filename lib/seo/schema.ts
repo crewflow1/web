@@ -4,7 +4,7 @@
  * Each function returns a plain object ready to be JSON.stringify'd into a
  * <script type="application/ld+json"> via <JsonLd> (components/seo/json-ld.tsx).
  *
- * Everything is grounded in real, verifiable facts from lib/seo/site.ts —
+ * Everything is grounded in real, verifiable facts from lib/seo/site.ts ,
  * we deliberately DO NOT emit aggregateRating / Review schema with invented
  * numbers. Fabricated review markup violates Google's structured-data
  * policies and is a real manual-action risk. `aggregateRatingSchema` exists
@@ -21,7 +21,7 @@ const WEBSITE_ID = `${SITE.url}/#website`;
 const SOFTWARE_ID = `${SITE.url}/#software`;
 
 /**
- * Organization — the root entity node. Everything else references this via
+ * Organization, the root entity node. Everything else references this via
  * @id so Google builds a single consolidated entity (knowledge panel).
  */
 export function organizationSchema(): JsonLd {
@@ -81,7 +81,7 @@ export function organizationSchema(): JsonLd {
  * canonical site name to show in the SERP ("CrewFlow", not "crewflow.uk").
  *
  * Note: no SearchAction / Sitelinks Searchbox is emitted because there is no
- * sitewide search endpoint yet — claiming one would be invalid markup. Add it
+ * sitewide search endpoint yet, claiming one would be invalid markup. Add it
  * back here the day a real `/search?q=` exists.
  */
 export function websiteSchema(): JsonLd {
@@ -98,7 +98,7 @@ export function websiteSchema(): JsonLd {
 }
 
 /**
- * SoftwareApplication — the product node. Includes the real, public price
+ * SoftwareApplication, the product node. Includes the real, public price
  * (£500/mo recurring + £1,000 setup is stated on-site, so it is fair game).
  */
 export function softwareApplicationSchema(
@@ -111,7 +111,7 @@ export function softwareApplicationSchema(
     name: SITE.name,
     applicationCategory: "BusinessApplication",
     applicationSubCategory: "Construction Management Software",
-    operatingSystem: "Web, iOS, Android",
+    operatingSystem: "Web",
     url: SITE.url,
     description: SITE.description,
     publisher: { "@id": ORG_ID },
@@ -125,7 +125,7 @@ export function softwareApplicationSchema(
       "Per-job profitability tracking",
       "Payroll (PAYE, NI)",
       "VAT and Corporation Tax",
-      "AI receptionist and assistants",
+      "Health & safety: RAMS, permits, toolbox talks",
     ],
     offers: {
       "@type": "Offer",
@@ -156,7 +156,7 @@ export type AggregateRatingInput = {
   worstRating?: number;
 };
 
-/** Aggregate rating node — caller must pass genuine, on-page review data. */
+/** Aggregate rating node, caller must pass genuine, on-page review data. */
 export function aggregateRatingSchema(input: AggregateRatingInput): JsonLd {
   return {
     "@type": "AggregateRating",
@@ -167,7 +167,7 @@ export function aggregateRatingSchema(input: AggregateRatingInput): JsonLd {
   };
 }
 
-/** FAQPage — eligible for the FAQ rich result. */
+/** FAQPage, eligible for the FAQ rich result. */
 export function faqSchema(items: { q: string; a: string }[]): JsonLd {
   return {
     "@context": "https://schema.org",
@@ -180,7 +180,7 @@ export function faqSchema(items: { q: string; a: string }[]): JsonLd {
   };
 }
 
-/** BreadcrumbList — drives the breadcrumb rich result + URL-path clarity. */
+/** BreadcrumbList, drives the breadcrumb rich result + URL-path clarity. */
 export function breadcrumbSchema(
   crumbs: { name: string; path: string }[],
 ): JsonLd {
@@ -196,7 +196,7 @@ export function breadcrumbSchema(
   };
 }
 
-/** Article / BlogPosting — for blog posts + guides. */
+/** Article / BlogPosting, for blog posts + guides. */
 export function articleSchema(input: {
   headline: string;
   description: string;
@@ -250,7 +250,7 @@ export function webPageSchema(input: {
 }
 
 /**
- * ItemList — used on hub/index pages (e.g. /features, /compare) to describe
+ * ItemList, used on hub/index pages (e.g. /features, /compare) to describe
  * the set of child pages. Strengthens the topical cluster for Google.
  */
 export function itemListSchema(

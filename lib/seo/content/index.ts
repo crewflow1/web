@@ -1,5 +1,5 @@
 /**
- * Content registry — the single place that knows every marketing URL.
+ * Content registry, the single place that knows every marketing URL.
  *
  * The sitemap, the header/footer nav and all internal-link resolution read
  * from here, so adding an entry to one of the data files automatically:
@@ -42,7 +42,7 @@ export type { ToolPage } from "./tools";
 export type LinkItem = { label: string; href: string };
 
 /* -------------------------------------------------------------------------- */
-/* Path builders — one source of truth for URL shape                          */
+/* Path builders, one source of truth for URL shape                          */
 /* -------------------------------------------------------------------------- */
 
 export const paths = {

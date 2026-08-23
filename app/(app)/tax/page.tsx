@@ -223,6 +223,10 @@ export default async function TaxDashboardPage() {
     scheme: orgSettings.vat_scheme,
     accrualInvoices: vatInputs.accrualInvoices,
     flatRate: vatFlatRate,
+    // CF-1: cash-scheme input VAT (box 4) is payment-based from the supplier-payment
+    // ledger; undefined under standard ⇒ accrual. (This page shows box 4 only.)
+    supplierPayments: vatInputs.supplierPayments,
+    reverseChargeNet: vatInputs.reverseCharge.net,
   };
   const vat = computeVatQuarter(
     vatInputs.invoicePayments,

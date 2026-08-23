@@ -7,7 +7,7 @@ import * as Sentry from "@sentry/nextjs";
  * Root global error boundary.
  *
  * This is the ONLY boundary that catches errors thrown while rendering
- * the root layout itself — `app/error.tsx` renders *inside* the root
+ * the root layout itself, `app/error.tsx` renders *inside* the root
  * layout, so it cannot. A global-error must therefore declare its own
  * <html>/<body>. Sentry's automatic (onRequestError) instrumentation
  * does not see React render errors caught by a client error boundary,
@@ -32,7 +32,7 @@ export default function GlobalError({
           Something went wrong
         </h1>
         <p className="mt-3 max-w-md text-sm text-slate-600">
-          Sorry — CrewFlow hit an unexpected error. Try again, or email{" "}
+          Sorry, CrewFlow hit an unexpected error. Try again, or email{" "}
           <a className="underline" href="mailto:hello@crewflow.uk">
             hello@crewflow.uk
           </a>

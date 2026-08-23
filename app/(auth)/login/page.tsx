@@ -13,7 +13,7 @@ type SearchParams = Promise<{
 }>;
 
 // Messages map. Errors that are recoverable by "request a new magic link"
-// are styled to nudge the user to the form below — the failing sign-in
+// are styled to nudge the user to the form below, the failing sign-in
 // link is single-use and the recovery is literally one click + one form.
 const ERROR_MESSAGES: Record<
   string,
@@ -28,7 +28,7 @@ const ERROR_MESSAGES: Record<
     recoverable: true,
   },
   auth_failed: {
-    msg: "We couldn't complete the sign-in. Enter your email below — or try Google above — to start over.",
+    msg: "We couldn't complete the sign-in. Enter your email below, or try Google above, to start over.",
     recoverable: true,
   },
   magic_link_used: {
@@ -44,11 +44,11 @@ const ERROR_MESSAGES: Record<
     recoverable: true,
   },
   provider_error: {
-    msg: "Our sign-in provider had a hiccup. Try again — Google works as a faster alternative.",
+    msg: "Our sign-in provider had a hiccup. Try again, Google works as a faster alternative.",
     recoverable: true,
   },
   bootstrap_failed: {
-    msg: "Your account exists but a setup step failed. Try signing in again — if it persists, email hello@crewflow.uk.",
+    msg: "Your account exists but a setup step failed. Try signing in again, if it persists, email hello@crewflow.uk.",
     recoverable: true,
   },
   oauth_no_url: {
@@ -107,7 +107,7 @@ export default async function LoginPage({
           </button>
         </form>
 
-        {/* Microsoft SSO — DARK by default. Only renders when the Azure
+        {/* Microsoft SSO, DARK by default. Only renders when the Azure
             provider credential is configured (NEXT_PUBLIC_FEATURE_MICROSOFT_SSO).
             No broken/fake button while off. */}
         {microsoftEnabled ? (
@@ -169,7 +169,7 @@ export default async function LoginPage({
         <div className="h-px flex-1 bg-slate-200" />
       </div>
 
-      {/* Email + password — ADDITIVE. Existing Google + magic-link above are
+      {/* Email + password, ADDITIVE. Existing Google + magic-link above are
           unchanged; a passwordless user simply has no password and keeps using
           those. */}
       <EmailPasswordForm next={nextHint || undefined} />

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { CalcCard, CalcInputs, NumberField, SelectField, ResultGrid, Result, gbp } from "./calc-ui";
 
 /**
- * UK VAT calculator — add VAT to a net figure or strip VAT from a gross one.
+ * UK VAT calculator, add VAT to a net figure or strip VAT from a gross one.
  * Default 20% standard rate; 5% and 0% included for completeness.
  */
 export function VatCalculator() {
@@ -42,9 +42,9 @@ export function VatCalculator() {
           value={rate}
           onChange={setRate}
           options={[
-            { value: "20", label: "Standard — 20%" },
-            { value: "5", label: "Reduced — 5%" },
-            { value: "0", label: "Zero — 0%" },
+            { value: "20", label: "Standard, 20%" },
+            { value: "5", label: "Reduced, 5%" },
+            { value: "0", label: "Zero, 0%" },
           ]}
         />
         <SelectField

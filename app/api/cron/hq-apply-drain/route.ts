@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { isCronAuthorised } from "@/lib/cron/auth";
 import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
-import { runApplyOnApprovalDrain } from "@/server/services/hq-apply-drain";
+import {
+  hqApplyOnApprovalEnabled,
+  runApplyOnApprovalDrain,
+} from "@/server/services/hq-apply-drain";
 
 /**
  * CrewFlow HQ — the apply-on-approval drain (CEO Directive #014 / D-04, Phase C, C3 rollout;
@@ -48,6 +51,18 @@ export const maxDuration = 60;
 export async function GET(request: Request): Promise<NextResponse> {
   if (!isCronAuthorised(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  // Dark gate — the SAME synchronous env kill-switch `runApplyOnApprovalDrain`
+  // short-circuits on (default-off, and prod today). Hoisted here so an OFF
+  // deploy costs ZERO database work AND writes NO cron_runs telemetry row,
+  // mirroring push-drain / webhook-dispatch. Nothing is stranded: OFF, the sweep
+  // reads no approved rows and applies nothing, so an early return can only skip
+  // work that would itself have been a total no-op. Flip the switch ON and full
+  // telemetry (including the swept>0/applied=0 unbound-authority fingerprint)
+  // resumes. No body on a 204.
+  if (!hqApplyOnApprovalEnabled()) {
+    return new NextResponse(null, { status: 204 });
   }
 
   const { status, payload } = await withCronTelemetry("hq-apply-drain", async () => {

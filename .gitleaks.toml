@@ -1,0 +1,25 @@
+# gitleaks config — extends the bundled default ruleset and adds a NARROW
+# allowlist so the secret scan (.github/workflows/security-scan.yml) stays
+# deterministic across gitleaks version bumps (Dependabot updates the pinned
+# action over time, and a future rule could tighten to match shorter prefixes).
+#
+# This allowlists FIXTURES and PREFIX LITERALS only — never a real secret. The
+# repo commits no real keys: every .env* is gitignored and none is tracked.
+title = "CrewFlow gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known-safe Stripe live-key prefix checks and test fixtures"
+
+# The bare live-key PREFIX (no secret body) — used only for mode detection:
+#   lib/stripe/client.ts / lib/payments/portal-stripe.ts: key.startsWith("sk_live_")
+#   __tests__/stripe/contract.test.ts: asserts that prefix-detection logic
+#   __tests__/monitoring/scrub.test.ts: dummy header value proving redaction
+# These carry no real secret body; the exact fixture value is listed so the
+# match is surgical rather than a blanket path exemption.
+regexes = [
+  '''sk_live_abc123''',
+  '''startsWith\("sk_live_"\)''',
+]

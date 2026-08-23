@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isCronAuthorised } from "@/lib/cron/auth";
 import { runEmbeddingWorker } from "@/server/services/memory-embedder";
+import { isEmbeddingConfigured } from "@/lib/ai/embeddings";
 import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
 
 /**
@@ -32,6 +33,17 @@ export const maxDuration = 60;
 export async function GET(request: Request): Promise<NextResponse> {
   if (!isCronAuthorised(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  // DARK-GATE BEFORE TELEMETRY (Wave A.4): embedding is the worker's whole job,
+  // so with no embedding provider configured (the prod default — the `embedding`
+  // tier is unbound) the worker is a guaranteed no-op. Short-circuit with a 204
+  // BEFORE withCronTelemetry so a dark tick writes zero cron_runs rows, mirroring
+  // push-drain/sms-drain. `isEmbeddingConfigured()` is a synchronous, side-effect
+  // -free env/registry check (it does NOT add a getEmbeddingProvider outside-caller
+  // — it wraps the in-module one). The moment a provider is bound this falls
+  // through and full telemetry resumes automatically. No body on a 204.
+  if (!isEmbeddingConfigured()) {
+    return new NextResponse(null, { status: 204 });
   }
   const url = new URL(request.url);
   // `limit` bounds how many batches a single invocation may process — a manual

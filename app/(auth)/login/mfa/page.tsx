@@ -32,7 +32,7 @@ export default async function MfaChallengePage({
   const { data: factors } = await supabase.auth.mfa.listFactors();
   const hasVerified = (factors?.totp ?? []).some((f) => f.status === "verified");
   if (!hasVerified) {
-    // Nothing to verify — don't strand the user on a dead page.
+    // Nothing to verify, don't strand the user on a dead page.
     redirect(safeInternalPath(next) ?? "/dashboard");
   }
 

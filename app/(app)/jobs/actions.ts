@@ -127,7 +127,11 @@ export async function createJob(
       p_job_id: data.id,
       p_org_id: ctx.org.id,
       p_template_id: result.data.template_id,
-      p_anchor_date: result.data.scheduled_date ?? null,
+      // `p_anchor_date` now has `default null` (20261216000000), so gen-types
+      // makes it optional — the member path (no scheduled date) simply omits it,
+      // and the DB treats an omitted/NULL anchor identically (skips the
+      // admin-only baseline; see clone_job_template, 20261132000001).
+      p_anchor_date: result.data.scheduled_date ?? undefined,
     });
     if (cloneError) {
       console.error("[jobs] template clone failed", cloneError);

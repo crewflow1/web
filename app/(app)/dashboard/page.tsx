@@ -543,6 +543,10 @@ export default async function DashboardPage() {
       scheme: dashOrgSettings.vat_scheme,
       accrualInvoices: vatInputs.accrualInvoices,
       flatRate: resolveFlatRateForPeriod(dashOrgSettings.flat_rate_config, quarterStart),
+      // CF-1: cash-scheme box 4 is payment-based (supplier-payment ledger); undefined
+      // under standard ⇒ accrual.
+      supplierPayments: vatInputs.supplierPayments,
+      reverseChargeNet: vatInputs.reverseCharge.net,
     },
   );
 

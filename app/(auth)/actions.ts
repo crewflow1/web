@@ -40,7 +40,7 @@ export async function signInWithGoogle() {
   const supabase = await createClient();
   const origin = getOrigin(await headers());
 
-  // No hardcoded `?next=` — the auth callback already picks the
+  // No hardcoded `?next=`, the auth callback already picks the
   // correct landing per role (super-admins → /admin/organizations,
   // everyone else → /dashboard). A hardcoded next pointing at the
   // contractor dashboard would override the super-admin fallback
@@ -64,7 +64,7 @@ export async function signInWithGoogle() {
   }
 
   // Defensive: Supabase returned neither an error nor a URL. Don't leave the
-  // form silently broken — surface it so the user can retry.
+  // form silently broken, surface it so the user can retry.
   redirect("/login?error=oauth_no_url");
 }
 
@@ -87,7 +87,7 @@ export async function signInWithMagicLink(formData: FormData) {
     redirect("/login?error=invalid_email");
   }
 
-  // Throttle magic-link sends per destination address — blocks email-bomb /
+  // Throttle magic-link sends per destination address, blocks email-bomb /
   // Supabase cost abuse. Fails open (see lib/security/rate-limit) so a limiter
   // fault can never lock users out of sign-in.
   const limit = await consume(
@@ -104,7 +104,7 @@ export async function signInWithMagicLink(formData: FormData) {
   const supabase = await createClient();
   const origin = getOrigin(await headers());
 
-  // No hardcoded `?next=` — see signInWithGoogle above.
+  // No hardcoded `?next=`, see signInWithGoogle above.
   const { error } = await supabase.auth.signInWithOtp({
     email: parsed.data.email,
     options: {
@@ -130,13 +130,13 @@ export async function signOut() {
 }
 
 // ===========================================================================
-// EMAIL + PASSWORD  (ADDITIVE — alongside magic-link + Google, never replacing)
+// EMAIL + PASSWORD  (ADDITIVE, alongside magic-link + Google, never replacing)
 // ===========================================================================
 //
 // CONFIG NOTE (activation, not code): email+password sign-in relies on the
 // Supabase "Email" auth provider having the PASSWORD grant enabled in the
 // dashboard (Authentication → Providers → Email). Magic-link (OTP) uses the
-// same provider, so it is almost certainly already on — but if signInWithPassword
+// same provider, so it is almost certainly already on, but if signInWithPassword
 // returns "Email logins are disabled" it is that toggle, NOT this code. The UI
 // below is built so it works the moment the grant is on. Nothing here changes
 // the existing signInWithOtp / signInWithOAuth flows.
@@ -145,7 +145,7 @@ export async function signOut() {
 // returns "Invalid login credentials" for them, which we surface plainly. Their
 // passwordless sign-in keeps working exactly as before.
 
-// Supabase hashes with bcrypt, which silently truncates beyond 72 bytes — cap
+// Supabase hashes with bcrypt, which silently truncates beyond 72 bytes, cap
 // the input so "the first 72 chars" can never become a confusing auth mismatch.
 const PASSWORD_MAX = 72;
 const PASSWORD_MIN = 8;
@@ -192,13 +192,13 @@ function safeLanding(email: string | null, rawNext: string | undefined): string 
  * Email + password sign-in.
  *
  * Returns a FormState (useActionState) so the /login form can render inline
- * errors and preserve the typed email — no redirect round-trip that would
+ * errors and preserve the typed email, no redirect round-trip that would
  * wipe the field. On success `redirectTo` names the landing; the client
  * navigates there.
  *
  * If the user has a VERIFIED TOTP factor, a session is created at aal1 and we
  * redirect to /login/mfa to finish the challenge (→ aal2). We do NOT hard-block
- * aal1 sessions elsewhere — MFA is opt-in (see the enforcement note in
+ * aal1 sessions elsewhere, MFA is opt-in (see the enforcement note in
  * app/(app)/settings/security/actions.ts).
  */
 export async function signInWithPassword(
@@ -214,7 +214,7 @@ export async function signInWithPassword(
   }
   const { email, password, next } = result.data;
 
-  // Same limiter as magic-link — throttles credential-stuffing per address.
+  // Same limiter as magic-link, throttles credential-stuffing per address.
   // Fails OPEN (see lib/security/rate-limit) so a limiter fault never locks
   // anyone out of sign-in.
   const limit = await consume("auth", email, DEFAULT_LIMITS.auth);
@@ -231,7 +231,7 @@ export async function signInWithPassword(
   if (error || !data.user) {
     // Loud but non-enumerating: identical message whether the email is unknown
     // or the password is wrong. A magic-link/Google user (no password) also
-    // lands here — the hint points them back to the passwordless options.
+    // lands here, the hint points them back to the passwordless options.
     return formError(
       "Incorrect email or password. If you normally sign in with Google or a magic link, use those options above.",
       { email },
@@ -322,7 +322,7 @@ export async function signUpWithPassword(
     try {
       await ensureUserRow({ id: data.user.id, email: data.user.email ?? email });
     } catch {
-      // Non-fatal — onboarding will pick them up.
+      // Non-fatal, onboarding will pick them up.
     }
   }
   return formSuccess({ redirectTo: safeLanding(data.user?.email ?? email, undefined) });
@@ -341,7 +341,7 @@ const resetRequestSchema = z.object({
  * on /auth/callback (type=recovery), which verifies the token, creates a
  * session, and forwards to /update-password (via ?next=).
  *
- * Always returns the SAME success state whether or not the address exists —
+ * Always returns the SAME success state whether or not the address exists ,
  * never leak account existence.
  */
 export async function requestPasswordReset(
@@ -353,7 +353,7 @@ export async function requestPasswordReset(
   const { email } = result.data;
 
   const limit = await consume("auth", email, DEFAULT_LIMITS.auth);
-  // Even when throttled we return the neutral success message — no enumeration,
+  // Even when throttled we return the neutral success message, no enumeration,
   // no lockout signal.
   if (limit.allowed) {
     const supabase = await createClient();
@@ -427,7 +427,7 @@ export async function updatePassword(
 }
 
 // ===========================================================================
-// MICROSOFT SSO  (DARK — credential-gated; provider 'azure')
+// MICROSOFT SSO  (DARK, credential-gated; provider 'azure')
 // ===========================================================================
 
 /**
@@ -437,7 +437,7 @@ export async function updatePassword(
  * NEXT_PUBLIC_FEATURE_MICROSOFT_SSO === "true", which should be flipped ONLY
  * once the EXTERNAL credential exists (a Supabase Azure provider backed by an
  * Azure AD app registration). Without that, Supabase returns a provider error
- * — this action surfaces it plainly rather than failing silently.
+ *, this action surfaces it plainly rather than failing silently.
  */
 export async function signInWithMicrosoft() {
   const supabase = await createClient();
@@ -470,12 +470,12 @@ const mfaChallengeSchema = z.object({
 });
 
 /**
- * Complete the TOTP challenge at login. Requires a live (aal1) session — the
+ * Complete the TOTP challenge at login. Requires a live (aal1) session, the
  * password step already created one. Finds the user's verified TOTP factor,
  * challenges it, and verifies the code to reach aal2.
  *
  * NOTE: this is the OPT-IN completion of MFA for users who enrolled. It is
- * NOT a global gate — users without a factor never reach here, and an aal1
+ * NOT a global gate, users without a factor never reach here, and an aal1
  * session is not forcibly blocked elsewhere.
  */
 export async function challengeMfa(
@@ -500,7 +500,7 @@ export async function challengeMfa(
   }
   const totp = (factors?.totp ?? []).find((f) => f.status === "verified");
   if (!totp) {
-    // No verified factor — nothing to challenge. Let them straight in rather
+    // No verified factor, nothing to challenge. Let them straight in rather
     // than trapping them on this page.
     return formSuccess({ redirectTo: safeLanding(user.email ?? null, next) });
   }
@@ -530,7 +530,7 @@ export async function challengeMfa(
 
 const recoveryCodeSchema = z.object({
   // Accept the code in any casing / with-or-without the display dash & spaces;
-  // normalisation happens inside verifyRecoveryCode. 8–32 chars covers the
+  // normalisation happens inside verifyRecoveryCode. 8 to 32 chars covers the
   // formatted (11) and bare (10) forms with slack.
   code: z
     .string()
@@ -546,15 +546,15 @@ const recoveryCodeSchema = z.object({
  * This is the escape hatch for a user who enrolled TOTP and lost the device:
  * with a live aal1 session (created by the password step) they present a backup
  * code instead of an authenticator code. On a match we:
- *   1. mark that single code used (one-time — a redeemed code never works again),
+ *   1. mark that single code used (one-time, a redeemed code never works again),
  *   2. remove the user's TOTP factor(s) via the admin API, and
  *   3. delete their remaining recovery codes (the set is spent once used to
- *      recover — they'll be prompted to re-enrol and mint a fresh batch).
+ *      recover, they'll be prompted to re-enrol and mint a fresh batch).
  *
  * Removing the lost factor is what actually lets them back in: with no verified
  * factor, the aal1 session is sufficient (MFA is opt-in / not force-gated). This
  * mirrors the existing self-service recovery ("remove the factor") but works
- * WITHOUT a second working sign-in method — the whole point of backup codes.
+ * WITHOUT a second working sign-in method, the whole point of backup codes.
  *
  * Security posture: rate-limited (shares the auth limiter, keyed by user id),
  * constant-time hash comparison, non-enumerating error, and all secret-table
@@ -576,7 +576,7 @@ export async function redeemRecoveryCode(
     return formError("Your session expired. Please sign in again.");
   }
 
-  // Throttle guessing — same limiter as the rest of auth, keyed by the user id
+  // Throttle guessing, same limiter as the rest of auth, keyed by the user id
   // (a code is ~50 bits so this is defence-in-depth, not the primary barrier).
   // Fails OPEN (see lib/security/rate-limit) so a limiter fault never strands a
   // locked-out user.
@@ -601,7 +601,7 @@ export async function redeemRecoveryCode(
   }
 
   // Consume the used code (one-time). If this write fails, refuse rather than
-  // proceed — a code that couldn't be burned must not grant access.
+  // proceed, a code that couldn't be burned must not grant access.
   const { error: burnErr } = await admin
     .from("mfa_recovery_codes")
     .update({ used_at: new Date().toISOString() })
@@ -618,11 +618,11 @@ export async function redeemRecoveryCode(
       await admin.auth.admin.mfa.deleteFactor({ id: f.id, userId: user.id });
     } catch {
       // best-effort per factor; a residual factor just means another challenge,
-      // and the user has already burned a code — don't hard-fail the recovery.
+      // and the user has already burned a code, don't hard-fail the recovery.
     }
   }
 
-  // The set is spent — clear the rest so a stale batch can't linger.
+  // The set is spent, clear the rest so a stale batch can't linger.
   await admin.from("mfa_recovery_codes").delete().eq("user_id", user.id);
 
   return formSuccess({ redirectTo: safeLanding(user.email ?? null, next) });

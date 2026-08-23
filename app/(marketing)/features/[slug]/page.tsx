@@ -79,10 +79,10 @@ export default async function FeaturePage({
 
       <Section bg="muted">
         <div className="mx-auto max-w-3xl">
-          <h2 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+          <h2 className="font-display text-2xl font-bold tracking-[-0.02em] text-ink sm:text-3xl">
             {f.problem.heading}
           </h2>
-          <p className="mt-4 text-lg leading-relaxed text-slate-600">{f.problem.body}</p>
+          <p className="mt-4 text-lg leading-relaxed text-ink-mut">{f.problem.body}</p>
         </div>
       </Section>
 

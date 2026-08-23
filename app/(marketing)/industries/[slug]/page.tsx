@@ -77,15 +77,15 @@ export default async function IndustryPage({
 
       <Section bg="muted">
         <div className="mx-auto max-w-3xl">
-          <h2 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+          <h2 className="font-display text-2xl font-bold tracking-[-0.02em] text-ink sm:text-3xl">
             The daily grind for {i.trade.toLowerCase()}
           </h2>
-          <ul className="mt-6 space-y-3 text-sm text-slate-700">
+          <ul className="mt-6 space-y-3 text-[15px] text-ink-mut">
             {i.painPoints.map((p, idx) => (
               <li key={idx} className="flex items-start gap-3">
                 <span
                   aria-hidden
-                  className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-red-100 text-[10px] font-bold text-red-700"
+                  className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-danger/15 text-[10px] font-bold text-danger"
                 >
                   ✕
                 </span>

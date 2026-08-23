@@ -1,0 +1,49 @@
+name: security-scan
+
+# Supply-chain / secret-hygiene scan — deliberately SEPARATE from ci.yml.
+#
+# Why its own workflow rather than a seventh job in ci.yml:
+#   - ci.yml's `on:` block is pinned by __tests__/ci/workflow-gates.test.ts,
+#     which asserts `main` appears exactly twice there. Adding triggers to that
+#     block would break that guard. A standalone workflow keeps the six-gate
+#     contract untouched.
+#   - This scan is GitHub-Actions-only and never builds or boots the app, so it
+#     has ZERO Vercel impact (Vercel builds are the metered cost here; GitHub
+#     Actions minutes are free for this public repo). It is cheap and
+#     deterministic: a filesystem scan for committed secrets, nothing more.
+#
+# gitleaks is free for public repositories (no GITLEAKS_LICENSE needed). The
+# action is SHA-pinned (supply-chain hygiene: a moved tag can't swap the code
+# under us); Dependabot's github-actions ecosystem keeps the pin current.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: security-scan-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: gitleaks (secret scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so a secret introduced in an earlier commit is caught,
+          # not just one in the tip. Cheap on GitHub-hosted runners; no Vercel.
+          fetch-depth: 0
+      # v2.3.9 — pinned by commit SHA, not the moving v2 tag.
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7
+        env:
+          # Required by gitleaks-action v2 to scan pull_request events (it reads
+          # the PR commit range via the API). The auto-provided token is enough;
+          # `permissions: contents: read` above scopes it. No secret to configure.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Repo-root .gitleaks.toml narrows the default ruleset to avoid
+          # false positives on Stripe live-key *prefix checks* / test fixtures.
+          GITLEAKS_CONFIG: .gitleaks.toml

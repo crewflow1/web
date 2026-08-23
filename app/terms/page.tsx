@@ -19,7 +19,7 @@ export default function TermsPage() {
   return (
     <LegalShell
       title="Terms of service"
-      intro="The rules of using CrewFlow — what we promise to do, what we ask of you."
+      intro="The rules of using CrewFlow, what we promise to do, what we ask of you."
       lastUpdated="2026-05-21"
     >
       <h2>The agreement</h2>
@@ -33,7 +33,7 @@ export default function TermsPage() {
       <h2>Your workspace</h2>
       <p>
         A workspace belongs to an <strong>organisation</strong> (your
-        construction company). One person — the owner — is responsible for
+        construction company). One person, the owner, is responsible for
         billing and for who else has access. Admins can invite or remove
         staff. Staff can use the product within the permissions the
         organisation grants. Don&apos;t share your sign-in with anyone:
@@ -43,7 +43,7 @@ export default function TermsPage() {
       <h2>What you can use it for</h2>
       <p>
         CrewFlow is built for UK construction companies to run their
-        operations — leads, quotes, jobs, staff, payroll, invoices, and
+        operations, leads, quotes, jobs, staff, payroll, invoices, and
         payments. You can use it for any lawful business purpose that fits
         that shape.
       </p>
@@ -66,8 +66,8 @@ export default function TermsPage() {
 
       <h2>Your data</h2>
       <p>
-        Everything you enter — customers, quotes, invoices, photos,
-        anything — is yours. We hold it on your behalf to provide the
+        Everything you enter, customers, quotes, invoices, photos,
+        anything, is yours. We hold it on your behalf to provide the
         service. You can export it (CSV) or ask for a full database export
         at any time by emailing us. When you cancel, we delete it within 30
         days, except where tax law (HMRC) obliges us to retain it.
@@ -80,7 +80,7 @@ export default function TermsPage() {
       <h2>Uptime &amp; support</h2>
       <p>
         We aim for 99.9% monthly uptime. We don&apos;t currently offer a
-        contractual SLA — if that&apos;s a procurement requirement, email{" "}
+        contractual SLA, if that&apos;s a procurement requirement, email{" "}
         <a href="mailto:hello@crewflow.uk">hello@crewflow.uk</a> and
         we&apos;ll talk. Support is via email; we aim to respond within one
         UK business day.
@@ -90,7 +90,7 @@ export default function TermsPage() {
       <p>
         Pricing is shown on the product&apos;s pricing page at sign-up.
         Subscriptions auto-renew unless you cancel before the renewal date.
-        We won&apos;t lock you out of your data if a payment fails — your
+        We won&apos;t lock you out of your data if a payment fails, your
         workspace becomes read-only first, and you have 30 days to pay or
         export before access is suspended.
       </p>
@@ -101,7 +101,7 @@ export default function TermsPage() {
 
       <h2>Money flowing through CrewFlow</h2>
       <p>
-        CrewFlow records invoices and payments — it isn&apos;t the
+        CrewFlow records invoices and payments, it isn&apos;t the
         merchant of record for any money your customers pay you. We
         don&apos;t hold client funds. Bank details you show on invoices
         and quotes are yours; you&apos;re responsible for keeping them
@@ -109,7 +109,7 @@ export default function TermsPage() {
       </p>
       <p>
         Payroll figures (PAYE, NI) are <strong>estimates</strong> based on
-        the hours logged. Use them as a starting point — your accountant or
+        the hours logged. Use them as a starting point, your accountant or
         payroll bureau is the source of truth for what actually gets paid
         to HMRC.
       </p>
@@ -137,7 +137,7 @@ export default function TermsPage() {
         You can cancel at any time from the settings page or by emailing
         us. We can suspend or terminate accounts that breach these terms
         (especially the &ldquo;what you can&apos;t use it for&rdquo; list)
-        with reasonable notice — immediately if the breach is severe or
+        with reasonable notice, immediately if the breach is severe or
         illegal.
       </p>
 
@@ -153,7 +153,7 @@ export default function TermsPage() {
       <h2>Contact</h2>
       <p>
         Email <a href="mailto:hello@crewflow.uk">hello@crewflow.uk</a>{" "}
-        for anything — billing, support, procurement, complaints.
+        for anything, billing, support, procurement, complaints.
       </p>
     </LegalShell>
   );
