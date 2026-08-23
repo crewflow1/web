@@ -85,7 +85,7 @@ export default async function ExpensesPage({ searchParams }: { searchParams: SP 
     <div className="mx-auto max-w-5xl space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Expenses</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Receipts</h1>
           <p className="mt-1 text-sm text-slate-600">
             Upload a receipt or supplier invoice — the AI extracts amount,
             VAT, supplier and category. Nothing posts to your books until

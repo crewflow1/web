@@ -9,6 +9,7 @@ import {
   navForRole,
   utilityForRole,
   activeAreaId,
+  areaLandingHref,
   isHrefActive,
   type NavArea,
   type NavRole,
@@ -50,7 +51,11 @@ const QUICK: Record<"admin" | "staff", { href: string; labelKey: string; label: 
     { href: "/me", labelKey: "nav.my_day", label: "My day", icon: "Clock" },
     { href: "/jobs", labelKey: "nav.jobs", label: "Jobs", icon: "Hammer" },
     { href: "/diary", labelKey: "nav.site_diary", label: "Diary", icon: "ShieldCheck" },
-    { href: "/health-safety", labelKey: "nav.site_safety", label: "Safety", icon: "ShieldCheck" },
+    // Staff-safe safety surface — the admin RAMS register (/health-safety) is
+    // hidden from the staff sidebar, so the quick bar points at Toolbox talks,
+    // the first staff-visible Site & safety child (matches areaLandingHref). The
+    // label stays "Safety" (nav.site_safety), not "Toolbox talks".
+    { href: "/toolbox", labelKey: "nav.site_safety", label: "Safety", icon: "ShieldCheck" },
   ],
 };
 
@@ -256,7 +261,7 @@ export function MobileNav({
               <ul className="space-y-0.5">
                 <li>
                   <Link
-                    href={currentArea.href}
+                    href={areaLandingHref(currentArea)}
                     className="flex items-center gap-3 rounded-lg px-3 py-3 text-[15px] font-medium text-slate-900"
                   >
                     <NavIcon name={currentArea.icon} className="h-5 w-5 text-slate-500" />

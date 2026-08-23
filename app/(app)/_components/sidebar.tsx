@@ -9,6 +9,7 @@ import {
   navForRole,
   utilityForRole,
   activeAreaId,
+  areaLandingHref,
   isHrefActive,
   type NavArea,
   type NavRole,
@@ -97,7 +98,7 @@ export function Sidebar({
                     an overlay, so adjacent targets never collide. */}
                 <div className="group flex items-center gap-0.5">
                   <Link
-                    href={area.href}
+                    href={areaLandingHref(area)}
                     aria-current={areaActive && !hasChildren ? "page" : undefined}
                     className={[
                       "flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-3 py-2 text-sm transition",

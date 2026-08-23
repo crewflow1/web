@@ -261,7 +261,7 @@ export default async function AgeingReportPage() {
             not the date it was raised. Balances come from the payment ledger, so a part-paid
             invoice shows only what is still owed. This total is the same figure{" "}
             <Link href="/cash" className="underline hover:text-slate-900">
-              Get paid
+              Cash position
             </Link>{" "}
             reports as owed.
             {debtors.totals.undated > 0 ? (

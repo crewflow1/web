@@ -173,8 +173,8 @@ export const PRIMARY_NAV: NavArea[] = [
       { label: "Cash position", labelKey: "nav.cash", href: "/cash", keywords: ["overview", "money in", "money out"] },
       { label: "Invoices", labelKey: "nav.invoices", href: "/invoices", keywords: ["billing", "get paid"] },
       { label: "Payments", labelKey: "nav.payments", href: "/payments", keywords: ["bank", "reconcile", "reconciliation"] },
-      { label: "Expenses", labelKey: "nav.expenses", href: "/expenses", keywords: ["costs", "spend"] },
-      { label: "Finances", labelKey: "nav.finances", href: "/finances", keywords: ["ledger", "journal"] },
+      { label: "Receipts", labelKey: "nav.expenses", href: "/expenses", keywords: ["expenses", "receipt capture", "supplier invoice", "approve"] },
+      { label: "Costs", labelKey: "nav.finances", href: "/finances", keywords: ["finances", "spend", "cost log", "ledger", "journal"] },
       { label: "CIS", labelKey: "nav.cis", href: "/cis", keywords: ["subcontractor", "deductions", "rct"] },
       { label: "Tax", labelKey: "nav.tax", href: "/tax", keywords: ["vat", "paye", "mtd", "hmrc"] },
       { label: "Reports", labelKey: "nav.reports", href: "/reports", keywords: ["profit", "cashflow", "ageing", "pipeline"] },
@@ -312,4 +312,22 @@ export function allNavHrefs(): string[] {
     for (const c of area.children) out.add(c.href);
   }
   return [...out];
+}
+
+/**
+ * The route an area HEADER should navigate to for a given (already role-filtered)
+ * area — the first child the role can actually see, falling back to the area's
+ * own href.
+ *
+ * Pass an area produced by `navForRole()` (its children are role-filtered). For
+ * an owner/admin the first child equals `area.href` for every area, so their
+ * landing is unchanged; for a `staff` member it prevents an area header from
+ * dropping them onto an admin-only route their own sidebar deliberately hides —
+ * e.g. "Site & safety" lands on the first staff-visible child (Toolbox talks),
+ * not the admin RAMS register, and "People" on Leave, not the pay-bearing roster.
+ * A row with no visible children keeps `area.href` (unreachable in practice —
+ * such an area is filtered out of the sidebar entirely).
+ */
+export function areaLandingHref(area: NavArea): string {
+  return area.children[0]?.href ?? area.href;
 }
