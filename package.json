@@ -51,7 +51,7 @@
     "react-dom": "^19.0.0",
     "react-email": "^3.0.4",
     "react-hook-form": "^7.54.0",
-    "resend": "^4.0.1",
+    "resend": "^6.21.0",
     "server-only": "^0.0.1",
     "stripe": "^17.4.0",
     "tailwind-merge": "^2.5.5",
