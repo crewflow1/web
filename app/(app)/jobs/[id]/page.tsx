@@ -736,7 +736,14 @@ export default async function EditJobPage({
                 {GBP.format(totalCommitted)}
               </dd>
             </div>
-            {profit ? (
+            {/* Profit + Margin are labour-cost-derived. Since staff_compensation
+                (20261218) makes co-worker pay admin-only, only an owner/admin can
+                compute a COMPLETE labour cost — a non-admin would see an understated
+                cost / overstated margin. So these figures render for owner/admin
+                only (they are management figures anyway; the Money area is likewise
+                admin-only). Cash/value tiles beside them are pay-independent and
+                stay visible to all members. */}
+            {isAdmin && profit ? (
               <>
                 <div className="min-w-0">
                   <dt className="text-xs uppercase tracking-wide text-slate-500">Profit</dt>
@@ -861,7 +868,7 @@ export default async function EditJobPage({
             >
               + Add cost
             </Link>
-            {profit ? (
+            {isAdmin && profit ? (
               <span
                 className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${marginPillClass(profit.band)}`}
               >

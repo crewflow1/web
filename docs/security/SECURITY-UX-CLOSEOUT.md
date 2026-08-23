@@ -94,3 +94,40 @@ fixtures unchanged; real-Postgres RLS regression tests; adversarial review.
   pair reviewed; loud-read baseline +1 ledgered for the /me best-effort own-pay estimate).
 
 **VERDICT: hourly_pay finding CONFIRMED and FIXED at the DB boundary.**
+
+---
+
+## Phase 2 — job Commercial / Valuations / Billing access
+
+### Trace + verdict
+- `_job-tabs.tsx` renders Commercial/Valuations/Billing to EVERY member (no role
+  gate). `commercial/page.tsx` had only `requireOrgContext()`; role (`canSetBudget`
+  = owner/admin) gated only the budget WRITE — figures (margin/cost/profit) rendered
+  to any member. Job overview showed Profit + Margin ungated. This is the
+  pre-existing "any member VIEWS, role gates WRITES" design.
+- **Verdict: mixed — a correctness-forced gate + a genuinely-ambiguous product
+  decision.** Not a single A/B/C.
+
+### Correctness-forced (FIXED — a direct corollary of Phase 1)
+Profit/margin/cost are **labour-cost-derived**. Since staff_compensation makes
+co-worker pay admin-only, only an owner/admin can compute a COMPLETE labour cost;
+a non-admin would see an UNDERSTATED cost / overstated margin — a wrong money
+figure. So the pay-dependent figures are now owner/admin only:
+- job overview Profit + Margin tiles → `isAdmin` gated;
+- `/commercial` page → redirects non-admins to the job overview (server gate);
+- Commercial tab hidden for staff; the Cmd+K "commercial (margin & cost)" +
+  "add cost" commands are owner/admin only.
+This is not an invented permission — it is the unavoidable consequence of the pay
+fix, and it is consistent with the CEO-approved "Money area is admin-only" IA.
+
+### Genuinely ambiguous (SURFACED — authorization UNCHANGED, per the directive)
+`/valuations` (applications for payment) and `/billing` (customer invoicing) are
+**pay-independent** (no correctness issue) and their staff-visibility is a real
+product decision the code makes explicitly (view-all). I did NOT change their
+authorization. **CEO decision needed:** should field staff see a job's valuations
+/ customer-billing / commercial-cash strip, or are those management-only like the
+Money area? If management-only, gate `/valuations` + `/billing` + the overview cash
+strip to owner/admin the same way (a small, mechanical follow-up).
+
+No server access boundary was weakened; the leak-relevant surface (labour cost via
+pay) is closed.

@@ -91,7 +91,10 @@ export async function acceptOrgInvite(formData: FormData) {
   const compNow = existingComp as
     | { hourly_pay: number | null; emergency_contact: unknown | null }
     | null;
-  const compUpdates: { hourly_pay?: number; emergency_contact?: unknown } = {};
+  const compUpdates: {
+    hourly_pay?: number;
+    emergency_contact?: { name: string | null; phone: string | null; relationship: string | null };
+  } = {};
   // Error-aware, NOT a discard: the "never overwrite existing" rule depends on
   // reading the current row, so if that read FAILED we skip the seed entirely
   // rather than risk overwriting an existing rate with the invite value.
@@ -100,7 +103,13 @@ export async function acceptOrgInvite(formData: FormData) {
       compUpdates.hourly_pay = metaInvitee.invited_hourly_pay;
     }
     if (!compNow?.emergency_contact && metaInvitee.invited_emergency_contact) {
-      compUpdates.emergency_contact = metaInvitee.invited_emergency_contact;
+      const ec = metaInvitee.invited_emergency_contact;
+      // Normalise to a no-undefined object (Json-assignable, matches the invite writer).
+      compUpdates.emergency_contact = {
+        name: ec.name ?? null,
+        phone: ec.phone ?? null,
+        relationship: ec.relationship ?? null,
+      };
     }
   }
   if (Object.keys(compUpdates).length > 0) {

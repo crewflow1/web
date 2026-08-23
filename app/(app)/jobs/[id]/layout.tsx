@@ -91,7 +91,10 @@ export default async function JobLayout({
       </div>
 
       <div className="mb-6">
-        <JobTabs jobId={id} />
+        <JobTabs
+          jobId={id}
+          isAdmin={ctx.membership.role === "owner" || ctx.membership.role === "admin"}
+        />
       </div>
 
       {children}

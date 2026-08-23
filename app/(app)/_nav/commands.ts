@@ -86,11 +86,19 @@ export function buildCommands(role: NavRole, pathname: string): Command[] {
     });
     cmds.push(
       inThisJob("Job overview", "", "ctx-job-overview"),
-      inThisJob("Job commercial (margin & cost)", "/commercial", "ctx-job-commercial", ["profit", "p&l"]),
       inThisJob("Job valuations (applications for payment)", "/valuations", "ctx-job-valuations", ["application", "interim", "qs"]),
       inThisJob("Job billing", "/billing", "ctx-job-billing", ["invoice"]),
-      { id: "ctx-job-cost", kind: "context", label: "Add cost to this job", href: `/finances/new?job_id=${jobId}`, group: "This job", keywords: ["expense", "spend"] },
     );
+    // Commercial (margin/cost) + Add-cost lead to owner/admin-only surfaces:
+    // labour cost is admin-computable-only (staff_compensation, 20261218) and
+    // /commercial redirects non-admins; /finances is in the admin-only Money area.
+    // Surface these commands to owner/admin only so staff don't hit a dead end.
+    if (roleAllowed(ADMIN, role)) {
+      cmds.push(
+        inThisJob("Job commercial (margin & cost)", "/commercial", "ctx-job-commercial", ["profit", "p&l"]),
+        { id: "ctx-job-cost", kind: "context", label: "Add cost to this job", href: `/finances/new?job_id=${jobId}`, group: "This job", keywords: ["expense", "spend"] },
+      );
+    }
   }
 
   // ── Actions ──
