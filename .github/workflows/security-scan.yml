@@ -40,6 +40,10 @@ jobs:
       # v2.3.9 — pinned by commit SHA, not the moving v2 tag.
       - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7
         env:
+          # Required by gitleaks-action v2 to scan pull_request events (it reads
+          # the PR commit range via the API). The auto-provided token is enough;
+          # `permissions: contents: read` above scopes it. No secret to configure.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Repo-root .gitleaks.toml narrows the default ruleset to avoid
           # false positives on Stripe live-key *prefix checks* / test fixtures.
           GITLEAKS_CONFIG: .gitleaks.toml
