@@ -196,3 +196,57 @@ breadcrumbs on 16/184). Fixing it well is a broad, multi-file sweep — exactly 
 "churn for its own sake" rule #8 excludes from a security closeout. RECOMMEND a
 targeted PageHeader+Breadcrumb wayfinding slice (object `[id]` routes) as separate
 UX work; not churned in here.
+
+---
+
+## Phase 5 — performance regression check — PASS
+
+Prior programme's perf work must not regress (auth-read dedup, dashboard
+single-wave concurrency, DailyBriefing Suspense, no new client bundle). Measured
+against a fresh production build + `next start` on the closeout branch:
+
+- **/dashboard REST query count = 85** (Kong access log, owner session). Prior
+  baseline was ~84; the +1 is the payroll tile now reading `staff_compensation`
+  via `loadOrgHourlyPay` instead of an embedded `user:users(hourly_pay)` join —
+  same number of round-trips, no fan-out. No runaway (guard: <110).
+- Dashboard still renders as one concurrent `Promise.all` wave with the
+  `DailyBriefing` Suspense boundary intact (unchanged by this branch).
+- No `"use client"` added to any server component; the pay reads all moved
+  server-side (page/service), so no client bundle growth.
+
+Verdict: **no performance regression.**
+
+## Phase 6 — role + mobile + direct-URL QA — PASS (1 pre-existing item documented)
+
+Automated (Playwright, production build) — 8/8 role + label checks pass:
+
+| Check | Result |
+|---|---|
+| owner `/finances` h1 = "Costs" (4A) | ✓ |
+| owner reaches `/commercial` (unaffected) | ✓ |
+| owner `/dashboard` query count 85 (no regression) | ✓ |
+| staff `/dashboard` → `/me` (existing gate preserved) | ✓ |
+| staff `/commercial` → redirected to job overview (2) | ✓ |
+| staff job overview hides "Margin" (2) | ✓ |
+| staff job tab bar hides "Commercial" (2) | ✓ |
+| staff `/me` (own pay) renders | ✓ |
+
+The DB-level proof (staff cannot read a co-worker's pay; self/admin can; cross-org
++ anon blocked) is the 6/6 real-Postgres suite
+`__tests__/integration/staff/compensation-rls.test.ts` — the authoritative Phase-1
+gate; the UI checks above are corroboration, not the boundary.
+
+Mobile overflow sweep at 320 / 375 / 390 / 430 / 768 (owner: `/finances`, job
+overview, `/commercial`; staff: `/me`, job overview) — **24/25 clean**.
+
+### Pre-existing item (NOT caused by this closeout; documented, not fixed)
+Owner job-overview `/jobs/[id]` horizontally overflows at **768px** (scrollWidth
+934 vs 768). Root cause is a wide element in `_job-programme.tsx` (a component this
+PR does NOT touch) — its container lacks an `overflow-x-auto`/`min-w-0` bound.
+Proof it is pre-existing: `_job-programme.tsx` is byte-identical to main, and on
+main the overview rendered the same content to owners, so an owner's 768px view is
+unchanged from main. This branch actually *removes* it for staff (24/25 clean,
+staff 768px clean) by gating the extra Profit/Margin tiles + Commercial tab.
+Fixing a pre-existing cosmetic overflow in an untouched component is exactly the
+"no cosmetic redesign programme" this closeout excludes (rule #8). RECOMMEND a
+one-line `overflow-x-auto` wrap on the programme grid as a separate small UX fix.
