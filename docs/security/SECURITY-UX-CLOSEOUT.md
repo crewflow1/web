@@ -346,3 +346,14 @@ remain: fleet/asset "Finance" (vehicle/asset financing), HQ "Finance AI" (dept),
 cash "rent, finance, PAYE/NI" (loan outflow), and the route/table/API resource
 name `finances` (URL≠label, deliberately unchanged). typecheck clean; unit +
 security 10,906/10,906.
+
+### Final review verdicts (all three SAFE)
+- **Security / RLS: SAFE TO DEPLOY** (real-Postgres falsification; boundary holds).
+- **Domain / financial: SAFE TO DEPLOY** (re-review: blocker + majors closed;
+  owner/admin byte-equivalent; migration lossless; no calc touched).
+- **UX / IA / role: SAFE TO DEPLOY** (re-review ×2: M1 + reports guards + MINORs
+  closed; Finances→Costs sweep independently re-grepped clean).
+
+## Phase 8 — CI
+Branch `security/ux-closeout` @ `40ab8e3f` pushed; PR #848. (CI status recorded at
+release time.)
