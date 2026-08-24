@@ -736,7 +736,14 @@ export default async function EditJobPage({
                 {GBP.format(totalCommitted)}
               </dd>
             </div>
-            {profit ? (
+            {/* Profit + Margin are labour-cost-derived. Since staff_compensation
+                (20261218) makes co-worker pay admin-only, only an owner/admin can
+                compute a COMPLETE labour cost — a non-admin would see an understated
+                cost / overstated margin. So these figures render for owner/admin
+                only (they are management figures anyway; the Money area is likewise
+                admin-only). Cash/value tiles beside them are pay-independent and
+                stay visible to all members. */}
+            {isAdmin && profit ? (
               <>
                 <div className="min-w-0">
                   <dt className="text-xs uppercase tracking-wide text-slate-500">Profit</dt>
@@ -853,7 +860,18 @@ export default async function EditJobPage({
 
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-base font-semibold text-slate-900">Profitability</h2>
+          {/* Profit/Margin/Gross-profit/Costs-by-category are labour-cost-DERIVED.
+              staff_compensation (20261218) makes co-worker pay admin-only, so under
+              a staff JWT the labour cost resolves to the viewer's own rate only —
+              any profit figure shown to staff would be both SENSITIVE and WRONG
+              (costs understated, margin overstated). So the whole profitability
+              READ is owner/admin-only, matching the Job-value tiles + the
+              /commercial gate. Cost ENTRY stays open to every member (finances
+              INSERT RLS admits members — field staff log costs), so the
+              "+ Add cost" button is preserved for all roles. */}
+          <h2 className="text-base font-semibold text-slate-900">
+            {isAdmin ? "Profitability" : "Costs"}
+          </h2>
           <div className="flex flex-wrap items-center gap-2">
             <Link
               href={`/finances/new?job_id=${job.id}`}
@@ -861,7 +879,7 @@ export default async function EditJobPage({
             >
               + Add cost
             </Link>
-            {profit ? (
+            {isAdmin && profit ? (
               <span
                 className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${marginPillClass(profit.band)}`}
               >
@@ -872,11 +890,16 @@ export default async function EditJobPage({
             ) : null}
           </div>
         </div>
-        {!profit ? (
+        {!isAdmin ? (
           <p className="mt-3 text-sm text-slate-500">
-            No invoices or finance entries linked to this job yet. Open an
+            Log costs against this job with <strong>+ Add cost</strong>. Profit
+            and margin are visible to owners and admins.
+          </p>
+        ) : !profit ? (
+          <p className="mt-3 text-sm text-slate-500">
+            No invoices or cost entries linked to this job yet. Open an
             invoice and pick this job under <em>Link to job</em>, and log
-            finances against this job, to see profitability.
+            costs against this job, to see profitability.
           </p>
         ) : (
           <div className="mt-4 space-y-4">

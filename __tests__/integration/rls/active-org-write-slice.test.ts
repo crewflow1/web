@@ -92,7 +92,13 @@ async function mkUser(suffix: string, orgIds: string[]): Promise<{ id: string; t
   // ourselves (memberships.user_id FKs public.users).
   await db(serviceClient())
     .from("users")
-    .insert({ id, email, full_name: email, hourly_pay: HOURLY_PAY });
+    .insert({ id, email, full_name: email });
+  // hourly_pay moved off public.users to the admin-gated staff_compensation
+  // table (migration 20261218). Seed it via service-role (RLS-bypassing) so the
+  // known rate is present for any code path that reads it back.
+  await db(serviceClient())
+    .from("staff_compensation")
+    .insert({ user_id: id, hourly_pay: HOURLY_PAY });
   for (const orgId of orgIds) {
     const m = await db(serviceClient())
       .from("memberships")

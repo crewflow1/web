@@ -107,11 +107,11 @@ export function describeActivity(row: ActivityRow): string {
     case "invoice.draft":
       return `set invoice ${m["number"] ?? ""} to draft`;
     case "finance.created":
-      return `added a finance entry ${fmtNumber(m["amount"]) ?? ""} ${m["category"] ? `(${m["category"]})` : ""}`.trim();
+      return `added a cost ${fmtNumber(m["amount"]) ?? ""} ${m["category"] ? `(${m["category"]})` : ""}`.trim();
     case "finance.updated":
-      return `updated a finance entry`;
+      return `updated a cost`;
     case "finance.deleted":
-      return `deleted a finance entry`;
+      return `deleted a cost`;
     case "lead.created":
       return `captured a new lead ${m["service"] ? `(${m["service"]})` : ""}`.trim();
     case "lead.stage_changed":
@@ -206,7 +206,7 @@ export const ACTIVITY_TYPES = [
   { value: "job.", label: "Jobs" },
   { value: "quote.", label: "Quotes" },
   { value: "invoice.", label: "Invoices" },
-  { value: "finance.", label: "Finances" },
+  { value: "finance.", label: "Costs" },
   { value: "customer.", label: "Customers" },
   { value: "variation.", label: "Variations" },
   { value: "grn.", label: "Deliveries" },

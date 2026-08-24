@@ -201,16 +201,17 @@ export async function gatherProfitability(
   const payRows = memberIds.length
     ? await allRows("company-health: user pay", (from, to) =>
         db
-          .from("users")
-          .select("id, hourly_pay")
-          .in("id", memberIds)
-          .order("id", { ascending: true })
+          // staff_compensation (20261218): hourly_pay behind self-or-admin RLS.
+          .from("staff_compensation")
+          .select("user_id, hourly_pay")
+          .in("user_id", memberIds)
+          .order("user_id", { ascending: true })
           .range(from, to),
       )
     : [];
   const hourlyByUser = new Map<string, number>();
   for (const u of payRows) {
-    const uid = sv(u.id);
+    const uid = sv((u as { user_id?: string }).user_id);
     if (!uid) continue;
     hourlyByUser.set(uid, Number((u as { hourly_pay?: number | string | null }).hourly_pay ?? 0));
   }

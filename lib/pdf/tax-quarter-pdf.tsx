@@ -190,7 +190,7 @@ export function TaxQuarterPdf({ data }: { data: TaxQuarterPdfInput }) {
         </View>
 
         <Text style={styles.sectionTitle}>
-          Finance / expense rows ({data.finance_rows.length})
+          Cost / expense rows ({data.finance_rows.length})
         </Text>
         <View style={styles.table}>
           <View style={styles.thRow}>
@@ -203,7 +203,7 @@ export function TaxQuarterPdf({ data }: { data: TaxQuarterPdfInput }) {
           {data.finance_rows.length === 0 ? (
             <View style={styles.tr}>
               <Text style={[styles.td, { flex: 1 }]}>
-                No finance rows in this quarter.
+                No cost entries in this quarter.
               </Text>
             </View>
           ) : (

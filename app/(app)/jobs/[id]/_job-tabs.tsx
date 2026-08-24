@@ -16,9 +16,12 @@ import { usePathname } from "next/navigation";
  * (the generic Tabs primitive is extracted in a later wave — see the ledger).
  */
 
-const TABS: { label: string; sub: string }[] = [
+const TABS: { label: string; sub: string; adminOnly?: boolean }[] = [
   { label: "Overview", sub: "" },
-  { label: "Commercial", sub: "/commercial" },
+  // Commercial is margin/cost/profit — labour-cost-derived, so only owner/admin
+  // can see a complete figure (staff_compensation makes co-worker pay admin-only,
+  // 20261218); the page itself redirects non-admins. Hide the tab to match.
+  { label: "Commercial", sub: "/commercial", adminOnly: true },
   { label: "Valuations", sub: "/valuations" },
   { label: "Billing", sub: "/billing" },
   { label: "Drawings", sub: "/blueprints" },
@@ -27,7 +30,7 @@ const TABS: { label: string; sub: string }[] = [
   { label: "Warranties", sub: "/warranties" },
 ];
 
-export function JobTabs({ jobId }: { jobId: string }) {
+export function JobTabs({ jobId, isAdmin = false }: { jobId: string; isAdmin?: boolean }) {
   const pathname = usePathname();
   const base = `/jobs/${jobId}`;
 
@@ -37,7 +40,7 @@ export function JobTabs({ jobId }: { jobId: string }) {
         aria-label="Job sections"
         className="-mb-px flex gap-1 overflow-x-auto"
       >
-        {TABS.map((t) => {
+        {TABS.filter((t) => isAdmin || !t.adminOnly).map((t) => {
           const href = `${base}${t.sub}`;
           const active =
             t.sub === ""

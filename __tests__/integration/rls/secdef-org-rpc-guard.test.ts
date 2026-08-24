@@ -82,6 +82,22 @@ const ALLOWLIST: ReadonlyMap<string, string> = new Map<string, string>([
     "admin membership primitive: checks the CALLER's own owner/admin membership via auth.uid() (with impersonation scoping); returns false for anon; leaks nothing.",
   ],
 
+  // Compensation-access primitives (20261218) — the staff_compensation RLS
+  // policies' OWN check, same class as is_org_admin/is_org_member. Each returns a
+  // BOOLEAN about the CALLER's own rights (keyed on auth.uid()), never row data,
+  // so neither is a cross-tenant read primitive; anon has no auth.uid() → false.
+  // They are SECURITY DEFINER only to read memberships without RLS recursion, and
+  // MUST stay EXECUTE-able by authenticated because the RLS policy invokes them as
+  // the querying role. Verified by reading pg_get_functiondef (see the migration).
+  [
+    "can_read_compensation",
+    "compensation read primitive: returns true iff target_user = auth.uid() (self) OR the caller (auth.uid()) is an owner/admin of an org the target belongs to. Boolean only, no row data; a staff caller learns only 'is this me', an admin only about their own org's members (already known); anon → false. It IS the staff_compensation SELECT policy's check.",
+  ],
+  [
+    "can_write_compensation",
+    "compensation write primitive: returns true iff the caller (auth.uid()) is an owner/admin of an org the target belongs to (no self-write — no payroll self-escalation). Boolean only, no row data; anon → false. It IS the staff_compensation write policy's check.",
+  ],
+
   // Membership-guarded via current_org_ids(), but they raise a GENERIC
   // exception rather than 42501, so they miss the canonical auto-pass. A
   // non-member is still denied.

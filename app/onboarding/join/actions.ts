@@ -69,30 +69,54 @@ export async function acceptOrgInvite(formData: FormData) {
   };
   const { data: profile } = await admin
     .from("users")
-    .select("full_name, hourly_pay, employment_type, emergency_contact")
+    .select("full_name, employment_type")
     .eq("id", user.id)
     .maybeSingle();
-  type UserUpdate = {
-    full_name: string;
-    hourly_pay?: number;
-    employment_type?: string;
-    emergency_contact?: {
-      name?: string | null;
-      phone?: string | null;
-      relationship?: string | null;
-    };
-  };
+  type UserUpdate = { full_name: string; employment_type?: string };
   const profileUpdates: UserUpdate = { full_name };
-  if (profile && profile.hourly_pay === null && typeof metaInvitee.invited_hourly_pay === "number") {
-    profileUpdates.hourly_pay = metaInvitee.invited_hourly_pay;
-  }
   if (profile && !profile.employment_type && metaInvitee.invited_employment_type) {
     profileUpdates.employment_type = metaInvitee.invited_employment_type;
   }
-  if (profile && !profile.emergency_contact && metaInvitee.invited_emergency_contact) {
-    profileUpdates.emergency_contact = metaInvitee.invited_emergency_contact;
-  }
   await admin.from("users").update(profileUpdates).eq("id", user.id);
+
+  // Pay + emergency contact live in staff_compensation (20261218). Seed from the
+  // admin-set invite metadata via the service-role admin client — a member can
+  // NEVER self-set their own pay (RLS write policy is admin-only), so this trusted
+  // server path is the only way the invited rate reaches the ledger.
+  const { data: existingComp, error: existingCompErr } = await admin
+    .from("staff_compensation")
+    .select("hourly_pay, emergency_contact")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  const compNow = existingComp as
+    | { hourly_pay: number | null; emergency_contact: unknown | null }
+    | null;
+  const compUpdates: {
+    hourly_pay?: number;
+    emergency_contact?: { name: string | null; phone: string | null; relationship: string | null };
+  } = {};
+  // Error-aware, NOT a discard: the "never overwrite existing" rule depends on
+  // reading the current row, so if that read FAILED we skip the seed entirely
+  // rather than risk overwriting an existing rate with the invite value.
+  if (!existingCompErr) {
+    if ((compNow?.hourly_pay ?? null) === null && typeof metaInvitee.invited_hourly_pay === "number") {
+      compUpdates.hourly_pay = metaInvitee.invited_hourly_pay;
+    }
+    if (!compNow?.emergency_contact && metaInvitee.invited_emergency_contact) {
+      const ec = metaInvitee.invited_emergency_contact;
+      // Normalise to a no-undefined object (Json-assignable, matches the invite writer).
+      compUpdates.emergency_contact = {
+        name: ec.name ?? null,
+        phone: ec.phone ?? null,
+        relationship: ec.relationship ?? null,
+      };
+    }
+  }
+  if (Object.keys(compUpdates).length > 0) {
+    await admin
+      .from("staff_compensation")
+      .upsert({ user_id: user.id, ...compUpdates, updated_by: user.id }, { onConflict: "user_id" });
+  }
 
   // Create the membership (or no-op if it already exists).
   const { data: existing } = await admin

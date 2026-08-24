@@ -67,7 +67,9 @@ function fixtures() {
     customers: [{ id: "cust-1", name: "Acme Ltd" }],
     time_entries: [TEN_HOURS],
     memberships: [{ user_id: "u-1" }],
-    users: [{ id: "u-1", hourly_pay: 20 }],
+    users: [{ id: "u-1" }],
+    // Pay moved to staff_compensation (20261218); report labour cost reads it here.
+    staff_compensation: [{ user_id: "u-1", hourly_pay: 20 }],
   };
 }
 

@@ -79,12 +79,20 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
   const weekEndIso = addDaysIso(weekStartIso, 6);
   const monthStartIso = startOfMonthIso(now);
 
-  const [profileRes, openRes, weekRes, rotaRes, leavesRes, jobsRes, monthRes] =
+  const [profileRes, compRes, openRes, weekRes, rotaRes, leavesRes, jobsRes, monthRes] =
     await Promise.all([
       supabase
         .from("users")
-        .select("full_name, hourly_pay, employment_type")
+        .select("full_name, employment_type")
         .eq("id", user.id)
+        .maybeSingle(),
+      // Own pay from staff_compensation (20261218) — the self-read RLS admits the
+      // caller's OWN row, so this drives the /me earnings estimate without exposing
+      // any co-worker's rate.
+      supabase
+        .from("staff_compensation")
+        .select("hourly_pay")
+        .eq("user_id", user.id)
         .maybeSingle(),
       // ACTIVE-org pins throughout. `user_id` alone is NOT a scope for a person
       // who works for two companies through CrewFlow: their org-B shifts, leave
@@ -166,7 +174,13 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
   if (monthRes.error) throw readFailure("me: month entries", monthRes.error);
 
   const profile = profileRes.data;
-  const hourlyPay = Number(profile?.hourly_pay ?? 0);
+  // Own-pay for the earnings estimate. Error-aware (not a silent discard): if the
+  // read failed we surface no rate rather than a stale/guessed one — a personal
+  // best-effort estimate, so it degrades to 0 (shown as "set your rate") instead
+  // of throwing and 500-ing the worker's home page.
+  const hourlyPay = compRes.error
+    ? 0
+    : Number((compRes.data as { hourly_pay?: number | string | null } | null)?.hourly_pay ?? 0);
   const fullName = profile?.full_name ?? user.email ?? "you";
 
   const open = openRes.data as TimeEntry | null;

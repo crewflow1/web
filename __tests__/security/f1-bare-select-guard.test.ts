@@ -312,10 +312,10 @@ const ALLOWLIST: Record<string, string> = {
   //    surfaced only once the cast-form matcher was taught. Each is a single
   //    parent entity's child set (a job's / a PO's), never a cross-tenant scan:
   //    cardinality is bounded by the parent and cannot approach the 1000 cap.
-  "app/(app)/jobs/[id]/commercial/page.tsx:177":
-    "bounded: ONE job's retention releases (.eq('job_id').eq('org_id')) — feeds the committed/forecast retention figure for a single job; retention is released in 1-2 tranches per job, never near 1000. (Surfaced once C66-B de-vacuumed the cast-form windowing; the read is org-pinned per C66-A's cross-org money-injection fix. Moved 176→177 when the stock-COGS wave added one import line above it.)",
-  "app/(app)/jobs/[id]/commercial/page.tsx:182":
-    "bounded: ONE job's purchase orders (.eq('job_id')) — feeds the committed-costs tile for a single job; a job has a handful to dozens of POs, never near 1000. (Moved 181→182 when the stock-COGS wave added one import line above it.)",
+  "app/(app)/jobs/[id]/commercial/page.tsx:186":
+    "bounded: ONE job's retention releases (.eq('job_id').eq('org_id')) — feeds the committed/forecast retention figure for a single job; retention is released in 1-2 tranches per job, never near 1000. (Org-pinned per C66-A's cross-org money-injection fix. Moved to 186 in the security closeout when the staff-redirect guard was added to the top of the page.)",
+  "app/(app)/jobs/[id]/commercial/page.tsx:191":
+    "bounded: ONE job's purchase orders (.eq('job_id')) — feeds the committed-costs tile for a single job; a job has a handful to dozens of POs, never near 1000. (Moved to 191 in the security closeout when the staff-redirect guard was added above.)",
   "app/(app)/jobs/[id]/page.tsx:336":
     "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap. (Moved 315→317 when the P3 span column + checklist import were added above it; then 317→330 when the stock-COGS wave added an import line + the loadStockCogsCostRows composition block above it.)",
   "app/(app)/jobs/retention-actions.ts:163":
@@ -412,8 +412,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE org's members (.eq('org_id')) — the settings team panel; bounded by the org's headcount, never near 1000 (line moved 76→77 when the FlatRateSettings import was added; moved 77→80 when the i18n-wave getRequestI18n helper + its comment replaced the bare requireOrgContext call)",
   "app/(app)/staff/leave/page.tsx:97":
     "bounded: ONE org's members (.eq('org_id')) — the leave-page name lookup; bounded by the org's headcount (line moved 96→97 when the getHolidayBalanceForUser import was added for the holiday-balance card)",
-  "app/(app)/staff/page.tsx:56":
-    "bounded: ONE org's members (.eq('org_id')) — the staff register; bounded by the org's headcount",
+  "app/(app)/staff/page.tsx:55":
+    "bounded: ONE org's members (.eq('org_id')) — the staff register; bounded by the org's headcount. (Line moved to 55 in the security closeout when hourly_pay was dropped from the users embed — pay now reads from staff_compensation below.)",
   "app/(app)/staff/rota/page.tsx:112":
     "bounded: ONE org's members (.eq('org_id')) — the rota staff list + assign-form labels; bounded by the org's headcount",
   "app/customer-portal/_warranties.ts:133":
@@ -424,8 +424,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE org's owner/admin recipients (.eq('org_id').in('role', ['owner','admin'])) — a handful of privileged users per org, far below 1000",
   "lib/email/send-material-request.ts:110":
     "bounded: ONE org's owner/admin recipients (.eq('org_id').in('role', ['owner','admin'])) — a handful of privileged users per org",
-  "lib/profitability/labour-rates.ts:34":
-    "bounded: ONE org's member ids (.eq('org_id')) — folded into an hourly-pay map (loadOrgHourlyPay); bounded by the org's headcount, and the sibling users read is a chunk-safe .in(memberIds)",
+  "lib/profitability/labour-rates.ts:36":
+    "bounded: ONE org's member ids (.eq('org_id')) — folded into an hourly-pay map (loadOrgHourlyPay); bounded by the org's headcount, and the sibling staff_compensation read is a chunk-safe .in(memberIds). (Line moved to 36 in the security closeout when the docstring grew for the users.hourly_pay→staff_compensation move.)",
 
   // ── C66 cast-form de-vacuum: hq_sales_companies NAME-ENRICHMENT lookups
   //    surfaced once the depth-aware windowing saw these cast-form reads. Each is
@@ -1123,6 +1123,16 @@ describe("F-1 bare-select guard — high-value table reads must page or be singl
  *   SINGLE     — only ever an existence / single-row probe (.limit(1)).
  */
 const COVERAGE_REVIEWED: Record<string, string> = {
+  // staff_compensation (20261218) — the self-or-admin-gated home of hourly_pay +
+  // emergency_contact (moved off co-worker-readable public.users). EVERY set-read
+  // is an id-batch `.in('user_id', memberIds)` where memberIds is drawn from an
+  // org-pinned memberships read (labour-rates, reports, company-health,
+  // intelligence, dashboard-via-loadOrgHourlyPay, staff roster, payroll run) — so
+  // each read is structurally bounded by the org's headcount, never a raw scan.
+  // The self-read (/me) + admin single-row reads (staff/[id], staff edit) are
+  // .maybeSingle(). RLS is the real guard; this bound is per-org id-batch.
+  staff_compensation:
+    "id-batch: every set-read is .in('user_id', memberIds) from an org-pinned memberships read (bounded by headcount); single-row reads use .maybeSingle()",
   // ---- PAGED (always fetchAllRows) ----
   // MP Wave R4 — comms outbound-audit view (server/services/outbound-audit.ts):
   // each source read is org-pinned (.eq('org_id')) and F-1 PAGED via fetchAllRows.

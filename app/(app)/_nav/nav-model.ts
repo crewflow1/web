@@ -174,7 +174,7 @@ export const PRIMARY_NAV: NavArea[] = [
       { label: "Invoices", labelKey: "nav.invoices", href: "/invoices", keywords: ["billing", "get paid"] },
       { label: "Payments", labelKey: "nav.payments", href: "/payments", keywords: ["bank", "reconcile", "reconciliation"] },
       { label: "Expenses", labelKey: "nav.expenses", href: "/expenses", keywords: ["costs", "spend"] },
-      { label: "Finances", labelKey: "nav.finances", href: "/finances", keywords: ["ledger", "journal"] },
+      { label: "Costs", labelKey: "nav.finances", href: "/finances", keywords: ["finances", "spend", "cost log", "ledger", "journal"] },
       { label: "CIS", labelKey: "nav.cis", href: "/cis", keywords: ["subcontractor", "deductions", "rct"] },
       { label: "Tax", labelKey: "nav.tax", href: "/tax", keywords: ["vat", "paye", "mtd", "hmrc"] },
       { label: "Reports", labelKey: "nav.reports", href: "/reports", keywords: ["profit", "cashflow", "ageing", "pipeline"] },

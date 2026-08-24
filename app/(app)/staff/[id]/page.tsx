@@ -66,7 +66,7 @@ export default async function StaffDetailPage({
     .select(
       `
         role, user_id,
-        user:users ( id, full_name, email, phone, hourly_pay, employment_type, start_date, emergency_contact )
+        user:users ( id, full_name, email, phone, employment_type, start_date )
       `,
     )
     .eq("org_id", ctx.org.id)
@@ -81,9 +81,22 @@ export default async function StaffDetailPage({
     full_name: string | null;
     email: string;
     phone: string | null;
-    hourly_pay: number | null;
     employment_type: string | null;
     start_date: string | null;
+  } | null;
+
+  // Pay + emergency contact live in staff_compensation (20261218): the self-or-
+  // admin RLS admits an admin viewing any org member, and a member viewing their
+  // OWN detail — but not a co-worker's, so a staff member who reaches another's
+  // detail page by URL sees pay/emergency as "—".
+  const { data: compRow, error: compError } = await supabase
+    .from("staff_compensation")
+    .select("hourly_pay, emergency_contact")
+    .eq("user_id", id)
+    .maybeSingle();
+  if (compError) throw readFailure("staff detail: compensation", compError);
+  const comp = compRow as {
+    hourly_pay: number | null;
     emergency_contact: {
       name?: string | null;
       phone?: string | null;
@@ -201,13 +214,13 @@ export default async function StaffDetailPage({
           defaults={{
             full_name: user?.full_name ?? "",
             phone: user?.phone ?? "",
-            hourly_pay: user?.hourly_pay != null ? String(user.hourly_pay) : "",
+            hourly_pay: comp?.hourly_pay != null ? String(comp.hourly_pay) : "",
             employment_type: user?.employment_type ?? "",
             start_date: user?.start_date ?? "",
-            emergency_contact_name: user?.emergency_contact?.name ?? "",
-            emergency_contact_phone: user?.emergency_contact?.phone ?? "",
+            emergency_contact_name: comp?.emergency_contact?.name ?? "",
+            emergency_contact_phone: comp?.emergency_contact?.phone ?? "",
             emergency_contact_relationship:
-              user?.emergency_contact?.relationship ?? "",
+              comp?.emergency_contact?.relationship ?? "",
           }}
         />
       </section>
@@ -218,7 +231,7 @@ export default async function StaffDetailPage({
         <p className="mt-2 text-sm text-slate-600">
           Hourly:{" "}
           <strong className="text-slate-900">
-            {user?.hourly_pay != null ? GBP.format(Number(user.hourly_pay)) : "—"}
+            {comp?.hourly_pay != null ? GBP.format(Number(comp.hourly_pay)) : "—"}
           </strong>
         </p>
         <p className="mt-1 text-xs text-slate-500">

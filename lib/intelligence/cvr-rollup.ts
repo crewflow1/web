@@ -131,7 +131,7 @@ export function cvrTotalMetric(r: CvrRollup): LabelledMetric<CvrRollup> {
       "every pound spent read as overrun.",
     computedFrom: [
       { label: "Job budgets", href: "/jobs" },
-      { label: "Costs (finances)", href: "/finances" },
+      { label: "Costs", href: "/finances" },
       { label: "Purchase orders", href: "/purchase-orders" },
     ],
   });

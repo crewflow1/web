@@ -224,7 +224,7 @@ export async function gatherUtilisation(
   const fromInstant = new Date(window.startMs - ROTA_LOOKBACK_MS).toISOString();
   const toInstant = new Date(window.endMs).toISOString();
 
-  const [users, rota, timeEntries] = await Promise.all([
+  const [users, comp, rota, timeEntries] = await Promise.all([
     memberIds.length === 0
       ? Promise.resolve([] as Row[])
       : allRows("intelligence: users", (from, to) =>
@@ -232,9 +232,20 @@ export async function gatherUtilisation(
             .from("users")
             // GLOBAL table (no org_id column): scoped by the membership ids
             // above — the documented exception to the org-pin rule.
-            .select("id, full_name, hourly_pay")
+            .select("id, full_name")
             .in("id", memberIds)
             .order("id", { ascending: true })
+            .range(from, to),
+        ),
+    memberIds.length === 0
+      ? Promise.resolve([] as Row[])
+      : allRows("intelligence: user pay", (from, to) =>
+          db
+            // staff_compensation (20261218): hourly_pay behind self-or-admin RLS.
+            .from("staff_compensation")
+            .select("user_id, hourly_pay")
+            .in("user_id", memberIds)
+            .order("user_id", { ascending: true })
             .range(from, to),
         ),
     allRows("intelligence: rota entries", (from, to) =>
@@ -263,7 +274,12 @@ export async function gatherUtilisation(
 
   const nameById = new Map(users.map((u) => [String(u.id), sv(u.full_name)]));
   const rateById = new Map(
-    users.map((u) => [String(u.id), u.hourly_pay == null ? null : Number(u.hourly_pay)]),
+    comp.map((c) => [
+      String((c as { user_id?: string }).user_id),
+      (c as { hourly_pay?: number | string | null }).hourly_pay == null
+        ? null
+        : Number((c as { hourly_pay?: number | string | null }).hourly_pay),
+    ]),
   );
 
   const members: UtilisationMember[] = memberIds.map((id) => ({
@@ -656,16 +672,17 @@ export async function gatherCvrRollup(
   const payRows = memberIds.length
     ? await allRows("intelligence: cvr user pay", (from, to) =>
         db
-          .from("users")
-          .select("id, hourly_pay")
-          .in("id", memberIds)
-          .order("id", { ascending: true })
+          // staff_compensation (20261218): hourly_pay behind self-or-admin RLS.
+          .from("staff_compensation")
+          .select("user_id, hourly_pay")
+          .in("user_id", memberIds)
+          .order("user_id", { ascending: true })
           .range(from, to),
       )
     : [];
   const hourlyByUser = new Map<string, number>();
   for (const u of payRows) {
-    const uid = sv(u.id);
+    const uid = sv((u as { user_id?: string }).user_id);
     if (!uid) continue;
     hourlyByUser.set(uid, Number((u as { hourly_pay?: number | string | null }).hourly_pay ?? 0));
   }

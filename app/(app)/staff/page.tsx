@@ -31,7 +31,6 @@ type MemberRow = {
     email: string;
     phone: string | null;
     employment_type: string | null;
-    hourly_pay: number | null;
     start_date: string | null;
   } | null;
 };
@@ -57,12 +56,29 @@ export default async function StaffPage({
     .select(
       `
         user_id, role,
-        user:users ( id, full_name, email, phone, employment_type, hourly_pay, start_date )
+        user:users ( id, full_name, email, phone, employment_type, start_date )
       `,
     )
     .eq("org_id", ctx.org.id)
     .order("role", { ascending: true });
   if (membersError) throw readFailure("staff: members register", membersError);
+
+  // Pay is in staff_compensation (20261218) behind self-or-admin RLS: an admin
+  // reads every member's rate (full roster), a non-admin who reaches this page by
+  // URL reads only their OWN — so a co-worker's pay renders as "—", never leaked.
+  const memberIds = [...new Set((membersRaw ?? []).map((m) => m.user_id))];
+  const payByUser = new Map<string, number>();
+  if (memberIds.length > 0) {
+    const { data: compRows, error: compError } = await supabase
+      .from("staff_compensation")
+      .select("user_id, hourly_pay")
+      .in("user_id", memberIds);
+    if (compError) throw readFailure("staff: compensation", compError);
+    for (const c of compRows ?? []) {
+      const row = c as { user_id: string; hourly_pay: number | string | null };
+      if (row.hourly_pay != null) payByUser.set(row.user_id, Number(row.hourly_pay));
+    }
+  }
 
   const members = (membersRaw ?? []) as MemberRow[];
 
@@ -163,7 +179,11 @@ export default async function StaffPage({
                 <th className="px-6 py-2">Email</th>
                 <th className="px-6 py-2">Role</th>
                 <th className="px-6 py-2">Type</th>
-                <th className="px-6 py-2 text-right">Hourly</th>
+                {/* Pay is self-or-admin (20261218): for a non-admin the column
+                    would show only their own row and "—" for everyone else,
+                    reading as broken data. Hide it entirely — own pay lives on
+                    /me and the self detail page. */}
+                {isAdmin ? <th className="px-6 py-2 text-right">Hourly</th> : null}
                 <th className="px-6 py-2">Since</th>
                 <th className="px-6 py-2" />
               </tr>
@@ -171,7 +191,7 @@ export default async function StaffPage({
             <tbody className="divide-y divide-slate-100">
               {members.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-10 text-center text-sm text-slate-500">
+                  <td colSpan={isAdmin ? 7 : 6} className="px-6 py-10 text-center text-sm text-slate-500">
                     <p className="font-medium text-slate-700">No members yet.</p>
                     {isAdmin ? (
                       <p className="mt-2">
@@ -203,15 +223,19 @@ export default async function StaffPage({
                       </span>
                     </td>
                     <td className="px-6 py-2 text-slate-600">{m.user?.employment_type ?? "—"}</td>
-                    <td className="px-6 py-2 text-right text-slate-600">
-                      {m.user?.hourly_pay != null
-                        ? `£${Number(m.user.hourly_pay).toFixed(2)}`
-                        : "—"}
-                    </td>
+                    {isAdmin ? (
+                      <td className="px-6 py-2 text-right text-slate-600">
+                        {payByUser.has(m.user_id)
+                          ? `£${payByUser.get(m.user_id)!.toFixed(2)}`
+                          : "—"}
+                      </td>
+                    ) : null}
                     <td className="px-6 py-2 text-slate-600">{m.user?.start_date ?? "—"}</td>
                     <td className="px-6 py-2 text-right">
                       <Link href={`/staff/${m.user_id}`} className="text-xs text-slate-500 hover:text-slate-900">
-                        Edit →
+                        {/* Non-admins land on a read-only detail page — don't
+                            promise an edit they can't perform. */}
+                        {isAdmin ? "Edit →" : "View →"}
                       </Link>
                     </td>
                   </tr>

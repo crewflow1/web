@@ -86,9 +86,23 @@ export function buildCommands(role: NavRole, pathname: string): Command[] {
     });
     cmds.push(
       inThisJob("Job overview", "", "ctx-job-overview"),
-      inThisJob("Job commercial (margin & cost)", "/commercial", "ctx-job-commercial", ["profit", "p&l"]),
       inThisJob("Job valuations (applications for payment)", "/valuations", "ctx-job-valuations", ["application", "interim", "qs"]),
       inThisJob("Job billing", "/billing", "ctx-job-billing", ["invoice"]),
+    );
+    // Commercial (margin/cost VIEW) is owner/admin-only: labour cost is
+    // admin-computable-only (staff_compensation, 20261218) and /commercial
+    // redirects non-admins — so gate the command to avoid a dead end.
+    if (roleAllowed(ADMIN, role)) {
+      cmds.push(
+        inThisJob("Job commercial (margin & cost)", "/commercial", "ctx-job-commercial", ["profit", "p&l"]),
+      );
+    }
+    // Adding a cost is a MEMBER action, not admin-only: the `finances` INSERT RLS
+    // admits any org member and the on-page "+ Add cost" button is shown to every
+    // role, so this command must match (gating only the ⌘K shortcut created an
+    // inconsistency). Whether field staff SHOULD log job costs at all is a product
+    // question surfaced in docs/security/SECURITY-UX-CLOSEOUT.md — not decided here.
+    cmds.push(
       { id: "ctx-job-cost", kind: "context", label: "Add cost to this job", href: `/finances/new?job_id=${jobId}`, group: "This job", keywords: ["expense", "spend"] },
     );
   }

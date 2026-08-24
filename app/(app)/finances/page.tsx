@@ -158,9 +158,10 @@ export default async function FinancesPage({
     <div className="space-y-6">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Finances</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Costs</h1>
           <p className="mt-1 text-sm text-slate-600">
-            Track receipts, earnings, and VAT.
+            Your cost log — every expense with its category, VAT and receipt.
+            Approved receipts land here.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -288,9 +289,9 @@ export default async function FinancesPage({
         {!rows || rows.length === 0 ? (
           <EmptyState
             icon="🧾"
-            title="No finance entries yet"
+            title="No costs yet"
             body="Log receipts, expenses, and earnings. VAT is computed automatically; you can export the lot to CSV at quarter-end."
-            primary={{ href: "/finances/new", label: "Add first entry" }}
+            primary={{ href: "/finances/new", label: "Add first cost" }}
           />
         ) : (
           <table className="min-w-full divide-y divide-slate-200">

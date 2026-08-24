@@ -54,6 +54,15 @@ import { BudgetForm, type CurrentBudget } from "./_budget-form";
 export default async function JobCommercialPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { ctx } = await requireOrgContext();
+  // The commercial position is margin/cost/profit — labour-cost-derived, so only
+  // an owner/admin can see a COMPLETE figure (staff_compensation makes co-worker
+  // pay admin-only, 20261218). A non-admin would get an understated cost; and
+  // commercial/margin is management data (the Money area is admin-only too). Gate
+  // the page to owner/admin; field staff go back to the job's operational overview.
+  if (ctx.membership.role !== "owner" && ctx.membership.role !== "admin") {
+    const { redirect } = await import("next/navigation");
+    redirect(`/jobs/${id}`);
+  }
   const supabase = await createClient();
 
   const job = await loadJobForOrg<{

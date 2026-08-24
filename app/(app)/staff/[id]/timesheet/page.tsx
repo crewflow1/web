@@ -64,11 +64,19 @@ export default async function TimesheetPage({
   const weekEndIso = addDaysIso(weekStartIso, 6);
   const monthStartIso = startOfMonthIso();
 
-  const [profileRes, entriesRes] = await Promise.all([
+  const [profileRes, compRes, entriesRes] = await Promise.all([
     supabase
       .from("users")
-      .select("full_name, email, hourly_pay, employment_type")
+      .select("full_name, email, employment_type")
       .eq("id", staffId)
+      .maybeSingle(),
+    // Pay from staff_compensation (20261218, self-or-admin RLS). This page is
+    // already gated to admin OR the staff member themselves (above), so the read
+    // is authorised for exactly the viewers allowed here.
+    supabase
+      .from("staff_compensation")
+      .select("hourly_pay")
+      .eq("user_id", staffId)
       .maybeSingle(),
     // PAGED (F-1): this timesheet's week/month hour tiles sum the whole month —
     // a bare `.select()` clamped at max_rows (1000) would drop shifts past the
@@ -95,6 +103,10 @@ export default async function TimesheetPage({
 
   if (!profileRes.data) notFound();
   if (entriesRes.error) throw readFailure("staff timesheet: entries", entriesRes.error);
+  // LOUD on a failed pay read (matches the entries read above): a silent fall to
+  // £0 would understate labour cost rather than surface the failure. This page is
+  // admin-or-self only, so the reader is entitled to the rate.
+  if (compRes.error) throw readFailure("staff timesheet: compensation", compRes.error);
   const profile = profileRes.data;
   const entries = (entriesRes.data ?? []) as TimeEntry[];
 
@@ -106,7 +118,9 @@ export default async function TimesheetPage({
 
   const hoursWeek = hoursInWindow(entries, weekStart, weekEnd, now);
   const hoursMonth = hoursInWindow(entries, monthStart, monthEnd, now);
-  const hourlyPay = Number(profile.hourly_pay ?? 0);
+  const hourlyPay = Number(
+    (compRes.data as { hourly_pay?: number | string | null } | null)?.hourly_pay ?? 0,
+  );
   const labourCostWeek = Math.round(hoursWeek * hourlyPay * 100) / 100;
   const labourCostMonth = Math.round(hoursMonth * hourlyPay * 100) / 100;
 

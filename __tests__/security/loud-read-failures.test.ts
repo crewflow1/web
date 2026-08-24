@@ -427,7 +427,12 @@ const RATCHET: Array<{
     // = await …in(purchaseOrderIds).limit(1000)` (which discarded the error) when
     // it was rewritten to CHUNK + PAGE via fetchAllRows and now binds + throws on
     // `error`. 1 discard retired.
-    discard: 55 /* +4 inherited from Trains 24-26, see docs/loud-read-failures.md */,
+    // 55 → 56 (security closeout, staff_compensation): /me reads the worker's OWN
+    // hourly_pay for the earnings ESTIMATE. It is a personal best-effort display —
+    // on a read error it degrades to "no rate" rather than throwing and 500-ing the
+    // worker's home page (the sibling /me reads are best-effort too). It is NOT a
+    // money-authority read (that path is payroll, which is LOUD). Deliberate +1.
+    discard: 56 /* +4 inherited from Trains 24-26, see docs/loud-read-failures.md */,
     // 52 → 49: the job hub's H&S panel (_job-safety.tsx) bound `error` on all
     // three of its reads (RAMS, permits, toolbox talks), so their `?? []` now
     // sits behind a real check and stops counting as debt. A SAFETY control
