@@ -268,7 +268,7 @@ export default async function TaxDashboardPage() {
         <h1 className="text-2xl font-bold text-slate-900">Tax dashboard</h1>
         <p className="mt-1 text-sm text-slate-600">
           {ctx.org.name} — running estimates of your VAT, PAYE and
-          Corporation Tax based on the invoices and finances logged in
+          Corporation Tax based on the invoices and costs logged in
           CrewFlow this tax year.
         </p>
       </header>
@@ -356,7 +356,7 @@ export default async function TaxDashboardPage() {
             label="Estimated profit"
             value={GBP.format(corp.estimated_profit)}
             basis="Invoiced · accrual"
-            sub="invoiced revenue (net) − finance costs (net)"
+            sub="invoiced revenue (net) − logged costs (net)"
           />
           <Stat
             label="Rate applied"
@@ -378,7 +378,7 @@ export default async function TaxDashboardPage() {
           />
         </dl>
         <p className="mt-3 text-xs text-slate-500">
-          Profit is approximated as net invoice revenue minus net finance
+          Profit is approximated as net invoice revenue minus net logged
           costs since the tax year started. This skips depreciation,
           director&apos;s salary, capital allowances and a dozen other
           adjustments your accountant handles at year end.

@@ -338,14 +338,17 @@ describe("dual-org: every table read is pinned to the active org", () => {
     // 20261218) via .in('user_id', memberIds). BOTH are reached ONLY through this
     // org's membership ids — never a raw table scan, never another org's worker.
     const usersReads = h.reads.filter((r) => r.table === "users");
-    expect(usersReads.length).toBeGreaterThanOrEqual(1);
+    // Exact pins (restored): the split read is users(id, full_name) ×1 and
+    // staff_compensation(user_id, hourly_pay) ×2 (cvr pay + utilisation). If a
+    // read is added/removed, update deliberately — don't relax to a range.
+    expect(usersReads.length).toBe(1);
     for (const ur of usersReads) {
       const idIn = ur.ins.find(([c]) => c === "id");
       expect(idIn, "users must be reached through .in('id', memberIds)").toBeDefined();
       expect(idIn?.[1]).toEqual(["user-a"]); // org A's members only — never Bob
     }
     const compReads = h.reads.filter((r) => r.table === "staff_compensation");
-    expect(compReads.length).toBeGreaterThanOrEqual(1);
+    expect(compReads.length).toBe(2);
     for (const cr of compReads) {
       const idIn = cr.ins.find(([c]) => c === "user_id");
       expect(idIn, "staff_compensation must be reached through .in('user_id', memberIds)").toBeDefined();

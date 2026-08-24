@@ -103,6 +103,10 @@ export default async function TimesheetPage({
 
   if (!profileRes.data) notFound();
   if (entriesRes.error) throw readFailure("staff timesheet: entries", entriesRes.error);
+  // LOUD on a failed pay read (matches the entries read above): a silent fall to
+  // £0 would understate labour cost rather than surface the failure. This page is
+  // admin-or-self only, so the reader is entitled to the rate.
+  if (compRes.error) throw readFailure("staff timesheet: compensation", compRes.error);
   const profile = profileRes.data;
   const entries = (entriesRes.data ?? []) as TimeEntry[];
 

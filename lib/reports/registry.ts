@@ -66,7 +66,14 @@ export const REPORTS: Record<ReportKey, ReportMeta> = {
     description:
       "Revenue, cost and gross profit by month and by job, with margin bands — from the job profitability authority.",
     href: "/reports/profit",
-    managementOnly: false,
+    // Labour-cost-DERIVED (P&L subtracts time-tracked labour valued at
+    // staff_compensation). Since 20261218 put pay behind self-or-admin RLS, a
+    // non-admin reading this under their own JWT sees only their OWN rate →
+    // labour understated, profit/margin overstated: a WRONG money figure, not
+    // just a sensitive one. So it is management-only (page redirects non-admins;
+    // export route 403s them; the /reports index hides it) — the same
+    // correctness-forced gate applied to the job-page Profitability section.
+    managementOnly: true,
   },
   cashflow: {
     key: "cashflow",
@@ -82,7 +89,11 @@ export const REPORTS: Record<ReportKey, ReportMeta> = {
     description:
       "Rostered vs recorded hours per member over the last 30 days, with coverage and labour cost.",
     href: "/reports/utilisation",
-    managementOnly: false,
+    // Exposes a per-member hourly-rate column + labour cost (documents.ts). Same
+    // pay-RLS consequence as profit: under a non-admin JWT co-workers' rates
+    // resolve to null and labour cost is understated — wrong + pay-adjacent. So
+    // management-only, consistent with the profit report and the pay fix.
+    managementOnly: true,
   },
   pipeline: {
     key: "pipeline",

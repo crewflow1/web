@@ -250,3 +250,81 @@ staff 768px clean) by gating the extra Profit/Margin tiles + Commercial tab.
 Fixing a pre-existing cosmetic overflow in an untouched component is exactly the
 "no cosmetic redesign programme" this closeout excludes (rule #8). RECOMMEND a
 one-line `overflow-x-auto` wrap on the programme grid as a separate small UX fix.
+
+---
+
+## Phase 7 — three adversarial reviews (independent, read-only) + remediation
+
+All three were told to FALSIFY the change and end with an explicit deploy verdict.
+
+### Security / RLS — **SAFE TO DEPLOY**
+Real-Postgres falsification with a live staff JWT (inside an explicit
+`BEGIN…ROLLBACK`, `rolbypassrls=f`): staff→co-worker pay = 0 rows; staff→self = own
+row; staff self-write = 0 rows (blocked); admin→member = 1 row; cross-org admin +
+stranger = 0 rows; anon denied. Helpers `SECURITY DEFINER`, owned by postgres,
+`search_path=""`, no recursion. Every app read runs on the user-JWT client (RLS is
+the gate); service-role paths are write-only or self-scoped; cron report-delivery
+is admin-subscription-gated (verified INSERT RLS). `users.hourly_pay/emergency_contact`
+dropped; zero code reads them. Nothing weakened. One MINOR: add an
+`emergency_contact` assertion — **DONE** (seeded both cols; negative on staff→admin,
+positive on admin→member).
+
+### Domain / financial — DO NOT DEPLOY → remediated
+Confirmed payroll/job-costing/dashboard/VAT/CIS byte-equivalent for owner/admin;
+migration lossless; RLS proven. Found **one BLOCKER** (below) + MINORs (timesheet
+silent pay-discard; one relaxed exact-count) — **all fixed**. Also a MAJOR:
+`/reports/profit` had no page-level role guard.
+
+### UX / IA / role — DO NOT DEPLOY → remediated
+Grepped the app rather than trusting the doc; caught the SAME blocker independently,
+plus the rename was still half-applied (M2) and two role MINORs.
+
+### BLOCKER (caught by BOTH non-security reviewers) — job "Profitability" section leaked to staff — FIXED
+`app/(app)/jobs/[id]/page.tsx:861-949`. Phase 2 gated the Job-value Profit/Margin
+tiles + margin pill but MISSED the sibling "Profitability" section (gated only by
+`!profit`), which rendered Revenue/Costs/**Gross profit**/**Costs-by-category
+(Labour…)** to every member. Doubly wrong: under a staff JWT `loadOrgHourlyPay`
+returns only the viewer's own rate → understated cost / overstated profit. **Fix:**
+the whole profitability READ is now `isAdmin`-gated (staff see a slim "Costs" section
+with only the "+ Add cost" action). Cost ENTRY is deliberately preserved for all
+roles (see CEO decision below).
+
+### MAJOR — `/reports/profit` (and `/reports/utilisation`) wrong for direct-URL staff — FIXED
+Both reports are labour-cost-derived (P&L; utilisation carries a per-member rate
+column + labour cost) via the rewired `report-data.ts` / `intelligence.ts` pay read.
+The Reports nav area is admin-only, but the PAGES had no guard, so a direct URL
+showed a non-admin an overstated P&L / broken labour figures. **Fix:** page-level
+owner/admin redirect on both, and `registry.managementOnly` flipped to `true` for
+both so the export route's 403 and the /reports index filter agree. (overview +
+pipeline read no pay — left staff-visible.)
+
+### MINORs — FIXED
+- Roster `/staff` "Hourly" column hidden for non-admins (was self-populated + "—"
+  for everyone else = looks broken); "Edit →" → "View →" for non-admins.
+- ⌘K "Add cost to this job" **un-gated** — cost entry is a member action (button +
+  `finances` INSERT RLS admit members); gating only the shortcut was inconsistent.
+- Timesheet pay read now LOUD (was a silent £0 on read failure).
+- `source-assertions` exact read-count restored (`users` ×1, `staff_compensation`
+  ×2) instead of the relaxed `>=1`.
+- CI-only: `active-org-write-slice.test.ts` seeded `hourly_pay` on `public.users`
+  (now dropped) → moved to a `staff_compensation` seed.
+
+### Not fixed here (documented) 
+- `/staff/[id]` "View timesheet" → co-worker "Forbidden" page — pre-existing, has a
+  `/me` link (graceful). Out of this closeout's scope.
+
+### NEW CEO decisions surfaced (not guessed)
+1. **Should field staff be able to LOG job costs at all?** Today the `finances`
+   INSERT RLS admits any member and the job "+ Add cost" button is shown to all —
+   so cost entry is member-accessible by design. This closeout PRESERVES that
+   (tightening it would break a field workflow and is a product call, not a
+   security fix). If costs should be admin-only, gate the button + `/finances/new`
+   + the INSERT RLS together.
+2. **Profit & utilisation reports are now management-only.** They were
+   `managementOnly:false` (staff-visible), but the pay fix makes them wrong+pay-
+   adjacent for staff, so they are now owner/admin-only — a correctness-forced
+   corollary, consistent with the job Profitability gate. If the CEO wants a
+   staff-facing profit/utilisation view it needs a pay-free projection (a build).
+
+**Re-review disposition:** every BLOCKER/MAJOR fixed; typecheck clean; unit +
+security 10,906/10,906 green after the fixes; the RLS integration suite strengthened.

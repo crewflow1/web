@@ -179,7 +179,11 @@ export default async function StaffPage({
                 <th className="px-6 py-2">Email</th>
                 <th className="px-6 py-2">Role</th>
                 <th className="px-6 py-2">Type</th>
-                <th className="px-6 py-2 text-right">Hourly</th>
+                {/* Pay is self-or-admin (20261218): for a non-admin the column
+                    would show only their own row and "—" for everyone else,
+                    reading as broken data. Hide it entirely — own pay lives on
+                    /me and the self detail page. */}
+                {isAdmin ? <th className="px-6 py-2 text-right">Hourly</th> : null}
                 <th className="px-6 py-2">Since</th>
                 <th className="px-6 py-2" />
               </tr>
@@ -187,7 +191,7 @@ export default async function StaffPage({
             <tbody className="divide-y divide-slate-100">
               {members.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-6 py-10 text-center text-sm text-slate-500">
+                  <td colSpan={isAdmin ? 7 : 6} className="px-6 py-10 text-center text-sm text-slate-500">
                     <p className="font-medium text-slate-700">No members yet.</p>
                     {isAdmin ? (
                       <p className="mt-2">
@@ -219,15 +223,19 @@ export default async function StaffPage({
                       </span>
                     </td>
                     <td className="px-6 py-2 text-slate-600">{m.user?.employment_type ?? "—"}</td>
-                    <td className="px-6 py-2 text-right text-slate-600">
-                      {payByUser.has(m.user_id)
-                        ? `£${payByUser.get(m.user_id)!.toFixed(2)}`
-                        : "—"}
-                    </td>
+                    {isAdmin ? (
+                      <td className="px-6 py-2 text-right text-slate-600">
+                        {payByUser.has(m.user_id)
+                          ? `£${payByUser.get(m.user_id)!.toFixed(2)}`
+                          : "—"}
+                      </td>
+                    ) : null}
                     <td className="px-6 py-2 text-slate-600">{m.user?.start_date ?? "—"}</td>
                     <td className="px-6 py-2 text-right">
                       <Link href={`/staff/${m.user_id}`} className="text-xs text-slate-500 hover:text-slate-900">
-                        Edit →
+                        {/* Non-admins land on a read-only detail page — don't
+                            promise an edit they can't perform. */}
+                        {isAdmin ? "Edit →" : "View →"}
                       </Link>
                     </td>
                   </tr>

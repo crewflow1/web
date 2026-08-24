@@ -66,9 +66,18 @@ describeIntegration("staff_compensation RLS — pay is self + admin only (real P
     admin = await newUser("admin", orgA, "owner");
     staff = await newUser("staff", orgA, "staff");
     outsider = await newUser("outsider", orgB, "owner");
-    // Seed pay via the service role (bypasses RLS) — the admin's £45.50, staff's £18.00.
-    await svc().from("staff_compensation").insert({ user_id: admin.id, hourly_pay: 45.5 });
-    await svc().from("staff_compensation").insert({ user_id: staff.id, hourly_pay: 18.0 });
+    // Seed pay + emergency_contact via the service role (bypasses RLS) — both
+    // columns moved off public.users, both must be self-or-admin only.
+    await svc().from("staff_compensation").insert({
+      user_id: admin.id,
+      hourly_pay: 45.5,
+      emergency_contact: { name: "Jane Doe", phone: "07700900000" },
+    });
+    await svc().from("staff_compensation").insert({
+      user_id: staff.id,
+      hourly_pay: 18.0,
+      emergency_contact: { name: "John Kin", phone: "07700900111" },
+    });
   });
 
   afterAll(async () => {
@@ -85,13 +94,15 @@ describeIntegration("staff_compensation RLS — pay is self + admin only (real P
     }
   });
 
-  it("staff CANNOT read a co-worker's (the admin's) pay — the leak, closed", async () => {
+  it("staff CANNOT read a co-worker's (the admin's) pay OR emergency contact — the leak, closed", async () => {
     const res = await db(userClient(staff.token))
       .from("staff_compensation")
-      .select("user_id, hourly_pay")
+      .select("user_id, hourly_pay, emergency_contact")
       .eq("user_id", admin.id);
     expect(res.error).toBeNull();
-    expect(res.data ?? []).toEqual([]); // RLS returns zero rows — not the £45.50
+    // RLS is row-level: zero rows returned means NEITHER the £45.50 pay NOR the
+    // emergency contact reaches a co-worker. (Both columns, one policy.)
+    expect(res.data ?? []).toEqual([]);
   });
 
   it("staff CAN read their OWN pay (the /me earnings estimate)", async () => {
@@ -104,14 +115,16 @@ describeIntegration("staff_compensation RLS — pay is self + admin only (real P
     expect(Number(res.data?.[0]?.hourly_pay)).toBe(18);
   });
 
-  it("an org admin CAN read a member's pay (payroll / roster / costing)", async () => {
+  it("an org admin CAN read a member's pay AND emergency contact (payroll / roster / HR)", async () => {
     const res = await db(userClient(admin.token))
       .from("staff_compensation")
-      .select("user_id, hourly_pay")
+      .select("user_id, hourly_pay, emergency_contact")
       .eq("user_id", staff.id);
     expect(res.error).toBeNull();
     expect(res.data?.length).toBe(1);
     expect(Number(res.data?.[0]?.hourly_pay)).toBe(18);
+    // emergency_contact is admin-readable (the HR use-case the column exists for).
+    expect(res.data?.[0]?.emergency_contact).toEqual({ name: "John Kin", phone: "07700900111" });
   });
 
   it("staff CANNOT write their own pay (no payroll self-escalation)", async () => {

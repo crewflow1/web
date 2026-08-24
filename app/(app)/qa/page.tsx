@@ -79,7 +79,7 @@ const FLOWS: Flow[] = [
       { label: "Confirm margin pills show green/amber/red bands" },
       { label: "Open /tax", href: "/tax" },
       { label: "Confirm VAT quarter tile has 'computed' confidence" },
-      { label: "Download quarterly VAT PDF", sub: "totals + every paid invoice + finance row" },
+      { label: "Download quarterly VAT PDF", sub: "totals + every paid invoice + cost row" },
       { label: "Confirm Corp Tax tile uses the correct rate band (19/marginal/25%)" },
     ],
   },

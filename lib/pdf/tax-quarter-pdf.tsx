@@ -203,7 +203,7 @@ export function TaxQuarterPdf({ data }: { data: TaxQuarterPdfInput }) {
           {data.finance_rows.length === 0 ? (
             <View style={styles.tr}>
               <Text style={[styles.td, { flex: 1 }]}>
-                No finance rows in this quarter.
+                No cost entries in this quarter.
               </Text>
             </View>
           ) : (

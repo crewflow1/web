@@ -1030,7 +1030,7 @@ export default async function DashboardPage() {
         {profitabilityRows.length === 0 ? (
           <p className="rounded-lg border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">
             No jobs have revenue or costs yet. Link an invoice to a job
-            (Invoice → Link to job) and log finances against the job (Finance
+            (Invoice → Link to job) and log costs against the job (Costs
             → select job) to see profitability appear here.
           </p>
         ) : (
