@@ -190,7 +190,7 @@ export function TaxQuarterPdf({ data }: { data: TaxQuarterPdfInput }) {
         </View>
 
         <Text style={styles.sectionTitle}>
-          Finance / expense rows ({data.finance_rows.length})
+          Cost / expense rows ({data.finance_rows.length})
         </Text>
         <View style={styles.table}>
           <View style={styles.thRow}>

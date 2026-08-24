@@ -328,3 +328,21 @@ pipeline read no pay — left staff-visible.)
 
 **Re-review disposition:** every BLOCKER/MAJOR fixed; typecheck clean; unit +
 security 10,906/10,906 green after the fixes; the RLS integration suite strengthened.
+
+### Re-review round 2 (UX) — M2 sweep finished
+The UX re-review confirmed M1, the reports guards, and every MINOR CLOSED and safe
+("nothing here is unsafe and nothing leaks pay-derived data"), but rightly
+FALSIFIED the "complete sweep" claim a second time: my straggler grep had filtered
+out any line containing `/finances`, which hid label+href-on-one-line cases. Six
+more user-visible strings tied to the Costs area were then fixed:
+`lib/health/company-health.ts` ("Finances" drill-through → "Costs"),
+`lib/intelligence/cvr-rollup.ts` ("Costs (finances)" → "Costs"),
+`lib/pdf/tax-quarter-pdf.tsx` (section heading "Finance / expense rows" → "Cost /
+expense rows" — it had contradicted the empty-state renamed one line below), and
+the user-surfaced `/api/finances` messages ("Failed to load finances"/"Failed to
+create finance"/"Finance saved…" → cost). A corrected sweep (grep NOT filtering
+`/finances`, then classifying every hit) now shows only different-meaning uses
+remain: fleet/asset "Finance" (vehicle/asset financing), HQ "Finance AI" (dept),
+cash "rent, finance, PAYE/NI" (loan outflow), and the route/table/API resource
+name `finances` (URL≠label, deliberately unchanged). typecheck clean; unit +
+security 10,906/10,906.

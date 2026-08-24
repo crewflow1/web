@@ -498,7 +498,7 @@ function profitabilityDimension(
     label: HEALTH_DIMENSION_LABEL.profitability,
     kind: "heuristic" as const,
     drillThrough: [
-      { label: "Finances", href: "/finances" },
+      { label: "Costs", href: "/finances" },
       { label: "Invoices", href: "/invoices" },
     ],
   };

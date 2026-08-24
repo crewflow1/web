@@ -82,7 +82,7 @@ export async function GET(request: NextRequest) {
   const { data, error, count } = await q;
   if (error) {
     console.error("[finances] list failed", error);
-    return respond.error(500, "Failed to load finances");
+    return respond.error(500, "Failed to load costs");
   }
 
   return respond.json({ data: data ?? [], count: count ?? 0, limit, offset });
@@ -162,7 +162,7 @@ export async function POST(request: NextRequest) {
 
   if (insertErr || !inserted) {
     console.error("[finances] create failed", insertErr);
-    return respond.error(500, "Failed to create finance");
+    return respond.error(500, "Failed to create cost");
   }
 
   let receiptPath: string | null = null;
@@ -182,7 +182,7 @@ export async function POST(request: NextRequest) {
       console.error("[finances] receipt upload failed", upErr);
       // Don't fail the whole request — the row is saved. Surface the partial
       // failure so the client can prompt for re-upload.
-      return respond.json({ id: inserted.id, warning: "Finance saved, but receipt upload failed" }, { status: 207 });
+      return respond.json({ id: inserted.id, warning: "Cost saved, but receipt upload failed" }, { status: 207 });
     }
     const { error: patchErr } = await supabase
       .from("finances")
