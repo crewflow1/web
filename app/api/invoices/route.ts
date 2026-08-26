@@ -48,9 +48,7 @@ export async function GET(request: NextRequest) {
     .range(offset, offset + limit - 1);
 
   if (status && (INVOICE_STATUSES as readonly string[]).includes(status)) {
-    // Pre-regen bridge (20261219): generated enum gains 'void' after the prod
-    // apply + db:types regen; drop the cast then.
-    q = q.eq("status", status as never);
+    q = q.eq("status", status as (typeof INVOICE_STATUSES)[number]);
   }
 
   const { data, error, count } = await q;

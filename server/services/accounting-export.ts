@@ -150,7 +150,7 @@ export async function buildAccountingExport(params: {
         // overstate revenue in the customer's books. Keep every real status
         // (sent / awaiting_payment / partially_paid / paid / overdue).
         .neq("status", "draft")
-        .neq("status", "void" as never); // pre-regen bridge (20261219)
+        .neq("status", "void");
       // COARSE UPPER-BOUND PRE-FILTER ONLY. The canonical tax point is
       // `sent_at ?? created_at` (canonical.ts), and `sent_at >= created_at`, so:
       //   - `created_at <= to` is a SAFE superset — an invoice created after `to`

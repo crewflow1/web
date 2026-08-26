@@ -132,9 +132,7 @@ export async function GET(request: NextRequest) {
         .split(",")
         .map((s) => s.trim())
         .filter((s) => allowed.has(s)) as InvoiceStatus[];
-      // Pre-regen bridge (20261219): generated enum gains 'void' after the
-      // prod apply + db:types regen; drop the cast then.
-      if (wanted.length > 0) q = q.in("status", wanted as unknown as string[] as never);
+      if (wanted.length > 0) q = q.in("status", wanted);
     }
     return q as unknown as PromiseLike<{ data: InvoiceRow[] | null; error: unknown }>;
   });

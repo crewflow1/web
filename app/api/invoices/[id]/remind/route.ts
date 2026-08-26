@@ -63,7 +63,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   if (inv.org_id !== ctx.org.id) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
-  if (String(inv.status) === "void") { // pre-regen bridge (20261219)
+  if (inv.status === "void") {
     // A void invoice (20261219) is retracted — reminding a customer to pay it
     // would be a customer-facing lie.
     return NextResponse.json(
