@@ -85,5 +85,9 @@ The backend must enforce this same boundary (nav-hiding is not enforcement).
 - **Cross-browser critical matrix: chromium 7/7 · WebKit 7/7 · Firefox 7/7** (home render, login form, auth-wall redirect+destination, money-surface auth wall, quote-portal fail-closed, worker-portal fail-closed, 375px no-overflow) — via `playwright.matrix.config.ts`
 - e2e fixture fixes: 3× `listUsers` pagination (default-50 page missed seed users on an accumulated local stack)
 
-## Deploy
-(appended at release)
+## Deploy (2026-08-26)
+- **PR #849 squash-merged** → main `4d3307745ff9edd360ae058012649a00f9f8eca7`; CI 8/8 green pre-merge.
+- Migration dry-run clean (exactly `20261219`+`20261220`); **applied to prod** → **380 applied, tip `20261220000000`** == 380 main files (exact parity). All 3 triggers + 6 audit columns + `void` enum member verified live in prod.
+- **Prod deployed + verified:** `sha:4d33077`, `status:healthy`, `db:ok`; dark providers unchanged (email only — none activated).
+- **PR #850** (types regen + 7 pre-regen bridges removed): follow-up; e2e tier hit the pre-existing fleet-mobile fuel-tile fixture race (unrelated to the types diff — same specs green on #849 CI + twice locally); rerun issued.
+- Auth SMTP (fix 3) remains the CEO manual step (see above).
