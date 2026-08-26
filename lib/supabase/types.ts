@@ -11685,6 +11685,9 @@ export type Database = {
           total: number | null
           updated_at: string
           vat_total: number
+          void_reason: string | null
+          voided_at: string | null
+          voided_by: string | null
         }
         Insert: {
           amount?: number
@@ -11703,6 +11706,9 @@ export type Database = {
           total?: number | null
           updated_at?: string
           vat_total?: number
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Update: {
           amount?: number
@@ -11721,6 +11727,9 @@ export type Database = {
           total?: number | null
           updated_at?: string
           vat_total?: number
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
         }
         Relationships: [
           {
@@ -12922,6 +12931,9 @@ export type Database = {
         Row: {
           ai_summary: string | null
           assigned_to: string | null
+          cancel_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
           created_at: string
           customer_id: string | null
           defects_liability_months: number
@@ -12950,6 +12962,9 @@ export type Database = {
         Insert: {
           ai_summary?: string | null
           assigned_to?: string | null
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
           created_at?: string
           customer_id?: string | null
           defects_liability_months?: number
@@ -12978,6 +12993,9 @@ export type Database = {
         Update: {
           ai_summary?: string | null
           assigned_to?: string | null
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
           created_at?: string
           customer_id?: string | null
           defects_liability_months?: number
@@ -23671,6 +23689,7 @@ export type Database = {
         | "partially_paid"
         | "paid"
         | "overdue"
+        | "void"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -23817,6 +23836,7 @@ export const Constants = {
         "partially_paid",
         "paid",
         "overdue",
+        "void",
       ],
     },
   },

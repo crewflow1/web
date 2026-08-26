@@ -226,12 +226,10 @@ export async function voidInvoice(invoiceId: string, formData: FormData) {
     .from("invoices")
     .update(
       {
-        // Pre-regen bridge (20261219): the generated enum gains 'void' after
-        // the prod apply + `npm run db:types`; remove the cast then.
-        status: "void" as never,
+        status: "void",
         void_reason: reason.slice(0, 2000),
         voided_by: user.id,
-      } as never,
+      },
       { count: "exact" },
     )
     .eq("id", id)
