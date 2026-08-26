@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getRequestI18n } from "@/server/i18n/request";
+import { requireManagementRole } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { formatAddressOneLine, customerToAddress } from "@/lib/address";
 import {
@@ -46,6 +47,9 @@ export default async function CustomersPage({
   searchParams: SP;
 }) {
   const { ctx, t } = await getRequestI18n();
+  // Sales/customers (carries financial rollups) is owner/admin only (nav
+  // ADMIN_ROLES); staff reach customer/site detail through their assigned job.
+  requireManagementRole(ctx);
   const sp = await searchParams;
   const page = parsePage(sp.page);
   const offset = offsetForPage(page);

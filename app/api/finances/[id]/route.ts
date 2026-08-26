@@ -2,7 +2,7 @@ import { type NextRequest } from "next/server";
 import * as respond from "@/lib/api/respond";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementApi } from "@/server/auth/session";
 import { updateFinanceSchema } from "@/lib/finances/schema";
 import { financeWriteRefusal } from "@/lib/finances/errors";
 import type { Database } from "@/lib/supabase/types";
@@ -23,7 +23,10 @@ type FinanceUpdate = Database["public"]["Tables"]["finances"]["Update"];
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: NextRequest, { params }: Ctx) {
-  const { ctx } = await requireOrgContext();
+  // Management-only (first-customer fix 1): this surface carries money.
+  const guard = await requireManagementApi();
+  if (guard instanceof Response) return guard;
+  const { ctx } = guard;
   const { id } = await params;
 
   let body: unknown;
@@ -81,7 +84,10 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
 }
 
 export async function DELETE(_request: NextRequest, { params }: Ctx) {
-  const { ctx } = await requireOrgContext();
+  // Management-only (first-customer fix 1): this surface carries money.
+  const guard = await requireManagementApi();
+  if (guard instanceof Response) return guard;
+  const { ctx } = guard;
   const { id } = await params;
 
   const supabase = await createClient();

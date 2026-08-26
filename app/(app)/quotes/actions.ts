@@ -6,7 +6,11 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
-import { requireOrgContext, type OrgContext } from "@/server/auth/session";
+import {
+  requireOrgContext,
+  requireManagementRole,
+  type OrgContext,
+} from "@/server/auth/session";
 import {
   quoteFormSchema,
   type LineItem,
@@ -45,6 +49,95 @@ import {
 type LineItemInsert = Database["public"]["Tables"]["quote_line_items"]["Insert"];
 
 const idSchema = z.string().uuid();
+
+/**
+ * Quote→job data carry (first-customer fix 4).
+ *
+ * The auto-created job used to be a near-empty shell (customer + a notes blob):
+ * the quote's property/site and scope never reached the job, so the PM re-keyed
+ * everything. This helper resolves, BEST-EFFORT, what should carry:
+ *
+ *   • site address — the quote's linked property address (multi-property
+ *     customers). Written to jobs.site_address_line1; for property-less quotes
+ *     the job's address already resolves to the customer's own address at
+ *     render time (lib/address.ts resolveJobAddress), so nothing is copied.
+ *   • scope — the quote's line-item DESCRIPTIONS (never prices) appended to the
+ *     job notes so the job reads ready-to-run. Financial truth is NOT
+ *     duplicated: value stays on the quote + auto-invoice, both linked to the
+ *     job (quotes.job_id backlink + invoices.job_id).
+ *
+ * Failure-safe by construction: any read error degrades to the bare provenance
+ * note — job creation must never fail because enrichment couldn't load.
+ */
+async function buildJobCarryFromQuote(
+  // Structural: both the tenant client (owner path) and the admin client
+  // (public token path — no user session) satisfy this. Reads are org-pinned
+  // below, so the admin client can't be steered cross-tenant.
+  supabase: Pick<Awaited<ReturnType<typeof createClient>>, "from">,
+  orgId: string,
+  quote: {
+    id: string;
+    number: string;
+    notes: string | null;
+    property_id?: string | null;
+  },
+): Promise<{ site_address_line1: string | null; notes: string }> {
+  let siteLine: string | null = null;
+  let scope = "";
+  // Two INDEPENDENT best-effort reads — separate try blocks so a failure in
+  // one can never abort the other (reviewer C finding 1).
+  try {
+    if (quote.property_id) {
+      const { data: prop } = await supabase
+        .from("properties")
+        .select("address")
+        .eq("id", quote.property_id)
+        .eq("org_id", orgId)
+        .maybeSingle();
+      // properties.address is JSONB (baseline schema), shaped like
+      // { line1?, line2?, city?, postcode? } — the same shape the quote form
+      // helpers read (app/(app)/quotes/_form-helpers.ts). Compose one line.
+      const raw = (prop as { address?: unknown } | null)?.address;
+      if (raw && typeof raw === "object") {
+        const a = raw as Record<string, unknown>;
+        const parts = ["line1", "line2", "city", "postcode"]
+          .map((k) => (typeof a[k] === "string" ? (a[k] as string).trim() : ""))
+          .filter(Boolean);
+        // jobs.site_address_line1 is capped at 200 by the job form schema —
+        // never write more than a subsequent edit could save back.
+        if (parts.length > 0) siteLine = parts.join(", ").slice(0, 200);
+      } else if (typeof raw === "string" && raw.trim()) {
+        siteLine = raw.trim().slice(0, 200);
+      }
+    }
+  } catch {
+    // Best-effort only.
+  }
+  try {
+    const { data: lines } = await supabase
+      .from("quote_line_items")
+      .select("description, sort_order")
+      .eq("quote_id", quote.id)
+      .eq("org_id", orgId)
+      .order("sort_order", { ascending: true })
+      .limit(50);
+    const descs = (lines ?? [])
+      .map((l) => String((l as { description?: string | null }).description ?? "").trim())
+      .filter(Boolean);
+    if (descs.length > 0) {
+      scope = `\n\nScope (from quote):\n${descs.map((d) => `• ${d}`).join("\n")}`;
+    }
+  } catch {
+    // Best-effort only — fall through to the bare provenance note.
+  }
+  const notes =
+    `Auto-created from accepted quote ${quote.number}.` +
+    scope +
+    (quote.notes ? `\n\nQuote notes:\n${quote.notes}` : "");
+  // jobFormSchema.notes is .max(5000): never write a job the edit form can't
+  // save back (reviewer C finding 2).
+  return { site_address_line1: siteLine, notes: notes.slice(0, 5000) };
+}
 
 function parseLineItemsJson(raw: FormDataEntryValue | null): LineItem[] {
   if (typeof raw !== "string") return [];
@@ -110,6 +203,7 @@ export async function createQuote(
   formData: FormData,
 ): Promise<FormState<QuoteFormInput>> {
   const { user, ctx } = await requireOrgContext();
+  requireManagementRole(ctx);
   const parsed = parseQuoteForm(formData);
   if (!parsed.success) return quoteValidationFailure(parsed, formData);
 
@@ -245,6 +339,7 @@ export async function updateQuote(
   formData: FormData,
 ): Promise<FormState<QuoteFormInput>> {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx);
   if (!idSchema.safeParse(id).success) {
     return formError("Invalid quote id.");
   }
@@ -387,6 +482,7 @@ export async function updateQuote(
 
 export async function sendQuote(id: string) {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx);
   if (!idSchema.safeParse(id).success) redirect("/quotes");
 
   const supabase = await createClient();
@@ -484,6 +580,7 @@ function requireQuoteApprover(ctx: OrgContext): void {
 
 export async function requestQuoteApproval(id: string) {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx);
   if (!idSchema.safeParse(id).success) redirect("/quotes");
 
   const supabase = await createClient();
@@ -529,6 +626,7 @@ export async function requestQuoteApproval(id: string) {
 
 export async function reviewQuote(id: string, formData: FormData) {
   const { ctx, user } = await requireOrgContext();
+  requireManagementRole(ctx);
   if (!idSchema.safeParse(id).success) redirect("/quotes");
   requireQuoteApprover(ctx);
 
@@ -670,6 +768,7 @@ export async function reviewQuote(id: string, formData: FormData) {
 
 export async function deleteQuote(id: string) {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx);
   const supabase = await createClient();
 
   // INTEGRITY GUARD — refuse to delete a quote that invoices still depend on.
@@ -746,6 +845,7 @@ export async function deleteQuote(id: string) {
  */
 export async function acceptQuoteAsOwner(id: string, formData: FormData) {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx);
   const signerName = String(formData.get("signer_name") ?? "Owner accepted on customer's behalf");
 
   const supabase = await createClient();
@@ -793,7 +893,7 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
     .eq("id", id)
     .eq("org_id", ctx.org.id)
     .select(
-      "id, org_id, subtotal, vat_total, job_id, variation_number, customer_id, number, notes",
+      "id, org_id, subtotal, vat_total, job_id, variation_number, customer_id, property_id, number, notes",
     )
     .single();
 
@@ -808,6 +908,9 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
   // parent's job_id) and for quotes with no customer to attach the job to.
   let jobId: string | null = quote.job_id;
   if (!quote.job_id && quote.customer_id) {
+    // Carry the quote's site + scope onto the job (first-customer fix 4) —
+    // best-effort; a failed enrichment degrades to the bare provenance note.
+    const carry = await buildJobCarryFromQuote(supabase, ctx.org.id, quote);
     const { data: newJob, error: jobErr } = await supabase
       .from("jobs")
       .insert({
@@ -817,9 +920,8 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
         org_id: ctx.org.id,
         customer_id: quote.customer_id,
         status: "new",
-        notes: `Auto-created from accepted quote ${quote.number}.${
-          quote.notes ? `\n\nQuote notes:\n${quote.notes}` : ""
-        }`,
+        site_address_line1: carry.site_address_line1,
+        notes: carry.notes,
       })
       .select("id")
       .single();
@@ -958,6 +1060,7 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
 
 export async function declineQuoteAsOwner(id: string) {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx);
   const supabase = await createClient();
   const { error } = await supabase
     .from("quotes")
@@ -1009,7 +1112,7 @@ export async function acceptQuoteByToken(
   const { data: quote, error: lookupErr } = await admin
     .from("quotes")
     .select(
-      "id, org_id, status, subtotal, vat_total, valid_until, lead_id, job_id, variation_number, customer_id, number, notes",
+      "id, org_id, status, subtotal, vat_total, valid_until, lead_id, job_id, variation_number, customer_id, property_id, number, notes",
     )
     .eq("public_token", token)
     .maybeSingle();
@@ -1090,15 +1193,17 @@ export async function acceptQuoteByToken(
   let newJobId: string | null = quote.job_id;
   let createdJob = false;
   if (!quote.job_id && quote.customer_id) {
+    // Carry the quote's site + scope onto the job (first-customer fix 4).
+    // org-pinned reads on the admin client; best-effort (see the helper).
+    const carry = await buildJobCarryFromQuote(admin, quote.org_id, quote);
     const { data: newJob, error: jobErr } = await admin
       .from("jobs")
       .insert({
         org_id: quote.org_id,
         customer_id: quote.customer_id,
         status: "new",
-        notes: `Auto-created from accepted quote ${quote.number}.${
-          quote.notes ? `\n\nQuote notes:\n${quote.notes}` : ""
-        }`,
+        site_address_line1: carry.site_address_line1,
+        notes: carry.notes,
       })
       .select("id")
       .single();
@@ -1284,6 +1389,7 @@ export async function declineQuoteByToken(
  */
 export async function createVariation(jobId: string, formData: FormData) {
   const { user, ctx } = await requireOrgContext();
+  requireManagementRole(ctx);
   if (!idSchema.safeParse(jobId).success) redirect("/jobs");
 
   const { variationFormSchema, computeVariation } = await import(
@@ -1531,6 +1637,7 @@ export async function recordVariationEotAgreement(
   formData: FormData,
 ) {
   const { user, ctx } = await requireOrgContext();
+  requireManagementRole(ctx);
   if (!idSchema.safeParse(quoteId).success) redirect("/quotes");
 
   // Recording an agreed contractual date is an owner/admin act, matching how
@@ -1589,6 +1696,7 @@ export async function recordVariationEotAgreement(
  */
 export async function reclassifyVariationValidUntilAsEot(quoteId: string) {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx);
   if (!idSchema.safeParse(quoteId).success) redirect("/quotes");
 
   const role = ctx.membership.role;

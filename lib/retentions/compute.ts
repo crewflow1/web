@@ -43,8 +43,10 @@ export type RetentionPosition = {
   isFullyReleased: boolean;
 };
 
-/** Invoice statuses that do NOT count toward the retention base. */
-const UNCERTIFIED = new Set(["draft"]);
+/** Invoice statuses that do NOT count toward the retention base.
+ *  `void` (20261219): a retracted invoice must not inflate accrued/held
+ *  retention nor the release cap. */
+const UNCERTIFIED = new Set(["draft", "void"]);
 
 function clampPct(n: number): number {
   if (!Number.isFinite(n)) return 0;

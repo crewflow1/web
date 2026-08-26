@@ -6,6 +6,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { invoiceCustomerEmail } from "@/lib/invoices/customer";
 import { InvoiceControls } from "./_controls";
+import { voidInvoice } from "./payment-actions";
 import { PaymentsPanel } from "./_payments-panel";
 import { PaymentProofsPanel } from "./_payment-proofs-panel";
 import type { InvoiceStatus } from "@/lib/invoices/schema";
@@ -35,14 +36,36 @@ const STATUS_STYLES: Record<InvoiceStatus, string> = {
   partially_paid: "bg-indigo-100 text-indigo-800",
   paid: "bg-green-100 text-green-700",
   overdue: "bg-red-100 text-red-700",
+  void: "bg-slate-200 text-slate-500 line-through",
 };
 
 export default async function InvoiceDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ error?: string; saved?: string }>;
 }) {
   const { id } = await params;
+  const sp = await searchParams;
+  // Void-flow feedback (20261219): the voidInvoice action redirects back here
+  // with a code — a refused money correction must never fail silently.
+  const banner = (() => {
+    switch (sp.error ?? (sp.saved === "voided" ? "saved_voided" : "")) {
+      case "void_reason_required":
+        return { tone: "error" as const, text: "Add a reason before voiding — it goes on the audit record." };
+      case "void_has_payments":
+        return { tone: "error" as const, text: "This invoice has payments recorded, so it can't be voided. Remove the payment first, or issue a correction." };
+      case "void_terminal":
+        return { tone: "error" as const, text: "This invoice is already void — a void invoice is final." };
+      case "void_failed":
+        return { tone: "error" as const, text: "Couldn't void the invoice just now. Try again." };
+      case "saved_voided":
+        return { tone: "ok" as const, text: "Invoice voided. It no longer counts towards what you're owed." };
+      default:
+        return null;
+    }
+  })();
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 
@@ -63,6 +86,8 @@ export default async function InvoiceDetailPage({
     created_at: string;
     quote_id: string | null;
     job_id: string | null;
+    voided_at: string | null;
+    void_reason: string | null;
     // Direct customer anchor (Issue #349 Phase 1) — preferred over the quote
     // path, which is NULL for every stage-billing invoice.
     customer: { email: string | null } | null;
@@ -73,7 +98,7 @@ export default async function InvoiceDetailPage({
     .select(
       `
         id, number, status, amount, vat_total, total, due_date, sent_at,
-        paid_at, notes, created_at, quote_id, job_id,
+        paid_at, notes, created_at, quote_id, job_id, voided_at, void_reason,
         customer:customers!invoices_customer_org_fkey ( email ),
         quote:quotes ( customer:customers ( email ) )
       `,
@@ -162,6 +187,18 @@ export default async function InvoiceDetailPage({
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      {banner ? (
+        <div
+          role="status"
+          className={
+            banner.tone === "error"
+              ? "rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+              : "rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800"
+          }
+        >
+          {banner.text}
+        </div>
+      ) : null}
       <div className="flex items-center gap-2 text-sm text-slate-500">
         <Link href="/invoices" className="hover:text-slate-900">
           Invoices
@@ -343,6 +380,53 @@ export default async function InvoiceDetailPage({
             })()}
           />
         </div>
+
+        {/* Void (20261219): the operational correction for an invoice raised in
+            error. Only offered while no money has landed (paid/partially_paid
+            are a credit-note problem — deliberately unsupported here); the DB
+            trigger is the real authority and refuses anything else, so this
+            visibility check is UX, not security. Terminal once voided. */}
+        {status !== "void" && status !== "paid" && status !== "partially_paid" ? (
+          <form
+            action={voidInvoice.bind(null, invoice.id)}
+            className="mt-6 border-t border-slate-200 pt-4"
+          >
+            <div className="text-sm font-medium text-slate-900">
+              Void this invoice
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Raised in error? Voiding keeps the record for your books but
+              removes it from what you&apos;re owed. This cannot be undone. An
+              invoice with payments recorded can&apos;t be voided — remove the
+              payment first.
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                name="reason"
+                required
+                minLength={3}
+                maxLength={2000}
+                placeholder="Reason (required)"
+                className="w-64 max-w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+              />
+              <button
+                type="submit"
+                className="rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100"
+              >
+                Void invoice
+              </button>
+            </div>
+          </form>
+        ) : null}
+        {status === "void" ? (
+          <p className="mt-6 border-t border-slate-200 pt-4 text-sm text-slate-500">
+            This invoice was voided
+            {invoice.voided_at ? ` on ${invoice.voided_at.slice(0, 10)}` : ""}
+            {invoice.void_reason ? ` — “${invoice.void_reason}”` : ""}. It no
+            longer counts towards what you&apos;re owed.
+          </p>
+        ) : null}
       </section>
     </div>
   );

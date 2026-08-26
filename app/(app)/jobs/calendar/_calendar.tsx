@@ -50,9 +50,12 @@ const STATUS_STYLES: Record<string, string> = {
   "in-progress": "border-amber-300 bg-amber-50 text-amber-900",
   completed: "border-green-300 bg-green-50 text-green-900",
   blocked: "border-red-300 bg-red-50 text-red-900",
+  cancelled: "border-slate-300 bg-slate-100 text-slate-500",
 };
 
-const STATUSES = ["new", "in-progress", "completed", "blocked"] as const;
+// "cancelled" is present so an operator can DELIBERATELY view cancelled work;
+// the default (no filter) grid excludes it (lib/schedule/calendar-data.ts).
+const STATUSES = ["new", "in-progress", "completed", "blocked", "cancelled"] as const;
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 

@@ -97,6 +97,13 @@ vi.mock("@/server/auth/session", () => ({
     user: { id: USER_ID, email: "op@example.com" },
     ctx: { org: { id: ORG_ID }, membership: { role: "owner" } },
   })),
+  // Faithful mirror of the fix-1 management guard (owner passes; staff would not).
+  requireManagementRole: (ctx?: { membership?: { role?: string } }) => {
+    const role = ctx?.membership?.role;
+    if (role !== "owner" && role !== "admin") {
+      throw new Error("REDIRECT:/dashboard?error=forbidden");
+    }
+  },
 }));
 
 // The job load is the active-org chokepoint; return a job in the active org.

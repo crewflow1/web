@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getRequestI18n } from "@/server/i18n/request";
+import { requireManagementRole } from "@/server/auth/session";
 import {
   INVOICE_STATUSES,
   OUTSTANDING_STATUSES,
@@ -41,10 +42,14 @@ const STATUS_STYLES: Record<InvoiceStatus, string> = {
   partially_paid: "bg-indigo-100 text-indigo-800",
   paid: "bg-green-100 text-green-700",
   overdue: "bg-red-100 text-red-700",
+  void: "bg-slate-200 text-slate-500 line-through",
 };
 
 export default async function InvoicesPage({ searchParams }: { searchParams: SP }) {
   const { ctx, t } = await getRequestI18n();
+  // Money is owner/admin only (nav marks it ADMIN_ROLES); enforce server-side so
+  // a staff member cannot reach it by direct URL. RLS remains the last line.
+  requireManagementRole(ctx);
   const sp = await searchParams;
   const page = Math.max(parseInt(sp.page ?? "1", 10) || 1, 1);
   const offset = (page - 1) * PAGE_SIZE;

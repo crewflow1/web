@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementApi } from "@/server/auth/session";
 import { sendQuoteEmail } from "@/lib/email/send-quote";
 import { readFailure } from "@/lib/supabase/read-failure";
 import * as Sentry from "@sentry/nextjs";
@@ -20,7 +20,10 @@ export const runtime = "nodejs";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function POST(request: NextRequest, { params }: Ctx) {
-  const { ctx } = await requireOrgContext();
+  // Management-only (first-customer fix 1): this surface carries money.
+  const guard = await requireManagementApi();
+  if (guard instanceof Response) return guard;
+  const { ctx } = guard;
   const { id } = await params;
 
   let body: { to?: string; message?: string } = {};

@@ -57,12 +57,28 @@ vi.mock("@/lib/supabase/admin", () => ({
   })),
 }));
 
-vi.mock("@/server/auth/session", () => ({
-  requireOrgContext: vi.fn(async () => ({
+vi.mock("@/server/auth/session", () => {
+  // Faithful fix-1 mirrors: requireManagementApi derives from the SAME base
+  // context mock; a missing/non-management role gets the real 403 shape.
+  const base =  vi.fn(async () => ({
     ctx: { org: { id: "org-active" }, user: { id: "user-1" } },
     user: { id: "user-1", email: "u@example.test" },
-  })),
-}));
+  }));
+  const isMgmt = (r: unknown) => r === "owner" || r === "admin";
+  return {
+    requireOrgContext: base,
+    requireManagementRole: (ctx?: { membership?: { role?: string } }) => {
+      if (!isMgmt(ctx?.membership?.role)) throw new Error("REDIRECT:/dashboard?error=forbidden");
+    },
+    requireManagementApi: vi.fn(async () => {
+      const res = (await base()) as { ctx?: { membership?: { role?: string } } };
+      if (!isMgmt(res?.ctx?.membership?.role ?? "owner")) {
+        return Response.json({ error: "forbidden" }, { status: 403 });
+      }
+      return res;
+    }),
+  };
+});
 
 const { PATCH } = await import("@/app/api/finances/[id]/route");
 

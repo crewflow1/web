@@ -71,6 +71,10 @@ export const OVERDUE_COLLECTABLE_STATUSES = [
 export const OVERDUE_NON_COLLECTABLE_STATUSES = [
   "draft",
   "paid",
+  // Terminal correction state (20261219): a voided invoice is not owed and can
+  // never become overdue. Joins the non-collectable side so collectable +
+  // non-collectable still partition the enum exactly.
+  "void",
 ] as const satisfies readonly InvoiceStatus[];
 
 /** The minimum an invoice must expose to be judged. */

@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { addPaymentSchema } from "@/lib/payments/schema";
 import { z } from "zod";
@@ -31,6 +31,7 @@ export async function addInvoicePayment(
   formData: FormData,
 ): Promise<FormState<PaymentValues>> {
   const { ctx, user } = await requireOrgContext();
+  requireManagementRole(ctx); // money mutation (fix 1)
   if (!uuid.safeParse(invoiceId).success) return formError("Invalid invoice id.");
 
   const result = validateFormData(formData, addPaymentSchema);
@@ -167,6 +168,7 @@ export async function addInvoicePayment(
 
 export async function removeInvoicePayment(paymentId: string) {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx); // money mutation (fix 1)
   if (!uuid.safeParse(paymentId).success) redirect("/invoices");
 
   const supabase = await createClient();
@@ -197,4 +199,59 @@ export async function removeInvoicePayment(paymentId: string) {
   revalidatePath("/invoices");
   revalidatePath("/dashboard");
   redirect(`/invoices/${row.invoice_id}?saved=payment_removed`);
+}
+
+/**
+ * Void an issued invoice (20261219) — the operational correction for an
+ * invoice raised in error, WITHOUT deleting accounting evidence.
+ *
+ * The DB trigger (tg_invoices_void_guard) is the authority: it refuses paid /
+ * partially-paid invoices and anything with a payments row (that correction is
+ * a credit-note workflow, deliberately not built), requires a reason, stamps
+ * voided_at itself, and makes void terminal. This action just carries the
+ * caller's identity + reason and translates the refusal into a friendly
+ * banner. Management-only: voiding changes what the business is owed.
+ */
+export async function voidInvoice(invoiceId: string, formData: FormData) {
+  const { ctx, user } = await requireOrgContext();
+  requireManagementRole(ctx);
+  const id = uuid.parse(invoiceId);
+  const reason = String(formData.get("reason") ?? "").trim();
+  if (reason.length < 3) {
+    redirect(`/invoices/${id}?error=void_reason_required`);
+  }
+
+  const supabase = await createClient();
+  const { error, count } = await supabase
+    .from("invoices")
+    .update(
+      {
+        // Pre-regen bridge (20261219): the generated enum gains 'void' after
+        // the prod apply + `npm run db:types`; remove the cast then.
+        status: "void" as never,
+        void_reason: reason.slice(0, 2000),
+        voided_by: user.id,
+      } as never,
+      { count: "exact" },
+    )
+    .eq("id", id)
+    .eq("org_id", ctx.org.id);
+
+  if (error) {
+    // The trigger's refusals (paid / has payments / terminal) surface here.
+    const message = error.message ?? "";
+    const code = message.includes("recorded payments")
+      ? "void_has_payments"
+      : message.includes("final")
+        ? "void_terminal"
+        : "void_failed";
+    console.error("[invoices] void refused", { id, code, message });
+    redirect(`/invoices/${id}?error=${code}`);
+  }
+  if (!count) redirect(`/invoices/${id}?error=void_failed`);
+
+  revalidatePath(`/invoices/${id}`);
+  revalidatePath("/invoices");
+  revalidatePath("/dashboard");
+  redirect(`/invoices/${id}?saved=voided`);
 }

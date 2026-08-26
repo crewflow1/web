@@ -1,5 +1,5 @@
 import * as respond from "@/lib/api/respond";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementApi } from "@/server/auth/session";
 import {
   jobsPerWeek,
   revenuePerMonth,
@@ -20,7 +20,9 @@ import {
  */
 export async function GET() {
   try {
-    const { ctx } = await requireOrgContext();
+    const guard = await requireManagementApi();
+    if (guard instanceof Response) return guard;
+    const { ctx } = guard;
     const [jobs_per_week, revenue_per_month, vat_per_quarter, top_customers] =
       await Promise.all([
         jobsPerWeek(ctx.org.id, 8),

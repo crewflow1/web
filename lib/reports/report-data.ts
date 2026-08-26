@@ -95,12 +95,15 @@ async function buildProfitDocument(
     fetchAllRows<{
       job_id: string | null;
       amount: number | string | null;
+      status: string | null;
       created_at: string | null;
       paid_at: string | null;
     }>((from, to) =>
       client
         .from("invoices")
-        .select("id, job_id, amount, created_at, paid_at")
+        // `status` so profitability excludes `void` (20261219) — a voided
+        // invoice must not linger as P&L revenue.
+        .select("id, job_id, amount, status, created_at, paid_at")
         .eq("org_id", orgId)
         .order("id", { ascending: true })
         .range(from, to),

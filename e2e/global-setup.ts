@@ -77,8 +77,10 @@ export default async function globalSetup(): Promise<void> {
   if (created.data.user) {
     userId = created.data.user.id;
   } else {
-    // already exists → find it
-    const list = await svc.auth.admin.listUsers();
+    // already exists → find it. perPage must beat the default 50: a local
+    // stack accumulates integration-tier auth users across runs, and the seed
+    // user silently fell past the first page (fixture-only fix).
+    const list = await svc.auth.admin.listUsers({ page: 1, perPage: 1000 });
     const found = list.data.users.find((u) => u.email === EMAIL);
     if (!found) throw new Error(`[e2e harness] could not create or find seed user: ${created.error?.message}`);
     userId = found.id;
@@ -186,7 +188,7 @@ export default async function globalSetup(): Promise<void> {
   async function seedMember(email: string, fullName: string, stateFile: string): Promise<void> {
     const created = await svc.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
     let id = created.data.user?.id;
-    if (!id) { const list = await svc.auth.admin.listUsers(); id = list.data.users.find((u) => u.email === email)?.id; if (id) await svc.auth.admin.updateUserById(id, { password: PASSWORD, email_confirm: true }); }
+    if (!id) { const list = await svc.auth.admin.listUsers({ page: 1, perPage: 1000 }); id = list.data.users.find((u) => u.email === email)?.id; if (id) await svc.auth.admin.updateUserById(id, { password: PASSWORD, email_confirm: true }); }
     if (!id) throw new Error(`[e2e harness] could not seed member ${email}: ${created.error?.message}`);
     await db.from("users").upsert({ id, email, full_name: fullName });
     await db.from("memberships").upsert({ org_id: orgId, user_id: id, role: "staff" }, { onConflict: "org_id,user_id" });
@@ -205,7 +207,7 @@ export default async function globalSetup(): Promise<void> {
   const hqEmail = "e2e-hq@crewflow.test";
   const hqCreated = await svc.auth.admin.createUser({ email: hqEmail, password: PASSWORD, email_confirm: true });
   let hqId = hqCreated.data.user?.id;
-  if (!hqId) { const list = await svc.auth.admin.listUsers(); hqId = list.data.users.find((u) => u.email === hqEmail)?.id; if (hqId) await svc.auth.admin.updateUserById(hqId, { password: PASSWORD, email_confirm: true }); }
+  if (!hqId) { const list = await svc.auth.admin.listUsers({ page: 1, perPage: 1000 }); hqId = list.data.users.find((u) => u.email === hqEmail)?.id; if (hqId) await svc.auth.admin.updateUserById(hqId, { password: PASSWORD, email_confirm: true }); }
   if (!hqId) throw new Error(`[e2e harness] could not seed hq user: ${hqCreated.error?.message}`);
   await db.from("users").upsert({ id: hqId, email: hqEmail, full_name: "E2E HQ" });
   await mintState(hqEmail, PASSWORD, STATE_PATH.replace("owner.json", "hq.json"));

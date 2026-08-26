@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementApi } from "@/server/auth/session";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { sendInvoiceEmail } from "@/lib/email/send-invoice";
 import * as Sentry from "@sentry/nextjs";
@@ -22,7 +22,10 @@ export const runtime = "nodejs";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function POST(request: NextRequest, { params }: Ctx) {
-  const { ctx } = await requireOrgContext();
+  // Management-only (first-customer fix 1): this surface carries money.
+  const guard = await requireManagementApi();
+  if (guard instanceof Response) return guard;
+  const { ctx } = guard;
   const { id } = await params;
 
   let body: { to?: string; message?: string } = {};
@@ -87,6 +90,11 @@ export async function POST(request: NextRequest, { params }: Ctx) {
         );
       case "not_found":
         return NextResponse.json({ error: "not_found" }, { status: 404 });
+      case "voided":
+        return NextResponse.json(
+          { error: "voided", detail: "This invoice was voided. Nothing was sent." },
+          { status: 409 },
+        );
       case "no_recipient":
         return NextResponse.json(
           {

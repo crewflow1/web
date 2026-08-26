@@ -275,7 +275,9 @@ export default async function JobCommercialPage({ params }: { params: Promise<{ 
   });
   const profit = computeJobProfitability(
     id,
-    invoices.map((i) => ({ job_id: i.job_id, amount: i.amount })),
+    // status must survive the map: a void invoice (20261219) is excluded from
+    // revenue by isRevenueRow — stripping status here silently re-counted it.
+    invoices.map((i) => ({ job_id: i.job_id, amount: i.amount, status: i.status })),
     costInput,
   );
   const costsTotal = profit?.costs_total ?? 0;

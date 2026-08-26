@@ -6,7 +6,12 @@
 
 import { z } from "zod";
 
-export const JOB_STATUSES = ["new", "in-progress", "completed", "blocked"] as const;
+// `cancelled` (20261220) is a real terminal state so cancelling work never
+// means deleting it. The DB trigger (tg_jobs_cancel_guard) refuses
+// completed→cancelled and allows reopen only to `new`; active operational
+// views allowlist active statuses, so a cancelled job drops out of them by
+// construction while its documents/costs/safety history remain attached.
+export const JOB_STATUSES = ["new", "in-progress", "completed", "blocked", "cancelled"] as const;
 export type JobStatus = (typeof JOB_STATUSES)[number];
 
 export const JOB_RECURRING_PATTERNS = [

@@ -144,12 +144,28 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: vi.fn(async () => fakeClient),
 }));
 
-vi.mock("@/server/auth/session", () => ({
-  requireOrgContext: vi.fn(async () => ({
+vi.mock("@/server/auth/session", () => {
+  // Faithful fix-1 mirrors: requireManagementApi derives from the SAME base
+  // context mock; a missing/non-management role gets the real 403 shape.
+  const base =  vi.fn(async () => ({
     ctx: { membership: { role: "owner" }, org: { id: "org-1" } },
     user: { id: "user-1", email: "owner@org-1.test" },
-  })),
-}));
+  }));
+  const isMgmt = (r: unknown) => r === "owner" || r === "admin";
+  return {
+    requireOrgContext: base,
+    requireManagementRole: (ctx?: { membership?: { role?: string } }) => {
+      if (!isMgmt(ctx?.membership?.role)) throw new Error("REDIRECT:/dashboard?error=forbidden");
+    },
+    requireManagementApi: vi.fn(async () => {
+      const res = (await base()) as { ctx?: { membership?: { role?: string } } };
+      if (!isMgmt(res?.ctx?.membership?.role ?? "owner")) {
+        return Response.json({ error: "forbidden" }, { status: 403 });
+      }
+      return res;
+    }),
+  };
+});
 
 // Not exercised by the upload path, but the action imports it at module load.
 vi.mock("@/server/services/automation-dispatcher", () => ({

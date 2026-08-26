@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
 import {
   customerFormSchema,
   type CustomerFormInput,
@@ -89,6 +89,7 @@ export async function createCustomer(
   formData: FormData,
 ): Promise<FormState<CustomerFormInput>> {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
   const result = validateFormData(formData, customerFormSchema);
   if (!result.ok) return result.state;
 
@@ -144,6 +145,7 @@ export async function updateCustomer(
   formData: FormData,
 ): Promise<FormState<CustomerFormInput>> {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
   const result = validateFormData(formData, customerFormSchema);
   if (!result.ok) return result.state;
 
@@ -210,6 +212,7 @@ export async function updateCustomer(
  */
 export async function rotateCustomerPortalToken(id: string) {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
   const supabase = await createClient();
   // Token shape is owned by lib/customers/portal-token.ts so the
   // rotate action and any future code path stay in lockstep.
@@ -258,6 +261,7 @@ export async function rotateCustomerPortalToken(id: string) {
  */
 export async function sendCustomerStatement(id: string, formData: FormData) {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
   const supabase = await createClient();
 
   const from = statementBound(formData.get("from"));
@@ -291,6 +295,7 @@ export async function sendCustomerStatement(id: string, formData: FormData) {
 
 export async function deleteCustomer(id: string) {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
   const supabase = await createClient();
   // RLS allows DELETE only for admins/owners. Non-admins get a no-op
   // (zero rows affected); the exact count lets us tell that apart from a

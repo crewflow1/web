@@ -144,6 +144,14 @@ export function JobForm({
           { value: "in-progress", label: "In progress" },
           { value: "completed", label: "Completed" },
           { value: "blocked", label: "Blocked" },
+          // Terminal cancel (20261220) — EDIT-ONLY: a job can be cancelled but
+          // never *born* cancelled (the DB guard is BEFORE UPDATE, so a
+          // create-with-cancelled would skip the audit stamp entirely). The
+          // trigger refuses completed→cancelled and allows reopen only to
+          // "new"; an illegal pick fails loudly, not silently.
+          ...(defaults?.status != null
+            ? [{ value: "cancelled", label: "Cancelled" }]
+            : []),
         ]}
       />
       {templates && templates.length > 0 ? (

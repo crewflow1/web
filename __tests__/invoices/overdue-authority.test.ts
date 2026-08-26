@@ -161,10 +161,12 @@ describe("status sets", () => {
     }
   });
 
-  it("there is no 'void' status in this schema", () => {
-    // The directive's model mentioned void; the enum has no such value.
-    // If one is added it must join NON_COLLECTABLE.
-    expect([...INVOICE_STATUSES]).not.toContain("void");
+  it("'void' (20261219) exists and is NON-collectable", () => {
+    // The terminal correction state: a voided invoice is not owed, can never
+    // be overdue, and joined NON_COLLECTABLE exactly as this suite's previous
+    // guard prescribed ("if one is added it must join NON_COLLECTABLE").
+    expect([...INVOICE_STATUSES]).toContain("void");
+    expect(isCollectableStatus("void")).toBe(false);
   });
 });
 

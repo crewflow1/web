@@ -244,7 +244,7 @@ class LeadWriteInput(TypedDict, total=False):
 
 
 class JobWriteInput(TypedDict, total=False):
-    status: Literal["new", "in-progress", "completed", "blocked"]
+    status: Literal["new", "in-progress", "completed", "blocked", "cancelled"]
     scheduled_date: str
     customer_id: str
     notes: str
@@ -258,7 +258,7 @@ class JobWriteInput(TypedDict, total=False):
 
 class JobUpdateInput(TypedDict, total=False):
     """At least one field must be provided. Omitted fields are left unchanged."""
-    status: Literal["new", "in-progress", "completed", "blocked"]
+    status: Literal["new", "in-progress", "completed", "blocked", "cancelled"]
     scheduled_date: str
     customer_id: str
     notes: str

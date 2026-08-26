@@ -113,6 +113,12 @@ export async function createJob(
     .single();
 
   if (error || !data) {
+    // Surface the cancel-guard's human-readable refusal (20261220 — "a job
+    // cannot be created as cancelled…") verbatim, like updateJob does.
+    const msg = String(error?.message ?? "");
+    if (msg.includes("cancelled")) {
+      return formError(msg, result.data as JobValues);
+    }
     console.error("[jobs] create failed", error);
     return formError("Couldn't save the job. Try again.", result.data as JobValues);
   }
@@ -232,6 +238,14 @@ export async function updateJob(
     .eq("org_id", ctx.org.id);
 
   if (error) {
+    // The cancel-guard trigger (20261220) raises with a human-readable sentence
+    // ("a completed job cannot be cancelled…" / "…only be reopened to \"new\"").
+    // Surface it verbatim instead of a generic failure so the operator learns
+    // the rule, not just that something failed.
+    const msg = String(error.message ?? "");
+    if (msg.includes("cancelled") || msg.includes("reopened")) {
+      return formError(msg, result.data as JobValues);
+    }
     console.error("[jobs] update failed", error);
     return formError("Couldn't save changes. Try again.", result.data as JobValues);
   }

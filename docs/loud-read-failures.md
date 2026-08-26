@@ -365,3 +365,11 @@ best-effort shape as the pre-existing `getPaymentProofSignedUrl`.
     binds + throws `readFailure`; the per-file storage `createSignedUrl` is the
     one soft read (→ null URL → that file's "Open" link is hidden on the inbox).
 Per the UP rule, baseline raised in the same commit with this reason.
+- **app/(app) discard 56 → 58** (UP — best-effort, ledgered; first-customer fix 4):
+  - `app/(app)/quotes/actions.ts` `buildJobCarryFromQuote` — TWO deliberate
+    soft reads (`properties` address, `quote_line_items` descriptions) that
+    enrich the auto-created job on quote acceptance. Acceptance/job creation
+    must NEVER fail because enrichment couldn't load, so both degrade to the
+    bare provenance note; financial truth is untouched (value stays on the
+    quote + auto-invoice, linked via quotes.job_id).
+Per the UP rule, baseline raised in the same commit with this reason.

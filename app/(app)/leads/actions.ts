@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
 import {
   createLeadSchema,
   updateLeadSchema,
@@ -50,6 +50,7 @@ export async function createLead(
   formData: FormData,
 ): Promise<FormState<LeadValues>> {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
   const result = validateFormData(formData, createLeadSchema);
   if (!result.ok) return result.state as FormState<LeadValues>;
 
@@ -112,6 +113,7 @@ export async function updateLead(
   formData: FormData,
 ): Promise<FormState<LeadValues>> {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
   if (!idSchema.safeParse(id).success) return formError("Invalid lead id.");
 
   const result = validateFormData(formData, updateLeadSchema);
@@ -175,6 +177,7 @@ export async function updateLead(
  */
 export async function moveLeadStage(id: string, formData: FormData) {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
   if (!idSchema.safeParse(id).success) redirect("/leads");
 
   const parsed = moveStageSchema.safeParse({
@@ -216,6 +219,7 @@ const ACTED_KIND_SCHEMA = z.enum(["call", "message", "archive"]);
 
 export async function acknowledgeLead(id: string, formData: FormData) {
   const { ctx, user } = await requireOrgContext();
+  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
   if (!idSchema.safeParse(id).success) redirect("/leads?error=bad_id");
 
   const parsed = ACTED_KIND_SCHEMA.safeParse(formData.get("kind") ?? "");
@@ -293,6 +297,7 @@ export async function acknowledgeLead(id: string, formData: FormData) {
  */
 export async function regenerateLeadSummary(id: string) {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
   if (!idSchema.safeParse(id).success) redirect("/leads?error=bad_id");
 
   // SECURITY (P2 audit H-1): summariseLead reads via the service-role admin
@@ -349,6 +354,7 @@ export async function regenerateLeadSummary(id: string) {
  */
 export async function convertLeadToCustomer(id: string) {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
   if (!idSchema.safeParse(id).success) redirect("/leads?error=bad_id");
 
   const supabase = await createClient();
@@ -430,6 +436,7 @@ export async function convertLeadToCustomer(id: string) {
 
 export async function deleteLead(id: string) {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
   if (!idSchema.safeParse(id).success) redirect("/leads");
 
   const supabase = await createClient();

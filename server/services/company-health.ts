@@ -155,7 +155,8 @@ export async function gatherProfitability(
     allRows("company-health: invoices", (from, to) =>
       db
         .from("invoices")
-        .select("id, job_id, amount")
+        // `status` so profitability excludes `void` (20261219).
+        .select("id, job_id, amount, status")
         .eq("org_id", orgId)
         .order("id", { ascending: true })
         .range(from, to),

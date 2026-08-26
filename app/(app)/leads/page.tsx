@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { getRequestI18n } from "@/server/i18n/request";
+import { requireManagementRole } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import {
   LEAD_STAGES,
@@ -50,6 +51,8 @@ type SP = Promise<{
 
 export default async function LeadsPage({ searchParams }: { searchParams: SP }) {
   const { ctx, t } = await getRequestI18n();
+  // Sales pipeline (value/forecast) is owner/admin only (nav ADMIN_ROLES).
+  requireManagementRole(ctx);
   const sp = await searchParams;
   const supabase = await createClient();
 

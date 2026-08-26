@@ -156,8 +156,21 @@ vi.mock("next/navigation", () => ({
 // unrealistic. Keeping the two in sync is what the real flow guarantees.
 vi.mock("@/server/auth/session", () => ({
   requireOrgContext: vi.fn(async () => ({
-    ctx: { org: { id: "org-uuid-1" }, user: { id: "test-user" } },
+    ctx: {
+      org: { id: "org-uuid-1" },
+      // Management role so the owner-accept path passes the fix-1 guard —
+      // these tests exercise acceptance mechanics, not authorization.
+      membership: { org_id: "org-uuid-1", role: "owner" },
+      user: { id: "test-user" },
+    },
+    user: { id: "test-user" },
   })),
+  requireManagementRole: (ctx?: { membership?: { role?: string } }) => {
+    const role = ctx?.membership?.role;
+    if (role !== "owner" && role !== "admin") {
+      throw new Error("REDIRECT:/dashboard?error=forbidden");
+    }
+  },
 }));
 
 vi.mock("@/lib/supabase/server", () => ({

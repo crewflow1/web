@@ -64,8 +64,8 @@ describe("portal money surfaces agree (home Outstanding == invoices Due now)", (
   it("both surfaces PAGE the invoices read via fetchAllRows/.range, with NO flat .limit (DEFECT A)", () => {
     for (const src of [OVERVIEW, LIST]) {
       // The invoices read is windowed (paged), not capped.
-      expect(src).toMatch(/\.from\("invoices"\)[\s\S]{0,500}?\.range\(/);
-      expect(src).not.toMatch(/\.from\("invoices"\)[\s\S]{0,500}?\.limit\(/);
+      expect(src).toMatch(/\.from\("invoices"\)[\s\S]{0,700}?\.range\(/);
+      expect(src).not.toMatch(/\.from\("invoices"\)[\s\S]{0,700}?\.limit\(/);
     }
     // The home page additionally pages its invoice_payments read (it did not read
     // payments at all before — that is why it could not net them).

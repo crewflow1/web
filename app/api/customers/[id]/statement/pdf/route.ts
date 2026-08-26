@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementApi } from "@/server/auth/session";
 import { loadCustomerStatement } from "@/server/services/customer-statement";
 import { StatementPdf } from "@/lib/pdf/statement-pdf";
 
@@ -19,7 +19,10 @@ type Ctx = { params: Promise<{ id: string }> };
  * are optional — an invalid bound is treated as absent, not an error.
  */
 export async function GET(request: NextRequest, { params }: Ctx) {
-  const { ctx } = await requireOrgContext();
+  // Management-only (first-customer fix 1): this surface carries money.
+  const guard = await requireManagementApi();
+  if (guard instanceof Response) return guard;
+  const { ctx } = guard;
   const { id } = await params;
   const supabase = await createClient();
 

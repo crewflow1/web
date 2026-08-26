@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementApi } from "@/server/auth/session";
 import { csvEscape } from "@/lib/csv";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 
@@ -18,7 +18,10 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
  */
 
 export async function GET(request: NextRequest) {
-  const { ctx } = await requireOrgContext();
+  // Management-only (first-customer fix 1): this surface carries money.
+  const guard = await requireManagementApi();
+  if (guard instanceof Response) return guard;
+  const { ctx } = guard;
   const url = request.nextUrl;
   const from = url.searchParams.get("from");
   const to = url.searchParams.get("to");

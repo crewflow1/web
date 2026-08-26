@@ -66,7 +66,11 @@ const ARG_PIN = /\.eq\(\s*["']org_id["'](?:\s+as\s+never)?,\s*orgId(?:\s+as\s+ne
 // getRequestI18n() (which returns the same ctx and enforces requireOrgContext
 // internally) satisfies this — both destructure ctx from the resolved request.
 const CAPTURES_CTX =
-  /const \{[^}]*\bctx\b[^}]*\} = await (requireOrgContext|getRequestI18n)\(\)/;
+  // Either the classic org-context capture, or the management-gated API form
+  // (fix 1: `const guard = await requireManagementApi(); … const { ctx } = guard;`)
+  // — the latter is STRICTLY stronger: it wraps requireOrgContext AND adds the
+  // owner/admin gate before any table read.
+  /const \{[^}]*\bctx\b[^}]*\} = await (requireOrgContext|getRequestI18n|requireManagementContext)\(\)|const guard = await requireManagementApi\(\);[\s\S]{0,300}?const \{[^}]*\bctx\b[^}]*\} = guard/;
 
 // ---------------------------------------------------------------------------
 // 1. List pages — one pin per collection read, keyed by the table it reads
