@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementApi } from "@/server/auth/session";
 import { INVOICE_STATUSES, type InvoiceStatus } from "@/lib/invoices/schema";
 import { csvEscape } from "@/lib/csv";
 import { fetchAllRows } from "@/lib/supabase/paginate";
@@ -82,7 +82,10 @@ type LineItemRow = {
 };
 
 export async function GET(request: NextRequest) {
-  const { ctx } = await requireOrgContext();
+  // Management-only (first-customer fix 1): this surface carries money.
+  const guard = await requireManagementApi();
+  if (guard instanceof Response) return guard;
+  const { ctx } = guard;
   const url = request.nextUrl;
   const format = (url.searchParams.get("format") ?? "simple").toLowerCase();
   const from = url.searchParams.get("from");
@@ -129,7 +132,9 @@ export async function GET(request: NextRequest) {
         .split(",")
         .map((s) => s.trim())
         .filter((s) => allowed.has(s)) as InvoiceStatus[];
-      if (wanted.length > 0) q = q.in("status", wanted);
+      // Pre-regen bridge (20261219): generated enum gains 'void' after the
+      // prod apply + db:types regen; drop the cast then.
+      if (wanted.length > 0) q = q.in("status", wanted as unknown as string[] as never);
     }
     return q as unknown as PromiseLike<{ data: InvoiceRow[] | null; error: unknown }>;
   });

@@ -318,7 +318,7 @@ const JobWriteInput: Record<string, unknown> = {
   type: "object",
   additionalProperties: false,
   properties: {
-    status: { type: "string", enum: ["new", "in-progress", "completed", "blocked"] },
+    status: { type: "string", enum: ["new", "in-progress", "completed", "blocked", "cancelled"] },
     scheduled_date: { type: "string", description: "YYYY-MM-DD" },
     customer_id: { type: "string", format: "uuid" },
     notes: { type: "string", maxLength: 5000 },

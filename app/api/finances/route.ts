@@ -2,7 +2,7 @@ import { type NextRequest } from "next/server";
 import * as respond from "@/lib/api/respond";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementApi, requireOrgContext } from "@/server/auth/session";
 import { verifyJobInOrg } from "@/lib/crm/reference-integrity";
 import {
   createFinanceSchema,
@@ -33,7 +33,9 @@ function isAllowedMime(mime: string | null | undefined): boolean {
 }
 
 export async function GET(request: NextRequest) {
-  const { ctx } = await requireOrgContext();
+  const guard = await requireManagementApi();
+  if (guard instanceof Response) return guard;
+  const { ctx } = guard;
   const supabase = await createClient();
   const url = request.nextUrl;
 
@@ -89,6 +91,10 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  // Cost ENTRY is deliberately member-open — field staff log costs from the
+  // job page ("+ Add cost" → /finances/new), per the documented design in
+  // app/(app)/jobs/[id]/page.tsx. The cost LEDGER (GET above, /finances list)
+  // is management-only. RLS "members can insert" matches this split.
   const { ctx } = await requireOrgContext();
   const contentType = request.headers.get("content-type") ?? "";
 

@@ -195,7 +195,11 @@ export async function loadJobBilling(orgId: string, jobId: string): Promise<JobB
       ratePercent,
       retentionHeld: retention.held,
       invoices: invoiceRows
-        .filter((i) => String(i.status ?? "") !== "draft")
+        .filter((i) => {
+          const s = String(i.status ?? "");
+          // draft = not yet real; void (20261219) = retracted — neither nets.
+          return s !== "draft" && s !== "void";
+        })
         .map((i) => ({
           net: i.amount as number | string | null,
           grossRemaining: round2(Math.max(0, toPounds(mv(i.total)) - (paidByInvoice.get(String(i.id)) ?? 0))),

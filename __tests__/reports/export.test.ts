@@ -43,6 +43,19 @@ vi.mock("@/lib/reports/aggregates", () => ({
 
 vi.mock("@/server/auth/session", () => ({
   requireOrgContext: requireOrgContextMock,
+  // Faithful mirror of requireManagementApi (fix 1): the export route is
+  // management-only. Derives from the SAME requireOrgContextMock so each test's
+  // configured ctx keeps driving the outcome; a non-management role gets the
+  // same 403 JSON the real helper returns.
+  requireManagementApi: vi.fn(async () => {
+    const res = await requireOrgContextMock();
+    const role = (res as { ctx?: { membership?: { role?: string } } })?.ctx
+      ?.membership?.role;
+    if (role !== "owner" && role !== "admin") {
+      return Response.json({ error: "forbidden" }, { status: 403 });
+    }
+    return res;
+  }),
 }));
 
 // Import under test AFTER the mocks are registered.
@@ -58,7 +71,9 @@ beforeEach(() => {
   topCustomersMock.mockReset();
   requireOrgContextMock.mockReset();
 
-  requireOrgContextMock.mockResolvedValue({ ctx: { org: { id: "org-1" } } });
+  requireOrgContextMock.mockResolvedValue({
+    ctx: { org: { id: "org-1" }, membership: { org_id: "org-1", role: "owner" } },
+  });
   jobsPerWeekMock.mockResolvedValue([
     { week_start: "2026-06-01", total: 4, completed: 3 },
   ]);
@@ -158,9 +173,13 @@ describe("reports export wiring (source-pinned architecture)", () => {
     expect(code).not.toMatch(/createClient/);
   });
 
-  it("is org-isolated behind requireOrgContext", () => {
+  it("is org-isolated AND management-gated behind requireManagementApi", () => {
+    // Strengthened (fix 1): the route funnels through requireManagementApi,
+    // which wraps requireOrgContext (org isolation) and ADDS the owner/admin
+    // gate — this CSV carries revenue/VAT/top-customers, never staff-readable.
     const code = read(ROUTE);
-    expect(code).toMatch(/requireOrgContext\s*\(\s*\)/);
+    expect(code).toMatch(/requireManagementApi\s*\(\s*\)/);
+    expect(code).not.toMatch(/requireOrgContext\s*\(\s*\)/);
   });
 
   it("introduces no AI surface", () => {

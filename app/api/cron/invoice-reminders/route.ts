@@ -128,6 +128,8 @@ async function runReminders() {
         `,
         )
         .neq("status", "paid")
+        // void (20261219) = retracted — never remind a customer to pay it.
+        .neq("status", "void" as never) // pre-regen bridge (20261219)
         .not("sent_at", "is", null)
         .lte("sent_at", upperIso)
         .gte("sent_at", lowerIso)

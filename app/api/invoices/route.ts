@@ -1,7 +1,7 @@
 import { type NextRequest } from "next/server";
 import * as respond from "@/lib/api/respond";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementApi } from "@/server/auth/session";
 import { createInvoiceSchema, INVOICE_STATUSES } from "@/lib/invoices/schema";
 import { invoiceDueDate } from "@/lib/invoices/due-date";
 
@@ -22,7 +22,9 @@ const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 50;
 
 export async function GET(request: NextRequest) {
-  const { ctx } = await requireOrgContext();
+  const guard = await requireManagementApi();
+  if (guard instanceof Response) return guard;
+  const { ctx } = guard;
   const supabase = await createClient();
   const url = request.nextUrl;
   const limit = Math.min(
@@ -46,7 +48,9 @@ export async function GET(request: NextRequest) {
     .range(offset, offset + limit - 1);
 
   if (status && (INVOICE_STATUSES as readonly string[]).includes(status)) {
-    q = q.eq("status", status as (typeof INVOICE_STATUSES)[number]);
+    // Pre-regen bridge (20261219): generated enum gains 'void' after the prod
+    // apply + db:types regen; drop the cast then.
+    q = q.eq("status", status as never);
   }
 
   const { data, error, count } = await q;
@@ -58,7 +62,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const { ctx } = await requireOrgContext();
+  const guard = await requireManagementApi();
+  if (guard instanceof Response) return guard;
+  const { ctx } = guard;
 
   let body: unknown;
   try {

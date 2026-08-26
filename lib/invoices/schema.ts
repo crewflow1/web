@@ -20,6 +20,12 @@ export const INVOICE_STATUSES = [
   "partially_paid",
   "paid",
   "overdue",
+  // Terminal correction state (20261219). Read vocabulary only — never in
+  // WRITABLE_ (void goes through the dedicated voidInvoice action, guarded by
+  // the DB trigger), never in ISSUED_ (not revenue), never in OUTSTANDING_ or
+  // OVERDUE_COLLECTABLE_ (not a receivable). Every one of those is a positive
+  // allowlist, so exclusion is by construction.
+  "void",
 ] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 
@@ -44,13 +50,18 @@ export const WRITABLE_INVOICE_STATUSES = [
 ] as const satisfies readonly InvoiceStatus[];
 export type WritableInvoiceStatus = (typeof WRITABLE_INVOICE_STATUSES)[number];
 
-/** Statuses where the invoice is outstanding (operator should chase). */
-export const OUTSTANDING_STATUSES: ReadonlyArray<InvoiceStatus> = [
+/**
+ * Statuses where the invoice is outstanding (operator should chase).
+ * `void` (20261219) is deliberately absent — a voided invoice is not owed.
+ * Narrow literal tuple (not ReadonlyArray<InvoiceStatus>) so `.in("status", …)`
+ * stays assignable to the generated DB enum before the post-deploy type regen.
+ */
+export const OUTSTANDING_STATUSES = [
   "sent",
   "awaiting_payment",
   "partially_paid",
   "overdue",
-];
+] as const satisfies readonly InvoiceStatus[];
 
 /**
  * Statuses where the invoice has been ISSUED — i.e. sent to the customer and so
@@ -62,10 +73,9 @@ export const OUTSTANDING_STATUSES: ReadonlyArray<InvoiceStatus> = [
  * overstates profit — and hence the Corporation Tax estimate — for essentially
  * every org, and contradicts the "Invoiced · accrual" basis the tax page declares.
  *
- * There is no `void`/`cancelled` member in this schema (the enum is draft, sent,
- * awaiting_payment, partially_paid, paid, overdue). If one is ever added it must be
- * excluded here too. This is the single accrual-revenue authority every summing
- * caller should read.
+ * `void` (added 20261219) is deliberately EXCLUDED: a voided invoice is not
+ * revenue on any basis. This is the single accrual-revenue authority every
+ * summing caller should read.
  */
 export const ISSUED_INVOICE_STATUSES = [
   "sent",

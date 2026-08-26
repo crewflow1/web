@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import {
@@ -67,6 +67,8 @@ function nextVatDeadline(periodEndExclusiveIso: string): Date {
 
 export default async function TaxDashboardPage() {
   const { ctx } = await requireOrgContext();
+  // Money-group surface (nav ADMIN_ROLES) — enforce server-side (fix 1).
+  requireManagementRole(ctx);
   const supabase = await createClient();
 
   // The org's HMRC VAT stagger drives WHICH period the VAT figures cover. A LOUD

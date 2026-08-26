@@ -148,7 +148,15 @@ export type CreateLeadInput = z.infer<typeof createLeadSchema>;
  */
 export const createJobSchema = z
   .object({
-    status: z.enum(JOB_STATUSES).optional(),
+    // A job can be cancelled, never BORN cancelled (DB guard 20261220) — the
+    // create schema excludes it so the API mirrors the trigger's rule with a
+    // clean 400 instead of a 500.
+    status: z
+      .enum(JOB_STATUSES)
+      .refine((s) => s !== "cancelled", {
+        message: "a job cannot be created as cancelled",
+      })
+      .optional(),
     scheduled_date: optionalDate,
     customer_id: optionalUuid,
     notes: optionalText(5000),

@@ -39,6 +39,7 @@ type Row = Record<string, unknown>;
 function makeClient(rows: Row[]): CalendarSupabaseClient {
   function makeBuilder() {
     const eqs: Array<[string, unknown]> = [];
+    const neqs: Array<[string, unknown]> = [];
     const isNulls: string[] = [];
     const notNulls: string[] = [];
     const gtes: Array<[string, string]> = [];
@@ -78,6 +79,14 @@ function makeClient(rows: Row[]): CalendarSupabaseClient {
       select: () => builder,
       eq(col: string, val: unknown) {
         eqs.push([col, val]);
+        return builder;
+      },
+      // Default cancelled-exclusion (20261220): the grid calls
+      // .neq("status","cancelled") when no explicit status filter is set. The
+      // fixture rows never carry status "cancelled", so filtering here is a
+      // faithful no-op that still exercises the real call chain.
+      neq(col: string, val: unknown) {
+        neqs.push([col, val]);
         return builder;
       },
       is(col: string, val: unknown) {
@@ -230,7 +239,7 @@ describe("fetchCalendarJobs — window-scoped + paged past the 1000-row cap (F-1
     const failing = {
       from: () => {
         const b: Record<string, unknown> = {};
-        for (const m of ["select", "eq", "is", "not", "gte", "lte", "order"]) {
+        for (const m of ["select", "eq", "neq", "is", "not", "gte", "lte", "order"]) {
           b[m] = () => b;
         }
         b.range = () => Promise.resolve({ data: null, error: { message: "boom" } });

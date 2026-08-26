@@ -171,7 +171,15 @@ export async function createInvoiceCheckout(
     invoiceTotal: invoice.total,
     payments: [{ amount: paid }],
   });
-  if (balance.outstanding <= 0 || invoice.status === "paid") {
+  if (
+    balance.outstanding <= 0 ||
+    invoice.status === "paid" ||
+    // A void invoice (20261219) has zero payments so "outstanding" would look
+    // collectable — but it is retracted. Refuse BEFORE any Stripe session is
+    // minted; the DB trigger would reject the webhook's payment insert anyway,
+    // which would strand captured money. Fail here, cleanly.
+    invoice.status === "void"
+  ) {
     return { ok: false, reason: "nothing_due" };
   }
   const amount = balance.outstanding;

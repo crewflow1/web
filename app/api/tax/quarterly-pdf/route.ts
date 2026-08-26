@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementApi } from "@/server/auth/session";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import {
@@ -39,7 +39,10 @@ function inclusiveEndIso(endExclusiveIso: string): string {
 }
 
 export async function GET(request: NextRequest) {
-  const { ctx } = await requireOrgContext();
+  // Management-only (first-customer fix 1): this surface carries money.
+  const guard = await requireManagementApi();
+  if (guard instanceof Response) return guard;
+  const { ctx } = guard;
   const supabase = await createClient();
 
   // The org's HMRC VAT stagger fixes the period LENGTH (quarter vs month) and

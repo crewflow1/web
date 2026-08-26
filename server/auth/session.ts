@@ -437,3 +437,63 @@ async function loadOrgContextForImpersonation(
     org: mapOrgRow(row),
   };
 }
+
+/**
+ * ── Management authority (owner/admin) ───────────────────────────────────────
+ * The single backend authority for "who may see the money". The nav model
+ * (app/(app)/_nav/nav-model.ts) already marks the Sales, Money and Operations
+ * groups with ADMIN_ROLES = ["owner","admin"]; nav-hiding is presentation, not
+ * enforcement, so these helpers let the page / route / server-action / search
+ * layers enforce the SAME boundary server-side. This is NOT a new permission
+ * system — it reuses the existing membership role. RLS is untouched and remains
+ * the last line of defence; this closes the in-org over-exposure where a `staff`
+ * member could reach financial surfaces by direct URL/API/Cmd+K.
+ *
+ * `ctx.membership.role` is the caller's OWN row in the active org (resolved by
+ * requireOrgContext with a user_id filter), so this never does an unfiltered
+ * memberships read. Impersonating HQ super-admins render as role="owner"
+ * (loadOrgContextForImpersonation) and are therefore correctly allowed.
+ */
+export function isManagementRole(role: string | null | undefined): boolean {
+  return role === "owner" || role === "admin";
+}
+
+/**
+ * PAGE / server-component guard. Non-management members are redirected to their
+ * dashboard with a forbidden marker — same UX as the existing local
+ * requireAdmin() used across settings/staff (never a 500, never a blank page).
+ */
+export function requireManagementRole(ctx: OrgContext): void {
+  if (!isManagementRole(ctx.membership.role)) {
+    redirect("/dashboard?error=forbidden");
+  }
+}
+
+/** Resolve org context AND assert management in one call (for pages/actions). */
+export async function requireManagementContext(): Promise<{
+  user: User;
+  ctx: OrgContext;
+}> {
+  const res = await requireOrgContext();
+  requireManagementRole(res.ctx);
+  return res;
+}
+
+/**
+ * API / route-handler guard. Returns the context for management callers, or a
+ * ready-to-return 403 JSON Response for everyone else — so a fetch/XHR to a
+ * money endpoint gets an honest 403 rather than an HTML redirect body it can't
+ * use. Usage:
+ *   const guard = await requireManagementApi();
+ *   if (guard instanceof Response) return guard;
+ *   const { ctx } = guard;
+ */
+export async function requireManagementApi(): Promise<
+  { user: User; ctx: OrgContext } | Response
+> {
+  const res = await requireOrgContext();
+  if (!isManagementRole(res.ctx.membership.role)) {
+    return Response.json({ error: "forbidden" }, { status: 403 });
+  }
+  return res;
+}

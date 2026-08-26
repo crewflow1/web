@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
 import {
   computeActivitySummary,
   computeLeadInsights,
@@ -43,6 +43,8 @@ export const dynamic = "force-dynamic";
 
 export default async function InsightsPage() {
   const { ctx } = await requireOrgContext();
+  // Money-group surface (nav ADMIN_ROLES) — enforce server-side (fix 1).
+  requireManagementRole(ctx);
 
   const [activity, leads, companySignals] = await Promise.all([
     computeActivitySummary(ctx.org.id, 30),

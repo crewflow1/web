@@ -38,7 +38,7 @@ function fn(source: string, name: string): string {
 /** The idiom every fixed site must show: capture ctx, then scope by it. */
 function expectScopedByCtx(body: string, label: string) {
   expect(body, `${label} must capture the org context`).toMatch(
-    /const \{[^}]*\bctx\b[^}]*\} = await requireOrgContext\(\)/,
+    /const \{[^}]*\bctx\b[^}]*\} = await requireOrgContext\(\)|const guard = await requireManagementApi\(\);[\s\S]{0,300}?const \{[^}]*\bctx\b[^}]*\} = guard/,
   );
   expect(body, `${label} must constrain by the active org`).toMatch(
     /\.eq\("org_id", ctx\.org\.id\)/,
@@ -51,7 +51,7 @@ describe("outward-facing sends — wrong org must never reach the transport", ()
   it("the invoice SEND route resolves + compares the org BEFORE calling the helper", () => {
     const SRC = src("app/api/invoices/[id]/send/route.ts");
     const F = fn(SRC, "POST");
-    expect(F).toMatch(/const \{ ctx \} = await requireOrgContext\(\)/);
+    expect(F).toMatch(/const \{ ctx \} = await requireOrgContext\(\)|const guard = await requireManagementApi\(\);[\s\S]{0,300}?const \{ ctx \} = guard/);
     expect(F).toMatch(/inv\.org_id !== ctx\.org\.id/);
     // Ordering is the whole point: a check after the send proves nothing.
     // Both offsets target real code — matching bare identifiers would also hit
@@ -69,7 +69,7 @@ describe("outward-facing sends — wrong org must never reach the transport", ()
   it("the quote SEND route resolves + compares the org BEFORE calling the helper", () => {
     const SRC = src("app/api/quotes/[id]/send/route.ts");
     const F = fn(SRC, "POST");
-    expect(F).toMatch(/const \{ ctx \} = await requireOrgContext\(\)/);
+    expect(F).toMatch(/const \{ ctx \} = await requireOrgContext\(\)|const guard = await requireManagementApi\(\);[\s\S]{0,300}?const \{ ctx \} = guard/);
     expect(F).toMatch(/q\.org_id !== ctx\.org\.id/);
     const gate = F.indexOf("q.org_id !== ctx.org.id");
     const send = F.indexOf("await sendQuoteEmail(");
@@ -366,7 +366,7 @@ describe("notification mutations — pinned to the active org", () => {
   for (const name of ["markRead", "markAllRead", "dismiss"]) {
     it(`${name} captures ctx and passes the active org to the service`, () => {
       const F = fn(ACTIONS, name);
-      expect(F).toMatch(/const \{ ctx \} = await requireOrgContext\(\)/);
+      expect(F).toMatch(/const \{ ctx \} = await requireOrgContext\(\)|const guard = await requireManagementApi\(\);[\s\S]{0,300}?const \{ ctx \} = guard/);
       expect(F).toMatch(/orgId: ctx\.org\.id/);
     });
   }

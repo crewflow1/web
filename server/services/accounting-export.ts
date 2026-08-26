@@ -145,9 +145,12 @@ export async function buildAccountingExport(params: {
         .eq("org_id", orgId)
         // Exclude drafts: a draft invoice is not a real sale and must never
         // become an accounting row (it would post as a genuine sales invoice on
-        // the future provider push). Keep every real status (sent /
-        // awaiting_payment / partially_paid / paid / overdue).
-        .neq("status", "draft");
+        // the future provider push). Exclude void (20261219) for the same
+        // reason: a voided invoice is a retracted sale — exporting it would
+        // overstate revenue in the customer's books. Keep every real status
+        // (sent / awaiting_payment / partially_paid / paid / overdue).
+        .neq("status", "draft")
+        .neq("status", "void" as never); // pre-regen bridge (20261219)
       // COARSE UPPER-BOUND PRE-FILTER ONLY. The canonical tax point is
       // `sent_at ?? created_at` (canonical.ts), and `sent_at >= created_at`, so:
       //   - `created_at <= to` is a SAFE superset — an invoice created after `to`

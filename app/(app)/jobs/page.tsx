@@ -28,6 +28,7 @@ const STATUS_LABELS: Record<string, string> = {
   "in-progress": "In progress",
   completed: "Completed",
   blocked: "Blocked",
+  cancelled: "Cancelled",
 };
 
 const STATUS_STYLES: Record<string, string> = {
@@ -35,6 +36,7 @@ const STATUS_STYLES: Record<string, string> = {
   "in-progress": "bg-amber-100 text-amber-700",
   completed: "bg-green-100 text-green-700",
   blocked: "bg-red-100 text-red-700",
+  cancelled: "bg-slate-200 text-slate-500",
 };
 
 type SP = Promise<{ customer?: string; page?: string; q?: string }>;

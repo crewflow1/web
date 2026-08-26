@@ -37,6 +37,15 @@ vi.mock("next/cache", () => ({
 const requireOrgContextMock = vi.fn();
 vi.mock("@/server/auth/session", () => ({
   requireOrgContext: () => requireOrgContextMock(),
+  // Faithful mirror of the fix-1 management guard the action now ALSO calls
+  // (defense-in-depth over its own internal role gate): staff redirect exactly
+  // like production, owners/admins pass through.
+  requireManagementRole: (ctx?: { membership?: { role?: string } }) => {
+    const role = ctx?.membership?.role;
+    if (role !== "owner" && role !== "admin") {
+      redirectMock("/dashboard?error=forbidden");
+    }
+  },
 }));
 
 const recordAdminActivityMock = vi.fn();

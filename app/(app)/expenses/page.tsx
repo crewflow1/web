@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 
 /**
@@ -46,6 +46,8 @@ type SP = Promise<{ status?: string; saved?: string }>;
 
 export default async function ExpensesPage({ searchParams }: { searchParams: SP }) {
   const { ctx } = await requireOrgContext();
+  // Expenses is owner/admin only (nav ADMIN_ROLES); enforce server-side.
+  requireManagementRole(ctx);
   const sp = await searchParams;
   const supabase = await createClient();
 

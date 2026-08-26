@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementApi } from "@/server/auth/session";
 import { askAi } from "@/server/services/ai-question";
 import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
 
@@ -31,7 +31,11 @@ const requestSchema = z.object({
 });
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const { ctx } = await requireOrgContext();
+  // Management-only (fix 1): the snapshot carries invoiced totals/counts.
+  const guard = await requireManagementApi();
+  // The 403 is a plain Response; this route's signature is NextResponse.
+  if (guard instanceof Response) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  const { ctx } = guard;
 
   // Phase 7 — rate limit AI questions: 20 per IP per hour. Caps
   // LLM cost on abuse + keeps the request cheap.

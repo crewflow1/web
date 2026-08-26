@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
 
 /**
  * Staff-side access to a customer-submitted payment proof.
@@ -31,6 +31,7 @@ export async function getPaymentProofSignedUrl(
   proofId: string,
 ): Promise<string | null> {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx); // payment-proof access (fix 1)
   const id = z.string().uuid().safeParse(proofId);
   if (!id.success) return null;
 

@@ -432,7 +432,7 @@ const RATCHET: Array<{
     // on a read error it degrades to "no rate" rather than throwing and 500-ing the
     // worker's home page (the sibling /me reads are best-effort too). It is NOT a
     // money-authority read (that path is payroll, which is LOUD). Deliberate +1.
-    discard: 56 /* +4 inherited from Trains 24-26, see docs/loud-read-failures.md */,
+    discard: 58 /* +4 inherited from Trains 24-26; +2 first-customer fix 4: buildJobCarryFromQuote's two best-effort enrichment reads (properties + quote_line_items) — job creation must NEVER fail because the carry couldn't load; see docs/loud-read-failures.md */,
     // 52 → 49: the job hub's H&S panel (_job-safety.tsx) bound `error` on all
     // three of its reads (RAMS, permits, toolbox talks), so their `?? []` now
     // sits behind a real check and stops counting as debt. A SAFETY control

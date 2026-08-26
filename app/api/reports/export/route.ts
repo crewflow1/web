@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementApi } from "@/server/auth/session";
 import { csvEscape } from "@/lib/csv";
 import {
   jobsPerWeek,
@@ -36,7 +36,11 @@ import {
 type Cell = string | number;
 
 export async function GET() {
-  const { ctx } = await requireOrgContext();
+  // Management-only: this CSV carries revenue / VAT / top-customers. A staff
+  // member must not be able to export it (nav marks Money ADMIN_ROLES).
+  const guard = await requireManagementApi();
+  if (guard instanceof Response) return guard;
+  const { ctx } = guard;
 
   try {
     const [jobs, revenue, vat, top] = await Promise.all([

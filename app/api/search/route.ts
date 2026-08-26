@@ -2,7 +2,7 @@ import { type NextRequest } from "next/server";
 import * as respond from "@/lib/api/respond";
 import { createClient } from "@/lib/supabase/server";
 import type { SupabaseReadError } from "@/lib/supabase/read-failure";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, isManagementRole } from "@/server/auth/session";
 import { sanitizeSearchTerm } from "@/lib/search/sanitize";
 import { sortHitsByMatch } from "@/lib/search/rank";
 import {
@@ -100,6 +100,18 @@ type Hit = {
   href: string;
 };
 
+/**
+ * Hit types that belong to the Sales/Money area (owner/admin only). A staff
+ * Cmd+K result set excludes these, matching the nav + page/API role boundary.
+ */
+const MANAGEMENT_ONLY_SEARCH_TYPES = new Set<Hit["type"]>([
+  "customer",
+  "quote",
+  "invoice",
+  "lead",
+  "purchase_order",
+]);
+
 /** Hits surfaced per entity type. */
 const PER_TYPE = 8;
 /** Parents fetched purely to chain ids into dependent queries (kept > PER_TYPE
@@ -128,6 +140,16 @@ export async function GET(req: NextRequest) {
   // leads, invoices, RAMS, permits and staff, each linking into a detail page
   // that (since #456/#459/#463) correctly 404s.
   const { ctx } = await requireOrgContext();
+
+  // Cmd+K must not surface Sales/Money entities to a non-management member — the
+  // same boundary the nav + page/API guards enforce. A `staff` result set keeps
+  // the operational/field entities (jobs, documents, snags, site reports, RAMS,
+  // permits) and drops customers/quotes/invoices/leads/POs. RLS already scopes to
+  // the org; this scopes to the role. Filtering the merged hits at the return
+  // points closes the leak without restructuring the query waves.
+  const canSeeMoney = isManagementRole(ctx.membership.role);
+  const roleVisible = (hs: Hit[]): Hit[] =>
+    canSeeMoney ? hs : hs.filter((h) => !MANAGEMENT_ONLY_SEARCH_TYPES.has(h.type));
   const supabase = await createClient();
 
   const q = (req.nextUrl.searchParams.get("q") ?? "").trim();
@@ -235,7 +257,7 @@ export async function GET(req: NextRequest) {
   const leadOr = combineOr(ilikeOrFilter(q, LEAD_SEARCH_COLUMNS), custIdBranch);
   if (!jobOr || !quoteOr || !leadOr) {
     // Own-column branches are always present for a 2+ char term; narrows types.
-    return respond.json({ hits });
+    return respond.json({ hits: roleVisible(hits) });
   }
 
   const [jobsRes, quotesRes, leadsRes] = await Promise.all([
@@ -476,5 +498,5 @@ export async function GET(req: NextRequest) {
   // exact/prefix title match on the user's term wins regardless of which wave or
   // entity type surfaced it, with type priority breaking ties. Array.sort is
   // stable, so within an equal score+priority the original wave order stands.
-  return respond.json({ hits: sortHitsByMatch(hits, q) });
+  return respond.json({ hits: sortHitsByMatch(roleVisible(hits), q) });
 }

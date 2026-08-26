@@ -36,6 +36,14 @@ vi.mock("next/cache", () => ({
 const requireOrgContextMock = vi.fn();
 vi.mock("@/server/auth/session", () => ({
   requireOrgContext: () => requireOrgContextMock(),
+  // Faithful fix-1 mirror: leads actions are management-only; the tests
+  // configure owner/admin contexts, which pass through unchanged.
+  requireManagementRole: (ctx?: { membership?: { role?: string } }) => {
+    const role = ctx?.membership?.role ?? "owner";
+    if (role !== "owner" && role !== "admin") {
+      throw new Error("REDIRECT:/dashboard?error=forbidden");
+    }
+  },
 }));
 
 const createClientMock = vi.fn();

@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/paginate";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementApi } from "@/server/auth/session";
 import { QuotePdf, type QuotePdfInput } from "@/lib/pdf/quote-pdf";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 
@@ -21,7 +21,10 @@ export const runtime = "nodejs";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_request: NextRequest, { params }: Ctx) {
-  const { ctx } = await requireOrgContext();
+  // Management-only (first-customer fix 1): this surface carries money.
+  const guard = await requireManagementApi();
+  if (guard instanceof Response) return guard;
+  const { ctx } = guard;
   const { id } = await params;
   const supabase = await createClient();
 

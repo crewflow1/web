@@ -147,6 +147,14 @@ vi.mock("@/server/auth/session", () => ({
     },
     user: { id: "user-owner" },
   })),
+  // Faithful mirror of the real guard (first-customer fix 1): quote actions are
+  // management-only; a staff caller is redirected exactly like production.
+  requireManagementRole: (ctx?: { membership?: { role?: string } }) => {
+    const role = ctx?.membership?.role;
+    if (role !== "owner" && role !== "admin") {
+      redirectMock("/dashboard?error=forbidden");
+    }
+  },
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));

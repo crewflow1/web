@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
 import {
   FINANCE_CATEGORIES,
   FINANCE_VAT_RATES,
@@ -48,6 +48,8 @@ export default async function FinancesPage({
   searchParams: SP;
 }) {
   const { ctx } = await requireOrgContext();
+  // Costs/finances is owner/admin only (nav ADMIN_ROLES); enforce server-side.
+  requireManagementRole(ctx);
   const sp = await searchParams;
   const page = Math.max(parseInt(sp.page ?? "1", 10) || 1, 1);
   const offset = (page - 1) * PAGE_SIZE;

@@ -134,6 +134,9 @@ export default async function PortalInvoicesPage({
         )
         .eq("org_id", customer.org_id)
         .eq("customer_id", customer.id)
+        // A void invoice (20261219) is retracted — the customer must never see
+        // it as owed, be shown bank details for it, or be able to pay it.
+        .neq("status", "void" as never) // pre-regen bridge (20261219)
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to) as unknown as PromiseLike<{

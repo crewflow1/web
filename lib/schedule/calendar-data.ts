@@ -92,7 +92,10 @@ export async function fetchCalendarJobs({
       .from("jobs")
       .select(CALENDAR_JOB_SELECT)
       .eq("org_id", orgId);
+    // Cancelled jobs (20261220) are dead work — they never occupy the schedule
+    // by default. An explicit status filter (incl. "cancelled") still shows them.
     if (statusFilter) q = q.eq("status", statusFilter);
+    else q = q.neq("status", "cancelled");
     if (staffFilter) q = q.eq("assigned_to", staffFilter);
     return q;
   };

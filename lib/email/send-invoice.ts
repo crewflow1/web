@@ -31,7 +31,7 @@ import * as Sentry from "@sentry/nextjs";
 
 export type SendInvoiceEmailResult =
   | { sent: true; emailId: string; to: string; sent_at: string; new_status: string }
-  | { sent: false; reason: "no_resend_key" | "not_found" | "no_recipient" | "invalid_recipient" | "load_failed" | "send_failed"; detail?: string };
+  | { sent: false; reason: "no_resend_key" | "not_found" | "voided" | "no_recipient" | "invalid_recipient" | "load_failed" | "send_failed"; detail?: string };
 
 type InvoiceJoined = {
   id: string;
@@ -124,6 +124,11 @@ export async function sendInvoiceEmail(
     return { sent: false, reason: "load_failed", detail: "Couldn't load the invoice." };
   }
   if (!invoice) return { sent: false, reason: "not_found" };
+  if (invoice.status === "void") {
+    // A void invoice (20261219) is retracted — emailing it (initial OR
+    // reminder) would tell the customer to pay a debt that no longer exists.
+    return { sent: false, reason: "voided", detail: "This invoice was voided." };
+  }
 
   // Recipient resolves via the invoice's OWN customer first (Issue #349 Phase
   // 1), so a sent invoice whose quote was later deleted is still emailable; the

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementApi } from "@/server/auth/session";
 import { computeLeadInsights } from "@/lib/ai/aggregates";
 import { resolveInsightNarrative } from "@/server/services/ai-insights";
 
@@ -21,7 +21,10 @@ import { resolveInsightNarrative } from "@/server/services/ai-insights";
  */
 
 export async function GET(request: NextRequest) {
-  const { ctx } = await requireOrgContext();
+  // Sales-area insight data — management-only (fix 1).
+  const guard = await requireManagementApi();
+  if (guard instanceof Response) return guard;
+  const { ctx } = guard;
   const url = request.nextUrl;
   const rawWindow = parseInt(url.searchParams.get("window") ?? "30", 10);
   const windowDays = Math.max(1, Math.min(Number.isFinite(rawWindow) ? rawWindow : 30, 365));

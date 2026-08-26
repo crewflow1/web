@@ -741,7 +741,12 @@ export async function gatherCvrRollup(
     // time-tracked labour PLUS employer on-costs, from the shared builder above.
     const profit = computeJobProfitability(
       jobId,
-      jobInvoices.map((i) => ({ job_id: sv(i.job_id), amount: mv(i.amount) })),
+      jobInvoices.map((i) => ({
+        job_id: sv(i.job_id),
+        amount: mv(i.amount),
+        // Carry status so computeJobProfitability excludes void (20261219).
+        status: String(i.status ?? ""),
+      })),
       costRowsByJob.get(jobId) ?? [],
     );
 

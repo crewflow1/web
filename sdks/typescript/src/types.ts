@@ -219,7 +219,7 @@ export interface LeadWriteInput {
 }
 
 export interface JobWriteInput {
-  status?: "new" | "in-progress" | "completed" | "blocked";
+  status?: "new" | "in-progress" | "completed" | "blocked" | "cancelled";
   scheduled_date?: string;
   customer_id?: string;
   notes?: string;
@@ -233,7 +233,7 @@ export interface JobWriteInput {
 
 /** At least one field must be provided. Omitted fields are left unchanged. */
 export interface JobUpdateInput {
-  status?: "new" | "in-progress" | "completed" | "blocked";
+  status?: "new" | "in-progress" | "completed" | "blocked" | "cancelled";
   scheduled_date?: string;
   customer_id?: string;
   notes?: string;

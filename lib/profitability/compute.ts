@@ -108,7 +108,23 @@ export type JobProfitability = {
   band: MarginBand;
 };
 
-type InvoiceRow = { job_id: string | null; amount: number | string | null };
+type InvoiceRow = {
+  job_id: string | null;
+  amount: number | string | null;
+  /**
+   * Optional: when the feeder selects it, a `void` invoice (20261219 — the
+   * operational correction state) is excluded from revenue here as well.
+   * Feeders pass `status` through so this filter bites (the portal list and
+   * accounting export additionally filter at the query); a voided £50k mistake
+   * must never linger as phantom job revenue.
+   */
+  status?: string | null;
+};
+
+/** A voided invoice is not revenue on any profit surface. */
+function isRevenueRow(inv: { status?: string | null }): boolean {
+  return inv.status !== "void";
+}
 type FinanceRow = {
   job_id: string | null;
   amount: number | string | null;
@@ -161,7 +177,7 @@ export function computeJobProfitability(
 ): JobProfitability | null {
   let revenue = 0;
   for (const inv of invoices) {
-    if (inv.job_id === jobId) revenue += Number(inv.amount ?? 0);
+    if (inv.job_id === jobId && isRevenueRow(inv)) revenue += Number(inv.amount ?? 0);
   }
   const buckets: Record<CostBucket, number> = {
     labour: 0,
@@ -245,7 +261,13 @@ export type MonthBucket = {
 };
 
 export function profitByMonth(
-  invoices: Array<{ amount: number | string | null; created_at?: string | null; paid_at?: string | null }>,
+  invoices: Array<{
+    amount: number | string | null;
+    created_at?: string | null;
+    paid_at?: string | null;
+    /** When present, `void` rows (20261219) are excluded from revenue. */
+    status?: string | null;
+  }>,
   finances: Array<{ amount: number | string | null; created_at?: string | null }>,
   months: number,
   /** Use 'paid_at' to count revenue only when paid; 'created_at' to count when issued. */
@@ -270,7 +292,7 @@ export function profitByMonth(
     const key = dateStr.slice(0, 7);
     if (!earliestKey || key < earliestKey) continue;
     const bucket = buckets.get(key);
-    if (bucket) bucket.revenue += Number(inv.amount ?? 0);
+    if (bucket && isRevenueRow(inv)) bucket.revenue += Number(inv.amount ?? 0);
   }
   for (const f of finances) {
     if (!f.created_at) continue;
@@ -285,7 +307,12 @@ export function profitByMonth(
 
 /** Sum of profit across the data set (for a "Total profit, month" tile). */
 export function totalProfitThisMonth(
-  invoices: Array<{ amount: number | string | null; created_at?: string | null }>,
+  invoices: Array<{
+    amount: number | string | null;
+    created_at?: string | null;
+    /** When present, `void` rows (20261219) are excluded from revenue. */
+    status?: string | null;
+  }>,
   finances: Array<{ amount: number | string | null; created_at?: string | null }>,
   now: Date = new Date(),
 ): number {
@@ -293,7 +320,7 @@ export function totalProfitThisMonth(
   let rev = 0;
   let cost = 0;
   for (const inv of invoices) {
-    if (inv.created_at && inv.created_at.slice(0, 7) === monthKey) {
+    if (inv.created_at && inv.created_at.slice(0, 7) === monthKey && isRevenueRow(inv)) {
       rev += Number(inv.amount ?? 0);
     }
   }

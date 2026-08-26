@@ -146,7 +146,9 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
         .select("id, status, scheduled_date, customer:customers ( name )")
         .eq("org_id", ctx.org.id)
         .or(`assigned_to.eq.${user.id},assigned_to.is.null`)
-        .neq("status", "completed")
+        // Active work only: completed is done, cancelled (20261220) is dead —
+        // a field worker's "My jobs" must never point them at a cancelled site.
+        .not("status", "in", "(completed,cancelled)")
         .order("scheduled_date", { ascending: true })
         .limit(20),
       // PAGED (F-1): drives this month's hours + the shift-history list — a
