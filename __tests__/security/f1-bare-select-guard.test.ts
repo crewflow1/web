@@ -316,8 +316,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE job's retention releases (.eq('job_id').eq('org_id')) — feeds the committed/forecast retention figure for a single job; retention is released in 1-2 tranches per job, never near 1000. (Org-pinned per C66-A's cross-org money-injection fix. Moved to 186 in the security closeout when the staff-redirect guard was added to the top of the page.)",
   "app/(app)/jobs/[id]/commercial/page.tsx:191":
     "bounded: ONE job's purchase orders (.eq('job_id')) — feeds the committed-costs tile for a single job; a job has a handful to dozens of POs, never near 1000. (Moved to 191 in the security closeout when the staff-redirect guard was added above.)",
-  "app/(app)/jobs/[id]/page.tsx:336":
-    "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap. (Moved 315→317 when the P3 span column + checklist import were added above it; then 317→330 when the stock-COGS wave added an import line + the loadStockCogsCostRows composition block above it.)",
+  "app/(app)/jobs/[id]/page.tsx:337":
+    "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap. (Moved 315→317 when the P3 span column + checklist import were added above it; then 317→330 when the stock-COGS wave added an import line + the loadStockCogsCostRows composition block above it; then 330→337 when the G2 variation-request panel import was added above it.)",
   "app/(app)/jobs/retention-actions.ts:163":
     "bounded: ONE job's invoices (.eq('job_id')) — folded into the retention position for a single job; a job's invoices are a handful",
   "app/(app)/purchase-orders/[id]/page.tsx:161":
@@ -1357,6 +1357,12 @@ const COVERAGE_REVIEWED: Record<string, string> = {
     "CURATED CATALOGUE + PER-PARENT: the discovery read (app/(app)/marketplace/page.tsx) is the approved-app catalogue .eq('status','approved') — a small curated global set displayed for browse, not tenant data, not an aggregate/count/estate scan; the developer-console read (settings/marketplace/page.tsx) is .eq('partner_id') over ONE org's own listings (a handful). Neither is completeness-sensitive.",
   marketplace_installs:
     "PER-ORG config: the discovery read (app/(app)/marketplace/page.tsx) is the org's live installs .eq('org_id').eq('status','active') — config-scale (a firm installs a handful of apps), rendered as an installed-badge map; never summed or scanned cross-tenant.",
+  // ---- Variation-request intake (G2, 20261221) ----
+  // Reviewed 2026-08-29: no TS read of this table sums, counts or feeds a
+  // completeness-sensitive decision — state integrity lives in the DB trigger
+  // (tg_variation_requests_guard), and the convert stamp is an id-pinned UPDATE.
+  variation_requests:
+    "PER-PARENT recent-N displays only. The job-workspace panel (app/(app)/jobs/[id]/_variation-request-panel.tsx) reads ONE job's requests .eq('org_id').eq('job_id') newest-first .limit(PANEL_LIMIT+1) with an explicit '+' overflow indicator — a working-queue display, not an aggregate. The portal read-back (app/customer-portal/[token]/requests/_variation-requests.ts) is .eq('org_id').in('job_id', ids) where the id set comes from a fetchAllRows-paged org+customer-pinned jobs read, .limit(50) recent display. The variations/new prefill is .maybeSingle(); the convert stamp is an .update().eq(id/org/job/status) RETURNING. Nothing is summed cross-tenant.",
 };
 
 /** Tables with at least one SET read in ONE file's (raw) source — the per-source

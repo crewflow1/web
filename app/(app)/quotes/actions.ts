@@ -1575,9 +1575,66 @@ export async function createVariation(jobId: string, formData: FormData) {
     redirect(`/jobs/${jobId}?error=variation_line_items_failed`);
   }
 
+  // G2 convert hook: when this VO was raised FROM an accepted variation
+  // request (/jobs/[id]/variations/new?fromRequest=… plants the hidden field),
+  // stamp that request 'converted' with this quote's id — closing the
+  // intake → decision → priced-VO trail. Best-effort AND fail-closed on
+  // identity: the update is pinned to the active org + THIS job + status
+  // 'accepted' (the only status the DB trigger lets convert), so a forged or
+  // stale id no-ops rather than corrupting another request. A failure here
+  // never unwinds the VO — the request can be reconciled later; the money
+  // must not vanish because a bookkeeping stamp raced.
+  const variationRequestId = formData.get("variation_request_id");
+  if (
+    typeof variationRequestId === "string" &&
+    idSchema.safeParse(variationRequestId).success
+  ) {
+    await markVariationRequestConverted(supabase, {
+      requestId: variationRequestId,
+      orgId: ctx.org.id,
+      jobId,
+      quoteId: variation.id,
+    });
+  }
+
   revalidatePath(`/jobs/${jobId}`);
   revalidatePath(`/quotes/${variation.id}`);
   redirect(`/quotes/${variation.id}?saved=variation_created`);
+}
+
+/**
+ * Stamp a variation request 'converted' after its VO was created (G2).
+ *
+ * NOT exported (this is a "use server" module — exports must be actions) and
+ * never the enforcement: the DB trigger tg_variation_requests_guard is what
+ * actually guarantees only accepted→converted with a quote id. The
+ * `.eq("status", "accepted")` predicate makes the common non-accepted case a
+ * silent no-op instead of a trigger error, and `.eq("job_id", …)` refuses a
+ * request id borrowed from a different job.
+ */
+async function markVariationRequestConverted(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  input: { requestId: string; orgId: string; jobId: string; quoteId: string },
+): Promise<void> {
+  // variation_requests post-dates the generated types (snags idiom).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = supabase as unknown as { from: (t: string) => any };
+  const { data, error } = await db
+    .from("variation_requests")
+    .update({ status: "converted", variation_quote_id: input.quoteId })
+    .eq("id", input.requestId)
+    .eq("org_id", input.orgId)
+    .eq("job_id", input.jobId)
+    .eq("status", "accepted")
+    .select("id");
+  if (error) {
+    console.error("[variations] convert-stamp failed", error);
+  } else if (!data || data.length === 0) {
+    console.warn(
+      "[variations] convert-stamp matched no accepted request — request id stale or not accepted",
+      { requestId: input.requestId },
+    );
+  }
 }
 
 /**

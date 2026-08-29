@@ -22,6 +22,7 @@ import { JobProgressSection } from "./_job-progress";
 import { JobProgrammeSection } from "./_job-programme";
 import { JobChecklistSection } from "./_job-checklist";
 import { JobSnagsSection } from "./_job-snags";
+import { VariationRequestPanel } from "./_variation-request-panel";
 import { JobMaterialsSection } from "./_job-materials";
 import { SiteTimelineSection } from "./_site-timeline";
 import { JobDocumentsPanel } from "./_job-documents";
@@ -521,6 +522,8 @@ export default async function EditJobPage({
       saved === "retention_schedule" ||
       saved === "progress" ||
       saved === "programme" ||
+      saved === "variation_request" ||
+      saved === "variation_request_review" ||
       saved === "dependencies" ? (
         <div
           role="status"
@@ -534,9 +537,13 @@ export default async function EditJobPage({
                 ? "Progress update recorded."
                 : saved === "programme"
                   ? "Programme baseline recorded."
-                  : saved === "dependencies"
-                    ? "Milestone dependencies saved."
-                    : "Retention release recorded."}
+                  : saved === "variation_request"
+                    ? "Variation request logged."
+                    : saved === "variation_request_review"
+                      ? "Variation request updated."
+                      : saved === "dependencies"
+                        ? "Milestone dependencies saved."
+                        : "Retention release recorded."}
         </div>
       ) : null}
 
@@ -1000,6 +1007,14 @@ export default async function EditJobPage({
         jobId={job.id}
         orgId={ctx.membership.org_id}
         todayIso={todayIso}
+      />
+
+      {/* Variation-request intake + review (roadmap G2). Accepting routes into
+          the EXISTING variations/new flow — no second money engine. */}
+      <VariationRequestPanel
+        jobId={job.id}
+        orgId={ctx.membership.org_id}
+        isManagement={canViewPrivate}
       />
 
       <JobMaterialsSection

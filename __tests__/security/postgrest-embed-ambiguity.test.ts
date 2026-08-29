@@ -363,6 +363,15 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   "stocktake_sessions → users",
   "supplier_payments → users",
   "support_tickets → users",
+  // variation_requests (G2, 20261221000000): requested_by (the staff member who
+  // asked) + reviewed_by (the admin who decided) both → users. Reviewed
+  // 2026-08-29: the ONLY users(...) embed is the job-workspace panel
+  // (app/(app)/jobs/[id]/_variation-request-panel.tsx) and it carries the
+  // explicit hint users!variation_requests_requested_by_fkey; every other read
+  // (portal read-back, variations/new prefill, convert stamp) selects scalar
+  // columns only. Two FKs is inherent — who asked vs who decided is the intake
+  // audit trail. Any future embed must name its FK constraint (test 2 enforces).
+  "variation_requests → users",
   // worker_signoff_tokens (20261185000000): created_by (staff who issued the
   // link) + revoked_by (staff who revoked it) both → users. Reviewed
   // 2026-08-19: neither _data.ts reader nor the portal loader embeds users(...)
