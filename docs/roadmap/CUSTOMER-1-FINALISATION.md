@@ -39,7 +39,7 @@ Reviewer A found the fixed panel could go silently empty AGAIN under **limit-cro
 ## Reviews
 - **Reviewer A (My Day/field UX): SAFE TO DEPLOY** — condition (limit-crowding) applied pre-merge, see amendment.
 - **Reviewer B (security): SAFE TO DEPLOY** — no cross-worker/org/financial/comp exposure; Money boundary byte-identical to baseline; RLS tenant client confirmed.
-- **Reviewer C (disaster recovery):** (verdict recorded below)
+- **Reviewer C (disaster recovery): RECOVERY PARTIALLY PROVEN (schema/controls/app) — data-restore pending owner actions.** Independently re-verified PITR:false + WAL health + drill-DB tip. Accepted the drill as honest (rebuild-from-source, correctly not oversold; no invented SLA). Downgraded one number: **RPO ≤24 h is dashboard-unconfirmed** (plan tier + visible daily backups must be eyeballed — the Aug-25 pause pattern is characteristic of a tier without daily backups). Minimum owner actions to reach RECOVERY PROVEN: (1) dashboard check of tier+backup list, (2) enable PITR, (3) obtain SUPABASE_DB_PASSWORD + one off-platform dump, (4) one rehearsed data restore on a scratch/fork with measured RTO. Runbook amended accordingly (RPO wording + maintenance-cutover link).
 
 ## CI / Release
 (recorded below)
