@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
@@ -50,8 +51,10 @@ interface ApprovalQuery<T> extends DbList<T> {
   eq(column: string, value: unknown): ApprovalQuery<T>;
   in(column: string, values: ReadonlyArray<unknown>): ApprovalQuery<T>;
   lt(column: string, value: unknown): ApprovalQuery<T>;
+  gte(column: string, value: unknown): ApprovalQuery<T>;
   order(column: string, options?: { ascending?: boolean }): ApprovalQuery<T>;
   limit(count: number): ApprovalQuery<T>;
+  range(from: number, to: number): ApprovalQuery<T>;
   maybeSingle(): PromiseLike<{ data: T | null; error: { message: string } | null }>;
 }
 
@@ -172,6 +175,76 @@ export type RequestApprovalInput = {
  * point — an employee runner calls this to submit work for review. The INSERT
  * trigger emits `approval.requested` in the same transaction.
  */
+/**
+ * Per-employee count of approvals REQUESTED in [startIso, endIso) — the
+ * sanctioned aggregation door for KPI rollups. Lives here because this module
+ * is the ONLY code allowed to touch hq_approvals (single-module pin,
+ * __tests__/security/hq-approval-console.test.ts). F-1 COMPLETE: paged via
+ * fetchAllRows, never a capped sample — an approvals KPI that silently
+ * dropped rows past a limit would under-report exactly the employees that
+ * escalate most. Loud on failure: a KPI must never render zero over a broken
+ * read.
+ */
+export async function countApprovalsRequestedByEmployee(
+  startIso: string,
+  endIso: string,
+): Promise<Map<string, number>> {
+  const admin = createAdminClient();
+  const { data, error } = await fetchAllRows<{ ai_employee_id: string }>(
+    (from, to) =>
+      approvals<{ ai_employee_id: string }>(admin)
+        .select("ai_employee_id")
+        .gte("requested_at", startIso)
+        .lt("requested_at", endIso)
+        .order("requested_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: { ai_employee_id: string }[] | null;
+        error: unknown;
+      }>,
+  );
+  if (error) throw readFailure("hq-approvals: kpi count window", error);
+  const counts = new Map<string, number>();
+  for (const row of data) {
+    counts.set(row.ai_employee_id, (counts.get(row.ai_employee_id) ?? 0) + 1);
+  }
+  return counts;
+}
+
+export type EmployeeFeedApprovalRow = {
+  id: string;
+  subject_type: string;
+  action: string;
+  state: string;
+  reviewer_email: string | null;
+  decision_reason: string | null;
+  requested_at: string;
+  decided_at: string | null;
+};
+
+/**
+ * Recent approvals raised BY one AI employee, newest first — the sanctioned
+ * door for the boardroom interaction feed (single-module pin: no other module
+ * may touch hq_approvals directly). Returns the raw { data, error } shape so
+ * the feed can keep its degrade-one-source-with-a-loud-log semantics: the feed
+ * is a display surface, and two honest streams beat zero.
+ */
+export async function listRecentApprovalsByEmployee(
+  employeeId: string,
+  limit: number,
+): Promise<{ data: EmployeeFeedApprovalRow[] | null; error: { message: string } | null }> {
+  const admin = createAdminClient();
+  return approvals<EmployeeFeedApprovalRow>(admin)
+    .select(
+      "id, subject_type, action, state, reviewer_email, decision_reason, requested_at, decided_at",
+    )
+    .eq("ai_employee_id", employeeId)
+    .order("requested_at", { ascending: false })
+    // Honest bounded sample (a recent-activity feed, not an aggregate); the
+    // clamp keeps the bound statically provable <= 1000.
+    .limit(Math.min(limit, 1000));
+}
+
 export async function requestApproval(input: RequestApprovalInput): Promise<ApprovalResult> {
   const subjectType = input.subjectType?.trim();
   const subjectId = input.subjectId?.trim();

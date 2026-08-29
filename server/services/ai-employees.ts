@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listAdminActivity, type AdminActivityRow } from "@/server/services/hq-audit";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { listRecentApprovalsByEmployee } from "@/server/services/hq-approvals";
 import {
   type AiEmployee,
   type AiEmployeeTask,
@@ -216,14 +217,9 @@ export async function getEmployeeInteractionFeed(
       .eq("assigned_employee_id", employeeId)
       .order("created_at", { ascending: false })
       .limit(FEED_SOURCE_LIMIT),
-    admin
-      .from("hq_approvals" as never)
-      .select(
-        "id, subject_type, action, state, reviewer_email, decision_reason, requested_at, decided_at",
-      )
-      .eq("ai_employee_id", employeeId)
-      .order("requested_at", { ascending: false })
-      .limit(FEED_SOURCE_LIMIT),
+    // Approvals go through the sanctioned hq-approvals door (single-module pin)
+    // rather than a direct hq_approvals read.
+    listRecentApprovalsByEmployee(employeeId, FEED_SOURCE_LIMIT),
     listAdminActivity("ai_employees", employeeId, FEED_SOURCE_LIMIT),
   ]);
 

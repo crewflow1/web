@@ -1134,6 +1134,16 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   staff_compensation:
     "id-batch: every set-read is .in('user_id', memberIds) from an org-pinned memberships read (bounded by headcount); single-row reads use .maybeSingle()",
   // ---- PAGED (always fetchAllRows) ----
+  // Final-roadmap Wave 2 — per-employee KPI window reads (verified 2026-08-29):
+  // ai_invocations has exactly ONE set-read (server/services/ai-employee-stats.ts
+  // ::getEmployeeKpis cost window) and it is fetchAllRows-PAGED over a closed
+  // one-month window (.gte/.lt created_at, stable created_at+id ordering) with a
+  // LOUD readFailure throw — never a clamped sample, never a silent zero.
+  ai_invocations:
+    "PAGED: fetchAllRows over the closed UK-month window (ai-employee-stats KPI cost read); loud readFailure on error",
+  // (hq_approvals has NO entry here: its only reads live inside the sanctioned
+  // server/services/hq-approvals.ts module — the hq-approval-console pin — via
+  // the typed approvals<T>() door, so the scanner finds no bare set-read.)
   // MP Wave R4 — comms outbound-audit view (server/services/outbound-audit.ts):
   // each source read is org-pinned (.eq('org_id')) and F-1 PAGED via fetchAllRows.
   comm_events: "PAGED: fetchAllRows, org-pinned (outbound-audit unified view)",

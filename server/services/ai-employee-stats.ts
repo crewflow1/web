@@ -1,5 +1,8 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows } from "@/lib/supabase/paginate";
+import { readFailure } from "@/lib/supabase/read-failure";
+import { countApprovalsRequestedByEmployee } from "@/server/services/hq-approvals";
 import { ukMonthKeyOf, ukMonthWindow } from "@/lib/ai/governor/policy";
 import {
   computeEmployeeStats,
@@ -114,8 +117,6 @@ export function statsForEmployee(
 // and a failed upsert degrades to display-only with a loud log.
 // ---------------------------------------------------------------------
 
-const KPI_READ_LIMIT = 1000; // bounded sample; PostgREST clamps to max_rows=1000
-
 export type EmployeeKpis = {
   /** First day of the UK budget month this row describes (YYYY-MM-01). */
   periodStart: string;
@@ -142,10 +143,9 @@ function emptyKpis(periodStart: string): EmployeeKpis {
 /**
  * Compute the current UK-month KPIs for the roster, upsert them into
  * `ai_employee_kpis`, and return them keyed by employee SLUG (the KPI table's
- * own key). Three bounded reads regardless of roster size, mirroring
- * `getAiWorkforceStats`. Read failures degrade that source to zero with a loud
- * log — a wrong dashboard figure is the only cost, and no spend decision hangs
- * on this path.
+ * own key). Three PAGED-COMPLETE reads over the month window (fetchAllRows) —
+ * KPI aggregates must never be silently clamped samples — and read failures
+ * are LOUD (readFailure): a zeroed KPI over a broken read is fabricated health.
  */
 export async function getEmployeeKpis(
   employees: ReadonlyArray<{ id: string; slug: string }>,
@@ -165,59 +165,61 @@ export async function getEmployeeKpis(
   if (byId.size === 0) return new Map();
 
   const admin = createAdminClient();
-  const [taskRes, approvalRes, costRes] = await Promise.all([
-    admin
-      .from("hq_ai_tasks" as never)
-      .select("assigned_employee_id, status")
-      .not("assigned_employee_id", "is", null)
-      .in("status", ["completed", "failed"])
-      .gte("created_at", startIso)
-      .lt("created_at", endIso)
-      .limit(KPI_READ_LIMIT),
-    admin
-      .from("hq_approvals" as never)
-      .select("ai_employee_id")
-      .gte("requested_at", startIso)
-      .lt("requested_at", endIso)
-      .limit(KPI_READ_LIMIT),
-    admin
-      .from("ai_invocations" as never)
-      .select("ai_employee_id, estimated_cost_pence")
-      .not("ai_employee_id", "is", null)
-      .gte("created_at", startIso)
-      .lt("created_at", endIso)
-      .limit(KPI_READ_LIMIT),
+  // F-1 COMPLETE + LOUD: all three sources are paged to the full month window
+  // (fetchAllRows) and THROW on failure — a KPI that silently rendered zero
+  // over a broken read would be exactly the fabricated-health pattern the
+  // loud-read doctrine forbids. Approvals go through the sanctioned
+  // hq-approvals door (single-module pin) rather than a direct table read.
+  type TaskRow = { assigned_employee_id: string; status: string };
+  type CostRow = { ai_employee_id: string; estimated_cost_pence: number };
+  const [taskRes, approvalCounts, costRes] = await Promise.all([
+    fetchAllRows<TaskRow>(
+      (from, to) =>
+        admin
+          .from("hq_ai_tasks" as never)
+          .select("assigned_employee_id, status")
+          .not("assigned_employee_id", "is", null)
+          .in("status", ["completed", "failed"])
+          .gte("created_at", startIso)
+          .lt("created_at", endIso)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to) as unknown as PromiseLike<{
+          data: TaskRow[] | null;
+          error: unknown;
+        }>,
+    ),
+    countApprovalsRequestedByEmployee(startIso, endIso),
+    fetchAllRows<CostRow>(
+      (from, to) =>
+        admin
+          .from("ai_invocations" as never)
+          .select("ai_employee_id, estimated_cost_pence")
+          .not("ai_employee_id", "is", null)
+          .gte("created_at", startIso)
+          .lt("created_at", endIso)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to) as unknown as PromiseLike<{
+          data: CostRow[] | null;
+          error: unknown;
+        }>,
+    ),
   ]);
+  if (taskRes.error) throw readFailure("ai-employee-stats: kpi tasks window", taskRes.error);
+  if (costRes.error) throw readFailure("ai-employee-stats: kpi cost window", costRes.error);
 
-  if (taskRes.error) {
-    console.error("[ai-employee-stats] kpi task read failed", taskRes.error);
-  }
-  if (approvalRes.error) {
-    console.error("[ai-employee-stats] kpi approval read failed", approvalRes.error);
-  }
-  if (costRes.error) {
-    console.error("[ai-employee-stats] kpi cost read failed", costRes.error);
-  }
-
-  for (const row of (taskRes.data ?? []) as unknown as Array<{
-    assigned_employee_id: string;
-    status: string;
-  }>) {
+  for (const row of taskRes.data) {
     const k = byId.get(row.assigned_employee_id);
     if (!k) continue;
     if (row.status === "completed") k.tasksCompleted += 1;
     else if (row.status === "failed") k.tasksFailed += 1;
   }
-  for (const row of (approvalRes.data ?? []) as unknown as Array<{
-    ai_employee_id: string;
-  }>) {
-    const k = byId.get(row.ai_employee_id);
-    if (k) k.approvalsRequested += 1;
+  for (const [employeeId, count] of approvalCounts) {
+    const k = byId.get(employeeId);
+    if (k) k.approvalsRequested += count;
   }
-  for (const row of (costRes.data ?? []) as unknown as Array<{
-    ai_employee_id: string;
-    estimated_cost_pence: number;
-  }>) {
+  for (const row of costRes.data) {
     const k = byId.get(row.ai_employee_id);
     if (k) k.costPence += Math.max(0, Math.round(row.estimated_cost_pence || 0));
   }

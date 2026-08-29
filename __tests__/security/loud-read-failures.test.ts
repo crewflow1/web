@@ -484,7 +484,12 @@ const RATCHET: Array<{
     // `error` — a transient storage hiccup hides ONE "View" link, never blanks
     // the file list (listCustomerFiles is loud + F-1 paged). Identical best-effort
     // shape to getPaymentProofSignedUrl. See docs/loud-read-failures.md (C ledger).
-    discard: 14,
+    // 14 → 15 (final-roadmap Wave 2, AI-employee contract): app/admin/ai-boardroom/
+    // actions.ts::retireAiEmployee handles its update error with console.error +
+    // redirect-back-with-error-banner — the SAME handled shape as the sibling
+    // action at :122 (the user SEES the failure; nothing renders as healthy-empty).
+    // A handled admin-action error path, ledgered not silenced.
+    discard: 15,
     softData: 10,
     countOnly: 0,
   },
