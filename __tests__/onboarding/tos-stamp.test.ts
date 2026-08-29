@@ -58,11 +58,16 @@ describe("migration 20261223000000 — org-level columns + honest backfill", () 
   });
 
   it("backfills existing orgs honestly: created_at + 'legacy', never a version claim", () => {
-    expect(MIGRATION).toMatch(/set tos_accepted_at = created_at/);
+    expect(MIGRATION).toMatch(/set tos_accepted_at = o\.created_at/);
     expect(MIGRATION).toMatch(/tos_version = 'legacy'/);
-    expect(MIGRATION).toMatch(/where tos_accepted_at is null/);
+    expect(MIGRATION).toMatch(/where o\.tos_accepted_at is null/);
     // The backfill must NOT fabricate who clicked.
     expect(MIGRATION).not.toMatch(/set[\s\S]{0,120}tos_accepted_by =/);
+    // …and must NOT stamp memberless shells (a bare HQ-seeded org has nobody
+    // who could have accepted anything — its honest state stays NULL / "—").
+    expect(MIGRATION).toMatch(
+      /exists \(select 1 from public\.memberships m where m\.org_id = o\.id\)/,
+    );
   });
 });
 

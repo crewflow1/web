@@ -139,7 +139,7 @@ describe("design_review handler — dark seam wiring", () => {
   it("completes deterministically with a NULL critique while the seam is dark", async () => {
     generateDepartmentDraftMock.mockResolvedValue(null);
     const { designReviewHandler } = await import("@/server/services/hq-design-runner");
-    const result = (await designReviewHandler({} as never)) as Record<string, unknown>;
+    const result = (await designReviewHandler({ identity: { employeeId: "emp-test-1", slug: "test-ai" } } as never)) as Record<string, unknown>;
 
     expect(result.kind).toBe("design_review");
     expect(result.generativeCritique).toBeNull();
@@ -153,7 +153,7 @@ describe("design_review handler — dark seam wiring", () => {
   it("attaches the governed critique when the seam yields one (armed future)", async () => {
     generateDepartmentDraftMock.mockResolvedValue("A grounded critique.");
     const { designReviewHandler } = await import("@/server/services/hq-design-runner");
-    const result = (await designReviewHandler({} as never)) as Record<string, unknown>;
+    const result = (await designReviewHandler({ identity: { employeeId: "emp-test-1", slug: "test-ai" } } as never)) as Record<string, unknown>;
     expect(result.generativeCritique).toBe("A grounded critique.");
     expect(String(result.generativeNote)).toContain("unreviewed draft");
   });

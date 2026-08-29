@@ -165,8 +165,8 @@ export async function getEmployeeKpis(
   if (byId.size === 0) return new Map();
 
   const admin = createAdminClient();
-  // F-1 COMPLETE + LOUD: all three sources are paged to the full month window
-  // (fetchAllRows) and THROW on failure — a KPI that silently rendered zero
+  // F-1 COMPLETE + LOUD, roster-bounded: all three sources are paged to the
+  // full month window, filtered to the requested roster ids, and THROW on failure — a KPI that silently rendered zero
   // over a broken read would be exactly the fabricated-health pattern the
   // loud-read doctrine forbids. Approvals go through the sanctioned
   // hq-approvals door (single-module pin) rather than a direct table read.
@@ -178,7 +178,7 @@ export async function getEmployeeKpis(
         admin
           .from("hq_ai_tasks" as never)
           .select("assigned_employee_id, status")
-          .not("assigned_employee_id", "is", null)
+          .in("assigned_employee_id", [...byId.keys()])
           .in("status", ["completed", "failed"])
           .gte("created_at", startIso)
           .lt("created_at", endIso)
@@ -195,7 +195,7 @@ export async function getEmployeeKpis(
         admin
           .from("ai_invocations" as never)
           .select("ai_employee_id, estimated_cost_pence")
-          .not("ai_employee_id", "is", null)
+          .in("ai_employee_id", [...byId.keys()])
           .gte("created_at", startIso)
           .lt("created_at", endIso)
           .order("created_at", { ascending: true })

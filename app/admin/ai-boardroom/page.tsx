@@ -81,14 +81,18 @@ export default async function AiBoardroomPage({
   ]);
   // The explicit 1–5 approval level per employee, derived from the served posture the Capability
   // Registry resolves (deterministic classification — no new authority; see approval-levels.ts).
-  const approvalLevels = await resolveApprovalLevelsByEmployeeId(employees);
-  // Current UK-month KPIs per employee (tasks/cost/failure-rate) — honest
-  // derived figures from hq_ai_tasks + hq_approvals + the attributed AI cost
-  // ledger; this read path also PERSISTS the period row (compute-on-read
-  // upsert into ai_employee_kpis).
-  const kpis = await getEmployeeKpis(
-    employees.map((e) => ({ id: e.id, slug: e.slug })),
-  );
+  // Both batches depend only on `employees`, so they overlap on the wire —
+  // approval-levels fan-out and the KPI month-window scan each cost a full
+  // Vercel↔Supabase hop, and serializing them doubled the roster page's
+  // data latency for no ordering benefit.
+  const [approvalLevels, kpis] = await Promise.all([
+    resolveApprovalLevelsByEmployeeId(employees),
+    // Current UK-month KPIs per employee (tasks/cost/failure-rate) — honest
+    // derived figures from hq_ai_tasks + hq_approvals + the attributed AI cost
+    // ledger; this read path also PERSISTS the period row (compute-on-read
+    // upsert into ai_employee_kpis).
+    getEmployeeKpis(employees.map((e) => ({ id: e.id, slug: e.slug }))),
+  ]);
   // slug → display name, for the "Reports to" line on each card.
   const nameBySlug = new Map(employees.map((e) => [e.slug, e.name] as const));
 

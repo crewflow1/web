@@ -193,7 +193,7 @@ describe("C. release_notes_draft handler — dark seam wiring", () => {
     const { releaseNotesHandler } = await import(
       "@/server/services/hq-documentation-runner"
     );
-    const result = (await releaseNotesHandler({} as never)) as Record<string, unknown>;
+    const result = (await releaseNotesHandler({ identity: { employeeId: "emp-test-1", slug: "test-ai" } } as never)) as Record<string, unknown>;
 
     expect(result.kind).toBe("release_notes_draft");
     expect(result.insufficient).toBe(false);
@@ -215,7 +215,7 @@ describe("C. release_notes_draft handler — dark seam wiring", () => {
     const { releaseNotesHandler } = await import(
       "@/server/services/hq-documentation-runner"
     );
-    const result = (await releaseNotesHandler({} as never)) as Record<string, unknown>;
+    const result = (await releaseNotesHandler({ identity: { employeeId: "emp-test-1", slug: "test-ai" } } as never)) as Record<string, unknown>;
     expect(result.generativeProse).toBe("Release prose.");
     expect(String(result.generativeNote)).toContain("unreviewed draft");
   });

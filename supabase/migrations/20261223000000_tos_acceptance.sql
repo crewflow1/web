@@ -31,6 +31,10 @@
 -- created_at as the acceptance time and version 'legacy' so nobody can
 -- mistake a backfilled row for a recorded click on a specific version.
 -- tos_accepted_by stays NULL for them (we genuinely don't know).
+-- SCOPE: only orgs with at least one membership — an org with NO members
+-- (a bare seeded shell) has nobody who could have accepted anything, so
+-- stamping it would fabricate the very fact the header promises can stay
+-- honestly NULL ("—" on the HQ customer page).
 -- =====================================================================
 
 alter table public.organizations
@@ -54,8 +58,10 @@ comment on column public.organizations.tos_version is
   '"accepted under whatever terms were live at signup", never a claim '
   'about a specific version.';
 
--- Backfill existing orgs (idempotent: only rows never stamped).
-update public.organizations
-set tos_accepted_at = created_at,
+-- Backfill existing orgs (idempotent: only rows never stamped; membered
+-- orgs only — see SCOPE above).
+update public.organizations o
+set tos_accepted_at = o.created_at,
     tos_version = 'legacy'
-where tos_accepted_at is null;
+where o.tos_accepted_at is null
+  and exists (select 1 from public.memberships m where m.org_id = o.id);

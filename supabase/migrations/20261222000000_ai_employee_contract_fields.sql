@@ -127,6 +127,19 @@ language plpgsql
 set search_path = ''
 as $$
 begin
+  if tg_op = 'INSERT' then
+    -- A row cannot be BORN retired: the only admitted entry is disabled →
+    -- retired through an UPDATE (mirrors tg_jobs_cancel_guard / the
+    -- variation-requests guard, which both close their INSERT arms). Without
+    -- this, one seed statement could create an immediately-immutable,
+    -- undeletable row that never passed through the lifecycle.
+    if new.status = 'retired' or new.retired_at is not null then
+      raise exception 'ai_employees: % cannot be created retired — retire an existing disabled row instead.', new.slug
+        using errcode = 'check_violation';
+    end if;
+    return new;
+  end if;
+
   if tg_op = 'DELETE' then
     if old.status = 'retired' then
       raise exception 'ai_employees: a retired employee is a permanent record and cannot be deleted (%).', old.slug
@@ -137,6 +150,18 @@ begin
 
   -- UPDATE paths.
   if old.status = 'retired' then
+    -- ONE admitted exception: the manager_slug FK is ON DELETE SET NULL, and
+    -- that cascade is an UPDATE on this row. Refusing it would make ANY
+    -- employee with a retired report undeletable (the FK's internal UPDATE
+    -- trips this trigger — the same mechanics the ai_invocations ledger
+    -- documents above). A retired row losing its manager link when the
+    -- manager row goes is historical truth, not mutation; every other column
+    -- must be byte-identical.
+    if new.manager_slug is null
+       and old.manager_slug is not null
+       and (to_jsonb(new) - 'manager_slug') = (to_jsonb(old) - 'manager_slug') then
+      return new;
+    end if;
     raise exception 'ai_employees: % is retired — retirement is terminal; no update is admitted.', old.slug
       using errcode = 'check_violation';
   end if;
@@ -157,7 +182,7 @@ end $$;
 
 drop trigger if exists ai_employees_retirement on public.ai_employees;
 create trigger ai_employees_retirement
-  before update or delete on public.ai_employees
+  before insert or update or delete on public.ai_employees
   for each row execute function public.tg_ai_employees_retirement();
 
 -- ═══════════════════════════════════════════════════════════════════════════

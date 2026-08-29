@@ -83,12 +83,12 @@ const designHandler: TaskHandler = async () => {
  * today) the seam returns null and the artifact's generativeNote says so — the
  * run is byte-identical to a purely deterministic one.
  */
-const designReviewHandler: TaskHandler = async () => {
+const designReviewHandler: TaskHandler = async (ctx) => {
   const { employees } = await readReviewSignals();
   const review = summariseDesignReview(employees, new Date());
   const generativeCritique = review.insufficient
     ? null
-    : await generateDepartmentDraft("hq.design_review", review);
+    : await generateDepartmentDraft("hq.design_review", review, { aiEmployeeId: ctx.identity.employeeId });
   if (generativeCritique != null) {
     return {
       ...review,

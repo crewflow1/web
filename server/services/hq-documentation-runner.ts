@@ -182,13 +182,13 @@ async function readReleaseWindow(now: Date): Promise<{
  * (always, today) the seam returns null and the artifact's generativeNote says
  * so; the composed sections stand alone.
  */
-const releaseNotesHandler: TaskHandler = async () => {
+const releaseNotesHandler: TaskHandler = async (ctx) => {
   const now = new Date();
   const { activity, events, decisions } = await readReleaseWindow(now);
   const notes = composeReleaseNotes(activity, events, decisions, RELEASE_WINDOW_DAYS, now);
   const generativeProse = notes.insufficient
     ? null
-    : await generateDepartmentDraft("hq.doc_draft", notes);
+    : await generateDepartmentDraft("hq.doc_draft", notes, { aiEmployeeId: ctx.identity.employeeId });
   if (generativeProse != null) {
     return {
       ...notes,

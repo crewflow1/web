@@ -32,8 +32,11 @@
 -- server/services/tenant-attachments.ts is widened in the same PR; the
 -- attachment-target drift test pins the two together).
 --
--- Reversible: drop table public.variation_requests, drop the two functions,
--- and narrow the tenant_attachments CHECK. No existing row is mutated.
+-- Reversible: drop table public.variation_requests, drop function
+-- public.tg_variation_requests_guard (the ONLY function this migration
+-- creates — tg_set_updated_at is SHARED infrastructure from 20260515150000;
+-- never drop it), and narrow the tenant_attachments CHECK. No existing row
+-- is mutated.
 
 create table if not exists public.variation_requests (
   id              uuid primary key default gen_random_uuid(),

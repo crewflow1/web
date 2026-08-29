@@ -56,7 +56,19 @@ export default async function WorkerPortalPage({
   );
 
   const outstanding = materials.filter((m) => !m.acknowledged).length;
-  const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
+  // Error CODES only, rendered through an exact-match allowlist — the same
+  // posture the customer-portal requests page takes. Arbitrary query-string
+  // text must never render inside this branded page (a crafted link could
+  // otherwise plant attacker-authored copy on a surface workers trust).
+  const WORKER_ERROR_COPY: Record<string, string> = {
+    rate_limited: "Too many attempts. Please wait a minute and try again.",
+    invalid_input: "Check the form and try again.",
+    signoff_failed: "Could not record your sign-off — please try again.",
+    request_failed: "Could not send your request — please try again.",
+  };
+  const errorMessage = sp.error
+    ? WORKER_ERROR_COPY[sp.error] ?? "Something went wrong — please try again."
+    : null;
   const justSigned = sp.saved === "signed";
   const justRequested = sp.saved === "variation_requested";
 

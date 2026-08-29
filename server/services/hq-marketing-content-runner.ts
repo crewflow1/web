@@ -99,7 +99,7 @@ function seoInventory(): ContentBriefInput["seoInventory"] {
   };
 }
 
-const marketingContentHandler: TaskHandler = async () => {
+const marketingContentHandler: TaskHandler = async (ctx) => {
   const leads = await readLeanDemoRows();
   const brief: ContentBriefResult = computeContentBrief(
     { leads, seoInventory: seoInventory() },
@@ -110,7 +110,7 @@ const marketingContentHandler: TaskHandler = async () => {
   // A refusal or dark tier changes NOTHING about the deterministic brief.
   const generativeDraft = brief.insufficient
     ? null
-    : await generateDepartmentDraft("hq.marketing_draft", brief);
+    : await generateDepartmentDraft("hq.marketing_draft", brief, { aiEmployeeId: ctx.identity.employeeId });
   if (generativeDraft != null) {
     return {
       ...brief,

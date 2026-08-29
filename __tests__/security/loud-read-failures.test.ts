@@ -603,7 +603,13 @@ const RATCHET: Array<{
     // `?? []` on a read error. Genuinely best-effort: a miss skips that push batch,
     // which is retried via push_deliveries.retry_count/scheduled_for — never a silent
     // blank of a completeness-sensitive tenant view. See docs/loud-read-failures.md.
-    softData: 48,
+    // 48 → 47 (final-roadmap review fix): server/services/ops-snapshot.ts's 7-day
+    // cron_runs window was a bare read consumed as `.data ?? []` — AND silently
+    // clamped to PostgREST's 1000-row cap, so 45-route rolling stats were computed
+    // over roughly the newest day. Now fetchAllRows-paged over the full window and
+    // THROWN as readFailure. One soft-data shape retired; baseline lowered so the
+    // next regression has nowhere to hide.
+    softData: 47,
     // 4 → 5: server/services/hq-outreach.ts `countOutreach` is a head:true count read
     // for the CEO metrics tile, mirroring countResearch/countQualification — an honest
     // zero when nothing has run yet is the correct reassuring answer here.

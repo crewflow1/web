@@ -40,7 +40,7 @@ export async function acknowledgeAsWorker(token: string, formData: FormData): Pr
   const ip = getIpFromHeaders(h) ?? "anonymous";
   const rl = await consume("quote_action", `${session!.token.id}:${ip}`, DEFAULT_LIMITS.quote_action);
   if (!rl.allowed) {
-    redirect(`${back}?error=${encodeURIComponent("Too many attempts. Please wait a few minutes and try again.")}`);
+    redirect(`${back}?error=rate_limited`);
   }
 
   // 3. Validate shape.
@@ -52,7 +52,7 @@ export async function acknowledgeAsWorker(token: string, formData: FormData): Pr
     signatureDataUrl: formData.get("signatureDataUrl") ?? undefined,
   });
   if (!parsed.success) {
-    redirect(`${back}?error=${encodeURIComponent(parsed.error.issues[0]?.message ?? "Invalid input")}`);
+    redirect(`${back}?error=invalid_input`);
   }
   const v = parsed.data;
 
@@ -103,7 +103,7 @@ export async function acknowledgeAsWorker(token: string, formData: FormData): Pr
     // unauthenticated external worker (info disclosure). Surface a generic,
     // user-safe message instead.
     console.error("[worker-portal] acknowledgement insert failed", error);
-    redirect(`${back}?error=${encodeURIComponent("Could not record your sign-off — please try again.")}`);
+    redirect(`${back}?error=signoff_failed`);
   }
 
   redirect(`${back}?saved=signed`);

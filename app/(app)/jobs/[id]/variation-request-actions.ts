@@ -164,7 +164,7 @@ export async function reviewVariationRequest(
   }
 
   const decided = input.decision === "accepted" || input.decision === "rejected";
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("variation_requests")
     .update({
       status: input.decision,
@@ -174,10 +174,20 @@ export async function reviewVariationRequest(
     })
     .eq("id", input.request_id)
     .eq("org_id", ctx.org.id) // write predicate re-asserts the org
-    .eq("status", from); // optimistic-concurrency: no double-decide race
+    .eq("status", from) // optimistic-concurrency: no double-decide race
+    .select("id");
   if (error) {
     console.error("[variation-requests] review update failed", error);
     return formError("Couldn't save that decision. Refresh and try again.");
+  }
+  if ((updated ?? []).length === 0) {
+    // The status predicate matched nothing: another reviewer decided first.
+    // Zero rows is NOT a PostgREST error, so without this check the loser of
+    // the race saw a success toast for a decision that was silently discarded
+    // (the same rowcount check markVariationRequestConverted already does).
+    return formError(
+      "That request was decided by someone else a moment ago — refresh to see its current state.",
+    );
   }
 
   return formSuccess({

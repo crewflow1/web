@@ -140,8 +140,15 @@ async function readActiveOrgRevenue(): Promise<{
     const n = typeof v === "string" ? Number(v) : v;
     return Number.isFinite(n) ? n : null;
   };
+  // mrr_gbp is NOT NULL DEFAULT 0 (20260606), so 0 means "no contracted figure
+  // recorded", never "contracted at £0" — the same semantics ltvMetrics already
+  // applies with its v > 0 filter. Mapping 0 → null here is what makes the
+  // documented list-price fallback (and its labelled fallback count) reachable;
+  // without it every unpriced active org silently summed as £0 MRR.
+  const zeroIsUnrecorded = (v: number | null): number | null =>
+    v != null && v > 0 ? v : null;
   return {
-    mrrs: data.map((r) => toNumberOrNull(r.mrr_gbp)),
+    mrrs: data.map((r) => zeroIsUnrecorded(toNumberOrNull(r.mrr_gbp))),
     ltvs: data.map((r) => toNumberOrNull(r.ltv_gbp)),
   };
 }

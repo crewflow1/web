@@ -50,7 +50,7 @@ export async function requestVariationAsWorker(
   );
   if (!rl.allowed) {
     redirect(
-      `${back}?error=${encodeURIComponent("Too many requests. Please wait a minute and try again.")}`,
+      `${back}?error=rate_limited`,
     );
   }
 
@@ -63,7 +63,7 @@ export async function requestVariationAsWorker(
   });
   if (!parsed.success) {
     redirect(
-      `${back}?error=${encodeURIComponent(parsed.error.issues[0]?.message ?? "Check the form and try again.")}`,
+      `${back}?error=invalid_input`,
     );
   }
 
@@ -91,7 +91,7 @@ export async function requestVariationAsWorker(
   if (error) {
     console.error("[worker-portal] variation request insert failed", error);
     redirect(
-      `${back}?error=${encodeURIComponent("Could not send your request — please try again.")}`,
+      `${back}?error=request_failed`,
     );
   }
 

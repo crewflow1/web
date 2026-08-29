@@ -1,5 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows } from "@/lib/supabase/paginate";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { getEmailQueueStats } from "@/server/services/notification-email-queue-stats";
 import {
   CRON_ROUTES,
@@ -173,10 +175,14 @@ async function readCronHealth(
   type CronTable = {
     select: (cols: string) => {
       gte: (k: string, v: string) => {
-        order: (k: string, opts: { ascending: boolean }) => Promise<{
-          data: CronRunRow[] | null;
-          error: { message: string } | null;
-        }>;
+        order: (k: string, opts: { ascending: boolean }) => {
+          order: (k2: string, opts2: { ascending: boolean }) => {
+            range: (from: number, to: number) => Promise<{
+              data: CronRunRow[] | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
       };
       in: (k: string, v: ReadonlyArray<string>) => {
         order: (k: string, opts: { ascending: boolean }) => {
@@ -203,12 +209,29 @@ async function readCronHealth(
     Date.now() - 7 * 86_400_000,
   ).toISOString();
 
-  // Pull the last 7 days of runs — cheap and gives us rolling stats.
-  const recent7Res = await tbl
-    .select("id, route, started_at, completed_at, ok, error_message, duration_ms")
-    .gte("started_at", sevenDaysAgo)
-    .order("started_at", { ascending: false });
-  const recent7 = recent7Res.data ?? [];
+  // Pull the last 7 days of runs, F-1 PAGED to the FULL window (fetchAllRows,
+  // stable started_at+id ordering). The previous bare read was silently
+  // clamped to PostgREST's 1000-row cap — 45 routes over 7 days exceed that
+  // easily, so runs_7d, failure counts and last-ok flags were computed over
+  // roughly the newest day and were WRONG for most of the roster. LOUD on
+  // failure: an ops panel rendering healthy zeros over a broken read is
+  // fabricated health.
+  const recent7Res = await fetchAllRows<CronRunRow>(
+    (from, to) =>
+      tbl
+        .select("id, route, started_at, completed_at, ok, error_message, duration_ms")
+        .gte("started_at", sevenDaysAgo)
+        .order("started_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: CronRunRow[] | null;
+        error: unknown;
+      }>,
+  );
+  if (recent7Res.error) {
+    throw readFailure("ops-snapshot: cron_runs 7d window", recent7Res.error);
+  }
+  const recent7 = recent7Res.data;
 
   const per_route: CronRouteHealth[] = CRON_ROUTES.map((route) => {
     const runs = recent7.filter((r) => r.route === route);

@@ -127,6 +127,7 @@ function isSupportedProvider(provider: string): boolean {
 export async function generateDepartmentDraft(
   feature: HqDepartmentDraftFeature,
   artifact: unknown,
+  opts?: { aiEmployeeId?: string | null },
 ): Promise<string | null> {
   // OWN-CLASS TIER GATE FIRST (C35-C): drafting → mid. Dark mid tier ⇒ no
   // provider is ever resolved, and the deterministic artifact stands alone.
@@ -174,6 +175,10 @@ export async function generateDepartmentDraft(
         // The artifact is deterministic for a given window, so the same artifact
         // drafted twice is the same prose. Only its SHA-256 reaches the ledger.
         dedupeContent: `${feature} ${prompt}`,
+        // Per-employee cost attribution (contract item 3): the drafting spend
+        // lands on the department employee that ran the task, so the boardroom
+        // KPI cost column is complete on activation day — not under-attributed.
+        aiEmployeeId: opts?.aiEmployeeId ?? null,
       },
     );
     if (outcome.status !== "ran") return null;

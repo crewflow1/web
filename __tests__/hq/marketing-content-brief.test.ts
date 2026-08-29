@@ -174,7 +174,7 @@ describe("C. marketing_content_draft handler — dark seam wiring", () => {
       "@/server/services/hq-marketing-content-runner"
     );
     const result = (await marketingContentHandler(
-      {} as never,
+      { identity: { employeeId: "emp-test-1", slug: "test-ai" } } as never,
     )) as Record<string, unknown>;
 
     expect(result.kind).toBe("marketing_content_brief");
@@ -184,6 +184,12 @@ describe("C. marketing_content_draft handler — dark seam wiring", () => {
     // The seam was asked under EXACTLY its registered key, with the brief.
     expect(generateDepartmentDraftMock).toHaveBeenCalledTimes(1);
     expect(generateDepartmentDraftMock.mock.calls[0]![0]).toBe("hq.marketing_draft");
+    // Per-employee cost attribution (contract item 3): the handler must hand
+    // its own identity to the seam so activation-day spend lands on the right
+    // employee, never unattributed.
+    expect(generateDepartmentDraftMock.mock.calls[0]![2]).toEqual({
+      aiEmployeeId: "emp-test-1",
+    });
   });
 
   it("attaches governed prose when the seam yields it (armed future), with an honest note", async () => {
@@ -192,7 +198,7 @@ describe("C. marketing_content_draft handler — dark seam wiring", () => {
     const { marketingContentHandler } = await import(
       "@/server/services/hq-marketing-content-runner"
     );
-    const result = (await marketingContentHandler({} as never)) as Record<string, unknown>;
+    const result = (await marketingContentHandler({ identity: { employeeId: "emp-test-1", slug: "test-ai" } } as never)) as Record<string, unknown>;
     expect(result.generativeDraft).toBe("Drafted copy.");
     expect(String(result.generativeNote)).toContain("unreviewed draft");
   });
@@ -202,7 +208,7 @@ describe("C. marketing_content_draft handler — dark seam wiring", () => {
     const { marketingContentHandler } = await import(
       "@/server/services/hq-marketing-content-runner"
     );
-    const result = (await marketingContentHandler({} as never)) as Record<string, unknown>;
+    const result = (await marketingContentHandler({ identity: { employeeId: "emp-test-1", slug: "test-ai" } } as never)) as Record<string, unknown>;
     // The SEO inventory is a static registry (always readable), so the brief is
     // not insufficient — but with zero demo volume the origin proposals vanish
     // and only the inventory proposal remains, all still deterministic.
