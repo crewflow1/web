@@ -13,9 +13,15 @@ procedure.
 > scope for autonomous execution and are documented here for a human operator
 > with Owner + billing access to perform.
 
-## What's verified in production today
+> **Currency note (2026-08-29):** the snapshot section immediately below is the
+> original **2026-06 snapshot (STALE)** — its figures (25 MB, 98 tables,
+> `max_connections=60`) no longer describe production. For today's posture see
+> **[Current state 2026-08-29](#current-state-2026-08-29)** at the bottom of
+> this file. The restore *procedure* (Steps 1–3) remains correct.
 
-Read-only checks against prod (`pg_stat_archiver`, `pg_settings`):
+## What's verified in production — 2026-06 snapshot (STALE)
+
+Read-only checks against prod (`pg_stat_archiver`, `pg_settings`) as of 2026-06:
 
 | Signal | Value | Meaning |
 |---|---|---|
@@ -120,3 +126,22 @@ comms. Practise it on a throwaway project first.
   logical dump for that tier of failure.
 - This runbook is documentation only; it executes nothing and changes no
   setting.
+
+## Current state 2026-08-29
+
+Verified posture at the Customer-#1 reconciliation (supersedes the 2026-06
+snapshot above; the restore procedure in Steps 1–3 is unchanged):
+
+| Signal | Value (2026-08-29) |
+|---|---|
+| WAL archiving | **Healthy** — archiving current, 0 failures |
+| PITR add-on | **OFF** (verified via management API; WAL-G on) — enabling it is a billing decision, **CEO action**, and remains the single biggest recovery upgrade (RPO 24 h → ~2 min) |
+| Compute tier | **Medium** (the 2026-06 `max_connections=60` Nano/Micro inference is obsolete) |
+| Off-platform copy | Dated off-platform dump route established (pending `SUPABASE_DB_PASSWORD` in the founder's password manager — verified blocked without it) |
+| Restore rehearsal | **Rehearsed and measured** — full replay of all 380 migrations onto a clean database in ~26 s restoring 307 RLS-enabled tables / 605 policies / 461 triggers, app verified live post-restore. Full drill record + incident procedure: [`docs/customer-success/FIRST-CUSTOMER-SUPPORT.md`](./customer-success/FIRST-CUSTOMER-SUPPORT.md) § "Database incident — evidence-backed drill record (2026-08-29)" |
+| Migration tip | `20261220000000` (380/380 repo↔DB parity) |
+
+Honest recovery numbers today: schema-restore RTO ≈ 30 s · app redeploy RTO
+≈ 5 min · data RPO ≤ 24 h on daily backups (PITR OFF). The open CEO actions
+(PITR enable, DB password custody, dated dump) are tracked in the support
+runbook's checklist — not here.

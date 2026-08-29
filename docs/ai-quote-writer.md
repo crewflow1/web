@@ -173,7 +173,9 @@ the model arrives through `getTextProvider()`, the existing provider abstraction
   review). The registry is the authority: a call site declaring `complex` to get
   a better model is refused.
 - Subject to the **£100/month/org hard ceiling**, its 50/80/100 % bands, and the
-  15-minute duplicate refusal.
+  15-minute duplicate refusal — all enforced by an **atomic SQL
+  reserve-then-settle** under a per-org advisory lock (migration `20261070`),
+  so concurrent traffic cannot race past the ceiling or the duplicate check.
 - Every call that reaches a provider is recorded in `ai_invocations`, successes
   and failures alike. Each draft records the SHA-256 fingerprint that joins it to
   its ledger row.
@@ -246,13 +248,16 @@ save them normally) and **Discard**. Nothing is ever sent automatically.
 Engineering:
 
 1. **Bind a model** to the `mid` tier in `lib/ai/governor/registry.ts` and provide
-   the vendor credential. Both, or nothing happens.
-2. **Close the governor's read-then-act gap.** The £100 ceiling is a *start gate*:
-   calls already in flight are not individually stopped, so concurrent traffic can
-   overshoot by (calls in flight × cost per call). Concurrent identical submits
-   likewise race past the duplicate check. Both need one atomic SQL reservation
-   instead of a read followed by a write. Measured and bounded in
-   `__tests__/ai/quote-writer-governor.test.ts`.
+   the vendor credential. Both, or nothing happens. **This is the whole
+   engineering activation step** — the governor gap that used to sit here is
+   closed (next item).
+2. ~~Close the governor's read-then-act gap.~~ **DONE — migration `20261070`
+   (2026-07-30, PR #497).** The £100 ceiling is no longer a start gate: budget
+   is now an **atomic SQL reserve-then-settle** under a per-org advisory lock,
+   so in-flight calls cannot overshoot the ceiling and concurrent identical
+   submits cannot race past the duplicate check. Counterfactuals were measured
+   before the fix (11,000p/12,000p overshoot; 6 duplicate paid calls) and are
+   regression-pinned. No governor work remains before activation.
 3. **Re-run the eval corpus against the real provider.** The offline harness tests
    CrewFlow's pipeline against hand-written responses; it says nothing about model
    quality or real-world injection resistance. The cases are structural so they can

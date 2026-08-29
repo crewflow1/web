@@ -1,5 +1,15 @@
 # CrewFlow Bible — Adoption & Gap Analysis
 
+> ## ⛔ SUPERSEDED (2026-08-29)
+> This document — **including its "living engineering tracker"** — is a
+> historical artifact and is **no longer updated or accurate** (its census
+> stops at 103 migrations; production is at 380). For current platform truth
+> use, in order:
+> 1. [`docs/roadmap/MASTER-ROADMAP-RECONCILIATION.md`](../roadmap/MASTER-ROADMAP-RECONCILIATION.md) — canonical capability reconciliation
+> 2. [`docs/roadmap/STATUS.md`](../roadmap/STATUS.md) — programme control plane (see its 2026-08-29 header block)
+>
+> Do not act on any figure, gap, or "current census" below. Preserved for audit.
+
 > **Status:** Constitutional study. **No implementation.** This document reads the
 > CrewFlow Bible as a new executive engineer would on day one, measures it against
 > the *actual* codebase, and answers the ten questions posed on adoption. It
