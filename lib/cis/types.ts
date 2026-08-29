@@ -85,6 +85,34 @@ export const CIS_STATUS_DESCRIPTIONS: Record<CisStatus, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// Verification source (provenance)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the CURRENT verification outcome came from. Mirrors the DB CHECK
+ * `cis_subcontractors_verification_source_known` (migration 20261224000000).
+ *
+ *   manual   — an org admin verified with HMRC out-of-band (CIS online
+ *              service / helpline) and typed the result in. The only source
+ *              that has ever existed in production.
+ *   hmrc_api — recorded by the HMRC online verification adapter
+ *              (lib/integrations/hmrc/cis-verify.ts). DARK today: the adapter
+ *              refuses without HMRC credentials + the connect flag, so no row
+ *              carries this value until activation.
+ *
+ * Whatever the source, the outcome reaches the row through the SAME write
+ * authority (server/services/cis.ts recordVerification) — the source labels
+ * the evidence, it never selects a different code path or rate.
+ */
+export const CIS_VERIFICATION_SOURCES = ["manual", "hmrc_api"] as const;
+
+export type CisVerificationSource = (typeof CIS_VERIFICATION_SOURCES)[number];
+
+export function isCisVerificationSource(v: unknown): v is CisVerificationSource {
+  return typeof v === "string" && (CIS_VERIFICATION_SOURCES as readonly string[]).includes(v);
+}
+
+// ---------------------------------------------------------------------------
 // Legal form
 // ---------------------------------------------------------------------------
 
@@ -127,6 +155,8 @@ export type CisSubcontractor = {
   /** Percent 0-100. Null only while the status is pre-outcome. Derived from cis_status. */
   deduction_rate: number | null;
   verification_reference: string | null;
+  /** Provenance of the current outcome. 'manual' until HMRC activation. */
+  verification_source: CisVerificationSource;
   /** ISO date (yyyy-mm-dd). */
   verified_at: string | null;
   /** ISO date (yyyy-mm-dd). */

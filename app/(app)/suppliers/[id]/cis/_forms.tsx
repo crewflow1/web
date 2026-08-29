@@ -166,9 +166,10 @@ export function CisProfileForm({
 // ---------------------------------------------------------------------------
 
 /**
- * Record a verification an admin obtained from HMRC THEMSELVES. There is no
- * "Verify with HMRC" button because there is no HMRC integration — presenting
- * one would imply a check this system did not perform.
+ * Record a verification an admin obtained from HMRC THEMSELVES. The "Verify
+ * with HMRC" button is a SEPARATE component (CisHmrcVerifyForm below) that the
+ * page renders only when HMRC is actually connectable — presenting it while
+ * dark would imply a check this system cannot perform.
  *
  * The deduction rate is NOT an input. It is derived from the result and shown
  * in the option labels, so a 30% result cannot be filed as a 20% one.
@@ -254,6 +255,51 @@ export function CisVerificationForm({
       <div className="pt-1">
         <SubmitButton pending={pending}>Record verification</SubmitButton>
       </div>
+    </FormShell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// HMRC online verification (rendered ONLY when HMRC is connectable)
+// ---------------------------------------------------------------------------
+
+/**
+ * One button, no inputs: the identifiers HMRC needs are the stored profile and
+ * the org's own contractor details, never anything typed here. The page only
+ * renders this when `isHmrcConnectable()` is true (never in production today),
+ * so its existence on screen is itself an honest signal — and the server
+ * action re-checks connectability and admin role regardless, because a POST
+ * can be replayed no matter what the UI showed.
+ */
+export function CisHmrcVerifyForm({
+  action,
+  hasUtr,
+}: {
+  action: ActionFn;
+  hasUtr: boolean;
+}) {
+  const [state, formAction, pending] = useActionState<FormState<Values>, FormData>(
+    action,
+    INITIAL_FORM_STATE,
+  );
+
+  if (!hasUtr) {
+    return (
+      <p className="text-sm text-slate-600">
+        Record the subcontractor&apos;s UTR below before verifying — HMRC can&apos;t verify
+        anyone without one.
+      </p>
+    );
+  }
+
+  return (
+    <FormShell state={state} action={formAction} className="space-y-2">
+      <p className="text-xs text-slate-500">
+        Asks HMRC&apos;s CIS verification service for this subcontractor&apos;s current
+        status and records the answer — the deduction rate follows from HMRC&apos;s
+        result and can&apos;t be chosen.
+      </p>
+      <SubmitButton pending={pending}>Verify with HMRC</SubmitButton>
     </FormShell>
   );
 }

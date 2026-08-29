@@ -9,7 +9,12 @@ import {
   transitionRefusal,
   MANUAL_VERIFICATION_SOURCE,
 } from "@/lib/cis/verification";
-import { isOutcomeStatus, type CisStatus, type CisSubcontractor } from "@/lib/cis/types";
+import {
+  isOutcomeStatus,
+  type CisStatus,
+  type CisSubcontractor,
+  type CisVerificationSource,
+} from "@/lib/cis/types";
 import type { CisProfileInput, CisVerificationInput } from "@/lib/cis/schema";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
@@ -37,8 +42,8 @@ export type CisResult<T> = { ok: true; data: T } | { ok: false; error: string };
 const COLUMNS =
   "org_id, supplier_id, legal_name, trading_name, company_number, utr, " +
   "subcontractor_type, vat_registered, vat_number, cis_status, deduction_rate, " +
-  "verification_reference, verified_at, verification_expires_at, verified_by, " +
-  "notes, created_by, updated_by, created_at, updated_at";
+  "verification_reference, verification_source, verified_at, verification_expires_at, " +
+  "verified_by, notes, created_by, updated_by, created_at, updated_at";
 
 type Res<T> = { data: T | null; error: { message: string } | null };
 
@@ -208,12 +213,18 @@ export async function upsertCisProfile(
 }
 
 /**
- * Record the result of a MANUAL HMRC verification.
+ * Record the result of an HMRC verification — THE single write authority for
+ * verification state, whatever obtained the outcome.
  *
- * There is NO HMRC integration — an admin verifies out-of-band via HMRC's own
- * service and types the outcome in. Nothing here contacts HMRC and nothing
- * simulates doing so. See the provider seam in lib/cis/verification.ts for how
- * a real integration would attach later.
+ * `source` says WHERE the outcome came from and nothing more:
+ *   'manual'   (the default) — an admin verified out-of-band via HMRC's own
+ *              service and typed the outcome in. Nothing in this service
+ *              contacts HMRC and nothing simulates doing so.
+ *   'hmrc_api' — the G5 dark adapter (lib/integrations/hmrc/cis-verify.ts)
+ *              obtained the outcome from HMRC's online verification service.
+ *              The adapter only SUPPLIES the values; it records them HERE, so
+ *              both sources pass the identical guard chain below and there is
+ *              no second write path to subvert.
  *
  * The rate is DERIVED from the recorded status and never accepted from the
  * caller, so a 30% result cannot be filed as a 20% one. The database enforces
@@ -224,6 +235,7 @@ export async function recordVerification(
   supplierId: string,
   input: CisVerificationInput,
   actorId: string,
+  source: CisVerificationSource = MANUAL_VERIFICATION_SOURCE,
 ): Promise<CisResult<CisSubcontractor>> {
   const existing = await getCisProfile(orgId, supplierId);
   if (!existing) {
@@ -263,11 +275,12 @@ export async function recordVerification(
       cis_status: next,
       deduction_rate: rate,
       verification_reference: input.verification_reference ?? null,
+      verification_source: source,
       verified_at: input.verified_at,
       verification_expires_at: expires,
       verified_by: actorId,
       updated_by: actorId,
-      notes: appendVerificationNote(existing.notes, next, input.verified_at),
+      notes: appendVerificationNote(existing.notes, next, input.verified_at, source),
     })
     .eq("org_id", orgId)
     .eq("supplier_id", supplierId)
@@ -330,11 +343,9 @@ function appendVerificationNote(
   existing: string | null,
   status: CisStatus,
   verifiedAt: string,
+  source: CisVerificationSource,
 ): string | null {
-  return appendNote(
-    existing,
-    `[${verifiedAt}] Verification recorded (${MANUAL_VERIFICATION_SOURCE}): ${status}.`,
-  );
+  return appendNote(existing, `[${verifiedAt}] Verification recorded (${source}): ${status}.`);
 }
 
 /** Append an audit line to the free-text notes, oldest-first, bounded in size. */
