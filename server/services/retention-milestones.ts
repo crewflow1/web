@@ -1,5 +1,4 @@
 import "server-only";
-import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { recordAdminActivity } from "@/server/services/hq-audit";
@@ -43,7 +42,12 @@ export async function ensureMilestoneNotifications(
   actor: { id: string | null; email: string | null },
 ): Promise<{ emitted: ReadonlyArray<MilestoneId> }> {
   try {
-    const supabase = await createClient();
+    // ADMIN client, deliberately: this runs inside the dashboard's after()
+    // callback, where Next (>=15.5.19) refuses cookies() — and the request
+    // client reads cookies. orgId is the caller's ALREADY-AUTHENTICATED active
+    // org (ctx.org.id), the read is pinned .eq("id", orgId), and the write at
+    // the bottom of this function already uses the admin client.
+    const supabase = createAdminClient();
     const { data, error } = await supabase
       .from("organizations")
       .select("onboarding_state")
