@@ -165,6 +165,54 @@ export type SetStageResult =
   | { ok: false; reason: "invalid_stage" | "not_updatable" }
   | TaskRpcError;
 
+/**
+ * P4 — HONEST task-type → pipeline-stage mapping. `setTaskStage` previously had ONE
+ * caller (the saga dispatch, which stamps saga_step tasks from DEPARTMENT_STAGE); the
+ * standing task types below now stamp their stage the same way — at DISPATCH, inside
+ * `enqueueTask` — because the stage RPC freezes terminal rows, so "after completion"
+ * is structurally impossible, and because a task IS at its stage of the product
+ * pipeline from the moment the work is queued (exactly the saga precedent). The board
+ * (lib/hq/boardroom-cards PIPELINE_STAGES) already displays the stage axis.
+ *
+ * ONLY semantically-true mappings are listed; every entry is defended. Task types
+ * with no natural product-pipeline stage (support_reply_draft, orchestration_routing,
+ * memory_curation, …) are DELIBERATELY absent and stay unstaged — an unstaged task is
+ * a valid, honest state, and no mapping is forced (qualification is NOT
+ * 'specification', outreach is NOT 'sales' execution — see below).
+ */
+export const TASK_TYPE_PIPELINE_STAGE: Readonly<Partial<Record<string, PipelineStage>>> = {
+  // The three sales runners → 'research'. All three produce prospect INTELLIGENCE
+  // and PREPARATION artifacts about a company — a research report, an evidence-
+  // weighed qualification verdict, and a never-auto-sent outreach DRAFT grounded in
+  // that research. None of them executes a sale (no send, no deal, no transition
+  // past qualification), so 'sales' would overstate all three; 'research' is the
+  // stage of the pipeline this discovery/preparation work genuinely occupies.
+  research_company: "research",
+  qualify_company: "research",
+  generate_email: "research",
+  // Product AI's demand→proposal sweep → 'idea'. It converts observed customer
+  // demand into a DRAFT Decision-Centre proposal — the birth of an initiative,
+  // which is precisely what the 'idea' stage models. Nothing is specified,
+  // designed, or built by this task.
+  product_proposal: "idea",
+  // The thirteen executive reviews → 'review'. Each drains a `*_review` task whose
+  // whole output is an explainable review of its deterministic board — literally
+  // the 'review' stage of the lifecycle, with no other stage even arguable.
+  ceo_review: "review",
+  cfo_review: "review",
+  coo_review: "review",
+  cto_review: "review",
+  customer_success_review: "review",
+  exec_assistant_review: "review",
+  finance_review: "review",
+  marketing_review: "review",
+  operations_review: "review",
+  product_review: "review",
+  qa_review: "review",
+  sales_review: "review",
+  support_review: "review",
+};
+
 // ---------------------------------------------------------------------
 // The typed RPC shim — identical idiom to hq-memory.ts. `.bind(admin)` is
 // REQUIRED: supabase-js's `rpc()` delegates to `this.rest`, so a detached
@@ -255,7 +303,28 @@ export async function enqueueTask(input: EnqueueTaskInput): Promise<EnqueueResul
   if (!data || data.ok !== true || !data.task) {
     return { ok: false, reason: "error", error: "hq_ai_task_create: malformed response" };
   }
-  return { ok: true, task: data.task, deduped: data.deduped === true };
+  const deduped = data.deduped === true;
+
+  // P4 — stamp the product-pipeline stage for task types with a defended natural
+  // mapping (TASK_TYPE_PIPELINE_STAGE), through the ONE sanctioned stage RPC.
+  // Enqueue is the only moment shared by every one of these types (the stage RPC
+  // freezes terminal rows, so post-completion stamping is impossible), and it is
+  // the existing saga precedent (hq-workflow dispatch stamps at create). Dedup'd
+  // returns are skipped — the original create already stamped. BEST-EFFORT: a
+  // failed stamp is logged and never fails the enqueue (stage is presentation
+  // provenance, orthogonal to the execution lifecycle).
+  const stage = TASK_TYPE_PIPELINE_STAGE[input.taskType];
+  if (stage && !deduped && data.task.pipeline_stage == null) {
+    const staged = await setTaskStage(data.task.id, stage);
+    if (staged.ok) return { ok: true, task: staged.task, deduped };
+    console.error("[hq-tasks] pipeline-stage stamp failed", {
+      taskId: data.task.id,
+      taskType: input.taskType,
+      stage,
+      reason: staged.reason,
+    });
+  }
+  return { ok: true, task: data.task, deduped };
 }
 
 /**

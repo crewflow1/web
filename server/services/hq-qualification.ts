@@ -61,7 +61,14 @@ import {
   recordTimelineEvent,
   setCompanyStatus,
 } from "@/server/services/hq-sales";
-import { recallForTask, rememberForTask } from "@/server/services/hq-runner-memory";
+import {
+  memoryContextFromRecall,
+  priorDecisionMemoryIds,
+  recallForTask,
+  rememberForTask,
+  type TaskMemoryContext,
+} from "@/server/services/hq-runner-memory";
+import type { RecallResult } from "@/server/sdk/memory";
 import { enqueueTask } from "@/server/services/hq-tasks";
 import {
   drainTaskType,
@@ -114,6 +121,42 @@ function taskReads<T>(admin: AdminClient): TaskRead<T> {
 // whole verdict is small (five criteria + a short rationale).
 // ---------------------------------------------------------------------
 
+/**
+ * P3 — the qualification artifact's `memory_context`: the recalled Shared
+ * Memory that informed the verdict, PLUS the one documented deterministic
+ * adjustment memory makes to this run. When a recalled memory records a PRIOR
+ * DECISION about this same company (type `qualification_decision`/`decision` —
+ * the recall is subject-biased to the company), the run is flagged a REPEAT
+ * EVALUATION: the flag is stamped here, in the decision step's detail, and in
+ * the `scored` timeline event's metadata, so the verdict is never presented as
+ * a first look when the company has been decided on before. The rubric's
+ * criteria/score are NOT altered — memory adjusts the framing deterministically
+ * and visibly, never the arithmetic.
+ */
+export type QualificationMemoryContext = TaskMemoryContext & {
+  repeatEvaluation: boolean;
+  priorDecisionMemoryIds: string[];
+};
+
+/**
+ * Fold the recall into the artifact section above — PURE, exported for the
+ * unit tests. Null recall / empty recall → null (honest absence).
+ */
+export function assessRecallForQualification(
+  recall: RecallResult | null,
+): QualificationMemoryContext | null {
+  const priorIds = priorDecisionMemoryIds(recall);
+  const repeat = priorIds.length > 0;
+  const base = memoryContextFromRecall(
+    recall,
+    repeat
+      ? "Prior Shared Memory recalled before scoring — including at least one earlier decision about this company, so this verdict is flagged as a repeat evaluation."
+      : "Prior Shared Memory recalled before scoring; the verdict below weighed these recalled outcomes alongside the live company record.",
+  );
+  if (!base) return null;
+  return { ...base, repeatEvaluation: repeat, priorDecisionMemoryIds: priorIds };
+}
+
 type QualificationResult = {
   phase: QualificationPhase;
   steps: QualificationStepState[];
@@ -122,6 +165,8 @@ type QualificationResult = {
   startedAt: string | null;
   finishedAt: string | null;
   error: string | null;
+  /** P3 — see {@link QualificationMemoryContext}. Null = recall unavailable. */
+  memory_context: QualificationMemoryContext | null;
 };
 
 function freshResult(): QualificationResult {
@@ -133,6 +178,7 @@ function freshResult(): QualificationResult {
     startedAt: new Date().toISOString(),
     finishedAt: null,
     error: null,
+    memory_context: null,
   };
 }
 
@@ -317,10 +363,18 @@ const qualificationTaskHandler: TaskHandler = async (ctx: RunContext) => {
     // read/score/qualify — no `memory` token), so this is a deliberate no-op
     // that honours the default-deny floor. If a memory grant is ever added, the
     // recall lights up with no further code change.
-    await recallForTask(ctx, {
+    //
+    // P3 — the recall is CONSUMED, not discarded: it is folded into the
+    // artifact's `memory_context` (bounded summaries + how they informed the
+    // verdict), and when a recalled memory records a PRIOR DECISION about this
+    // company the run is flagged a repeat evaluation — the documented
+    // deterministic adjustment (see assessRecallForQualification).
+    const recall = await recallForTask(ctx, {
       query: company.name,
       subject: { kind: "organisation", id: companyId, label: company.name },
     });
+    result.memory_context = assessRecallForQualification(recall);
+    const repeatEvaluation = result.memory_context?.repeatEvaluation === true;
 
     // ---- PHASE: Assessing -------------------------------------------
     await setPhase("assessing");
@@ -410,7 +464,9 @@ const qualificationTaskHandler: TaskHandler = async (ctx: RunContext) => {
       ai_employee_id: employeeId,
       source: QUALIFICATION_SOURCE,
       subject: `Qualification: ${decisionLabel(verdict.decision)}`,
-      body: verdict.summary,
+      body: repeatEvaluation
+        ? `${verdict.summary} Repeat evaluation — a prior decision about this company is on record in Shared Memory.`
+        : verdict.summary,
       metadata: {
         decision: verdict.decision,
         score: verdict.score,
@@ -418,6 +474,10 @@ const qualificationTaskHandler: TaskHandler = async (ctx: RunContext) => {
         confidence: verdict.confidence,
         recommendedStatus: verdict.recommendedStatus,
         rationale: verdict.rationale,
+        // P3 — the documented deterministic memory adjustment: flagged, never
+        // silently re-scored (the rubric's arithmetic is untouched).
+        repeat_evaluation: repeatEvaluation,
+        prior_decision_memories: result.memory_context?.priorDecisionMemoryIds ?? [],
       },
     });
 
@@ -436,11 +496,12 @@ const qualificationTaskHandler: TaskHandler = async (ctx: RunContext) => {
     await setStep(
       "decision",
       "done",
-      transitioned
+      (transitioned
         ? `${decisionLabel(verdict.decision)} → moved to ${verdict.recommendedStatus}`
         : verdict.recommendedStatus
           ? `${decisionLabel(verdict.decision)} (status left unchanged)`
-          : `${decisionLabel(verdict.decision)} — held at 'new' for review`,
+          : `${decisionLabel(verdict.decision)} — held at 'new' for review`) +
+        (repeatEvaluation ? " · repeat evaluation (prior decision on record)" : ""),
     );
 
     // ---- PHASE: Completed -------------------------------------------

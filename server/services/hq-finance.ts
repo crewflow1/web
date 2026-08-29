@@ -1,6 +1,8 @@
 import "server-only";
 import { requireHqPage } from "@/server/auth/hq";
 import { buildHqSnapshot } from "@/server/services/hq-snapshot";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { MONTHLY_PRICE_GBP } from "@/lib/hq/metrics";
 import {
   computeFinanceBoard,
@@ -71,12 +73,31 @@ export async function gatherFinanceBoard(): Promise<FinanceBoard> {
   const churnedThisMonth =
     cancellation.length >= 1 ? cancellation[cancellation.length - 1]?.count ?? 0 : 0;
 
+  // P12 — the REAL per-org revenue source: organizations.mrr_gbp / ltv_gbp for
+  // every ACTIVE org (the same columns the HQ customers OS reads). LOUD read
+  // with honest degradation: a failure logs and passes null, and the pure layer
+  // labels MRR as the count × list-price ESTIMATE / marks LTV insufficient —
+  // never a silently fabricated figure.
+  const perOrg = await readActiveOrgRevenue();
+
   const input: FinanceInput = {
     activeCustomers: snapshot.orgs.active,
     trials: snapshot.orgs.trial,
     newCustomersThisMonth,
     churnedThisMonth,
     monthlyPriceGbp: MONTHLY_PRICE_GBP,
+    activeOrgMrrsGbp: perOrg?.mrrs ?? null,
+    activeOrgLtvsGbp: perOrg?.ltvs ?? null,
+    // P12 — the forecast's real inputs: the demo_requests lifecycle counts the
+    // snapshot already reads (live pipeline + historical won/lost outcomes).
+    // Legacy 'new' rows are pending first contact, so they count as pipeline.
+    demoLifecycle: {
+      pendingDemo: snapshot.demos.pending_demo + snapshot.demos.legacy_new,
+      demoBooked: snapshot.demos.demo_booked,
+      approved: snapshot.demos.approved,
+      rejected: snapshot.demos.rejected,
+      cancelled: snapshot.demos.cancelled,
+    },
     // Absent sources — honest nulls, never fabricated figures.
     costOfRevenueGbp: null,
     cashCollectedGbp: null,
@@ -86,6 +107,43 @@ export async function gatherFinanceBoard(): Promise<FinanceBoard> {
   };
 
   return computeFinanceBoard(input, new Date());
+}
+
+/**
+ * Per-active-org mrr_gbp/ltv_gbp — PAGED (F-1: the estate can exceed the
+ * 1000-row PostgREST clamp; a clamped read would silently drop revenue).
+ * Returns null on any read error (logged loudly) so the pure layer degrades
+ * honestly instead of summing a partial estate as if it were the whole one.
+ */
+async function readActiveOrgRevenue(): Promise<{
+  mrrs: Array<number | null>;
+  ltvs: Array<number | null>;
+} | null> {
+  type Row = { mrr_gbp: number | string | null; ltv_gbp: number | string | null };
+  const admin = createAdminClient();
+  const { data, error } = await fetchAllRows<Row>(
+    (from, to) =>
+      admin
+        .from("organizations")
+        .select("mrr_gbp, ltv_gbp" as never)
+        .eq("status", "active")
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<Row>>,
+  );
+  if (error) {
+    console.error("[hq-finance] active-org revenue read failed", error);
+    return null;
+  }
+  const toNumberOrNull = (v: number | string | null): number | null => {
+    if (v == null) return null;
+    const n = typeof v === "string" ? Number(v) : v;
+    return Number.isFinite(n) ? n : null;
+  };
+  return {
+    mrrs: data.map((r) => toNumberOrNull(r.mrr_gbp)),
+    ltvs: data.map((r) => toNumberOrNull(r.ltv_gbp)),
+  };
 }
 
 /**

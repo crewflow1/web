@@ -407,3 +407,78 @@ export function computeProductBoard(input: ProductInput, now: Date): ProductBoar
           },
   };
 }
+
+// ---------------------------------------------------------------------------
+// P11 — demand themes → DRAFT Decision-Centre proposals (pure mapper).
+//
+// The deterministic tier that turns the product board's TOP demand themes —
+// real support-ticket categories with real open counts — into DRAFT decision
+// proposals, mirroring lib/hq/decision-autoproposal.ts exactly:
+//   • DRAFT ONLY: the mapper emits proposal fields; the service opens each as a
+//     `proposed` row via openDeterministicProposal. It never decides, never
+//     builds, never executes.
+//   • HONESTY: every field is derived from the theme's own counts; revenue
+//     impact says plainly that no revenue-attribution source exists rather
+//     than inventing a number.
+//   • DETERMINISTIC + PURE: same themes in → same proposals out. No clock, no
+//     I/O, no model. The service adds the DB write; the Decision Centre's
+//     source_signal_key unique index is the cross-run idempotency.
+// ---------------------------------------------------------------------------
+
+/** A theme must have at least this many OPEN tickets to raise a proposal. */
+export const PROPOSAL_MIN_OPEN_TICKETS = 3;
+/** At most this many themes (the top of the demand distribution) propose per run. */
+export const PROPOSAL_MAX_THEMES = 3;
+
+/** The draft proposal fields, in the Decision Centre's auto-proposal shape. */
+export interface ProductDemandProposal {
+  readonly title: string;
+  readonly problem: string;
+  readonly revenueImpact: string;
+  readonly risk: string;
+  readonly demand: string;
+  readonly recommendation: string;
+  /** Stable idempotency key: `product_demand:<category>`. */
+  readonly sourceSignalKey: string;
+}
+
+function pct(part: number, whole: number): number {
+  return whole > 0 ? Math.round((part / whole) * 100) : 0;
+}
+
+/**
+ * Map the demand distribution to draft proposals — PURE. Themes arrive already
+ * in the board's deterministic order (highest demand first); the mapper keeps
+ * that order, takes the top {@link PROPOSAL_MAX_THEMES} themes that clear the
+ * {@link PROPOSAL_MIN_OPEN_TICKETS} open-ticket floor, and de-duplicates by
+ * category within the batch. The deterministic scoring rationale — open count,
+ * total volume, share of all demand — is written into the proposal fields
+ * themselves so a super-admin sees the evidence, not a bare assertion.
+ */
+export function mapDemandThemesToProposals(
+  themes: ReadonlyArray<ProductTheme>,
+  totalTickets: number,
+): ProductDemandProposal[] {
+  const out: ProductDemandProposal[] = [];
+  const seen = new Set<string>();
+  for (const theme of themes) {
+    if (out.length >= PROPOSAL_MAX_THEMES) break;
+    if (theme.open < PROPOSAL_MIN_OPEN_TICKETS) continue;
+    if (seen.has(theme.category)) continue;
+    seen.add(theme.category);
+
+    const share = pct(theme.total, totalTickets);
+    out.push(
+      Object.freeze({
+        title: `Customer demand: ${theme.label}`,
+        problem: `${theme.open} open ticket${theme.open === 1 ? "" : "s"} (of ${theme.total} all-time) in the "${theme.label}" category — ${share}% of all recorded customer demand. Deterministic score: open=${theme.open}, total=${theme.total}, share=${share}%.`,
+        revenueImpact: `No revenue-attribution source exists for support demand; the impact of "${theme.label}" is unquantified (stated, not invented).`,
+        risk: `Sustained unresolved demand: ${theme.open} customer${theme.open === 1 ? "" : "s"} currently waiting in this theme with no roadmap answer on record.`,
+        demand: `${theme.open} open / ${theme.total} total ticket${theme.total === 1 ? "" : "s"} in "${theme.label}" (${share}% of the ${totalTickets}-ticket demand distribution).`,
+        recommendation: `Weigh "${theme.label}" for the product roadmap: review the ${theme.open} open ticket${theme.open === 1 ? "" : "s"} and decide build / defer / decline.`,
+        sourceSignalKey: `product_demand:${theme.category}`,
+      }),
+    );
+  }
+  return out;
+}

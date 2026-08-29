@@ -643,6 +643,43 @@ export const AI_FEATURES = {
     degradesTo:
       "null — the /admin/support-ai triage board renders its deterministic cards only, with no prose blurb.",
   },
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // The HQ DEPARTMENT GENERATIVE LEGS (L9a). Three department AI contracts
+  // (Marketing content, Design review, Documentation drafting) each produce a
+  // DETERMINISTIC artifact from real data via the Task Engine, and each carries
+  // ONE governed dark seam for the generative half of its roadmap contract. All
+  // three reach a model only through the shared department-seam helper
+  // (server/services/hq-generative-seams.ts) → invokeWithGovernor →
+  // getTextProvider, billed to the HQ budget org — the same one-door shape as
+  // the board narratives above. `drafting`, because each is prose a human
+  // reviews; none needs `complex` multi-step reasoning over the artifact it is
+  // handed. DARK until a generative tier is bound; while dark every artifact
+  // states its generative field is null and the deterministic content stands
+  // alone.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  "hq.marketing_draft": {
+    key: "hq.marketing_draft",
+    label: "HQ marketing content draft",
+    taskClass: "drafting",
+    degradesTo:
+      "null — the weekly content brief stays fully deterministic (real demo-request sources + the SEO page inventory); its generativeDraft field is null and says so. No copy is generated while dark.",
+  },
+  "hq.design_review": {
+    key: "hq.design_review",
+    label: "HQ design review critique",
+    taskClass: "drafting",
+    degradesTo:
+      "null — the design_review task completes with its deterministic token/consistency findings only; the generativeCritique field is null and says so. No UI critique prose is generated while dark.",
+  },
+  "hq.doc_draft": {
+    key: "hq.doc_draft",
+    label: "HQ documentation draft",
+    taskClass: "drafting",
+    degradesTo:
+      "null — release notes remain the deterministic composition over admin_activity_log / hq_events / hq_decisions; the generativeProse field is null and says so. No documentation prose is generated while dark.",
+  },
 } as const satisfies Record<string, AiFeatureDefinition>;
 
 export type AiFeature = keyof typeof AI_FEATURES;

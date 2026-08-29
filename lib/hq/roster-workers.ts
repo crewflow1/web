@@ -411,6 +411,245 @@ export function summariseDocDrift(
 }
 
 // =====================================================================
+// 5b. Documentation AI — RELEASE NOTES + ROSTER-DOC COVERAGE (L9a / P10).
+//
+//     composeReleaseNotes: the deterministic "release notes draft" — a
+//     structured composition over three REAL ledgers in a window: the admin
+//     activity log (what operators did), the HQ event spine (what the platform
+//     and its AI employees did), and HQ decisions (what was decided). It
+//     composes and counts; it invents no line. The GENERATIVE half (reader-
+//     facing prose) is the governed dark seam `hq.doc_draft`, attached by the
+//     runner and null until a model tier is bound.
+//
+//     summariseRosterDocCoverage: the doc-drift extension — cross-checks the
+//     ai_employees roster against the Bible workforce file list
+//     (docs/bible/workforce/employees/*.md, read by the runner at runtime with
+//     the same node:fs surface launch-readiness.ts already uses). The file list
+//     is INJECTED (null when the runtime cannot read the directory — e.g. a
+//     serverless bundle without docs/), so the FS leg degrades to an honest
+//     "unavailable in this runtime" rather than a fabricated all-covered.
+// =====================================================================
+
+export interface ReleaseActivityRow {
+  action: string;
+  target_table: string;
+  created_at: string;
+}
+export interface ReleaseEventRow {
+  verb: string;
+  object_type: string;
+  severity: string | null;
+  ts: string;
+}
+export interface ReleaseDecisionRow {
+  title: string;
+  status: string | null;
+  created_at: string;
+}
+
+export interface ReleaseNotesSection {
+  key: string;
+  heading: string;
+  /** Deterministic entry lines, each composed from a real grouped count. */
+  entries: string[];
+}
+
+export interface ReleaseNotesResult extends WorkerEnvelope {
+  kind: "release_notes_draft";
+  windowDays: number;
+  signals: {
+    activityRows: number;
+    eventRows: number;
+    decisionRows: number;
+    criticalEvents: number;
+  };
+  sections: ReleaseNotesSection[];
+  /**
+   * The governed generative leg (`hq.doc_draft`). ALWAYS null from this pure
+   * compute; the runner may replace it once a model tier is bound.
+   */
+  generativeProse: string | null;
+  generativeNote: string;
+}
+
+const DOC_GENERATIVE_DARK_NOTE =
+  "Reader-facing prose is a governed dark seam (hq.doc_draft): no model tier is bound, so no prose is generated and this field is null. The deterministic composition above is complete without it.";
+
+/** Group rows by a key and emit "N x label" lines, largest group first. */
+function groupedLines<T>(rows: ReadonlyArray<T>, keyOf: (r: T) => string): string[] {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const k = keyOf(r);
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([k, n]) => `${n}\u00d7 ${k}`);
+}
+
+export function composeReleaseNotes(
+  activity: ReadonlyArray<ReleaseActivityRow>,
+  events: ReadonlyArray<ReleaseEventRow>,
+  decisions: ReadonlyArray<ReleaseDecisionRow>,
+  windowDays: number,
+  now: Date,
+): ReleaseNotesResult {
+  const sources = ["admin_activity_log", "hq_events", "hq_decisions"];
+  const kind = "release_notes_draft";
+  if (activity.length === 0 && events.length === 0 && decisions.length === 0) {
+    return {
+      ...insufficient(
+        kind,
+        `no admin activity, HQ events or decisions in the last ${windowDays} days to compose from.`,
+        sources,
+        now,
+        {
+          windowDays,
+          signals: { activityRows: 0, eventRows: 0, decisionRows: 0, criticalEvents: 0 },
+          sections: [],
+        },
+      ),
+      generativeProse: null,
+      generativeNote: DOC_GENERATIVE_DARK_NOTE,
+    } as ReleaseNotesResult;
+  }
+
+  const sections: ReleaseNotesSection[] = [];
+  if (activity.length > 0) {
+    sections.push({
+      key: "operator_actions",
+      heading: `Operator actions (${activity.length})`,
+      entries: groupedLines(activity, (r) => `${r.action} on ${r.target_table}`),
+    });
+  }
+  if (events.length > 0) {
+    sections.push({
+      key: "platform_events",
+      heading: `Platform & AI-employee events (${events.length})`,
+      entries: groupedLines(events, (r) => `${r.verb} ${r.object_type}`),
+    });
+  }
+  if (decisions.length > 0) {
+    sections.push({
+      key: "decisions",
+      heading: `Decisions raised (${decisions.length})`,
+      entries: decisions
+        .map((d) => `${d.title} [${d.status ?? "unknown"}]`)
+        .sort((a, b) => a.localeCompare(b)),
+    });
+  }
+
+  const criticalEvents = events.filter((e) => e.severity === "critical").length;
+  const severity: WorkerSeverity = criticalEvents > 0 ? "warning" : "ok";
+  const summary = `Release-notes draft over the last ${windowDays} days: ${activity.length} operator action${s(activity.length)}, ${events.length} platform event${s(events.length)} (${criticalEvents} critical), ${decisions.length} decision${s(decisions.length)} — composed into ${sections.length} section${s(sections.length)} for human review.`;
+  const reasoning =
+    `Deterministic composition over three real ledgers in a ${windowDays}-day window: admin_activity_log rows grouped by action+table, hq_events grouped by verb+object, and hq_decisions listed verbatim by title and status. Every line is a grouped count or a stored title — no release claim is invented, and nothing is published: a human reviews the draft. Reader-facing prose is the governed dark seam hq.doc_draft (see generativeNote).`;
+
+  return {
+    ...determined(kind, summary, reasoning, severity, sources, now, {
+      windowDays,
+      signals: {
+        activityRows: activity.length,
+        eventRows: events.length,
+        decisionRows: decisions.length,
+        criticalEvents,
+      },
+      sections,
+    }),
+    generativeProse: null,
+    generativeNote: DOC_GENERATIVE_DARK_NOTE,
+  } as ReleaseNotesResult;
+}
+
+export interface RosterDocCoverageResult extends WorkerEnvelope {
+  kind: "roster_doc_coverage";
+  signals: {
+    employees: number;
+    docFiles: number | null;
+    /** Roster slugs with NO Bible workforce file. */
+    undocumentedSlugs: string[];
+    /** Bible workforce files naming NO current roster slug (stale docs). */
+    orphanedDocs: string[];
+    fsAvailable: boolean;
+  };
+}
+
+/**
+ * Cross-check the ai_employees roster against the Bible workforce file list.
+ * A workforce file `NN-<slug>.md` covers roster slug `<slug>`. `docFiles` is
+ * null when the runtime could not read the directory — that is an HONEST
+ * "unavailable in this runtime", never treated as full coverage.
+ */
+export function summariseRosterDocCoverage(
+  employees: ReadonlyArray<{ slug: string }>,
+  docFiles: ReadonlyArray<string> | null,
+  now: Date,
+): RosterDocCoverageResult {
+  const sources = ["ai_employees", "docs/bible/workforce/employees/*"];
+  const kind = "roster_doc_coverage";
+  if (docFiles == null) {
+    return insufficient(
+      kind,
+      "the Bible workforce directory could not be read in this runtime, so doc coverage cannot be asserted.",
+      sources,
+      now,
+      {
+        signals: {
+          employees: employees.length,
+          docFiles: null,
+          undocumentedSlugs: [],
+          orphanedDocs: [],
+          fsAvailable: false,
+        },
+      },
+    ) as RosterDocCoverageResult;
+  }
+  if (employees.length === 0 && docFiles.length === 0) {
+    return insufficient(kind, "no employees and no workforce docs to reconcile yet.", sources, now, {
+      signals: {
+        employees: 0,
+        docFiles: 0,
+        undocumentedSlugs: [],
+        orphanedDocs: [],
+        fsAvailable: true,
+      },
+    }) as RosterDocCoverageResult;
+  }
+
+  // `NN-<slug>.md` -> `<slug>`; tolerate files without the numeric prefix.
+  const docSlugs = new Map<string, string>(); // slug -> filename
+  for (const f of docFiles) {
+    const m = f.match(/^(?:\d+-)?(.+)\.md$/);
+    if (m) docSlugs.set(m[1]!, f);
+  }
+  const rosterSlugs = new Set(employees.map((e) => e.slug));
+  const undocumentedSlugs = [...rosterSlugs].filter((slug) => !docSlugs.has(slug)).sort();
+  const orphanedDocs = [...docSlugs.entries()]
+    .filter(([slug]) => !rosterSlugs.has(slug))
+    .map(([, file]) => file)
+    .sort();
+
+  const drift = undocumentedSlugs.length + orphanedDocs.length;
+  const severity: WorkerSeverity = drift > 0 ? "warning" : "ok";
+  const summary =
+    severity === "ok"
+      ? `Workforce docs in step: all ${employees.length} roster identit${employees.length === 1 ? "y" : "ies"} have a Bible file and no file is orphaned (${docFiles.length} docs).`
+      : `Warning: ${undocumentedSlugs.length} roster identit${undocumentedSlugs.length === 1 ? "y" : "ies"} lack a Bible workforce file${undocumentedSlugs.length ? ` (${undocumentedSlugs.join(", ")})` : ""}; ${orphanedDocs.length} doc file${s(orphanedDocs.length)} name no current identity.`;
+  const reasoning =
+    `Deterministic reconciliation of ${rosterSlugs.size} roster slug${s(rosterSlugs.size)} against ${docFiles.length} Bible workforce file${s(docFiles.length)} (filename convention NN-<slug>.md). A roster identity with no file is undocumented; a file naming no identity is stale. No doc is edited — this reports the drift for a human.`;
+
+  return determined(kind, summary, reasoning, severity, sources, now, {
+    signals: {
+      employees: employees.length,
+      docFiles: docFiles.length,
+      undocumentedSlugs,
+      orphanedDocs,
+      fsAvailable: true,
+    },
+  }) as RosterDocCoverageResult;
+}
+
+// =====================================================================
 // 6. Onboarding AI — activation nudges over the org estate.
 //    Source: organizations (onboarding_state / onboarding_percent / status). Reports which
 //    live orgs have stalled activation; it touches no customer account.
@@ -680,6 +919,169 @@ export function summariseDesignConsistency(
       distinctIcons,
     },
   }) as DesignConsistencyResult;
+}
+
+// =====================================================================
+// 9b. Design AI — the DESIGN REVIEW (L9a / P8): a deeper deterministic audit of
+//     the HQ-configurable design surface, beyond the missing-token scan above.
+//
+//     HONEST SCOPE, stated precisely: this reviews the design data the platform
+//     ACTUALLY STORES AND CAN REACH AT RUNTIME — the roster's brand tokens
+//     (ai_employees.icon / accent / department): token-format coherence (mixed
+//     hex/named accent vocabularies fracture the Boardroom palette), accent
+//     collisions inside a department (two identities rendered identically), and
+//     icon collisions estate-wide. It does NOT walk the component tree:
+//     FILE-SYSTEM-LEVEL audits (DataTable/EmptyState/PageHeader adoption, token
+//     usage in TSX) are CI-territory — the design-system tests own them, because
+//     a serverless runtime has no reliable source tree to walk and a runtime FS
+//     scan would be a fabricated audit the moment the bundle omits the sources.
+//     The GENERATIVE half (a prose UI critique) is the governed dark seam
+//     `hq.design_review` — attached by the runner, null until a tier is bound.
+// =====================================================================
+
+export interface DesignReviewEmployeeRow {
+  slug: string;
+  icon: string | null;
+  accent: string | null;
+  department: string | null;
+}
+
+export interface DesignReviewResult extends WorkerEnvelope {
+  kind: "design_review";
+  signals: {
+    employees: number;
+    /** Accent token format families in use (e.g. "hex", "named") — >1 is drift. */
+    accentFormats: string[];
+    mixedAccentFormats: boolean;
+    /** Departments where two employees share one accent (identical rendering). */
+    departmentAccentCollisions: Array<{ department: string; accent: string; slugs: string[] }>;
+    /** Icons carried by more than one employee estate-wide. */
+    iconCollisions: Array<{ icon: string; slugs: string[] }>;
+    findings: Array<{ scope: string; issue: string }>;
+  };
+  /**
+   * The governed generative critique (`hq.design_review`). ALWAYS null from
+   * this pure compute; the runner may replace it once a model tier is bound.
+   */
+  generativeCritique: string | null;
+  generativeNote: string;
+}
+
+const DESIGN_GENERATIVE_DARK_NOTE =
+  "UI critique prose is a governed dark seam (hq.design_review): no model tier is bound, so no critique is generated and this field is null. The deterministic findings above are complete without it.";
+
+/** Classify an accent token's format family (hex vs named/utility token). */
+function accentFormatOf(accent: string): string {
+  const a = accent.trim();
+  if (/^#[0-9a-fA-F]{3,8}$/.test(a)) return "hex";
+  if (/^[a-z][a-z0-9-]*$/i.test(a)) return "named";
+  return "other";
+}
+
+export function summariseDesignReview(
+  employees: ReadonlyArray<DesignReviewEmployeeRow>,
+  now: Date,
+): DesignReviewResult {
+  const sources = ["ai_employees"];
+  const kind = "design_review";
+  if (employees.length === 0) {
+    return {
+      ...insufficient(kind, "no employees to design-review yet.", sources, now, {
+        signals: {
+          employees: 0,
+          accentFormats: [],
+          mixedAccentFormats: false,
+          departmentAccentCollisions: [],
+          iconCollisions: [],
+          findings: [],
+        },
+      }),
+      generativeCritique: null,
+      generativeNote: DESIGN_GENERATIVE_DARK_NOTE,
+    } as DesignReviewResult;
+  }
+
+  const findings: Array<{ scope: string; issue: string }> = [];
+
+  // 1. Accent token-format coherence.
+  const formatSet = new Set<string>();
+  for (const e of employees) {
+    if (!blank(e.accent)) formatSet.add(accentFormatOf(e.accent!));
+  }
+  const accentFormats = [...formatSet].sort();
+  const mixedAccentFormats = accentFormats.length > 1;
+  if (mixedAccentFormats) {
+    findings.push({
+      scope: "roster:accent",
+      issue: `Accent tokens mix ${accentFormats.length} format families (${accentFormats.join(", ")}) — one vocabulary keeps the Boardroom palette coherent.`,
+    });
+  }
+
+  // 2. Accent collisions inside a department (two identities rendered identically).
+  const byDeptAccent = new Map<string, string[]>();
+  for (const e of employees) {
+    if (blank(e.accent)) continue;
+    const key = `${e.department ?? "unknown"}\u0000${e.accent!.trim().toLowerCase()}`;
+    const list = byDeptAccent.get(key) ?? [];
+    list.push(e.slug);
+    byDeptAccent.set(key, list);
+  }
+  const departmentAccentCollisions = [...byDeptAccent.entries()]
+    .filter(([, slugs]) => slugs.length > 1)
+    .map(([key, slugs]) => {
+      const [department, accent] = key.split("\u0000");
+      return { department: department!, accent: accent!, slugs: [...slugs].sort() };
+    })
+    .sort((a, b) => a.department.localeCompare(b.department) || a.accent.localeCompare(b.accent));
+  for (const c of departmentAccentCollisions) {
+    findings.push({
+      scope: `department:${c.department}`,
+      issue: `${c.slugs.length} identities share accent '${c.accent}' (${c.slugs.join(", ")}) — indistinguishable cards within one department.`,
+    });
+  }
+
+  // 3. Icon collisions estate-wide.
+  const byIcon = new Map<string, string[]>();
+  for (const e of employees) {
+    if (blank(e.icon)) continue;
+    const key = e.icon!.trim();
+    const list = byIcon.get(key) ?? [];
+    list.push(e.slug);
+    byIcon.set(key, list);
+  }
+  const iconCollisions = [...byIcon.entries()]
+    .filter(([, slugs]) => slugs.length > 1)
+    .map(([icon, slugs]) => ({ icon, slugs: [...slugs].sort() }))
+    .sort((a, b) => a.icon.localeCompare(b.icon));
+  for (const c of iconCollisions) {
+    findings.push({
+      scope: "roster:icon",
+      issue: `Icon '${c.icon}' is carried by ${c.slugs.length} identities (${c.slugs.join(", ")}).`,
+    });
+  }
+
+  const severity: WorkerSeverity = findings.length > 0 ? "warning" : "ok";
+  const summary =
+    severity === "ok"
+      ? `Design review clean across ${employees.length} identit${employees.length === 1 ? "y" : "ies"}: one accent vocabulary, no accent collision within a department, no icon reuse.`
+      : `Warning: ${findings.length} design finding${s(findings.length)} — ${mixedAccentFormats ? "mixed accent formats; " : ""}${departmentAccentCollisions.length} department accent collision${s(departmentAccentCollisions.length)}, ${iconCollisions.length} icon collision${s(iconCollisions.length)}.`;
+  const reasoning =
+    `Deterministic design review over ${employees.length} roster row${s(employees.length)} — the design data the platform actually stores: accent token-format coherence, per-department accent collisions, estate-wide icon reuse. Component-adoption audits live in CI design-system tests, where the source tree is real; nothing is guessed here, and no design asset is changed — this critiques for a human.`;
+
+  return {
+    ...determined(kind, summary, reasoning, severity, sources, now, {
+      signals: {
+        employees: employees.length,
+        accentFormats,
+        mixedAccentFormats,
+        departmentAccentCollisions,
+        iconCollisions,
+        findings,
+      },
+    }),
+    generativeCritique: null,
+    generativeNote: DESIGN_GENERATIVE_DARK_NOTE,
+  } as DesignReviewResult;
 }
 
 // =====================================================================

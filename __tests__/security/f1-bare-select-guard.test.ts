@@ -436,10 +436,10 @@ const ALLOWLIST: Record<string, string> = {
   //    these files are the paged pipeline / count reads, not these lookups.
   "server/services/hq-outreach.ts:786":
     "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentOutreachRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 757→786 when ctx.memory recall/remember wiring was added to the runner.)",
-  "server/services/hq-qualification.ts:867":
-    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentQualificationRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 830→867 when ctx.memory recall/remember wiring was added to the runner.)",
-  "server/services/hq-research.ts:1555":
-    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentResearchRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 1517→1555 when ctx.memory recall/remember wiring was added to the runner.)",
+  "server/services/hq-qualification.ts:928":
+    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentQualificationRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 867→928 when P3 threaded the recall into the artifact's memory_context.)",
+  "server/services/hq-research.ts:1579":
+    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentResearchRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 1555→1579 when P3 threaded the recall into the artifact's memory_context.)",
 };
 
 function walk(dir: string, out: string[]): void {
@@ -1158,6 +1158,18 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   whatsapp_assistant_actions: "PAGED: fetchAllRows, org-pinned pending-review queue",
   accounting_pushed_entities: "PAGED: fetchAllRows (accounting-export ledger reconcile read)",
   activity_log: "PAGED: fetchAllRows on every read (activity feed, dashboard tile, AI aggregates)",
+  // L9a / P10 — Documentation AI release-notes composition
+  // (server/services/hq-documentation-runner.ts, readReleaseWindow). The ONLY
+  // set-read on each of these two append-only ledgers is F-1 PAGED via
+  // fetchAllRows over a 14-day `.gte` window on a stable id order, so the
+  // composed grouped counts are COMPLETE for the window — never a clamp-capped
+  // aggregate. hq_decisions is deliberately NOT read here: the runner goes
+  // through the sanctioned decision service (hq-decisions.ts), which owns every
+  // .from on its tables.
+  admin_activity_log:
+    "PAGED: fetchAllRows over a 14-day gte window, stable id order (release-notes composition — the grouped counts must be complete for the window)",
+  hq_events:
+    "PAGED: fetchAllRows over a 14-day gte window, stable id order (release-notes composition — the grouped counts must be complete for the window)",
   retention_policies:
     "PER-ORG config + PAGED cron read. The settings page read (app/(app)/settings/data-retention/page.tsx) is .eq('org_id') over a per-org config set bounded at the ~10-entry purgeable allowlist (one row per (org,table) via the unique constraint). The cron's cross-org read (server/services/retention-purge.ts, runRetentionPurge) is F-1 PAGED via fetchAllRows on a stable id order, so it can never truncate and skip an org's enabled policy.",
   retention_purge_log:

@@ -218,8 +218,8 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
     "bounded: 'my recent 20 jobs' widget on the profile page — a top-N display. (Line moved to 145 in the security closeout when the own-pay read was split out to staff_compensation above this read; reason unchanged.)",
   "server/services/fleet-snapshot.ts:568":
     "bounded: last-50 telematics readings for a vehicle track display (recent-N sample)",
-  "server/services/hq-customer-snapshot.ts:216":
-    "bounded: last-10 payments for an HQ customer snapshot display (top-N). (Moved 215→216 when a fetchAllRows import was added for the .from(as never) cast-form wave.)",
+  "server/services/hq-customer-snapshot.ts:277":
+    "bounded: last-10 payments for an HQ customer snapshot display (top-N). (Moved 215→216 when a fetchAllRows import was added for the .from(as never) cast-form wave; 216→277 when the L11 member-roster read — itself PAGED via fetchAllRows — and the CustomerMember type were added above.)",
 
   // NEW-form recency pickers — no saved reference is re-rendered through the list
   // (the EDIT counterpart resolves it separately), so no picker silent-null.

@@ -54,6 +54,83 @@ export interface MemoryCapableContext {
   capabilities: ResolvedCapabilitySet;
 }
 
+// ---------------------------------------------------------------------
+// The artifact-side fold — recalled memory made VISIBLE in the runner's
+// deterministic result (P3: shared-memory retrieval must inform the output,
+// not just be fetched and discarded).
+// ---------------------------------------------------------------------
+
+/** One recalled memory, folded to the bounded shape a task artifact carries. */
+export type RecalledMemorySummary = {
+  id: string;
+  class: string;
+  type: string;
+  title: string;
+  summary: string;
+};
+
+/**
+ * The `memory_context` section of a runner's result artifact: the recalled
+ * memories that actually informed the run, plus a plain-English note saying
+ * HOW they informed it. `null` (the caller keeps the field null) means the
+ * recall was unavailable — no capability, degraded, or nothing recalled —
+ * which is an honest absence, never an empty fabrication.
+ */
+export type TaskMemoryContext = {
+  recalled: RecalledMemorySummary[];
+  note: string;
+};
+
+/** Bound: a task artifact never carries more than this many recall summaries. */
+export const MEMORY_CONTEXT_LIMIT = 5;
+
+/**
+ * Fold a recall result into the artifact's `memory_context` section — PURE.
+ * Returns null when the recall was null (capability-gated off / degraded) or
+ * recalled nothing, so callers can assign it directly and the artifact stays
+ * honest: a section exists if and only if real memories informed the run.
+ * Items are already relevance-ranked by the recall (§7.3); we keep the top
+ * `MEMORY_CONTEXT_LIMIT` and only the bounded summary fields (never bodies),
+ * so the result jsonb stays small by construction.
+ */
+export function memoryContextFromRecall(
+  recall: RecallResult | null,
+  note: string,
+): TaskMemoryContext | null {
+  if (!recall || recall.items.length === 0) return null;
+  return {
+    recalled: recall.items.slice(0, MEMORY_CONTEXT_LIMIT).map((m) => ({
+      id: m.id,
+      class: m.class,
+      type: m.type,
+      title: m.title,
+      summary: m.summary,
+    })),
+    note,
+  };
+}
+
+/**
+ * Memory types that record a PRIOR DECISION about the recall's subject. When
+ * qualification recalls one of these for the company it is scoring, the run is
+ * a REPEAT EVALUATION — a documented deterministic adjustment (the flag) is
+ * applied so the verdict is never presented as a first look when it is not.
+ * `qualification_decision` is what rememberForTask writes after every verdict;
+ * `decision` is the generic decision-class type other employees may record.
+ */
+export const PRIOR_DECISION_MEMORY_TYPES: readonly string[] = [
+  "qualification_decision",
+  "decision",
+];
+
+/** The ids of recalled memories that record a prior decision — PURE. */
+export function priorDecisionMemoryIds(recall: RecallResult | null): string[] {
+  if (!recall) return [];
+  return recall.items
+    .filter((m) => PRIOR_DECISION_MEMORY_TYPES.includes(m.type))
+    .map((m) => m.id);
+}
+
 function canUse(ctx: MemoryCapableContext, mode: MemoryCapabilityMode): boolean {
   return employeeCanUseMemory(ctx.capabilities.tokens, mode);
 }

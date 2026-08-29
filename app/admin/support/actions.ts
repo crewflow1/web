@@ -19,6 +19,10 @@ import {
   SUPPORT_PRIORITIES,
   SUPPORT_CATEGORIES,
 } from "@/lib/hq/support";
+import {
+  enqueueSupportReplyDraft,
+  runSupportReplyDraftTask,
+} from "@/server/services/hq-support-ai";
 
 /**
  * HQ-side support actions (HQ-7).
@@ -339,4 +343,49 @@ export async function assignTicket(formData: FormData): Promise<void> {
   revalidatePath(`/admin/support/${parsed.data.ticket_id}`);
   revalidatePath(`/admin/support`);
   redirect(`/admin/support/${parsed.data.ticket_id}?saved=assign`);
+}
+
+// --------------------------------------------------------------------
+// P13 — Draft reply (AI): governed, dark, NEVER auto-sent.
+//
+// Enqueues a `support_reply_draft` task for the ticket on the generic Task
+// Engine and drains it immediately, so the draft artifact is a real
+// hq_ai_tasks result with honest provenance (deterministic today; the
+// governed generative leg under the registered `hq.draft` key upgrades it
+// only once a model tier is bound). This action NEVER writes a
+// support_messages row and NEVER calls replyAsHq — the human reads the
+// draft, edits it, and sends it themselves through the reply form.
+// --------------------------------------------------------------------
+
+export async function generateSupportReplyDraft(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const parsed = ticketIdSchema.safeParse(formData.get("ticket_id"));
+  if (!parsed.success) redirect(`/admin/support?error=invalid_input`);
+  const ticketId = parsed.data;
+
+  const enq = await enqueueSupportReplyDraft(ticketId, admin.email);
+  if (!enq.ok) {
+    redirect(`/admin/support/${ticketId}?error=draft_enqueue_failed`);
+  }
+  if (enq.skipped) {
+    // No seeded support-ai identity — an honest refusal, not a silent no-op.
+    redirect(`/admin/support/${ticketId}?error=draft_no_support_ai`);
+  }
+
+  // Drain the just-enqueued task through the canonical runner so the draft is
+  // ready when the page re-renders. Best-effort: a failed run leaves the task
+  // in the engine (retry/reap applies) and the panel shows its empty state.
+  const run = await runSupportReplyDraftTask();
+
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "support.reply_draft_generated",
+    targetTable: "support_tickets",
+    targetId: ticketId,
+    metadata: { task_id: enq.taskId ?? null, outcome: run.status },
+  });
+
+  revalidatePath(`/admin/support/${ticketId}`);
+  redirect(`/admin/support/${ticketId}?saved=draft`);
 }

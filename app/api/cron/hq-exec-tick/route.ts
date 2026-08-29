@@ -30,6 +30,10 @@ import {
   drainProductReviewTasks,
 } from "@/server/services/hq-product-exec-runner";
 import {
+  enqueueProductProposalSweep,
+  drainProductProposalTasks,
+} from "@/server/services/hq-product";
+import {
   enqueueQaReview,
   drainQaReviewTasks,
 } from "@/server/services/hq-qa-exec-runner";
@@ -92,6 +96,14 @@ const EXECS: ReadonlyArray<{
   { label: "sales", enqueue: enqueueSalesReview, drain: drainSalesReviewTasks },
   { label: "marketing", enqueue: enqueueMarketingReview, drain: drainMarketingReviewTasks },
   { label: "product", enqueue: enqueueProductReview, drain: drainProductReviewTasks },
+  // P11 — Product AI's demand→proposal sweep: converts the board's top demand
+  // themes into DRAFT Decision-Centre proposals (openDeterministicProposal;
+  // idempotent per theme via source_signal_key). Deterministic, never decides.
+  {
+    label: "product_proposal",
+    enqueue: enqueueProductProposalSweep,
+    drain: drainProductProposalTasks,
+  },
   { label: "qa", enqueue: enqueueQaReview, drain: drainQaReviewTasks },
   { label: "finance", enqueue: enqueueFinanceReview, drain: drainFinanceReviewTasks },
   { label: "operations", enqueue: enqueueOperationsReview, drain: drainOperationsReviewTasks },
