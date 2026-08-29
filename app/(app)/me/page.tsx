@@ -143,19 +143,11 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
         .order("starts_at", { ascending: true }),
       supabase
         .from("jobs")
-        // `assigned_to` MUST be selected: the "My jobs" filter below narrows to
-        // rows where assigned_to === user.id, and PostgREST only returns columns
-        // named here — omitting it made every row's assigned_to `undefined`, so
-        // the panel rendered permanently empty for every worker (Customer #1
-        // rehearsal defect, 2026-08-29).
+        // assigned_to MUST stay selected — the panel filter reads it (2026-08-29 fix).
         .select("id, status, scheduled_date, assigned_to, customer:customers ( name )")
         .eq("org_id", ctx.org.id)
-        // OWN assignments only. The previous or-branch also fetched every
-        // UNASSIGNED live job, so the org's backlog shared this query's 20-row
-        // LIMIT — ≥20 unassigned jobs with earlier scheduled dates pushed the
-        // worker's own job out of the window and the panel went silently empty
-        // again (reviewer finding, 2026-08-29). Unassigned rows were discarded
-        // by the filter below anyway; fetch exactly what renders.
+        // OWN assignments only — an unassigned-jobs or-branch shared the 20-row
+        // LIMIT and could crowd the worker's own job out (reviewer fix, 2026-08-29).
         .eq("assigned_to", user.id)
         // Active work only: completed is done, cancelled (20261220) is dead —
         // a field worker's "My jobs" must never point them at a cancelled site.
