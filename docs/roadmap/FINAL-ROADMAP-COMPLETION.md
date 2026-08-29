@@ -33,3 +33,16 @@ L7 reachability: app/(app)/_nav/nav-model.ts + notifications bell + app/(app)/se
 L8 docs+hygiene: README.md, docs/roadmap/STATUS.md, backup runbook, bible adoption tracker, ai-quote-writer doc + package.json (inngest, packageManager)
 
 (Progress + results appended per lane.)
+
+## Wave 1 — COMPLETE (8/8 lanes, consolidated gates green: tsc 0 · unit 11,069 · security 8,180)
+- **G1 search (d9227ad2):** 12→22 families, nav-locked role boundary, money-column-free finance hits, 34 new security pins.
+- **G2 variation intake (1fb86968):** `variation_requests` (mig 20261221), 3 intake surfaces (site/portal/worker-token), trigger-guarded forward-only lifecycle, convert hook — variation engine stays sole commercial authority. 9/9 RLS integration.
+- **G3 tables (1889eb53):** canonical DataTable (sticky/sort/filter/resize/bulk/keyboard/group; inline-edit documented-omitted) + adoption invoices/customers/suppliers/staff.
+- **G4 charts (fdd00fe9):** zero-dep server-SVG system; reports home/cashflow/profit + dashboard revenue trend; engine-parity by construction; proportionality-tested.
+- **G5 CIS verify (65d84f8f):** dark HMRC verification adapter (mig 20261224 verification_source); READY vs ACTIVATED separated.
+- **G6 saga (530a3f59):** canonical saga_step runner — sagas reach `done`; real-PG lifecycle/failure/concurrency proven; orphans structurally recovered.
+- **Reachability (7d43818d):** notifications nav; flag-conditional marketplace nav; /settings/sso activation page; GDPR export+erase surfaces (posture-matched); Outreach AI at /admin/outreach (draft-only pinned).
+- **Docs+hygiene (8517df9f):** README truth rewrite; STATUS control-plane reset (NEXT-FREE trap eliminated); runbook stamps; superseded banners; inngest removed; npm lockfile canonical; 18 truth pins. NOTE: `npm audit` = 51 prod-dep vulns (1 critical, ws/uuid chains) — fix pass scheduled post-Wave-2.
+
+## Wave 2 — IN FLIGHT
+L9a HQ dept engines (P6/P7/P8/P10: real task handlers + governed dark seams + GitHub/Vercel dark adapters + executor-gated merge/deploy tools) · L9b (P3 recall consumption fix, P4 stage mapping, P11 product→decisions, P12 real MRR/LTV/forecast, P13 support draft-reply seam) · L10 contract fields+roster (migs 20261222/20261225 + ADR-0012) · L11 platform (ops 45-cron, email requeue, ToS mig 20261223, request-id persistence mig 20261226, HQ user listing, Sentry link) · L12 performance evidence harness.
