@@ -1,0 +1,2135 @@
+[
+{
+"id": "R001",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "CRM customer memory (interactions/docs/notes/comms/financials)",
+"horizon": "cur",
+"status": "A",
+"evidence": "customers/[id] 360 rollup+timeline+contacts"
+},
+{
+"id": "R002",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Leads capture manual",
+"horizon": "cur",
+"status": "A",
+"evidence": "leads/actions createLead"
+},
+{
+"id": "R003",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Leads pipeline/stages/scoring/forecast",
+"horizon": "cur",
+"status": "A",
+"evidence": "leads/pipeline.ts 7 stages deterministic score"
+},
+{
+"id": "R004",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Lead->customer conversion idempotent",
+"horizon": "cur",
+"status": "A",
+"evidence": "lib/leads/convert.ts"
+},
+{
+"id": "R005",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Customers one-record CRUD+B2B parent/child",
+"horizon": "cur",
+"status": "A",
+"evidence": "customers/*"
+},
+{
+"id": "R006",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Quotes builder+templates+price book",
+"horizon": "cur",
+"status": "A",
+"evidence": "quotes/_builder+price-book picker"
+},
+{
+"id": "R007",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Quote internal approval workflow",
+"horizon": "cur",
+"status": "A",
+"evidence": "quotes/actions 485-669 self-approval guard"
+},
+{
+"id": "R008",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Quote versions history+diff",
+"horizon": "cur",
+"status": "A",
+"evidence": "mig 20261150 append-only"
+},
+{
+"id": "R009",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Quote PDF + email send",
+"horizon": "cur",
+"status": "A",
+"evidence": "api/quotes/[id]/pdf+send (Resend live)"
+},
+{
+"id": "R010",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Public e-sign acceptance portal",
+"horizon": "cur",
+"status": "A",
+"evidence": "app/q/[token] typed+drawn sig, ip-hash"
+},
+{
+"id": "R011",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Quote->job auto-create w/ data carry",
+"horizon": "cur",
+"status": "A",
+"evidence": "buildJobCarryFromQuote both accept paths"
+},
+{
+"id": "R012",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Quote->invoice auto-draft+send",
+"horizon": "cur",
+"status": "A",
+"evidence": "acceptQuoteByToken 1223-1250"
+},
+{
+"id": "R013",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Jobs operational hub (workspace+tabs)",
+"horizon": "cur",
+"status": "A",
+"evidence": "jobs/[id] 8 tabs"
+},
+{
+"id": "R014",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Scheduling calendar/gantt/resource",
+"horizon": "cur",
+"status": "A",
+"evidence": "jobs/calendar"
+},
+{
+"id": "R015",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Programme baselines/critical path",
+"horizon": "cur",
+"status": "A",
+"evidence": "_job-programme write-once baselines"
+},
+{
+"id": "R016",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Tasks/checklists per job",
+"horizon": "cur",
+"status": "A",
+"evidence": "checklist-actions 4 mutations"
+},
+{
+"id": "R017",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Variations create/price/sign/derive",
+"horizon": "cur",
+"status": "A",
+"evidence": "createVariation+VariationSummary+commercial-position"
+},
+{
+"id": "R018",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Variations EoT lifecycle+pack PDF",
+"horizon": "cur",
+"status": "A",
+"evidence": "eot actions+lib/pdf/eot-pack"
+},
+{
+"id": "R019",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Invoices lifecycle+void state",
+"horizon": "cur",
+"status": "A",
+"evidence": "mig 20261219, excluded everywhere"
+},
+{
+"id": "R020",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Payments record/allocate/partial",
+"horizon": "cur",
+"status": "A",
+"evidence": "invoice_payments+allocation RPC"
+},
+{
+"id": "R021",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Invoice reminders auto-email",
+"horizon": "cur",
+"status": "A",
+"evidence": "cron invoice-reminders (void-excluded)"
+},
+{
+"id": "R022",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Payroll staff/timesheets/leave/PAYE/pension estimates",
+"horizon": "cur",
+"status": "A",
+"evidence": "lib/payroll/compute dated tables"
+},
+{
+"id": "R023",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Staff mgmt (roles/quals/perf/availability)",
+"horizon": "cur",
+"status": "A",
+"evidence": "staff/* + qualifications"
+},
+{
+"id": "R024",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Documents one-home + staff/private split",
+"horizon": "cur",
+"status": "A",
+"evidence": "job-documents service"
+},
+{
+"id": "R025",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Photos linked to jobs + camera capture",
+"horizon": "cur",
+"status": "A",
+"evidence": "capture=environment"
+},
+{
+"id": "R026",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Dashboard 'what needs attention' briefing",
+"horizon": "cur",
+"status": "A",
+"evidence": "buildDailyBriefing penny-verified live"
+},
+{
+"id": "R027",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Reporting profit/revenue/cash/utilisation/pipeline",
+"horizon": "cur",
+"status": "A",
+"evidence": "reports/* + PDF/CSV"
+},
+{
+"id": "R028",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Activity log timeline",
+"horizon": "cur",
+"status": "A",
+"evidence": "activity_log DB-trigger captured"
+},
+{
+"id": "R029",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Notifications centre in-app",
+"horizon": "cur",
+"status": "A",
+"evidence": "app/(app)/notifications + drains"
+},
+{
+"id": "R030",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Multi-tenancy + auth + roles",
+"horizon": "cur",
+"status": "A",
+"evidence": "RLS 307/307 + owner/admin/staff"
+},
+{
+"id": "R031",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Website marketing + landing pages",
+"horizon": "cur",
+"status": "A",
+"evidence": "(site)+(marketing) 53 SEO pages"
+},
+{
+"id": "R032",
+"volume": "V04-PRODUCT",
+"section": "Foundation modules",
+"requirement": "Search across core entities",
+"horizon": "cur",
+"status": "A",
+"evidence": "api/search 12 families"
+},
+{
+"id": "R033",
+"volume": "V04-PRODUCT",
+"section": "Foundation",
+"requirement": "Search: EVERYTHING searchable (photos/blueprints/assets/suppliers/expenses/tickets/AI decisions/meetings)",
+"horizon": "cur",
+"status": "C",
+"evidence": "Cmd+K=12 families; blueprints/photos/assets/tickets absent \u2014 GAP-1"
+},
+{
+"id": "R034",
+"volume": "V04-PRODUCT",
+"section": "Foundation",
+"requirement": "AI Receptionist foundation (inbound multi-channel + governed drafting)",
+"horizon": "cur",
+"status": "B",
+"evidence": "receptionist.ts 2788L; channels+LLM dark"
+},
+{
+"id": "R035",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "Blueprint Centre (sheets/zoom/versions/pins/comments/photos/tasks/compare/markup/PDF)",
+"horizon": "cur",
+"status": "A",
+"evidence": "jobs/[id]/blueprints full incl offline"
+},
+{
+"id": "R036",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "AI WhatsApp Assistant (voice-notes/photos/video/docs -> lead/job/notes/tasks/variations)",
+"horizon": "cur",
+"status": "B",
+"evidence": "media pipeline+transcription governed dark; DA-verified"
+},
+{
+"id": "R037",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "Offline mode (5 create+3 update entities+photos)",
+"horizon": "cur",
+"status": "C",
+"evidence": "registry.ts; 'entire app offline' unmet; reasoned carve-outs under-documented"
+},
+{
+"id": "R038",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "Native mobile apps iOS/Android",
+"horizon": "fut",
+"status": "F",
+"evidence": "explicit future; PWA is the strategy"
+},
+{
+"id": "R039",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "AI Quote Writer",
+"horizon": "cur",
+"status": "B",
+"evidence": "governed dark, refuses-not-fakes"
+},
+{
+"id": "R040",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "AI Scheduler",
+"horizon": "cur",
+"status": "G",
+"evidence": "deterministic solver; no-AI pinned by test+decision"
+},
+{
+"id": "R041",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "AI Cashflow",
+"horizon": "cur",
+"status": "G",
+"evidence": "deterministic forecast+insights seam; daily-briefing doc records supersede"
+},
+{
+"id": "R042",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "Blueprint pins",
+"horizon": "cur",
+"status": "A",
+"evidence": "pins+tasks live"
+},
+{
+"id": "R043",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "Snagging",
+"horizon": "cur",
+"status": "A",
+"evidence": "snags full lifecycle"
+},
+{
+"id": "R044",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "Daily site diary + auto rollup",
+"horizon": "cur",
+"status": "A",
+"evidence": "diary+cron rollup"
+},
+{
+"id": "R045",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "Weather intelligence",
+"horizon": "cur",
+"status": "B",
+"evidence": "pipeline+consumers built; provider credential dark"
+},
+{
+"id": "R046",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "RAMS generator",
+"horizon": "cur",
+"status": "A",
+"evidence": "11 templates deterministic"
+},
+{
+"id": "R047",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "Toolbox talks",
+"horizon": "cur",
+"status": "A",
+"evidence": "deliver/snapshot/sign/PDF"
+},
+{
+"id": "R048",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "Health & Safety suite",
+"horizon": "cur",
+"status": "A",
+"evidence": "RAMS/permits/inductions/muster live"
+},
+{
+"id": "R049",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "CIS automation (deduct/statements/verify-record)",
+"horizon": "cur",
+"status": "A",
+"evidence": "DB-enforced cumulative engine; verify manual-entry"
+},
+{
+"id": "R050",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "OCR receipts/supplier-invoices/delivery-notes",
+"horizon": "cur",
+"status": "B",
+"evidence": "imports OCR + delivery_note kind; vision tier dark"
+},
+{
+"id": "R051",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "Purchase orders + GRN + 3-way match",
+"horizon": "cur",
+"status": "A",
+"evidence": "po-matching read-only"
+},
+{
+"id": "R052",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "Supplier/merchant integrations",
+"horizon": "cur",
+"status": "B",
+"evidence": "Jewson/TP cXML dark"
+},
+{
+"id": "R053",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "Asset tracking + QR",
+"horizon": "cur",
+"status": "A",
+"evidence": "assets+rotate_asset_qr RPC"
+},
+{
+"id": "R054",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "Fleet management (MOT/insurance/service/fuel/tyres)",
+"horizon": "cur",
+"status": "A",
+"evidence": "incl 20261173 tyres"
+},
+{
+"id": "R055",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "Open API",
+"horizon": "cur",
+"status": "B",
+"evidence": "v1 14 paths dark, OpenAPI3.1"
+},
+{
+"id": "R056",
+"volume": "V04-PRODUCT",
+"section": "Future modules (built ahead where noted)",
+"requirement": "Marketplace",
+"horizon": "cur",
+"status": "B",
+"evidence": "substrate dark; nav-orphan when lit"
+},
+{
+"id": "R057",
+"volume": "V04-PORTAL",
+"section": "Customer portal",
+"requirement": "Secure token access",
+"horizon": "cur",
+"status": "A",
+"evidence": "_helpers fail-closed"
+},
+{
+"id": "R058",
+"volume": "V04-PORTAL",
+"section": "Customer portal",
+"requirement": "View quotes",
+"horizon": "cur",
+"status": "A",
+"evidence": "quotes tab->/q"
+},
+{
+"id": "R059",
+"volume": "V04-PORTAL",
+"section": "Customer portal",
+"requirement": "Approve quotes",
+"horizon": "cur",
+"status": "A",
+"evidence": "e-sign portal"
+},
+{
+"id": "R060",
+"volume": "V04-PORTAL",
+"section": "Customer portal",
+"requirement": "View invoices+statement PDF",
+"horizon": "cur",
+"status": "A",
+"evidence": "invoices tab"
+},
+{
+"id": "R061",
+"volume": "V04-PORTAL",
+"section": "Customer portal",
+"requirement": "Pay invoices online",
+"horizon": "cur",
+"status": "B",
+"evidence": "Stripe Connect dark; bank-details+proof live"
+},
+{
+"id": "R062",
+"volume": "V04-PORTAL",
+"section": "Customer portal",
+"requirement": "See progress",
+"horizon": "cur",
+"status": "A",
+"evidence": "jobs tab"
+},
+{
+"id": "R063",
+"volume": "V04-PORTAL",
+"section": "Customer portal",
+"requirement": "View photos",
+"horizon": "cur",
+"status": "A",
+"evidence": "photos tab"
+},
+{
+"id": "R064",
+"volume": "V04-PORTAL",
+"section": "Customer portal",
+"requirement": "Upload files",
+"horizon": "cur",
+"status": "A",
+"evidence": "files tab"
+},
+{
+"id": "R065",
+"volume": "V04-PORTAL",
+"section": "Customer portal",
+"requirement": "Timeline",
+"horizon": "cur",
+"status": "A",
+"evidence": "activity tab"
+},
+{
+"id": "R066",
+"volume": "V04-PORTAL",
+"section": "Customer portal",
+"requirement": "Read updates/reports",
+"horizon": "cur",
+"status": "A",
+"evidence": "reports tab"
+},
+{
+"id": "R067",
+"volume": "V04-PORTAL",
+"section": "Customer portal",
+"requirement": "Message company",
+"horizon": "cur",
+"status": "A",
+"evidence": "messages+chat tabs"
+},
+{
+"id": "R068",
+"volume": "V04-PORTAL",
+"section": "Customer portal",
+"requirement": "Book/request future work",
+"horizon": "cur",
+"status": "A",
+"evidence": "requests+servicing slots"
+},
+{
+"id": "R069",
+"volume": "V04-PORTAL",
+"section": "Customer portal",
+"requirement": "Download certificates",
+"horizon": "cur",
+"status": "A",
+"evidence": "via Documents (no tab\u2014UX note)"
+},
+{
+"id": "R070",
+"volume": "V04-PORTAL",
+"section": "Customer portal",
+"requirement": "View warranties",
+"horizon": "cur",
+"status": "A",
+"evidence": "warranties tab"
+},
+{
+"id": "R071",
+"volume": "V04-PORTAL",
+"section": "Customer portal",
+"requirement": "Maintenance reminders",
+"horizon": "cur",
+"status": "B",
+"evidence": "derived live; proactive email dark"
+},
+{
+"id": "R072",
+"volume": "V04-FLOW",
+"section": "Connected workflow",
+"requirement": "Lead->Customer",
+"horizon": "cur",
+"status": "A",
+"evidence": "convert idempotent"
+},
+{
+"id": "R073",
+"volume": "V04-FLOW",
+"section": "Connected workflow",
+"requirement": "Customer->Quote",
+"horizon": "cur",
+"status": "A",
+"evidence": "prefilled"
+},
+{
+"id": "R074",
+"volume": "V04-FLOW",
+"section": "Connected workflow",
+"requirement": "Quote->Approval->Send",
+"horizon": "cur",
+"status": "A",
+"evidence": "gated"
+},
+{
+"id": "R075",
+"volume": "V04-FLOW",
+"section": "Connected workflow",
+"requirement": "Accept->Job w/ carry",
+"horizon": "cur",
+"status": "A",
+"evidence": "site/scope/provenance"
+},
+{
+"id": "R076",
+"volume": "V04-FLOW",
+"section": "Connected workflow",
+"requirement": "Accept->Invoice",
+"horizon": "cur",
+"status": "A",
+"evidence": "auto-draft+email"
+},
+{
+"id": "R077",
+"volume": "V04-FLOW",
+"section": "Connected workflow",
+"requirement": "Job->Scheduling",
+"horizon": "cur",
+"status": "A",
+"evidence": "dates/calendar/rota"
+},
+{
+"id": "R078",
+"volume": "V04-FLOW",
+"section": "Connected workflow",
+"requirement": "Scheduling->Site activity",
+"horizon": "cur",
+"status": "A",
+"evidence": "diary/reports/time job-keyed"
+},
+{
+"id": "R079",
+"volume": "V04-FLOW",
+"section": "Connected workflow",
+"requirement": "Site->Variation request intake",
+"horizon": "cur",
+"status": "D",
+"evidence": "no structured capture \u2014 GAP-2 (portal messages informal)"
+},
+{
+"id": "R080",
+"volume": "V04-FLOW",
+"section": "Connected workflow",
+"requirement": "Variation->Quote+Invoice derivation",
+"horizon": "cur",
+"status": "A",
+"evidence": "derived contract value"
+},
+{
+"id": "R081",
+"volume": "V04-FLOW",
+"section": "Connected workflow",
+"requirement": "Invoice->Payment",
+"horizon": "cur",
+"status": "A",
+"evidence": "manual+CSV reconcile; online dark"
+},
+{
+"id": "R082",
+"volume": "V04-FLOW",
+"section": "Connected workflow",
+"requirement": "Payment->Costing/Cash/Reports",
+"horizon": "cur",
+"status": "A",
+"evidence": "29 consumers; job-cost composition"
+},
+{
+"id": "R083",
+"volume": "V04-FLOW",
+"section": "Connected workflow",
+"requirement": "Reporting->Intelligence",
+"horizon": "cur",
+"status": "A",
+"evidence": "insights/briefing same ledgers"
+},
+{
+"id": "R084",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P1 AI Employee Framework",
+"horizon": "cur",
+"status": "C",
+"evidence": "one real framework; manager/conversation/cost fields absent"
+},
+{
+"id": "R085",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P2 AI Boardroom",
+"horizon": "cur",
+"status": "A",
+"evidence": "live real-data cards, honest presentation-state"
+},
+{
+"id": "R086",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P3 Shared Memory",
+"horizon": "cur",
+"status": "C",
+"evidence": "substrate+6 write sites real; semantic retrieval dark; taxonomy differs from Bible list"
+},
+{
+"id": "R087",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P4 AI Task Engine",
+"horizon": "cur",
+"status": "A",
+"evidence": "7 SECURITY DEFINER entries, claims/lease/reaper; 15-stage pipeline vocabulary-only (1 caller)"
+},
+{
+"id": "R088",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P5 Sales AI",
+"horizon": "cur",
+"status": "C",
+"evidence": "research+qualification real manual-launch; outreach code-complete ORPHANED; no lead sourcing"
+},
+{
+"id": "R089",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P6 Marketing AI",
+"horizon": "cur",
+"status": "D",
+"evidence": "metrics board only; channel/campaign/ad data absent by construction"
+},
+{
+"id": "R090",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P7 CTO AI",
+"horizon": "cur",
+"status": "D",
+"evidence": "no PR review/merge/deploy/monitoring; zero GitHub/Vercel integration; metrics board only"
+},
+{
+"id": "R091",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P8 Design AI",
+"horizon": "cur",
+"status": "D",
+"evidence": "brand-token roster audit only"
+},
+{
+"id": "R092",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P9 QA AI",
+"horizon": "cur",
+"status": "C",
+"evidence": "real board over task/audit telemetry; runs no tests"
+},
+{
+"id": "R093",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P10 Documentation AI",
+"horizon": "cur",
+"status": "D",
+"evidence": "roster-field linter; reads/writes no docs"
+},
+{
+"id": "R094",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P11 Product AI",
+"horizon": "cur",
+"status": "C",
+"evidence": "feedback board; roadmap writes absent"
+},
+{
+"id": "R095",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P12 Finance AI",
+"horizon": "cur",
+"status": "C",
+"evidence": "MRR=count*\u00a3500 hardcode; no LTV/forecast metric on board; no Stripe reads"
+},
+{
+"id": "R096",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P13 Support AI",
+"horizon": "cur",
+"status": "C",
+"evidence": "cross-tenant triage board; reply capability unbuilt"
+},
+{
+"id": "R097",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P14 Operations AI",
+"horizon": "cur",
+"status": "C",
+"evidence": "cron/alerts/task-queue board"
+},
+{
+"id": "R098",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P15 AI Collaboration",
+"horizon": "cur",
+"status": "C",
+"evidence": "saga substrate real BUT saga_step handler missing \u2014 DEFECT: tasks unclaimable, sagas pin at running"
+},
+{
+"id": "R099",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P16 Decision Centre",
+"horizon": "cur",
+"status": "A",
+"evidence": "full contract, immutable, autopropose live; ai_debate slot empty/deterministic"
+},
+{
+"id": "R100",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P17 Daily CEO Briefing",
+"horizon": "cur",
+"status": "A",
+"evidence": "cron 06:00 deterministic durable"
+},
+{
+"id": "R101",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P18 Voice Layer",
+"horizon": "cur",
+"status": "C",
+"evidence": "beyond architecture-only: real edge+substrate; all intelligent legs dark"
+},
+{
+"id": "R102",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P19 Automation Engine",
+"horizon": "cur",
+"status": "A",
+"evidence": "tenant engine live; AI-employee triggering = dark node kind only"
+},
+{
+"id": "R103",
+"volume": "V01-HQ-PLAN",
+"section": "HQ Master Plan",
+"requirement": "P20 Long-term vision",
+"horizon": "fut",
+"status": "F",
+"evidence": "by definition"
+},
+{
+"id": "R104",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Identity/name/role/dept/avatar",
+"horizon": "cur",
+"status": "A",
+"evidence": "ai_employees columns"
+},
+{
+"id": "R105",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Manager field",
+"horizon": "cur",
+"status": "D",
+"evidence": "no column; prose only"
+},
+{
+"id": "R106",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Purpose/responsibilities",
+"horizon": "cur",
+"status": "C",
+"evidence": "description/system_prompt inert prose"
+},
+{
+"id": "R107",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Permissions least-privilege enforced",
+"horizon": "cur",
+"status": "A",
+"evidence": "Capability Registry sole authority; legacy cols dropped"
+},
+{
+"id": "R108",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Tools registry immutable",
+"horizon": "cur",
+"status": "A",
+"evidence": "sdk/tools"
+},
+{
+"id": "R109",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Memory shared+per-employee",
+"horizon": "cur",
+"status": "C",
+"evidence": "real tables; AI consumption dark"
+},
+{
+"id": "R110",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Structured outputs (summary/reasoning/confidence/evidence/alternatives)",
+"horizon": "cur",
+"status": "A",
+"evidence": "sdk/output envelope"
+},
+{
+"id": "R111",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Tasks + history",
+"horizon": "cur",
+"status": "A",
+"evidence": "hq_ai_tasks"
+},
+{
+"id": "R112",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Conversation history per employee",
+"horizon": "cur",
+"status": "D",
+"evidence": "absent"
+},
+{
+"id": "R113",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Recommendations",
+"horizon": "cur",
+"status": "C",
+"evidence": "scattered (sales/decisions); no unified mechanism"
+},
+{
+"id": "R114",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Status field",
+"horizon": "cur",
+"status": "A",
+"evidence": "6 states"
+},
+{
+"id": "R115",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Confidence",
+"horizon": "cur",
+"status": "C",
+"evidence": "binary-honest 0/1"
+},
+{
+"id": "R116",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Audit history",
+"horizon": "cur",
+"status": "A",
+"evidence": "admin_activity_log+spine"
+},
+{
+"id": "R117",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Performance metrics",
+"horizon": "cur",
+"status": "C",
+"evidence": "derived; no KPI ledger"
+},
+{
+"id": "R118",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Cost per employee",
+"horizon": "cur",
+"status": "D",
+"evidence": "ai_invocations keys org/feature not employee"
+},
+{
+"id": "R119",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Impact measured",
+"horizon": "cur",
+"status": "D",
+"evidence": "absent"
+},
+{
+"id": "R120",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Approval level 1-5",
+"horizon": "cur",
+"status": "A",
+"evidence": "derived+displayed"
+},
+{
+"id": "R121",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Lifecycle pause",
+"horizon": "cur",
+"status": "C",
+"evidence": "disabled status; no retire semantics"
+},
+{
+"id": "R122",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Autonomy 5 levels enforced",
+"horizon": "cur",
+"status": "A",
+"evidence": "gate+posture+killswitches+null authorities 5 layers"
+},
+{
+"id": "R123",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Irreversible actions approval-gated",
+"horizon": "cur",
+"status": "A",
+"evidence": "over-gated: no AI tenant mutation exists"
+},
+{
+"id": "R124",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Approval state persisted+audited immutably",
+"horizon": "cur",
+"status": "A",
+"evidence": "hq_approvals trigger state machine+spine"
+},
+{
+"id": "R125",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Failure escalation / never silent fail",
+"horizon": "cur",
+"status": "A",
+"evidence": "fail->escalate task states+reaper"
+},
+{
+"id": "R126",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Roster: 42 specs seeded",
+"horizon": "cur",
+"status": "C",
+"evidence": "33 seeded; #27-36 tenant-domain cohort absent w/o recorded deferral"
+},
+{
+"id": "R127",
+"volume": "V06-AI-EMP",
+"section": "AI employee contract",
+"requirement": "Apply/execution authority (Level4/5 live)",
+"horizon": "cur",
+"status": "E",
+"evidence": "ADR-0009/0011 CEO-gated; NOTE remaining engineering post-decision (not config flip)"
+},
+{
+"id": "R128",
+"volume": "V07-DB",
+"section": "Database",
+"requirement": "Org scoping every customer table",
+"horizon": "cur",
+"status": "A",
+"evidence": "307/307 RLS"
+},
+{
+"id": "R129",
+"volume": "V07-DB",
+"section": "Database",
+"requirement": "RLS mandatory+tested",
+"horizon": "cur",
+"status": "A",
+"evidence": "integration suites"
+},
+{
+"id": "R130",
+"volume": "V07-DB",
+"section": "Database",
+"requirement": "FK integrity+composite tenant FKs",
+"horizon": "cur",
+"status": "A",
+"evidence": "20261113 pattern"
+},
+{
+"id": "R131",
+"volume": "V07-DB",
+"section": "Database",
+"requirement": "Constraints/checks/uniques",
+"horizon": "cur",
+"status": "A",
+"evidence": "void/cancel/RAMS CHECKs"
+},
+{
+"id": "R132",
+"volume": "V07-DB",
+"section": "Database",
+"requirement": "Indexes + org-id coverage guard",
+"horizon": "cur",
+"status": "A",
+"evidence": "perf-org-id-indexes test"
+},
+{
+"id": "R133",
+"volume": "V07-DB",
+"section": "Database",
+"requirement": "Append-only audit",
+"horizon": "cur",
+"status": "A",
+"evidence": "activity/admin/spine triggers"
+},
+{
+"id": "R134",
+"volume": "V07-DB",
+"section": "Database",
+"requirement": "Event architecture",
+"horizon": "cur",
+"status": "A",
+"evidence": "hq_events spine append-only"
+},
+{
+"id": "R135",
+"volume": "V07-DB",
+"section": "Database",
+"requirement": "Soft delete where appropriate",
+"horizon": "cur",
+"status": "C",
+"evidence": "void/cancel yes; customers hard-delete FK-protected"
+},
+{
+"id": "R136",
+"volume": "V07-DB",
+"section": "Database",
+"requirement": "Migration discipline",
+"horizon": "cur",
+"status": "A",
+"evidence": "380/380 named+guarded"
+},
+{
+"id": "R137",
+"volume": "V07-DB",
+"section": "Database",
+"requirement": "Naming consistency",
+"horizon": "cur",
+"status": "A",
+"evidence": "business-concept names"
+},
+{
+"id": "R138",
+"volume": "V07-DB",
+"section": "Database",
+"requirement": "AI data separation",
+"horizon": "cur",
+"status": "A",
+"evidence": "ai_* + governed"
+},
+{
+"id": "R139",
+"volume": "V07-DB",
+"section": "Database",
+"requirement": "HQ/customer separation",
+"horizon": "cur",
+"status": "A",
+"evidence": "hq_* + admin surface"
+},
+{
+"id": "R140",
+"volume": "V07-DB",
+"section": "Database",
+"requirement": "Search architecture",
+"horizon": "cur",
+"status": "C",
+"evidence": "lexical 12 families; pgvector built dark"
+},
+{
+"id": "R141",
+"volume": "V07-DB",
+"section": "Database",
+"requirement": "Backups expectations",
+"horizon": "cur",
+"status": "C",
+"evidence": "WAL healthy; PITR OFF; off-platform dump proven"
+},
+{
+"id": "R142",
+"volume": "V07-DB",
+"section": "Database",
+"requirement": "Restore procedure tested",
+"horizon": "cur",
+"status": "C",
+"evidence": "schema+data drill proven local; dashboard restore unrehearsed"
+},
+{
+"id": "R143",
+"volume": "V07-DB",
+"section": "Database",
+"requirement": "Scale: millions of customers/billions events",
+"horizon": "std",
+"status": "H",
+"evidence": "UNPROVEN \u2014 architecturally plausible; no load tests"
+},
+{
+"id": "R144",
+"volume": "V08-API",
+"section": "API architecture",
+"requirement": "Consistent envelope every response",
+"horizon": "std",
+"status": "C",
+"evidence": "9/148 routes, ratchet-frozen; no timestamp/metadata fields"
+},
+{
+"id": "R145",
+"volume": "V08-API",
+"section": "API architecture",
+"requirement": "Request IDs",
+"horizon": "std",
+"status": "C",
+"evidence": "minted+propagated; not persisted; skips cron/webhooks"
+},
+{
+"id": "R146",
+"volume": "V08-API",
+"section": "API architecture",
+"requirement": "Safe errors",
+"horizon": "std",
+"status": "A",
+"evidence": "coded strings, internals logged"
+},
+{
+"id": "R147",
+"volume": "V08-API",
+"section": "API architecture",
+"requirement": "Org scoping+audit events",
+"horizon": "std",
+"status": "A",
+"evidence": "guards+activity triggers"
+},
+{
+"id": "R148",
+"volume": "V08-API",
+"section": "API architecture",
+"requirement": "AI APIs as endpoints",
+"horizon": "std",
+"status": "G",
+"evidence": "internal services by design; 3 session AI endpoints"
+},
+{
+"id": "R149",
+"volume": "V08-API",
+"section": "API architecture",
+"requirement": "Comms delivery/open/click/reply tracking",
+"horizon": "std",
+"status": "C",
+"evidence": "delivered/opened/clicked built (resend-events dark); replied absent"
+},
+{
+"id": "R150",
+"volume": "V08-API",
+"section": "API architecture",
+"requirement": "Integration isolation",
+"horizon": "std",
+"status": "A",
+"evidence": "per-provider adapters+cron seams"
+},
+{
+"id": "R151",
+"volume": "V08-API",
+"section": "API architecture",
+"requirement": "Incoming webhooks auth/log/retry/idempotent",
+"horizon": "std",
+"status": "A",
+"evidence": "9 signed doors"
+},
+{
+"id": "R152",
+"volume": "V08-API",
+"section": "API architecture",
+"requirement": "Outgoing webhooks signed/retry/idempotent",
+"horizon": "std",
+"status": "B",
+"evidence": "full system dark; SSRF defence; 8 verbs w/ producers"
+},
+{
+"id": "R153",
+"volume": "V08-API",
+"section": "API architecture",
+"requirement": "Rate limiting",
+"horizon": "std",
+"status": "C",
+"evidence": "v1 durable r-open/w-closed; internal in-memory fail-open; gaps on session APIs"
+},
+{
+"id": "R154",
+"volume": "V08-API",
+"section": "API architecture",
+"requirement": "Versioning /v1",
+"horizon": "std",
+"status": "B",
+"evidence": "public only, frozen contract"
+},
+{
+"id": "R155",
+"volume": "V08-API",
+"section": "API architecture",
+"requirement": "Public Open API + docs",
+"horizon": "std",
+"status": "B",
+"evidence": "14 paths+OpenAPI3.1 dark; SDKs absent"
+},
+{
+"id": "R156",
+"volume": "V08-API",
+"section": "API architecture",
+"requirement": "Endpoint monitoring/alerts",
+"horizon": "std",
+"status": "C",
+"evidence": "Sentry LIVE in prod (repo doc stale); no per-endpoint metrics"
+},
+{
+"id": "R157",
+"volume": "V08-API",
+"section": "API architecture",
+"requirement": "<200ms average + load tests",
+"horizon": "std",
+"status": "H",
+"evidence": "UNPROVEN; no perf CI"
+},
+{
+"id": "R158",
+"volume": "V08-API",
+"section": "API architecture",
+"requirement": "API documentation",
+"horizon": "std",
+"status": "C",
+"evidence": "public complete; internal in-code headers"
+},
+{
+"id": "R159",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Zero trust / least privilege / defence in depth",
+"horizon": "std",
+"status": "A",
+"evidence": "31/31 spot-checks incl money boundary"
+},
+{
+"id": "R160",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Secure defaults deny",
+"horizon": "std",
+"status": "A",
+"evidence": "flags default false; RLS deny"
+},
+{
+"id": "R161",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Auth methods (magic/Google/password/MFA)",
+"horizon": "std",
+"status": "A",
+"evidence": "+MS-SSO dark"
+},
+{
+"id": "R162",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Multi-tenant isolation DB-enforced",
+"horizon": "std",
+"status": "A",
+"evidence": "cross-tenant suites"
+},
+{
+"id": "R163",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Storage isolation",
+"horizon": "std",
+"status": "A",
+"evidence": "signed URLs+bucket RLS"
+},
+{
+"id": "R164",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Search isolation",
+"horizon": "std",
+"status": "A",
+"evidence": "role-filtered"
+},
+{
+"id": "R165",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "AI isolation",
+"horizon": "std",
+"status": "A",
+"evidence": "governor+capability gate"
+},
+{
+"id": "R166",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Encryption transit/rest+token crypto",
+"horizon": "std",
+"status": "A",
+"evidence": "AES-256-GCM seam"
+},
+{
+"id": "R167",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Secret management",
+"horizon": "std",
+"status": "A",
+"evidence": "env-only; gitleaks"
+},
+{
+"id": "R168",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Immutable audit",
+"horizon": "std",
+"status": "A",
+"evidence": "append-only triggers"
+},
+{
+"id": "R169",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Monitoring",
+"horizon": "std",
+"status": "C",
+"evidence": "Sentry live; no paging/uptime monitor wired"
+},
+{
+"id": "R170",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Backups+PITR",
+"horizon": "std",
+"status": "C",
+"evidence": "PITR OFF (CEO); dumps proven"
+},
+{
+"id": "R171",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Incident response documented",
+"horizon": "std",
+"status": "A",
+"evidence": "runbooks+drill evidence"
+},
+{
+"id": "R172",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "GDPR export/delete/retention",
+"horizon": "std",
+"status": "A",
+"evidence": "export ZIP live(API-only); erasure built"
+},
+{
+"id": "R173",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Consent management",
+"horizon": "std",
+"status": "C",
+"evidence": "analytics consent built; no persisted ToS acceptance"
+},
+{
+"id": "R174",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Penetration testing",
+"horizon": "std",
+"status": "E",
+"evidence": "documented plan; external not performed"
+},
+{
+"id": "R175",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Fuzzing",
+"horizon": "std",
+"status": "D",
+"evidence": "absent"
+},
+{
+"id": "R176",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Dependency scanning",
+"horizon": "std",
+"status": "C",
+"evidence": "dependabot+advisory non-blocking"
+},
+{
+"id": "R177",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Secret scanning",
+"horizon": "std",
+"status": "A",
+"evidence": "gitleaks CI"
+},
+{
+"id": "R178",
+"volume": "V09-SEC",
+"section": "Security",
+"requirement": "Recovery drills",
+"horizon": "std",
+"status": "C",
+"evidence": "schema+data drill done; dashboard restore pending"
+},
+{
+"id": "R179",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Design tokens all dimensions",
+"horizon": "std",
+"status": "C",
+"evidence": "colour tokens real; spacing/radius/motion not tokenised; 650 px literals"
+},
+{
+"id": "R180",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Dark charcoal+gold product theme",
+"horizon": "std",
+"status": "G",
+"evidence": "superseded by recorded light-system decision (ux-rebuild docs; no Bible ADR)"
+},
+{
+"id": "R181",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Component library complete",
+"horizon": "std",
+"status": "C",
+"evidence": "Button/Badge/Table-chrome/Skeleton/Modal real; Toast/Tabs/Chart/Form absent; ~20% adoption"
+},
+{
+"id": "R182",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Tables: sticky headers",
+"horizon": "std",
+"status": "D",
+"evidence": "zero sticky"
+},
+{
+"id": "R183",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Tables: column resizing",
+"horizon": "std",
+"status": "D",
+"evidence": "none"
+},
+{
+"id": "R184",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Tables: sorting",
+"horizon": "std",
+"status": "D",
+"evidence": "none"
+},
+{
+"id": "R185",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Tables: filtering",
+"horizon": "std",
+"status": "C",
+"evidence": "page-level GET filters"
+},
+{
+"id": "R186",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Tables: grouping",
+"horizon": "std",
+"status": "D",
+"evidence": "none"
+},
+{
+"id": "R187",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Tables: bulk actions",
+"horizon": "std",
+"status": "D",
+"evidence": "no row selection"
+},
+{
+"id": "R188",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Tables: keyboard navigation",
+"horizon": "std",
+"status": "D",
+"evidence": "palette only"
+},
+{
+"id": "R189",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Tables: search",
+"horizon": "std",
+"status": "C",
+"evidence": "global Cmd+K+jobs q"
+},
+{
+"id": "R190",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Tables: inline editing",
+"horizon": "std",
+"status": "D",
+"evidence": "detail forms"
+},
+{
+"id": "R191",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Empty states teach",
+"horizon": "std",
+"status": "A",
+"evidence": "55 files EmptyState"
+},
+{
+"id": "R192",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Loading skeletons",
+"horizon": "std",
+"status": "A",
+"evidence": "54 loading.tsx"
+},
+{
+"id": "R193",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Error states recover",
+"horizon": "std",
+"status": "C",
+"evidence": "3 boundaries total"
+},
+{
+"id": "R194",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Accessibility contrast/focus/scalable",
+"horizon": "std",
+"status": "A",
+"evidence": "AA build-enforced+8 axe suites"
+},
+{
+"id": "R195",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Reduced motion",
+"horizon": "std",
+"status": "C",
+"evidence": "marketing full; product thin"
+},
+{
+"id": "R196",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Charts simple/interactive/beautiful",
+"horizon": "std",
+"status": "D",
+"evidence": "no chart library exists"
+},
+{
+"id": "R197",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Navigation consistency",
+"horizon": "std",
+"status": "A",
+"evidence": "single nav-model source"
+},
+{
+"id": "R198",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Icons one library",
+"horizon": "std",
+"status": "C",
+"evidence": "lucide nav; emoji elsewhere"
+},
+{
+"id": "R199",
+"volume": "V10-DESIGN",
+"section": "Design system",
+"requirement": "Mobile independent design",
+"horizon": "std",
+"status": "A",
+"evidence": "bottom nav/camera/44px spot"
+},
+{
+"id": "R200",
+"volume": "V11-ENG",
+"section": "Engineering standards",
+"requirement": "Branch/PR/review flow",
+"horizon": "std",
+"status": "A",
+"evidence": "PR-gated releases observed"
+},
+{
+"id": "R201",
+"volume": "V11-ENG",
+"section": "Engineering standards",
+"requirement": "Type safety gate",
+"horizon": "std",
+"status": "A",
+"evidence": "ci typecheck"
+},
+{
+"id": "R202",
+"volume": "V11-ENG",
+"section": "Engineering standards",
+"requirement": "Lint gate",
+"horizon": "std",
+"status": "A",
+"evidence": "ci"
+},
+{
+"id": "R203",
+"volume": "V11-ENG",
+"section": "Engineering standards",
+"requirement": "Unit tests gate",
+"horizon": "std",
+"status": "A",
+"evidence": "10.9k tests"
+},
+{
+"id": "R204",
+"volume": "V11-ENG",
+"section": "Engineering standards",
+"requirement": "Integration real-PG gate",
+"horizon": "std",
+"status": "A",
+"evidence": "fresh volume+migrations"
+},
+{
+"id": "R205",
+"volume": "V11-ENG",
+"section": "Engineering standards",
+"requirement": "Security tier gate",
+"horizon": "std",
+"status": "A",
+"evidence": "8.1k trust-boundary tests"
+},
+{
+"id": "R206",
+"volume": "V11-ENG",
+"section": "Engineering standards",
+"requirement": "E2E real app gate",
+"horizon": "std",
+"status": "A",
+"evidence": "playwright+build"
+},
+{
+"id": "R207",
+"volume": "V11-ENG",
+"section": "Engineering standards",
+"requirement": "Regression discipline",
+"horizon": "std",
+"status": "A",
+"evidence": "every bug->test observed"
+},
+{
+"id": "R208",
+"volume": "V11-ENG",
+"section": "Engineering standards",
+"requirement": "Performance tests",
+"horizon": "std",
+"status": "D",
+"evidence": "absent"
+},
+{
+"id": "R209",
+"volume": "V11-ENG",
+"section": "Engineering standards",
+"requirement": "Dependency scanning",
+"horizon": "std",
+"status": "C",
+"evidence": "advisory non-blocking by policy"
+},
+{
+"id": "R210",
+"volume": "V11-ENG",
+"section": "Engineering standards",
+"requirement": "Secret scanning",
+"horizon": "std",
+"status": "A",
+"evidence": "gitleaks"
+},
+{
+"id": "R211",
+"volume": "V11-ENG",
+"section": "Engineering standards",
+"requirement": "Migration validation",
+"horizon": "std",
+"status": "A",
+"evidence": "guards+dry-run discipline"
+},
+{
+"id": "R212",
+"volume": "V11-ENG",
+"section": "Engineering standards",
+"requirement": "Production verification",
+"horizon": "std",
+"status": "A",
+"evidence": "post-deploy smoke ritual"
+},
+{
+"id": "R213",
+"volume": "V11-ENG",
+"section": "Engineering standards",
+"requirement": "Documentation per feature",
+"horizon": "std",
+"status": "A",
+"evidence": "docs/ 63 files+file headers"
+},
+{
+"id": "R214",
+"volume": "V11-ENG",
+"section": "Engineering standards",
+"requirement": "Rollback plan",
+"horizon": "std",
+"status": "C",
+"evidence": "Vercel instant documented; not automated"
+},
+{
+"id": "R215",
+"volume": "V11-ENG",
+"section": "Engineering standards",
+"requirement": "Tech-debt tracked openly",
+"horizon": "std",
+"status": "A",
+"evidence": "ratchets+ledgers"
+},
+{
+"id": "R216",
+"volume": "V11-ENG",
+"section": "Engineering standards",
+"requirement": "Branch protection required checks",
+"horizon": "std",
+"status": "H",
+"evidence": "GitHub-side not repo-readable"
+},
+{
+"id": "R217",
+"volume": "V12-MKT",
+"section": "Marketing",
+"requirement": "SEO programmatic engine",
+"horizon": "cur",
+"status": "A",
+"evidence": "53 pages+tools+sitemap+JSON-LD"
+},
+{
+"id": "R218",
+"volume": "V12-MKT",
+"section": "Marketing",
+"requirement": "Demo funnel->Stripe setup checkout->onboarding email",
+"horizon": "cur",
+"status": "A",
+"evidence": "demo-lifecycle end-to-end"
+},
+{
+"id": "R219",
+"volume": "V12-MKT",
+"section": "Marketing",
+"requirement": "Product-truth guardrail in marketing",
+"horizon": "cur",
+"status": "A",
+"evidence": "pillars.ts exclusion list"
+},
+{
+"id": "R220",
+"volume": "V12-MKT",
+"section": "Marketing",
+"requirement": "Email nurture sequences",
+"horizon": "proc",
+"status": "P",
+"evidence": "no engine; process not coded commitment"
+},
+{
+"id": "R221",
+"volume": "V12-MKT",
+"section": "Marketing",
+"requirement": "Bob-the-Builder cinematic series",
+"horizon": "proc",
+"status": "P",
+"evidence": "external repos/strategy"
+},
+{
+"id": "R222",
+"volume": "V12-MKT",
+"section": "Marketing",
+"requirement": "Content calendar/social cadence",
+"horizon": "proc",
+"status": "P",
+"evidence": "strategy"
+},
+{
+"id": "R223",
+"volume": "V12-MKT",
+"section": "Marketing",
+"requirement": "Analytics (PostHog)",
+"horizon": "cur",
+"status": "B",
+"evidence": "one env-var from live"
+},
+{
+"id": "R224",
+"volume": "V12-MKT",
+"section": "Marketing",
+"requirement": "Referral/community/webinars",
+"horizon": "proc",
+"status": "P",
+"evidence": "process/future"
+},
+{
+"id": "R225",
+"volume": "V13-SALES",
+"section": "Sales",
+"requirement": "HQ sales CRM companies/contacts/tasks/analytics",
+"horizon": "cur",
+"status": "A",
+"evidence": "hq-sales 2027L"
+},
+{
+"id": "R226",
+"volume": "V13-SALES",
+"section": "Sales",
+"requirement": "Research/Qualification AI",
+"horizon": "cur",
+"status": "A",
+"evidence": "live manual-launch; LLM dark"
+},
+{
+"id": "R227",
+"volume": "V13-SALES",
+"section": "Sales",
+"requirement": "Outreach drafts (never auto-send)",
+"horizon": "cur",
+"status": "C",
+"evidence": "code-complete; ORPHANED no UI/callers"
+},
+{
+"id": "R228",
+"volume": "V13-SALES",
+"section": "Sales",
+"requirement": "Comms transports (LinkedIn/SMS/voice)",
+"horizon": "fut",
+"status": "F",
+"evidence": "planned-never-faked"
+},
+{
+"id": "R229",
+"volume": "V13-SALES",
+"section": "Sales",
+"requirement": "Pipeline forecast",
+"horizon": "cur",
+"status": "C",
+"evidence": "insufficient-honest"
+},
+{
+"id": "R230",
+"volume": "V13-SALES",
+"section": "Sales",
+"requirement": "Sales enablement assets (ROI calc/proposals/objections)",
+"horizon": "proc",
+"status": "P",
+"evidence": "learning library live; rest process"
+},
+{
+"id": "R231",
+"volume": "V05-HQ-OS",
+"section": "HQ OS Vol III",
+"requirement": "5-layer architecture data/memory/intelligence/automation/decision",
+"horizon": "cur",
+"status": "A",
+"evidence": "layers map to spine/memory/boards/drains/decisions"
+},
+{
+"id": "R232",
+"volume": "V05-HQ-OS",
+"section": "HQ OS Vol III",
+"requirement": "Departments dashboards",
+"horizon": "cur",
+"status": "A",
+"evidence": "76 admin pages"
+},
+{
+"id": "R233",
+"volume": "V05-HQ-OS",
+"section": "HQ OS Vol III",
+"requirement": "CEO one-screen clarity",
+"horizon": "cur",
+"status": "A",
+"evidence": "/admin/ceo+briefing"
+},
+{
+"id": "R234",
+"volume": "V05-HQ-OS",
+"section": "HQ OS Vol III",
+"requirement": "Support desk + customers OS + health/churn room",
+"horizon": "cur",
+"status": "A",
+"evidence": "admin/customers+health"
+},
+{
+"id": "R235",
+"volume": "V05-HQ-OS",
+"section": "HQ OS Vol III",
+"requirement": "Impersonation safe",
+"horizon": "cur",
+"status": "A",
+"evidence": "guardrails verified"
+},
+{
+"id": "R236",
+"volume": "V05-HQ-OS",
+"section": "HQ OS Vol III",
+"requirement": "Ops traffic-light",
+"horizon": "cur",
+"status": "C",
+"evidence": "8/45 crons surfaced"
+},
+{
+"id": "R237",
+"volume": "V05-HQ-OS",
+"section": "HQ OS Vol III",
+"requirement": "HQ security least-priv",
+"horizon": "cur",
+"status": "A",
+"evidence": "email allowlist+404"
+}
+]
