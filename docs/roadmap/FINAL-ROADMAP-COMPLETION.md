@@ -15,7 +15,9 @@ CEO directive: build every current-stage roadmap gap; freeze lifted for the reco
 | 20261223000000 | ToS/consent acceptance stamp | L11 |
 | 20261224000000 | CIS verification schema additions (only if needed after inspection) | L5 |
 | 20261225000000 | HQ roster completion seeds (#27-36 mapped to existing engines) | L10 |
-| 20261226000000+ | reserve — ask coordinator |
+| 20261226000000 | API request-id persistence | L11 |
+| 20261227000000 | deny-floor registry grants for the 20261225 cohort (consolidation) | coordinator |
+| 20261228000000+ | reserve — ask coordinator |
 
 ## Queues (Phase 1 triage of C/D/H)
 - **QUEUE 1 BUILD:** G1 search families · G2 variation intake · G3 table system · G4 charts · G5 CIS verify dark adapter · G6 saga_step handler · reachability pack (/notifications, marketplace nav, /settings/sso page, GDPR UI, Outreach surface) · HQ dept contracts P6/P7/P8/P10 (governed dark seams + deterministic engines) · P12 finance real MRR/LTV/forecast · P13 support draft seam · P11 product→decisions wiring · P4 stage progression · P3 recall-into-prompt wiring · AI contract manager/conversation/cost/impact/retire/KPI · roster seeds+ADR · ops page 45-cron coverage · ToS persistence · docs truth reset · dependency hygiene · performance evidence harness
@@ -43,6 +45,11 @@ L8 docs+hygiene: README.md, docs/roadmap/STATUS.md, backup runbook, bible adopti
 - **G6 saga (530a3f59):** canonical saga_step runner — sagas reach `done`; real-PG lifecycle/failure/concurrency proven; orphans structurally recovered.
 - **Reachability (7d43818d):** notifications nav; flag-conditional marketplace nav; /settings/sso activation page; GDPR export+erase surfaces (posture-matched); Outreach AI at /admin/outreach (draft-only pinned).
 - **Docs+hygiene (8517df9f):** README truth rewrite; STATUS control-plane reset (NEXT-FREE trap eliminated); runbook stamps; superseded banners; inngest removed; npm lockfile canonical; 18 truth pins. NOTE: `npm audit` = 51 prod-dep vulns (1 critical, ws/uuid chains) — fix pass scheduled post-Wave-2.
+
+## Wave 2 consolidation (503031d2 + 7cb70c39 + integration fixes)
+- **Guard trips fixed per doctrine (503031d2):** KPI month-window reads paged (fetchAllRows) + loud (readFailure); hq_approvals single-module pin restored via two sanctioned doors (countApprovalsRequestedByEmployee, listRecentApprovalsByEmployee); ledgers updated honestly (ai_invocations COVERAGE_REVIEWED; loud-read outside-(app) 14→15 for the handled retire error-banner path).
+- **Hygiene (7cb70c39):** npm audit fix non-breaking 51→33 prod vulns; ALL residual 33 need semver-major (next 16 / react-email 6 / @sentry/nextjs 10) — the "critical" next flag is a chained via (nested postcss 8.4.31 + sharp 0.33.5); installed next 15.5.24 (backport tip) is outside every direct advisory range. launch-readiness cron copy now derives from CRON_ROUTES.
+- **Integration debts (this commit):** mig 20261227 seeds explicit deny-floor grants for the 20261225 cohort (20261205 precedent; the registry invariant — every operable employee served FROM the registry — outranks 20261225's "floor is honest" note). Production confidence sweep + 6 registry test sweeps scoped to `retired_at is null` (retirement is DB-terminal: a retired row refuses every update, so it can never operate — decommissioned history, not a registry gap). variation_requests classified into the DSAR census (known → export; erasure default hard-delete is correct — the converted variation/quote is the statutory record). site-compliance sign-out test orders its timestamp after the row's own DB stamp (Docker clock skew ~85ms; the check constraint is the subject working as designed).
 
 ## Wave 2 — IN FLIGHT
 L9a HQ dept engines (P6/P7/P8/P10: real task handlers + governed dark seams + GitHub/Vercel dark adapters + executor-gated merge/deploy tools) · L9b (P3 recall consumption fix, P4 stage mapping, P11 product→decisions, P12 real MRR/LTV/forecast, P13 support draft-reply seam) · L10 contract fields+roster (migs 20261222/20261225 + ADR-0012) · L11 platform (ops 45-cron, email requeue, ToS mig 20261223, request-id persistence mig 20261226, HQ user listing, Sentry link) · L12 performance evidence harness.

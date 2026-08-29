@@ -220,6 +220,7 @@
     "tenant_attachments",
     "time_entries",
     "toolbox_talks",
+    "variation_requests",
     "voice_notes",
     "weather_watches",
     "webhook_deliveries",

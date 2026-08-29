@@ -36,6 +36,7 @@ type QueryResult<T> = { data: T | null; error: { message: string } | null };
 type Term<T> = PromiseLike<QueryResult<T>>;
 type Filterable<T> = Term<T> & {
   eq(column: string, value: unknown): Filterable<T>;
+  is(column: string, value: null): Filterable<T>;
   select(columns?: string): Filterable<T>;
 };
 type RegistryTable = {
@@ -48,7 +49,7 @@ const anon = (): DbClient => anonClient() as unknown as DbClient;
 
 describeIntegration("Capability Registry · R2 backfill — complete + referentially whole (D-05)", () => {
   it("the backfill is COMPLETE — every live employee has an employee-scoped grant", async () => {
-    const emps = await svc().from("ai_employees").select("slug");
+    const emps = await svc().from("ai_employees").select("slug").is("retired_at", null);
     expect(emps.error, emps.error?.message).toBeNull();
     const slugs = ((emps.data ?? []) as Array<Record<string, unknown>>).map((r) => r.slug as string);
     expect(slugs.length, "the seeded roster must be present").toBeGreaterThan(0);

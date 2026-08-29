@@ -56,7 +56,12 @@ const EMP_COLUMNS = "slug, department";
  */
 export interface RosterReadClient {
   from(table: string): {
-    select(columns: string): PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>;
+    select(columns: string): {
+      is(
+        column: string,
+        value: null,
+      ): PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>;
+    };
   };
 }
 
@@ -75,7 +80,11 @@ function toLegacyEmployee(row: Record<string, unknown>): LegacyEmployee {
  * "nothing to see" when it could not read anything would be worse than loud failure.
  */
 async function readRoster(client: RosterReadClient): Promise<LegacyEmployee[]> {
-  const res = await client.from("ai_employees").select(EMP_COLUMNS);
+  // Retirement (20261222) is TERMINAL at the DB — a retired row refuses every
+  // update, so it can never transition to a working state; the floor is its
+  // correct, permanent posture. The audit therefore sweeps the OPERABLE roster:
+  // a retired identity is decommissioned history, not a registry gap.
+  const res = await client.from("ai_employees").select(EMP_COLUMNS).is("retired_at", null);
   if (res.error) throw new Error(`[registry-confidence] roster read failed: ${res.error.message}`);
   return ((res.data ?? []) as Record<string, unknown>[]).map(toLegacyEmployee);
 }

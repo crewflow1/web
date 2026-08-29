@@ -186,17 +186,25 @@ describeIntegration("site-compliance · tenant isolation + triggers", () => {
     const ins = await db(userClient(dualToken))
       .from("site_visitors")
       .insert({ org_id: orgB, site_id: siteA, visitor_name: "Ada Lovelace", company: "Analytical" })
-      .select("id, org_id, site_id")
+      .select("id, org_id, site_id, signed_in_at")
       .single();
     expect(ins.error, ins.error?.message).toBeNull();
     // org derived from the site (A), not the spoofed B.
     expect(String(ins.data?.org_id)).toBe(orgA);
     const id = String(ins.data?.id);
+    // signed_in_at is stamped by the DB clock, which can run ~100ms ahead of
+    // this harness's host clock under Docker Desktop. The check constraint
+    // (signed_out_at >= signed_in_at) is the subject working as designed, so
+    // order the sign-out AFTER the row's own stamp instead of trusting the
+    // host clock — real sign-outs happen on human timescales, never inside
+    // the skew window.
+    const signedInMs = Date.parse(String(ins.data?.signed_in_at));
+    const signedOutIso = new Date(Math.max(Date.now(), signedInMs + 1000)).toISOString();
 
     // Sign out — a legitimate update.
     const out = await db(userClient(dualToken))
       .from("site_visitors")
-      .update({ signed_out_at: new Date().toISOString() })
+      .update({ signed_out_at: signedOutIso })
       .eq("id", id)
       .select("id");
     expect(out.error, out.error?.message).toBeNull();
