@@ -143,7 +143,12 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
         .order("starts_at", { ascending: true }),
       supabase
         .from("jobs")
-        .select("id, status, scheduled_date, customer:customers ( name )")
+        // `assigned_to` MUST be selected: the "My jobs" filter below narrows to
+        // rows where assigned_to === user.id, and PostgREST only returns columns
+        // named here — omitting it made every row's assigned_to `undefined`, so
+        // the panel rendered permanently empty for every worker (Customer #1
+        // rehearsal defect, 2026-08-29).
+        .select("id, status, scheduled_date, assigned_to, customer:customers ( name )")
         .eq("org_id", ctx.org.id)
         .or(`assigned_to.eq.${user.id},assigned_to.is.null`)
         // Active work only: completed is done, cancelled (20261220) is dead —
