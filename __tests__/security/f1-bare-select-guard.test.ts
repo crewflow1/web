@@ -412,8 +412,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE org's members (.eq('org_id')) — the settings team panel; bounded by the org's headcount, never near 1000 (line moved 76→77 when the FlatRateSettings import was added; moved 77→80 when the i18n-wave getRequestI18n helper + its comment replaced the bare requireOrgContext call)",
   "app/(app)/staff/leave/page.tsx:97":
     "bounded: ONE org's members (.eq('org_id')) — the leave-page name lookup; bounded by the org's headcount (line moved 96→97 when the getHolidayBalanceForUser import was added for the holiday-balance card)",
-  "app/(app)/staff/page.tsx:55":
-    "bounded: ONE org's members (.eq('org_id')) — the staff register; bounded by the org's headcount. (Line moved to 55 in the security closeout when hourly_pay was dropped from the users embed — pay now reads from staff_compensation below.)",
+  "app/(app)/staff/page.tsx:56":
+    "bounded: ONE org's members (.eq('org_id')) — the staff register; bounded by the org's headcount. (Line moved to 55 in the security closeout when hourly_pay was dropped from the users embed — pay now reads from staff_compensation below; moved 55→56 when the DataTable import was added for the G3 canonical-table adoption.)",
   "app/(app)/staff/rota/page.tsx:112":
     "bounded: ONE org's members (.eq('org_id')) — the rota staff list + assign-form labels; bounded by the org's headcount",
   "app/customer-portal/_warranties.ts:133":

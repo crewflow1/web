@@ -7,6 +7,7 @@ import {
   type SuppliersClient,
 } from "@/server/services/suppliers";
 import { EmptyState } from "../_components/empty-state";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 
 /**
  * /suppliers — list suppliers for the ACTIVE org.
@@ -28,6 +29,18 @@ type SupplierRow = {
   category: string | null;
   created_at: string;
 };
+
+/**
+ * Canonical DataTable columns (roadmap G3). The responsive column hiding is
+ * declared ONCE per column, so the th and every td of a pair can never
+ * half-hide — the same contract components/ui/table.tsx documents.
+ */
+const SUPPLIER_COLUMNS: DataTableColumn[] = [
+  { key: "name", header: "Name", sortable: "text" },
+  { key: "category", header: "Category", sortable: "text", hideBelow: "sm", cellClassName: "text-slate-600" },
+  { key: "email", header: "Email", hideBelow: "md", cellClassName: "text-slate-600" },
+  { key: "phone", header: "Phone", hideBelow: "md", cellClassName: "text-slate-600" },
+];
 
 export default async function SuppliersPage() {
   const { ctx } = await requireOrgContext();
@@ -79,41 +92,34 @@ export default async function SuppliersPage() {
           primary={{ href: "/suppliers/new", label: "Add a supplier" }}
         />
       ) : (
-        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="min-w-full divide-y divide-slate-200">
-            <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3 hidden sm:table-cell">Category</th>
-                <th className="px-4 py-3 hidden md:table-cell">Email</th>
-                <th className="px-4 py-3 hidden md:table-cell">Phone</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white text-sm">
-              {rows.map((row) => (
-                <tr key={row.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/suppliers/${row.id}`}
-                      className="font-medium text-slate-900 hover:text-slate-700"
-                    >
-                      {row.name}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-slate-600 hidden sm:table-cell">
-                    {row.category ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 text-slate-600 hidden md:table-cell">
-                    {row.email ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 text-slate-600 hidden md:table-cell">
-                    {row.phone ?? "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
+        <DataTable
+          label="Suppliers"
+          columns={SUPPLIER_COLUMNS}
+          className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+          stickyHeader
+          rows={rows.map((row) => ({
+            id: row.id,
+            href: `/suppliers/${row.id}`,
+            filterText: `${row.name} ${row.category ?? ""} ${row.email ?? ""} ${row.phone ?? ""}`,
+            sortValues: {
+              name: row.name,
+              category: row.category,
+            },
+            cells: {
+              name: (
+                <Link
+                  href={`/suppliers/${row.id}`}
+                  className="font-medium text-slate-900 hover:text-slate-700"
+                >
+                  {row.name}
+                </Link>
+              ),
+              category: row.category ?? "—",
+              email: row.email ?? "—",
+              phone: row.phone ?? "—",
+            },
+          }))}
+        />
       )}
     </div>
   );
