@@ -1,6 +1,7 @@
 import "server-only";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { CRON_ROUTES } from "@/lib/ops/cron-routes";
 import { buildOpsSnapshot } from "@/server/services/ops-snapshot";
 import { readAutomationHealth } from "@/server/services/automation-dispatcher";
 
@@ -93,7 +94,7 @@ export async function buildLaunchReadiness(): Promise<LaunchReadiness> {
           : "amber",
       summary:
         cronFailures7d === 0
-          ? `5 cron routes wired; ${ops.crons.filter((c) => c.last_ok_at).length} have a recent success`
+          ? `${CRON_ROUTES.length} cron routes wired; ${ops.crons.filter((c) => c.last_ok_at).length} have a recent success`
           : `${cronFailures7d} cron failures in last 7d`,
     },
     {
