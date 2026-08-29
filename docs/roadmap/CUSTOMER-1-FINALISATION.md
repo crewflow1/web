@@ -20,11 +20,26 @@ Scope: exactly four objectives — (1) fix My Day→My jobs, (2) verify producti
 
 **Security regression (as staff, fixed build):** `/invoices` → bounced to /me ✓ · `/api/reports/export` → 403 ✓ · Cmd+K "fitzwilliam" → job+snag only ✓ · compensation RLS untouched (no permission code in the diff).
 
-## Part 2 — PITR/backup verification
-(populated below)
+## Reviewer amendment (same defect, directly coupled)
+Reviewer A found the fixed panel could go silently empty AGAIN under **limit-crowding**: the or-branch also fetched every unassigned live job, sharing the query's 20-row LIMIT — ≥20 unassigned actives with earlier dates pushed the worker's own job out of the window. Remedy applied (one line): fetch `.eq("assigned_to", user.id)` only (unassigned rows were client-discarded anyway). Also added the loud-read guard on `jobsRes.error` (a failed read must not masquerade as the empty state). Tests extended to pin both (10/10). Live re-verified post-rebuild: both assignments render.
 
-## Part 3 — restore rehearsal
-(populated below)
+## Part 2 — PITR/backup verification (read-only, 2026-08-29)
+- `supabase backups list` (management API, CLI's own auth): region **West EU (Ireland)** · **WALG: true** · **PITR: FALSE** · earliest/latest restorable timestamp: none.
+- WAL archiving healthy (pg_stat_archiver: 2796 archived, **0 failed**, last archive minutes before check) — Supabase's physical/daily backup substrate is running.
+- **CEO ACTION REQUIRED (not performed — billing feature): enable the PITR add-on** in Supabase dashboard → Project → Database → Backups / Add-ons. Until then, restore granularity = the daily physical backup (dashboard-restorable), i.e. **RPO up to ~24 h**; with PITR it becomes ~2 min.
+- Also noted: the operator does not hold `SUPABASE_DB_PASSWORD`, so pooler-level `pg_dump` (off-platform logical dumps) is currently impossible from this seat; the direct-db host no longer resolves on Supabase's new infra (expected).
 
-## Reviews / CI / Release
-(populated below)
+## Part 3 — restore rehearsal (safe, non-destructive; production untouched)
+**Method:** Plan B. A production data-level clone was NOT possible without the DB password/PITR (above), and a destructive prod restore is forbidden — so the drill proved the recovery layers that are provable today:
+1. **Schema + controls restore, timed:** full local `supabase db reset` (drop → re-init → replay ALL 380 migrations) — **RESET_START 18:06:44Z → RESET_END 18:07:10Z = 26 seconds**.
+2. **Validation of the restored database:** migrations **380 / tip 20261220000000** (== production) · **307 RLS-enabled tables · 605 policies · 461 triggers** incl. **87 append-only/immutability guards** and all **3 invoice-void/job-cancel guards** · **758 FK constraints · 1477 indexes**. Representative org/customer/job/quote/invoice/payment/timesheet/RAMS rows re-loaded and verified rendering through the real app (Harrison & Cole re-seed, ~1 s, 40 steps OK; auth/user linkage intact — worker login + My Day render post-restore).
+3. **What this does and does not prove:** schema, security controls, and application-level recovery are PROVEN with a measured RTO; **production DATA restore remains dashboard-evidence only** (daily physical backups exist; restore is a Supabase-dashboard operation that cannot be rehearsed non-destructively without PITR-to-a-fork or the DB password for logical dumps).
+- **Evidence-supported numbers:** schema-layer RTO **~30 s**; app redeploy RTO **~5 min** (Vercel deploy history); data RPO **≤24 h today** (daily backup), **~2 min once PITR is enabled**; data-restore RTO: **not yet measured** (dashboard operation — rehearse once PITR/fork or DB password is available). No SLA promises invented.
+
+## Reviews
+- **Reviewer A (My Day/field UX): SAFE TO DEPLOY** — condition (limit-crowding) applied pre-merge, see amendment.
+- **Reviewer B (security): SAFE TO DEPLOY** — no cross-worker/org/financial/comp exposure; Money boundary byte-identical to baseline; RLS tenant client confirmed.
+- **Reviewer C (disaster recovery):** (verdict recorded below)
+
+## CI / Release
+(recorded below)

@@ -47,6 +47,19 @@ describe("My Day → My jobs: select/filter contract", () => {
   it("the query still excludes completed and cancelled jobs at the DB", () => {
     expect(src).toMatch(/\.not\("status",\s*"in",\s*"\(completed,cancelled\)"\)/);
   });
+
+  it("the query fetches OWN assignments only — no unassigned branch (limit-crowding regression)", () => {
+    // Reviewer finding (2026-08-29): `.or(assigned_to.eq.me,assigned_to.is.null)`
+    // let ≥20 unassigned active jobs crowd the worker's own job out of the
+    // 20-row LIMIT, silently recreating the empty panel. The fetch must pin
+    // assigned_to to the caller and never carry an is.null branch.
+    expect(src).toMatch(/\.eq\("assigned_to",\s*user\.id\)/);
+    expect(src).not.toMatch(/assigned_to\.is\.null/);
+  });
+
+  it("a failed jobs read fails loud, never masquerading as the empty state", () => {
+    expect(src).toMatch(/if \(jobsRes\.error\) throw readFailure\("me: my jobs"/);
+  });
 });
 
 describe("My Day → My jobs: filter semantics (pure)", () => {
