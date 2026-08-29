@@ -66,11 +66,36 @@ export type CustomerOrg = {
   admin_org_notes: string | null;
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
+  /** ToS acceptance (migration 20261223000000). Org-level — the org is the
+   *  contracting party. version 'legacy' = migration backfill. */
+  tos_accepted_at: string | null;
+  tos_accepted_by: string | null;
+  tos_version: string | null;
+};
+
+/**
+ * One workspace member for the HQ "Users" section — memberships × users.
+ *
+ * COLUMN ALLOW-LIST IS A SECURITY BOUNDARY (pinned by
+ * __tests__/customer-os/org-users-listing.test.ts): identity + role +
+ * join date ONLY. Pay/compensation data lives in staff_compensation
+ * (RLS-locked, migration 20261218000000) and MUST NEVER be joined here —
+ * this snapshot renders on an HQ page, and HQ operators seeing every
+ * tenant employee's pay was the exact leak that migration closed.
+ */
+export type CustomerMember = {
+  user_id: string;
+  role: string;
+  joined_at: string;
+  full_name: string | null;
+  email: string | null;
 };
 
 export type CustomerSnapshot = {
   org: CustomerOrg;
   owner: CustomerOwner | null;
+  /** Every workspace member (identity + role only — see CustomerMember). */
+  members: ReadonlyArray<CustomerMember>;
   /** Subscription status derived from org status + setup fee. */
   subscription: SubscriptionStatus;
   /** Estimated LTV (prefers cached if set). */
@@ -149,6 +174,9 @@ export async function loadCustomerSnapshot(
         "admin_org_notes",
         "stripe_customer_id",
         "stripe_subscription_id",
+        "tos_accepted_at",
+        "tos_accepted_by",
+        "tos_version",
       ].join(", ") as never,
     )
     .eq("id", orgId)
@@ -174,6 +202,39 @@ export async function loadCustomerSnapshot(
         phone: ownerRow.user?.phone ?? null,
       }
     : null;
+
+  // ---------- 2b. Full member roster (HQ "Users" section) ---------------
+  // Closes the "can't see a customer's non-owner users without
+  // impersonating" gap. Org-pinned; identity + role + join date ONLY —
+  // never pay fields (see CustomerMember). PAGED (F-1): the roster IS the
+  // complete answer to "who is in this workspace" — any flat cap would
+  // silently hide members past it. Stable total order (created_at, id).
+  type MemberRow = {
+    user_id: string | null;
+    role: string;
+    created_at: string;
+    user: { full_name: string | null; email: string | null } | null;
+  };
+  const { data: memberRows, error: membersError } = await fetchAllRows<MemberRow>(
+    (from, to) =>
+      admin
+        .from("memberships")
+        .select("user_id, role, created_at, user:users ( full_name, email )")
+        .eq("org_id", orgId)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<MemberRow>>,
+  );
+  if (membersError) throw readFailure("hq customer: members", membersError);
+  const members: CustomerMember[] = (memberRows as unknown as MemberRow[])
+    .filter((m): m is MemberRow & { user_id: string } => Boolean(m.user_id))
+    .map((m) => ({
+      user_id: m.user_id,
+      role: m.role,
+      joined_at: m.created_at,
+      full_name: m.user?.full_name ?? null,
+      email: m.user?.email ?? null,
+    }));
 
   // ---------- 3. Linked demo request (best-effort by owner email) -----
   let demoRequest: CustomerSnapshot["demoRequest"] = null;
@@ -352,6 +413,7 @@ export async function loadCustomerSnapshot(
   return {
     org,
     owner,
+    members,
     subscription,
     ltv,
     health,

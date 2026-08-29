@@ -10,6 +10,7 @@ import {
   markAllNotificationsRead,
   dismissNotification,
 } from "@/server/services/notifications-service";
+import { requeueFailedNotificationEmail } from "@/server/services/notification-email-requeue";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 
 /**
@@ -60,6 +61,32 @@ export async function markAllReadHq(): Promise<void> {
   });
   revalidatePath("/admin/notifications");
   redirect("/admin/notifications?saved=all_read");
+}
+
+/**
+ * Requeue ONE permanently-failed email from the /admin/notifications
+ * failure list. The reset semantics (and why this is operator-only)
+ * live in server/services/notification-email-requeue.ts. Audited via
+ * admin_activity_log like every other HQ action.
+ */
+export async function requeueFailedEmail(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const parsed = idSchema.safeParse({ id: formData.get("id") });
+  if (!parsed.success) redirect("/admin/notifications?error=invalid_input");
+  const result = await requeueFailedNotificationEmail(parsed.data.id);
+  if (!result.ok) {
+    redirect(`/admin/notifications?error=${encodeURIComponent(result.reason)}`);
+  }
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "notification.email_requeued",
+    targetTable: "notification_email_queue",
+    targetId: parsed.data.id,
+    metadata: {},
+  });
+  revalidatePath("/admin/notifications");
+  redirect("/admin/notifications?saved=requeued");
 }
 
 export async function dismissHq(formData: FormData): Promise<void> {

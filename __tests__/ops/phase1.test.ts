@@ -216,9 +216,15 @@ describe("Phase 1 — buildOpsSnapshot", () => {
     expect(OPS_SVC).toMatch(/emailBacklog/);
   });
 
-  it("exposes a CRON_ROUTES tuple covering every wired cron", () => {
+  it("derives CRON_ROUTES from vercel.json — every wired cron covered", () => {
+    // L11: the hard-coded tuple this test used to pin drifted to 8 routes
+    // while vercel.json scheduled 45. Coverage is now DERIVED
+    // (lib/ops/cron-routes.ts); the Phase-1 routes must still be scheduled,
+    // and full both-direction parity is pinned in ops/cron-coverage.test.ts.
+    expect(OPS_SVC).toMatch(/from "@\/lib\/ops\/cron-routes"/);
+    const vercel = read("vercel.json");
     for (const r of CRON_ROUTES) {
-      expect(OPS_SVC).toMatch(new RegExp(`"${r}"`));
+      expect(vercel).toMatch(new RegExp(`"/api/cron/${r}"`));
     }
   });
 });

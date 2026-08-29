@@ -8,6 +8,7 @@ import { createOrgWithOwner } from "@/server/services/bootstrap-account";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { notifyOnCustomerSignup } from "@/lib/notifications/events";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { CURRENT_TOS_VERSION } from "@/lib/legal/tos";
 
 // Loose UK postcode regex — accepts most real UK formats with or without spaces.
 const UK_POSTCODE = /^[A-Z]{1,2}[0-9R][0-9A-Z]?\s?[0-9][A-Z]{2}$/i;
@@ -78,6 +79,26 @@ export async function createOrg(formData: FormData) {
       .from("users")
       .update({ full_name: first_name })
       .eq("id", user.id);
+
+    // ToS acceptance stamp (migration 20261223000000) — ORG-LEVEL, the org
+    // being the contracting party. The creator accepted by continuing
+    // through this form (the signup UI presents the terms), so record who,
+    // when, and WHICH version. Columns post-date the generated types →
+    // house `as never` idiom until the next types regen.
+    const { error: tosError } = await admin
+      .from("organizations")
+      .update({
+        tos_accepted_at: new Date().toISOString(),
+        tos_accepted_by: user.id,
+        tos_version: CURRENT_TOS_VERSION,
+      } as never)
+      .eq("id", result.orgId);
+    if (tosError) {
+      // Loud but non-fatal: the org exists and the owner is attached — a
+      // failed stamp must not strand a paying customer at signup. The HQ
+      // customer page will show the missing stamp for manual follow-up.
+      console.error("[onboarding/company] tos stamp failed", tosError);
+    }
 
     // Loud HQ notification: a new company just signed up.
     await emitNotifications(

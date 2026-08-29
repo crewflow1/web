@@ -5,6 +5,11 @@ import {
   type CronRouteHealth,
   type EnvVarStatus,
 } from "@/server/services/ops-snapshot";
+import {
+  CRON_FAMILIES,
+  CRON_FAMILY_LABEL,
+  type CronFamily,
+} from "@/lib/ops/cron-routes";
 
 /**
  * /admin/ops — HQ system status dashboard.
@@ -37,11 +42,23 @@ export default async function OpsPage() {
 
   return (
     <div className="space-y-6">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-bold text-slate-900">Ops</h1>
-        <p className="text-sm text-slate-600">
-          Live system health for CrewFlow. Refresh to recompute.
-        </p>
+      <header className="flex flex-wrap items-end justify-between gap-2">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold text-slate-900">Ops</h1>
+          <p className="text-sm text-slate-600">
+            Live system health for CrewFlow. Refresh to recompute.
+          </p>
+        </div>
+        {snapshot.sentry_url ? (
+          <a
+            href={snapshot.sentry_url}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Open Sentry →
+          </a>
+        ) : null}
       </header>
 
       {/* Headline traffic-light */}
@@ -114,11 +131,13 @@ export default async function OpsPage() {
         ) : null}
       </section>
 
-      {/* Cron status */}
+      {/* Cron status — the FULL vercel.json roster, grouped by family */}
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <header className="flex items-baseline justify-between">
           <h2 className="text-base font-semibold text-slate-900">Cron jobs</h2>
-          <p className="text-[11px] text-slate-500">last 7 days</p>
+          <p className="text-[11px] text-slate-500">
+            {snapshot.crons.length} scheduled · last 7 days
+          </p>
         </header>
         <div className="mt-4 overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
@@ -132,11 +151,25 @@ export default async function OpsPage() {
                 <th className="px-3 py-2">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
-              {snapshot.crons.map((c) => (
-                <CronRow key={c.route} cron={c} />
-              ))}
-            </tbody>
+            {CRON_FAMILIES.map((family) => {
+              const rows = snapshot.crons.filter((c) => c.family === family);
+              if (rows.length === 0) return null;
+              return (
+                <tbody key={family} className="divide-y divide-slate-100">
+                  <tr>
+                    <td
+                      colSpan={6}
+                      className="bg-slate-50/60 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500"
+                    >
+                      {CRON_FAMILY_LABEL[family as CronFamily]} ({rows.length})
+                    </td>
+                  </tr>
+                  {rows.map((c) => (
+                    <CronRow key={c.route} cron={c} />
+                  ))}
+                </tbody>
+              );
+            })}
           </table>
         </div>
       </section>
