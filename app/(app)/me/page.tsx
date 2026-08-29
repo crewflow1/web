@@ -143,9 +143,12 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
         .order("starts_at", { ascending: true }),
       supabase
         .from("jobs")
-        .select("id, status, scheduled_date, customer:customers ( name )")
+        // assigned_to MUST stay selected — the panel filter reads it (2026-08-29 fix).
+        .select("id, status, scheduled_date, assigned_to, customer:customers ( name )")
         .eq("org_id", ctx.org.id)
-        .or(`assigned_to.eq.${user.id},assigned_to.is.null`)
+        // OWN assignments only — an unassigned-jobs or-branch shared the 20-row
+        // LIMIT and could crowd the worker's own job out (reviewer fix, 2026-08-29).
+        .eq("assigned_to", user.id)
         // Active work only: completed is done, cancelled (20261220) is dead —
         // a field worker's "My jobs" must never point them at a cancelled site.
         .not("status", "in", "(completed,cancelled)")
@@ -174,6 +177,10 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
   // worker's hours/pay tiles (payroll-adjacent figures are RED).
   if (weekRes.error) throw readFailure("me: week entries", weekRes.error);
   if (monthRes.error) throw readFailure("me: month entries", monthRes.error);
+  // Fail loud on the jobs read too — a failed read must not masquerade as the
+  // "No jobs assigned to you right now" empty state (the exact silent-empty
+  // failure mode the 2026-08-29 My-jobs fix was about).
+  if (jobsRes.error) throw readFailure("me: my jobs", jobsRes.error);
 
   const profile = profileRes.data;
   // Own-pay for the earnings estimate. Error-aware (not a silent discard): if the

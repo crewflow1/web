@@ -454,7 +454,12 @@ const RATCHET: Array<{
     // the active org. On a read error the `?? []` yields [] → the RPC is skipped
     // (no invoice generated), which is the safe outcome; matches the file's other
     // best-effort billing reads. See docs/loud-read-failures.md (C ledger).
-    softData: 34,
+    // 34 → 33: Customer #1 finalisation (2026-08-29) — /me "My jobs" (jobsRes)
+    // was a silent soft-data read: a failed jobs fetch rendered the "No jobs
+    // assigned to you right now" empty state, masquerading as data. It now
+    // throws readFailure("me: my jobs") like the page's hours/tasks reads —
+    // one fewer soft-data discard (the ratchet's intended direction).
+    softData: 33,
     // 5 → 4: train "offl" moved createSiteReport's cosmetic report-number count
     // (`nextReportNumber`, a head:true count read) OUT of the action and INTO the
     // shared write core (server/services/site-report-writes.ts), so the online
