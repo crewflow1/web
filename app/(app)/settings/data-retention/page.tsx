@@ -11,7 +11,9 @@ import {
   RETENTION_PURGEABLE_TABLES,
 } from "@/lib/retention/policy";
 import { retentionPurgeEnabled } from "@/server/services/retention-purge";
+import { gdprErasureEnabled } from "@/server/services/gdpr-erase";
 import { saveRetentionPolicy, previewRetentionPolicy } from "./actions";
+import { GdprEraseForm } from "./_gdpr-erase.client";
 import {
   RetentionTableRow,
   type RetentionPolicyView,
@@ -106,6 +108,8 @@ export default async function DataRetentionSettingsPage() {
   }));
 
   const purgeLive = retentionPurgeEnabled();
+  const erasureLive = gdprErasureEnabled();
+  const isOwner = ctx.membership.role === "owner";
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 py-8">
@@ -219,6 +223,73 @@ export default async function DataRetentionSettingsPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </section>
+
+      {/* GDPR — export (live) ------------------------------------------- */}
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-base font-semibold text-slate-900">
+          Export all workspace data (GDPR)
+        </h2>
+        <p className="mt-1 text-sm text-slate-600">
+          Download a ZIP archive of your organisation&apos;s own data — one JSON
+          file per table, with a manifest listing what is included and what is
+          deliberately excluded (credentials, tokens and government identifiers
+          are never exported). Exporting changes nothing in your account, and
+          every export is recorded for audit.
+        </p>
+        {isAdmin ? (
+          // A plain link — the route is itself admin-gated and streams the ZIP.
+          <a
+            href="/api/gdpr/export"
+            className="mt-4 inline-flex items-center rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            Download data export (ZIP)
+          </a>
+        ) : (
+          <p className="mt-4 rounded-md bg-slate-100 px-3 py-2 text-xs font-medium text-slate-600">
+            Only an owner or admin can generate the organisation-wide export.
+          </p>
+        )}
+      </section>
+
+      {/* GDPR — erasure -------------------------------------------------- */}
+      <section className="rounded-xl border border-red-200 bg-white p-6 shadow-sm">
+        <h2 className="text-base font-semibold text-slate-900">
+          Erase this organisation&apos;s data (GDPR right to erasure)
+        </h2>
+        <p className="mt-1 text-sm text-slate-600">
+          Erasure permanently removes personal data: statutory financial, tax,
+          payroll and CIS records are anonymised in place (the figures are kept
+          for their legal retention window, the personal details are scrubbed),
+          everything else is hard-deleted, and all stored files are removed.
+          It cannot be undone, and every erasure is recorded in an append-only
+          log.
+        </p>
+        {!erasureLive ? (
+          // HONEST DARK STATE — self-serve erasure is deliberately not enabled;
+          // the API refuses (503) while the deployment flag is off, so this
+          // panel documents the support-assisted path instead of a dead button.
+          <div className="mt-4 rounded-md border border-blue-200 bg-blue-50 px-3 py-3 text-xs text-blue-900">
+            <p className="font-semibold">
+              Erasure is a support-assisted process for this workspace.
+            </p>
+            <p className="mt-1">
+              To begin, contact support from your owner account. We verify the
+              request with the organisation owner, agree a date, then run the
+              erasure described above and send you the confirmation record.
+              Consider downloading a data export first — after erasure there is
+              nothing left to export.
+            </p>
+          </div>
+        ) : !isOwner ? (
+          <p className="mt-4 rounded-md bg-slate-100 px-3 py-2 text-xs font-medium text-slate-600">
+            Only the organisation owner can start an erasure.
+          </p>
+        ) : (
+          <div className="mt-4">
+            <GdprEraseForm orgSlug={ctx.org.slug} />
           </div>
         )}
       </section>

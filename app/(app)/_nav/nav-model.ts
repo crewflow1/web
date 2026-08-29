@@ -45,6 +45,16 @@ export interface NavChild {
   roles?: readonly NavRole[];
   /** Extra search terms for the command palette (never rendered). */
   keywords?: string[];
+  /**
+   * Feature-flag key gating this entry's VISIBILITY. The entry renders only
+   * when the consumer's `flags` list (resolved SERVER-SIDE from server-only
+   * env — e.g. FEATURE_MARKETPLACE → "marketplace" — and threaded down by the
+   * app layout) contains this key. Absent-by-default: this pure-data model
+   * never reads env itself, so a flagged entry is HIDDEN unless the server
+   * explicitly lit it. Route-level gating (404 while dark) is unchanged —
+   * this only stops nav surfaces advertising a dark destination.
+   */
+  flag?: string;
 }
 
 export interface NavArea {
@@ -58,6 +68,8 @@ export interface NavArea {
   icon: string;
   /** Who sees the area. */
   roles: readonly NavRole[];
+  /** Feature-flag key gating the whole area's visibility (see NavChild.flag). */
+  flag?: string;
   /** Second-level destinations, shown when the area is expanded/active. */
   children: NavChild[];
 }
@@ -207,12 +219,20 @@ export const PRIMARY_NAV: NavArea[] = [
     labelKey: "nav.inbox",
     href: "/inbox",
     icon: "Inbox",
-    roles: ADMIN_ROLES,
+    // ALL_ROLES so the per-user notification centre is reachable by every
+    // member; the customer-comms children stay owner/admin (explicit roles
+    // below). For staff the area's landing resolves to its first visible
+    // child — Notifications — via areaLandingHref, never the admin enquiries.
+    roles: ALL_ROLES,
     children: [
-      { label: "Enquiries", labelKey: "nav.inbox", href: "/inbox", keywords: ["messages"] },
-      { label: "Conversations", labelKey: "nav.conversations", href: "/inbox/conversations", keywords: ["chat", "threads"] },
-      { label: "Review queue", labelKey: "nav.review_queue", href: "/inbox/review" },
-      { label: "Delivery audit", labelKey: "nav.delivery_audit", href: "/inbox/audit" },
+      { label: "Enquiries", labelKey: "nav.inbox", href: "/inbox", roles: ADMIN_ROLES, keywords: ["messages"] },
+      { label: "Conversations", labelKey: "nav.conversations", href: "/inbox/conversations", roles: ADMIN_ROLES, keywords: ["chat", "threads"] },
+      // The full notification centre (/notifications) — per-user, so every
+      // role. Previously LIVE but orphaned: only the bell dropdown's 15 most
+      // recent were reachable. (Reachability pinned in __tests__/ui/reachability.test.ts.)
+      { label: "Notifications", labelKey: "nav.notifications", href: "/notifications", roles: ALL_ROLES, keywords: ["alerts", "bell", "unread", "mentions"] },
+      { label: "Review queue", labelKey: "nav.review_queue", href: "/inbox/review", roles: ADMIN_ROLES },
+      { label: "Delivery audit", labelKey: "nav.delivery_audit", href: "/inbox/audit", roles: ADMIN_ROLES },
     ],
   },
 ];
@@ -233,7 +253,18 @@ export const UTILITY_NAV: NavArea[] = [
       { label: "Settings home", labelKey: "nav.settings", href: "/settings" },
       { label: "Plan & billing", labelKey: "settings.billing.title", href: "/settings/billing", roles: ADMIN_ROLES },
       { label: "Security", labelKey: "settings.security.title", href: "/settings/security", roles: ADMIN_ROLES },
+      // Enterprise SSO's activation surface. NOT flag-gated in nav: like the
+      // integrations panels, the page itself renders an honest dark state
+      // while FEATURE_ENTERPRISE_SSO is off (it never 404s), so admins can
+      // discover the capability without anything pretending to be live.
+      { label: "Single sign-on (SSO)", href: "/settings/sso", roles: ADMIN_ROLES, keywords: ["saml", "oidc", "scim", "enterprise", "identity provider"] },
       { label: "Integrations", labelKey: "settings.integrations.title", href: "/settings/integrations", roles: ADMIN_ROLES },
+      // The tenant app marketplace. DARK (FEATURE_MARKETPLACE): the route 404s
+      // while off, so the nav entry is flag-conditional — it appears only when
+      // the server layout resolves the flag on. House doctrine: dark surfaces
+      // that 404 are absent from nav; this closes the inverse hole (reachable
+      // nowhere even when lit).
+      { label: "Marketplace", href: "/marketplace", roles: ADMIN_ROLES, flag: "marketplace", keywords: ["apps", "third-party", "install", "partner"] },
       { label: "API keys", labelKey: "settings.api_keys.title", href: "/settings/api-keys", roles: ADMIN_ROLES },
       { label: "Webhooks", labelKey: "settings.webhooks.title", href: "/settings/webhooks", roles: ADMIN_ROLES },
       { label: "Automations", labelKey: "settings.automations.title", href: "/settings/automations", roles: ADMIN_ROLES },
@@ -255,25 +286,42 @@ export const UTILITY_NAV: NavArea[] = [
   },
 ];
 
-// ── Role filtering ───────────────────────────────────────────────────────────
+// ── Role + flag filtering ────────────────────────────────────────────────────
 
 function roleAllowed(roles: readonly NavRole[] | undefined, role: NavRole): boolean {
   return !roles || roles.includes(role);
 }
 
-/** The primary areas (with children) a given role should see. */
-export function navForRole(role: NavRole, nav: NavArea[] = PRIMARY_NAV): NavArea[] {
+/**
+ * Flag gate. An entry with no `flag` always passes; a flagged entry passes
+ * only when the caller's server-resolved `flags` list lit it. `flags` defaults
+ * to [] so every consumer that doesn't thread flags hides all dark entries —
+ * absent-by-default, never lit-by-accident.
+ */
+function flagAllowed(flag: string | undefined, flags: readonly string[]): boolean {
+  return !flag || flags.includes(flag);
+}
+
+/** The primary areas (with children) a given role should see. `flags` is the
+ *  server-resolved feature-flag list (see NavChild.flag). */
+export function navForRole(
+  role: NavRole,
+  flags: readonly string[] = [],
+  nav: NavArea[] = PRIMARY_NAV,
+): NavArea[] {
   return nav
-    .filter((a) => roleAllowed(a.roles, role))
+    .filter((a) => roleAllowed(a.roles, role) && flagAllowed(a.flag, flags))
     .map((a) => ({
       ...a,
-      children: a.children.filter((c) => roleAllowed(c.roles ?? a.roles, role)),
+      children: a.children.filter(
+        (c) => roleAllowed(c.roles ?? a.roles, role) && flagAllowed(c.flag, flags),
+      ),
     }));
 }
 
 /** Utility areas (Settings/Help) for a role. */
-export function utilityForRole(role: NavRole): NavArea[] {
-  return navForRole(role, UTILITY_NAV);
+export function utilityForRole(role: NavRole, flags: readonly string[] = []): NavArea[] {
+  return navForRole(role, flags, UTILITY_NAV);
 }
 
 // ── Active-state detection ───────────────────────────────────────────────────

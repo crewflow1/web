@@ -9,6 +9,7 @@ import { OfflineOutbox } from "./_components/offline-outbox";
 import { OfflineReadCache } from "./_components/offline-read-cache";
 import { OfflinePhotoOutbox } from "./_components/offline-photo-outbox";
 import { createClient } from "@/lib/supabase/server";
+import { isMarketplaceEnabled } from "@/lib/marketplace/flag";
 import { getActiveImpersonation } from "@/server/services/impersonation";
 import { endImpersonation } from "@/app/admin/impersonation/actions";
 import { Sidebar } from "./_components/sidebar";
@@ -46,6 +47,12 @@ export default async function AppLayout({
     })(),
   ]);
   const notifications: Notification[] = (notificationsRes.data ?? []) as Notification[];
+
+  // Feature flags the nav model needs, resolved HERE (server) from server-only
+  // env and threaded to the client nav surfaces as inert string keys — the
+  // flags themselves never ride into a client bundle. A dark feature's nav
+  // entry (nav-model `flag`) is hidden unless its key appears in this list.
+  const navFlags: string[] = [...(isMarketplaceEnabled() ? ["marketplace"] : [])];
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -94,7 +101,7 @@ export default async function AppLayout({
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            <SearchPalette role={ctx.membership.role} />
+            <SearchPalette role={ctx.membership.role} flags={navFlags} />
             <NotificationsBell initial={notifications} />
             <span className="hidden text-xs text-slate-500 md:inline">
               {user.email}
@@ -116,7 +123,7 @@ export default async function AppLayout({
       <OfflinePhotoOutbox userId={user.id} orgId={ctx.org.id} />
 
       <div className="flex">
-        <Sidebar role={ctx.membership.role} locale={locale} />
+        <Sidebar role={ctx.membership.role} locale={locale} flags={navFlags} />
         {/* Bottom-padding reserves room for the mobile bottom-nav (md:hidden). */}
         {/* min-w-0 lets the content column shrink below its content's intrinsic
             width so wide tables scroll within their own container instead of
@@ -125,7 +132,7 @@ export default async function AppLayout({
           {children}
         </main>
       </div>
-      <MobileNav role={ctx.membership.role} locale={locale} />
+      <MobileNav role={ctx.membership.role} locale={locale} flags={navFlags} />
       <OfflineIdentityMarker userId={user.id} orgId={ctx.org.id} />
       {/* Keeps the device's offline READ cache warm (jobs, customers, invoice
           headers, diary, snags) so pages still render with no signal. Identity is

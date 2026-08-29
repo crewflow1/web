@@ -66,9 +66,16 @@ const JOB_RE = /^\/jobs\/([^/]+)(?:\/|$)/;
 
 /**
  * Build the full command list for a role + current path. Entity hits are added
- * separately by the palette from /api/search.
+ * separately by the palette from /api/search. `flags` is the server-resolved
+ * feature-flag list threaded from the layout (nav-model flag gating) — the
+ * palette stays auto-derived from the same filtered model as the sidebar, so
+ * a dark destination never appears as a command either.
  */
-export function buildCommands(role: NavRole, pathname: string): Command[] {
+export function buildCommands(
+  role: NavRole,
+  pathname: string,
+  flags: readonly string[] = [],
+): Command[] {
   const cmds: Command[] = [];
 
   // ── Contextual (a specific job is open) ──
@@ -115,7 +122,7 @@ export function buildCommands(role: NavRole, pathname: string): Command[] {
 
   // ── Navigation (from the nav model) ──
   const seen = new Set<string>();
-  for (const area of [...navForRole(role), ...utilityForRole(role)]) {
+  for (const area of [...navForRole(role, flags), ...utilityForRole(role, flags)]) {
     const areaLabel = area.label;
     if (!seen.has(area.href)) {
       seen.add(area.href);

@@ -89,6 +89,7 @@ export const HQ_AREAS: HqNavArea[] = [
       { href: "/admin/sales-orchestrator-ai", label: "Sales orchestrator" },
       { href: "/admin/research", label: "Research AI" },
       { href: "/admin/qualification", label: "Qualification AI" },
+      { href: "/admin/outreach", label: "Outreach AI" },
       { href: "/admin/marketing-ai", label: "Marketing AI" },
       { href: "/admin/product-ai", label: "Product AI" },
       { href: "/admin/demos", label: "Demos" },

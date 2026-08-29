@@ -142,6 +142,27 @@ export async function resolveScimConfigByToken(
   return { orgId: String(data.org_id), configId: String(data.id) };
 }
 
+/**
+ * Load an org's SCIM config regardless of enabled state (for the admin settings
+ * surface). Returns null when no token has ever been minted. Exposes only the
+ * NON-SECRET columns (the token itself is stored hashed and is never readable
+ * back) — callers must still be admin-gated.
+ */
+export async function loadScimConfig(orgId: string): Promise<ScimConfig | null> {
+  const { data, error } = await (admin()
+    .from("org_scim_config" as never)
+    .select("id, org_id, enabled, token_prefix")
+    .eq("org_id", orgId)
+    .maybeSingle() as unknown as Promise<{ data: AnyRow | null; error: unknown }>);
+  if (error || !data) return null;
+  return {
+    id: String(data.id),
+    orgId: String(data.org_id),
+    enabled: Boolean(data.enabled),
+    tokenPrefix: (data.token_prefix as string | null) ?? null,
+  };
+}
+
 /** Parse a `Bearer <token>` header into the raw token, or null on any other shape. */
 export function parseBearer(header: string | null | undefined): string | null {
   if (!header) return null;

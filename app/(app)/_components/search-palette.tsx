@@ -40,7 +40,17 @@ type Hit = {
     | "job_document"
     | "snag"
     | "purchase_order"
-    | "site_report";
+    | "site_report"
+    | "supplier"
+    | "finance"
+    | "blueprint"
+    | "asset"
+    | "vehicle"
+    | "toolbox_talk"
+    | "diary_entry"
+    | "support_ticket"
+    | "staff_qualification"
+    | "attachment";
   id: string;
   title: string;
   subtitle: string | null;
@@ -60,6 +70,16 @@ const TYPE_LABELS: Record<Hit["type"], string> = {
   snag: "Snag",
   purchase_order: "PO",
   site_report: "Report",
+  supplier: "Supplier",
+  finance: "Cost",
+  blueprint: "Drawing",
+  asset: "Asset",
+  vehicle: "Vehicle",
+  toolbox_talk: "Toolbox talk",
+  diary_entry: "Site diary",
+  support_ticket: "Ticket",
+  staff_qualification: "Qualification",
+  attachment: "File",
 };
 
 const TYPE_ICONS: Record<Hit["type"], string> = {
@@ -75,6 +95,16 @@ const TYPE_ICONS: Record<Hit["type"], string> = {
   snag: "🚧",
   purchase_order: "🛒",
   site_report: "📑",
+  supplier: "🏬",
+  finance: "🧾",
+  blueprint: "📐",
+  asset: "🏗️",
+  vehicle: "🚐",
+  toolbox_talk: "🗣️",
+  diary_entry: "📓",
+  support_ticket: "🎫",
+  staff_qualification: "🎓",
+  attachment: "📎",
 };
 
 const RECENTS_KEY = "cf-cmd-recents";
@@ -90,7 +120,15 @@ function coerceRole(role: string): NavRole {
   return role === "staff" || role === "admin" || role === "owner" ? role : "owner";
 }
 
-export function SearchPalette({ role = "owner" }: { role?: string }) {
+export function SearchPalette({
+  role = "owner",
+  flags = [],
+}: {
+  role?: string;
+  /** Server-resolved feature flags — keeps palette commands derived from the
+   *  same flag-filtered nav model as the sidebar/mobile nav. */
+  flags?: readonly string[];
+}) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<Hit[]>([]);
@@ -103,7 +141,10 @@ export function SearchPalette({ role = "owner" }: { role?: string }) {
   const pathname = usePathname();
 
   const navRole = coerceRole(role);
-  const commands = useMemo(() => buildCommands(navRole, pathname), [navRole, pathname]);
+  const commands = useMemo(
+    () => buildCommands(navRole, pathname, flags),
+    [navRole, pathname, flags],
+  );
 
   // Load recents once.
   useEffect(() => {
