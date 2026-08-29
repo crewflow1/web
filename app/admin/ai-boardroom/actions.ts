@@ -143,6 +143,78 @@ export async function updateAiEmployeeConfig(formData: FormData): Promise<void> 
 }
 
 // --------------------------------------------------------------------
+// Retire (terminal) — the only admitted exit from the roster
+// --------------------------------------------------------------------
+//
+// Retirement is NOT a status edit, so it is deliberately absent from the
+// configSchema status enum: it is a one-way admin action. The database trigger
+// (migration 20261222000000) is the authority — only disabled → retired is
+// admitted, and a retired row refuses every later update and delete. This
+// action re-states the precondition for a friendly message, then lets the
+// trigger be the enforcement.
+
+const retireSchema = z.object({
+  id: z.string().uuid(),
+  slug: z.string().regex(SLUG_RE),
+});
+
+export async function retireAiEmployee(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const parsed = retireSchema.safeParse({
+    id: formData.get("id"),
+    slug: formData.get("slug"),
+  });
+  if (!parsed.success) {
+    redirect(
+      `/admin/ai-boardroom?error=${encodeURIComponent("Invalid retire input")}`,
+    );
+  }
+
+  const d = parsed.data;
+  const supabase = createAdminClient();
+
+  const { data: prev } = await supabase
+    .from("ai_employees" as never)
+    .select("status")
+    .eq("id", d.id)
+    .maybeSingle();
+  const prevStatus = (prev as unknown as { status: string | null } | null)?.status ?? null;
+  if (prevStatus !== "disabled") {
+    redirect(
+      `/admin/ai-boardroom/${d.slug}?error=${encodeURIComponent(
+        "Only a disabled employee can be retired — disable it first.",
+      )}`,
+    );
+  }
+
+  // The trigger stamps retired_at and refuses anything but disabled → retired.
+  const { error } = await supabase
+    .from("ai_employees" as never)
+    .update({ status: "retired" } as never)
+    .eq("id", d.id)
+    .eq("status", "disabled");
+  if (error) {
+    console.error("[ai-boardroom] retireAiEmployee failed", error);
+    redirect(
+      `/admin/ai-boardroom/${d.slug}?error=${encodeURIComponent("Couldn't retire — try again.")}`,
+    );
+  }
+
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "ai_employee.retired",
+    targetTable: "ai_employees",
+    targetId: d.id,
+    metadata: { status_from: prevStatus, status_to: "retired" },
+  });
+
+  revalidatePath(`/admin/ai-boardroom/${d.slug}`);
+  revalidatePath("/admin/ai-boardroom");
+  redirect(`/admin/ai-boardroom/${d.slug}?saved=retired`);
+}
+
+// --------------------------------------------------------------------
 // Append a task-history entry (manual, descriptive — no execution)
 // --------------------------------------------------------------------
 

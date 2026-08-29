@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { ukMonthKeyOf, ukMonthWindow } from "@/lib/ai/governor/policy";
 import {
   computeEmployeeStats,
   emptyEmployeeStats,
@@ -94,4 +95,170 @@ export function statsForEmployee(
   employeeId: string,
 ): EmployeeStats {
   return ws.byEmployee.get(employeeId) ?? emptyEmployeeStats();
+}
+
+// ---------------------------------------------------------------------
+// Per-employee KPIs — persisted, honest, derived (contract items 3 + 4).
+//
+// COST comes from the AI invocation ledger's new `ai_employee_id` attribution
+// column (migration 20261222000000): the sum of `estimated_cost_pence` over the
+// current UK budget month — the SAME calendar window the cost governor buckets
+// by, so cost and outcomes describe one period. IMPACT is the honest derived
+// triple (tasks completed / tasks failed / approvals requested) over the real
+// engine tables — never invented revenue.
+//
+// PERSISTENCE is compute-on-read: the boardroom's stats read path calls this,
+// which upserts the CURRENT period's row into `ai_employee_kpis` (service-role
+// only; RLS with no policies) and returns the figures. No new cron — the table
+// accretes one row per (employee, month) as the boardroom is actually used,
+// and a failed upsert degrades to display-only with a loud log.
+// ---------------------------------------------------------------------
+
+const KPI_READ_LIMIT = 1000; // bounded sample; PostgREST clamps to max_rows=1000
+
+export type EmployeeKpis = {
+  /** First day of the UK budget month this row describes (YYYY-MM-01). */
+  periodStart: string;
+  tasksCompleted: number;
+  tasksFailed: number;
+  approvalsRequested: number;
+  /** Attributed spend (ai_invocations.ai_employee_id) this period, in pence. */
+  costPence: number;
+  /** failed / (completed + failed); null when nothing finished this period. */
+  failureRatePct: number | null;
+};
+
+function emptyKpis(periodStart: string): EmployeeKpis {
+  return {
+    periodStart,
+    tasksCompleted: 0,
+    tasksFailed: 0,
+    approvalsRequested: 0,
+    costPence: 0,
+    failureRatePct: null,
+  };
+}
+
+/**
+ * Compute the current UK-month KPIs for the roster, upsert them into
+ * `ai_employee_kpis`, and return them keyed by employee SLUG (the KPI table's
+ * own key). Three bounded reads regardless of roster size, mirroring
+ * `getAiWorkforceStats`. Read failures degrade that source to zero with a loud
+ * log — a wrong dashboard figure is the only cost, and no spend decision hangs
+ * on this path.
+ */
+export async function getEmployeeKpis(
+  employees: ReadonlyArray<{ id: string; slug: string }>,
+): Promise<Map<string, EmployeeKpis>> {
+  const monthKey = ukMonthKeyOf(new Date());
+  const periodStart = `${monthKey}-01`;
+  const { startMs, endMs } = ukMonthWindow(monthKey);
+  const startIso = new Date(startMs).toISOString();
+  const endIso = new Date(endMs).toISOString();
+
+  const byId = new Map<string, EmployeeKpis>();
+  const slugById = new Map<string, string>();
+  for (const e of employees) {
+    byId.set(e.id, emptyKpis(periodStart));
+    slugById.set(e.id, e.slug);
+  }
+  if (byId.size === 0) return new Map();
+
+  const admin = createAdminClient();
+  const [taskRes, approvalRes, costRes] = await Promise.all([
+    admin
+      .from("hq_ai_tasks" as never)
+      .select("assigned_employee_id, status")
+      .not("assigned_employee_id", "is", null)
+      .in("status", ["completed", "failed"])
+      .gte("created_at", startIso)
+      .lt("created_at", endIso)
+      .limit(KPI_READ_LIMIT),
+    admin
+      .from("hq_approvals" as never)
+      .select("ai_employee_id")
+      .gte("requested_at", startIso)
+      .lt("requested_at", endIso)
+      .limit(KPI_READ_LIMIT),
+    admin
+      .from("ai_invocations" as never)
+      .select("ai_employee_id, estimated_cost_pence")
+      .not("ai_employee_id", "is", null)
+      .gte("created_at", startIso)
+      .lt("created_at", endIso)
+      .limit(KPI_READ_LIMIT),
+  ]);
+
+  if (taskRes.error) {
+    console.error("[ai-employee-stats] kpi task read failed", taskRes.error);
+  }
+  if (approvalRes.error) {
+    console.error("[ai-employee-stats] kpi approval read failed", approvalRes.error);
+  }
+  if (costRes.error) {
+    console.error("[ai-employee-stats] kpi cost read failed", costRes.error);
+  }
+
+  for (const row of (taskRes.data ?? []) as unknown as Array<{
+    assigned_employee_id: string;
+    status: string;
+  }>) {
+    const k = byId.get(row.assigned_employee_id);
+    if (!k) continue;
+    if (row.status === "completed") k.tasksCompleted += 1;
+    else if (row.status === "failed") k.tasksFailed += 1;
+  }
+  for (const row of (approvalRes.data ?? []) as unknown as Array<{
+    ai_employee_id: string;
+  }>) {
+    const k = byId.get(row.ai_employee_id);
+    if (k) k.approvalsRequested += 1;
+  }
+  for (const row of (costRes.data ?? []) as unknown as Array<{
+    ai_employee_id: string;
+    estimated_cost_pence: number;
+  }>) {
+    const k = byId.get(row.ai_employee_id);
+    if (k) k.costPence += Math.max(0, Math.round(row.estimated_cost_pence || 0));
+  }
+
+  const bySlug = new Map<string, EmployeeKpis>();
+  for (const [id, k] of byId) {
+    const finished = k.tasksCompleted + k.tasksFailed;
+    k.failureRatePct = finished === 0 ? null : Math.round((k.tasksFailed / finished) * 100);
+    const slug = slugById.get(id);
+    if (slug) bySlug.set(slug, k);
+  }
+
+  // Persist the current period — best-effort, one round trip for the roster.
+  try {
+    const computedAt = new Date().toISOString();
+    const rows = [...bySlug.entries()].map(([slug, k]) => ({
+      employee_slug: slug,
+      period_start: k.periodStart,
+      tasks_completed: k.tasksCompleted,
+      tasks_failed: k.tasksFailed,
+      approvals_requested: k.approvalsRequested,
+      cost_pence: k.costPence,
+      computed_at: computedAt,
+    }));
+    const { error } = await admin
+      .from("ai_employee_kpis" as never)
+      .upsert(rows as never, { onConflict: "employee_slug,period_start" } as never);
+    if (error) {
+      console.error("[ai-employee-stats] kpi upsert failed", error);
+    }
+  } catch (e) {
+    console.error("[ai-employee-stats] kpi upsert threw", e);
+  }
+
+  return bySlug;
+}
+
+/** KPIs for one employee, or a zeroed current-period baseline. */
+export function kpisForEmployee(
+  kpis: Map<string, EmployeeKpis>,
+  slug: string,
+): EmployeeKpis {
+  return kpis.get(slug) ?? emptyKpis(`${ukMonthKeyOf(new Date())}-01`);
 }

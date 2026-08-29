@@ -11,6 +11,12 @@ import {
   deriveApprovalLevel,
   type ApprovalLevelResult,
 } from "@/lib/ai-employees/approval-levels";
+import {
+  mergeInteractionFeed,
+  type FeedApprovalRow,
+  type FeedTaskRow,
+  type InteractionItem,
+} from "@/lib/ai-employees/interaction-feed";
 import { resolveServedAuthority } from "@/server/sdk/registry-parity";
 
 /**
@@ -46,6 +52,8 @@ const EMPLOYEE_COLUMNS = [
   "memory_scope",
   "current_task",
   "last_activity_at",
+  "manager_slug",
+  "retired_at",
   "sort_order",
   "created_at",
   "updated_at",
@@ -165,4 +173,70 @@ export async function loadAiEmployeeBySlug(
   const activity = await listAdminActivity("ai_employees", employee.id, 50);
 
   return { employee, tasks, memory, activity };
+}
+
+// ---------------------------------------------------------------------
+// Interaction feed — the employee's real conversation with the company
+// (contract item 5). See lib/ai-employees/interaction-feed.ts for why this
+// is a merged feed of stored rows rather than a chat transcript: no chat UI
+// exists for a literal conversation, so the honest history IS the employee's
+// engine tasks (hq_ai_tasks), the humans' config decisions about it
+// (admin_activity_log), and the approvals it raised (hq_approvals).
+// ---------------------------------------------------------------------
+
+export type { InteractionItem } from "@/lib/ai-employees/interaction-feed";
+
+const FEED_SOURCE_LIMIT = 50;
+
+/**
+ * The merged, newest-first interaction feed for one employee. Service-role
+ * reads (all three sources are HQ-only tables); callers must already be behind
+ * the super-admin gate. Read failures on a SINGLE source degrade that source to
+ * empty with a loud log rather than blanking the whole feed — the feed is a
+ * display surface, and two honest streams beat zero.
+ */
+export async function getEmployeeInteractionFeed(
+  slug: string,
+): Promise<InteractionItem[]> {
+  const admin = createAdminClient();
+
+  const { data: empRaw, error: empError } = await admin
+    .from("ai_employees" as never)
+    .select("id")
+    .eq("slug", slug)
+    .maybeSingle();
+  if (empError) throw readFailure("ai-employees: feed employee", empError);
+  const employeeId = (empRaw as unknown as { id: string } | null)?.id;
+  if (!employeeId) return [];
+
+  const [taskRes, approvalRes, activity] = await Promise.all([
+    admin
+      .from("hq_ai_tasks" as never)
+      .select("id, task_type, status, result, error_message, created_at, finished_at")
+      .eq("assigned_employee_id", employeeId)
+      .order("created_at", { ascending: false })
+      .limit(FEED_SOURCE_LIMIT),
+    admin
+      .from("hq_approvals" as never)
+      .select(
+        "id, subject_type, action, state, reviewer_email, decision_reason, requested_at, decided_at",
+      )
+      .eq("ai_employee_id", employeeId)
+      .order("requested_at", { ascending: false })
+      .limit(FEED_SOURCE_LIMIT),
+    listAdminActivity("ai_employees", employeeId, FEED_SOURCE_LIMIT),
+  ]);
+
+  if (taskRes.error) {
+    console.error("[ai-employees] interaction feed: task read failed", taskRes.error);
+  }
+  if (approvalRes.error) {
+    console.error("[ai-employees] interaction feed: approval read failed", approvalRes.error);
+  }
+
+  return mergeInteractionFeed(
+    (taskRes.data ?? []) as unknown as FeedTaskRow[],
+    activity,
+    (approvalRes.data ?? []) as unknown as FeedApprovalRow[],
+  );
 }

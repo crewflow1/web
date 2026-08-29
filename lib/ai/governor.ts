@@ -417,6 +417,15 @@ export type RecordInvocationInput = {
   contentHash?: string | null;
   /** Pre-computed cost; omitted ⇒ derived from the tier's price metadata. */
   estimatedCostPence?: number;
+  /**
+   * The acting AI employee (ai_employees.id), when one exists — per-employee
+   * cost ATTRIBUTION only (migration 20261222000000). Distinct from `userId`
+   * (the human, and the per-employee-LIMIT subject): this identifies WHICH AI
+   * employee's work the spend belongs to, so the boardroom can show cost per
+   * employee. Omitted/null for calls with no acting AI employee; never affects
+   * any budget decision.
+   */
+  aiEmployeeId?: string | null;
 };
 
 /**
@@ -456,6 +465,7 @@ export async function recordInvocation(input: RecordInvocationInput): Promise<bo
         // The ledger's CHECK requires a code on failure and none on success.
         error_code: input.success ? null : (input.errorCode ?? "unknown_error"),
         content_hash: input.contentHash ?? null,
+        ai_employee_id: input.aiEmployeeId ?? null,
       });
     if (error) {
       console.error("[ai/governor] invocation record failed", error);
@@ -668,6 +678,8 @@ export async function settleReservation(input: {
   usage: InvocationUsage;
   latencyMs: number;
   errorCode?: string | null;
+  /** Acting AI employee for ledger ATTRIBUTION (never a budget decision). */
+  aiEmployeeId?: string | null;
   /** Used only if the reservation has vanished, so the spend is still recorded. */
   fallback: RecordInvocationInput;
 }): Promise<boolean> {
@@ -682,6 +694,7 @@ export async function settleReservation(input: {
       p_output_tokens: Math.max(0, Math.round(input.usage.outputTokens || 0)),
       p_latency_ms: Math.max(0, Math.round(input.latencyMs || 0)),
       p_error_code: input.success ? null : (input.errorCode ?? "unknown_error"),
+      p_ai_employee_id: input.aiEmployeeId ?? null,
     });
     if (error) {
       console.error("[ai/governor] settlement failed", error);
@@ -791,6 +804,17 @@ export type InvokeWithGovernorInput = {
    * its SHA-256 digest reaches the ledger.
    */
   dedupeContent?: string | null;
+  /**
+   * The acting AI EMPLOYEE (ai_employees.id), when the call runs on behalf of
+   * one — a runner kit / HQ worker whose identity object carries the roster
+   * row's UUID. ATTRIBUTION ONLY: it is written to the ledger row so cost
+   * aggregates per employee (migration 20261222000000); it never enters the
+   * reservation arithmetic, the per-employee LIMIT (that subject stays
+   * `userId` via limitSubjectUserId), or any refusal. While the tiers are dark
+   * the governed path never reaches a settle, so passing this today changes
+   * nothing observable — it means attribution is complete on activation day.
+   */
+  aiEmployeeId?: string | null;
 };
 
 /**
@@ -983,6 +1007,7 @@ export async function invokeWithGovernor<T>(
       usage: fallbackUsage,
       latencyMs,
       errorCode,
+      aiEmployeeId: input.aiEmployeeId ?? null,
       fallback: {
         orgId: input.orgId,
         userId: input.userId ?? null,
@@ -997,6 +1022,7 @@ export async function invokeWithGovernor<T>(
           inputTokens: 0,
           outputTokens: 0,
         }),
+        aiEmployeeId: input.aiEmployeeId ?? null,
       },
     });
     // RETHROW: the caller's existing catch owns the degraded path.
@@ -1021,6 +1047,7 @@ export async function invokeWithGovernor<T>(
     costPence,
     usage: call.usage,
     latencyMs,
+    aiEmployeeId: input.aiEmployeeId ?? null,
     fallback: {
       orgId: input.orgId,
       userId: input.userId ?? null,
@@ -1031,6 +1058,7 @@ export async function invokeWithGovernor<T>(
       success: true,
       contentHash,
       estimatedCostPence: costPence,
+      aiEmployeeId: input.aiEmployeeId ?? null,
     },
   });
 

@@ -6,6 +6,8 @@ import {
 } from "@/server/services/ai-employees";
 import {
   getAiWorkforceStats,
+  getEmployeeKpis,
+  kpisForEmployee,
   statsForEmployee,
 } from "@/server/services/ai-employee-stats";
 import {
@@ -80,6 +82,15 @@ export default async function AiBoardroomPage({
   // The explicit 1–5 approval level per employee, derived from the served posture the Capability
   // Registry resolves (deterministic classification — no new authority; see approval-levels.ts).
   const approvalLevels = await resolveApprovalLevelsByEmployeeId(employees);
+  // Current UK-month KPIs per employee (tasks/cost/failure-rate) — honest
+  // derived figures from hq_ai_tasks + hq_approvals + the attributed AI cost
+  // ledger; this read path also PERSISTS the period row (compute-on-read
+  // upsert into ai_employee_kpis).
+  const kpis = await getEmployeeKpis(
+    employees.map((e) => ({ id: e.id, slug: e.slug })),
+  );
+  // slug → display name, for the "Reports to" line on each card.
+  const nameBySlug = new Map(employees.map((e) => [e.slug, e.name] as const));
 
   const q = (sp.q ?? "").trim().toLowerCase();
   const dept = (sp.dept ?? "").trim();
@@ -262,6 +273,16 @@ export default async function AiBoardroomPage({
                             </div>
                           </div>
 
+                          {/* Management line (relationships.md §2). Null = the human board. */}
+                          <p className="mt-2 text-[11px] text-slate-500">
+                            Reports to{" "}
+                            <span className="font-medium text-slate-700">
+                              {e.manager_slug
+                                ? (nameBySlug.get(e.manager_slug) ?? e.manager_slug)
+                                : "Human board"}
+                            </span>
+                          </p>
+
                           {/* Current focus (configured) */}
                           <div className="mt-3 min-w-0">
                             <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
@@ -271,6 +292,22 @@ export default async function AiBoardroomPage({
                               {e.current_task ?? "—"}
                             </p>
                           </div>
+
+                          {/* This month's honest KPIs — engine tasks, attributed
+                              AI cost, failure rate. Derived, never invented. */}
+                          {(() => {
+                            const k = kpisForEmployee(kpis, e.slug);
+                            return (
+                              <p className="mt-2 text-[11px] tabular-nums text-slate-500">
+                                This month: {k.tasksCompleted} done · {k.tasksFailed}{" "}
+                                failed
+                                {k.failureRatePct !== null
+                                  ? ` (${k.failureRatePct}% fail)`
+                                  : ""}{" "}
+                                · £{(k.costPence / 100).toFixed(2)} AI cost
+                              </p>
+                            );
+                          })()}
 
                           {/* Needs-approval flag — the honest per-card signal. */}
                           {needsApproval ? (
