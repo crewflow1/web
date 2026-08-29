@@ -17,6 +17,8 @@ import {
   type StepStatus,
 } from "@/lib/hq/workflow/model";
 import { decomposeDirective, getTemplate } from "@/lib/hq/workflow/decompose";
+import { drainSagaStepTasks } from "@/server/services/hq-saga-step-runner";
+import type { DrainSummary } from "@/server/sdk/tasks";
 
 /**
  * CrewFlow HQ — the Workflow-Saga service (the foundation aggregator).
@@ -466,6 +468,15 @@ export type SagaDrainResult = {
   held_for_approval: number;
   /** Per-step failures (logged; the pass continues). */
   errors: number;
+  /**
+   * The `saga_step` TASK-EXECUTION summary for this pass (G6). Before the sync
+   * scan, the drain runs the canonical `saga_step` runner
+   * (server/services/hq-saga-step-runner.ts) so dispatched steps' tasks are
+   * actually EXECUTED — the missing half that left every saga stuck `running`
+   * forever. Null only when the executor pass itself faulted (logged; the sync
+   * pass still runs, so propagation is never blocked by an executor fault).
+   */
+  step_tasks: DrainSummary | null;
   durationMs: number;
 };
 
@@ -500,6 +511,33 @@ export async function drainReadySagaSteps(
   const system: Actor = { id: null, email: null };
   const admin = createAdminClient();
 
+  // 0. EXECUTE the dispatched work first (G6): drain ready `saga_step` tasks
+  // through the canonical runner, so this same pass's re-sync below can propagate
+  // the completions into the steps (completed → done → dependents ready). This is
+  // also the REPAIR path for the queued-orphaned backlog: `hq_ai_task_claim`
+  // selects by task_type + pending, so every stuck task becomes claimable here
+  // with no data surgery. Best-effort — an executor fault is logged and counted,
+  // never allowed to block the sync/dispatch scan.
+  let stepTasks: DrainSummary | null = null;
+  let errors = 0;
+  try {
+    const drained = await drainSagaStepTasks(limit);
+    stepTasks = {
+      claimed: drained.claimed,
+      completed: drained.completed,
+      failed: drained.failed,
+      retried: drained.retried,
+      leaseLost: drained.leaseLost,
+      errors: drained.errors,
+    };
+  } catch (e) {
+    console.error(
+      "[hq-workflow] drainReadySagaSteps: saga_step task drain failed",
+      e instanceof Error ? e.message : String(e),
+    );
+    errors++;
+  }
+
   // Active sagas only (planned/running/blocked), stalest-first — a recency cursor so
   // a saga touched this pass rotates behind the ones not yet reached.
   const { data: activeSagas, error: listErr } = await sagas(admin)
@@ -512,7 +550,6 @@ export async function drainReadySagaSteps(
   let stepsDispatched = 0;
   let stepsSynced = 0;
   let heldForApproval = 0;
-  let errors = 0;
   const sagaRows = Array.isArray(activeSagas) ? activeSagas : [];
 
   for (const sagaRow of sagaRows) {
@@ -567,6 +604,7 @@ export async function drainReadySagaSteps(
     steps_synced: stepsSynced,
     held_for_approval: heldForApproval,
     errors,
+    step_tasks: stepTasks,
     durationMs: Date.now() - startedAt,
   };
 }
