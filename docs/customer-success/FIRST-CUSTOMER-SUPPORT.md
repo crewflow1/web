@@ -38,12 +38,19 @@ Escalation ladder: **L1** CrewFlow UI/HQ → **L2** provider dashboard (Supabase
 
 **6. Failed deployment.** Vercel instant rollback (seconds). Migration failed mid-apply: stop, don't ship the app, decide fix-forward vs restore with engineering.
 
-## Pre-customer #1 operational checklist (from the readiness review)
+## Database incident — evidence-backed drill record (2026-08-29)
 
-- [ ] Confirm the **PITR add-on** is active in Supabase dashboard (2-min check; CLI can't see it — WAL archiving verified healthy, but the add-on state is dashboard-only)
-- [ ] Rehearse a restore once on a scratch project (never done yet; the backup runbook calls it a launch blocker)
+**CREWFLOW DATABASE INCIDENT procedure:** 1) detect (`/api/health` db flag, Sentry, customer report) → 2) assess scope (single record vs corruption vs loss) → 3) freeze writes if corruption is spreading (Vercel: pause deploy/enable maintenance; worst case suspend the org in HQ) → 4) identify the safe restore point (**note the exact UTC time of the bad event immediately**) → 5) preserve forensics (screenshot, export affected rows via GDPR ZIP/CSVs before any restore) → 6) restore (scoped: in-app void/cancel/import-rollback; full: Supabase dashboard → Backups — **daily physical backup today; restore is project-wide and destructive**) → 7) validate restored env (migration tip `20261220…`, RLS/trigger counts, spot-check org/jobs/invoices, `/api/health`) → 8) no DNS/app cutover needed (app is stateless; Vercel instant-rollback covers app-layer) → 9) customer comms: what window is lost (RPO), when service resumed → 10) post-incident: re-run integrity checks, write up, fix the cause.
+
+**What is PROVEN (drill, 2026-08-29):** schema + security controls + app-layer recovery — full replay of all 380 migrations onto a clean database took **26 seconds** and restored 307 RLS-enabled tables, 605 policies, 461 triggers (incl. all append-only/immutability and void/cancel guards), 758 FKs, 1477 indexes; a realistic company re-loaded and the live app rendered it (worker login + My Day verified post-restore).
+**Numbers we can honestly state:** schema-restore RTO ≈ 30 s · app redeploy RTO ≈ 5 min · **data RPO today ≤ 24 h** (daily physical backup; WAL archiving verified healthy, 0 failures) · with PITR enabled RPO ≈ 2 min · **data-restore RTO: not yet measured** (dashboard operation; rehearse when the actions below land). No other SLA is promised.
+
+## Pre-customer #1 operational checklist
+
+- [ ] **Enable the PITR add-on** — verified 2026-08-29 via management API: **PITR is currently OFF** (WAL-G on). Supabase dashboard → Database → Backups/Add-ons. This is the single biggest recovery upgrade (RPO 24 h → ~2 min). Billing decision — CEO only.
+- [ ] Save `SUPABASE_DB_PASSWORD` in the founder's password manager — without it no off-platform `pg_dump` is possible from any operator seat (verified blocked 2026-08-29).
+- [ ] Take one dated off-platform `supabase db dump` once the password is available (belt and braces), and rehearse one dashboard restore on a scratch/forked project to measure data-restore RTO.
 - [ ] Bookmark: Sentry project, Resend logs, Supabase Auth logs, Vercel deployments, /admin/ops
-- [ ] Keep a dated off-platform `supabase db dump` before onboarding (belt and braces)
 
 ## Data export, if a customer asks for their data
 
