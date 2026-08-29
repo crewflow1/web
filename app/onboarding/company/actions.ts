@@ -47,6 +47,15 @@ function makeSlug(name: string): string {
 export async function createOrg(formData: FormData) {
   const user = await requireUser();
 
+  // Terms consent is a hard gate: the stamp below records a legal fact, so an
+  // org is never created without the explicit tick (the checkbox is required
+  // client-side; this is the server's own refusal).
+  if (formData.get("tos_accept") !== "on") {
+    redirect(
+      `/onboarding/company?error=${encodeURIComponent("Please agree to the Terms of service to continue.")}`,
+    );
+  }
+
   const parsed = schema.safeParse({
     name: formData.get("name"),
     first_name: formData.get("first_name"),
@@ -81,9 +90,10 @@ export async function createOrg(formData: FormData) {
       .eq("id", user.id);
 
     // ToS acceptance stamp (migration 20261223000000) — ORG-LEVEL, the org
-    // being the contracting party. The creator accepted by continuing
-    // through this form (the signup UI presents the terms), so record who,
-    // when, and WHICH version. Columns post-date the generated types →
+    // being the contracting party. The form PRESENTS the terms (link + a
+    // required tick, refused above without it), so this records who, when,
+    // and WHICH published revision (CURRENT_TOS_VERSION tracks
+    // app/terms/page.tsx lastUpdated). Columns post-date the generated types →
     // house `as never` idiom until the next types regen.
     const { error: tosError } = await admin
       .from("organizations")

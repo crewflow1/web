@@ -11,7 +11,10 @@
  *
  * Dependency-free so both server actions and unit tests import it.
  */
-export const CURRENT_TOS_VERSION = "2026-08";
+// Tracks the PUBLISHED revision: app/terms/page.tsx lastUpdated="2026-05-21".
+// A stamped version must name terms a person could actually have read — the
+// tos-stamp test pins this constant to the published page's revision month.
+export const CURRENT_TOS_VERSION = "2026-05";
 
 /** The reserved backfill marker (see migration 20261223000000). */
 export const LEGACY_TOS_VERSION = "legacy";

@@ -52,9 +52,14 @@ to the Live Executor rollout governance (ADR 0011) and a CEO activation call, no
 migration. Consequences, accepted deliberately:
 
 - The rows are seeded `status = 'disabled'` — dark identities, honest about having no worker.
-- **No Capability Registry grants** are seeded: the registry's default-deny floor is the correct
-  served posture for an identity with no runner (the boardroom's approval-level badge renders the
-  floor, which is the truth).
+- ~~**No Capability Registry grants** are seeded~~ **Superseded in the same branch by migration
+  `20261227000000`:** the registry's own pinned invariant (R2 backfill completeness / LR5.3
+  registry-only operation, integration-enforced) requires every non-retired employee to be
+  served FROM the registry by an EXPLICIT grant — the implicit floor is the automatic
+  fail-safe, never the steady-state posture. Each of the eleven now carries the explicit
+  deny-floor grant the 20261205 roster-workers precedent established (read/draft/memory,
+  `can_execute false`, `requires_approval true`) — the IDENTICAL posture this section argued
+  for, but registry-served, auditable, and individually revocable.
 - No `model_provider` / `model_name`: registered, not wired.
 
 ### 3. The management spine is data, not prose

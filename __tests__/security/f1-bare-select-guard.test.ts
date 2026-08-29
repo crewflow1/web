@@ -303,8 +303,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: jobs name lookup CHUNKED .in('id', idsChunk) where each chunk is ≤JOB_IN_CHUNK=500 unique PKs — jobs.id is unique so a chunk yields ≤500 rows. The blueprints register above is fully PAGED (listBlueprintsForOrg → fetchAllRows), so the job-id set can exceed 500; the lookup is chunked to stay below the cap. Same class as site-reports/page.tsx:111.",
   "app/(app)/toolbox/page.tsx:89":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the toolbox register (.limit(500)) — ≤500 unique PKs",
-  "app/(app)/jobs/page.tsx:136":
-    "bounded: the 'Today's jobs' panel query — one org × one calendar day (.eq('scheduled_date', todayIso)), a handful of rows, never near the cap. The paginated list query above it is windowed via .range().",
+  "app/(app)/jobs/page.tsx:147":
+    "bounded: the 'Today's jobs' panel query — one org × one calendar day (.eq('scheduled_date', todayIso)), a handful of rows, never near the cap. The paginated list query above it is windowed via .range(). Moved 136→147 in the final-roadmap wave (DataTable adoption) — pure shift, same read.",
   "app/(app)/leads/page.tsx:60":
     "paged: the pipeline read IS complete — executed via fetchAllRows((from,to) => query.range(from,to)) at the bottom of the fn; the builder pattern places the .range terminator beyond the static region window, so the analyser can't see it. (Line moved 51→57 when the lead-score band imports were added above this read; reason unchanged.)",
 

@@ -24,6 +24,15 @@ const MIGRATION = read(
 describe("ToS version constant", () => {
   it("is a dated version string, never the reserved backfill marker", () => {
     expect(CURRENT_TOS_VERSION).toMatch(/^\d{4}-\d{2}$/);
+    // The stamped version must name terms a person could actually have read:
+    // it tracks the PUBLISHED revision (app/terms/page.tsx lastUpdated).
+    const termsPage = readFileSync(
+      resolve(__dirname, "..", "..", "app/terms/page.tsx"),
+      "utf8",
+    );
+    const published = /lastUpdated="(\d{4}-\d{2})-\d{2}"/.exec(termsPage)?.[1];
+    expect(published, "app/terms/page.tsx must carry lastUpdated").toBeTruthy();
+    expect(CURRENT_TOS_VERSION).toBe(published);
     expect(CURRENT_TOS_VERSION).not.toBe(LEGACY_TOS_VERSION);
     expect(LEGACY_TOS_VERSION).toBe("legacy");
   });

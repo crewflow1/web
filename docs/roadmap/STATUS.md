@@ -7,7 +7,8 @@
 ## ✅ Reconciled 2026-08-29 (current truth — read this block, treat everything below as history)
 
 - **Production `main`:** `88cbe193` (verified against the deployed app, not inferred)
-- **Migration tip:** `20261220000000` — **380/380** repo↔DB parity
+- **Migration tip:** `20261220000000` — **380/380** repo↔DB parity (production).
+  The `roadmap/final-completion` branch carries `20261221`–`20261227` (repo total 387) — pending release, NOT applied; parity is re-verified at release
 - **Defect state:** P0 = 0 · P1 = 0 — Customer-#1 release gates CLOSED (PRs #849/#850 shipped: invoice void, job cancel, Money authz boundary)
 - **Next migration prefix:** query `supabase_migrations.schema_migrations` `max(version)+1` — **never trust this file** (or any doc) for the next prefix
 - **Canonical roadmap truth:** [`MASTER-ROADMAP-RECONCILIATION.md`](./MASTER-ROADMAP-RECONCILIATION.md) — where any block below disagrees with it, the reconciliation wins

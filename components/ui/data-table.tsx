@@ -262,7 +262,10 @@ export function DataTable({
 
   function onRowKeyDown(e: KeyboardEvent<HTMLTableRowElement>, idx: number, row: DataTableRow) {
     // Only steer when the ROW itself is focused — a checkbox or link inside
-    // the row keeps its native keyboard behaviour untouched.
+    // the row keeps its native keyboard behaviour untouched. (The bubble-up
+    // from an inner control reaches this handler too, so the guard must be
+    // enforced, not just documented.)
+    if (e.target !== e.currentTarget) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
       focusRow(idx + 1);
@@ -313,9 +316,40 @@ export function DataTable({
     dragRef.current = null;
   }
 
+  /** Keyboard resize (WCAG 2.1.1): arrows nudge the column ±16px. */
+  function onResizeKeyDown(
+    e: KeyboardEvent<HTMLSpanElement>,
+    key: string,
+    min: number,
+  ) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const th = thRefs.current[key];
+    if (!th) return;
+    setWidths((prev) => {
+      const base = prev ?? (() => {
+        const measured: Record<string, number> = {};
+        for (const c of columns) {
+          const el = thRefs.current[c.key];
+          if (el) measured[c.key] = el.offsetWidth;
+        }
+        return measured;
+      })();
+      const current = base[key] ?? th.offsetWidth;
+      const next = Math.max(min, current + (e.key === "ArrowRight" ? 16 : -16));
+      return { ...base, [key]: next };
+    });
+  }
+
   function exportSelectedCsv() {
     if (!csvExport) return;
-    const body = selectedVisible
+    // ALL selected rows, not the filter-visible intersection: the bulk bar
+    // says "{selected.length} selected" and selection was an explicit act —
+    // a filter typed AFTER selecting is a view, and silently dropping the
+    // now-hidden selected rows from the file would contradict the count the
+    // user just read.
+    const body = rows
+      .filter((r) => selected.includes(r.id))
       .filter((r) => r.csv !== undefined)
       .map((r) => [...r.csv!]);
     const csv = toCsv([...csvExport.header], body);
@@ -507,12 +541,14 @@ export function DataTable({
                       <span
                         role="separator"
                         aria-orientation="vertical"
-                        aria-label="Resize column"
+                        aria-label={`Resize ${typeof col.header === "string" && col.header ? col.header : col.key} column`}
+                        tabIndex={0}
                         onPointerDown={(e) => onResizeStart(e, col.key)}
                         onPointerMove={(e) => onResizeMove(e, col.minWidth ?? 64)}
                         onPointerUp={onResizeEnd}
                         onPointerCancel={onResizeEnd}
-                        className="absolute inset-y-0 right-0 w-2 cursor-col-resize touch-none select-none"
+                        onKeyDown={(e) => onResizeKeyDown(e, col.key, col.minWidth ?? 64)}
+                        className="absolute inset-y-0 right-0 w-2 cursor-col-resize touch-none select-none focus:outline-none focus-visible:bg-slate-400/60 focus-visible:ring-2 focus-visible:ring-slate-500"
                       />
                     ) : null}
                   </th>

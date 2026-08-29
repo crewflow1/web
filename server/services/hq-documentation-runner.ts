@@ -147,6 +147,10 @@ async function readReleaseWindow(now: Date): Promise<{
         .from("admin_activity_log" as never)
         .select("action, target_table, created_at" as never)
         .gte("created_at" as never, since)
+        // created_at first — admin_activity_log.id is a RANDOM uuid, so an
+        // id-only order shifts under concurrent inserts across .range()
+        // boundaries (the paginate contract needs insert-stable ordering).
+        .order("created_at" as never, { ascending: true })
         .order("id" as never, { ascending: true })
         .range(from, to) as unknown as PromiseLike<PageResult<ReleaseActivityRow>>,
   );

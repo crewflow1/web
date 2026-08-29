@@ -211,7 +211,7 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // so neither carries a producer .limit and neither needs an entry. Same
   // treatment as reviews/new, snags/new and site-reports/new below.
   "app/(app)/dashboard/page.tsx:231":
-    "bounded: dashboard 'recent 5 leads' widget — an intentional top-5 display. (Moved to 230 in the security closeout when the payroll-tile read switched to loadOrgHourlyPay + a comment was added above; same intentional top-5 semantics inside the merged `coreWave` Promise.all.)",
+    "bounded: dashboard 'recent 5 leads' widget — an intentional top-5 display. (Moved to 230 in the security closeout when the payroll-tile read switched to loadOrgHourlyPay + a comment was added above; same intentional top-5 semantics inside the merged `coreWave` Promise.all.) Moved 230→231 in the final-roadmap wave (L4/L7 import shifts) — pure line shift, same read.",
   "app/(app)/leads/[id]/page.tsx:142":
     "bounded: this lead's related quotes — top-5 display on the lead detail page. (Line moved 132→136 when the lead→customer conversion imports were added; then 136→142 when the lead-score imports + panel were added above this read; reason unchanged.)",
   "app/(app)/me/page.tsx:145":
@@ -279,8 +279,8 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // aggregated documents with their job/customer name — never counted/summed.
   "app/(app)/documents/page.tsx:183":
     "bounded: /documents job-name lookup — CHUNKED .in('id', idsChunk) capped at .limit(JOB_IN_CHUNK=500) per chunk (jobs.id unique ⇒ ≤500 rows); a display-label lookup over a fully-read doc set, NOT counted/summed",
-  "app/(app)/jobs/page.tsx:95":
-    "bounded: search-match helper — collects up to 200 matching customer ids to fold into the .range()-paged jobs query; a name-search sub-sample, not a materialised set",
+  "app/(app)/jobs/page.tsx:106":
+    "bounded: search-match helper — collects up to 200 matching customer ids to fold into the .range()-paged jobs query; a name-search sub-sample, not a materialised set Moved 95→106 in the final-roadmap wave (DataTable adoption added JOB_COLUMNS + import) — pure shift, same read.",
 
   // Customer-portal reads.
   //

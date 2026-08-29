@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { Wrench, Sparkles, ShieldCheck, AlertTriangle } from "lucide-react";
 import { requireHqPage } from "@/server/auth/hq";
+import { queuePrReview } from "./actions";
 import { loadCtoBoard } from "@/server/services/hq-cto";
 import {
   CTO_KIND_LABEL,
@@ -55,17 +56,90 @@ function formatCto(value: number | null, format: CtoFormat): string {
   }
 }
 
-export default async function CtoAiPage() {
+type SP = Promise<{ saved?: string; error?: string }>;
+
+/** Outcome CODES from the queue-PR-review action — exact-match allowlist. */
+const PR_REVIEW_OUTCOME_COPY: Record<string, { tone: "ok" | "err"; text: string }> = {
+  pr_review_queued: {
+    tone: "ok",
+    text: "PR review task queued and drained — the result appears in the CTO AI task feed.",
+  },
+  invalid_pr_number: { tone: "err", text: "Enter a valid PR number (a positive whole number)." },
+  pr_review_enqueue_failed: { tone: "err", text: "Could not queue that review — try again." },
+  pr_review_no_cto_ai: {
+    tone: "err",
+    text: "No CTO AI identity is seeded, so nothing can run the review.",
+  },
+};
+
+export default async function CtoAiPage({ searchParams }: { searchParams: SP }) {
   await requireHqPage();
+  const sp = await searchParams;
+  const outcome =
+    PR_REVIEW_OUTCOME_COPY[sp.saved ?? ""] ?? PR_REVIEW_OUTCOME_COPY[sp.error ?? ""] ?? null;
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 shadow-xl">
       <Header />
       <div className="space-y-8 p-5 sm:p-7">
+        {outcome ? (
+          <p
+            role="status"
+            className={
+              outcome.tone === "ok"
+                ? "rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-sm text-emerald-300"
+                : "rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-sm text-red-300"
+            }
+          >
+            {outcome.text}
+          </p>
+        ) : null}
+        <QueuePrReviewForm />
         <Suspense fallback={<BoardSkeleton />}>
           <Body />
         </Suspense>
       </div>
     </div>
+  );
+}
+
+/**
+ * The production door for cto_pr_review (L9a, P7) — event-shaped, so it is
+ * queued here rather than by the roster-workers tick. Dark-honest: with no
+ * GitHub credential bound the adapter refuses before fetch and the task
+ * completes with its documented dark outcome.
+ */
+function QueuePrReviewForm() {
+  return (
+    <form
+      action={queuePrReview}
+      className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-4"
+    >
+      <div>
+        <label htmlFor="cto-pr-number" className="block text-xs font-medium text-slate-400">
+          Queue a PR review
+        </label>
+        <input
+          id="cto-pr-number"
+          name="pr_number"
+          type="number"
+          min={1}
+          step={1}
+          required
+          placeholder="PR number"
+          className="mt-1 w-36 rounded-md border border-slate-700 bg-slate-950 px-3 py-1.5 text-sm text-slate-100 placeholder:text-slate-600"
+        />
+      </div>
+      <button
+        type="submit"
+        className="rounded-md bg-indigo-500/90 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500"
+      >
+        Queue review
+      </button>
+      <p className="basis-full text-xs text-slate-500 sm:basis-auto sm:pl-2">
+        Runs through the Task Engine as CTO AI; the diff fetch stays dark until a
+        GitHub credential is bound, and the task records that honestly.
+      </p>
+    </form>
   );
 }
 

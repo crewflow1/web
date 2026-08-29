@@ -122,9 +122,14 @@ export async function submitChangeRequest(formData: FormData): Promise<void> {
     backTo(token, { error: "could_not_submit" });
   }
 
+  // REFERENCES ONLY, no PII: admin_activity_log sits OUTSIDE the org-scoped
+  // GDPR census (no org_id column), so a customer name/email written here
+  // would survive the tenant's DSAR erasure sweep. customer_id is the join
+  // key an HQ operator needs; the name/email live (and get erased) in
+  // `customers`.
   await recordAdminActivity({
     actorId: null,
-    actorEmail: customer.email ?? null,
+    actorEmail: null,
     action: "portal.variation_request.submitted",
     targetTable: "variation_requests",
     targetId: request.id,
@@ -132,7 +137,6 @@ export async function submitChangeRequest(formData: FormData): Promise<void> {
       org_id: customer.org_id,
       customer_id: customer.id,
       job_id: job.id,
-      customer_name: customer.name,
       source: "customer_portal",
     },
   });

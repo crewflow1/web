@@ -11,6 +11,8 @@ import { enqueueApiContract, drainApiTasks } from "@/server/services/hq-api-runn
 import {
   enqueueDocumentationDrift,
   drainDocumentationTasks,
+  enqueueReleaseNotes,
+  drainReleaseNotesTasks,
 } from "@/server/services/hq-documentation-runner";
 import {
   enqueueOnboardingNudges,
@@ -21,7 +23,16 @@ import {
   enqueueComplianceReview,
   drainComplianceTasks,
 } from "@/server/services/hq-legal-compliance-runner";
-import { enqueueDesignConsistency, drainDesignTasks } from "@/server/services/hq-design-runner";
+import {
+  enqueueDesignConsistency,
+  drainDesignTasks,
+  enqueueDesignReview,
+  drainDesignReviewTasks,
+} from "@/server/services/hq-design-runner";
+import {
+  enqueueContentBrief,
+  drainContentBriefTasks,
+} from "@/server/services/hq-marketing-content-runner";
 import {
   enqueueOrchestrationRouting,
   drainOrchestrationTasks,
@@ -40,7 +51,7 @@ import {
  *
  *   GET /api/cron/hq-roster-workers-tick
  *
- * Drives the twelve previously-dark roster employees (security, devops, database, api,
+ * Drives the roster-employee engine legs (twelve workers + the three cadence-shaped department contracts: content brief, design review, release notes) (security, devops, database, api,
  * documentation, onboarding, hr, legal-compliance, design, orchestrator, workflow,
  * memory-manager) on the generic Task Engine. Each tick ENQUEUES one fresh task per worker
  * (deduped per DAY, so a re-tick never piles up a backlog) and then DRAINS the ready tasks
@@ -58,7 +69,7 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Enqueue + a bounded claim-one drain across 12 workers back to back.
+// Enqueue + a bounded claim-one drain across 15 worker legs back to back.
 export const maxDuration = 60;
 
 const WORKERS: ReadonlyArray<{
@@ -82,6 +93,17 @@ const WORKERS: ReadonlyArray<{
     enqueue: enqueueMemoryCuration,
     drain: drainMemoryCurationTasks,
   },
+  // L9a department contracts — the CADENCE-SHAPED engine legs (each dedupes
+  // per day / ISO week in its own enqueue, so a re-tick never piles up a
+  // backlog). Without these entries the legs were dead code: their handlers
+  // registered only inside never-imported functions, so no content_brief,
+  // design_review or release_notes_draft task could ever exist in production
+  // (the exact zero-production-callers pattern the reconciliation condemned).
+  // cto_pr_review is EVENT-shaped (needs a PR number) and is reachable via the
+  // /admin/cto-ai queue action instead, mirroring the P13 support seam.
+  { label: "marketing_content", enqueue: enqueueContentBrief, drain: drainContentBriefTasks },
+  { label: "design_review", enqueue: enqueueDesignReview, drain: drainDesignReviewTasks },
+  { label: "release_notes", enqueue: enqueueReleaseNotes, drain: drainReleaseNotesTasks },
 ];
 
 async function safe<T>(

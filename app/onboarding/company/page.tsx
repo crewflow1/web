@@ -83,6 +83,31 @@ export default async function CompanyPage({
           help="Optional — shows on quotes and invoices."
         />
 
+        {/* The terms are PRESENTED here — the org-level acceptance stamp
+            (migration 20261223) must record a consent someone could actually
+            have given, so the link and the explicit tick are required, and
+            the server action refuses to create the org without the tick. */}
+        <label className="flex items-start gap-2.5 text-sm text-slate-700">
+          <input
+            type="checkbox"
+            name="tos_accept"
+            required
+            className="mt-0.5 h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900"
+          />
+          <span>
+            I agree to the{" "}
+            <a
+              href="/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-slate-900 underline hover:text-slate-700"
+            >
+              Terms of service
+            </a>{" "}
+            on behalf of this company.
+          </span>
+        </label>
+
         <button
           type="submit"
           className="w-full rounded-md bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"

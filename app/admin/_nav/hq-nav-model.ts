@@ -137,6 +137,8 @@ export const HQ_AREAS: HqNavArea[] = [
       { href: "/admin/ops", label: "System status" },
       { href: "/admin/analytics", label: "Analytics" },
       { href: "/admin/cto-ai", label: "CTO AI" },
+      { href: "/admin/design-ai", label: "Design AI" },
+      { href: "/admin/documentation-ai", label: "Documentation AI" },
       { href: "/admin/qa-ai", label: "QA AI" },
       { href: "/admin/operations-ai", label: "Operations AI" },
       { href: "/admin/impersonation", label: "Impersonation" },

@@ -1,4 +1,5 @@
 import "server-only";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptToken } from "@/lib/integrations/token-crypto";
 import { hashApiKey } from "@/lib/api-auth/keygen";
@@ -144,9 +145,12 @@ export async function resolveScimConfigByToken(
 
 /**
  * Load an org's SCIM config regardless of enabled state (for the admin settings
- * surface). Returns null when no token has ever been minted. Exposes only the
- * NON-SECRET columns (the token itself is stored hashed and is never readable
- * back) — callers must still be admin-gated.
+ * surface). Returns null ONLY for "no token has ever been minted" — a read
+ * FAILURE throws instead: rendering the not-yet-minted state over a broken
+ * read would invite a re-mint, whose upsert overwrites token_hash and flips
+ * enabled off. Exposes only the NON-SECRET columns (the token itself is
+ * stored hashed and is never readable back) — callers must still be
+ * admin-gated.
  */
 export async function loadScimConfig(orgId: string): Promise<ScimConfig | null> {
   const { data, error } = await (admin()
@@ -154,7 +158,8 @@ export async function loadScimConfig(orgId: string): Promise<ScimConfig | null> 
     .select("id, org_id, enabled, token_prefix")
     .eq("org_id", orgId)
     .maybeSingle() as unknown as Promise<{ data: AnyRow | null; error: unknown }>);
-  if (error || !data) return null;
+  if (error) throw readFailure("enterprise-sso: scim config", error);
+  if (!data) return null;
   return {
     id: String(data.id),
     orgId: String(data.org_id),

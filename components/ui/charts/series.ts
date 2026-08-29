@@ -45,10 +45,12 @@ export const SERIES: Record<Tone, SeriesClasses> = {
     swatch: "bg-emerald-600",
   },
   amber: {
-    fill: "fill-amber-500",
-    stroke: "stroke-amber-500",
+    // amber-600, not -500: ~2.2:1 on white fails the 3:1 non-text minimum
+    // this file's own doctrine sets; -600 clears it.
+    fill: "fill-amber-600",
+    stroke: "stroke-amber-600",
     area: "fill-amber-100",
-    swatch: "bg-amber-500",
+    swatch: "bg-amber-600",
   },
   red: {
     fill: "fill-red-600",

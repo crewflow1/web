@@ -84,7 +84,15 @@ type JobRow = {
 export async function loadPortalChangeRequests(
   customerId: string,
   orgId: string,
-): Promise<{ jobs: PortalJobOption[]; requests: PortalChangeRequest[] }> {
+): Promise<{
+  jobs: PortalJobOption[];
+  requests: PortalChangeRequest[];
+  /** True when a read failed: the panel renders an explicit unavailable
+   *  state instead of a healthy "no requests yet" over a broken read. */
+  degraded: boolean;
+  /** True when more than the 50 most recent requests exist (bounded read). */
+  truncated: boolean;
+}> {
   const admin = createAdminClient();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = admin as unknown as { from: (t: string) => any };
@@ -108,8 +116,10 @@ export async function loadPortalChangeRequests(
       }>,
   );
   if (jobsError) {
+    // Degrade EXPLICITLY: a customer surface rendering the healthy empty
+    // state over a broken read is indistinguishable from "no requests yet".
     console.error("[portal/change-requests] jobs read failed", jobsError);
-    return { jobs: [], requests: [] };
+    return { jobs: [], requests: [], degraded: true, truncated: false };
   }
   const allJobs = jobRows;
   const labelById = new Map(allJobs.map((j) => [j.id, jobLabel(j)]));
@@ -120,7 +130,8 @@ export async function loadPortalChangeRequests(
     (j) => j.status !== "completed" && j.status !== "cancelled",
   );
 
-  if (allJobs.length === 0) return { jobs: [], requests: [] };
+  if (allJobs.length === 0)
+    return { jobs: [], requests: [], degraded: false, truncated: false };
 
   const { data: reqRows, error: reqError } = await db
     .from("variation_requests")
@@ -129,10 +140,19 @@ export async function loadPortalChangeRequests(
     .in("job_id", allJobs.map((j) => j.id))
     .eq("requester_type", "customer")
     .order("created_at", { ascending: false })
-    .limit(50);
+    // 51: one past the display bound, so overflow is DETECTED (truncated flag)
+    // rather than silently clamped with no indicator.
+    .limit(51);
   if (reqError) {
     console.error("[portal/change-requests] requests read failed", reqError);
+    return {
+      jobs: openJobs.map((j) => ({ id: j.id, label: labelById.get(j.id) ?? "Job" })),
+      requests: [],
+      degraded: true,
+      truncated: false,
+    };
   }
+  const truncated = ((reqRows ?? []) as unknown[]).length > 50;
 
   const requests: PortalChangeRequest[] = (
     (reqRows ?? []) as Array<{
@@ -142,16 +162,20 @@ export async function loadPortalChangeRequests(
       created_at: string;
       job_id: string;
     }>
-  ).map((r) => ({
-    id: r.id,
-    title: r.title,
-    stage: PORTAL_CHANGE_STAGES[r.status] ?? "received",
-    submitted_on: dateFmt.format(new Date(r.created_at)),
-    job_label: labelById.get(r.job_id) ?? "Job",
-  }));
+  )
+    .slice(0, 50)
+    .map((r) => ({
+      id: r.id,
+      title: r.title,
+      stage: PORTAL_CHANGE_STAGES[r.status] ?? "received",
+      submitted_on: dateFmt.format(new Date(r.created_at)),
+      job_label: labelById.get(r.job_id) ?? "Job",
+    }));
 
   return {
     jobs: openJobs.map((j) => ({ id: j.id, label: jobLabel(j) })),
     requests,
+    degraded: false,
+    truncated,
   };
 }

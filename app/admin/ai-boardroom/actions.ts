@@ -173,11 +173,20 @@ export async function retireAiEmployee(formData: FormData): Promise<void> {
   const d = parsed.data;
   const supabase = createAdminClient();
 
-  const { data: prev } = await supabase
+  const { data: prev, error: prevError } = await supabase
     .from("ai_employees" as never)
     .select("status")
     .eq("id", d.id)
     .maybeSingle();
+  if (prevError) {
+    // Loud, and with HONEST copy: a failed read must not masquerade as the
+    // lifecycle refusal ("disable it first") when the employee may well be
+    // disabled — the read simply didn't happen.
+    console.error("[ai-boardroom] retire pre-check read failed", prevError);
+    redirect(
+      `/admin/ai-boardroom/${d.slug}?error=${encodeURIComponent("Couldn't check the employee's state — try again.")}`,
+    );
+  }
   const prevStatus = (prev as unknown as { status: string | null } | null)?.status ?? null;
   if (prevStatus !== "disabled") {
     redirect(

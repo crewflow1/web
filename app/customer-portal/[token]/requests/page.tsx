@@ -65,7 +65,12 @@ export default async function PortalRequestsPage({
     listPortalFutureWorkRequests(customer.id, customer.org_id),
     loadPortalChangeRequests(customer.id, customer.org_id),
   ]);
-  const { jobs: changeJobs, requests: changeRequests } = changeData;
+  const {
+    jobs: changeJobs,
+    requests: changeRequests,
+    degraded: changeDegraded,
+    truncated: changeTruncated,
+  } = changeData;
 
   const banner = (() => {
     if (sp.saved === "submitted")
@@ -247,11 +252,26 @@ export default async function PortalRequestsPage({
         </section>
       ) : null}
 
+      {changeDegraded ? (
+        <section
+          role="alert"
+          className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"
+        >
+          Your change requests can&rsquo;t be shown right now — please refresh
+          in a moment. Anything you&rsquo;ve already submitted is safe.
+        </section>
+      ) : null}
+
       {changeRequests.length > 0 ? (
         <section className="space-y-2">
           <h3 className="text-sm font-semibold text-slate-900">
             Your change requests
           </h3>
+          {changeTruncated ? (
+            <p className="text-xs text-slate-500">
+              Showing your 50 most recent change requests.
+            </p>
+          ) : null}
           <ul className="space-y-2">
             {changeRequests.map((r) => (
               <li

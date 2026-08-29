@@ -20,7 +20,7 @@ network fetch) so activation is a config flip, never an engineering project.
 |---|---|
 | Framework | Next.js 15 (App Router) + React 19 + TypeScript |
 | Styling | Tailwind CSS v3 + shadcn/ui |
-| Database | PostgreSQL (Supabase, single production project, 307 tables, RLS on tenant data) |
+| Database | PostgreSQL (Supabase, single production project, ~311 tables, RLS on tenant data) |
 | Migrations | Plain SQL files in `supabase/migrations/` (numbered, forward-only) |
 | Auth | Supabase Auth — magic link, Google OAuth, email+password, optional TOTP MFA (Microsoft SSO built dark) |
 | Hosting | Vercel (deploys from `main`) |
@@ -82,8 +82,10 @@ scanning.
 
 ## Migration discipline
 
-- Migrations are numbered SQL files in `supabase/migrations/` (currently 380;
-  production tip `20261220000000` at the time of writing).
+- Migrations are numbered SQL files in `supabase/migrations/` (currently 387 in
+  the repo; production tip `20261220000000` at the time of writing, with
+  `20261221`–`20261227` pending in the final-roadmap release train — the DB
+  itself, `supabase_migrations.schema_migrations`, is the only authority).
 - **Never take the "next free" prefix from a doc.** Ask the database:
   `select max(version) from supabase_migrations.schema_migrations;` — claim a
   prefix above the production tip AND above every in-flight branch slot, and
