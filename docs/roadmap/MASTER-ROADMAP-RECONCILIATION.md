@@ -1,5 +1,34 @@
 # Master Roadmap Reconciliation — zero-assumption, code-verified
 
+## ✅ FINAL-COMPLETION RE-AUDIT — 2026-08-30 (current truth; everything below this block is the 2026-08-29 baseline, preserved as history)
+
+**Method:** MANDATORY zero-based re-run of all 237 atoms against `roadmap/final-completion` (15 independent section auditors, previous statuses treated as hints only), then the 14 surviving current-stage breakers each BUILT or evidence-reclassified with citations — never silently. The JSON (`master-roadmap-reconciliation.json`) is fully rewritten with fresh per-atom evidence.
+
+| Status | 2026-08-29 | **2026-08-30** | Movement |
+|---|---|---|---|
+| A — BUILT+LIVE | 141 | **179** | +38 (G1-G6, reachability pack, contract items, docs truth) |
+| B — BUILT+DARK | 14 | **22** | +8 (dept engine legs wired dark: sourcing, CI-signal, briefs, reviews, drafts; CIS verify) |
+| C — PARTIAL | 46 | **16** | −30 · **ALL residual C are `std`-horizon standing standards** |
+| D — NOT BUILT | 19 | **2** | −17 · both `std` (fuzzing; branch-protection = GitHub settings, founder action) |
+| E — EXTERNAL-PLANNED | 2 | 3 | +1 (PITR toggle = paid dashboard action, CEO) |
+| F / G / H / P | 3/4/3/5 | 3/**5**/**2**/5 | ADR-0013/0014/0015 recorded; H now only `std` scale/latency claims |
+
+**THE GATE: current-stage (horizon `cur`, 155 atoms) C = 0 · D = 0 · H = 0.** Every engineering-controlled current-stage requirement is A, B (config-flip dark), E (external w/ engineering complete), G (recorded supersede), F or P.
+
+**The six-gap register: ALL CLOSED** — G1 search (22 families + HQ-palette decision search) · G2 variation intake (3 surfaces, mig 20261221) · G3 tables (canonical DataTable + invoices/customers/suppliers/staff/jobs; leads stays kanban BY RECORDED DECISION) · G4 charts (zero-dep server-SVG + sr-only tables) · G5 CIS verify (dark HMRC adapter, mig 20261224) · G6 saga_step (canonical runner, real-PG proven).
+
+**Built-but-unreachable register: EMPTY** — /notifications (nav), /settings/sso (page), GDPR export/erase (data-retention UI), Outreach AI (/admin/outreach), marketplace (flag-conditional nav), design-ai/documentation-ai (nav), the four L9a engine legs (tick + /admin/cto-ai door). Dead `inngest` removed; lockfile canonical npm.
+
+**Documentation actions: ALL DONE** — README truth rewrite · STATUS.md control-plane reset · ADR-0012 roster staging (+ in-file supersede note for 20261227 grants) · ADR-0013 offline scope · ADR-0014 light theme · ADR-0015 deletion policy · workforce-Bible measured-KPI reading.
+
+**Residual `std`-horizon C/D/H (20 atoms, stated openly, NOT current-stage):** envelope/request-id/rate-limit/monitoring/API-docs/tokens/component-library/reduced-motion/icon-unification breadth ratchets (in-flight house programmes), performance/load/fuzzing/recovery-drill test estates, comms open-click tracking (provider), branch protection (GitHub settings — founder), PITR-backed backup targets (CEO toggle), scale and <200ms claims (H until a production load test exists — the local evidence harness records MET-under-local-conditions honestly).
+
+**Branch state at this audit:** `roadmap/final-completion` @ `07242255` (24 commits over `88cbe193`); migrations 20261221-20261227 in-repo + local-applied, pending release; tsc 0 · unit 11,275 · security 8,186 · integration 2,618 · E2E 165 · build green.
+
+---
+
+# [HISTORY] Master Roadmap Reconciliation — zero-assumption, code-verified
+
 **Date:** 2026-08-29 · **Audited:** `main` = production = `88cbe193` · **Method:** the complete Bible/master-roadmap corpus (15 volumes/major sections) atomised into **237 requirements** (`master-roadmap-reconciliation.json`), verified by 15 independent reviewer lanes (A–O incl. a Devil's Advocate) against the repository, local schema mirror (380/380 == prod), and production. No prior audit trusted; 31 spot re-verifications of this week's claims all CONFIRMED. No code changed.
 
 ## Headline counts (numerator/denominator shown — no percentage theatre)
