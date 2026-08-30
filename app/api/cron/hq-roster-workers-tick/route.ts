@@ -34,6 +34,14 @@ import {
   drainContentBriefTasks,
 } from "@/server/services/hq-marketing-content-runner";
 import {
+  enqueueQaCiSnapshot,
+  drainQaCiSnapshotTasks,
+} from "@/server/services/hq-qa-ci-runner";
+import {
+  enqueueLeadSourcing,
+  drainLeadSourcingTasks,
+} from "@/server/services/hq-lead-sourcing-runner";
+import {
   enqueueOrchestrationRouting,
   drainOrchestrationTasks,
 } from "@/server/services/hq-orchestrator-runner";
@@ -104,6 +112,15 @@ const WORKERS: ReadonlyArray<{
   { label: "marketing_content", enqueue: enqueueContentBrief, drain: drainContentBriefTasks },
   { label: "design_review", enqueue: enqueueDesignReview, drain: drainDesignReviewTasks },
   { label: "release_notes", enqueue: enqueueReleaseNotes, drain: drainReleaseNotesTasks },
+  // QA CI-signal leg (R092): per-day snapshot task; DARK-honest — with no
+  // GitHub credential the adapter refuses before fetch and the task completes
+  // with the stated dark reason, never a fabricated pass rate.
+  { label: "qa_ci", enqueue: enqueueQaCiSnapshot, drain: drainQaCiSnapshotTasks },
+  // Sales lead-sourcing leg (R088): weekly-deduped task; DARK-honest — with no
+  // Companies House key the handler completes { sourced: 0, dark: true } before
+  // any fetch. Armed, it inserts DRAFT prospects only through the sanctioned
+  // createCompany door.
+  { label: "lead_sourcing", enqueue: enqueueLeadSourcing, drain: drainLeadSourcingTasks },
 ];
 
 async function safe<T>(

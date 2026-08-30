@@ -169,6 +169,9 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // digest pass. A single digest email deliberately must not enumerate thousands
   // of notifications; 200 is the display bound. (Sibling class to the queue-drain
   // worker's bounded .limit(DRAIN_BATCH_SIZE).)
+  // R088 lead-sourcing dedupe — a per-run id-batch probe, not a set read.
+  "server/services/hq-lead-sourcing-runner.ts:195":
+    "id-batch dedupe probe: which of THIS RUN's candidate company numbers already exist — .in('companies_house_number', numbers) where numbers is the sourcing batch (SOURCING_BATCH_MAX=10 per run), so the set is structurally bounded by the IN-list, never a scan; the .limit(1000) is the honest-bound clamp. Completeness holds per batch: an unknown number inserts via the sanctioned createCompany door, a known one skips.",
   "server/services/notification-preferences-service.ts:392":
     "bounded batch: ONE user's digest-eligible notifications (.eq('org_id') for that user, category-filtered) capped at 200 and ordered created_at ASC; the digest cursor advances only to the last INCLUDED row, so overflow rolls to the next pass rather than being dropped — a self-draining per-pass batch, not a completeness read.",
   // countPostedReceipts: REMOVED (C66). The PO register above it is now fully

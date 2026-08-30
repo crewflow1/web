@@ -243,6 +243,10 @@ const HIGH_VALUE_TABLES = new Set<string>([
 
 // "file:line" → reason. Keep tight; every entry is a documented smell.
 const ALLOWLIST: Record<string, string> = {
+  // R088 lead-sourcing dedupe — per-run id-batch probe (see the limit-clamp
+  // guard's twin entry).
+  "server/services/hq-lead-sourcing-runner.ts:195":
+    "id-batch dedupe probe: which of THIS RUN's candidate company numbers already exist — .in('companies_house_number', numbers) where numbers is the sourcing batch (SOURCING_BATCH_MAX=10 per run), so the set is structurally bounded by the IN-list, never a scan; the .limit(1000) is the honest-bound clamp. Completeness holds per batch: an unknown number inserts via the sanctioned createCompany door, a known one skips.",
   // Surfaced only once the guard learned to see the `table()` `.from`-wrapper
   // indirection (below). The read is GENUINELY BOUNDED, just not in a way the
   // static analyser can see: `.in("id", idsChunk)` where `idsChunk` is

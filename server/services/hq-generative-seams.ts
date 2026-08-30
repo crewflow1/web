@@ -1,4 +1,5 @@
 import "server-only";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getTextProvider, type TextResult } from "@/lib/ai/text";
 import { invokeWithGovernor, isTierActivated } from "@/lib/ai/governor";
 import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
@@ -124,6 +125,29 @@ function isSupportedProvider(provider: string): boolean {
  * every degraded leg returns `null`, which each caller stores as the artifact's
  * honest "generation is dark" state.
  */
+/** Best-effort read of the employee's CEO-editable role charter
+ *  (ai_employees.system_prompt) — the contract's "purpose drives runtime"
+ *  wire (R106): the charter shapes the draft's voice, while the fixed safety
+ *  framing below stays LAST and overriding. A read failure degrades to
+ *  no-charter (logged): a missing voice line must never block a draft. */
+async function loadRoleCharter(aiEmployeeId: string): Promise<string | null> {
+  const admin = createAdminClient();
+  const { data, error } = await (admin
+    .from("ai_employees" as never)
+    .select("system_prompt")
+    .eq("id", aiEmployeeId)
+    .maybeSingle() as unknown as Promise<{
+    data: { system_prompt: string | null } | null;
+    error: { message: string } | null;
+  }>);
+  if (error) {
+    console.error("[hq-generative-seams] role-charter read failed", error);
+    return null;
+  }
+  const charter = data?.system_prompt?.trim();
+  return charter ? charter : null;
+}
+
 export async function generateDepartmentDraft(
   feature: HqDepartmentDraftFeature,
   artifact: unknown,
@@ -142,7 +166,15 @@ export async function generateDepartmentDraft(
   if (!budgetOrgId) return null;
 
   const cfg = SEAM_PROMPTS[feature];
-  const system = hqDepartmentDraftSystemPrompt(cfg.role);
+  // Charter first, fixed safety framing LAST — the framing's strict rules
+  // dominate regardless of what the (CEO-authored) charter says.
+  const charter = opts?.aiEmployeeId ? await loadRoleCharter(opts.aiEmployeeId) : null;
+  const system = charter
+    ? `Your standing role charter (set in the boardroom):
+${charter}
+
+${hqDepartmentDraftSystemPrompt(cfg.role)}`
+    : hqDepartmentDraftSystemPrompt(cfg.role);
   const prompt = `${cfg.prefix}\n${JSON.stringify(stripOrgIdentifiers(artifact), null, 2)}\n${cfg.ask}`;
 
   let result: TextResult;

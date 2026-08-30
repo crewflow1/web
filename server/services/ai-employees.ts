@@ -18,6 +18,11 @@ import {
   type FeedTaskRow,
   type InteractionItem,
 } from "@/lib/ai-employees/interaction-feed";
+import {
+  foldRecommendations,
+  type RecommendationItem,
+  type RecommendationTaskRow,
+} from "@/lib/ai-employees/recommendations";
 import { resolveServedAuthority } from "@/server/sdk/registry-parity";
 
 /**
@@ -235,4 +240,50 @@ export async function getEmployeeInteractionFeed(
     activity,
     (approvalRes.data ?? []) as unknown as FeedApprovalRow[],
   );
+}
+
+// ---------------------------------------------------------------------
+// Recommendations — the proposals the employee's completed work carries
+// (contract item: Recommendations). See lib/ai-employees/recommendations.ts
+// for why this is a derived fold over stored task results rather than a
+// table: every recommendation a runner actually made is already persisted in
+// the task `result` jsonb (envelope actions/alternatives, exec-review
+// findings, qualification verdicts, research sales-prep briefs).
+// ---------------------------------------------------------------------
+
+export type { RecommendationItem } from "@/lib/ai-employees/recommendations";
+
+/**
+ * The recommendations folded from one employee's recent COMPLETED tasks,
+ * newest first. Service-role read (hq_ai_tasks is HQ-only); callers must
+ * already be behind the super-admin gate. Bounded recent sample, same limit as
+ * the interaction feed — this is a "recent recommendations" display, not a
+ * complete-set count. Unlike the feed there is only ONE source here, so a read
+ * failure THROWS (loud-read doctrine): degrading the sole source to empty
+ * would render an honest-looking "no recommendations" over a broken read.
+ */
+export async function getEmployeeRecommendations(
+  slug: string,
+): Promise<RecommendationItem[]> {
+  const admin = createAdminClient();
+
+  const { data: empRaw, error: empError } = await admin
+    .from("ai_employees" as never)
+    .select("id")
+    .eq("slug", slug)
+    .maybeSingle();
+  if (empError) throw readFailure("ai-employees: recommendations employee", empError);
+  const employeeId = (empRaw as unknown as { id: string } | null)?.id;
+  if (!employeeId) return [];
+
+  const { data, error } = await admin
+    .from("hq_ai_tasks" as never)
+    .select("id, task_type, result, created_at, finished_at")
+    .eq("assigned_employee_id", employeeId)
+    .eq("status", "completed")
+    .order("created_at", { ascending: false })
+    .limit(FEED_SOURCE_LIMIT);
+  if (error) throw readFailure("ai-employees: recommendations tasks", error);
+
+  return foldRecommendations((data ?? []) as unknown as RecommendationTaskRow[]);
 }

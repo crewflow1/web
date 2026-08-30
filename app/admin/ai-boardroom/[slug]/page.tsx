@@ -13,14 +13,17 @@ import {
   KeyRound,
   BarChart3,
   Wrench,
+  Lightbulb,
   type LucideIcon,
 } from "lucide-react";
 import {
   getEmployeeInteractionFeed,
+  getEmployeeRecommendations,
   listAiEmployees,
   loadAiEmployeeBySlug,
   resolveEmployeeApprovalLevel,
   type InteractionItem,
+  type RecommendationItem,
 } from "@/server/services/ai-employees";
 import {
   getEmployeeKpis,
@@ -120,6 +123,7 @@ export default async function AiEmployeeDetailPage({
     memoryTypes,
     boardroomCards,
     interactionFeed,
+    recommendations,
     kpiMap,
     roster,
   ] = await Promise.all([
@@ -132,6 +136,9 @@ export default async function AiEmployeeDetailPage({
     // human config decisions, approvals (see interaction-feed.ts for why
     // this merged feed IS the honest conversation history).
     getEmployeeInteractionFeed(e.slug),
+    // The proposals its completed work carries — folded from stored task
+    // results, never generated (see recommendations.ts).
+    getEmployeeRecommendations(e.slug),
     getEmployeeKpis([{ id: e.id, slug: e.slug }]),
     listAiEmployees(), // manager-name lookup for the management line
   ]);
@@ -530,6 +537,26 @@ export default async function AiEmployeeDetailPage({
           <ol className="divide-y divide-slate-100">
             {interactionFeed.map((item) => (
               <InteractionRow key={item.key} item={item} />
+            ))}
+          </ol>
+        )}
+      </Section>
+
+      {/* 8c · Recommendations -------------------------------------------------- */}
+      <Section
+        icon={Lightbulb}
+        title="Recommendations"
+        hint="Proposals this employee's completed work carries — proposed actions, considered alternatives, review findings, verdicts and prep briefs. Read straight out of stored task results; read-only, nothing here executes."
+      >
+        {recommendations.length === 0 ? (
+          <Empty>
+            No recommendations yet — items appear when this employee&apos;s tasks
+            complete with proposals.
+          </Empty>
+        ) : (
+          <ol className="divide-y divide-slate-100">
+            {recommendations.map((item) => (
+              <RecommendationRow key={item.key} item={item} />
             ))}
           </ol>
         )}
@@ -1130,6 +1157,40 @@ function InteractionRow({ item }: { item: InteractionItem }) {
         ) : null}
         <span className="text-[11px] text-slate-500">{fmtStamp(item.at)}</span>
       </div>
+    </li>
+  );
+}
+
+/** Kind pill vocabulary for a recommendation row — labels the stored shape honestly. */
+const RECOMMENDATION_KIND_META: Record<
+  RecommendationItem["kind"],
+  { label: string; tone: Tone }
+> = {
+  action: { label: "Proposed action", tone: "blue" },
+  alternative: { label: "Alternative", tone: "slate" },
+  finding: { label: "Finding", tone: "amber" },
+  verdict: { label: "Verdict", tone: "emerald" },
+  sales_prep: { label: "Sales prep", tone: "blue" },
+};
+
+/** One recommendation row — kind pill, title, honest detail, source task + stamp. */
+function RecommendationRow({ item }: { item: RecommendationItem }) {
+  const meta = RECOMMENDATION_KIND_META[item.kind];
+  return (
+    <li className="flex items-start gap-3 py-2.5">
+      <Badge tone={meta.tone} variant="soft" className="mt-0.5 shrink-0 text-[10px]">
+        {meta.label}
+      </Badge>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-slate-900">{item.title}</p>
+        {item.detail ? (
+          <p className="mt-0.5 text-xs leading-relaxed text-slate-600">{item.detail}</p>
+        ) : null}
+        <p className="mt-0.5 text-[11px] text-slate-500">
+          from {item.taskType.replace(/[._-]+/g, " ")}
+        </p>
+      </div>
+      <span className="shrink-0 text-[11px] text-slate-500">{fmtStamp(item.at)}</span>
     </li>
   );
 }

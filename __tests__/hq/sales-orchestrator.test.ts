@@ -241,6 +241,7 @@ describe("computeSalesOrchestratorBoard — insufficient when a source is unread
         "forecast_win_probability",
         "oldest_open_deal_age",
         "open_pipeline",
+        "pipeline_forecast_expected_wins",
         "outreach_backlog",
         "outreach_cadence_health",
         "outreach_conversion",
@@ -354,5 +355,64 @@ describe("computeSalesOrchestratorBoard — invariants across every metric", () 
     expect(SALES_ORCHESTRATOR_KIND_LABEL.fact).toBe("Fact");
     expect(SALES_ORCHESTRATOR_KIND_LABEL.derived).toBe("Derived");
     expect(SALES_ORCHESTRATOR_KIND_LABEL.insufficient).toBe("Insufficient data");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pipeline forecast (roadmap R229) — expected wins from the MEASURED win rate,
+// minimum-sample gated, never a fabricated probability.
+// ---------------------------------------------------------------------------
+describe("computeSalesOrchestratorBoard — pipeline forecast (expected wins)", () => {
+  const find = (b: ReturnType<typeof computeSalesOrchestratorBoard>) =>
+    b.metrics.find((m) => m.key === "pipeline_forecast_expected_wins")!;
+
+  it("is insufficient below the 8-decided-deal minimum, naming the sample rule", () => {
+    // FULL_INPUT carries only 3 decided deals (1 won + 2 lost/disqualified).
+    const m = find(computeSalesOrchestratorBoard(FULL_INPUT, NOW));
+    expect(m.kind).toBe("insufficient");
+    expect(m.basis).toContain("8-deal minimum");
+    expect(m.basis).toContain("3 decided");
+  });
+
+  it("derives open × measured win rate once the sample suffices", () => {
+    const companies = [
+      // 5 open
+      ...Array.from({ length: 5 }, () => ({
+        status: "new",
+        created_at: D10,
+        updated_at: RECENT,
+      })),
+      // 10 decided: 6 won, 4 lost → 60% measured win rate
+      ...Array.from({ length: 6 }, () => ({
+        status: "won",
+        created_at: CLOSED,
+        updated_at: CLOSED,
+      })),
+      ...Array.from({ length: 4 }, () => ({
+        status: "lost",
+        created_at: CLOSED,
+        updated_at: CLOSED,
+      })),
+    ];
+    const m = find(
+      computeSalesOrchestratorBoard(
+        { pipeline: { companies }, drains: null, cadence: null },
+        NOW,
+      ),
+    );
+    expect(m.kind).toBe("derived");
+    expect(m.value).toBe(3); // 5 open × 0.6
+    expect(m.basis).toContain("6/10 decided");
+    expect(m.basis).toContain("never a revenue figure");
+  });
+
+  it("is insufficient (source unavailable) when the pipeline could not be read", () => {
+    const m = find(
+      computeSalesOrchestratorBoard(
+        { pipeline: null, drains: null, cadence: null },
+        NOW,
+      ),
+    );
+    expect(m.kind).toBe("insufficient");
   });
 });

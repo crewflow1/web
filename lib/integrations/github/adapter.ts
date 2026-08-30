@@ -19,8 +19,9 @@ import "server-only";
  * is no code path from "no credentials" to `fetch`; the tests prove it with a
  * fetch spy.
  *
- * READ-ONLY BY CONSTRUCTION. This adapter holds ONLY GETs: PR list, one PR,
- * one PR diff. Merging a PR is an IRREVERSIBLE act and deliberately does NOT
+ * READ-ONLY BY CONSTRUCTION. This adapter holds ONLY GETs: PR list, one PR
+ * diff, recent workflow runs (the CI signal for the QA board — R092).
+ * Merging a PR is an IRREVERSIBLE act and deliberately does NOT
  * live here — it is registered as descriptive executor-tool metadata
  * (lib/hq/cto-tools.ts, `reversibilityClass: "irreversible"`) so it can only
  * ever route through the approval engine behind the executor gates, which
@@ -32,12 +33,31 @@ const GITHUB_API = "https://api.github.com";
 /** Bounded PR window — the CTO board needs a picture, not the archive. */
 const MAX_PR_PAGE = 30;
 
+/**
+ * Bounded workflow-run window — GitHub caps `per_page` at 100 and the QA CI
+ * snapshot needs a recent picture, not the archive. ONE page, NO pagination
+ * loop, ever.
+ */
+const MAX_RUN_PAGE = 100;
+
 export type GithubPullRequest = {
   number: number;
   title: string;
   state: string;
   draft: boolean;
   author: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type GithubWorkflowRun = {
+  id: number;
+  name: string;
+  /** GitHub run lifecycle — `queued` / `in_progress` / `completed`. */
+  status: string;
+  /** `success` / `failure` / `cancelled` / … — null while the run is still executing. */
+  conclusion: string | null;
+  headBranch: string | null;
   createdAt: string | null;
   updatedAt: string | null;
 };
@@ -152,6 +172,65 @@ export class GithubAdapter {
       };
     }
     return { ok: true, data: await res.text() };
+  }
+
+  /**
+   * List the most recent GitHub Actions workflow runs — the raw CI signal for
+   * the QA board's `qa_ci_snapshot` task (R092). Returns `not_configured` — no
+   * network — when dark. ONE bounded page (`per_page` clamped to 1..100),
+   * newest first as GitHub returns them; deliberately NO pagination loop.
+   */
+  async listRecentWorkflowRuns(
+    limit: number = MAX_RUN_PAGE,
+  ): Promise<GithubResult<GithubWorkflowRun[]>> {
+    // DARK GUARD FIRST. With no credentials we return without touching the network.
+    if (!this.isAvailable()) return githubNotConfigured();
+
+    // ── LIVE PATH (unreachable dark) ─────────────────────────────────────
+    const perPage = Math.min(
+      Math.max(Number.isFinite(limit) ? Math.trunc(limit) : MAX_RUN_PAGE, 1),
+      MAX_RUN_PAGE,
+    );
+    const repo = process.env.GITHUB_REPO!;
+    let res: Response;
+    try {
+      res = await this.get(`/repos/${repo}/actions/runs?per_page=${perPage}`);
+    } catch (e) {
+      return this.networkError(e);
+    }
+    const auth = this.authFailure(res.status);
+    if (auth) return auth;
+    if (!res.ok) {
+      return {
+        ok: false,
+        reason: "error",
+        message: `GitHub /actions/runs returned ${res.status}`,
+      };
+    }
+    const json = (await res.json()) as {
+      workflow_runs?: Array<{
+        id?: number;
+        name?: string | null;
+        status?: string | null;
+        conclusion?: string | null;
+        head_branch?: string | null;
+        created_at?: string;
+        updated_at?: string;
+      }>;
+    } | null;
+    const rows = Array.isArray(json?.workflow_runs) ? json.workflow_runs : [];
+    const runs = rows
+      .filter((r): r is typeof r & { id: number } => typeof r?.id === "number")
+      .map((r) => ({
+        id: r.id,
+        name: r.name ?? "",
+        status: r.status ?? "unknown",
+        conclusion: typeof r.conclusion === "string" ? r.conclusion : null,
+        headBranch: r.head_branch ?? null,
+        createdAt: r.created_at ?? null,
+        updatedAt: r.updated_at ?? null,
+      }));
+    return { ok: true, data: runs };
   }
 
   /** One authenticated GET against the GitHub API. No secret is logged. */
