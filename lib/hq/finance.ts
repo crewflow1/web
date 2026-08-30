@@ -429,7 +429,7 @@ function forecastMetric(
   mrr: number,
   price: number,
 ): FinanceMetric {
-  // METRIC_ID, not KEY: an identifier literally named METRIC_ID with a string value
+  // METRIC_ID, not KEY: an identifier literally named KEY with a string value
   // trips secret scanners' generic-api-key rule.
   const METRIC_ID = "revenue_forecast_3m";
   const LABEL = "Revenue forecast (3 months)";
