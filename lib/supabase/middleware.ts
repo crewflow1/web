@@ -129,6 +129,10 @@ export async function updateSession(request: NextRequest, requestId?: string) {
     pathname.startsWith("/tools") ||
     pathname.startsWith("/blog") ||
     pathname.startsWith("/product") || // six-pillar product/solution pages (redesign)
+    // API docs: a developer evaluating the public API is by definition not
+    // logged in. Missed from this list because the page shipped dark behind
+    // FEATURE_PUBLIC_API_JOBS — found by the live-activation probe (Q1).
+    pathname.startsWith("/developers") ||
     pathname.startsWith("/privacy") ||
     pathname.startsWith("/terms") ||
     pathname.startsWith("/q/") || // public per-quote view
