@@ -72,7 +72,7 @@ export const SECTION_BLURB: Record<SectionId, string> = {
   integrations:
     "Which third-party providers are wired in. Read-only reflection of env vars — connection edits live in Vercel.",
   feature_flags:
-    "Operator-only feature flags. Use sparingly — the canonical home for product flags is the customer plan / role config.",
+    "Read-only truth panel. Production feature flags live in Vercel env (NEXT_PUBLIC_FEATURE_* / FEATURE_*) — a toggle here could not reach them, so none is offered.",
 };
 
 // =====================================================================
@@ -185,11 +185,12 @@ export const integrationsSchema = z.object({
   notes: z.string().trim().max(2000).default(""),
 });
 
-export const featureFlagsSchema = z.object({
-  enable_ai_coo: z.boolean().default(false),
-  enable_whatsapp_outbound: z.boolean().default(false),
-  enable_self_service_billing: z.boolean().default(false),
-});
+// The three JSONB toggles that used to live here (enable_ai_coo,
+// enable_whatsapp_outbound, enable_self_service_billing) were a FALSE control
+// panel: persisted, rendered as switches, and read by NOTHING — the real
+// gates are Vercel env flags. Removed by the live-activation programme;
+// `.passthrough()`-free parse simply ignores any historic stored values.
+export const featureFlagsSchema = z.object({});
 
 // =====================================================================
 // Combined schema + defaults

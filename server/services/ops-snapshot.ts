@@ -137,6 +137,38 @@ const TRACKED_ENV: ReadonlyArray<Omit<EnvVarStatus, "present">> = [
     required: false,
     hint: "Shared bearer token for /api/receptionist/inbound. Required only when external channel adapters (Twilio, WhatsApp Business, Meta) are wired.",
   },
+  // Live-activation programme: the vars below were LIVE in prod but invisible
+  // to this panel — presence-only rows so ops truth covers what actually runs.
+  {
+    name: "STRIPE_SECRET_KEY",
+    required: false,
+    hint: "SaaS billing checkout + /api/webhooks/stripe. Live-mode badge at /api/admin/stripe/verify.",
+  },
+  {
+    name: "STRIPE_WEBHOOK_SECRET",
+    required: false,
+    hint: "Signature secret for /api/webhooks/stripe. Missing ⇒ webhook 503s (retry-safe).",
+  },
+  {
+    name: "SENTRY_DSN",
+    required: false,
+    hint: "Server/edge error monitoring. Unset ⇒ Sentry initialises nothing.",
+  },
+  {
+    name: "CREWFLOW_SUPERADMIN_EMAILS",
+    required: false,
+    hint: "HQ allowlist. Empty ⇒ /admin 404s for everyone (Stripe admin actions become untriggerable).",
+  },
+  {
+    name: "MAINTENANCE_MODE",
+    required: false,
+    hint: "Global kill switch — \"on\" returns retry-safe 503s platform-wide. Presence here means it is ACTIVE.",
+  },
+  {
+    name: "VAPID_PUBLIC_KEY",
+    required: false,
+    hint: "Web-push channel (pairs with VAPID_PRIVATE_KEY). Unset ⇒ push enqueues nothing.",
+  },
 ];
 
 function readEnv(): ReadonlyArray<EnvVarStatus> {
