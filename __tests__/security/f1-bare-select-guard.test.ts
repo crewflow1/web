@@ -352,8 +352,8 @@ const ALLOWLIST: Record<string, string> = {
   // NOT A READ: `.from('notifications').insert(payload).select(ALL_COLS)` — an
   // INSERT…RETURNING. The returned set is bounded by the payload it just wrote,
   // so it cannot truncate; it trips only because the region carries `.select(`.
-  "server/services/notifications-service.ts:144":
-    "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read. (Line moved to 144 as the R4 push/notification-channel branch shifted surrounding lines.)",
+  "server/services/notifications-service.ts:159":
+    "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read. (Line moved to 144 as the R4 push/notification-channel branch shifted surrounding lines.) Moved 144→159 when the uuidOrNull helper block was added above it — pure shift, same INSERT…RETURNING.",
   "lib/notifications/push.ts:533":
     "bounded: `.from('notifications').select(...).in('id', ids)` where ids is the batch drawn from the just-claimed push_deliveries drain (≤ PUSH_DRAIN_BATCH_SIZE < 1000) — an id-keyed hydrate of an already-bounded set, not a completeness-sensitive scan. Same class as cis-statements.ts:169.",
   "lib/notifications/sms.ts:524":
@@ -392,7 +392,7 @@ const ALLOWLIST: Record<string, string> = {
   "app/(app)/invoices/[id]/page.tsx:135":
     "bounded: ONE invoice's payments (.eq('invoice_id', id)) — the payment ledger for a single invoice folded into paidTotal; a single invoice has a handful of payments, never near 1000",
   "app/admin/billing/actions.ts:160":
-    "not a read: `untypedAdminTable('billing_invoices').insert(insert).select('id')` — INSERT…RETURNING, bounded by the inserted row, cannot truncate a read; flagged only because the statement carries `.select(`. Same class as notifications-service.ts:140.",
+    "not a read: `untypedAdminTable('billing_invoices').insert(insert).select('id')` — INSERT…RETURNING, bounded by the inserted row, cannot truncate a read; flagged only because the statement carries `.select(`. Same class as notifications-service.ts:159.",
   "server/services/bank-sync.ts:699":
     "bounded: chunked dedupe read .in('provider_tx_id', batch) where batch = providerTxIds.slice(i, i+DEDUPE_IN_CHUNK) — each call returns ≤ DEDUPE_IN_CHUNK rows, well below the 1000 cap. Same class as cis-statements.ts:169.",
 
