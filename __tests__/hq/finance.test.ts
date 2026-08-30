@@ -27,6 +27,11 @@ const BASE: FinanceInput = {
   newCustomersThisMonth: 2,
   churnedThisMonth: 1,
   monthlyPriceGbp: 500,
+  // P12 sources — null here = unreadable this cycle, so the legacy estimate /
+  // insufficient paths (pinned below) stay exercised by the BASE fixture.
+  activeOrgMrrsGbp: null,
+  activeOrgLtvsGbp: null,
+  demoLifecycle: null,
   costOfRevenueGbp: null,
   cashCollectedGbp: null,
   cashBalanceGbp: null,
@@ -168,6 +173,131 @@ describe("computeFinanceBoard — SAME code computes real figures once a source 
       NOW,
     );
     expect(metric(board, "gross_margin").kind).toBe("insufficient");
+  });
+});
+
+describe("P12 — real MRR from per-org organizations.mrr_gbp", () => {
+  it("MRR = sum of per-org mrr_gbp, per-org fallback to the £500 list price ONLY when null", () => {
+    // 3 orgs: £750 + £400 contracted, one unrecorded → falls back to £500.
+    const board = computeFinanceBoard(
+      { ...BASE, activeCustomers: 3, activeOrgMrrsGbp: [750, null, 400] },
+      NOW,
+    );
+    const m = metric(board, "mrr");
+    expect(m.kind).toBe("derived");
+    expect(m.value).toBe(1650); // 750 + 500 (fallback) + 400
+    expect(m.basis).toMatch(/mrr_gbp/);
+    expect(m.basis).toMatch(/1 without a recorded mrr_gbp.*£500/);
+    // ARR follows the REAL figure.
+    expect(metric(board, "arr").value).toBe(1650 * 12);
+  });
+
+  it("all per-org figures recorded → pure sum, no fallback wording", () => {
+    const board = computeFinanceBoard(
+      { ...BASE, activeCustomers: 2, activeOrgMrrsGbp: [600, 450] },
+      NOW,
+    );
+    const m = metric(board, "mrr");
+    expect(m.value).toBe(1050);
+    expect(m.basis).not.toMatch(/without a recorded/);
+  });
+
+  it("per-org source unreadable (null) → the count × list-price ESTIMATE, labelled so", () => {
+    const m = metric(computeFinanceBoard(BASE, NOW), "mrr"); // BASE has null source
+    expect(m.value).toBe(4000); // 8 × 500 — the degraded estimate
+    expect(m.basis).toMatch(/Estimate/);
+    expect(m.basis).toMatch(/could not be read/);
+  });
+});
+
+describe("P12 — LTV from cached per-org ltv_gbp", () => {
+  it("total + average over orgs WITH a recorded value; unrecorded excluded, never £0", () => {
+    const board = computeFinanceBoard(
+      { ...BASE, activeCustomers: 4, activeOrgLtvsGbp: [12_000, null, 0, 6000] },
+      NOW,
+    );
+    const total = metric(board, "ltv_total");
+    const avg = metric(board, "ltv_avg");
+    expect(total.kind).toBe("derived");
+    expect(total.value).toBe(18_000); // null + 0 are UNRECORDED, not £0 values
+    expect(avg.value).toBe(9000);
+    expect(total.basis).toMatch(/2 orgs without a recorded value excluded/);
+  });
+
+  it("no org has a recorded LTV → insufficient (an unrecorded LTV is not £0)", () => {
+    const board = computeFinanceBoard(
+      { ...BASE, activeOrgLtvsGbp: [null, 0] },
+      NOW,
+    );
+    expect(metric(board, "ltv_total").kind).toBe("insufficient");
+    expect(metric(board, "ltv_avg").kind).toBe("insufficient");
+    expect(metric(board, "ltv_total").basis).toMatch(/not £0/);
+  });
+
+  it("source unreadable → both LTV metrics insufficient", () => {
+    const board = computeFinanceBoard(BASE, NOW);
+    expect(metric(board, "ltv_total").kind).toBe("insufficient");
+    expect(metric(board, "ltv_avg").kind).toBe("insufficient");
+  });
+});
+
+describe("P12 — deterministic 3-month pipeline-weighted revenue forecast", () => {
+  const DEMOS = {
+    pendingDemo: 4,
+    demoBooked: 2,
+    approved: 6,
+    rejected: 3,
+    cancelled: 1,
+  };
+
+  it("forecast = 3 × (real MRR + winRate × pipeline × list price), basis showing the working", () => {
+    // Real MRR = 1000 (two orgs). winRate = 6/10 = 0.6; pipeline = 6.
+    // pipelineMrr = 0.6 × 6 × 500 = 1800 → forecast = 3 × (1000 + 1800) = 8400.
+    const board = computeFinanceBoard(
+      {
+        ...BASE,
+        activeCustomers: 2,
+        activeOrgMrrsGbp: [600, 400],
+        demoLifecycle: DEMOS,
+      },
+      NOW,
+    );
+    const m = metric(board, "revenue_forecast_3m");
+    expect(m.kind).toBe("derived");
+    expect(m.value).toBe(8400);
+    expect(m.basis).toMatch(/60% historical demo win rate \(6 of 10 decided\)/);
+    expect(m.basis).toMatch(/6 live pipeline requests/);
+    expect(m.basis).toMatch(/upper-bound/i);
+  });
+
+  it("below the minimum decided-demo sample → honest insufficient, never a noisy rate", () => {
+    const board = computeFinanceBoard(
+      {
+        ...BASE,
+        demoLifecycle: { pendingDemo: 10, demoBooked: 5, approved: 2, rejected: 1, cancelled: 0 },
+      },
+      NOW,
+    );
+    const m = metric(board, "revenue_forecast_3m");
+    expect(m.kind).toBe("insufficient");
+    expect(m.value).toBeNull();
+    expect(m.basis).toMatch(/minimum sample of 5/);
+  });
+
+  it("demo source unreadable → insufficient", () => {
+    const m = metric(computeFinanceBoard(BASE, NOW), "revenue_forecast_3m");
+    expect(m.kind).toBe("insufficient");
+    expect(m.basis).toMatch(/could not be read/);
+  });
+
+  it("CAC STAYS insufficient — no acquisition-spend source exists (P12 does not fabricate one)", () => {
+    const board = computeFinanceBoard(
+      { ...BASE, activeOrgMrrsGbp: [500], demoLifecycle: DEMOS },
+      NOW,
+    );
+    const m = metric(board, "cac");
+    expect(m.kind).toBe("insufficient");
+    expect(m.value).toBeNull();
   });
 });
 

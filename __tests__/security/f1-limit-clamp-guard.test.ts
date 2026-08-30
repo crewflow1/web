@@ -169,6 +169,9 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // digest pass. A single digest email deliberately must not enumerate thousands
   // of notifications; 200 is the display bound. (Sibling class to the queue-drain
   // worker's bounded .limit(DRAIN_BATCH_SIZE).)
+  // R088 lead-sourcing dedupe — a per-run id-batch probe, not a set read.
+  "server/services/hq-lead-sourcing-runner.ts:195":
+    "id-batch dedupe probe: which of THIS RUN's candidate company numbers already exist — .in('companies_house_number', numbers) where numbers is the sourcing batch (SOURCING_BATCH_MAX=10 per run), so the set is structurally bounded by the IN-list, never a scan; the .limit(1000) is the honest-bound clamp. Completeness holds per batch: an unknown number inserts via the sanctioned createCompany door, a known one skips.",
   "server/services/notification-preferences-service.ts:392":
     "bounded batch: ONE user's digest-eligible notifications (.eq('org_id') for that user, category-filtered) capped at 200 and ordered created_at ASC; the digest cursor advances only to the last INCLUDED row, so overflow rolls to the next pass rather than being dropped — a self-draining per-pass batch, not a completeness read.",
   // countPostedReceipts: REMOVED (C66). The PO register above it is now fully
@@ -210,16 +213,16 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // create AND draft-edit, so an out-of-cap saved job was silently mis-attributed),
   // so neither carries a producer .limit and neither needs an entry. Same
   // treatment as reviews/new, snags/new and site-reports/new below.
-  "app/(app)/dashboard/page.tsx:230":
-    "bounded: dashboard 'recent 5 leads' widget — an intentional top-5 display. (Moved to 230 in the security closeout when the payroll-tile read switched to loadOrgHourlyPay + a comment was added above; same intentional top-5 semantics inside the merged `coreWave` Promise.all.)",
+  "app/(app)/dashboard/page.tsx:231":
+    "bounded: dashboard 'recent 5 leads' widget — an intentional top-5 display. (Moved to 230 in the security closeout when the payroll-tile read switched to loadOrgHourlyPay + a comment was added above; same intentional top-5 semantics inside the merged `coreWave` Promise.all.) Moved 230→231 in the final-roadmap wave (L4/L7 import shifts) — pure line shift, same read.",
   "app/(app)/leads/[id]/page.tsx:142":
     "bounded: this lead's related quotes — top-5 display on the lead detail page. (Line moved 132→136 when the lead→customer conversion imports were added; then 136→142 when the lead-score imports + panel were added above this read; reason unchanged.)",
   "app/(app)/me/page.tsx:145":
     "bounded: 'my recent 20 jobs' widget on the profile page — a top-N display. (Line moved to 145 in the security closeout when the own-pay read was split out to staff_compensation above this read; reason unchanged.)",
   "server/services/fleet-snapshot.ts:568":
     "bounded: last-50 telematics readings for a vehicle track display (recent-N sample)",
-  "server/services/hq-customer-snapshot.ts:216":
-    "bounded: last-10 payments for an HQ customer snapshot display (top-N). (Moved 215→216 when a fetchAllRows import was added for the .from(as never) cast-form wave.)",
+  "server/services/hq-customer-snapshot.ts:277":
+    "bounded: last-10 payments for an HQ customer snapshot display (top-N). (Moved 215→216 when a fetchAllRows import was added for the .from(as never) cast-form wave; 216→277 when the L11 member-roster read — itself PAGED via fetchAllRows — and the CustomerMember type were added above.)",
 
   // NEW-form recency pickers — no saved reference is re-rendered through the list
   // (the EDIT counterpart resolves it separately), so no picker silent-null.
@@ -246,31 +249,41 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // customer/job/quote ids are chained into dependent `.in()` reads, themselves
   // bounded by that cap). NONE is fed into a count/sum/completeness surface — a
   // dropped hit past the cap is by-design "refine your query", not a wrong number.
-  "app/api/search/route.ts:210":
+  // (Line keys last re-pointed for the "everything searchable" completion wave,
+  // which grew the route above these reads.)
+  "app/api/search/route.ts:339":
     "bounded: search customers — .limit(CHAIN_LIMIT=50) DISPLAY hits, org-pinned; ids chained into ≤50 .in() lookups, NOT counted/summed",
-  "app/api/search/route.ts:265":
+  "app/api/search/route.ts:465":
     "bounded: search jobs — .limit(CHAIN_LIMIT=50) DISPLAY hits, org-pinned; ids chained into ≤50 .in() lookups, NOT counted/summed",
-  "app/api/search/route.ts:274":
+  "app/api/search/route.ts:474":
     "bounded: search quotes — .limit(CHAIN_LIMIT=50) DISPLAY hits, org-pinned; ids chained into ≤50 .in() lookups, NOT counted/summed",
-  "app/api/search/route.ts:280":
+  "app/api/search/route.ts:480":
     "bounded: search leads — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
-  "app/api/search/route.ts:370":
+  "app/api/search/route.ts:628":
     "bounded: search invoices — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
   // Documents-search wave (new entities in the command palette). Each is an
   // org-pinned (.eq('org_id', ctx.org.id)) top-N DISPLAY hit list capped at
   // PER_TYPE=8, mapped straight into `hits` for display — never counted/summed.
-  "app/api/search/route.ts:388":
+  "app/api/search/route.ts:646":
     "bounded: search purchase_orders — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
-  "app/api/search/route.ts:394":
+  "app/api/search/route.ts:652":
     "bounded: search site_reports — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
+  // "Everything searchable" completion wave — same class as every other
+  // /api/search read: org-pinned top-N DISPLAY hit lists, never counted/summed.
+  "app/api/search/route.ts:364":
+    "bounded: search support_tickets — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
+  "app/api/search/route.ts:490":
+    "bounded: search fleet_vehicles — .or(asset_id.in.(≤50 matched asset ids)) profile lookup capped at .limit(CHAIN_LIMIT=50); decides vehicle-vs-asset hit rendering for the ≤50 matched assets, NOT counted/summed",
+  "app/api/search/route.ts:660":
+    "bounded: search finances — .limit(PER_TYPE=8) DISPLAY hits, org-pinned; selects NO money columns (category/notes/date only), NOT fed to any count/sum",
   // /documents home — the HIGH-VALUE jobs read is a CHUNKED name lookup:
   // `.in('id', idsChunk)` where each chunk is ≤JOB_IN_CHUNK=500 unique job ids
   // (jobs.id is unique, so a chunk yields ≤500 rows), used only to label the
   // aggregated documents with their job/customer name — never counted/summed.
   "app/(app)/documents/page.tsx:183":
     "bounded: /documents job-name lookup — CHUNKED .in('id', idsChunk) capped at .limit(JOB_IN_CHUNK=500) per chunk (jobs.id unique ⇒ ≤500 rows); a display-label lookup over a fully-read doc set, NOT counted/summed",
-  "app/(app)/jobs/page.tsx:95":
-    "bounded: search-match helper — collects up to 200 matching customer ids to fold into the .range()-paged jobs query; a name-search sub-sample, not a materialised set",
+  "app/(app)/jobs/page.tsx:106":
+    "bounded: search-match helper — collects up to 200 matching customer ids to fold into the .range()-paged jobs query; a name-search sub-sample, not a materialised set Moved 95→106 in the final-roadmap wave (DataTable adoption added JOB_COLUMNS + import) — pure shift, same read.",
 
   // Customer-portal reads.
   //
@@ -315,7 +328,7 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   //    reads surfaced once notifications / health_score_events joined
   //    PRODUCER_TABLES. Each is a recent-N display or a single-scope read, never
   //    a complete-set aggregation, so the sub-cap .limit is honest.
-  "app/(app)/layout.tsx:38":
+  "app/(app)/layout.tsx:39":
     "bounded: the top nav notification bell — recent-30 notifications for ONE user in the active org (.eq('org_id').eq('user_id').limit(30)), a per-user top-N display. (Moved 32→34 when the offline read-cache + photo-outbox client components were imported into the app layout; moved 34→38 when the i18n-wave request helper + its comment replaced the bare requireOrgContext call.)",
   "app/customer-portal/_future-work.ts:57":
     "bounded: ONE customer's own portal future-work requests (.eq('org_id').eq('customer_id').eq('source','portal').limit(50)) — token-scoped to a single customer, a recent-50 display",
@@ -332,7 +345,7 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   //    bounded DISPLAY sample, not a completeness/count/ZIP contributor (those —
   //    listPortalReports/listPortalCertificates and createPayrollRun's members
   //    read — were PAGED, not capped).
-  "app/api/search/route.ts:218":
+  "app/api/search/route.ts:347":
     "bounded: search members — .limit(40) command-palette DISPLAY hits, org-pinned (.eq('org_id')); a top-N result list, NOT fed to any count/sum. Same class as the other /api/search reads.",
   "app/customer-portal/_photos.ts:107":
     "bounded: recent-50 published reports for the portal PHOTO GALLERY (.eq('customer_id').eq('org_id')...order('portal_published_at' desc).limit(50)), further capped at MAX_PORTAL_PHOTOS extracted photos — a display gallery, NOT the documents-library count/ZIP (those use listPortalReports, now PAGED)",

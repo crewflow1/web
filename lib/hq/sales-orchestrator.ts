@@ -278,6 +278,9 @@ const SOURCE_UNAVAILABLE = (what: string) =>
 
 /** An open deal untouched (no status movement) for longer than this is stalled. */
 const STALL_DAYS = 14;
+/** Minimum decided (won+lost) deals before a measured win rate feeds the
+ *  pipeline forecast — mirrors the finance board's minimum-sample doctrine. */
+const FORECAST_MIN_DECIDED = 8;
 /** The outreach cadence window — a live deal should be touched inside this. */
 const CADENCE_DAYS = 7;
 
@@ -317,6 +320,7 @@ export function computeSalesOrchestratorBoard(
       insufficient("deals_in_conversation", "In conversation", "int", SOURCE_UNAVAILABLE("sales pipeline")),
       insufficient("deals_won", "Won", "int", SOURCE_UNAVAILABLE("sales pipeline")),
       insufficient("deals_lost", "Lost / disqualified", "int", SOURCE_UNAVAILABLE("sales pipeline")),
+      insufficient("pipeline_forecast_expected_wins", "Pipeline forecast (expected wins)", "int", SOURCE_UNAVAILABLE("sales pipeline")),
       insufficient("qualification_conversion", "Qualification conversion", "pct", SOURCE_UNAVAILABLE("sales pipeline")),
       insufficient("outreach_conversion", "Outreach conversion", "pct", SOURCE_UNAVAILABLE("sales pipeline")),
       insufficient("win_rate", "Win rate", "pct", SOURCE_UNAVAILABLE("sales pipeline")),
@@ -515,6 +519,40 @@ export function computeSalesOrchestratorBoard(
         `Open deals with no status movement for over ${STALL_DAYS} days — the intervention queue, not a healthy zero.`,
       ),
     );
+
+  // ── Pipeline forecast (roadmap R229) — expected closed-won from the OPEN
+  // pipeline at the MEASURED historical win rate (won / decided). Purely
+  // deterministic and replayable; below the minimum decided sample the rate
+  // is statistical noise, so the metric is honestly insufficient rather
+  // than a figure conjured from three data points. Expected WINS, not value:
+  // the prospect pipeline carries no monetary value column, and inventing
+  // one is exactly what this board refuses to do.
+  {
+    const decided = wonCount + lostCount;
+    if (decided >= FORECAST_MIN_DECIDED && openCount > 0) {
+      const winRate = wonCount / decided;
+      metrics.push(
+        derived(
+          "pipeline_forecast_expected_wins",
+          "Pipeline forecast (expected wins)",
+          Math.round(openCount * winRate * 10) / 10,
+          "int",
+          `${openCount} open deal${openCount === 1 ? "" : "s"} × the measured historical win rate (${wonCount}/${decided} decided = ${Math.round(winRate * 100)}%). Deterministic expected closed-won count — not a per-deal probability model, and never a revenue figure (the pipeline carries no deal value).`,
+        ),
+      );
+    } else {
+      metrics.push(
+        insufficient(
+          "pipeline_forecast_expected_wins",
+          "Pipeline forecast (expected wins)",
+          "int",
+          decided < FORECAST_MIN_DECIDED
+            ? `Only ${decided} decided deal${decided === 1 ? "" : "s"} (won + lost) — below the ${FORECAST_MIN_DECIDED}-deal minimum a measured win rate needs to be more than noise.`
+            : "No open deals — there is nothing to forecast over.",
+        ),
+      );
+    }
+  }
   }
 
   // ── Drains — the three HQ task queues (research/qualification/outreach) ─

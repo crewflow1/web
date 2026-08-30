@@ -1,5 +1,15 @@
 # CrewFlow Vision 2030 — programme roadmap
 
+> ## ⛔ SUPERSEDED (2026-08-29)
+> This index is a historical artifact, frozen at 2026-06-24 (Shared Memory
+> Engine merge), and everything below — module statuses, percentages, roster
+> counts — is **known-stale by two months of shipped work**. For current truth
+> use:
+> 1. [`docs/roadmap/MASTER-ROADMAP-RECONCILIATION.md`](./roadmap/MASTER-ROADMAP-RECONCILIATION.md) — canonical capability reconciliation
+> 2. [`docs/roadmap/STATUS.md`](./roadmap/STATUS.md) — programme control plane (see its 2026-08-29 header block)
+>
+> Do not act on anything below. Preserved for audit.
+
 > **The destination.** CrewFlow is the operating system for UK construction
 > businesses. Vision 2030 is the build toward an **AI-operated company**: a
 > boardroom of specialised AI employees that research, qualify, win, onboard,

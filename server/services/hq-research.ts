@@ -87,7 +87,12 @@ import {
   recordTimelineEvent,
 } from "@/server/services/hq-sales";
 import { normaliseUrl } from "@/lib/research/extract";
-import { recallForTask, rememberForTask } from "@/server/services/hq-runner-memory";
+import {
+  memoryContextFromRecall,
+  recallForTask,
+  rememberForTask,
+  type TaskMemoryContext,
+} from "@/server/services/hq-runner-memory";
 import { enqueueTask, type TaskRow } from "@/server/services/hq-tasks";
 import {
   drainTaskType,
@@ -149,6 +154,14 @@ type ResearchResult = {
   scoreFactors: ResearchScoreFactor[];
   brief: SalesBrief | null;
   drafts: CommsDrafts | null;
+  /**
+   * P3 — the recalled Shared Memory that actually informed this report: prior
+   * knowledge about the company (earlier research outcomes, contact history)
+   * surfaced INTO the artifact rather than fetched and discarded. `null` when
+   * the recall was capability-gated off, degraded, or found nothing (an honest
+   * absence — never an empty fabrication).
+   */
+  memory_context: TaskMemoryContext | null;
 };
 
 function freshResult(): ResearchResult {
@@ -166,6 +179,7 @@ function freshResult(): ResearchResult {
     scoreFactors: [],
     brief: null,
     drafts: null,
+    memory_context: null,
   };
 }
 
@@ -399,10 +413,20 @@ const researchTaskHandler: TaskHandler = async (ctx: RunContext) => {
     // runner drain the recalled ids into the result's evidence[] for free. Gated
     // on the employee's memory capability (research-ai holds it); lexical +
     // structural only, and it degrades to nothing on any failure.
-    await recallForTask(ctx, {
+    //
+    // P3 — the recall is CONSUMED, not discarded: what came back is folded into
+    // the artifact's `memory_context` section (bounded summaries + a note), so
+    // the report SHOWS the prior knowledge — earlier research outcomes, contact
+    // history — it was grounded in. The next checkpoint (setPhase below)
+    // persists it into the live result the UI polls.
+    const recall = await recallForTask(ctx, {
       query: company.name,
       subject: { kind: "organisation", id: companyId, label: company.name },
     });
+    result.memory_context = memoryContextFromRecall(
+      recall,
+      `Prior Shared Memory about ${company.name} recalled before researching; the report below is grounded in these recalled outcomes as well as this run's fresh signals.`,
+    );
 
     // ---- PHASE: Researching -----------------------------------------
     await setPhase("researching");

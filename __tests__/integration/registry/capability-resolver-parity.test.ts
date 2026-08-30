@@ -36,6 +36,7 @@ type QueryResult<T> = { data: T | null; error: { message: string } | null };
 type Term<T> = PromiseLike<QueryResult<T>>;
 type Filterable<T> = Term<T> & {
   eq(column: string, value: unknown): Filterable<T>;
+  is(column: string, value: null): Filterable<T>;
   select(columns?: string): Filterable<T>;
 };
 type RegistryTable = {
@@ -60,7 +61,7 @@ function toLegacy(r: Record<string, unknown>): LegacyEmployee {
 
 /** The live roster, in the LegacyEmployee shape (asserts the fetch succeeds). */
 async function roster(): Promise<LegacyEmployee[]> {
-  const res = await svc().from("ai_employees").select(EMP_COLUMNS);
+  const res = await svc().from("ai_employees").select(EMP_COLUMNS).is("retired_at", null);
   expect(res.error, res.error?.message).toBeNull();
   return ((res.data ?? []) as Record<string, unknown>[]).map(toLegacy);
 }

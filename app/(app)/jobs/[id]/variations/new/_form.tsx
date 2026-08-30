@@ -18,8 +18,16 @@ const GBP = new Intl.NumberFormat("en-GB", {
 
 export function VariationForm({
   action,
+  defaultTitle,
+  defaultDescription,
+  variationRequestId,
 }: {
   action: (formData: FormData) => void;
+  /** Prefill from an accepted variation REQUEST (?fromRequest=…, G2). */
+  defaultTitle?: string;
+  defaultDescription?: string;
+  /** When set, createVariation stamps that request 'converted' on success. */
+  variationRequestId?: string;
 }) {
   const [labour, setLabour] = useState("0");
   const [materials, setMaterials] = useState("0");
@@ -39,14 +47,24 @@ export function VariationForm({
 
   return (
     <form action={action} className="space-y-6">
+      {variationRequestId ? (
+        <input type="hidden" name="variation_request_id" value={variationRequestId} />
+      ) : null}
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
-        <Field label="Title" name="title" required placeholder="e.g. Additional bathroom tiling" />
+        <Field
+          label="Title"
+          name="title"
+          required
+          placeholder="e.g. Additional bathroom tiling"
+          defaultValue={defaultTitle}
+        />
         <Field
           label="Description"
           name="description"
           textarea
           rows={3}
           placeholder="What's the scope of this variation?"
+          defaultValue={defaultDescription}
         />
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -141,6 +159,7 @@ function Field({
   rows = 3,
   placeholder,
   help,
+  defaultValue,
 }: {
   label: string;
   name: string;
@@ -150,6 +169,7 @@ function Field({
   rows?: number;
   placeholder?: string;
   help?: string;
+  defaultValue?: string;
 }) {
   return (
     <label className="block text-xs text-slate-600">
@@ -160,6 +180,7 @@ function Field({
           required={required}
           rows={rows}
           placeholder={placeholder}
+          defaultValue={defaultValue}
           className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
         />
       ) : (
@@ -168,6 +189,7 @@ function Field({
           name={name}
           required={required}
           placeholder={placeholder}
+          defaultValue={defaultValue}
           className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
         />
       )}

@@ -7,10 +7,21 @@
  *
  * Business model (CEO directive):
  *   - £1,000 one-off setup fee per customer
- *   - £500/month per active or trial customer
+ *   - £500/month LIST price per active or trial customer
  *   - No automation yet — we just MEASURE; status tracking only.
  */
 
+/**
+ * The £500/month LIST price — a FALLBACK, not the source of truth for MRR.
+ *
+ * P12: real MRR is per-organisation — `organizations.mrr_gbp` (the column the HQ
+ * customers OS reads/writes). The Finance AI board (lib/hq/finance.ts,
+ * `computeFinanceBoard`) now computes MRR as the SUM of each active org's
+ * `mrr_gbp`, counting an org at this list price ONLY when its `mrr_gbp` is null
+ * (no contracted figure recorded yet). This constant remains the documented list
+ * price for that fallback and for the count-based dashboard tiles below, whose
+ * bases state they are list-price estimates.
+ */
 export const MONTHLY_PRICE_GBP = 500;
 export const SETUP_FEE_GBP = 1000;
 

@@ -1,5 +1,14 @@
 # Vision 2030 — customer-platform programme progress
 
+> ## ⛔ SUPERSEDED (2026-08-29)
+> This tracker is a historical artifact, frozen at 2026-07-21, and its
+> PR/migration status is **known-stale** (e.g. #398–#404 have long since
+> merged and shipped; production is at 380 migrations). For current truth use:
+> 1. [`docs/roadmap/MASTER-ROADMAP-RECONCILIATION.md`](./roadmap/MASTER-ROADMAP-RECONCILIATION.md) — canonical capability reconciliation
+> 2. [`docs/roadmap/STATUS.md`](./roadmap/STATUS.md) — programme control plane (see its 2026-08-29 header block)
+>
+> Do not act on anything below. Preserved for audit.
+
 > Tracks the **Master Execution Directive**: finish the remaining Core
 > Construction Platform (Stage One) + the majority of Stage Two AI employees.
 > Separate from `docs/roadmap.md`, which tracks the HQ AI-boardroom / Sales-AI

@@ -448,10 +448,16 @@ describe("Phase H — Review requests", () => {
 // =====================================================================
 
 describe("Ops snapshot — new crons + env wired", () => {
-  it("CRON_ROUTES adds lead-followups, compliance-expiry, review-requests", () => {
+  it("CRON_ROUTES covers lead-followups, compliance-expiry, review-requests", () => {
+    // L11: ops-snapshot now DERIVES its roster from vercel.json via
+    // lib/ops/cron-routes.ts (full parity pinned in ops/cron-coverage.test.ts),
+    // so the coverage proof is: the routes are scheduled + the derivation is
+    // wired.
     const src = read("server/services/ops-snapshot.ts");
+    expect(src).toMatch(/from "@\/lib\/ops\/cron-routes"/);
+    const vercel = read("vercel.json");
     for (const r of ["lead-followups", "compliance-expiry", "review-requests"]) {
-      expect(src).toMatch(new RegExp(`"${r}"`));
+      expect(vercel).toMatch(new RegExp(`"/api/cron/${r}"`));
     }
   });
 

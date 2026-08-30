@@ -79,6 +79,9 @@ export const ATTACHMENT_TARGET_TABLES = [
   // calibration certificate register: the external lab's certificate PDF, held
   // against the structured cert record (P3W2, 20261145000001).
   "asset_calibration_certificates",
+  // variation-request intake: the photo of the thing the change is about,
+  // attached to the request before anyone prices it (G2, 20261221000000).
+  "variation_requests",
 ] as const;
 export type AttachmentTargetTable = (typeof ATTACHMENT_TARGET_TABLES)[number];
 

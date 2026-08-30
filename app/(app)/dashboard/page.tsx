@@ -8,6 +8,7 @@ import { computeReceivables } from "@/lib/invoices/receivables";
 import { computeRetentionDueRollup } from "@/lib/retentions/rollup";
 import { loadOrgHourlyPay } from "@/lib/profitability/labour-rates";
 import { ActivityFeed } from "./_activity-feed";
+import { RevenueTrend } from "./_revenue-trend";
 import type { ActivityRow } from "@/lib/activity/render";
 import { InsightsSection } from "./_insights";
 import { SetupChecklist } from "./_setup-checklist";
@@ -993,6 +994,9 @@ export default async function DashboardPage() {
           sub="quarterly + annual rollups"
         />
       </section>
+
+      {/* Money trend — 6-month paid-revenue area chart, derived from the invoice rows already fetched above (no extra query). */}
+      <RevenueTrend invoices={invoices} />
 
       {/* Field-ops row (Wave 4) — hours, labour cost, payroll due */}
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">

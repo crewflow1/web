@@ -24,11 +24,19 @@ const PALETTE = readFileSync(
   "utf8",
 );
 
-/** Every `type: "..."` literal actually pushed onto the hits array in the route. */
+/** Every `type: "..."` literal actually pushed onto the hits array in the
+ * route — including the two-armed ternary form (`type: cond ? "a" : "b"`,
+ * used for the asset/vehicle split). */
 function backendEmittedTypes(src: string): string[] {
   const out = new Set<string>();
   for (const m of src.matchAll(/\btype:\s*"([a-z_]+)"/g)) {
     out.add(m[1]!);
+  }
+  for (const m of src.matchAll(
+    /\btype:\s*\w+\s*\?\s*"([a-z_]+)"\s*:\s*"([a-z_]+)"/g,
+  )) {
+    out.add(m[1]!);
+    out.add(m[2]!);
   }
   return [...out].sort();
 }
@@ -68,6 +76,17 @@ describe("search palette type coverage (drift guard)", () => {
         "site_report",
         "snag",
         "staff",
+        // "everything searchable" completion families
+        "supplier",
+        "finance",
+        "blueprint",
+        "asset",
+        "vehicle",
+        "toolbox_talk",
+        "diary_entry",
+        "support_ticket",
+        "staff_qualification",
+        "attachment",
       ].sort(),
     );
   });

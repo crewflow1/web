@@ -4,6 +4,7 @@ import { getRequestI18n } from "@/server/i18n/request";
 import { requireManagementRole } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { formatAddressOneLine, customerToAddress } from "@/lib/address";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import {
   PAGE_SIZE,
   parsePage,
@@ -40,6 +41,19 @@ function parseTypeFilter(raw: string | undefined): CustomerTypeFilter | null {
     ? (raw as CustomerTypeFilter)
     : null;
 }
+
+/**
+ * Tablet/desktop columns for the canonical DataTable (roadmap G3). Client-side
+ * sorting covers the loaded page only; the server-side search + type filter +
+ * exact-count pagination above remain the authority over which rows load.
+ */
+const CUSTOMER_COLUMNS: DataTableColumn[] = [
+  { key: "name", header: "Name", sortable: "text", cellClassName: "font-medium text-slate-900" },
+  { key: "address", header: "Address", cellClassName: "text-slate-600" },
+  { key: "email", header: "Email", sortable: "text", cellClassName: "text-slate-600" },
+  { key: "phone", header: "Phone", cellClassName: "text-slate-600" },
+  { key: "open", header: "", cellClassName: "text-right" },
+];
 
 export default async function CustomersPage({
   searchParams,
@@ -211,16 +225,50 @@ export default async function CustomersPage({
         </div>
       ) : (
         <>
-          {/* Mobile: stacked card list */}
-          <ul className="space-y-2 sm:hidden">
-            {rows.map((c) => (
-              <li
-                key={c.id}
-                className="rounded-lg border border-slate-200 bg-white shadow-sm"
-              >
+          {/* Tablet + desktop: DataTable; below sm it renders the card list
+              from each row's mobileCard (the pre-existing card markup). */}
+          <DataTable
+            label="Customers"
+            columns={CUSTOMER_COLUMNS}
+            cardsBelow="sm"
+            className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm"
+            stickyHeader
+            rows={rows.map((c) => ({
+              id: c.id,
+              href: `/customers/${c.id}`,
+              filterText: `${c.name} ${c.email ?? ""} ${c.phone ?? ""} ${formatAddressOneLine(customerToAddress(c))}`,
+              sortValues: {
+                name: c.name,
+                email: c.email,
+                phone: c.phone,
+              },
+              cells: {
+                name: (
+                  <span className="inline-flex items-center gap-2">
+                    {c.name}
+                    {c.customer_type === "business" ? (
+                      <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-800">
+                        Business
+                      </span>
+                    ) : null}
+                  </span>
+                ),
+                address: formatAddressOneLine(customerToAddress(c)) || "—",
+                email: c.email ?? "—",
+                phone: c.phone ?? "—",
+                open: (
+                  <Link
+                    href={`/customers/${c.id}`}
+                    className="text-sm font-medium text-slate-700 hover:text-slate-900"
+                  >
+                    Edit →
+                  </Link>
+                ),
+              },
+              mobileCard: (
                 <Link
                   href={`/customers/${c.id}`}
-                  className="block px-4 py-3"
+                  className="block rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -256,57 +304,9 @@ export default async function CustomersPage({
                     </span>
                   </div>
                 </Link>
-              </li>
-            ))}
-          </ul>
-
-          {/* Tablet + desktop: table */}
-          <div className="hidden overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm sm:block">
-            <table className="min-w-full divide-y divide-slate-200">
-              <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="px-4 py-3">Name</th>
-                  <th className="px-4 py-3">Address</th>
-                  <th className="px-4 py-3">Email</th>
-                  <th className="px-4 py-3">Phone</th>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white text-sm">
-                {rows.map((c) => (
-                  <tr key={c.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-900">
-                      <span className="inline-flex items-center gap-2">
-                        {c.name}
-                        {c.customer_type === "business" ? (
-                          <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-800">
-                            Business
-                          </span>
-                        ) : null}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {formatAddressOneLine(customerToAddress(c)) || "—"}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {c.email ?? "—"}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {c.phone ?? "—"}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <Link
-                        href={`/customers/${c.id}`}
-                        className="text-sm font-medium text-slate-700 hover:text-slate-900"
-                      >
-                        Edit →
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ),
+            }))}
+          />
 
           {/* Pagination — "Showing A–B of N" makes the 200-per-page cap explicit. */}
           <nav className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">

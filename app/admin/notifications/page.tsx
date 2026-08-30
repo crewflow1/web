@@ -15,7 +15,12 @@ import {
   prioritySort,
   filterNotifications,
 } from "@/lib/notifications/sort";
-import { markReadHq, markAllReadHq, dismissHq } from "./actions";
+import {
+  markReadHq,
+  markAllReadHq,
+  dismissHq,
+  requeueFailedEmail,
+} from "./actions";
 
 /**
  * HQ Notifications centre — /admin/notifications (HQ-8).
@@ -88,6 +93,16 @@ export default async function HqNotificationsPage({
       return { tone: "ok" as const, msg: "All HQ notifications marked read." };
     if (sp.saved === "dismissed")
       return { tone: "ok" as const, msg: "Dismissed." };
+    if (sp.saved === "requeued")
+      return {
+        tone: "ok" as const,
+        msg: "Email requeued — the next drain pass (≤15 min) will re-attempt it.",
+      };
+    if (sp.error === "not_failed_or_missing")
+      return {
+        tone: "err" as const,
+        msg: "Couldn't requeue — that email is no longer in the failed state.",
+      };
     if (sp.error)
       return { tone: "err" as const, msg: `Error: ${sp.error}` };
     return null;
@@ -206,13 +221,27 @@ export default async function HqNotificationsPage({
                     key={f.id}
                     className="rounded-md border border-red-200 bg-red-50 px-2 py-1.5"
                   >
-                    <p className="font-medium text-red-900">
-                      {f.to_email} · retry {f.retry_count}
-                    </p>
-                    <p className="text-slate-700">{f.subject}</p>
-                    {f.last_error ? (
-                      <p className="mt-0.5 text-red-700">{f.last_error}</p>
-                    ) : null}
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-medium text-red-900">
+                          {f.to_email} · retry {f.retry_count}
+                        </p>
+                        <p className="text-slate-700">{f.subject}</p>
+                        {f.last_error ? (
+                          <p className="mt-0.5 text-red-700">{f.last_error}</p>
+                        ) : null}
+                      </div>
+                      <form action={requeueFailedEmail}>
+                        <input type="hidden" name="id" value={f.id} />
+                        <button
+                          type="submit"
+                          title="Reset this email to queued so the next drain pass re-attempts delivery"
+                          className="shrink-0 rounded-md border border-red-300 bg-white px-2 py-1 text-[11px] font-semibold text-red-800 hover:bg-red-100"
+                        >
+                          Requeue
+                        </button>
+                      </form>
+                    </div>
                   </li>
                 ))}
               </ul>

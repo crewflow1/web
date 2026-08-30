@@ -15,6 +15,7 @@ import {
 import { EmptyState } from "../_components/empty-state";
 import { HelpLink } from "../_components/help-link";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 
 /**
  * Invoices list.
@@ -34,6 +35,23 @@ const GBP = new Intl.NumberFormat("en-GB", {
   currency: "GBP",
   minimumFractionDigits: 2,
 });
+
+/**
+ * Desktop columns for the canonical DataTable (roadmap G3). Sorting is
+ * client-side over the loaded page; server filters/pagination above stay
+ * authoritative and untouched. `sortValues`/`csv` on each row are the plain
+ * values these keys point at — cells are pre-rendered ReactNodes because this
+ * page is a server component and functions cannot cross the RSC boundary.
+ */
+const INVOICE_COLUMNS: DataTableColumn[] = [
+  { key: "number", header: "Number", sortable: "text", cellClassName: "font-medium text-slate-900" },
+  { key: "status", header: "Status", sortable: "text" },
+  { key: "due", header: "Due", sortable: "date", cellClassName: "text-slate-600" },
+  { key: "net", header: "Net", sortable: "number", numeric: true, cellClassName: "font-medium text-slate-900" },
+  { key: "vat", header: "VAT", sortable: "number", numeric: true, cellClassName: "text-slate-600" },
+  { key: "total", header: "Total", sortable: "number", numeric: true, cellClassName: "font-medium text-slate-900" },
+  { key: "open", header: "", cellClassName: "text-right" },
+];
 
 const STATUS_STYLES: Record<InvoiceStatus, string> = {
   draft: "bg-slate-100 text-slate-700",
@@ -271,62 +289,67 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
           />
         </div>
       ) : (
-        <>
-          {/* Desktop table */}
-          <div className="hidden overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm md:block">
-            <table className="min-w-full divide-y divide-slate-200">
-              <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="px-4 py-3">Number</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Due</th>
-                  <th className="px-4 py-3 text-right">Net</th>
-                  <th className="px-4 py-3 text-right">VAT</th>
-                  <th className="px-4 py-3 text-right">Total</th>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white text-sm">
-                {rows.map((inv) => (
-                  <tr key={inv.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-900">{inv.number}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[invoiceDisplayStatus(inv, todayIso)]}`}
-                      >
-                        {invoiceDisplayStatus(inv, todayIso)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {inv.due_date ?? "—"}
-                    </td>
-                    <td className="px-4 py-3 text-right font-medium text-slate-900">
-                      {GBP.format(Number(inv.amount ?? 0))}
-                    </td>
-                    <td className="px-4 py-3 text-right text-slate-600">
-                      {GBP.format(Number(inv.vat_total ?? 0))}
-                    </td>
-                    <td className="px-4 py-3 text-right font-medium text-slate-900">
-                      {GBP.format(Number(inv.total ?? 0))}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <Link
-                        href={`/invoices/${inv.id}`}
-                        className="text-sm font-medium text-slate-700 hover:text-slate-900"
-                      >
-                        Open →
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Mobile cards */}
-          <ul className="space-y-2 md:hidden">
-            {rows.map((inv) => (
-              <li key={inv.id}>
+        /* Desktop table (DataTable renders the mobile cards below md itself).
+           Bulk selection is NON-destructive by design: the only bulk action is
+           a client-side CSV of the selected loaded rows (lib/csv escaping). */
+        <DataTable
+          label="Invoices"
+          columns={INVOICE_COLUMNS}
+          cardsBelow="md"
+          className="rounded-lg border border-slate-200 bg-white shadow-sm"
+          stickyHeader
+          selectable
+          csvExport={{
+            filename: "invoices-selected.csv",
+            header: ["Number", "Status", "Due date", "Net", "VAT", "Total"],
+          }}
+          rows={rows.map((inv) => {
+            const displayStatus = invoiceDisplayStatus(inv, todayIso);
+            const statusPill = (
+              <span
+                className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[displayStatus]}`}
+              >
+                {displayStatus}
+              </span>
+            );
+            return {
+              id: inv.id,
+              href: `/invoices/${inv.id}`,
+              selectLabel: `Select invoice ${inv.number}`,
+              filterText: `${inv.number} ${displayStatus} ${inv.due_date ?? ""}`,
+              sortValues: {
+                number: inv.number,
+                status: displayStatus,
+                due: inv.due_date,
+                net: Number(inv.amount ?? 0),
+                vat: Number(inv.vat_total ?? 0),
+                total: Number(inv.total ?? 0),
+              },
+              csv: [
+                inv.number,
+                displayStatus,
+                inv.due_date ?? "",
+                Number(inv.amount ?? 0),
+                Number(inv.vat_total ?? 0),
+                Number(inv.total ?? 0),
+              ],
+              cells: {
+                number: inv.number,
+                status: statusPill,
+                due: inv.due_date ?? "—",
+                net: GBP.format(Number(inv.amount ?? 0)),
+                vat: GBP.format(Number(inv.vat_total ?? 0)),
+                total: GBP.format(Number(inv.total ?? 0)),
+                open: (
+                  <Link
+                    href={`/invoices/${inv.id}`}
+                    className="text-sm font-medium text-slate-700 hover:text-slate-900"
+                  >
+                    Open →
+                  </Link>
+                ),
+              },
+              mobileCard: (
                 <Link
                   href={`/invoices/${inv.id}`}
                   className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition active:bg-slate-50"
@@ -345,17 +368,17 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
                         {GBP.format(Number(inv.total ?? 0))}
                       </div>
                       <span
-                        className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[invoiceDisplayStatus(inv, todayIso)]}`}
+                        className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[displayStatus]}`}
                       >
-                        {invoiceDisplayStatus(inv, todayIso)}
+                        {displayStatus}
                       </span>
                     </div>
                   </div>
                 </Link>
-              </li>
-            ))}
-          </ul>
-        </>
+              ),
+            };
+          })}
+        />
       )}
 
       {totalPages > 1 ? (

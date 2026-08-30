@@ -13,6 +13,8 @@ import {
   type CtoInput,
 } from "@/lib/hq/cto";
 import { generateHqBoardNarrative } from "@/server/services/hq-narrative";
+import { GithubAdapter } from "@/lib/integrations/github/adapter";
+import { VercelAdapter } from "@/lib/integrations/vercel/adapter";
 
 /**
  * CrewFlow HQ — CTO AI aggregator (super-admin surface). Service-role only.
@@ -101,12 +103,69 @@ export async function loadCtoBoard(): Promise<CtoBoardResult> {
 }
 
 /**
+ * Read GitHub PR telemetry through the DARK adapter (L9a / P7). The adapter
+ * refuses before fetch when unconfigured (`not_configured`, no network) — that
+ * and every failure fold to `null`, which the pure layer renders as the honest
+ * "adapter is dark" engineering section, never invented telemetry.
+ */
+async function readGithubTelemetry(): Promise<CtoInput["github"]> {
+  try {
+    const result = await new GithubAdapter().listPullRequests("open");
+    if (!result.ok) {
+      // `not_configured` is the expected dark path — silent. Real failures are loud.
+      if (result.reason !== "not_configured") {
+        console.error("[hq-cto] github telemetry read failed", result.message);
+      }
+      return null;
+    }
+    return {
+      pulls: result.data.map((p) => ({
+        number: p.number,
+        title: p.title,
+        author: p.author,
+        draft: p.draft,
+        updatedAt: p.updatedAt,
+      })),
+    };
+  } catch (e) {
+    console.error("[hq-cto] github telemetry read threw", e);
+    return null;
+  }
+}
+
+/**
+ * Read Vercel deployment telemetry through the DARK adapter (L9a / P7). Same
+ * fold: `not_configured` (the always-today path) and every failure → `null`.
+ */
+async function readVercelTelemetry(): Promise<CtoInput["vercel"]> {
+  try {
+    const result = await new VercelAdapter().listDeployments();
+    if (!result.ok) {
+      if (result.reason !== "not_configured") {
+        console.error("[hq-cto] vercel telemetry read failed", result.message);
+      }
+      return null;
+    }
+    return {
+      deployments: result.data.map((d) => ({
+        state: d.state,
+        target: d.target,
+        createdAt: d.createdAt,
+      })),
+    };
+  } catch (e) {
+    console.error("[hq-cto] vercel telemetry read threw", e);
+    return null;
+  }
+}
+
+/**
  * Build the deterministic CTO board WITHOUT the page auth gate — the shared
  * derivation used by both `loadCtoBoard` (super-admin page) and the CTO executive
  * runner (service-role cron). Reads only; no narrative, no auth.
  */
 export async function gatherCtoBoard(): Promise<CtoBoard> {
-  const [launch, tasks, shadow, aiCost, health] = await Promise.all([
+  const [launch, tasks, shadow, aiCost, health, github, vercel] = await Promise.all([
     buildLaunchReadiness().catch((e) => {
       console.error("[hq-cto] launch-readiness read failed", e);
       return null;
@@ -124,6 +183,8 @@ export async function gatherCtoBoard(): Promise<CtoBoard> {
       console.error("[hq-cto] customer-health read failed", e);
       return null;
     }),
+    readGithubTelemetry(),
+    readVercelTelemetry(),
   ]);
 
   const input: CtoInput = {
@@ -165,6 +226,8 @@ export async function gatherCtoBoard(): Promise<CtoBoard> {
             critical: health.filter((r) => bandFromScore(r.health_score) === "red").length,
             atRisk: health.filter((r) => bandFromScore(r.health_score) === "yellow").length,
           },
+    github,
+    vercel,
   };
 
   return computeCtoBoard(input, new Date());

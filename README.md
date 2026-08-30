@@ -1,169 +1,159 @@
 # CrewFlow — `crewflow/web`
 
-> **AI receptionist + quotes for construction companies.**
-> Never miss another construction lead.
+CrewFlow is a multi-tenant operations platform for UK construction SMBs: leads,
+quotes, jobs, invoicing, CIS, health & safety (RAMS/toolbox talks/permits),
+stock/fleet, a customer portal, and an internal HQ layer — all in a single
+Next.js application deployed at [crewflow.uk](https://crewflow.uk). Email is
+the one live outbound channel; every other external integration is **built
+dark** (code shipped, feature-flag + credential gated, refuses before any
+network fetch) so activation is a config flip, never an engineering project.
 
-Single Next.js 15 application that contains the marketing site, authenticated
-app, API routes, and webhook handlers. Built mobile-first for UK construction
-SMBs (3–50 employees). Deployed on Vercel + Supabase + Stripe.
-
-This repo is the entire product — there is no separate API, mobile app, or
-admin panel in v1. We split when there's a reason; not before.
+> This README describes what is actually deployed. If a doc and the code
+> disagree, the code wins. `__tests__/docs/readme-truth.test.ts` pins the
+> claims below so they cannot silently rot.
 
 ---
 
-## Stack
+## Stack (as deployed)
 
 | Concern | Choice |
 |---|---|
 | Framework | Next.js 15 (App Router) + React 19 + TypeScript |
 | Styling | Tailwind CSS v3 + shadcn/ui |
-| Database | PostgreSQL (Supabase, eu-west-2 London) |
-| Auth | Supabase Auth (magic link + Google) |
-| ORM | Drizzle |
-| Hosting | Vercel (web + serverless API) |
-| Telephony | Twilio (numbers + SMS) + Vapi (AI voice agent) |
-| AI | Anthropic Claude (reasoning), OpenAI Whisper (transcription) |
-| Payments | Stripe (UK) |
-| Email | Resend + React Email |
-| Background jobs | Inngest |
-| Errors | Sentry |
-| Analytics | PostHog (EU instance) |
-| Logs / uptime | BetterStack |
+| Database | PostgreSQL (Supabase, single production project, ~311 tables, RLS on tenant data) |
+| Migrations | Plain SQL files in `supabase/migrations/` (numbered, forward-only) |
+| Auth | Supabase Auth — magic link, Google OAuth, email+password, optional TOTP MFA (Microsoft SSO built dark) |
+| Hosting | Vercel (deploys from `main`) |
+| Email | Resend (live) + React Email templates |
+| Errors | Sentry (live in production) |
+| Tests | Vitest (unit / integration / security tiers) + Playwright (e2e) |
+| Package manager | npm (`package-lock.json` is the lockfile) |
 
-See `/docs` for architecture deep-dives (Vapi flow, schema, onboarding,
-receptionist prompt).
+There is **one** Supabase project — production. There is no second database
+environment. Local development runs the Supabase local stack (Docker);
+integration/e2e CI does the same. Treat every `--linked` command as touching
+production.
+
+Not in the stack (historical fiction, since removed from docs): no ORM
+(queries go through `@supabase/supabase-js` typed against generated
+`lib/supabase/types.ts`), no third-party background-job service (scheduled
+work runs via Vercel cron hitting `CRON_SECRET`-gated routes).
 
 ---
 
-## Prerequisites
-
-- Node.js 20+
-- pnpm 9+ (`npm i -g pnpm`)
-- A Supabase project (staging) — see `docs/03_SUPABASE_SCHEMA.sql`
-- Filled `.env.local` — copy from `.env.example`
-
-## Quick start
+## Local development
 
 ```bash
-pnpm install
-cp .env.example .env.local        # fill in your dev secrets
-pnpm db:generate                  # generate Drizzle types
-pnpm dev                          # http://localhost:3000
+npm install
+npx supabase start           # local Postgres + auth (Docker)
+npm run dev                  # http://localhost:3000
 ```
 
-To run background jobs locally:
+Minimal `.env.local` (no secrets beyond your own local/dev keys):
+
+```
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+NEXT_PUBLIC_SUPABASE_URL=<from `npx supabase start` output>
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<from `npx supabase start` output>
+SUPABASE_SERVICE_ROLE_KEY=<local service role, optional but needed for admin/server paths>
+```
+
+Everything else in `lib/env.ts` is optional and validated with Zod at boot —
+the server fails fast on a malformed variable. Provider keys (Resend, Sentry,
+Stripe, Twilio, …) are unnecessary locally; the dark-feature gates refuse
+before fetch when credentials are absent.
+
+## Tests
+
+Four tiers, each its own CI gate so a failure is attributed correctly:
 
 ```bash
-pnpm dlx inngest-cli@latest dev
+npm run typecheck            # tsc --noEmit
+npm run lint
+npm test                     # unit — mocked, no DB, no network
+npm run test:integration     # real local Postgres (supabase start first)
+npm run test:security        # trust-boundary proofs (real local Postgres)
+npm run test:e2e             # Playwright against a real build + local stack
 ```
 
-To preview transactional emails:
+CI (`.github/workflows/ci.yml` + `security-scan.yml`) runs 6 blocking gates —
+typecheck, lint, unit, integration, security, e2e — plus gitleaks secret
+scanning.
 
-```bash
-pnpm email                        # http://localhost:3001
-```
+## Migration discipline
+
+- Migrations are numbered SQL files in `supabase/migrations/` (currently 387 in
+  the repo; production tip `20261220000000` at the time of writing, with
+  `20261221`–`20261227` pending in the final-roadmap release train — the DB
+  itself, `supabase_migrations.schema_migrations`, is the only authority).
+- **Never take the "next free" prefix from a doc.** Ask the database:
+  `select max(version) from supabase_migrations.schema_migrations;` — claim a
+  prefix above the production tip AND above every in-flight branch slot, and
+  re-check immediately before merging.
+- Migrate-first: apply to production before (or in the same train as) the code
+  merge that depends on it; verify the catalogue (tables/columns), not just the
+  version row.
+- Additive and reversible by default; RLS policies land in the same migration
+  as the table.
+
+## Deploy
+
+Vercel builds and deploys `main` on push. Rollback is instant re-promotion of
+a previous Vercel deployment (code) — database changes are managed separately
+and are designed additive so old code runs safely against new schema. Batch
+work locally and push at milestones; CI is free, Vercel builds are not.
 
 ---
 
-## Project layout
+## Capabilities: LIVE vs DARK vs FUTURE
 
-```
-app/                  Next.js routes (marketing, auth, onboarding, app, api)
-components/           Shared React components (marketing, app, ui)
-db/                   Drizzle schema + migrations
-emails/               React Email templates
-inngest/              Background job functions
-lib/                  Pure utilities (env, format, vat, phone, validators)
-server/               Server-only: auth, ai, telephony, billing, services
-public/               Static assets, OG images, favicon
-styles/               globals.css + tailwind layer
-tests/                Vitest unit + Playwright e2e
-scripts/              Seed, migration helpers, one-off ops
-```
+**LIVE** = deployed and usable in production today. **DARK** = fully built and
+tested, but gated behind a feature flag + missing credential/decision; the code
+refuses before any external fetch. **FUTURE** = not built.
 
-Full conventions are in `docs/02_REPO_STRUCTURE.md`.
+| Capability | Status |
+|---|---|
+| Leads, quotes (approval-gated), jobs, invoicing (void-capable), customer portal | LIVE |
+| CIS: subcontractors, deductions, statements, CIS300 **prepare + CSV export** | LIVE (filing is DARK — HMRC-gated) |
+| Health & safety: RAMS, toolbox talks, permits, sign-off, PDFs | LIVE |
+| Stock, fleet, materials, warehouse (quantity-tier) | LIVE |
+| Payroll: estimates, CSV export, payslips | LIVE (no RTI filing — DARK) |
+| Accounting **CSV export** (canonical mapper) | LIVE |
+| Email (Resend), in-app notifications, offline read + selected offline writes, PWA | LIVE |
+| Public API v1 (key-auth, org-scoped) | DARK (flag) |
+| SMS / WhatsApp / voice receptionist / missed-call handling | DARK (provider creds; not live) |
+| Stripe portal payments + self-serve billing | DARK |
+| Accounting push (Xero/QuickBooks/Sage OAuth) | DARK |
+| HMRC MTD VAT / CIS300 filing / RTI | DARK (prepare-only is live) |
+| Calendar sync, open banking, telematics/GPS, merchants cXML, marketplace | DARK |
+| Enterprise SSO/SCIM, outbound webhooks, web-push, PostHog analytics | DARK |
+| Weather pipeline (Open-Meteo adapter, EOT integration) | DARK |
+| **All generative AI** (quote writer, receptionist turns, HQ narratives, embeddings) | DARK — governed, every tier unbound (`TIER_MODEL` all null); a key alone is refused |
+| Native mobile apps | FUTURE |
 
----
-
-## Environment
-
-Every env var is documented in `.env.example`. The list is also validated at
-boot in `lib/env.ts` via Zod — the server refuses to start with a missing or
-malformed variable, so a misconfigured deploy fails fast at build time rather
-than mysteriously at runtime.
-
-Three environments:
-
-| Env | Branch | Supabase | Stripe | Twilio | Domain |
-|---|---|---|---|---|---|
-| Production | `main` | `crewflow-prod` | live keys | live numbers | `crewflow.uk` |
-| Preview | every PR | `crewflow-staging` | test keys | test numbers | `*.vercel.app` |
-| Local | local dev | `crewflow-staging` | test keys | test numbers | `localhost:3000` |
-
----
-
-## Data model
-
-19 tables across organisations, customers, leads/conversations/calls, voice
-notes, quotes, jobs, invoices, payments, notifications, audit log. Multi-tenant
-via `org_id` on every row, enforced by Postgres Row-Level Security — a bug in
-application code cannot leak data across tenants.
-
-Schema source of truth: `docs/03_SUPABASE_SCHEMA.sql` (run once via Supabase
-SQL editor). All subsequent changes via Drizzle migrations under
-`db/migrations/`.
+The authoritative, evidence-based capability reconciliation is
+[`docs/roadmap/MASTER-ROADMAP-RECONCILIATION.md`](docs/roadmap/MASTER-ROADMAP-RECONCILIATION.md).
 
 ---
 
 ## Working on this codebase
 
-**Branch strategy:** trunk-based. Short-lived feature branches off `main`,
-merge via PR with green CI. No long-running release branches.
+- Trunk-based; short-lived branches off `main`, merge via PR with all gates
+  green. Conventional commits.
+- Any new tenant-data table MUST have `org_id`, an index on it, and RLS
+  policies — and server reads additionally pin `.eq("org_id", activeOrg)`
+  (RLS spans every org a user belongs to; the active-org pin is what prevents
+  cross-org blending).
+- Secrets never enter the repo (gitleaks blocks CI), chat, or screenshots.
 
-**Commits:** conventional commits (`feat:`, `fix:`, `chore:`, `refactor:`,
-`docs:`).
+## Pointers
 
-**Reviewing:** every PR needs CI green (typecheck + lint + tests) and at least
-one approval. UI changes attach a screenshot or short Loom.
-
-**RLS rule:** any new table holding tenant data MUST have `org_id`, an index
-on it, and RLS policies. PR template will remind you.
-
-**Secrets:** never in the repo, never in chat, never in screenshots. Vercel
-env vars are the deploy-time source; 1Password is the canonical store.
-
----
-
-## Pricing tiers (in code: `lib/plans.ts`)
-
-| Tier | Price | Seats | AI receptionist | Missed-call SMS | Voice notes | WhatsApp |
-|---|---|---|---|---|---|---|
-| Starter | £149/mo | 1 | ✓ | — | — | — |
-| Pro ⭐ | £249/mo | 5 | ✓ | ✓ | ✓ | ✓ |
-| Scale | £399/mo | 15 | ✓ + custom voice | ✓ | ✓ | ✓ |
-
-First 25 NI contractors get Pro free for 6 months.
+- Roadmap truth: [`docs/roadmap/MASTER-ROADMAP-RECONCILIATION.md`](docs/roadmap/MASTER-ROADMAP-RECONCILIATION.md) (canonical) + [`docs/roadmap/STATUS.md`](docs/roadmap/STATUS.md) (programme history)
+- Security model: [`docs/SECURITY.md`](docs/SECURITY.md)
+- Customer success runbooks: [`docs/customer-success/`](docs/customer-success/) (onboarding + support/incident drills)
+- Backup & recovery: [`docs/backup-recovery-runbook.md`](docs/backup-recovery-runbook.md)
+- AI governance: [`docs/ai-quote-writer.md`](docs/ai-quote-writer.md) + `lib/ai/governor/`
 
 ---
 
-## Tagline & positioning (do not change without product sign-off)
-
-- **Primary:** Never miss another construction lead.
-- **Secondary:** AI receptionist + quotes for construction companies.
-
-**Do NOT use** "operating system", "platform", "enterprise", or any of the
-banned words listed in `docs/05_LANDING_PAGE_COPY.md` § Copy lints.
-
----
-
-## Links
-
-- Production: https://crewflow.uk
-- Status: https://status.crewflow.uk (BetterStack)
-- Issue tracker: GitHub Issues on this repo
-- Docs: `/docs` folder + Notion (private)
-
----
-
-© 2026 CrewFlow. Built in Belfast.
+Production: https://crewflow.uk — © 2026 CrewFlow. Built in Belfast.

@@ -5,6 +5,7 @@ import { AddStaffButton, InviteStaffModal } from "./_invite-modal";
 import { PendingInvites } from "./_pending-invites";
 import { listPendingInvites } from "./_invites";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 
 /**
  * Staff list page.
@@ -170,81 +171,90 @@ export default async function StaffPage({
       ) : null}
 
 
-      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-6 py-2">Name</th>
-                <th className="px-6 py-2">Email</th>
-                <th className="px-6 py-2">Role</th>
-                <th className="px-6 py-2">Type</th>
-                {/* Pay is self-or-admin (20261218): for a non-admin the column
-                    would show only their own row and "—" for everyone else,
-                    reading as broken data. Hide it entirely — own pay lives on
-                    /me and the self detail page. */}
-                {isAdmin ? <th className="px-6 py-2 text-right">Hourly</th> : null}
-                <th className="px-6 py-2">Since</th>
-                <th className="px-6 py-2" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {members.length === 0 ? (
-                <tr>
-                  <td colSpan={isAdmin ? 7 : 6} className="px-6 py-10 text-center text-sm text-slate-500">
-                    <p className="font-medium text-slate-700">No members yet.</p>
-                    {isAdmin ? (
-                      <p className="mt-2">
-                        Use the{" "}
-                        <strong className="text-slate-900">+ Add staff</strong>{" "}
-                        button above to invite your first teammate.
-                      </p>
-                    ) : (
-                      <p className="mt-2">
-                        Ask an owner or admin to invite you.
-                      </p>
-                    )}
-                  </td>
-                </tr>
-              ) : (
-                members.map((m) => (
-                  <tr key={m.user_id}>
-                    <td className="px-6 py-2 text-slate-900">
-                      <Link href={`/staff/${m.user_id}`} className="font-medium hover:underline">
-                        {m.user?.full_name ?? "—"}
-                      </Link>
-                    </td>
-                    <td className="px-6 py-2 text-slate-600">{m.user?.email}</td>
-                    <td className="px-6 py-2">
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${ROLE_STYLES[m.role] ?? ROLE_STYLES.staff}`}
-                      >
-                        {m.role}
-                      </span>
-                    </td>
-                    <td className="px-6 py-2 text-slate-600">{m.user?.employment_type ?? "—"}</td>
-                    {isAdmin ? (
-                      <td className="px-6 py-2 text-right text-slate-600">
-                        {payByUser.has(m.user_id)
-                          ? `£${payByUser.get(m.user_id)!.toFixed(2)}`
-                          : "—"}
-                      </td>
-                    ) : null}
-                    <td className="px-6 py-2 text-slate-600">{m.user?.start_date ?? "—"}</td>
-                    <td className="px-6 py-2 text-right">
-                      <Link href={`/staff/${m.user_id}`} className="text-xs text-slate-500 hover:text-slate-900">
-                        {/* Non-admins land on a read-only detail page — don't
-                            promise an edit they can't perform. */}
-                        {isAdmin ? "Edit →" : "View →"}
-                      </Link>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      {/* Canonical DataTable (roadmap G3): sticky header + client-side sorting
+          over the loaded roster + roving keyboard row navigation. Selection is
+          deliberately INERT here — checkboxes with no bulk actions (none are
+          non-destructive for a staff roster), so nothing bulk-destructive can
+          ship by default. */}
+      <DataTable
+        label="Staff"
+        columns={
+          [
+            { key: "name", header: "Name", sortable: "text", cellClassName: "text-slate-900" },
+            { key: "email", header: "Email", sortable: "text", cellClassName: "text-slate-600" },
+            { key: "role", header: "Role", sortable: "text" },
+            { key: "type", header: "Type", cellClassName: "text-slate-600" },
+            // Pay is self-or-admin (20261218): for a non-admin the column
+            // would show only their own row and "—" for everyone else,
+            // reading as broken data. Hide it entirely — own pay lives on
+            // /me and the self detail page.
+            ...(isAdmin
+              ? [{ key: "hourly", header: "Hourly", sortable: "number", numeric: true, cellClassName: "text-slate-600" } as DataTableColumn]
+              : []),
+            { key: "since", header: "Since", sortable: "date", cellClassName: "text-slate-600" },
+            { key: "open", header: "", cellClassName: "text-right" },
+          ] satisfies DataTableColumn[]
+        }
+        className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+        stickyHeader
+        selectable
+        empty={
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white px-6 py-10 text-center text-sm text-slate-500 shadow-sm">
+            <p className="font-medium text-slate-700">No members yet.</p>
+            {isAdmin ? (
+              <p className="mt-2">
+                Use the{" "}
+                <strong className="text-slate-900">+ Add staff</strong>{" "}
+                button above to invite your first teammate.
+              </p>
+            ) : (
+              <p className="mt-2">
+                Ask an owner or admin to invite you.
+              </p>
+            )}
+          </div>
+        }
+        rows={members.map((m) => ({
+          id: m.user_id,
+          href: `/staff/${m.user_id}`,
+          selectLabel: `Select ${m.user?.full_name ?? m.user?.email ?? m.user_id}`,
+          filterText: `${m.user?.full_name ?? ""} ${m.user?.email ?? ""} ${m.role} ${m.user?.employment_type ?? ""}`,
+          sortValues: {
+            name: m.user?.full_name ?? null,
+            email: m.user?.email ?? null,
+            role: m.role,
+            hourly: payByUser.get(m.user_id) ?? null,
+            since: m.user?.start_date ?? null,
+          },
+          cells: {
+            name: (
+              <Link href={`/staff/${m.user_id}`} className="font-medium hover:underline">
+                {m.user?.full_name ?? "—"}
+              </Link>
+            ),
+            email: m.user?.email,
+            role: (
+              <span
+                className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${ROLE_STYLES[m.role] ?? ROLE_STYLES.staff}`}
+              >
+                {m.role}
+              </span>
+            ),
+            type: m.user?.employment_type ?? "—",
+            hourly: payByUser.has(m.user_id)
+              ? `£${payByUser.get(m.user_id)!.toFixed(2)}`
+              : "—",
+            since: m.user?.start_date ?? "—",
+            open: (
+              <Link href={`/staff/${m.user_id}`} className="text-xs text-slate-500 hover:text-slate-900">
+                {/* Non-admins land on a read-only detail page — don't
+                    promise an edit they can't perform. */}
+                {isAdmin ? "Edit →" : "View →"}
+              </Link>
+            ),
+          },
+        }))}
+      />
 
       {isAdmin ? <PendingInvites invites={pendingInvites} /> : null}
 

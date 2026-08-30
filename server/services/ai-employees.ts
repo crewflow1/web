@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listAdminActivity, type AdminActivityRow } from "@/server/services/hq-audit";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { listRecentApprovalsByEmployee } from "@/server/services/hq-approvals";
 import {
   type AiEmployee,
   type AiEmployeeTask,
@@ -11,6 +12,17 @@ import {
   deriveApprovalLevel,
   type ApprovalLevelResult,
 } from "@/lib/ai-employees/approval-levels";
+import {
+  mergeInteractionFeed,
+  type FeedApprovalRow,
+  type FeedTaskRow,
+  type InteractionItem,
+} from "@/lib/ai-employees/interaction-feed";
+import {
+  foldRecommendations,
+  type RecommendationItem,
+  type RecommendationTaskRow,
+} from "@/lib/ai-employees/recommendations";
 import { resolveServedAuthority } from "@/server/sdk/registry-parity";
 
 /**
@@ -46,6 +58,8 @@ const EMPLOYEE_COLUMNS = [
   "memory_scope",
   "current_task",
   "last_activity_at",
+  "manager_slug",
+  "retired_at",
   "sort_order",
   "created_at",
   "updated_at",
@@ -165,4 +179,111 @@ export async function loadAiEmployeeBySlug(
   const activity = await listAdminActivity("ai_employees", employee.id, 50);
 
   return { employee, tasks, memory, activity };
+}
+
+// ---------------------------------------------------------------------
+// Interaction feed — the employee's real conversation with the company
+// (contract item 5). See lib/ai-employees/interaction-feed.ts for why this
+// is a merged feed of stored rows rather than a chat transcript: no chat UI
+// exists for a literal conversation, so the honest history IS the employee's
+// engine tasks (hq_ai_tasks), the humans' config decisions about it
+// (admin_activity_log), and the approvals it raised (hq_approvals).
+// ---------------------------------------------------------------------
+
+export type { InteractionItem } from "@/lib/ai-employees/interaction-feed";
+
+const FEED_SOURCE_LIMIT = 50;
+
+/**
+ * The merged, newest-first interaction feed for one employee. Service-role
+ * reads (all three sources are HQ-only tables); callers must already be behind
+ * the super-admin gate. Read failures on a SINGLE source degrade that source to
+ * empty with a loud log rather than blanking the whole feed — the feed is a
+ * display surface, and two honest streams beat zero.
+ */
+export async function getEmployeeInteractionFeed(
+  slug: string,
+): Promise<InteractionItem[]> {
+  const admin = createAdminClient();
+
+  const { data: empRaw, error: empError } = await admin
+    .from("ai_employees" as never)
+    .select("id")
+    .eq("slug", slug)
+    .maybeSingle();
+  if (empError) throw readFailure("ai-employees: feed employee", empError);
+  const employeeId = (empRaw as unknown as { id: string } | null)?.id;
+  if (!employeeId) return [];
+
+  const [taskRes, approvalRes, activity] = await Promise.all([
+    admin
+      .from("hq_ai_tasks" as never)
+      .select("id, task_type, status, result, error_message, created_at, finished_at")
+      .eq("assigned_employee_id", employeeId)
+      .order("created_at", { ascending: false })
+      .limit(FEED_SOURCE_LIMIT),
+    // Approvals go through the sanctioned hq-approvals door (single-module pin)
+    // rather than a direct hq_approvals read.
+    listRecentApprovalsByEmployee(employeeId, FEED_SOURCE_LIMIT),
+    listAdminActivity("ai_employees", employeeId, FEED_SOURCE_LIMIT),
+  ]);
+
+  if (taskRes.error) {
+    console.error("[ai-employees] interaction feed: task read failed", taskRes.error);
+  }
+  if (approvalRes.error) {
+    console.error("[ai-employees] interaction feed: approval read failed", approvalRes.error);
+  }
+
+  return mergeInteractionFeed(
+    (taskRes.data ?? []) as unknown as FeedTaskRow[],
+    activity,
+    (approvalRes.data ?? []) as unknown as FeedApprovalRow[],
+  );
+}
+
+// ---------------------------------------------------------------------
+// Recommendations — the proposals the employee's completed work carries
+// (contract item: Recommendations). See lib/ai-employees/recommendations.ts
+// for why this is a derived fold over stored task results rather than a
+// table: every recommendation a runner actually made is already persisted in
+// the task `result` jsonb (envelope actions/alternatives, exec-review
+// findings, qualification verdicts, research sales-prep briefs).
+// ---------------------------------------------------------------------
+
+export type { RecommendationItem } from "@/lib/ai-employees/recommendations";
+
+/**
+ * The recommendations folded from one employee's recent COMPLETED tasks,
+ * newest first. Service-role read (hq_ai_tasks is HQ-only); callers must
+ * already be behind the super-admin gate. Bounded recent sample, same limit as
+ * the interaction feed — this is a "recent recommendations" display, not a
+ * complete-set count. Unlike the feed there is only ONE source here, so a read
+ * failure THROWS (loud-read doctrine): degrading the sole source to empty
+ * would render an honest-looking "no recommendations" over a broken read.
+ */
+export async function getEmployeeRecommendations(
+  slug: string,
+): Promise<RecommendationItem[]> {
+  const admin = createAdminClient();
+
+  const { data: empRaw, error: empError } = await admin
+    .from("ai_employees" as never)
+    .select("id")
+    .eq("slug", slug)
+    .maybeSingle();
+  if (empError) throw readFailure("ai-employees: recommendations employee", empError);
+  const employeeId = (empRaw as unknown as { id: string } | null)?.id;
+  if (!employeeId) return [];
+
+  const { data, error } = await admin
+    .from("hq_ai_tasks" as never)
+    .select("id, task_type, result, created_at, finished_at")
+    .eq("assigned_employee_id", employeeId)
+    .eq("status", "completed")
+    .order("created_at", { ascending: false })
+    .limit(FEED_SOURCE_LIMIT);
+  if (error) throw readFailure("ai-employees: recommendations tasks", error);
+
+  return foldRecommendations((data ?? []) as unknown as RecommendationTaskRow[]);
 }

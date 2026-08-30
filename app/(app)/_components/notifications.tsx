@@ -95,6 +95,18 @@ export function NotificationsBell({ initial }: { initial: Notification[] }) {
               ))}
             </ul>
           )}
+          {/* Footer — the door into the FULL notification centre. The dropdown
+              only shows the 15 most recent; /notifications is the complete,
+              paginated per-user history (previously live but orphaned). */}
+          <div className="border-t border-slate-200 bg-slate-50 px-3 py-2 text-center">
+            <Link
+              href="/notifications"
+              className="text-xs font-medium text-slate-700 hover:text-slate-900"
+              onClick={() => setOpen(false)}
+            >
+              View all notifications →
+            </Link>
+          </div>
         </div>
       ) : null}
     </div>

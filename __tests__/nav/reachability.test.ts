@@ -22,7 +22,9 @@ import { buildCommands } from "@/app/(app)/_nav/commands";
 const ROOT = resolve(__dirname, "../..");
 
 // Capabilities that intentionally have no nav home (see reachability-current.md).
-const INTENTIONAL_ORPHANS = ["/marketplace", "/qa", "/a/"];
+// /marketplace left this list when it gained a FLAG-CONDITIONAL nav entry
+// (hidden while FEATURE_MARKETPLACE is dark — see __tests__/ui/reachability.test.ts).
+const INTENTIONAL_ORPHANS = ["/qa", "/a/"];
 
 // Every primary/child destination the model exposes to anyone.
 const HREFS = new Set(allNavHrefs());
@@ -183,7 +185,8 @@ describe("no orphaned page.tsx routes outside the intentional set", () => {
     const modelledTop = new Set(
       [...HREFS].map((h) => "/" + h.split("/")[1]),
     );
-    const intentional = new Set(["marketplace", "qa", "a", "onboarding", "activity", "notifications", "materials"]);
+    // marketplace + notifications graduated into the nav model (L7 pack).
+    const intentional = new Set(["qa", "a", "onboarding", "activity", "materials"]);
     const orphans = segments.filter((s) => {
       const top = "/" + s;
       return !modelledTop.has(top) && !intentional.has(s);

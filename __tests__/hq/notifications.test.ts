@@ -605,7 +605,11 @@ describe("notifications service", () => {
 
   it("writes BOTH new and legacy column names so existing NotificationsBell keeps working", () => {
     expect(SVC).toMatch(/related_table: input\.source_module/);
-    expect(SVC).toMatch(/related_id: input\.source_id/);
+    // related_id is uuid-typed; the mirror goes through uuidOrNull — a
+    // verbatim text mirror made Postgres reject the ENTIRE insert for any
+    // slug source_id (how milestone notifications silently never landed).
+    // See __tests__/notifications/related-id-uuid-mirror.test.ts.
+    expect(SVC).toMatch(/related_id: uuidOrNull\(input\.source_id\)/);
   });
 });
 

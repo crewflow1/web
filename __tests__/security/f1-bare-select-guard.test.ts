@@ -243,6 +243,10 @@ const HIGH_VALUE_TABLES = new Set<string>([
 
 // "file:line" → reason. Keep tight; every entry is a documented smell.
 const ALLOWLIST: Record<string, string> = {
+  // R088 lead-sourcing dedupe — per-run id-batch probe (see the limit-clamp
+  // guard's twin entry).
+  "server/services/hq-lead-sourcing-runner.ts:195":
+    "id-batch dedupe probe: which of THIS RUN's candidate company numbers already exist — .in('companies_house_number', numbers) where numbers is the sourcing batch (SOURCING_BATCH_MAX=10 per run), so the set is structurally bounded by the IN-list, never a scan; the .limit(1000) is the honest-bound clamp. Completeness holds per batch: an unknown number inserts via the sanctioned createCompany door, a known one skips.",
   // Surfaced only once the guard learned to see the `table()` `.from`-wrapper
   // indirection (below). The read is GENUINELY BOUNDED, just not in a way the
   // static analyser can see: `.in("id", idsChunk)` where `idsChunk` is
@@ -303,8 +307,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: jobs name lookup CHUNKED .in('id', idsChunk) where each chunk is ≤JOB_IN_CHUNK=500 unique PKs — jobs.id is unique so a chunk yields ≤500 rows. The blueprints register above is fully PAGED (listBlueprintsForOrg → fetchAllRows), so the job-id set can exceed 500; the lookup is chunked to stay below the cap. Same class as site-reports/page.tsx:111.",
   "app/(app)/toolbox/page.tsx:89":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the toolbox register (.limit(500)) — ≤500 unique PKs",
-  "app/(app)/jobs/page.tsx:136":
-    "bounded: the 'Today's jobs' panel query — one org × one calendar day (.eq('scheduled_date', todayIso)), a handful of rows, never near the cap. The paginated list query above it is windowed via .range().",
+  "app/(app)/jobs/page.tsx:147":
+    "bounded: the 'Today's jobs' panel query — one org × one calendar day (.eq('scheduled_date', todayIso)), a handful of rows, never near the cap. The paginated list query above it is windowed via .range(). Moved 136→147 in the final-roadmap wave (DataTable adoption) — pure shift, same read.",
   "app/(app)/leads/page.tsx:60":
     "paged: the pipeline read IS complete — executed via fetchAllRows((from,to) => query.range(from,to)) at the bottom of the fn; the builder pattern places the .range terminator beyond the static region window, so the analyser can't see it. (Line moved 51→57 when the lead-score band imports were added above this read; reason unchanged.)",
 
@@ -316,8 +320,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE job's retention releases (.eq('job_id').eq('org_id')) — feeds the committed/forecast retention figure for a single job; retention is released in 1-2 tranches per job, never near 1000. (Org-pinned per C66-A's cross-org money-injection fix. Moved to 186 in the security closeout when the staff-redirect guard was added to the top of the page.)",
   "app/(app)/jobs/[id]/commercial/page.tsx:191":
     "bounded: ONE job's purchase orders (.eq('job_id')) — feeds the committed-costs tile for a single job; a job has a handful to dozens of POs, never near 1000. (Moved to 191 in the security closeout when the staff-redirect guard was added above.)",
-  "app/(app)/jobs/[id]/page.tsx:336":
-    "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap. (Moved 315→317 when the P3 span column + checklist import were added above it; then 317→330 when the stock-COGS wave added an import line + the loadStockCogsCostRows composition block above it.)",
+  "app/(app)/jobs/[id]/page.tsx:337":
+    "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap. (Moved 315→317 when the P3 span column + checklist import were added above it; then 317→330 when the stock-COGS wave added an import line + the loadStockCogsCostRows composition block above it; then 330→337 when the G2 variation-request panel import was added above it.)",
   "app/(app)/jobs/retention-actions.ts:163":
     "bounded: ONE job's invoices (.eq('job_id')) — folded into the retention position for a single job; a job's invoices are a handful",
   "app/(app)/purchase-orders/[id]/page.tsx:161":
@@ -348,8 +352,8 @@ const ALLOWLIST: Record<string, string> = {
   // NOT A READ: `.from('notifications').insert(payload).select(ALL_COLS)` — an
   // INSERT…RETURNING. The returned set is bounded by the payload it just wrote,
   // so it cannot truncate; it trips only because the region carries `.select(`.
-  "server/services/notifications-service.ts:144":
-    "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read. (Line moved to 144 as the R4 push/notification-channel branch shifted surrounding lines.)",
+  "server/services/notifications-service.ts:159":
+    "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read. (Line moved to 144 as the R4 push/notification-channel branch shifted surrounding lines.) Moved 144→159 when the uuidOrNull helper block was added above it — pure shift, same INSERT…RETURNING.",
   "lib/notifications/push.ts:533":
     "bounded: `.from('notifications').select(...).in('id', ids)` where ids is the batch drawn from the just-claimed push_deliveries drain (≤ PUSH_DRAIN_BATCH_SIZE < 1000) — an id-keyed hydrate of an already-bounded set, not a completeness-sensitive scan. Same class as cis-statements.ts:169.",
   "lib/notifications/sms.ts:524":
@@ -388,7 +392,7 @@ const ALLOWLIST: Record<string, string> = {
   "app/(app)/invoices/[id]/page.tsx:135":
     "bounded: ONE invoice's payments (.eq('invoice_id', id)) — the payment ledger for a single invoice folded into paidTotal; a single invoice has a handful of payments, never near 1000",
   "app/admin/billing/actions.ts:160":
-    "not a read: `untypedAdminTable('billing_invoices').insert(insert).select('id')` — INSERT…RETURNING, bounded by the inserted row, cannot truncate a read; flagged only because the statement carries `.select(`. Same class as notifications-service.ts:140.",
+    "not a read: `untypedAdminTable('billing_invoices').insert(insert).select('id')` — INSERT…RETURNING, bounded by the inserted row, cannot truncate a read; flagged only because the statement carries `.select(`. Same class as notifications-service.ts:159.",
   "server/services/bank-sync.ts:699":
     "bounded: chunked dedupe read .in('provider_tx_id', batch) where batch = providerTxIds.slice(i, i+DEDUPE_IN_CHUNK) — each call returns ≤ DEDUPE_IN_CHUNK rows, well below the 1000 cap. Same class as cis-statements.ts:169.",
 
@@ -412,8 +416,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE org's members (.eq('org_id')) — the settings team panel; bounded by the org's headcount, never near 1000 (line moved 76→77 when the FlatRateSettings import was added; moved 77→80 when the i18n-wave getRequestI18n helper + its comment replaced the bare requireOrgContext call)",
   "app/(app)/staff/leave/page.tsx:97":
     "bounded: ONE org's members (.eq('org_id')) — the leave-page name lookup; bounded by the org's headcount (line moved 96→97 when the getHolidayBalanceForUser import was added for the holiday-balance card)",
-  "app/(app)/staff/page.tsx:55":
-    "bounded: ONE org's members (.eq('org_id')) — the staff register; bounded by the org's headcount. (Line moved to 55 in the security closeout when hourly_pay was dropped from the users embed — pay now reads from staff_compensation below.)",
+  "app/(app)/staff/page.tsx:56":
+    "bounded: ONE org's members (.eq('org_id')) — the staff register; bounded by the org's headcount. (Line moved to 55 in the security closeout when hourly_pay was dropped from the users embed — pay now reads from staff_compensation below; moved 55→56 when the DataTable import was added for the G3 canonical-table adoption.)",
   "app/(app)/staff/rota/page.tsx:112":
     "bounded: ONE org's members (.eq('org_id')) — the rota staff list + assign-form labels; bounded by the org's headcount",
   "app/customer-portal/_warranties.ts:133":
@@ -436,10 +440,10 @@ const ALLOWLIST: Record<string, string> = {
   //    these files are the paged pipeline / count reads, not these lookups.
   "server/services/hq-outreach.ts:786":
     "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentOutreachRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 757→786 when ctx.memory recall/remember wiring was added to the runner.)",
-  "server/services/hq-qualification.ts:867":
-    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentQualificationRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 830→867 when ctx.memory recall/remember wiring was added to the runner.)",
-  "server/services/hq-research.ts:1555":
-    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentResearchRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 1517→1555 when ctx.memory recall/remember wiring was added to the runner.)",
+  "server/services/hq-qualification.ts:928":
+    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentQualificationRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 867→928 when P3 threaded the recall into the artifact's memory_context.)",
+  "server/services/hq-research.ts:1579":
+    "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentResearchRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 1555→1579 when P3 threaded the recall into the artifact's memory_context.)",
 };
 
 function walk(dir: string, out: string[]): void {
@@ -1134,6 +1138,16 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   staff_compensation:
     "id-batch: every set-read is .in('user_id', memberIds) from an org-pinned memberships read (bounded by headcount); single-row reads use .maybeSingle()",
   // ---- PAGED (always fetchAllRows) ----
+  // Final-roadmap Wave 2 — per-employee KPI window reads (verified 2026-08-29):
+  // ai_invocations has exactly ONE set-read (server/services/ai-employee-stats.ts
+  // ::getEmployeeKpis cost window) and it is fetchAllRows-PAGED over a closed
+  // one-month window (.gte/.lt created_at, stable created_at+id ordering) with a
+  // LOUD readFailure throw — never a clamped sample, never a silent zero.
+  ai_invocations:
+    "PAGED: fetchAllRows over the closed UK-month window (ai-employee-stats KPI cost read); loud readFailure on error",
+  // (hq_approvals has NO entry here: its only reads live inside the sanctioned
+  // server/services/hq-approvals.ts module — the hq-approval-console pin — via
+  // the typed approvals<T>() door, so the scanner finds no bare set-read.)
   // MP Wave R4 — comms outbound-audit view (server/services/outbound-audit.ts):
   // each source read is org-pinned (.eq('org_id')) and F-1 PAGED via fetchAllRows.
   comm_events: "PAGED: fetchAllRows, org-pinned (outbound-audit unified view)",
@@ -1158,6 +1172,18 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   whatsapp_assistant_actions: "PAGED: fetchAllRows, org-pinned pending-review queue",
   accounting_pushed_entities: "PAGED: fetchAllRows (accounting-export ledger reconcile read)",
   activity_log: "PAGED: fetchAllRows on every read (activity feed, dashboard tile, AI aggregates)",
+  // L9a / P10 — Documentation AI release-notes composition
+  // (server/services/hq-documentation-runner.ts, readReleaseWindow). The ONLY
+  // set-read on each of these two append-only ledgers is F-1 PAGED via
+  // fetchAllRows over a 14-day `.gte` window on a stable id order, so the
+  // composed grouped counts are COMPLETE for the window — never a clamp-capped
+  // aggregate. hq_decisions is deliberately NOT read here: the runner goes
+  // through the sanctioned decision service (hq-decisions.ts), which owns every
+  // .from on its tables.
+  admin_activity_log:
+    "PAGED: fetchAllRows over a 14-day gte window, stable id order (release-notes composition — the grouped counts must be complete for the window)",
+  hq_events:
+    "PAGED: fetchAllRows over a 14-day gte window, stable id order (release-notes composition — the grouped counts must be complete for the window)",
   retention_policies:
     "PER-ORG config + PAGED cron read. The settings page read (app/(app)/settings/data-retention/page.tsx) is .eq('org_id') over a per-org config set bounded at the ~10-entry purgeable allowlist (one row per (org,table) via the unique constraint). The cron's cross-org read (server/services/retention-purge.ts, runRetentionPurge) is F-1 PAGED via fetchAllRows on a stable id order, so it can never truncate and skip an org's enabled policy.",
   retention_purge_log:
@@ -1357,6 +1383,12 @@ const COVERAGE_REVIEWED: Record<string, string> = {
     "CURATED CATALOGUE + PER-PARENT: the discovery read (app/(app)/marketplace/page.tsx) is the approved-app catalogue .eq('status','approved') — a small curated global set displayed for browse, not tenant data, not an aggregate/count/estate scan; the developer-console read (settings/marketplace/page.tsx) is .eq('partner_id') over ONE org's own listings (a handful). Neither is completeness-sensitive.",
   marketplace_installs:
     "PER-ORG config: the discovery read (app/(app)/marketplace/page.tsx) is the org's live installs .eq('org_id').eq('status','active') — config-scale (a firm installs a handful of apps), rendered as an installed-badge map; never summed or scanned cross-tenant.",
+  // ---- Variation-request intake (G2, 20261221) ----
+  // Reviewed 2026-08-29: no TS read of this table sums, counts or feeds a
+  // completeness-sensitive decision — state integrity lives in the DB trigger
+  // (tg_variation_requests_guard), and the convert stamp is an id-pinned UPDATE.
+  variation_requests:
+    "PER-PARENT recent-N displays only. The job-workspace panel (app/(app)/jobs/[id]/_variation-request-panel.tsx) reads ONE job's requests .eq('org_id').eq('job_id') newest-first .limit(PANEL_LIMIT+1) with an explicit '+' overflow indicator — a working-queue display, not an aggregate. The portal read-back (app/customer-portal/[token]/requests/_variation-requests.ts) is .eq('org_id').in('job_id', ids) where the id set comes from a fetchAllRows-paged org+customer-pinned jobs read, .limit(50) recent display. The variations/new prefill is .maybeSingle(); the convert stamp is an .update().eq(id/org/job/status) RETURNING. Nothing is summed cross-tenant.",
 };
 
 /** Tables with at least one SET read in ONE file's (raw) source — the per-source

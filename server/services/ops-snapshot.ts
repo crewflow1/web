@@ -1,6 +1,14 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows } from "@/lib/supabase/paginate";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { getEmailQueueStats } from "@/server/services/notification-email-queue-stats";
+import {
+  CRON_ROUTES,
+  cronFamily,
+  type CronFamily,
+  type CronRouteName,
+} from "@/lib/ops/cron-routes";
 
 /**
  * /admin/ops snapshot — system health pull.
@@ -11,19 +19,14 @@ import { getEmailQueueStats } from "@/server/services/notification-email-queue-s
  *
  * Env reporting is presence-only (does the env var exist?). We never
  * echo the value — the directive's "do not expose secrets" rule.
+ *
+ * Cron coverage is DERIVED from vercel.json via lib/ops/cron-routes —
+ * every scheduled cron is monitored here; a hard-coded roster is the
+ * drift bug this replaced (8 tracked while vercel.json had 45).
  */
 
-export const CRON_ROUTES = [
-  "alerts-poll",
-  "notifications-drain",
-  "health-recompute",
-  "invoice-reminders",
-  "quote-followup",
-  "lead-followups",
-  "compliance-expiry",
-  "review-requests",
-] as const;
-export type CronRouteName = (typeof CRON_ROUTES)[number];
+export { CRON_ROUTES };
+export type { CronRouteName };
 
 export type EnvVarStatus = {
   name: string;
@@ -37,6 +40,8 @@ export type EnvVarStatus = {
 
 export type CronRouteHealth = {
   route: CronRouteName;
+  /** Readability grouping for the ops panel (drains/syncs/hq/maintenance). */
+  family: CronFamily;
   /** Most recent run timestamp, regardless of ok/fail. */
   last_run_at: string | null;
   /** Most recent SUCCESSFUL run timestamp. */
@@ -70,6 +75,12 @@ export type OpsSnapshot = {
   email: Awaited<ReturnType<typeof getEmailQueueStats>>;
   crons: ReadonlyArray<CronRouteHealth>;
   recent_failures: ReadonlyArray<RecentCronFailure>;
+  /**
+   * Optional deep link to the Sentry project dashboard, from the
+   * SENTRY_DASHBOARD_URL env var. A plain URL — not a secret — rendered
+   * as a link on /admin/ops when set; null when unset.
+   */
+  sentry_url: string | null;
 };
 
 /**
@@ -151,9 +162,9 @@ type CronRunRow = {
 };
 
 /**
- * Pull cron_runs telemetry for all 5 routes in batched form. One
- * query for the recent-rolling stats, one for the most-recent row
- * per route, one for the recent-failures list.
+ * Pull cron_runs telemetry for EVERY scheduled route in batched form:
+ * one 7-day window query serves the rolling stats, the most-recent-run
+ * flags, and the recent-failures list for the whole roster.
  */
 async function readCronHealth(
   admin: ReturnType<typeof createAdminClient>,
@@ -164,10 +175,14 @@ async function readCronHealth(
   type CronTable = {
     select: (cols: string) => {
       gte: (k: string, v: string) => {
-        order: (k: string, opts: { ascending: boolean }) => Promise<{
-          data: CronRunRow[] | null;
-          error: { message: string } | null;
-        }>;
+        order: (k: string, opts: { ascending: boolean }) => {
+          order: (k2: string, opts2: { ascending: boolean }) => {
+            range: (from: number, to: number) => Promise<{
+              data: CronRunRow[] | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
       };
       in: (k: string, v: ReadonlyArray<string>) => {
         order: (k: string, opts: { ascending: boolean }) => {
@@ -194,12 +209,29 @@ async function readCronHealth(
     Date.now() - 7 * 86_400_000,
   ).toISOString();
 
-  // Pull the last 7 days of runs — cheap and gives us rolling stats.
-  const recent7Res = await tbl
-    .select("id, route, started_at, completed_at, ok, error_message, duration_ms")
-    .gte("started_at", sevenDaysAgo)
-    .order("started_at", { ascending: false });
-  const recent7 = recent7Res.data ?? [];
+  // Pull the last 7 days of runs, F-1 PAGED to the FULL window (fetchAllRows,
+  // stable started_at+id ordering). The previous bare read was silently
+  // clamped to PostgREST's 1000-row cap — 45 routes over 7 days exceed that
+  // easily, so runs_7d, failure counts and last-ok flags were computed over
+  // roughly the newest day and were WRONG for most of the roster. LOUD on
+  // failure: an ops panel rendering healthy zeros over a broken read is
+  // fabricated health.
+  const recent7Res = await fetchAllRows<CronRunRow>(
+    (from, to) =>
+      tbl
+        .select("id, route, started_at, completed_at, ok, error_message, duration_ms")
+        .gte("started_at", sevenDaysAgo)
+        .order("started_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: CronRunRow[] | null;
+        error: unknown;
+      }>,
+  );
+  if (recent7Res.error) {
+    throw readFailure("ops-snapshot: cron_runs 7d window", recent7Res.error);
+  }
+  const recent7 = recent7Res.data;
 
   const per_route: CronRouteHealth[] = CRON_ROUTES.map((route) => {
     const runs = recent7.filter((r) => r.route === route);
@@ -207,6 +239,7 @@ async function readCronHealth(
     const latestOk = runs.find((r) => r.ok === true) ?? null;
     return {
       route,
+      family: cronFamily(route),
       last_run_at: latest?.started_at ?? null,
       last_ok_at: latestOk?.started_at ?? null,
       last_ok: latest?.ok ?? null,
@@ -258,11 +291,17 @@ export async function buildOpsSnapshot(): Promise<OpsSnapshot> {
     status = "amber";
     const reasons: string[] = [];
     if (anyCronFailing) {
-      const list = cronHealth.per_route
-        .filter((c) => c.failures_7d > 0)
+      // Cap the inline roster — with 45 monitored crons an incident could
+      // otherwise turn the one-line summary into a paragraph. The full
+      // detail is always in the table below.
+      const failing = cronHealth.per_route.filter((c) => c.failures_7d > 0);
+      const shown = failing
+        .slice(0, 6)
         .map((c) => `${c.route} (${c.failures_7d} fail)`)
         .join(", ");
-      reasons.push(`cron failures in last 7d: ${list}`);
+      const more =
+        failing.length > 6 ? ` + ${failing.length - 6} more` : "";
+      reasons.push(`cron failures in last 7d: ${shown}${more}`);
     }
     if (emailBacklog) {
       reasons.push(
@@ -275,6 +314,10 @@ export async function buildOpsSnapshot(): Promise<OpsSnapshot> {
     summary = "All systems nominal.";
   }
 
+  // Sentry deep link — a dashboard URL, never a DSN/secret. Presence-only
+  // gating: unset ⇒ null ⇒ the page renders nothing.
+  const sentryUrl = process.env.SENTRY_DASHBOARD_URL;
+
   return {
     status,
     summary,
@@ -282,5 +325,9 @@ export async function buildOpsSnapshot(): Promise<OpsSnapshot> {
     email,
     crons: cronHealth.per_route,
     recent_failures: cronHealth.recent_failures,
+    sentry_url:
+      typeof sentryUrl === "string" && sentryUrl.startsWith("https://")
+        ? sentryUrl
+        : null,
   };
 }

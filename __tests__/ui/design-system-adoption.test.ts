@@ -172,12 +172,17 @@ describe("the design system stays light-only and server-safe", () => {
   });
 
   /**
-   * modal.tsx is the ONE client module here, and it has to be: a focus trap, a
-   * scroll lock and Escape handling are browser behaviours. Everything else must
-   * stay server-side — a stray "use client" would drag every consuming page's
-   * subtree into the client bundle.
+   * modal.tsx and data-table.tsx are the TWO client modules here, and both
+   * have to be: a focus trap / scroll lock / Escape handling, and the
+   * DataTable's sorting, filtering, selection, roving row focus and column
+   * resizing, are browser behaviours. (data-table-core.ts deliberately stays a
+   * pure server-safe module so the logic ships no client boundary.) Everything
+   * else must stay server-side — a stray "use client" would drag every
+   * consuming page's subtree into the client bundle. Neither client module is
+   * re-exported from the barrel; DataTable's own test
+   * (__tests__/ui/data-table.test.ts) pins that, mirroring the Modal pin below.
    */
-  const CLIENT_MODULES = ["modal.tsx"];
+  const CLIENT_MODULES = ["modal.tsx", "data-table.tsx"];
 
   it("keeps every primitive except Modal free of client boundaries", () => {
     for (const f of uiFiles.filter((f) => !CLIENT_MODULES.includes(f))) {

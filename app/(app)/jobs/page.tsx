@@ -14,6 +14,7 @@ import {
 } from "@/lib/search/filters";
 import { MapActions } from "@/components/maps/MapActions";
 import { PAGE_SIZE, parsePage, offsetForPage, pageWindow } from "@/lib/jobs/list";
+import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 
 /**
  * Jobs list.
@@ -38,6 +39,16 @@ const STATUS_STYLES: Record<string, string> = {
   blocked: "bg-red-100 text-red-700",
   cancelled: "bg-slate-200 text-slate-500",
 };
+
+/** Desktop columns for the canonical DataTable (roadmap G3). */
+const JOB_COLUMNS: DataTableColumn[] = [
+  { key: "status", header: "Status" },
+  { key: "customer", header: "Customer", sortable: "text", cellClassName: "font-medium text-slate-900" },
+  { key: "address", header: "Address", cellClassName: "text-slate-600" },
+  { key: "assigned", header: "Assigned", cellClassName: "text-slate-600" },
+  { key: "scheduled", header: "Scheduled", sortable: "text", cellClassName: "text-slate-600" },
+  { key: "open", header: "", cellClassName: "text-right" },
+];
 
 type SP = Promise<{ customer?: string; page?: string; q?: string }>;
 
@@ -322,57 +333,54 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
         </div>
       ) : (
         <>
-          {/* Desktop table */}
-          <div className="hidden overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm md:block">
-            <table className="min-w-full divide-y divide-slate-200">
-              <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Customer</th>
-                  <th className="px-4 py-3">Address</th>
-                  <th className="px-4 py-3">Assigned</th>
-                  <th className="px-4 py-3">Scheduled</th>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white text-sm">
-                {rows.map((j) => (
-                  <tr key={j.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[j.status] ?? "bg-slate-100 text-slate-700"}`}
-                      >
-                        {STATUS_LABELS[j.status] ?? j.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 font-medium text-slate-900">
-                      {j.customer?.name ?? <span className="text-slate-500">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {formatAddressOneLine(resolveJobAddress(j, j.customer)) || (
-                        <span className="text-slate-500">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {j.assigned?.full_name ?? j.assigned?.email ?? (
-                        <span className="text-slate-500">Unassigned</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {j.scheduled_date ?? <span className="text-slate-500">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <Link
-                        href={`/jobs/${j.id}`}
-                        className="text-sm font-medium text-slate-700 hover:text-slate-900"
-                      >
-                        Open →
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {/* Desktop: the canonical DataTable (roadmap G3) — client-side
+              sort/filter over the LOADED page; the server-side search + status
+              filter + exact-count pagination remain the authority over which
+              rows load. Mobile keeps its own Today-first sections below, so
+              the table is simply hidden there rather than card-swapped. */}
+          <div className="hidden md:block">
+            <DataTable
+              label="Jobs"
+              columns={JOB_COLUMNS}
+              stickyHeader
+              className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm"
+              rows={rows.map((j) => ({
+                id: j.id,
+                href: `/jobs/${j.id}`,
+                filterText: `${STATUS_LABELS[j.status] ?? j.status} ${j.customer?.name ?? ""} ${formatAddressOneLine(resolveJobAddress(j, j.customer))} ${j.assigned?.full_name ?? j.assigned?.email ?? ""} ${j.scheduled_date ?? ""}`,
+                sortValues: {
+                  status: STATUS_LABELS[j.status] ?? j.status,
+                  customer: j.customer?.name ?? null,
+                  scheduled: j.scheduled_date ?? null,
+                },
+                cells: {
+                  status: (
+                    <span
+                      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[j.status] ?? "bg-slate-100 text-slate-700"}`}
+                    >
+                      {STATUS_LABELS[j.status] ?? j.status}
+                    </span>
+                  ),
+                  customer: j.customer?.name ?? <span className="text-slate-500">—</span>,
+                  address:
+                    formatAddressOneLine(resolveJobAddress(j, j.customer)) || (
+                      <span className="text-slate-500">—</span>
+                    ),
+                  assigned: j.assigned?.full_name ?? j.assigned?.email ?? (
+                    <span className="text-slate-500">Unassigned</span>
+                  ),
+                  scheduled: j.scheduled_date ?? <span className="text-slate-500">—</span>,
+                  open: (
+                    <Link
+                      href={`/jobs/${j.id}`}
+                      className="text-sm font-medium text-slate-700 hover:text-slate-900"
+                    >
+                      Open →
+                    </Link>
+                  ),
+                },
+              }))}
+            />
           </div>
 
           {/* Mobile: Today's Jobs first, then everything else */}

@@ -132,6 +132,26 @@ export interface MarketingBoard {
    * is empty when neither source is readable.
    */
   funnel: ReadonlyArray<MarketingFunnelStage>;
+  /**
+   * The FORM-ORIGIN channel mix (L9a / P6) — the source split that IS recorded,
+   * as exact derived shares over `demo_requests.source`. This is the honest
+   * substrate for channel attribution: origin shares over CrewFlow's OWN
+   * captured field. It is deliberately NOT paid/organic/social attribution —
+   * no UTM/medium is recorded anywhere, so the `channel_attribution` metric
+   * stays insufficient and this mix says exactly what it is instead. Null when
+   * the demo-request source could not be read this cycle.
+   */
+  channelMix: {
+    rows: ReadonlyArray<{
+      source: string;
+      label: string;
+      /** Exact share of all-time demo requests stamped with this origin. */
+      sharePct: number;
+      total: number;
+      new30d: number;
+    }>;
+    basis: string;
+  } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -504,11 +524,246 @@ export function computeMarketingBoard(input: MarketingInput, now: Date): Marketi
     ),
   );
 
+  // ── Channel mix — the form-origin split that IS recorded (L9a / P6) ────
+  // Exact derived shares over the same breakdown the sources panel shows.
+  // Never a substitute for UTM attribution (which stays insufficient above);
+  // this states honestly what CAN be attributed: the capture origin.
+  let channelMix: MarketingBoard["channelMix"] = null;
+  if (sources != null && sources.total > 0) {
+    channelMix = {
+      rows: sources.breakdown.map((b) => ({
+        source: b.source,
+        label: b.label,
+        sharePct: round1((b.total / sources.total) * 100),
+        total: b.total,
+        new30d: b.new30d,
+      })),
+      basis:
+        `Derived from demo_requests.source over ${sources.total} captured demo requests — the form-origin split that IS recorded. ` +
+        "This is origin attribution over CrewFlow's own capture field, NOT paid/organic/social channel attribution (no UTM/medium is recorded anywhere; see the channel_attribution card).",
+    };
+  }
+
   return {
     asOf: now.toISOString(),
     periodLabel,
     metrics,
     sources,
     funnel,
+    channelMix,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The WEEKLY CONTENT BRIEF (L9a / P6) — the Marketing AI's deterministic
+// content-planning artifact. Pure and clock-injected like everything above:
+// the runner (server/services/hq-marketing-content-runner.ts) reads the lean
+// demo-request rows and the static SEO page inventory (lib/seo/content
+// CONTENT_COUNTS — a build-time registry, not a guess) and defers here.
+//
+// EVERY proposal is derived from a REAL figure it cites: the top capture
+// origins by recent volume, and the thinnest surface of the live SEO page
+// inventory. Nothing is a generic idea pulled from air — remove the data and
+// the proposal disappears (the empty-input path is an honest insufficient).
+// The GENERATIVE half (actually drafting the copy) is the governed dark seam
+// `hq.marketing_draft`: the brief carries `generativeDraft: null` with a note
+// saying exactly that until a model tier is bound.
+// ---------------------------------------------------------------------------
+
+/** The live SEO page inventory, from the lib/seo/content registry (exact counts). */
+export interface ContentBriefSeoInventory {
+  features: number;
+  comparisons: number;
+  industries: number;
+  locations: number;
+  posts: number;
+  tools: number;
+}
+
+export interface ContentBriefInput {
+  /** The lean demo-request rows (same shape the board consumes); null when unreadable. */
+  leads: MarketingLeadsInput | null;
+  /** The SEO content registry counts; null only if the registry import failed. */
+  seoInventory: ContentBriefSeoInventory | null;
+}
+
+export interface ContentBriefProposal {
+  key: string;
+  /** A working title for the human to accept, edit, or discard. */
+  title: string;
+  /** WHY, citing the real figure the proposal is derived from. */
+  rationale: string;
+  /** Where the piece would live. */
+  targetSurface: string;
+}
+
+export interface ContentBriefResult {
+  kind: "marketing_content_brief";
+  /** ISO date (UTC Monday) of the week this brief covers. */
+  weekOf: string;
+  summary: string;
+  reasoning: string;
+  confidence: number;
+  insufficient: boolean;
+  generatedAt: string;
+  sources: string[];
+  /** Every brief needs a human before anything is written or published. */
+  approvalRequired: true;
+  signals: {
+    demoTotal: number;
+    demoNew30d: number;
+    topOrigins: Array<{ source: string; label: string; total: number; new30d: number }>;
+    inventory: ContentBriefSeoInventory | null;
+    inventoryTotal: number | null;
+    thinnestSurface: { surface: string; count: number } | null;
+  };
+  proposals: ContentBriefProposal[];
+  /**
+   * The governed generative leg (`hq.marketing_draft`). ALWAYS null from this
+   * pure compute; the runner may replace it with governed prose once a model
+   * tier is bound. While null, `generativeNote` states the honest reason.
+   */
+  generativeDraft: string | null;
+  generativeNote: string;
+  [key: string]: unknown;
+}
+
+const SURFACE_LABEL: Record<keyof ContentBriefSeoInventory, string> = {
+  features: "feature page",
+  comparisons: "comparison page",
+  industries: "industry page",
+  locations: "location page",
+  posts: "blog post",
+  tools: "tool page",
+};
+
+/** ISO date of the UTC Monday of `now`'s week. */
+function isoWeekMonday(now: Date): string {
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const day = d.getUTCDay(); // 0 = Sunday
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setUTCDate(d.getUTCDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
+
+const GENERATIVE_DARK_NOTE =
+  "Copy drafting is a governed dark seam (hq.marketing_draft): no model tier is bound, so no copy is generated and this field is null. The deterministic brief above is complete without it; binding a tier (plus the vendor credential and HQ budget org) is the only activation switch.";
+
+export function computeContentBrief(input: ContentBriefInput, now: Date): ContentBriefResult {
+  const sources: string[] = [];
+  if (input.leads != null) sources.push("demo_requests");
+  if (input.seoInventory != null) sources.push("lib/seo/content registry");
+  const weekOf = isoWeekMonday(now);
+  const nowMs = now.getTime();
+
+  // Honest insufficient: with neither real source, there is nothing to brief from.
+  if (input.leads == null && input.seoInventory == null) {
+    return {
+      kind: "marketing_content_brief",
+      weekOf,
+      summary: "Insufficient data — neither the demo-request capture nor the SEO page inventory could be read.",
+      reasoning:
+        "A content brief here is only ever derived from real acquisition data and the live page inventory; with both sources unreadable this cycle, proposing content would be invention. This is an honest empty read.",
+      confidence: 0,
+      insufficient: true,
+      generatedAt: now.toISOString(),
+      sources: ["demo_requests (unreadable)", "lib/seo/content registry (unreadable)"],
+      approvalRequired: true,
+      signals: {
+        demoTotal: 0,
+        demoNew30d: 0,
+        topOrigins: [],
+        inventory: null,
+        inventoryTotal: null,
+        thinnestSurface: null,
+      },
+      proposals: [],
+      generativeDraft: null,
+      generativeNote: GENERATIVE_DARK_NOTE,
+    };
+  }
+
+  const proposals: ContentBriefProposal[] = [];
+
+  // ── Lead-origin proposals — derived from the real capture split ────────
+  let demoTotal = 0;
+  let demoNew30d = 0;
+  let topOrigins: ContentBriefResult["signals"]["topOrigins"] = [];
+  if (input.leads != null) {
+    const breakdown = buildSourceBreakdown(input.leads.demoRequests, nowMs);
+    demoTotal = input.leads.demoRequests.length;
+    demoNew30d = breakdown.reduce((acc, b) => acc + b.new30d, 0);
+    topOrigins = [...breakdown]
+      .sort((a, b) => b.new30d - a.new30d || b.total - a.total || a.source.localeCompare(b.source))
+      .slice(0, 3)
+      .map((b) => ({ source: b.source, label: b.label, total: b.total, new30d: b.new30d }));
+    for (const origin of topOrigins) {
+      if (origin.total === 0) continue;
+      proposals.push({
+        key: `origin_${origin.source}`,
+        title: `Conversion piece for ${origin.label.toLowerCase()} leads`,
+        rationale:
+          `${origin.label} is a real capture origin: ${origin.total} demo request${origin.total === 1 ? "" : "s"} all-time, ` +
+          `${origin.new30d} in the last 30 days. Content addressing the questions this origin's visitors arrive with strengthens the strongest recorded path into the funnel.`,
+        targetSurface: "blog post or case study",
+      });
+    }
+  }
+
+  // ── Inventory proposal — derived from the live SEO page registry ───────
+  let inventoryTotal: number | null = null;
+  let thinnest: { surface: string; count: number } | null = null;
+  if (input.seoInventory != null) {
+    const inv = input.seoInventory;
+    inventoryTotal =
+      inv.features + inv.comparisons + inv.industries + inv.locations + inv.posts + inv.tools;
+    const entries = (Object.keys(SURFACE_LABEL) as Array<keyof ContentBriefSeoInventory>).map(
+      (k) => ({ surface: k as string, count: inv[k] }),
+    );
+    entries.sort((a, b) => a.count - b.count || a.surface.localeCompare(b.surface));
+    thinnest = entries[0] ?? null;
+    if (thinnest != null) {
+      const label = SURFACE_LABEL[thinnest.surface as keyof ContentBriefSeoInventory];
+      proposals.push({
+        key: `inventory_${thinnest.surface}`,
+        title: `New ${label} — extend the thinnest SEO surface`,
+        rationale:
+          `The live content registry holds ${inventoryTotal} indexable marketing pages; '${thinnest.surface}' is the thinnest surface at ${thinnest.count}. ` +
+          "Adding one entry to the registry publishes the page, adds it to the sitemap, and makes it an internal-link target in one change.",
+        targetSurface: `lib/seo/content/${thinnest.surface}`,
+      });
+    }
+  }
+
+  const insufficient = proposals.length === 0;
+  const summary = insufficient
+    ? "No content proposal can be derived this week — the readable sources hold no volume to ground one in."
+    : `Week of ${weekOf}: ${proposals.length} data-grounded content proposal${proposals.length === 1 ? "" : "s"} — ${proposals.map((p) => p.title).join("; ")}.`;
+  const reasoning =
+    `Deterministic weekly brief: lead-origin proposals are derived from the recorded demo_requests.source split (${demoTotal} captured requests, ${demoNew30d} in 30 days), and the inventory proposal from the live SEO content registry` +
+    (inventoryTotal != null ? ` (${inventoryTotal} pages)` : "") +
+    ". Every proposal cites the figure it is derived from; nothing is a generic idea. Drafting the copy itself is the governed dark seam hq.marketing_draft — see generativeNote. A human reviews, edits, and owns anything that gets written or published.";
+
+  return {
+    kind: "marketing_content_brief",
+    weekOf,
+    summary,
+    reasoning,
+    confidence: insufficient ? 0 : 1,
+    insufficient,
+    generatedAt: now.toISOString(),
+    sources,
+    approvalRequired: true,
+    signals: {
+      demoTotal,
+      demoNew30d,
+      topOrigins,
+      inventory: input.seoInventory,
+      inventoryTotal,
+      thinnestSurface: thinnest,
+    },
+    proposals,
+    generativeDraft: null,
+    generativeNote: GENERATIVE_DARK_NOTE,
   };
 }

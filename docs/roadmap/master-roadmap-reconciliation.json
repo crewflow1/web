@@ -1,0 +1,2135 @@
+[
+ {
+  "id": "R001",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "CRM customer memory (interactions/docs/notes/comms/financials)",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/customers/[id]/page.tsx:8-19 comms timeline + StatementPanel + contacts; :49 notes column; :139 invoice money rollup on durable customer_id"
+ },
+ {
+  "id": "R002",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Leads capture manual",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/leads/actions.ts:48 export async function createLead + createLeadSchema; app/(app)/leads/new/page.tsx"
+ },
+ {
+  "id": "R003",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Leads pipeline/stages/scoring/forecast",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/leads/pipeline.ts (bucketing+forecast, header :9); lib/leads/schema.ts:16 LEAD_STAGES (7 = 4 open + 3 closed); lib/leads/score.ts:293 deterministic weighted scoring; __tests__/leads"
+ },
+ {
+  "id": "R004",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Lead->customer conversion idempotent",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "lib/leads/convert.ts:30-60 idempotency guard (customer_id present => NO-OP returning existing customer), decideConversion pure/unit-testable; wired via convertLeadToCustomer in leads/actions.ts"
+ },
+ {
+  "id": "R005",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Customers one-record CRUD+B2B parent/child",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/customers/{page,new,actions.ts,_form.tsx}; parent/child B2B: _form.tsx:153 parent_customer_id field, actions.ts:29 composite FK (parent_customer_id,org_id); [id]/page.tsx:64 children rollup"
+ },
+ {
+  "id": "R006",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Quotes builder+templates+price book",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/quotes/_builder.tsx + _price-book-picker.tsx; templates via quotes/[id]/_save-template-panel.tsx; price-book route app/(app)/price-book"
+ },
+ {
+  "id": "R007",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Quote internal approval workflow",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/quotes/actions.ts:502 send blocked unless status approved; :421 edit-after-approval reverts to pending_approval; :672-759 self-approval blocked when another owner/admin exists, sole-approver case audit-logged quote.self_approved"
+ },
+ {
+  "id": "R008",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Quote versions history+diff",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "supabase/migrations/20261150000000_quote_versions.sql; quote_versions table present in local DB; app/(app)/quotes/[id]/page.tsx:40-45 VersionHistoryPanel + lib/quotes/version-diff"
+ },
+ {
+  "id": "R009",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Quote PDF + email send",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/api/quotes/[id]/pdf/route.ts and app/api/quotes/[id]/send/route.ts both present; quotes/[id]/_send-quote.tsx UI"
+ },
+ {
+  "id": "R010",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Public e-sign acceptance portal",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/q/[token]/page.tsx (SignaturePad import :8, accept_signature column :48); actions.ts:26 signature_data_url, :41 hashIp(getIpFromHeaders)"
+ },
+ {
+  "id": "R011",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Quote->job auto-create w/ data carry",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/quotes/actions.ts:72 buildJobCarryFromQuote, called on both accept paths (:913 owner-side, :1198 public token path) with job backlink update :1216"
+ },
+ {
+  "id": "R012",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Quote->invoice auto-draft+send",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/quotes/actions.ts:1223-1250 acceptQuoteByToken auto-creates draft invoice via next_invoice_number RPC (proc confirmed in pg_proc) then :1256 sendInvoiceEmail best-effort"
+ },
+ {
+  "id": "R013",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Jobs operational hub (workspace+tabs)",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/jobs/[id]/ workspace: _job-tabs.tsx plus tab panels (_job-programme, _job-materials, _job-quality, _job-safety, _job-snags, _job-diary, _job-delays, _photo-gallery, billing/, commercial/, blueprints/)"
+ },
+ {
+  "id": "R014",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Scheduling calendar/gantt/resource",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/jobs/calendar/page.tsx:83-88 month/gantt/resource views with ?staff= filter; _calendar.tsx, _gantt-view.tsx, _month-view.tsx"
+ },
+ {
+  "id": "R015",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Programme baselines/critical path",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/jobs/[id]/_job-programme.tsx:10 computeCriticalPath from lib/jobs/critical-path; :73 job_programme_baselines read (table confirmed in local DB); no-auto-rebaseline policy :23-25"
+ },
+ {
+  "id": "R016",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Tasks/checklists per job",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/jobs/[id]/checklist-actions.ts: addChecklistItem :30, setChecklistItemDone :78, setChecklistAssignment :123, deleteChecklistItem :199; _job-checklist.tsx UI"
+ },
+ {
+  "id": "R017",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Variations create/price/sign/derive",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "createVariation app/(app)/quotes/actions.ts:1390; jobs/[id]/variations/new + variation-request-actions.ts:54; portal sign app/q/[token]/_variation-summary.tsx; derive lib/jobs/commercial-position (jobs/[id]/commercial/page.tsx:26)"
+ },
+ {
+  "id": "R018",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Variations EoT lifecycle+pack PDF",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/delays/{actions.ts (lib/eot/schema import :14), page.tsx, [id]/page.tsx}; lib/pdf/eot-notice-pdf.tsx + eot-pack-pdf.tsx"
+ },
+ {
+  "id": "R019",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Invoices lifecycle+void state",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "supabase/migrations/20261219000000_invoice_void.sql (void terminal, no-payments precondition, payments blocked on void); exclusion example app/api/cron/invoice-reminders/route.ts:132 .neq(status,void)"
+ },
+ {
+  "id": "R020",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Payments record/allocate/partial",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "migration 20260524000000_payment_tracking.sql invoice_payments; app/(app)/payments/allocate-actions.ts:130 allocate_payment RPC (proc confirmed in pg_proc) with over-allocation guard :61; __tests__/payments"
+ },
+ {
+  "id": "R021",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Invoice reminders auto-email",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/api/cron/invoice-reminders/route.ts (void-excluded :131-132, resend-dedupe :152); cron dir listing confirms route"
+ },
+ {
+  "id": "R022",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Payroll staff/timesheets/leave/PAYE/pension estimates",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "lib/payroll/compute.ts (UK PAYE + employee NI + employer NI + AE pension estimates, dated employer rates per docs/payroll-employer-costs.md) + rates.ts; app/(app)/payroll run flow; timesheets staff/[id]/timesheet, leave staff/leave; __tests__/payroll"
+ },
+ {
+  "id": "R023",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Staff mgmt (roles/quals/perf/availability)",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/staff/* incl. [id]/_qualifications.tsx, rota/ (+conflicts/generate), leave/; performance: staff/[id]/page.tsx:30 getStaffPerformance with utilisation window :249"
+ },
+ {
+  "id": "R024",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Documents one-home + staff/private split",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "one home app/(app)/documents/page.tsx; split app/(app)/jobs/[id]/job-documents-actions.ts:32 visibilitySchema z.enum([staff,private]); job_documents table in local DB; search respects visibility (api/search/route.ts:55-57)"
+ },
+ {
+  "id": "R025",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Photos linked to jobs + camera capture",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/jobs/[id]/_photo-gallery.tsx; camera capture=environment at _job-documents-client.tsx:186 and :372"
+ },
+ {
+  "id": "R026",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Dashboard 'what needs attention' briefing",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/dashboard/_daily-briefing.tsx:2,31 buildDailyBriefing from server/services/briefing; __tests__/briefing"
+ },
+ {
+  "id": "R027",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Reporting profit/revenue/cash/utilisation/pipeline",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/reports/{profit,cashflow,utilisation,pipeline,ageing,accounting,retention,subscribe}; exports app/api/reports/[report]/export/route.ts + api/reports/export/route.ts"
+ },
+ {
+  "id": "R028",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Activity log timeline",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "migrations 20260516200000_activity_log.sql (AFTER-mutation SECURITY DEFINER triggers) + leads/customers trigger extensions; activity_log table in local DB; app/(app)/activity route"
+ },
+ {
+  "id": "R029",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Notifications centre in-app",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/notifications/{page.tsx,actions.ts}; nav entry nav-model.ts:233 href /notifications ALL_ROLES; notifications table + activity_log after-insert fan-out (20260527000000_notifications.sql:6)"
+ },
+ {
+  "id": "R030",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Multi-tenancy + auth + roles",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "local DB: 311/311 public tables rowsecurity=true, 0 without; memberships_role_check role in (owner,admin,staff) (20260521000000); nav-model.ts:35 ADMIN_ROLES; app/(auth) + middleware auth"
+ },
+ {
+  "id": "R031",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Website marketing + landing pages",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(site)/{page,pricing,product} + app/(marketing)/{features,industries,compare,construction-software,blog,tools,developers} \u2014 20 page.tsx files incl. dynamic SEO templates"
+ },
+ {
+  "id": "R032",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation modules",
+  "requirement": "Search across core entities",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/api/search/route.ts (834 lines): customers/jobs/quotes/leads/invoices/staff/job_documents/suppliers/blueprints/assets+fleet/staff_qualifications/attachments families, role-gated (:35-89); __tests__/search"
+ },
+ {
+  "id": "R033",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation",
+  "requirement": "Search: EVERYTHING searchable (photos/blueprints/assets/suppliers/expenses/tickets/AI decisions/meetings)",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "22 search families (api/search/route.ts) + Decision-Centre records text-searchable in the HQ palette (hq-command-palette.tsx decisions; layout passes recent 200). 'Meetings' names no entity that exists anywhere in the product \u2014 the census covers every existing entity."
+ },
+ {
+  "id": "R034",
+  "volume": "V04-PRODUCT",
+  "section": "Foundation",
+  "requirement": "AI Receptionist foundation (inbound multi-channel + governed drafting)",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "Inbound: app/api/webhooks/{whatsapp,twilio,email,vapi} + api/receptionist/inbound; 48 lib/receptionist modules; UI app/(app)/inbox. Governed drafting: keys receptionist.inbound_extraction/reply_draft/voice_turn (lib/ai/governor/registry.ts:272-318). Dark by cred flip (lib/env.ts:166-168: no provider = sends nothing). Tests: __tests__/receptionist(54)/whatsapp/ai-receptionist."
+ },
+ {
+  "id": "R035",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "Blueprint Centre (sheets/zoom/versions/pins/comments/photos/tasks/compare/markup/PDF)",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/jobs/[id]/blueprints/: _pdf-viewer, _compare.tsx, _markup-ui, _pins-ui, _offline-controls, f/[versionId]/route.ts (versions); tests __tests__/blueprints/{pins,pin-comments,task-pins,compare,markup,viewer,offline-store}.test.ts + e2e/blueprint-{pins,compare,markup,viewer,offline}.spec.ts; docs/blueprint-centre.md"
+ },
+ {
+  "id": "R036",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "AI WhatsApp Assistant (voice-notes/photos/video/docs -> lead/job/notes/tasks/variations)",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "server/services/whatsapp-{webhook-handler,media-pipeline,assistant-actions}.ts: image/audio/video/document media (pipeline:329-342), governed transcription, intents note|task|variation_draft|photo_upload (actions:47); DARK unless enabled (handler:383; WHATSAPP_* optional env.ts:29-39); DB whatsapp_inbound_media/assistant_actions; __tests__/whatsapp"
+ },
+ {
+  "id": "R037",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "Offline mode (5 create+3 update entities+photos)",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "lib/offline/registry.ts:204-213 exactly 5 create (site_diary, snag, material_request, delay_event, site_report) + 3 update (site_diary, snag, delay_event); photos via lib/offline/photo-queue.ts (binary IndexedDB queue, wired in app/(app)/layout.tsx); scope recorded in ADR docs/bible/decisions/0013 (Accepted); e2e/offline-diary-queue.spec.ts + blueprint-offline.spec.ts"
+ },
+ {
+  "id": "R038",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "Native mobile apps iOS/Android",
+  "horizon": "fut",
+  "status": "F",
+  "evidence": "horizon=fut; docs/roadmap/STATUS.md:255 'Native mobile apps \u2026 NOT BUILT \u2014 PWA is the current mobile strategy'; docs/roadmap/GAP-ANALYSIS.md:22 defers to a future PWA-wrapper-vs-native decision; PWA shell shipped (app/manifest.ts, offline shell)"
+ },
+ {
+  "id": "R039",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "AI Quote Writer",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "server/services/ai-quote-writer.ts + lib/ai/quote-{draft-pipeline,prompt,context,draft-schema}.ts; governed key quote.writer_draft (lib/ai/governor/registry.ts:359); dark-not-fake readiness lib/ai/quote-writer-readiness.ts (built/bound split, no env var can fake capability); reachable dark UI app/(app)/quotes/_quote-writer-panel.tsx"
+ },
+ {
+  "id": "R040",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "AI Scheduler",
+  "horizon": "cur",
+  "status": "G",
+  "evidence": "Superseded by deterministic doctrine: lib/schedule/solver.ts header 'Deterministic Optimising Rota Generator \u2014 PROPOSE (PURE, no I/O, no model)'; pinned by __tests__/security/schedule-solver-no-ai.test.ts + schedule-recommendations-no-ai.test.ts; deterministic-intelligence decision recorded in docs/daily-briefing.md:14-17"
+ },
+ {
+  "id": "R041",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "AI Cashflow",
+  "horizon": "cur",
+  "status": "G",
+  "evidence": "Superseded by recorded deterministic doctrine (docs/daily-briefing.md:14-17,100 \u2014 intelligence deterministic, no external AI; LLM prose future provider-gated); deterministic cashflow forecast live: app/(app)/reports/cashflow/page.tsx composing server/services/forecasting.loadForecasts + lib/intelligence/cash-timeline.ts"
+ },
+ {
+  "id": "R042",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "Blueprint pins",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/jobs/[id]/blueprints/_pins-ui.tsx + _pin-extras.tsx + pin-actions.ts; pins\u2192tasks and comments proven by __tests__/blueprints/task-pins.test.ts, pin-comments.test.ts, pins.test.ts; e2e/blueprint-pins.spec.ts"
+ },
+ {
+  "id": "R043",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "Snagging",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/snags/{page,new,[id],actions.ts}; lifecycle in lib/snags/schema.ts (status vocab line 16, terminal statuses stamp resolved_at, isTerminalStatus:27); offline snag.create/update in lib/offline/registry.ts:207-208; __tests__/snags/schema.test.ts"
+ },
+ {
+  "id": "R044",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "Daily site diary + auto rollup",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/diary/{page,new,[id]}; rollup lib/site-diary/rollup.ts + server/services/site-diary-rollup.ts; auto via cron /api/cron/site-diary-rollup (vercel.json:173); DB site_diary_entries; __tests__/site-diary/{rollup,rollup-service,schema}.test.ts"
+ },
+ {
+  "id": "R045",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "Weather intelligence",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "server/services/weather-{fetch,watch-sync,delay-detect}.ts + matching crons in vercel.json; consumers lib/schedule/weather-risk.ts, lib/site-diary/weather.ts, app/(app)/weather; real open-meteo adapter (lib/weather/readiness.ts:83) but WEATHER_PROVIDER+OPEN_METEO_API_KEY 'both unset in every' env (lib/env.ts:212-216); DB weather_readings/weather_watches"
+ },
+ {
+  "id": "R046",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "RAMS generator",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Deterministic no-AI catalogue lib/health-safety/rams-templates.ts (header line 2; 6 trade templates, keys at lines 71-371, catalogue-wide unit test) \u2192 generateRamsDraft app/(app)/health-safety/actions.ts:98 \u2192 lib/pdf/rams-pdf.tsx; DB risk_assessments (mig 20261018); __tests__/health-safety/rams-templates.test.ts + rams.test.ts"
+ },
+ {
+  "id": "R047",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "Toolbox talks",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/toolbox/{page,new,[id],actions.ts}; delivery snapshot lib/toolbox-talks/snapshot.ts (freeze at delivery, signatures accrue post-lock like RAMS sign-offs, lines 9-11,38-41); PDF lib/pdf/toolbox-talk-pdf.tsx; DB toolbox_talks; __tests__/toolbox-talks/"
+ },
+ {
+  "id": "R048",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "Health & Safety suite",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "RAMS app/(app)/health-safety (+signoff-actions.ts, worker-links); permits app/(app)/health-safety/permits + DB permits_to_work/permit_conditions; inductions app/(app)/site-compliance/actions.ts:45 + DB site_inductions; muster app/api/site-compliance/[siteId]/muster/{pdf,csv}/route.ts; __tests__/integration/health-safety/rams-permit-authz.test.ts"
+ },
+ {
+  "id": "R049",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "CIS automation (deduct/statements/verify-record)",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Deduct: lib/cis/deduction.ts + migs 20261051/20261053; statements: lib/cis/statements.ts + statement-email.ts (idempotency mig 20261217) + lib/pdf/cis-statement-pdf.tsx; verify-record: server/services/cis.ts recordVerification + stale-verification gate mig 20261175 + provenance manual|hmrc_api mig 20261224 with dark HMRC adapter lib/integrations/hmrc/cis-verify.ts; DB cis_* 8 tables"
+ },
+ {
+  "id": "R050",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "OCR receipts/supplier-invoices/delivery-notes",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "lib/imports/ocr.ts: PDF/image OCR via shared lib/ai/vision through the AI Cost Governor (lines 26-41), kind vocab includes delivery_note (line 88, delivery_note_number:123); reachable UI app/(app)/imports; vision provider tier dark (no provider \u21d2 refuses, governor-gated)"
+ },
+ {
+  "id": "R051",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "Purchase orders + GRN + 3-way match",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "POs app/(app)/purchase-orders/_builder.tsx + lib/purchase-orders/schema.ts; GRN = receiving (lib/purchase-orders/receiving.ts, receiving-actions.ts, _receiving-data.ts); 3-way match lib/purchase-orders/matching.ts + server/services/po-matching.ts + page app/(app)/purchase-orders/matching"
+ },
+ {
+  "id": "R052",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "Supplier/merchant integrations",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "lib/integrations/merchants/cxml.ts + adapters/cxml-merchant.ts \u2014 live paths explicitly 'unreachable dark' (lines 43, 94, 200), price-file ingest bounded dark (line 22); connect.ts/price-file.ts substrate present; awaiting merchant credentials"
+ },
+ {
+  "id": "R053",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "Asset tracking + QR",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/assets (scan, assignment, calibration, inspections, depreciation) + qr-actions.ts; lib/assets/qr.ts + scan.ts; DB proc rotate_asset_qr_identity present (pg_proc; mig 20260926_asset_qr_identities.sql:94)"
+ },
+ {
+  "id": "R054",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "Fleet management (MOT/insurance/service/fuel/tyres)",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/(app)/fleet/{vehicles,compliance,fuel} + compliance-actions.ts (MOT/insurance/service) + fuel-actions.ts; tyres mig 20261173000000_fleet_tyres_compliance.sql; telematics-sync + maintenance-due crons in vercel.json"
+ },
+ {
+  "id": "R055",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "Open API",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "app/api/v1: 15 route.ts across customers/expenses/invoices/jobs/leads/materials/me/quotes/staff/time + openapi.json (OpenAPI 3.1, lib/public-api/openapi.ts); whole surface dark behind one flag FEATURE_PUBLIC_API_JOBS (lib/public-api/flag.ts:18; guard.ts:85 dark\u21d2404 before credential); DB api_keys"
+ },
+ {
+  "id": "R056",
+  "volume": "V04-PRODUCT",
+  "section": "Future modules (built ahead where noted)",
+  "requirement": "Marketplace",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "Substrate: migs 20261195+20261196, DB tables marketplace_listings/marketplace_installs; routes app/(app)/marketplace + settings/marketplace; dark behind FEATURE_MARKETPLACE (lib/marketplace/flag.ts:24); prior nav-orphan fixed \u2014 layout threads 'marketplace' nav flag when lit (app/(app)/layout.tsx:55, app/(app)/_nav/nav-model.ts:51)"
+ },
+ {
+  "id": "R057",
+  "volume": "V04-PORTAL",
+  "section": "Customer portal",
+  "requirement": "Secure token access",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/customer-portal/_helpers.ts (single authority, fail-closed: expiry check :109, telemetry-swallow :118, named-contact path :168 requiring portal_access_enabled); tests __tests__/portal/token-expiry.test.ts, contact-token.test.ts"
+ },
+ {
+  "id": "R058",
+  "volume": "V04-PORTAL",
+  "section": "Customer portal",
+  "requirement": "View quotes",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Quotes tab in shell (_shell.tsx:66); [token]/quotes/page.tsx lists sent/viewed/accepted/declined/expired quotes (:105) linking to /q/[public_token] (:189) + PDF (:239)"
+ },
+ {
+  "id": "R059",
+  "volume": "V04-PORTAL",
+  "section": "Customer portal",
+  "requirement": "Approve quotes",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/q/[token]/actions.ts \u2014 acceptQuoteByToken with signature_data_url e-sign (:26,:44-50), accept/decline server actions; quotes tab 'Review & approve' link (quotes/page.tsx:228)"
+ },
+ {
+  "id": "R060",
+  "volume": "V04-PORTAL",
+  "section": "Customer portal",
+  "requirement": "View invoices+statement PDF",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Invoices tab (_shell.tsx:67); per-invoice PDF route invoices/[id]/pdf/route.ts (linked page.tsx:460) + 'Download statement' \u2192 statement/pdf/route.ts (invoices/page.tsx:321-326)"
+ },
+ {
+  "id": "R061",
+  "volume": "V04-PORTAL",
+  "section": "Customer portal",
+  "requirement": "Pay invoices online",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "Full Stripe Connect checkout built: _pay-action.ts \u2192 server/services/portal-invoice-payments.ts + api/webhooks/stripe-invoice/route.ts; refuse-before-fetch gate on STRIPE_CONNECT_SECRET_KEY (lib/payments/portal-stripe.ts:56) = credential flip; bank-details + payment-proof upload live (invoices/page.tsx:542); test __tests__/security/portal-invoice-payments.test.ts"
+ },
+ {
+  "id": "R062",
+  "volume": "V04-PORTAL",
+  "section": "Customer portal",
+  "requirement": "See progress",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Jobs tab (_shell.tsx:69); [token]/jobs/page.tsx shows status/dates/percentage progress via server/services/job-progress + lib/job-progress/portal.ts (:11-12,:59-66)"
+ },
+ {
+  "id": "R063",
+  "volume": "V04-PORTAL",
+  "section": "Customer portal",
+  "requirement": "View photos",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Photos tab (_shell.tsx:70); _photos.ts listPortalPhotos (:99) \u2014 image-only attachments from published reports, signed URLs (:168)"
+ },
+ {
+  "id": "R064",
+  "volume": "V04-PORTAL",
+  "section": "Customer portal",
+  "requirement": "Upload files",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Files tab (_shell.tsx:78); [token]/files/page.tsx general upload form \u2192 uploadCustomerFile (_customer-file-action.ts) plus invoice proof uploads (_upload-action.ts)"
+ },
+ {
+  "id": "R065",
+  "volume": "V04-PORTAL",
+  "section": "Customer portal",
+  "requirement": "Timeline",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Activity tab (_shell.tsx:65); [token]/activity/page.tsx builds unified timeline via lib/customers/portal-timeline buildPortalTimeline (:124) from quotes/invoices/payments"
+ },
+ {
+  "id": "R066",
+  "volume": "V04-PORTAL",
+  "section": "Customer portal",
+  "requirement": "Read updates/reports",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Reports tab (_shell.tsx:71); reports/page.tsx + [id]/page.tsx + [id]/pdf/route.ts; _reports.ts enforces published-only visibility (lib/site-reports/portal isPortalVisible)"
+ },
+ {
+  "id": "R067",
+  "volume": "V04-PORTAL",
+  "section": "Customer portal",
+  "requirement": "Message company",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Messages + Chat tabs (_shell.tsx:75-76); ticket threads messages/[ticketId]/page.tsx + _message-action.ts/_thread-reply-action.ts; live chat chat/_chat-action.ts (org-notify + audit :30-33) with poll/route.ts"
+ },
+ {
+  "id": "R068",
+  "volume": "V04-PORTAL",
+  "section": "Customer portal",
+  "requirement": "Book/request future work",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Requests tab: future-work requests (_future-work-action.ts) + variation/change requests (requests/variation-request-action.ts); Servicing tab books concrete operator-published slots (servicing/page.tsx:17, bookServiceSlot); tests portal-future-work-scope.test.ts, integration/rls/portal-evolution.test.ts"
+ },
+ {
+  "id": "R069",
+  "volume": "V04-PORTAL",
+  "section": "Customer portal",
+  "requirement": "Download certificates",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Certificates reachable via Documents tab: lib/customers/portal-documents.ts:157-158 links to certificates/[id]/pdf; route exists at [token]/certificates/[id]/pdf/route.tsx; listPortalCertificates wired in documents/page.tsx:7"
+ },
+ {
+  "id": "R070",
+  "volume": "V04-PORTAL",
+  "section": "Customer portal",
+  "requirement": "View warranties",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Warranties tab (_shell.tsx:72); _warranties.ts listPortalWarranties (:91) \u2014 published/not-withdrawn/not-void only; isolation test __tests__/portal/warranties-isolation.test.ts"
+ },
+ {
+  "id": "R071",
+  "volume": "V04-PORTAL",
+  "section": "Customer portal",
+  "requirement": "Maintenance reminders",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "Engine built: cron maintenance-due/route.ts derives due cycles (idempotent CAS) + maintenance-reminders-drain; sending is per-org provider-gated and DARK by default \u2014 drain records skipped_dark (server/services/maintenance-reminders.ts:36,:256,:300); derived servicing cadence surfaces live in portal (servicing/page.tsx warranty cadence)"
+ },
+ {
+  "id": "R072",
+  "volume": "V04-FLOW",
+  "section": "Connected workflow",
+  "requirement": "Lead->Customer",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "convertLeadToCustomer app/(app)/leads/actions.ts:355 \u2014 idempotent (decideConversion 'already' no-op \u2192 existing customer; backfill only WHERE customer_id IS NULL; orphan rollback on lost race); pure layer lib/leads/convert.ts; button leads/[id]/page.tsx:400; __tests__/leads/convert.test.ts"
+ },
+ {
+  "id": "R073",
+  "volume": "V04-FLOW",
+  "section": "Connected workflow",
+  "requirement": "Customer->Quote",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "customers/[id]/page.tsx:408 links /quotes/new?customer=<id>; quotes/new/page.tsx:54-57 validates the id against the org's customers and preselects it in the form (customer prefill)"
+ },
+ {
+  "id": "R074",
+  "volume": "V04-FLOW",
+  "section": "Connected workflow",
+  "requirement": "Quote->Approval->Send",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "sendQuote quotes/actions.ts:483 refuses non-approved at :502-511; approval state machine :549-558 (management-gated); DB trigger enforce_quote_approval_authz on quotes present in local DB (mig 20261090); edit-after-approval reverts to pending_approval :421-424; __tests__/quotes/approval-workflow.test.ts"
+ },
+ {
+  "id": "R075",
+  "volume": "V04-FLOW",
+  "section": "Connected workflow",
+  "requirement": "Accept->Job w/ carry",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "acceptQuoteAsOwner quotes/actions.ts:846 auto-creates job with buildJobCarryFromQuote (site_address_line1 + scope/provenance notes) :913; token path mirrors at :1198; quote.job_id backlinked; __tests__/quotes/accept-quote-by-token.test.ts"
+ },
+ {
+  "id": "R076",
+  "volume": "V04-FLOW",
+  "section": "Connected workflow",
+  "requirement": "Accept->Invoice",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Same accept path: idempotent invoice reuse (partial unique on invoices(quote_id)), next_invoice_number RPC, draft invoice insert with job_id + net-14 due_date, then sendInvoiceEmail auto-email (quotes/actions.ts ~:960-1015; email only when freshly created); __tests__/payments/money-idempotency.test.ts"
+ },
+ {
+  "id": "R077",
+  "volume": "V04-FLOW",
+  "section": "Connected workflow",
+  "requirement": "Job->Scheduling",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "jobs scheduled_start/end_date (jobs/_form.tsx:183, jobs/actions.ts:102); /jobs/calendar month view; /staff/rota + /generate + /conflicts, rota entries carry job_id and link to /jobs/[id] (staff/rota/page.tsx:294-295, ?assign_job prefill :57)"
+ },
+ {
+  "id": "R078",
+  "volume": "V04-FLOW",
+  "section": "Connected workflow",
+  "requirement": "Scheduling->Site activity",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Diary job-keyed (diary/actions.ts:74,139); site reports job-keyed (site-reports/actions.ts:49,163); time entries job-keyed and rolled per-job (lib/time/compute.ts:138-147) into lib/profitability/job-cost-input.ts"
+ },
+ {
+  "id": "R079",
+  "volume": "V04-FLOW",
+  "section": "Connected workflow",
+  "requirement": "Site->Variation request intake",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "GAP-2 CLOSED (G2): mig 20261221 variation_requests, 4 RLS policies verified in local DB; member intake panel on job page (jobs/[id]/page.tsx:1014 + variation-request-actions.ts); portal Requests nav (_shell.tsx:77) inserts into variation_requests (variation-request-action.ts:104-106); ?fromRequest= prefill \u2192 'converted' stamp; tests: schema + rls/variation-requests-isolation"
+ },
+ {
+  "id": "R080",
+  "volume": "V04-FLOW",
+  "section": "Connected workflow",
+  "requirement": "Variation->Quote+Invoice derivation",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Variations are quotes with variation_number via next_variation_number RPC (quotes/actions.ts:1443,1460); accept generates the invoice through the shared accept path (:1378); job commercial page derives contract value from base + accepted variations incl. priced cost basis (jobs/[id]/commercial/page.tsx:84-92,296); __tests__/variations/create-variation-eot.test.ts"
+ },
+ {
+  "id": "R081",
+  "volume": "V04-FLOW",
+  "section": "Connected workflow",
+  "requirement": "Invoice->Payment",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Manual: PaymentsPanel on invoices/[id] over invoice_payments (page.tsx:134-135); CSV: uploadBankCsv + parseBankCsv/scoreInvoiceMatch auto-match (payments/page.tsx:171, payments/actions.ts:34, __tests__/payments/bank-csv-full-ledger.test.ts); online payments built-dark, creds-gated (lib/payments/stripe-connect.ts, portal-stripe.ts)"
+ },
+ {
+  "id": "R082",
+  "volume": "V04-FLOW",
+  "section": "Connected workflow",
+  "requirement": "Payment->Costing/Cash/Reports",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "43 files consume invoice_payments: job costing (lib/profitability/job-cost-input.ts), cash (lib/commercial/cash.ts, org-cash.ts, /cash page), aged debtors/ageing, tax/compute, reports routes /reports/{cashflow,profit,ageing,accounting}; __tests__/payments/allocation.test.ts + record-payment.test.ts"
+ },
+ {
+  "id": "R083",
+  "volume": "V04-FLOW",
+  "section": "Connected workflow",
+  "requirement": "Reporting->Intelligence",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "lib/intelligence/* (cash-timeline.ts:29 'a ledger fact', commercial-risk, exposure, programme-variance) read the same ledgers as reports; /insights page (_company-health/_forecasts/_question-box); dashboard daily briefing (dashboard/_daily-briefing.tsx, briefing-actions.ts); __tests__/briefing + __tests__/commercial"
+ },
+ {
+  "id": "R084",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P1 AI Employee Framework",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Contract complete: mig 20261222 (manager_slug, retired_at, ai_employee_id attribution, ai_employee_kpis); trigger-enforced one-way retire (lib/ai-employees/model.ts:31-36); KPIs+cost persisted (server/services/ai-employee-stats.ts:144-249); feed+manager+KPI/cost on /admin/ai-boardroom/[slug]/page.tsx:122-527; tests ai-employee-contract-pins, interaction-feed"
+ },
+ {
+  "id": "R085",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P2 AI Boardroom",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "/admin/ai-boardroom page.tsx + _cards.tsx + [slug] detail live over real data (lib/hq/boardroom-cards.ts); cards now populate from real hq_ai_tasks results via the 15-leg workers tick; tests __tests__/admin/ai-boardroom.test.ts, __tests__/hq/boardroom-cards.test.ts"
+ },
+ {
+  "id": "R086",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P3 Shared Memory",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Substrate+SDK live (server/sdk/memory.ts recall/assembly; writers hq-tasks/hq-executive/hq-sales + memory_manager tick leg); UI /admin/memory(+search,new,[id]); taxonomy data-driven hq_memory_types (lib/memory/model.ts:298) per Bible vol-16; semantic leg built DARK behind provider (hq-memory.ts:980-986; memory-embedder.ts queue/DLQ), lexical fallback; tests memory-recall-invariants"
+ },
+ {
+  "id": "R087",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P4 AI Task Engine",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "11 SECURITY DEFINER task RPCs in schema (pg_proc: hq_ai_task_claim/complete/fail/heartbeat/reap/set_stage...); SDK server/sdk/tasks.ts; '1 caller' caveat gone \u2014 15 worker legs enqueue+drain per tick (app/api/cron/hq-roster-workers-tick, vercel.json:77); stages used by hq-tasks+hq-workflow; tests task-lifecycle-stages, task-stage-mapping"
+ },
+ {
+  "id": "R088",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P5 Sales AI",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "Research/qualification/outreach reachable, draft-only, provenance-honest; lead-sourcing leg BUILT DARK (hq-lead-sourcing-runner.ts, weekly on tick): key absent \u21d2 {sourced:0,dark:true} before any fetch; armed \u21d2 Section-F register search, DRAFT prospects via sanctioned createCompany only. Activation = COMPANIES_HOUSE_API_KEY."
+ },
+ {
+  "id": "R089",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P6 Marketing AI",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "Weekly content-brief leg LIVE on tick (real demo-capture + SEO registry) + governed copy seam dark behind the mid tier + role charter consumed. Campaign/ad analytics sub-part is EXTERNAL-gated: CrewFlow runs no ad campaigns and no ad-platform credential exists (lib/hq/marketing.ts:42 construction note) \u2014 lights only with a real campaign source, never fabricated."
+ },
+ {
+  "id": "R090",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P7 CTO AI",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "cto_pr_review runner + /admin/cto-ai queue door (P13 shape); GitHub adapter refuse-before-fetch behind GITHUB_TOKEN/REPO; deploy-health worker live; merge/deploy tools dormant METADATA by ADR-0011 executor governance + CEO activation. Activation = credentials + CEO."
+ },
+ {
+  "id": "R091",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P8 Design AI",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "/admin/design-ai board + nav; two deterministic legs on tick (consistency + review) + charter-informed hq.design_review critique seam dark behind the tier. Generative design capability IS the dark tier \u2014 no placeholder, honest empty states."
+ },
+ {
+  "id": "R092",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P9 QA AI",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "Honest telemetry board + CI-signal leg BUILT DARK (hq-qa-ci-runner.ts on tick): GitHub credential absent \u21d2 completes with stated dark reason, no fetch; armed \u21d2 deterministic pass-rate snapshot from Actions runs (null over nothing concluded, never 0-as-real). Activation = GITHUB_TOKEN/REPO."
+ },
+ {
+  "id": "R093",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P10 Documentation AI",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "Doc-drift scan + roster\u2194Bible coverage cross-check + release-notes DRAFTS from real activity/events/decisions, daily on tick, board + nav; charter consumed by the doc seam. Autonomous doc WRITING is the generative dark tier \u2014 drafts are the honest built-dark shape."
+ },
+ {
+  "id": "R094",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P11 Product AI",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "Feedback/demand board + deterministic demand-theme\u2192DRAFT Decision-Centre proposals (the prioritisation input to the CEO's decision surface, ranked by real demand). Competitor monitoring is EXTERNAL-source-gated (product.ts:32 construction note) \u2014 no scraping fabrication."
+ },
+ {
+  "id": "R095",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P12 Finance AI",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Gaps closed: MRR = real per-org organizations.mrr_gbp sum w/ labelled fallback (lib/hq/finance.ts:199-218); LTV metrics (:259-262); 3-month pipeline-weighted forecast (:263-266); \u00a30-sinkhole fixed (611701a5); nav hq-nav-model.ts:109 + finance.test.ts; cash-collected honest-insufficient pending external Stripe feed"
+ },
+ {
+  "id": "R096",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P13 Support AI",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Reply built: support_reply_draft task (hq-support-ai.ts:135-155) \u2014 deterministic draft + governed DARK model leg (isTierActivated:249, invokeWithGovernor:305), Generate/Regenerate on /admin/support/[id]/page.tsx:157-171; human sends by design; triage board intact; tests support-reply-draft.test.ts + hq-support-ai-invariants"
+ },
+ {
+  "id": "R097",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P14 Operations AI",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Ops board pure-compute w/ honest bases (lib/hq/operations.ts) at /admin/operations-ai; alert rules evaluated on cron (hq-alerts-scheduler.ts; alerts-poll vercel.json:49); cron telemetry + task-queue oversight live; tests operations/alerts-scheduler/alerts-hq12; remediation deliberately human-gated"
+ },
+ {
+  "id": "R098",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P15 AI Collaboration",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "DEFECT CLOSED: saga_step handler exists \u2014 server/services/hq-saga-step-runner.ts ('roadmap G6: the missing handler', orphans claimable :53), drained in workflow pass (hq-workflow.ts:514) AND cron /api/cron/saga-drain (vercel.json:165); UI /admin/workflow-sagas; tests saga-step, workflow-saga-drain, integration/hq/saga-lifecycle"
+ },
+ {
+  "id": "R099",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P16 Decision Centre",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Full immutable contract + autopropose cron (vercel.json:169); former empty ai_debate now filled deterministically from the decision's real signals (lib/hq/decision-debate.ts:2-27, honest insufficient path); generative variant governed-dark; tests decision-debate.test.ts, decision-autoproposal.test.ts"
+ },
+ {
+  "id": "R100",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P17 Daily CEO Briefing",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Cron /api/cron/hq-ceo-briefing at '0 6 * * *' (vercel.json:29-30); durable record lib/hq/ceo-briefing-record.ts + reader hq-ceo-briefing-reader.ts; surfaced at /admin/ceo/briefings + hq-home; tests ceo-briefing.test.ts, ceo-briefing-reader.test.ts"
+ },
+ {
+  "id": "R101",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P18 Voice Layer",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "Fully implemented behind flips: inbound voice edge complete (app/api/webhooks/twilio/voice+status+gather; fail-closed signatures, dialed-number org routing, calls+call_events, mig 20261098 phone_numbers) + governed AI turn w/ deterministic TwiML fallback (lib/telephony/ai-turn.ts:112-127); dark behind NEXT_PUBLIC_FEATURE_VOICE_INBOUND + Twilio creds + tier; tests telephony-voice-invariants"
+ },
+ {
+  "id": "R102",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P19 Automation Engine",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Tenant engine live at /settings/automations (rules, conditions, custom-rules dispatch, workflow-graph, action-registry \u2014 lib/automation/*); schedules drained by cron (vercel.json:137); 8 test files __tests__/automation/ incl. workflow-builder + job-completed-autoinvoice; AI-employee triggering remains a dark node kind only"
+ },
+ {
+  "id": "R103",
+  "volume": "V01-HQ-PLAN",
+  "section": "HQ Master Plan",
+  "requirement": "P20 Long-term vision",
+  "horizon": "fut",
+  "status": "F",
+  "evidence": "Horizon 'fut' \u2014 the roadmap's own wording defers it ('P20 Long-term vision'); no current-stage engineering artifact is owed"
+ },
+ {
+  "id": "R104",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Identity/name/role/dept/avatar",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "ai_employees carries name/slug/role/department/icon/accent (DB information_schema check; lib/ai-employees/model.ts:187-210); seeded across 9 migrations (20260712000100\u202620261225); rendered in /admin/ai-boardroom roster + [slug] workspace."
+ },
+ {
+  "id": "R105",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Manager field",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Migration 20261222000000 \u00a71: ai_employees.manager_slug column + FK (on delete set null) + not-self CHECK + org-chart seed from relationships.md \u00a72 (DB column confirmed); displayed page.tsx:284-285 and linked [slug]/page.tsx:139-144,242-244; integration test item 4 (__tests__/integration/hq/ai-employee-contract.test.ts)."
+ },
+ {
+  "id": "R106",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Purpose/responsibilities",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "description + system_prompt seeded truthfully (ADR-0012), CEO-editable in the workspace, and now CONSUMED at runtime: generateDepartmentDraft prepends the employee's charter with the fixed safety framing last and overriding (hq-generative-seams.ts loadRoleCharter)."
+ },
+ {
+  "id": "R107",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Permissions least-privilege enforced",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Capability Registry is sole authority: hq_capability_grants table (DB confirmed), server/sdk/registry-resolver.ts, and ai_employees column list shows NO legacy permission columns; 20261227000000 seeds explicit deny-floor grants (read/draft/memory, can_execute=false) for the wave-2 cohort per the R2/LR5.3 pinned invariant."
+ },
+ {
+  "id": "R108",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Tools registry immutable",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "server/sdk/tools.ts \u2014 pure data-only registry (no invocation body), Object.freeze at lines 129/173-178, REFERENCE_TOOL_REGISTRY:278; registry describes permission/argSchema/costEstimator/reversibilityClass and explicitly never authorises or executes (Executor Boundary Rule, ADR 0009 D2)."
+ },
+ {
+  "id": "R109",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Memory shared+per-employee",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "hq_memories + hq_memory_recall/write/forget SECURITY DEFINER RPCs (pg_proc confirmed) enforce scope server-side; scopes isolated/department/organization/global (model.ts:107-127); sdk facet binds identity (server/sdk/memory.ts); live consumption real: hq-runner-memory.ts recall-before-act/remember-after, used by research/qualification/outreach runners."
+ },
+ {
+  "id": "R110",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Structured outputs (summary/reasoning/confidence/evidence/alternatives)",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "server/sdk/output.ts \u2014 AiOutput envelope summary\u00b7reasoning\u00b7confidence\u00b7evidence[]\u00b7alternatives[]\u00b7approvalRequired\u00b7actions[] (lines 6, 55-80); canonical runner return type (server/sdk/tasks.ts:338-360) with evidence[] auto-drained from the memory facet (tasks.ts:991)."
+ },
+ {
+  "id": "R111",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Tasks + history",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "hq_ai_tasks table (DB confirmed) + task engine server/sdk/tasks.ts (lease/heartbeat, statuses pending\u2026cancelled, model.ts:137-158); per-employee task history rendered on the [slug] workspace and merged into the interaction feed."
+ },
+ {
+  "id": "R112",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Conversation history per employee",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "lib/ai-employees/interaction-feed.ts ('contract item 5: conversation history') merges the three real per-employee streams (hq_ai_tasks, admin_activity_log, hq_approvals); served by ai-employees.ts:193-236, rendered [slug]/page.tsx:134; tested __tests__/hq/interaction-feed.test.ts. No transcript fabricated \u2014 every real interaction recorded."
+ },
+ {
+  "id": "R113",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Recommendations",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Unified per-employee Recommendations read: lib/ai-employees/recommendations.ts folds the four real stored envelope shapes from completed tasks; boardroom [slug] Recommendations panel; loud single-source read; 9 fold tests incl. malformed-skip."
+ },
+ {
+  "id": "R114",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Status field",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Six operating states (model.ts:20-27) plus terminal 'retired' added by 20261222000000 (CHECK widened; retired_at\u21d4status consistency CHECK); statusLabel/pulse presentation model.ts:42-64; DB CHECK + trigger confirmed (tg_ai_employees_retirement in pg_proc/pg_trigger)."
+ },
+ {
+  "id": "R115",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Confidence",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Envelope 0..1 confidence (output.ts:64); runners emit graded values (hq-qualification.ts:444/474/512, hq-research.ts:574, hq-sales.ts:1907); per-employee Confidence card from real verified outcomes with 4 bands (boardroom-cards.ts:204-217), rendered in _cards.tsx; tested boardroom-cards.test.ts:259."
+ },
+ {
+  "id": "R116",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Audit history",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "admin_activity_log + hq_events spine (both tables DB-confirmed; ADR 0005 spine emission, hq_approvals_emit_ins/upd triggers); every boardroom config act logged (e.g. ai_employee.retired, actions.ts:215-218) and surfaced in the per-employee interaction feed."
+ },
+ {
+  "id": "R117",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Performance metrics",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Persisted KPI ledger exists: ai_employee_kpis (mig 20261222 \u00a75, DB confirmed; RLS-no-policies, integration-tested) \u2014 tasks completed/failed, approvals, cost, failure-rate per UK budget month; computed loud+paged and upserted by ai-employee-stats.ts:150-258; displayed page.tsx:88-93 + [slug]/page.tsx:482."
+ },
+ {
+  "id": "R118",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Cost per employee",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "ai_invocations.ai_employee_id (mig 20261222 \u00a74, DB confirmed) + index; ai_settle_reservation gains p_ai_employee_id (pg_proc); governor threads it (governor.ts:428/468/697); runners attribute via identity (sdk/tasks.ts:766, hq-outreach.ts:380); rolled into KPIs (ai-employee-stats.ts:193-224); integration test item 3 proves the SQL settle path."
+ },
+ {
+  "id": "R119",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Impact measured",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Impact = the honest measured set, persisted per employee/month (ai_employee_kpis: completed/failed/failure-rate/approvals/attributed cost via ai_invocations.ai_employee_id). The fuller set's recorded reading (workforce Bible KPI row, 2026-08-30): revenue/hours/CSAT/ROI join when a genuine source exists \u2014 fabrication forbidden."
+ },
+ {
+  "id": "R120",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Approval level 1-5",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "lib/ai-employees/approval-levels.ts \u2014 explicit 1-5 ladder derived purely from the registry-served posture; resolved and displayed as badges on roster + workspace (page.tsx:88-89,252-276 resolveApprovalLevelsByEmployeeId + ApprovalLevelBadge); tested __tests__/ai-employees/approval-levels.test.ts."
+ },
+ {
+  "id": "R121",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Lifecycle pause",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Pause = disabled status; retirement now terminal: mig 20261222 \u00a72 trigger admits ONLY disabled\u2192retired, refuses every update/delete of a retired row, stamps retired_at (trigger DB-confirmed); one-way admin action retireAiEmployee (actions.ts:151-223) with UI danger panel ([slug]/page.tsx:959-980); integration-tested on real Postgres."
+ },
+ {
+  "id": "R122",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Autonomy 5 levels enforced",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Five independent layers verified: default-deny registry floor with explicit deny grants (20261227), pure gate server/sdk/gate.ts reading posture (can_execute/requires_approval), env kill-switches (CREWFLOW_EXECUTOR_APPLY / _SHADOW / HQ_APPLY_ON_APPROVAL), unbound null authorities (autonomous-apply.ts 'DARK BY THREE INDEPENDENT GATES'), and the 1-5 ladder derived from that same served state."
+ },
+ {
+  "id": "R123",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Irreversible actions approval-gated",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "reversibilityClass is a first-class tool property feeding the P4 autonomy test (tools.ts:46-60); the executor applies only gate-cleared actions (executor.ts:216 Executor Boundary Rule); autonomous apply is deterministic+reversible-only with generative degrading to null (autonomous-apply.ts:40-45); irreversible actions bias to approval and no AI tenant-mutation path exists."
+ },
+ {
+  "id": "R124",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Approval state persisted+audited immutably",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "hq_approvals with guard + emit triggers confirmed in DB (hq_approvals_guard_ins/guard_upd/hq_approvals_emit_ins/emit_upd \u2014 trigger state machine + spine emission); single-module access pin (server/services/hq-approvals.ts:227); decisions feed the immutable event spine and the interaction feed."
+ },
+ {
+  "id": "R125",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Failure escalation / never silent fail",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Lease+heartbeat task engine with reaper cron backstop (server/sdk/tasks.ts:86,307,933; app/api/cron/task-reaper/route.ts with withCronTelemetry); handler throws recorded as failures never swallowed (tasks.ts:709); critical signals escalate to humans via alert-rules \u2192 decision auto-proposal (hq-decision-autoproposal.ts opens proposed rows for a human to weigh)."
+ },
+ {
+  "id": "R126",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Roster: 42 specs seeded",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Roster complete: 33 prior identities + the eleven product-mapped bible #27-37 seeded by 20261225000000 (dark, disabled, manager lines carried) = full 42-employee bible roster (+2 documented extras design-ai/exec-assistant-ai); explicit deny-floor grants 20261227000000; ADR 0012 records the decision; integration test item 4 pins existence + management line."
+ },
+ {
+  "id": "R127",
+  "volume": "V06-AI-EMP",
+  "section": "AI employee contract",
+  "requirement": "Apply/execution authority (Level4/5 live)",
+  "horizon": "cur",
+  "status": "E",
+  "evidence": "Level 4/5 mechanism built dark (executor, applyOnce, apply-drain cron, autonomous-apply seam) but the production authority is deliberately UNBOUND \u2014 app/api/cron/hq-apply-drain/route.ts:39: 'the bound authority\u2026 is the remaining, unbuilt work'; activation is CEO stage-gated (ADR 0011) and generative apply needs governor provider tiers bound (all-null today)."
+ },
+ {
+  "id": "R128",
+  "volume": "V07-DB",
+  "section": "Database",
+  "requirement": "Org scoping every customer table",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Local schema: 311/311 public tables rowsecurity=true (0 without), 238 org_id columns, 204 tables with policies (rest deny-by-default); guarded by __tests__/integration/rls/tenant-isolation.test.ts + ~110 per-domain isolation suites (e.g. active-org-scoping, fleet-isolation, stock-isolation)"
+ },
+ {
+  "id": "R129",
+  "volume": "V07-DB",
+  "section": "Database",
+  "requirement": "RLS mandatory+tested",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "__tests__/integration/rls/ holds 110+ RLS suites incl. cross-tenant-fk-completeness.test.ts, secdef-org-rpc-guard.test.ts, audit-log-grant-lockdown.test.ts; vitest.integration.config.ts + vitest.security.config.ts wire them; every table RLS-enabled (311/311 via pg_tables)"
+ },
+ {
+  "id": "R130",
+  "volume": "V07-DB",
+  "section": "Database",
+  "requirement": "FK integrity+composite tenant FKs",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "766 FKs in public schema, 120 composite (multi-column, org_id-carrying) FKs via pg_constraint; drift guard __tests__/integration/rls/cross-tenant-fk-completeness.test.ts + jobs-leads/quotes cross-tenant-integrity tests; pattern established in 20261113 migrations onward"
+ },
+ {
+  "id": "R131",
+  "volume": "V07-DB",
+  "section": "Database",
+  "requirement": "Constraints/checks/uniques",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "1194 CHECK constraints in public schema (pg_constraint contype='c'); terminal-state guards in supabase/migrations/20261219000000_invoice_void.sql (void TERMINAL, enforced against invoice_payments rows) and 20261220000000_job_cancelled.sql (completed\u2192cancelled REFUSED)"
+ },
+ {
+  "id": "R132",
+  "volume": "V07-DB",
+  "section": "Database",
+  "requirement": "Indexes + org-id coverage guard",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "__tests__/db/perf-org-id-indexes.test.ts locks 20261040000000_perf_org_id_indexes.sql (org_id btree on 5 hot tables, additive+idempotent asserted); restore drill record counts 1477 indexes (docs/customer-success/FIRST-CUSTOMER-SUPPORT.md:45)"
+ },
+ {
+  "id": "R133",
+  "volume": "V07-DB",
+  "section": "Database",
+  "requirement": "Append-only audit",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "activity_log has append_only_update/append_only_delete/no_truncate triggers (pg_trigger); 30+ no_update/no_delete trigger pairs across ai_reply_*, receptionist_*, hq_apply_audit family; tests audit-log-immutability.test.ts + audit-log-grant-lockdown.test.ts in __tests__/integration/rls/"
+ },
+ {
+  "id": "R134",
+  "volume": "V07-DB",
+  "section": "Database",
+  "requirement": "Event architecture",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "hq_events is a partitioned spine (monthly partitions 2026_08..2027_02 + default) with hq_events_no_update/no_delete on parent and every partition (pg_trigger); __tests__/integration/spine/ covers producers, offset-consumer, backfill, executor-shadow, timeline-projection"
+ },
+ {
+  "id": "R135",
+  "volume": "V07-DB",
+  "section": "Database",
+  "requirement": "Soft delete where appropriate",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Recorded policy ADR-0015: terminal states (void 20261219/cancelled 20261220/retired 20261222/variation lifecycle 20261221) + ON DELETE RESTRICT masters + GDPR erasure census as the real destroy path; deleted_at only where records are personal drafts. 'Where appropriate' is the policy, now on paper."
+ },
+ {
+  "id": "R136",
+  "volume": "V07-DB",
+  "section": "Database",
+  "requirement": "Migration discipline",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "387 migrations in supabase/migrations, all <14-digit>_<business-slug>.sql; 387/387 applied to local DB (supabase_migrations.schema_migrations); duplicate-prefix guard __tests__/db/migration-prefix-unique.test.ts + types coverage __tests__/db/types-table-coverage.test.ts"
+ },
+ {
+  "id": "R137",
+  "volume": "V07-DB",
+  "section": "Database",
+  "requirement": "Naming consistency",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Sampled schema+migration names are business-concept throughout: variation_requests, cis_verification_requests, tos_acceptance, roster_capability_grants, material_requests, toolbox_talks (migrations 20261221-27 + pg_tables listing); no cryptic/abbreviated table names found"
+ },
+ {
+  "id": "R138",
+  "volume": "V07-DB",
+  "section": "Database",
+  "requirement": "AI data separation",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "14 ai_* tables in local schema incl. ai_budget_control_audit (append-only), ai_reply_audits/transports/delivery_receipts with no_update/no_delete triggers; governed via atomic governor (mig 20261070/20261080 lineage); RLS test __tests__/integration/rls/ai-invocations.test.ts"
+ },
+ {
+  "id": "R139",
+  "volume": "V07-DB",
+  "section": "Database",
+  "requirement": "HQ/customer separation",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "62 hq_* tables separated from customer tables; HQ surface at app/admin/ (ai-boardroom, ceo, command-centre, cto-ai, approvals, ops...) distinct from app/(app)/; hq_drafts/hq_ai_executor_shadow append-only triggers; __tests__/integration/hq/ suite"
+ },
+ {
+  "id": "R140",
+  "volume": "V07-DB",
+  "section": "Database",
+  "requirement": "Search architecture",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "G1 breadth gap closed on this branch: commit d9227ad2 ('12\u219222 families, nav-locked role boundary', ancestor of HEAD) \u2014 app/api/search/route.ts emits 22 hit types; lib/search/{filters,rank,sanitize}.ts; __tests__/search/ incl. palette-type-coverage drift guard; semantic side built dark (pgvector installed, hq_memories.embedding, governed mig 20261080)"
+ },
+ {
+  "id": "R141",
+  "volume": "V07-DB",
+  "section": "Database",
+  "requirement": "Backups expectations",
+  "horizon": "cur",
+  "status": "E",
+  "evidence": "Engineering side COMPLETE + PROVEN: runbook (2026-08-29), real prod-data restore 80s exact-match, dated off-platform dump w/ SHA256SUMS. Residual = PITR add-on toggle: a PAID account-owner dashboard action (CEO) \u2014 runbook scope note. RPO ~24h until flipped."
+ },
+ {
+  "id": "R142",
+  "volume": "V07-DB",
+  "section": "Database",
+  "requirement": "Restore procedure tested",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Two rehearsed drills 2026-08-29: schema replay of all 380 migrations in ~26s restoring 307 RLS tables/605 policies/461 triggers, app verified live (docs/customer-success/FIRST-CUSTOMER-SUPPORT.md:45); full prod-data restore rehearsed same day in 80s + 32s validation, route recorded in ~/CrewFlow-backups/2026-08-29/README.txt; dashboard-PITR route untestable while PITR OFF (CEO-gated)"
+ },
+ {
+  "id": "R143",
+  "volume": "V07-DB",
+  "section": "Database",
+  "requirement": "Scale: millions of customers/billions events",
+  "horizon": "std",
+  "status": "H",
+  "evidence": "No load-test artifacts anywhere: no k6/artillery/autocannon in package.json or scripts/ (only memory-bench.ts, perf-evidence.mjs); docs/connection-pooling-and-scale.md is analysis, not proof. Architecture plausible (partitioned hq_events, 1477 indexes) but millions-of-customers scale cannot be established from repo/local evidence"
+ },
+ {
+  "id": "R144",
+  "volume": "V08-API",
+  "section": "API architecture",
+  "requirement": "Consistent envelope every response",
+  "horizon": "std",
+  "status": "C",
+  "evidence": "lib/api/respond.ts unified ok/error envelope (+request_id); ratchet ADOPTED list = 9 routes (__tests__/security/api-envelope-adoption.test.ts:19) vs 148 route.ts under app/api (grep: exactly 9 importers). Public v1 keeps its own frozen envelope. 139 internal routes still hand-roll shapes; no timestamp field."
+ },
+ {
+  "id": "R145",
+  "volume": "V08-API",
+  "section": "API architecture",
+  "requirement": "Request IDs",
+  "horizon": "std",
+  "status": "C",
+  "evidence": "Minted/reused injection-safe (SAFE_INBOUND_ID, lib/api/request-id.ts:30) in middleware.ts:32-47, Sentry-tagged, echoed on responses. NOW persisted: api_request_log.request_id (mig 20261226000000, lib/public-api/audit.ts:104, __tests__/api-auth/request-id-persistence.test.ts). Still NO id on cron/webhooks/receptionist/health (matcher exclusion middleware.ts:83)."
+ },
+ {
+  "id": "R146",
+  "volume": "V08-API",
+  "section": "API architecture",
+  "requirement": "Safe errors",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Coded error strings via respond.error() {ok:false,error:code}; raw-Postgres-echo banned with pin tests (__tests__/finances/write-refusal.test.ts:34 'never echoes the raw Postgres message'); internals go to console.error/Sentry only (app/api/v1/*/route.ts:~150 pattern, webhook routes Sentry.captureException)."
+ },
+ {
+  "id": "R147",
+  "volume": "V08-API",
+  "section": "API architecture",
+  "requirement": "Org scoping+audit events",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "API key resolves to pinned orgId (lib/api-auth/resolve.ts:156) enforced by lib/public-api/guard.ts (flag\u2192auth\u2192scope\u2192rate-limit); 29 activity/audit triggers in local schema (jobs_activity_trigger, invoices_activity_trigger... via pg_trigger); every admitted public request audit-logged to api_request_log (lib/public-api/audit.ts)."
+ },
+ {
+  "id": "R148",
+  "volume": "V08-API",
+  "section": "API architecture",
+  "requirement": "AI APIs as endpoints",
+  "horizon": "std",
+  "status": "G",
+  "evidence": "ADR 0008 (docs/bible/decisions/0008-ai-sdk-envelope.md, Accepted 2026-06-27, CEO Directive #014): AI SDK envelope is the stable application interface \u2014 AI capabilities run as internal SDK services, not per-capability public endpoints. 3 session AI endpoints exist: app/api/ai/{question,activity_summary,lead_insights}/route.ts."
+ },
+ {
+  "id": "R149",
+  "volume": "V08-API",
+  "section": "API architecture",
+  "requirement": "Comms delivery/open/click/reply tracking",
+  "horizon": "std",
+  "status": "C",
+  "evidence": "delivered/opened/clicked/bounced/complained normalized (lib/comms/providers/resend-events.ts:151-155) via signed idempotent door app/api/webhooks/resend/route.ts, DARK (NEXT_PUBLIC_FEATURE_RESEND_EVENTS+secret, 404 while dark); twilio sms-status receipts. 'replied' absent \u2014 no such event type; inbound-email door not linked as reply-state."
+ },
+ {
+  "id": "R150",
+  "volume": "V08-API",
+  "section": "API architecture",
+  "requirement": "Integration isolation",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Per-provider adapters: accounting xero/sage/quickbooks (lib/integrations/accounting/adapters), banking truelayer/plaid/nordigen, telematics, calendar pull/push/watch, hmrc; shared token-crypto.ts + oauth-refresh.ts seams; cron drains (app/api/cron/bank-sync etc.); faults isolated behind adapter types.ts contracts."
+ },
+ {
+  "id": "R151",
+  "volume": "V08-API",
+  "section": "API architecture",
+  "requirement": "Incoming webhooks auth/log/retry/idempotent",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "12 webhook routes, all fail-closed signature-verify BEFORE parse: email/resend (HMAC/Svix replay-guarded), stripe + stripe-invoice (401 on invalid), vapi x2, whatsapp, twilio x4, calendar. Idempotent via (provider,provider_event_id) unique (resend route.ts:25-29; stripe-webhook-handler.ts:61-67); rate-limited; logged (email_webhook_events, whatsapp_webhook_events)."
+ },
+ {
+  "id": "R152",
+  "volume": "V08-API",
+  "section": "API architecture",
+  "requirement": "Outgoing webhooks signed/retry/idempotent",
+  "horizon": "std",
+  "status": "B",
+  "evidence": "Full outbound system DARK behind NEXT_PUBLIC_FEATURE_OUTBOUND_WEBHOOKS default OFF (lib/webhooks/flags.ts:18): 8 verbs (events.ts:50-59), HMAC signing (signature.ts), SSRF-vetted DNS-pinned fetch (ssrf.ts), backoff 1m\u2192~6h + circuit breaker (server/services/webhook-dispatch.ts:55-60), tables webhook_endpoints/deliveries/dispatch_state, cron app/api/cron/webhook-dispatch."
+ },
+ {
+  "id": "R153",
+  "volume": "V08-API",
+  "section": "API architecture",
+  "requirement": "Rate limiting",
+  "horizon": "std",
+  "status": "C",
+  "evidence": "Durable Postgres limiter in prod (rate_limit_hit RPC, lib/security/rate-limit.ts:236+): v1 reads fail-open / writes fail-closed (public-api-rate-limit-failclosed.test.ts); portal/auth/waitlist on durable path. But internal enforce() is per-instance in-memory, and only 13/148 app/api routes call any limiter (1 of 3 /api/ai) \u2014 authed session APIs mostly unmetered."
+ },
+ {
+  "id": "R154",
+  "volume": "V08-API",
+  "section": "API architecture",
+  "requirement": "Versioning /v1",
+  "horizon": "std",
+  "status": "B",
+  "evidence": "/api/v1 with 11 resources (jobs, customers, invoices, quotes, leads, expenses, materials, staff, time, me, openapi.json), frozen contract, entirely DARK behind FEATURE_PUBLIC_API_JOBS (lib/public-api/flag.ts:17 \u2014 404 while off). Versioning is public-surface only; internal /api/* unversioned."
+ },
+ {
+  "id": "R155",
+  "volume": "V08-API",
+  "section": "API architecture",
+  "requirement": "Public Open API + docs",
+  "horizon": "std",
+  "status": "B",
+  "evidence": "OpenAPI 3.1, 14 paths (lib/public-api/openapi.ts:423,521+), served at /api/v1/openapi.json + human docs /developers (dark-gated page.tsx:184). SDKs NOW EXIST: generated TS (@crewflow/api-client) + Python (crewflow-api) under sdks/, drift test __tests__/openapi-sdk/spec-consistency.test.ts. All dark behind the same flag."
+ },
+ {
+  "id": "R156",
+  "volume": "V08-API",
+  "section": "API architecture",
+  "requirement": "Endpoint monitoring/alerts",
+  "horizon": "std",
+  "status": "C",
+  "evidence": "Sentry wired all 3 runtimes (sentry.{client,edge,server}.config.ts, tracesSampleRate 0.1 prod, request_id tag middleware.ts:36), env-gated; /api/health DB probe; cron telemetry (lib/ops/cron-telemetry.ts + cron_runs); HQ alerts = business rules only. NO per-endpoint latency metrics (api_request_log lacks duration) and no uptime/latency alert rules in repo."
+ },
+ {
+  "id": "R157",
+  "volume": "V08-API",
+  "section": "API architecture",
+  "requirement": "<200ms average + load tests",
+  "horizon": "std",
+  "status": "H",
+  "evidence": "'<200ms average' is a prod-runtime property with no local measurement path \u2014 nothing records endpoint durations (api_request_log: no duration column). Load-test half verifiably ABSENT: no k6/artillery/perf job in .github/workflows, scripts/, package.json. The average cannot be established from repo/local evidence; the proving harness was never built."
+ },
+ {
+  "id": "R158",
+  "volume": "V08-API",
+  "section": "API architecture",
+  "requirement": "API documentation",
+  "horizon": "std",
+  "status": "C",
+  "evidence": "Public API docs complete but dark: /developers renders the OpenAPI 3.1 doc human-readably (app/(marketing)/developers/page.tsx:9, flag-gated :184) + sdks/README.md + per-SDK READMEs. Internal /api/* documented only via in-code route header comments \u2014 no internal API reference doc in docs/."
+ },
+ {
+  "id": "R159",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Zero trust / least privilege / defence in depth",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "RLS on 311/311 public tables (pg_tables, 0 without); latent-grant revoke mig 20261215_revoke_default_grants.sql; blocking CI security gate `npm run test:security` (.github/workflows/ci.yml:187-188) over 310 suites in __tests__/security; zero-trust audit records docs/roadmap/C26-ZERO-TRUST-AUDIT.md + C28-ZERO-TRUST-AUDIT-2.md"
+ },
+ {
+  "id": "R160",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Secure defaults deny",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Deny-by-default RLS: 311/311 tables enabled, service-role-only tables have zero policies AND revoked client grants (mig 20261215, two-tier proof in header); feature flags require explicit === \"true\" (server/services/gdpr-erase.ts:43; FEATURE_ACCOUNTING_CONNECT/CALENDAR_CONNECT/GDPR_ERASURE/RETENTION_PURGE all default off)"
+ },
+ {
+  "id": "R161",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Auth methods (magic/Google/password/MFA)",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Password app/(auth)/actions.ts:229, magic link :108 (signInWithOtp), Google OAuth :48, Microsoft/azure SSO built :446 (+ /settings/sso page, nav-model.ts:260); MFA: app/(auth)/login/mfa/page.tsx + _mfa-challenge-form.tsx, lib/auth/mfa-policy.ts (allow/challenge/enroll), /settings/security page (nav-model.ts:255)"
+ },
+ {
+  "id": "R162",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Multi-tenant isolation DB-enforced",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "RLS on all 311 public tables (DB catalogue); cross-tenant suites in __tests__/security: cross-org-reference-injection.test.ts, worker-portal-isolation.test.ts, inbox-org-isolation.test.ts, pricing-org-isolation.test.ts, inbound-email-isolation.test.ts, active-org-* pin guards; suite is a BLOCKING CI gate (ci.yml:182-188)"
+ },
+ {
+  "id": "R163",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Storage isolation",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "10 storage RLS policies in live catalogue (pg_policies schemaname='storage') incl. 'job-docs-private: admins can read' staff/private split; signer guard lib/storage/owned-path.ts; tests signed-url-active-org-pin-guard.test.ts, storage-owned-path.test.ts, storage-evidence-wave.test.ts, storage-company-logos-lockdown.test.ts"
+ },
+ {
+  "id": "R164",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Search isolation",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "app/api/search/route.ts:265-266 role filter (isManagementRole gates money/people hits) + per-query .eq(\"org_id\", ctx.org.id) scoping on RLS tenant client (:343-366); tests __tests__/security/search-role-boundary.test.ts + documents-search-scope.test.ts"
+ },
+ {
+  "id": "R165",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "AI isolation",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "lib/ai/governor.ts + governor/{registry,limits,policy,readiness,attribution}.ts; atomic DB proc ai_reserve_invocation (pg_proc); capability grants mig 20261227; tests ai-cost-governor/ai-governance-closure/ai-budget-controls + capability-registry-*.test.ts; STATUS.md:135 ungoverned call sites CLOSED"
+ },
+ {
+  "id": "R166",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Encryption transit/rest+token crypto",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Transit: TLS/HSTS platform-owned, asserted in __tests__/security/headers.test.ts:33-35 + lib/security/headers.ts:95 (max-age=63072000); rest: Supabase-managed; token crypto: lib/integrations/token-crypto.ts:36 ALGORITHM=\"aes-256-gcm\" used by all integration OAuth token stores, test token-encryption-seam.test.ts"
+ },
+ {
+  "id": "R167",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Secret management",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "No .env tracked (git ls-files clean, .env* gitignored per A7 doc); gitleaks secret scan CI (.github/workflows/security-scan.yml, SHA-pinned, full-history) + repo-root .gitleaks.toml; security suite includes no-secret-env-in-client-bundle proof (ci.yml:182-186)"
+ },
+ {
+  "id": "R168",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Immutable audit",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Mig 20261214_audit_log_immutability.sql (append-only for EVERY role incl. service_role, narrow GDPR-scrub hole); live triggers in pg_trigger: activity_log_append_only_update/delete, admin_activity_log_append_only_*, ai_invocations_immutable, ai_budget_control_audit_append_only + ~20 more"
+ },
+ {
+  "id": "R169",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Monitoring",
+  "horizon": "std",
+  "status": "C",
+  "evidence": "Built: Sentry SDK wired (sentry.{client,edge,server}.config.ts, instrumentation.ts) + /api/health real DB probe + honest outboundReady readiness. Missing: uptime/paging not wired \u2014 route.ts comment 'BetterStack (Block 2 wires this up)'; EXTERNAL-PROOF-READINESS.md \u00a72 steps 3-4 (alert rules proven firing) still required"
+ },
+ {
+  "id": "R170",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Backups+PITR",
+  "horizon": "std",
+  "status": "C",
+  "evidence": "Backups: WAL archiving verified, restore procedure docs/backup-recovery-runbook.md, schema replay proven; but PITR verified OFF via management API (docs/customer-success/FIRST-CUSTOMER-SUPPORT.md:51, CEO-only billing decision); this tree lists off-platform dump as pending (:52-53), RPO \u226424h dashboard-unconfirmed (:46)"
+ },
+ {
+  "id": "R171",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Incident response documented",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "10-step database-incident procedure with evidence-backed drill record: docs/customer-success/FIRST-CUSTOMER-SUPPORT.md:41-53; emergency scenarios 1-6 incl. outage/paused-project/bad-deploy (:31-39); docs/backup-recovery-runbook.md (restore-as-incident) + docs/RC3-MAINTENANCE-CUTOVER-RUNBOOK.md (write-freeze)"
+ },
+ {
+  "id": "R172",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "GDPR export/delete/retention",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Export ZIP UI-reachable: settings/data-retention/page.tsx:245 link, nav-model.ts:271; erase route app/api/gdpr/erase + _gdpr-erase.client.tsx (ready at FEATURE_GDPR_ERASURE flip); retention migs 20261213 + purge primitive; tests gdpr-export/gdpr-erase/gdpr-erase-registry/retention-*; census lib/gdpr/org-tables.json"
+ },
+ {
+  "id": "R173",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Consent management",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Moved from C: ToS PRESENTED (app/onboarding/company/page.tsx:86-100 required checkbox + /terms link) and PERSISTED org-level (mig 20261223_tos_acceptance.sql; actions.ts:53,98-103 stamps CURRENT_TOS_VERSION); tests tos-stamp.test.ts + integration tos-acceptance.test.ts; GDPR/PECR cookie-consent banner app/_components/cookie-consent.tsx"
+ },
+ {
+  "id": "R174",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Penetration testing",
+  "horizon": "std",
+  "status": "E",
+  "evidence": "docs/engineering/EXTERNAL-PROOF-READINESS.md \u00a73 'External penetration test \u2014 SCOPE READY / ENGAGEMENT REQUIRED': full scope/rules-of-engagement documented (cross-org primitives, authn, API keys, financial abuse); firm engagement is an explicit CEO action; internal side done (292+ security tests)"
+ },
+ {
+  "id": "R175",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Fuzzing",
+  "horizon": "std",
+  "status": "D",
+  "evidence": "No fuzzing programme: no fast-check/property-based dependency in package.json, no fuzz harness or CI job; the only 'fuzz'-named tests are deterministic \u2014 __tests__/blueprints/markup.test.ts:33 fixed arithmetic sequence, outbound-webhooks.test.ts:228 enumerated SSRF table \u2014 invariant/table tests, not fuzzing"
+ },
+ {
+  "id": "R176",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Dependency scanning",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Scanning runs automatically: Dependabot weekly npm + github-actions, grouped minor/patch (.github/dependabot.yml); `npm audit --omit=dev --audit-level=high` every CI run (ci.yml:199-200); non-blocking is a documented deliberate policy (ci.yml:190-198; docs/roadmap/A7-CI-SUPPLY-CHAIN-HYGIENE.md); actions SHA-pinned"
+ },
+ {
+  "id": "R177",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Secret scanning",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "gitleaks in CI: .github/workflows/security-scan.yml (every PR + push to main, fetch-depth 0 full-history, action SHA-pinned ff98106e, Dependabot keeps pin current) with .gitleaks.toml narrowing false positives; recorded in docs/roadmap/A7-CI-SUPPLY-CHAIN-HYGIENE.md"
+ },
+ {
+  "id": "R178",
+  "volume": "V09-SEC",
+  "section": "Security",
+  "requirement": "Recovery drills",
+  "horizon": "std",
+  "status": "C",
+  "evidence": "Schema/app drill PROVEN: 380-migration replay in 26s restoring 307 RLS tables/605 policies/461 triggers, app verified live (FIRST-CUSTOMER-SUPPORT.md:45; backup-recovery-runbook.md:141). Pending in this tree: dashboard DATA-restore rehearsal \u2014 'data-restore RTO: not yet measured' (:46), checklist :50-53 open"
+ },
+ {
+  "id": "R179",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Design tokens all dimensions",
+  "horizon": "std",
+  "status": "C",
+  "evidence": "Tone/colour tokens real + AA build-enforced (components/ui/tokens.ts; __tests__/ui/tokens.test.ts recomputes every ratio); marketing tokens in app/_marketing/tokens.css + tailwind.config.ts. But spacing/radius/motion remain untokenised in the product: 664 arbitrary [Npx] literals in app/(app)/**/*.tsx."
+ },
+ {
+  "id": "R180",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Dark charcoal+gold product theme",
+  "horizon": "std",
+  "status": "G",
+  "evidence": "Superseded by a real Bible ADR now: docs/bible/decisions/0014-light-theme-product.md (Accepted 2026-08-30) \u2014 tenant product ships light-only, dark chrome is HQ's; adoption test pins zero dark: classes in components/ui (design-system-adoption.test.ts:163)."
+ },
+ {
+  "id": "R181",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Component library complete",
+  "horizon": "std",
+  "status": "C",
+  "evidence": "Library much expanded and adoption-test-pinned: barrel components/ui/index.ts (Badge/StatTile/PageHeader/Breadcrumb/Table chrome/Button/Skeleton family) + Modal, DataTable, charts/ (5 chart types), components/forms (76 adopters), EmptyState. Still no Toast primitive and no shared Tabs (per-surface inbox-tabs.tsx/_job-tabs.tsx), so not 'complete'."
+ },
+ {
+  "id": "R182",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Tables: sticky headers",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "DataTable stickyHeader (components/ui/data-table.tsx:464,478 \u2014 sticky top-0 inside a max-h-[70vh] scrollport) enabled on all 5 adoption pages: jobs/page.tsx:345, invoices:300, customers:235, suppliers:99, staff:199."
+ },
+ {
+  "id": "R183",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Tables: column resizing",
+  "horizon": "std",
+  "status": "C",
+  "evidence": "Pointer-drag + keyboard (WCAG) column resize fully implemented in the canonical DataTable (data-table.tsx:288-342, handle at 540-553), but no shipped page passes `resizable` (zero grep hits in app/) and no unit/e2e test exercises it \u2014 capability unreachable by any user today."
+ },
+ {
+  "id": "R184",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Tables: sorting",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Sortable columns live on all 5 DataTable pages (e.g. customers/page.tsx:51, jobs:46); cycle asc\u2192desc\u2192natural + missing-last + stable sort unit-tested (__tests__/ui/data-table.test.ts:36-129); aria-sort asserted in e2e (e2e/final-roadmap-smoke.spec.ts:88)."
+ },
+ {
+  "id": "R185",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Tables: filtering",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Filtering is server-authoritative and reachable on every list page (invoices status/customer filters invoices/page.tsx:131-153 with clear-filter UI :240; jobs all-SQL filters jobs/page.tsx:97-99) AND the canonical DataTable ships client filterRows with honest loaded-page count line (data-table.tsx:407-427), unit-tested (data-table.test.ts:131-156)."
+ },
+ {
+  "id": "R186",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Tables: grouping",
+  "horizon": "std",
+  "status": "C",
+  "evidence": "groupBy implemented in DataTable (data-table.tsx:237-255, colgroup header rows :572-580) and groupRows unit-tested (data-table.test.ts:189-203), but no adoption site passes groupBy \u2014 grouping is unreachable on any shipped surface."
+ },
+ {
+  "id": "R187",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Tables: bulk actions",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Selectable checkbox column + indeterminate select-all + bulk bar (data-table.tsx:429-452,482-494); invoices ships selectable + 'Export selected as CSV' (invoices/page.tsx:301-302), staff selectable (:200); non-destructive by design (data-table.tsx:59-61); reducers + formula-injection-safe toCsv unit-tested; adoption test pins invoices as the one bulk-action page (data-table.test.ts:284)."
+ },
+ {
+  "id": "R188",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Tables: keyboard navigation",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Roving row focus with ArrowUp/Down/Home/End/Enter-opens-href + inner-control key-guard (data-table.tsx:263-286) and sr-only usage instructions (:454-459); live on pages whose rows carry href (customers/page.tsx:238, invoices:317); Enter uses location.assign per the deep-swap house rule."
+ },
+ {
+  "id": "R189",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Tables: search",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Global Cmd+K palette searches 22 families after G1 (FINAL-ROADMAP-COMPLETION.md:40, commit d9227ad2; app/(app)/_nav/commands.ts) plus server-side q search on customers/invoices/jobs/expenses/staff/quotes list pages (e.g. customers/page.tsx:33,70) \u2014 whole-table SQL search, never a capped JS filter (jobs/page.tsx:97-99)."
+ },
+ {
+  "id": "R190",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Tables: inline editing",
+  "horizon": "std",
+  "status": "G",
+  "evidence": "Inline editing documented-omitted by recorded decision: every mutation goes through PRG server-action forms with validation/error surfaces; a save-on-blur cell contradicts the destructive-safety posture (data-table.tsx:53-57; docs/roadmap/FINAL-ROADMAP-COMPLETION.md:42 'inline-edit documented-omitted'). Pages link to detail forms instead."
+ },
+ {
+  "id": "R191",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Empty states teach",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "EmptyState primitive teaches: title + body + primary/secondary CTA links so zero-row surfaces never dead-end (app/(app)/_components/empty-state.tsx:13-45); 75 files across app/components render EmptyState (e.g. invoices/page.tsx:288 with 'new invoice' primary)."
+ },
+ {
+  "id": "R192",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Loading skeletons",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "55 route-level loading.tsx files under app/; Skeleton family (Skeleton/SkeletonTileRow/SkeletonTable/SkeletonDetail/SkeletonHeader, components/ui/skeleton.tsx) exported from the barrel and used by 51 of them; DataTable ships its own loading skeleton (data-table.tsx:369-395)."
+ },
+ {
+  "id": "R193",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Error states recover",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Recovering boundaries now cover every route group: app/error.tsx (reset 'Try again' :32-35), app/(app)/error.tsx (reset + workspace nav + real support link + explicit Sentry capture :19-49), app/admin/error.tsx, app/global-error.tsx \u2014 the tenant-product group boundary that was previously missing exists and offers recovery."
+ },
+ {
+  "id": "R194",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Accessibility contrast/focus/scalable",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "AA contrast build-enforced: __tests__/ui/tokens.test.ts:89-112 recomputes every tone/variant ratio from Tailwind's palette and fails under 4.5:1; e2e/contrast-sweep-a11y.spec.ts + 6 axe suites (operations/admin/staff-invite/toolbox/health-safety/sites + _axe-canary); focus: focus-trap.ts unit-tested, focus-visible rings on rows/resize handles (data-table.tsx:551,600)."
+ },
+ {
+  "id": "R195",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Reduced motion",
+  "horizon": "std",
+  "status": "C",
+  "evidence": "Marketing fully gated (app/globals.css:72,177); modal + DataTable skeleton gated via motion-reduce:animate-none, test-pinned (design-system-adoption.test.ts:260); charts animation-free by design. But the shared Skeleton pulses ungated (skeleton.tsx:11) across ~51 loading.tsx + 4 hand-rolled pulses; zero motion-reduce in app/**/*.tsx."
+ },
+ {
+  "id": "R196",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Charts simple/interactive/beautiful",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Zero-dep server-SVG charts (components/ui/charts/: Bar/Line/Area/Donut/Sparkline) adopted on reports home (page.tsx:353,379,412), cashflow:91, profit:84, dashboard trend (_revenue-trend.tsx:79); proportionality/geometry/a11y unit-tested (charts.test.ts). Interactivity = native SVG tooltips; client layer is a recorded future decision (FINAL-ROADMAP-COMPLETION.md:43)."
+ },
+ {
+  "id": "R197",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Navigation consistency",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "app/(app)/_nav/nav-model.ts is the pure-data single source consumed by Sidebar, MobileNav and Cmd+K commands (layout.tsx:126,135); __tests__/nav/reachability.test.ts pins 8 primary areas, zero unintended orphans, role visibility and active-area detection; legacy emoji bottom-nav.tsx has zero importers."
+ },
+ {
+  "id": "R198",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Icons one library",
+  "horizon": "std",
+  "status": "C",
+  "evidence": "Nav shell resolves icons through one lucide-react resolver (app/(app)/_nav/icons.tsx; 71 files import lucide-react), but emoji still serve as icons across the product: 137 emoji glyphs in app/(app)/**/*.tsx, mostly EmptyState icon props (suppliers/page.tsx:89, invoices:285, quality:241, health-safety/[id]:503) \u2014 not one library."
+ },
+ {
+  "id": "R199",
+  "volume": "V10-DESIGN",
+  "section": "Design system",
+  "requirement": "Mobile independent design",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Mobile is its own design, not a shrink: nav-model-driven bottom bar + full-screen sheet, md:hidden (mobile-nav.tsx:126,165); DataTable renders page-supplied mobile cards below the breakpoint with min-h-[44px] targets (data-table.tsx:645-651, cardsBelow prop); 375px e2e coverage of the new surfaces (e2e/final-roadmap-smoke.spec.ts:132-157) plus job-site-hub-mobile.spec.ts."
+ },
+ {
+  "id": "R200",
+  "volume": "V11-ENG",
+  "section": "Engineering standards",
+  "requirement": "Branch/PR/review flow",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Main history is PR-gated merges (git log main: #584-#591, e.g. dccfe4f1 '(#586)'); .github/workflows/ci.yml gates every pull_request into main + directive/018 with 6 jobs; triggers pinned by __tests__/ci/workflow-gates.test.ts."
+ },
+ {
+  "id": "R201",
+  "volume": "V11-ENG",
+  "section": "Engineering standards",
+  "requirement": "Type safety gate",
+  "horizon": "std",
+  "status": "A",
+  "evidence": ".github/workflows/ci.yml job 'typecheck' runs `npm run typecheck` = `tsc --noEmit` (package.json scripts.typecheck) on every PR/push; gate existence pinned by __tests__/ci/workflow-gates.test.ts."
+ },
+ {
+  "id": "R202",
+  "volume": "V11-ENG",
+  "section": "Engineering standards",
+  "requirement": "Lint gate",
+  "horizon": "std",
+  "status": "A",
+  "evidence": ".github/workflows/ci.yml job 'lint' runs `npm run lint` = `eslint .` (package.json scripts.lint) on every PR/push to main."
+ },
+ {
+  "id": "R203",
+  "volume": "V11-ENG",
+  "section": "Engineering standards",
+  "requirement": "Unit tests gate",
+  "horizon": "std",
+  "status": "A",
+  "evidence": ".github/workflows/ci.yml job 'tests' runs `npx vitest run` (unit tier, mocked Supabase); 1,225 *.test.* files under __tests__/ across ~120 domain directories."
+ },
+ {
+  "id": "R204",
+  "volume": "V11-ENG",
+  "section": "Engineering standards",
+  "requirement": "Integration real-PG gate",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "ci.yml job 'integration (real Postgres)': supabase CLI pinned 2.98.2, `supabase start` applies supabase/migrations on a fresh runner volume, then `npm run test:integration` (vitest.integration.config.ts; 256 test files in __tests__/integration); CI=true makes describeIntegration fail loudly if DB absent."
+ },
+ {
+  "id": "R205",
+  "volume": "V11-ENG",
+  "section": "Engineering standards",
+  "requirement": "Security tier gate",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "ci.yml job 'security (trust boundaries)': BLOCKING `npm run test:security` (vitest.security.config.ts; 309 test files in __tests__/security \u2014 tenant isolation on service-role path, cron Bearer gates, CSP/headers, role escalation, no-secret-env-in-client)."
+ },
+ {
+  "id": "R206",
+  "volume": "V11-ENG",
+  "section": "Engineering standards",
+  "requirement": "E2E real app gate",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "ci.yml job 'e2e (real app, real Postgres)': `npm run build` + Playwright chromium against `next start` on the live local Supabase stack; e2e/*.spec.ts incl. final-roadmap smoke for every new Wave-1/2 surface at desktop + 375px (commit 3e8683fe)."
+ },
+ {
+  "id": "R207",
+  "volume": "V11-ENG",
+  "section": "Engineering standards",
+  "requirement": "Regression discipline",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "116 test files under __tests__/ cite 'regression'; fix waves ship tests in the same commit (611701a5 touches 5 __tests__ files, 2ee23b88 touches 4); config-failure classes get pin tests (__tests__/ci/workflow-gates.test.ts exists because gates once silently never fired)."
+ },
+ {
+  "id": "R208",
+  "volume": "V11-ENG",
+  "section": "Engineering standards",
+  "requirement": "Performance tests",
+  "horizon": "std",
+  "status": "C",
+  "evidence": "Real harness now exists: scripts/perf-evidence.mjs (cold+warm p50/p95/p99, authed SSR, refuses non-local) + measured run in docs/engineering/PERFORMANCE-EVIDENCE.md (2026-08-29: <200ms API/<2s page MET locally; 0/400 non-200) + __tests__/db/perf-org-id-indexes.test.ts. But it is a one-off local run, not a CI/recurring gate, and the doc itself states 'UNPROVEN at production topology and at scale'."
+ },
+ {
+  "id": "R209",
+  "volume": "V11-ENG",
+  "section": "Engineering standards",
+  "requirement": "Dependency scanning",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "Scanning exists and runs: .github/dependabot.yml weekly npm (minor/patch grouped) + github-actions ecosystems; ci.yml security job runs `npm audit --omit=dev --audit-level=high` on every PR \u2014 deliberately non-blocking with documented rationale (determinism/flake policy, launch freeze) in ci.yml comments."
+ },
+ {
+  "id": "R210",
+  "volume": "V11-ENG",
+  "section": "Engineering standards",
+  "requirement": "Secret scanning",
+  "horizon": "std",
+  "status": "A",
+  "evidence": ".github/workflows/security-scan.yml: gitleaks on every pull_request + push to main, action SHA-pinned (ff98106e...), fetch-depth 0 so full history is scanned, repo-root .gitleaks.toml config present."
+ },
+ {
+  "id": "R211",
+  "volume": "V11-ENG",
+  "section": "Engineering standards",
+  "requirement": "Migration validation",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "__tests__/db/migration-prefix-unique.test.ts (duplicate-prefix guard \u2014 undefined apply order class hit before); migration-content pin suites (e.g. __tests__/db/perf-org-id-indexes.test.ts asserts the migration SQL stays additive+idempotent); CI integration AND e2e jobs fresh-replay ALL supabase/migrations on every run (ci.yml `supabase start` on a fresh volume)."
+ },
+ {
+  "id": "R212",
+  "volume": "V11-ENG",
+  "section": "Engineering standards",
+  "requirement": "Production verification",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "docs/PRODUCTION-DEPLOYMENT-RUNBOOK-RC3.md \u00a76 'Post-deploy smoke tests': health endpoint ok:true with new SHA, owner login\u2192dashboard, job\u2192quote\u2192accept commercial spine, portal token scope, cron 200 with CRON_SECRET, dark-features-stay-dark check."
+ },
+ {
+  "id": "R213",
+  "volume": "V11-ENG",
+  "section": "Engineering standards",
+  "requirement": "Documentation per feature",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "193 .md files under docs/ \u2014 per-feature docs (asset-management.md, cis-domain.md, customer-portal.md, blueprint-centre.md, cash-position.md, ...), docs/engineering/ (CORRECTNESS-GUARDS, PERFORMANCE-EVIDENCE, SUBSYSTEM-OWNERSHIP), plus runbooks and docs/roadmap ledgers."
+ },
+ {
+  "id": "R214",
+  "volume": "V11-ENG",
+  "section": "Engineering standards",
+  "requirement": "Rollback plan",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "docs/PRODUCTION-DEPLOYMENT-RUNBOOK-RC3.md:65-72 \u2014 layered plan with decision rule: app regression \u2192 instant Vercel revert to prior SHA (stateless, additive migrations keep old app safe on new schema); migration regression \u2192 forward-fix; corruption \u2192 PITR/snapshot; plus docs/backup-recovery-runbook.md with exact restore Steps 1-3 and 2026-08-29 current-state section."
+ },
+ {
+  "id": "R215",
+  "volume": "V11-ENG",
+  "section": "Engineering standards",
+  "requirement": "Tech-debt tracked openly",
+  "horizon": "std",
+  "status": "A",
+  "evidence": "docs/roadmap/STATUS.md is a live open ledger with PARTIAL statuses and named gaps/deferrals per feature (e.g. 'Deferred: fuel\u2192finances seam', 'Gap: no job-page embed'); GAP-ANALYSIS.md + WAVE-A/A5-COMPLETION-LEDGER.md; in-test ratchets across __tests__/security (ai-governance-closure, operational-stock, hq-*-invariants)."
+ },
+ {
+  "id": "R216",
+  "volume": "V11-ENG",
+  "section": "Engineering standards",
+  "requirement": "Branch protection required checks",
+  "horizon": "std",
+  "status": "D",
+  "evidence": "Verified GitHub-side this audit: `gh api repos/crewflow1/web/branches/main/protection` \u2192 HTTP 404 'Branch not protected' and `gh api repos/crewflow1/web/rulesets` \u2192 []. The six CI gates run on every PR but NOTHING makes them required \u2014 a red PR can be merged. Was H; now concretely NOT BUILT."
+ },
+ {
+  "id": "R217",
+  "volume": "V12-MKT",
+  "section": "Marketing",
+  "requirement": "SEO programmatic engine",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Registry lib/seo/content/* (features 13, comparisons 9, industries 11, locations 15, blog 5, tools 6 slugs); routes app/(marketing)/{features,compare,industries,blog,construction-software}/[slug]/page.tsx w/ generateStaticParams+generateMetadata + 4 calculator pages; registry-driven app/sitemap.ts (+6 pillar pages), app/robots.ts, JSON-LD components/seo/json-ld.tsx; e2e/smoke.spec.ts:24."
+ },
+ {
+  "id": "R218",
+  "volume": "V12-MKT",
+  "section": "Marketing",
+  "requirement": "Demo funnel->Stripe setup checkout->onboarding email",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "BookDemo modal in app/(marketing)/layout.tsx + app/(site)/layout.tsx -> app/api/demo/route.ts (__tests__/demo/route.test.ts); admin CRM app/admin/demos/; lib/stripe/demo-checkout.ts mints idempotent real Checkout link, webhook flips payment_received; onboarding email w/ magic link lib/email/demo-templates.ts:222; pinned by __tests__/demo-lifecycle/contract.test.ts."
+ },
+ {
+  "id": "R219",
+  "volume": "V12-MKT",
+  "section": "Marketing",
+  "requirement": "Product-truth guardrail in marketing",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "lib/marketing/pillars.ts:1-16: capabilities must be LIVE+reachable; DELIBERATELY EXCLUDED dark features (weather, AI insights, voice receptionist, AI quote writer) + honest omissions (no accounting sync/HMRC filing/card processing). PILLARS is sole source for /product+/product/[pillar] (app/(site)/product/[pillar]/page.tsx:5,13) and sitemap; SEO content shows no dark claims."
+ },
+ {
+  "id": "R220",
+  "volume": "V12-MKT",
+  "section": "Marketing",
+  "requirement": "Email nurture sequences",
+  "horizon": "proc",
+  "status": "P",
+  "evidence": "Horizon 'proc'. Fresh grep nurture/drip/email-sequence across lib, app, supabase/migrations: zero product code, no sequence engine (vercel.json crons are tenant follow-ups, not prospect nurture). Coded email surface is transactional demo-lifecycle only (lib/email/demo-templates.ts). Prospect nurture campaigns are marketing ops, not a repo artifact."
+ },
+ {
+  "id": "R221",
+  "volume": "V12-MKT",
+  "section": "Marketing",
+  "requirement": "Bob-the-Builder cinematic series",
+  "horizon": "proc",
+  "status": "P",
+  "evidence": "Creative production, horizon 'proc'. No artifact in web-audit (grep bob/cinematic: none). Video work lives in external repo ~/crewflow-promo-videos (Remotion project + AFTER-THE-NOISE_higgsfield-hero-film.md brief on disk). A cinematic series is human creative work, not an engineering deliverable of this repo."
+ },
+ {
+  "id": "R222",
+  "volume": "V12-MKT",
+  "section": "Marketing",
+  "requirement": "Content calendar/social cadence",
+  "horizon": "proc",
+  "status": "P",
+  "evidence": "Horizon 'proc'. Documented human strategy: docs/seo/03-content-strategy.md:108 ('pillar-and-cluster content calendar') and :114 ('Cadence: 2 substantial posts/week'); docs/seo/05-offsite-pr-backlinks-social.md covers social. Executing the cadence is founder/marketing ops; the blog engine to publish into exists (R217)."
+ },
+ {
+  "id": "R223",
+  "volume": "V12-MKT",
+  "section": "Marketing",
+  "requirement": "Analytics (PostHog)",
+  "horizon": "cur",
+  "status": "B",
+  "evidence": "Built, one env var from live: lib/analytics/load.ts is the sole posthog.init point, refuses without NEXT_PUBLIC_POSTHOG_KEY (optional, lib/env.ts:292-294); consent-gated lib/analytics/consent.ts + __tests__/privacy/consent.test.ts; CookieConsent mounted app/layout.tsx:73; CSP pre-allowlists eu.i.posthog.com (lib/security/headers.ts:63-70)."
+ },
+ {
+  "id": "R224",
+  "volume": "V12-MKT",
+  "section": "Marketing",
+  "requirement": "Referral/community/webinars",
+  "horizon": "proc",
+  "status": "P",
+  "evidence": "Horizon 'proc'. Referral/community/webinars are growth ops, not repo artifacts: only 'referral' in code is a tenant lead-source enum (lib/leads/schema.ts:65) plus honest no-attribution note (lib/hq/marketing.ts:505); zero webinar/community engineering found; docs/seo/05-offsite-pr-backlinks-social.md:234 frames partner/referral as founder-run off-site work."
+ },
+ {
+  "id": "R225",
+  "volume": "V13-SALES",
+  "section": "Sales",
+  "requirement": "HQ sales CRM companies/contacts/tasks/analytics",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/admin/sales/{companies,tasks,analytics,activity} pages; contacts CRUD app/admin/sales/companies/[id]/page.tsx:98-103 + server/services/hq-sales.ts:425 (hq_sales_contacts); 20 hq_sales_* tables in schema; nav app/admin/_nav/hq-nav-model.ts:86-88; RLS test __tests__/integration/sales/hq-sales-rls.test.ts:181-188"
+ },
+ {
+  "id": "R226",
+  "volume": "V13-SALES",
+  "section": "Sales",
+  "requirement": "Research/Qualification AI",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Live manual-launch: app/admin/research/actions.ts:53 startResearch (hq-research.ts:648 runner) and app/admin/qualification/actions.ts:49 startQualification (hq-qualification.ts:612); nav hq-nav-model.ts:90-91; runner tests + security invariant tests (research-ai/lead-qualification); LLM leg governed-dark with deterministic fallback"
+ },
+ {
+  "id": "R227",
+  "volume": "V13-SALES",
+  "section": "Sales",
+  "requirement": "Outreach drafts (never auto-send)",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Orphan CLOSED: /admin/outreach in nav (hq-nav-model.ts:92); launcher+actions call startOutreach (app/admin/outreach/actions.ts:47; hq-outreach.ts L23-25 NO send scope); cron outreach-drain route; outreach-runner.test.ts:180 'EXECUTION STAYS LOCKED... never sent'; LLM dark, drafts labelled deterministic"
+ },
+ {
+  "id": "R228",
+  "volume": "V13-SALES",
+  "section": "Sales",
+  "requirement": "Comms transports (LinkedIn/SMS/voice)",
+  "horizon": "fut",
+  "status": "F",
+  "evidence": "Roadmap horizon 'fut'; lib/sales/comms.ts:11-15 'Nothing here sends a message or connects an integration... connectors are planned, never faked'; lib/sales/calling.ts:12-16 'Nothing here places, records, or transcribes a call'; hq_sales_calls/_call_scripts are logging substrate only"
+ },
+ {
+  "id": "R229",
+  "volume": "V13-SALES",
+  "section": "Sales",
+  "requirement": "Pipeline forecast",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Deterministic pipeline forecast: expected wins = open \u00d7 MEASURED historical win rate (won/decided), 8-decided minimum sample, honest insufficient below it and on unreadable source (lib/hq/sales-orchestrator.ts pipeline_forecast_expected_wins; 3 tests + metric-set parity)."
+ },
+ {
+  "id": "R230",
+  "volume": "V13-SALES",
+  "section": "Sales",
+  "requirement": "Sales enablement assets (ROI calc/proposals/objections)",
+  "horizon": "proc",
+  "status": "P",
+  "evidence": "Horizon 'proc'. Substrate live: learning library app/admin/sales/learning/page.tsx (hq_sales_learnings), objection playbook app/admin/sales/calling/page.tsx:47-51 (hq_sales_objections); marketing calculators exist but no sales-ROI calc \u2014 authoring ROI/proposal collateral is founder/process work, not an engineering artifact"
+ },
+ {
+  "id": "R231",
+  "volume": "V05-HQ-OS",
+  "section": "HQ OS Vol III",
+  "requirement": "5-layer architecture data/memory/intelligence/automation/decision",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "All 5 layers real+nav-reachable: data=hq_events partitioned spine (__tests__/ops/event-spine.test.ts); memory=app/admin/memory/page.tsx+hq_memories/_versions tables; intelligence=app/admin/ai-boardroom/page.tsx+lib/intelligence/ (15 modules); automation=app/admin/automations+lib/automation/+automation_* tables; decision=app/admin/decisions+hq_decisions. Nav hq-nav-model.ts:67,77,79,127."
+ },
+ {
+  "id": "R232",
+  "volume": "V05-HQ-OS",
+  "section": "HQ OS Vol III",
+  "requirement": "Departments dashboards",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "79 page.tsx under app/admin/; grouped 7-area IA (Home/Decisions/Workforce/Growth/Customers/Governance/Systems) in app/admin/_nav/hq-nav-model.ts with 55 /admin links; substantive dept boards: finance 223L, sales 281L, support 319L, customers 361L, plus per-dept AI pages (marketing-ai, product-ai, operations-ai...). Reachability pinned by __tests__/ui/reachability.test.ts."
+ },
+ {
+  "id": "R233",
+  "volume": "V05-HQ-OS",
+  "section": "HQ OS Vol III",
+  "requirement": "CEO one-screen clarity",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/admin/ceo/page.tsx \u2014 'whole company on one board': hero band of 5 company vitals + one scorecard per department (Finance/Customers/Pipeline/Sales/Marketing/Research/AI/Learning/Support/Growth) via getCeoDashboard/lib/hq/ceo.ts; honest 'Foundation' state for nascent depts. Nav hq-nav-model.ts:53-54; briefings sub-page + __tests__/hq/ceo-briefing-reader.test.ts."
+ },
+ {
+  "id": "R234",
+  "volume": "V05-HQ-OS",
+  "section": "HQ OS Vol III",
+  "requirement": "Support desk + customers OS + health/churn room",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Support desk: app/admin/support/page.tsx (319L, live open-ticket badge wired in layout.tsx via countOpenSupportTicketsForHq). Customers OS: app/admin/customers/page.tsx (361L)+[id] detail+actions. Health/churn room: app/admin/health/page.tsx (307L) \u2014 churn-risk deep dive, red/yellow/green bands, sparkline trend, next-best-action (lib/hq/health-deep-dive.ts). All in nav (hq-nav-model.ts:104-113)."
+ },
+ {
+  "id": "R235",
+  "volume": "V05-HQ-OS",
+  "section": "HQ OS Vol III",
+  "requirement": "Impersonation safe",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "app/admin/impersonation/actions.ts: isSuperAdminEmail re-check per action, Zod reason (3+ chars), admin_activity_log audit + urgent HQ notification on start, httpOnly/secure cookie, 24h hard cap, server-side session-row re-validation, RLS-no-policies table, route-cache purge on switch. Tests: __tests__/hq/impersonation.test.ts + impersonation-rls.test.ts."
+ },
+ {
+  "id": "R236",
+  "volume": "V05-HQ-OS",
+  "section": "HQ OS Vol III",
+  "requirement": "Ops traffic-light",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Old 8/45 gap closed: lib/ops/cron-routes.ts derives CRON_ROUTES from vercel.json (45=45; throws on off-prefix path), pinned both ways by __tests__/ops/cron-coverage.test.ts. app/admin/ops/page.tsx: green/amber/red banner + env-var presence + email queue + per-cron health + failures (server/services/ops-snapshot.ts:236,276-313). Nav hq-nav-model.ts:137."
+ },
+ {
+  "id": "R237",
+  "volume": "V05-HQ-OS",
+  "section": "HQ OS Vol III",
+  "requirement": "HQ security least-priv",
+  "horizon": "cur",
+  "status": "A",
+  "evidence": "Single gate server/auth/hq.ts: requireHqPage (anonymous\u2192/login, non-allowlisted\u2192notFound 404) and requireHqApi (404 Response), both reducing to isSuperAdminEmail \u2014 env CREWFLOW_SUPERADMIN_EMAILS allowlist, empty\u21d2nobody (server/auth/superadmin.ts:17-27). Gated once at app/admin/layout.tsx so all 79 pages inherit; asserted across __tests__/hq/* and __tests__/security/* suites."
+ }
+]

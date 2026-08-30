@@ -42,9 +42,13 @@ function coerceRole(role: string): NavRole {
 export function Sidebar({
   role = "owner",
   locale = "en-GB",
+  flags = [],
 }: {
   role?: string;
   locale?: string;
+  /** Server-resolved feature flags (layout reads server-only env) — gates
+   *  flag-conditional nav entries (nav-model `flag`). */
+  flags?: readonly string[];
 }) {
   const pathname = usePathname();
   const tr = createTranslator(locale);
@@ -52,8 +56,8 @@ export function Sidebar({
     key && tr.has(key) ? tr.t(key) : fallback;
 
   const navRole = coerceRole(role);
-  const areas = navForRole(navRole);
-  const utility = utilityForRole(navRole);
+  const areas = navForRole(navRole, flags);
+  const utility = utilityForRole(navRole, flags);
   const activeId = activeAreaId(pathname);
 
   // Expand state: explicit user toggles override the default (active area open).

@@ -244,6 +244,21 @@ export function isVerificationStale(snapshot: VerificationSnapshot, asOf: string
   return freshness === "none" || freshness === "expired";
 }
 
+/**
+ * PASSTHROUGH — the question the HMRC verification adapter (and its UI) asks,
+ * answered by the ONE existing staleness authority rather than a re-derivation.
+ *
+ * "Needs re-verification" is exactly "the current verification is stale" as the
+ * 20261175 stale-verification gate defines it (the DB twin enforces the same
+ * rule on every payment allocation). This alias exists so the G5 adapter code
+ * reads as intent ("does this profile need re-verifying before HMRC is asked /
+ * before payment?") while there remains a single place the boundary logic
+ * lives. Deliberately NOT a second implementation.
+ */
+export function needsReverification(snapshot: VerificationSnapshot, asOf: string): boolean {
+  return isVerificationStale(snapshot, asOf);
+}
+
 // ---------------------------------------------------------------------------
 // Identifiers — canonicalise on write, mask on display
 // ---------------------------------------------------------------------------
@@ -317,17 +332,21 @@ export function canonicaliseVatNumber(raw: string | null | undefined): string | 
 // ---------------------------------------------------------------------------
 
 /**
- * ⚠️  NOTHING IMPLEMENTS THIS TODAY, AND NOTHING MAY FAKE IT.
+ * ⚠️  NOTHING MAY FAKE THIS SEAM — and while dark, nothing fulfils it at runtime.
  *
- * CIS M1 ships a MANUAL verification workflow only: an org admin verifies the
+ * CIS M1 shipped a MANUAL verification workflow only: an org admin verifies the
  * subcontractor with HMRC out-of-band (HMRC's CIS online service or the CIS
- * helpline) and records the outcome and reference here. There is no live HMRC
- * integration, no credentials, no environment variable and no network call
- * anywhere in this feature.
+ * helpline) and records the outcome and reference here. There is no credential,
+ * no environment variable and no network call anywhere in lib/cis or the CIS
+ * pages themselves.
  *
- * This interface exists so that when a real HMRC Transaction Engine / CIS API
- * integration is built (M5), it slots in behind a stable shape instead of the
- * verification logic being rewritten. Rules for whoever implements it:
+ * G5 STATUS: the real HMRC adapter now exists at
+ * lib/integrations/hmrc/cis-verify.ts — DARK. It refuses (typed
+ * `not_configured`, zero network) unless HMRC credentials AND
+ * NEXT_PUBLIC_FEATURE_HMRC_CONNECT are set, which is never today, and its
+ * outcome is recorded through the SAME recordVerification write the manual
+ * path uses (source='hmrc_api'). This seam remains the contract it satisfies.
+ * Rules for any implementation:
  *
  *   1. NEVER return a synthesised or guessed outcome. If HMRC cannot be reached,
  *      throw or return an error — do not fall back to `standard_20`. A fabricated

@@ -9,6 +9,9 @@ import {
   recordVerification,
   upsertCisProfile,
 } from "@/server/services/cis";
+import { isHmrcConnectable } from "@/lib/integrations/hmrc/oauth";
+import { requestHmrcCisVerification } from "@/lib/integrations/hmrc/cis-verify";
+import { CIS_STATUS_LABELS } from "@/lib/cis/types";
 import {
   cisProfileSchema,
   cisReverificationSchema,
@@ -30,9 +33,14 @@ import {
  * boundary is the admin-only RLS on `cis_subcontractors`, which refuses a
  * direct PostgREST caller identically.
  *
- * NO HMRC INTEGRATION EXISTS. `recordVerification` stores an outcome an admin
- * obtained from HMRC themselves. Nothing here calls HMRC, and nothing simulates
- * a call — see the provider seam in lib/cis/verification.ts.
+ * TWO VERIFICATION PATHS, ONE WRITE AUTHORITY. `saveCisVerification` stores an
+ * outcome an admin obtained from HMRC themselves (the only live path today).
+ * `verifyCisWithHmrc` asks HMRC's online verification service via the G5 DARK
+ * adapter (lib/integrations/hmrc/cis-verify.ts) — it refuses with a plain
+ * message unless HMRC is connectable (credentials + flag, never today), makes
+ * ZERO network calls while dark, and when live records its answer through the
+ * SAME recordVerification write (source='hmrc_api'). Nothing here simulates an
+ * HMRC call — see the provider seam in lib/cis/verification.ts.
  */
 
 const isManager = (role: string): boolean => role === "owner" || role === "admin";
@@ -116,6 +124,62 @@ export async function saveCisVerification(
   revalidate(supplierId);
   return formSuccess({
     successMessage: `Verification recorded — ${result.data.deduction_rate}% deduction.`,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Verification — request one from HMRC online (dark until activation)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ask HMRC to verify this subcontractor and record the answer. ADMIN-GATED
+ * like every action here; the adapter refuses before any network call while
+ * HMRC is not connectable, so in production today this returns the honest
+ * "not connected" message and does nothing else. No form fields: the
+ * identifiers come from the stored profile and contractor details, never from
+ * the browser.
+ */
+export async function verifyCisWithHmrc(
+  supplierId: string,
+  _prev: FormState<Values>,
+  _formData: FormData,
+): Promise<FormState<Values>> {
+  const { ctx, user } = await requireOrgContext();
+  if (!isManager(ctx.membership.role)) return formError(FORBIDDEN);
+  if (!idSchema.safeParse(supplierId).success) return formError("Invalid supplier id.");
+
+  // Belt-and-braces: the adapter dark-guards too, but refusing here keeps the
+  // action from doing ANY reads when the surface should not exist at all.
+  if (!isHmrcConnectable()) {
+    return formError(
+      "HMRC online verification is not connected. Verify with HMRC's CIS online service or the CIS helpline, then record the result here.",
+    );
+  }
+
+  const result = await requestHmrcCisVerification({
+    orgId: ctx.org.id,
+    supplierId,
+    actorId: user.id,
+  });
+  if (!result.ok) return formError(result.message);
+
+  await recordAdminActivity({
+    actorId: user.id,
+    actorEmail: user.email ?? null,
+    action: "cis.verification.recorded",
+    targetTable: "cis_subcontractors",
+    targetId: supplierId,
+    metadata: {
+      cis_status: result.profile.cis_status,
+      deduction_rate: result.profile.deduction_rate,
+      source: "hmrc_api",
+      was_stale: result.wasStale,
+    },
+  }).catch(() => {});
+
+  revalidate(supplierId);
+  return formSuccess({
+    successMessage: `HMRC verified — ${CIS_STATUS_LABELS[result.profile.cis_status]}, reference ${result.receipt.verificationNumber}.`,
   });
 }
 

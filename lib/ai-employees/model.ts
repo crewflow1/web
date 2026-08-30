@@ -27,6 +27,18 @@ export const AI_EMPLOYEE_STATUSES = [
 ] as const;
 export type AiEmployeeStatus = (typeof AI_EMPLOYEE_STATUSES)[number];
 
+/**
+ * Terminal retirement (migration 20261222000000). DELIBERATELY not part of
+ * AI_EMPLOYEE_STATUSES: that list feeds the editable status <select>, and
+ * retirement is not an edit — it is a one-way admin action (disabled →
+ * retired, enforced by DB trigger; a retired row refuses every update).
+ */
+export const RETIRED_STATUS = "retired" as const;
+
+export function isRetired(status: string): boolean {
+  return status === RETIRED_STATUS;
+}
+
 export const STATUS_LABELS: Record<AiEmployeeStatus, string> = {
   idle: "Idle",
   working: "Working",
@@ -37,6 +49,7 @@ export const STATUS_LABELS: Record<AiEmployeeStatus, string> = {
 };
 
 export function statusLabel(status: string): string {
+  if (status === RETIRED_STATUS) return "Retired";
   return STATUS_LABELS[(status as AiEmployeeStatus)] ?? status;
 }
 
@@ -187,6 +200,10 @@ export type AiEmployee = {
   memory_scope: string;
   current_task: string | null;
   last_activity_at: string | null;
+  /** The management spine (relationships.md §2). Null = reports to the human board. */
+  manager_slug: string | null;
+  /** Set exactly when status = 'retired' (terminal; DB-trigger enforced). */
+  retired_at: string | null;
   sort_order: number;
   created_at: string;
   updated_at: string;

@@ -4,9 +4,23 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
+## ✅ Reconciled 2026-08-29 (current truth — read this block, treat everything below as history)
+
+- **Production `main`:** `88cbe193` (verified against the deployed app, not inferred)
+- **Migration tip:** `20261220000000` — **380/380** repo↔DB parity (production).
+  The `roadmap/final-completion` branch carries `20261221`–`20261227` (repo total 387) — pending release, NOT applied; parity is re-verified at release
+- **Defect state:** P0 = 0 · P1 = 0 — Customer-#1 release gates CLOSED (PRs #849/#850 shipped: invoice void, job cancel, Money authz boundary)
+- **Next migration prefix:** query `supabase_migrations.schema_migrations` `max(version)+1` — **never trust this file** (or any doc) for the next prefix
+- **Canonical roadmap truth:** [`MASTER-ROADMAP-RECONCILIATION.md`](./MASTER-ROADMAP-RECONCILIATION.md) — where any block below disagrees with it, the reconciliation wins
+- Everything from the historical header below onward is **programme history**, preserved for audit; its commit hashes, tips, wave states and "remaining backlog" claims are stale.
+
+---
+
+## HISTORICAL header block (2026-08-01 — STALE, kept for audit; do not act on it)
+
 **Last reconciled:** 2026-08-01 (ROADMAP COMPLETION PROGRAMME, build-dark mandate — build every gated feature to the point where only a credential/decision/legal input remains, so activation is a config flip. Waves 1–2 shipped 4 trains: HQ **Decision Centre** `20261091` (Phase 16 + Layer-5 Delay/Delegate), **Deterministic Intelligence** (company-health RAG/CLV/subcontractor scoring, Phase 9, 0-mig), HQ **Finance AI** (MRR/ARR board, insufficient-honest, 0-mig), **Maintenance-reminder engine** `20261092` (Phase 7, built dark). Migration tip `20261090`→`20261092`.)
-**Production `main`:** `b45226fa` — verified against `/api/health`, not inferred
-**Production migration tip:** `20261108` — read from `supabase_migrations.schema_migrations`, NOT inferred
+**Production `main` (as of 2026-08-01, STALE):** `b45226fa` — verified against `/api/health` at the time
+**Production migration tip (as of 2026-08-01, STALE):** `20261108` — see the 2026-08-29 block at the top for current truth
 
 > **⚠️ CORRECTION (C26 zero-trust audit, 2026-08-03): the "engineering-complete" claim below was FALSE.** An independent 12-domain audit (`docs/roadmap/C26-ZERO-TRUST-AUDIT.md`) disproved it. The security/tenancy/DB/governance/financial spine is genuinely strong and survived, BUT real engineering remains: **the 5 dark OAuth integrations are NOT config-flip-ready** — no token-refresh path exists anywhere; accounting + calendar push are stubs (accounting's has a live UI caller that errors on use); banking/telematics sync are uncalled; connect dead-ends on unresolved account handles. Plus a shipped `/stock` mobile-overflow defect, an HQ CEO honesty crack (green-on-read-fail), an unwired automation trigger, 2 over-advertised webhook events, an orphaned VOICE_NOTES flag, and a corporation-tax marginal-relief under-calculation. See the audit doc for the full ✅/🟡/🟠/🔴 breakdown + remediation. Do NOT treat the paragraph below as accurate.
 >
@@ -36,7 +50,7 @@
 > Nine PRs merged in strict slot order with migrate-first discipline; every train got a fresh
 > adversarial review before merge, and two real P1s were caught+fixed pre-merge (EOT withdrawn-event
 > teardown-abort; NCR evidence deletability). Migration slots `20261080`–`20261086` are now ALL
-> APPLIED (see the train table). Next free slot: `20261087+` — re-verify against the DB before claiming.
+> APPLIED (see the train table). Next prefix = query `supabase_migrations.schema_migrations` `max(version)+1` — never trust this file.
 >
 > | PR | Train | Slot | Adversarial |
 > |---|---|---|---|
@@ -424,7 +438,7 @@ at replay. Check this table *and* run the `uniq -d` proof before naming a file.
 | `20261106` | HQ apply-on-approval store (`hq_application_records`, apply-once partial-unique, default-off + unbound authority) | **APPLIED** — Completion W12, #581 |
 | `20261107` | stock reorder points + replenishment (`stock_items.reorder_quantity`) | **APPLIED** — Completion W12, #580 |
 | `20261108` | HQ cadence-clock (`hq_ai_schedules` + `hq_ai_schedule_runs`, default-off) | **APPLIED (prod tip)** — Completion W12, #579 |
-| `20261109+` | **NEXT FREE** | unallocated — re-verify against the DB before claiming |
+| next prefix | — | query `supabase_migrations.schema_migrations` `max(version)+1` — **never trust this file** (this ledger stops at `20261108`; production is far past it — tip `20261220000000` at the 2026-08-29 reconciliation) |
 
 > **C13 ordering lesson, recorded because it will recur.** Under migrate-first with several
 > PRs open at once, production can hold a migration that `main` does not yet contain. A branch
@@ -436,7 +450,7 @@ at replay. Check this table *and* run the `uniq -d` proof before naming a file.
 
 > ### ⚠️ THIS TABLE WAS A LIVE TRAP UNTIL 2026-07-30
 > A read-only audit found this file simultaneously claiming tip `20261062` (here),
-> `20261068` (header) and declaring **`20261069+` "NEXT FREE"** — while `20261069`
+> `20261068` (header) and declaring **`20261069+` unallocated ("next free")** — while `20261069`
 > was **already applied in production**. Following it would have claimed a colliding
 > prefix: exactly the failure the warnings above and below describe. Three lessons,
 > now procedure: (1) the tip appears in ONE place in this file, not three; (2) always

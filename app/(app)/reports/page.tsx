@@ -16,6 +16,7 @@ import {
   type SubscriptionsClient,
 } from "@/lib/reports/subscriptions";
 import { REPORTS } from "@/lib/reports/registry";
+import { BarChart, compactNumber, type ChartSeries } from "@/components/ui/charts";
 import {
   isXeroConnectable,
   isQuickbooksConnectable,
@@ -31,9 +32,12 @@ import {
  *   - VAT per quarter (last 4; output − input)
  *   - Top customers by revenue (all-time, top 10)
  *
- * Bars are pure CSS — no chart library, no bundle cost. Each card
- * carries its own scale so a thin month doesn't shrink everything
- * else to invisible.
+ * Charts render through the canonical chart system (components/ui/charts) —
+ * server-rendered pure SVG, no chart library, no client JS, no bundle cost.
+ * Each chart carries its own scale so a thin month doesn't shrink everything
+ * else to invisible, plus an sr-only data table and native <title> tooltips.
+ * The aggregates stay computed by lib/reports/aggregates; the page only maps
+ * them to chart series (labels + preformatted display values).
  */
 
 const GBP = new Intl.NumberFormat("en-GB", {
@@ -320,36 +324,38 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
   );
 }
 
+/** £-prefixed compact axis ticks ("£1.2k"). Datum tooltips/tables use full GBP. */
+const gbpTick = (n: number): string => `£${compactNumber(n)}`;
+
 function JobsBars({ data }: { data: Awaited<ReturnType<typeof jobsPerWeek>> }) {
-  const max = Math.max(1, ...data.map((d) => d.total));
+  // Two aligned series — total (neutral) and completed (good) — grouped bars.
+  const series: ChartSeries[] = [
+    {
+      name: "Total",
+      tone: "slate",
+      data: data.map((row) => ({
+        label: WEEK_LABEL(row.week_start),
+        value: row.total,
+        text: `${row.total} ${row.total === 1 ? "job" : "jobs"}`,
+      })),
+    },
+    {
+      name: "Completed",
+      tone: "emerald",
+      data: data.map((row) => ({
+        label: WEEK_LABEL(row.week_start),
+        value: row.completed,
+        text: `${row.completed} completed`,
+      })),
+    },
+  ];
   return (
-    <ol className="mt-4 flex items-end gap-1.5 h-32">
-      {data.map((row) => {
-        const totalPct = (row.total / max) * 100;
-        const completedPct = (row.completed / max) * 100;
-        return (
-          <li
-            key={row.week_start}
-            className="flex flex-1 flex-col items-center justify-end"
-            title={`${WEEK_LABEL(row.week_start)} · ${row.total} jobs (${row.completed} completed)`}
-          >
-            <div className="relative w-full max-w-[28px]">
-              <div
-                className="rounded-t bg-slate-300"
-                style={{ height: `${Math.max(2, totalPct)}%` }}
-              />
-              <div
-                className="absolute inset-x-0 bottom-0 rounded-t bg-green-500"
-                style={{ height: `${completedPct}%` }}
-              />
-            </div>
-            <span className="mt-1 text-[10px] text-slate-500">
-              {WEEK_LABEL(row.week_start)}
-            </span>
-          </li>
-        );
-      })}
-    </ol>
+    <BarChart
+      title="Jobs per week, last 8 weeks"
+      desc="Grouped bars of total and completed jobs for each of the last 8 weeks."
+      series={series}
+      categoryHeader="Week starting"
+    />
   );
 }
 
@@ -358,77 +364,75 @@ function RevenueBars({
 }: {
   data: Awaited<ReturnType<typeof revenuePerMonth>>;
 }) {
-  const max = Math.max(1, ...data.map((d) => d.revenue));
+  const series: ChartSeries[] = [
+    {
+      name: "Revenue",
+      tone: "indigo",
+      data: data.map((row) => ({
+        label: MONTH_LABEL.format(new Date(`${row.month}T00:00:00Z`)),
+        value: row.revenue,
+        text: GBP.format(row.revenue),
+      })),
+    },
+  ];
   return (
-    <ol className="mt-4 flex items-end gap-1.5 h-32">
-      {data.map((row) => {
-        const pct = (row.revenue / max) * 100;
-        const label = MONTH_LABEL.format(new Date(`${row.month}T00:00:00Z`));
-        return (
-          <li
-            key={row.month}
-            className="flex flex-1 flex-col items-center justify-end"
-            title={`${label} · ${GBP.format(row.revenue)}`}
-          >
-            <div className="w-full max-w-[28px]">
-              <div
-                className="rounded-t bg-slate-900"
-                style={{ height: `${Math.max(2, pct)}%` }}
-              />
-            </div>
-            <span className="mt-1 text-[10px] text-slate-500">{label}</span>
-          </li>
-        );
-      })}
-    </ol>
+    <BarChart
+      title="Revenue per month, last 12 months"
+      desc="Monthly revenue from paid invoices over the last 12 months."
+      series={series}
+      categoryHeader="Month"
+      formatValue={gbpTick}
+    />
   );
 }
 
 function VatBars({ data }: { data: Awaited<ReturnType<typeof vatPerQuarter>> }) {
-  const allValues = data.flatMap((d) => [d.output_vat, d.input_vat]);
-  const max = Math.max(1, ...allValues);
+  const series: ChartSeries[] = [
+    {
+      name: "Output (collected)",
+      tone: "emerald",
+      data: data.map((row) => ({
+        label: QUARTER_LABEL(row.quarter),
+        value: row.output_vat,
+        text: GBP.format(row.output_vat),
+      })),
+    },
+    {
+      name: "Input (paid)",
+      tone: "amber",
+      data: data.map((row) => ({
+        label: QUARTER_LABEL(row.quarter),
+        value: row.input_vat,
+        text: GBP.format(row.input_vat),
+      })),
+    },
+  ];
   return (
-    <div className="mt-4 space-y-3">
-      <ol className="space-y-2">
-        {data.map((row) => {
-          const outputPct = (row.output_vat / max) * 100;
-          const inputPct = (row.input_vat / max) * 100;
-          return (
-            <li key={row.quarter} className="text-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-600">{QUARTER_LABEL(row.quarter)}</span>
-                <span className="font-medium text-slate-900">
-                  {GBP.format(row.net_vat)} net
-                </span>
-              </div>
-              <div className="mt-1 flex items-center gap-2">
-                <div className="flex-1">
-                  <div
-                    className="h-1.5 rounded bg-emerald-500"
-                    style={{ width: `${outputPct}%` }}
-                    title={`Output VAT ${GBP.format(row.output_vat)}`}
-                  />
-                  <div
-                    className="mt-0.5 h-1.5 rounded bg-amber-500"
-                    style={{ width: `${inputPct}%` }}
-                    title={`Input VAT ${GBP.format(row.input_vat)}`}
-                  />
-                </div>
-              </div>
+    <div>
+      <BarChart
+        title="VAT per quarter, last 4 quarters"
+        desc="Grouped bars of output VAT collected and input VAT paid for each of the last 4 quarters."
+        series={series}
+        categoryHeader="Quarter"
+        formatValue={gbpTick}
+      />
+      {/* Keep the per-quarter NET figures visible — the chart shows the two
+          sides; this line shows what's actually owed. */}
+      {data.length > 0 ? (
+        <ol className="mt-3 space-y-1">
+          {data.map((row) => (
+            <li
+              key={row.quarter}
+              className="flex items-center justify-between text-xs"
+            >
+              <span className="text-slate-600">{QUARTER_LABEL(row.quarter)}</span>
+              <span className="font-medium text-slate-900">
+                {GBP.format(row.net_vat)} net
+              </span>
             </li>
-          );
-        })}
-      </ol>
-      <div className="flex items-center gap-3 text-[11px] text-slate-500">
-        <span className="flex items-center gap-1">
-          <span aria-hidden className="inline-block h-1.5 w-2.5 rounded bg-emerald-500" />
-          Output (collected)
-        </span>
-        <span className="flex items-center gap-1">
-          <span aria-hidden className="inline-block h-1.5 w-2.5 rounded bg-amber-500" />
-          Input (paid)
-        </span>
-      </div>
+          ))}
+        </ol>
+      ) : null}
     </div>
   );
 }

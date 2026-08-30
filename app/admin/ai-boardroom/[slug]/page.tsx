@@ -13,12 +13,22 @@ import {
   KeyRound,
   BarChart3,
   Wrench,
+  Lightbulb,
   type LucideIcon,
 } from "lucide-react";
 import {
+  getEmployeeInteractionFeed,
+  getEmployeeRecommendations,
+  listAiEmployees,
   loadAiEmployeeBySlug,
   resolveEmployeeApprovalLevel,
+  type InteractionItem,
+  type RecommendationItem,
 } from "@/server/services/ai-employees";
+import {
+  getEmployeeKpis,
+  kpisForEmployee,
+} from "@/server/services/ai-employee-stats";
 import {
   AI_EMPLOYEE_STATUSES,
   STATUS_LABELS,
@@ -28,6 +38,7 @@ import {
   TASK_STATUSES,
   TASK_STATUS_LABELS,
   departmentLabel,
+  isRetired,
   statusLabel,
   memoryScopeLabel,
   taskStatusLabel,
@@ -49,6 +60,7 @@ import {
   addAiEmployeeMemory,
   authorAiEmployeeCapabilities,
   authorAiEmployeeMemoryScope,
+  retireAiEmployee,
 } from "../actions";
 import {
   getEmployeeMemoryFeed,
@@ -104,14 +116,37 @@ export default async function AiEmployeeDetailPage({
   // default-deny floor as the automatic fail-safe. Resolved alongside the
   // read-only shared-memory feed (CEO Directive 002).
   const now = new Date();
-  const [served, approvalLevel, memoryFeed, memoryTypes, boardroomCards] =
-    await Promise.all([
-      resolveServedCapabilityView(e),
-      resolveEmployeeApprovalLevel(e),
-      getEmployeeMemoryFeed({ id: e.id, department: e.department }),
-      listMemoryTypes(),
-      getBoardroomCardsForEmployee(e.id, now),
-    ]);
+  const [
+    served,
+    approvalLevel,
+    memoryFeed,
+    memoryTypes,
+    boardroomCards,
+    interactionFeed,
+    recommendations,
+    kpiMap,
+    roster,
+  ] = await Promise.all([
+    resolveServedCapabilityView(e),
+    resolveEmployeeApprovalLevel(e),
+    getEmployeeMemoryFeed({ id: e.id, department: e.department }),
+    listMemoryTypes(),
+    getBoardroomCardsForEmployee(e.id, now),
+    // The employee's real conversation with the company — engine tasks,
+    // human config decisions, approvals (see interaction-feed.ts for why
+    // this merged feed IS the honest conversation history).
+    getEmployeeInteractionFeed(e.slug),
+    // The proposals its completed work carries — folded from stored task
+    // results, never generated (see recommendations.ts).
+    getEmployeeRecommendations(e.slug),
+    getEmployeeKpis([{ id: e.id, slug: e.slug }]),
+    listAiEmployees(), // manager-name lookup for the management line
+  ]);
+  const kpi = kpisForEmployee(kpiMap, e.slug);
+  const managerName = e.manager_slug
+    ? (roster.find((r) => r.slug === e.manager_slug)?.name ?? e.manager_slug)
+    : null;
+  const retired = isRetired(e.status);
   // The complete served token set seeds the registry-native authoring editor.
   const capabilityTokens = [...served.tokens];
   const memoryTypeMap = buildTypeMap(memoryTypes);
@@ -154,7 +189,7 @@ export default async function AiEmployeeDetailPage({
             <span className="min-w-0 truncate">{e.name}</span>
           </span>
         }
-        description={`${e.role} · ${departmentLabel(e.department)}`}
+        description={`${e.role} · ${departmentLabel(e.department)} · Reports to ${managerName ?? "the human board"}`}
         actions={
           <>
             <Badge tone={statusTone(e.status)}>{statusLabel(e.status)}</Badge>
@@ -184,6 +219,16 @@ export default async function AiEmployeeDetailPage({
           {saved}
         </div>
       ) : null}
+      {retired ? (
+        <div
+          role="status"
+          className="rounded-md border border-slate-300 bg-slate-100 px-3 py-2 text-sm text-slate-700"
+        >
+          Retired {e.retired_at ? fmtStamp(e.retired_at) : ""} — retirement is
+          terminal. This record is read-only; the database refuses any further
+          change to it.
+        </div>
+      ) : null}
 
       {/* 2 · Responsibility -------------------------------------------------- */}
       <Section
@@ -195,6 +240,21 @@ export default async function AiEmployeeDetailPage({
         <p className="mt-2 text-sm leading-relaxed text-slate-600">
           {e.description || (
             <span className="text-slate-500">No mandate configured yet.</span>
+          )}
+        </p>
+        <p className="mt-3 text-sm text-slate-600">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Reports to
+          </span>{" "}
+          {e.manager_slug ? (
+            <Link
+              href={`/admin/ai-boardroom/${e.manager_slug}`}
+              className="font-medium text-slate-900 underline underline-offset-2 hover:text-slate-700"
+            >
+              {managerName}
+            </Link>
+          ) : (
+            <span className="font-medium text-slate-900">Human board</span>
           )}
         </p>
       </Section>
@@ -425,6 +485,81 @@ export default async function AiEmployeeDetailPage({
             hint={`${stats.memoryChars.toLocaleString("en-GB")} chars`}
           />
         </div>
+
+        {/* This month's persisted KPIs (ai_employee_kpis) — engine-task
+            outcomes, approvals raised, and ATTRIBUTED AI cost from the
+            invocation ledger. Honest derived figures; nothing invented. */}
+        <div className="mt-4 border-t border-slate-200 pt-4">
+          <Band>This month (period {kpi.periodStart})</Band>
+          <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <StatTile
+              label="Engine tasks done"
+              value={String(kpi.tasksCompleted)}
+              hint={`${kpi.tasksFailed} failed`}
+            />
+            <StatTile
+              label="Failure rate"
+              value={kpi.failureRatePct === null ? "—" : `${kpi.failureRatePct}%`}
+              hint="finished engine tasks"
+              tone={
+                kpi.failureRatePct === null
+                  ? undefined
+                  : kpi.failureRatePct >= 50
+                    ? "red"
+                    : kpi.failureRatePct >= 20
+                      ? "amber"
+                      : "emerald"
+              }
+            />
+            <StatTile
+              label="Approvals raised"
+              value={String(kpi.approvalsRequested)}
+              hint="sent to a human"
+            />
+            <StatTile
+              label="AI cost"
+              value={`£${(kpi.costPence / 100).toFixed(2)}`}
+              hint="attributed invocations"
+            />
+          </div>
+        </div>
+      </Section>
+
+      {/* 8b · Interaction history --------------------------------------------- */}
+      <Section
+        icon={Activity}
+        title="Interaction history"
+        hint="This employee's real conversation with the company — engine tasks and their results, human configuration decisions, and approvals. Merged from stored records; nothing is generated (no chat UI exists, so no transcript is invented)."
+      >
+        {interactionFeed.length === 0 ? (
+          <Empty>No interactions recorded yet.</Empty>
+        ) : (
+          <ol className="divide-y divide-slate-100">
+            {interactionFeed.map((item) => (
+              <InteractionRow key={item.key} item={item} />
+            ))}
+          </ol>
+        )}
+      </Section>
+
+      {/* 8c · Recommendations -------------------------------------------------- */}
+      <Section
+        icon={Lightbulb}
+        title="Recommendations"
+        hint="Proposals this employee's completed work carries — proposed actions, considered alternatives, review findings, verdicts and prep briefs. Read straight out of stored task results; read-only, nothing here executes."
+      >
+        {recommendations.length === 0 ? (
+          <Empty>
+            No recommendations yet — items appear when this employee&apos;s tasks
+            complete with proposals.
+          </Empty>
+        ) : (
+          <ol className="divide-y divide-slate-100">
+            {recommendations.map((item) => (
+              <RecommendationRow key={item.key} item={item} />
+            ))}
+          </ol>
+        )}
       </Section>
 
       {/* 9 · Configure (lower-emphasis operator zone) ------------------------ */}
@@ -847,6 +982,33 @@ export default async function AiEmployeeDetailPage({
               </ol>
             )}
           </div>
+
+          {/* Retire — terminal, trigger-enforced (disabled → retired only). */}
+          {!retired ? (
+            <div className="border-t border-slate-200 pt-6">
+              <Band>Retire</Band>
+              <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
+                Retirement is terminal: the database admits only disabled →
+                retired, and a retired record refuses every later change. The
+                identity and its history stay on the roster as a permanent
+                record.
+              </p>
+              {e.status === "disabled" ? (
+                <form action={retireAiEmployee} className="mt-3">
+                  <input type="hidden" name="id" value={e.id} />
+                  <input type="hidden" name="slug" value={e.slug} />
+                  <button type="submit" className={buttonClass("secondary")}>
+                    Retire this employee
+                  </button>
+                </form>
+              ) : (
+                <p className="mt-3 text-xs text-slate-500">
+                  Set status to Disabled first — only a disabled employee can be
+                  retired.
+                </p>
+              )}
+            </div>
+          ) : null}
         </div>
       </details>
     </div>
@@ -967,6 +1129,72 @@ function TaskRow({ t }: { t: AiEmployeeTask }) {
   );
 }
 
+/** One interaction-feed row — kind pill, title, honest detail, actor + stamp. */
+function InteractionRow({ item }: { item: InteractionItem }) {
+  const kindTone: Tone =
+    item.kind === "task" ? "blue" : item.kind === "approval" ? "amber" : "slate";
+  const kindLabel =
+    item.kind === "task" ? "Task" : item.kind === "approval" ? "Approval" : "Config";
+  return (
+    <li className="flex items-start gap-3 py-2.5">
+      <Badge tone={kindTone} variant="soft" className="mt-0.5 shrink-0 text-[10px]">
+        {kindLabel}
+      </Badge>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-slate-900">{item.title}</p>
+        {item.detail ? (
+          <p className="mt-0.5 text-xs leading-relaxed text-slate-600">{item.detail}</p>
+        ) : null}
+        {item.actor ? (
+          <p className="mt-0.5 text-[11px] text-slate-500">by {item.actor}</p>
+        ) : null}
+      </div>
+      <div className="flex shrink-0 flex-col items-end gap-1">
+        {item.status ? (
+          <Badge tone={taskTone(item.status)} className="text-[10px]">
+            {item.status.replace(/_/g, " ")}
+          </Badge>
+        ) : null}
+        <span className="text-[11px] text-slate-500">{fmtStamp(item.at)}</span>
+      </div>
+    </li>
+  );
+}
+
+/** Kind pill vocabulary for a recommendation row — labels the stored shape honestly. */
+const RECOMMENDATION_KIND_META: Record<
+  RecommendationItem["kind"],
+  { label: string; tone: Tone }
+> = {
+  action: { label: "Proposed action", tone: "blue" },
+  alternative: { label: "Alternative", tone: "slate" },
+  finding: { label: "Finding", tone: "amber" },
+  verdict: { label: "Verdict", tone: "emerald" },
+  sales_prep: { label: "Sales prep", tone: "blue" },
+};
+
+/** One recommendation row — kind pill, title, honest detail, source task + stamp. */
+function RecommendationRow({ item }: { item: RecommendationItem }) {
+  const meta = RECOMMENDATION_KIND_META[item.kind];
+  return (
+    <li className="flex items-start gap-3 py-2.5">
+      <Badge tone={meta.tone} variant="soft" className="mt-0.5 shrink-0 text-[10px]">
+        {meta.label}
+      </Badge>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-slate-900">{item.title}</p>
+        {item.detail ? (
+          <p className="mt-0.5 text-xs leading-relaxed text-slate-600">{item.detail}</p>
+        ) : null}
+        <p className="mt-0.5 text-[11px] text-slate-500">
+          from {item.taskType.replace(/[._-]+/g, " ")}
+        </p>
+      </div>
+      <span className="shrink-0 text-[11px] text-slate-500">{fmtStamp(item.at)}</span>
+    </li>
+  );
+}
+
 function Field({
   label,
   hint,
@@ -997,6 +1225,8 @@ function prettySaved(saved: string): string {
       return "Capabilities authored at the registry.";
     case "memory_scope":
       return "Memory scope authored at the registry.";
+    case "retired":
+      return "Employee retired — this record is now permanent and read-only.";
     default:
       return "Saved.";
   }

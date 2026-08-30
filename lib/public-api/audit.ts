@@ -1,6 +1,10 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { ResolvedApiKey } from "@/lib/api-auth/resolve";
+import {
+  REQUEST_ID_HEADER,
+  isAcceptableRequestId,
+} from "@/lib/api/request-id";
 
 /**
  * Public API v1 — the per-request ACCESS LOG writer.
@@ -13,8 +17,9 @@ import type { ResolvedApiKey } from "@/lib/api-auth/resolve";
  * service-role admin client (RLS admin-only read, no tenant write).
  *
  * METADATA ONLY — a HARD boundary. The row carries the HTTP method, the request
- * URL PATHNAME, and the guard's disposition status. It NEVER carries a request
- * body, a header, or the query string:
+ * URL PATHNAME, the guard's disposition status, and the validated x-request-id
+ * correlation token (an opaque, pattern-checked id — see below). It NEVER
+ * carries a request body, any other header, or the query string:
  *   - the body is where secrets/PII live, so it is never touched here;
  *   - the query string can carry pagination/filter values that name tenant
  *     rows, so it is stripped (only `url.pathname` is stored, and the DB CHECK
@@ -46,6 +51,7 @@ type ApiRequestLogInsert = {
     method: string;
     route: string;
     status: number;
+    request_id: string | null;
   }) => Promise<{ error: { message?: string | null } | null }>;
 };
 
@@ -74,6 +80,17 @@ export async function logApiRequest(
 
     const method = (request.method || "GET").toUpperCase();
 
+    // Correlation id (migration 20261226000000) — the SAME x-request-id the
+    // middleware validated/minted and threaded onto the forwarded request,
+    // so a Sentry event and this audit row share one id. Re-validated here
+    // (the header IS client-influenceable on paths that bypass middleware):
+    // an unacceptable value is dropped to NULL, never persisted raw — the
+    // column CHECK enforces the identical pattern as a second line.
+    const rawRequestId = request.headers.get(REQUEST_ID_HEADER);
+    const requestId = isAcceptableRequestId(rawRequestId)
+      ? rawRequestId
+      : null;
+
     const admin = createAdminClient();
     const { error } = await (
       admin.from("api_request_log" as never) as unknown as ApiRequestLogInsert
@@ -84,6 +101,7 @@ export async function logApiRequest(
       method,
       route,
       status,
+      request_id: requestId,
     });
     if (error) {
       console.error("[public-api] request-log write failed", error.message);

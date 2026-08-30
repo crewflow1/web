@@ -8,6 +8,7 @@ import { listAiEmployees } from "@/server/services/ai-employees";
 import { HqNavMobile } from "./_nav-mobile";
 import { HqSidebar } from "./_components/hq-sidebar";
 import { HqCommandPalette } from "./_components/hq-command-palette";
+import { listDecisions } from "@/server/services/hq-decisions";
 import { HQ_AREAS, flatHqNav } from "./_nav/hq-nav-model";
 
 /**
@@ -58,12 +59,21 @@ export default async function AdminLayout({
     status: e.status,
   }));
 
+  // Recent Decision-Centre records for palette TEXT search (roadmap R033 —
+  // AI decision records are searchable, not just filterable by status).
+  // Bounded recent set (listDecisions caps at 200), best-effort like the
+  // badges: a read failure degrades to no decision results, never a broken
+  // layout.
+  const paletteDecisions = await listDecisions({ limit: 200 })
+    .then((rows) => rows.map((d) => ({ id: d.id, title: d.title, status: d.status })))
+    .catch(() => []);
+
   return (
     <div className="min-h-screen bg-slate-50">
       {/* HQ command palette — Cmd+K, the sidebar pill, or the mobile search
           button. Rendered only here (behind requireHqPage) so customers never
           receive HQ commands. */}
-      <HqCommandPalette employees={roster} />
+      <HqCommandPalette employees={roster} decisions={paletteDecisions} />
 
       {/* Mobile top bar + grouped drawer */}
       <HqNavMobile

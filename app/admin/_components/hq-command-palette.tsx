@@ -30,9 +30,19 @@ export type HqPaletteEmployee = {
   status: string;
 };
 
+/** A recent Decision-Centre record, text-searchable by title (roadmap R033 —
+ *  "EVERYTHING searchable" includes AI decision records; the layout passes the
+ *  recent bounded set, same no-fetch posture as the roster). */
+export type HqPaletteDecision = {
+  id: string;
+  title: string;
+  status: string;
+};
+
 type Item =
   | { key: string; kind: "command"; group: string; label: string; href: string; cmd: HqCommand }
-  | { key: string; kind: "employee"; group: string; label: string; href: string; emp: HqPaletteEmployee };
+  | { key: string; kind: "employee"; group: string; label: string; href: string; emp: HqPaletteEmployee }
+  | { key: string; kind: "decision"; group: string; label: string; href: string; dec: HqPaletteDecision };
 
 const STATUS_DOT: Record<string, string> = {
   idle: "bg-slate-300",
@@ -43,7 +53,13 @@ const STATUS_DOT: Record<string, string> = {
   disabled: "bg-slate-200",
 };
 
-export function HqCommandPalette({ employees }: { employees: HqPaletteEmployee[] }) {
+export function HqCommandPalette({
+  employees,
+  decisions = [],
+}: {
+  employees: HqPaletteEmployee[];
+  decisions?: HqPaletteDecision[];
+}) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
@@ -137,8 +153,21 @@ export function HqCommandPalette({ employees }: { employees: HqPaletteEmployee[]
         emp: e,
       });
     }
+    const decMatches = decisions
+      .filter((d) => d.title.toLowerCase().includes(needle))
+      .slice(0, 6);
+    for (const d of decMatches) {
+      out.push({
+        key: `dec-${d.id}`,
+        kind: "decision",
+        group: "Decisions",
+        label: d.title,
+        href: `/admin/decisions/${d.id}`,
+        dec: d,
+      });
+    }
     return out;
-  }, [q, commands, employees]);
+  }, [q, commands, employees, decisions]);
 
   useEffect(() => {
     setActive((a) => (a >= items.length ? 0 : a));
@@ -240,6 +269,8 @@ export function HqCommandPalette({ employees }: { employees: HqPaletteEmployee[]
                           <span
                             className={`h-2 w-2 rounded-full ${STATUS_DOT[item.emp.status] ?? "bg-slate-300"}`}
                           />
+                        ) : item.kind === "decision" ? (
+                          "◆"
                         ) : item.cmd.kind === "view" ? (
                           "›"
                         ) : (
@@ -253,6 +284,10 @@ export function HqCommandPalette({ employees }: { employees: HqPaletteEmployee[]
                         {item.kind === "employee" ? (
                           <span className="block truncate text-xs text-slate-500">
                             {item.emp.role} · {statusLabel(item.emp.status)}
+                          </span>
+                        ) : item.kind === "decision" ? (
+                          <span className="block truncate text-xs text-slate-500">
+                            Decision · {item.dec.status.replace(/_/g, " ")}
                           </span>
                         ) : null}
                       </span>

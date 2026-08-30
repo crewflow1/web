@@ -17,7 +17,9 @@ import {
   maskUtr,
   verificationFreshness,
 } from "@/lib/cis/verification";
+import { isHmrcConnectable } from "@/lib/integrations/hmrc/oauth";
 import {
+  CisHmrcVerifyForm,
   CisProfileForm,
   CisReverificationForm,
   CisVerificationForm,
@@ -26,6 +28,7 @@ import {
   saveCisProfile,
   saveCisVerification,
   requestCisReverification,
+  verifyCisWithHmrc,
 } from "./actions";
 
 /**
@@ -134,6 +137,8 @@ export default async function SupplierCisPage({
 
   const profile = await getCisProfile(ctx.org.id, id);
   const today = new Date().toISOString().slice(0, 10);
+  // Server-side env read (credentials + flag). False in production today.
+  const hmrcOnline = isHmrcConnectable();
 
   const status: CisStatus = profile?.cis_status ?? "unverified";
   const freshness = profile
@@ -236,12 +241,41 @@ export default async function SupplierCisPage({
       ) : null}
 
       {/* ── Verification ───────────────────────────────────────────────── */}
+      {/*
+        The HMRC online path is DARK today (isHmrcConnectable() is false without
+        HMRC credentials + the connect flag). While dark, the manual workflow
+        renders exactly as it always has, plus one honest line saying the online
+        path is not connected — no button that implies a check this system
+        cannot perform. When connectable (never in prod today) the "Verify with
+        HMRC" panel appears above the manual form; both record through the same
+        write authority.
+      */}
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <h2 className="text-sm font-semibold text-slate-900">Record a verification</h2>
-        <p className="mt-1 text-xs text-slate-500">
-          CrewFlow does not contact HMRC. Verify the subcontractor using HMRC&apos;s CIS
-          online service or the CIS helpline, then record what they told you here.
-        </p>
+        {hmrcOnline ? (
+          <p className="mt-1 text-xs text-slate-500">
+            Verify directly with HMRC below, or record a result you obtained from
+            HMRC&apos;s CIS online service or the CIS helpline yourself.
+          </p>
+        ) : (
+          <>
+            <p className="mt-1 text-xs text-slate-500">
+              CrewFlow does not contact HMRC. Verify the subcontractor using HMRC&apos;s CIS
+              online service or the CIS helpline, then record what they told you here.
+            </p>
+            <p className="mt-1 text-xs text-slate-400">
+              HMRC online verification: not connected.
+            </p>
+          </>
+        )}
+        {hmrcOnline && profile ? (
+          <div className="mt-4 border-b border-slate-100 pb-4">
+            <CisHmrcVerifyForm
+              action={verifyCisWithHmrc.bind(null, id)}
+              hasUtr={Boolean(profile.utr)}
+            />
+          </div>
+        ) : null}
         <div className="mt-4">
           {profile ? (
             <CisVerificationForm

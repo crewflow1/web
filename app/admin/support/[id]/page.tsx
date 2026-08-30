@@ -20,7 +20,9 @@ import {
   setTicketStatus,
   setTicketPriority,
   setTicketCategory,
+  generateSupportReplyDraft,
 } from "../actions";
+import { getLatestSupportReplyDraft } from "@/server/services/hq-support-ai";
 import { SupportReplyForm } from "./_reply-form";
 
 type SP = Promise<{ saved?: string; error?: string }>;
@@ -43,6 +45,10 @@ export default async function HqSupportTicketDetailPage({
 
   // Audit-log timeline (status changes, assigns) for this ticket.
   const timeline = await listAdminActivity("support_tickets", id, 25);
+
+  // P13 — the latest AI reply-draft artifact (a completed support_reply_draft
+  // task result). Null = none generated yet; the panel shows its empty state.
+  const replyDraft = await getLatestSupportReplyDraft(id);
 
   const banner = (() => {
     if (sp.saved)
@@ -147,6 +153,60 @@ export default async function HqSupportTicketDetailPage({
               </article>
             ))
           )}
+
+          {/* P13 — Draft reply (AI): a governed DRAFT artifact with honest
+              provenance. It is NEVER sent automatically — the agent copies it
+              into the reply box below, edits, and sends it themselves. */}
+          <section className="rounded-xl border border-violet-200 bg-violet-50 p-4 shadow-sm">
+            <header className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-violet-700">
+                Draft reply (AI)
+              </h3>
+              <form action={generateSupportReplyDraft}>
+                <input type="hidden" name="ticket_id" value={ticket.id} />
+                <button
+                  type="submit"
+                  className="rounded-md bg-violet-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-800"
+                >
+                  {replyDraft ? "Regenerate draft" : "Generate draft"}
+                </button>
+              </form>
+            </header>
+            {replyDraft ? (
+              <div className="mt-3 space-y-2">
+                <p className="flex flex-wrap items-center gap-2 text-[11px]">
+                  <span
+                    className={`inline-flex items-center rounded-full border px-2 py-0.5 font-medium ${
+                      replyDraft.provenance === "deterministic"
+                        ? "border-slate-300 bg-white text-slate-700"
+                        : "border-violet-300 bg-violet-100 text-violet-800"
+                    }`}
+                  >
+                    {replyDraft.provenance === "deterministic"
+                      ? "Deterministic acknowledgement — no model bound"
+                      : `Model draft · ${replyDraft.provenance}${replyDraft.model ? ` (${replyDraft.model})` : ""}`}
+                  </span>
+                  <span className="text-slate-500">
+                    Generated {replyDraft.generatedAt.slice(0, 16).replace("T", " ")} UTC
+                  </span>
+                </p>
+                <pre className="whitespace-pre-wrap rounded-md border border-violet-200 bg-white p-3 font-sans text-sm text-slate-900">
+                  {replyDraft.body}
+                </pre>
+                <p className="text-[11px] text-slate-500">
+                  This draft is never sent automatically. Review it, copy it into
+                  the reply box below, edit as needed, and send it yourself.
+                </p>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-slate-600">
+                No draft yet. Generate one and Support AI will draft a reply from
+                this ticket&rsquo;s real fields — deterministic today, upgraded by
+                the governed model leg once a tier is bound. Drafts are never
+                sent automatically.
+              </p>
+            )}
+          </section>
 
           {/* Reply form — confirms before sending customer-visible replies */}
           <SupportReplyForm

@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext, isManagementRole } from "@/server/auth/session";
 import { sanitizeSearchTerm } from "@/lib/search/sanitize";
-import { sortHitsByMatch } from "@/lib/search/rank";
+import { matchScore } from "@/lib/search/rank";
 import {
   ilikeOrFilter,
   inIdsBranch,
@@ -62,22 +62,49 @@ export const runtime = "nodejs";
  *   - site_reports: title / report number, PLUS reports on a matched job OR a
  *     matched customer (site_reports carry both job_id and customer_id).
  *
- * PHOTOS — deliberately NOT searched. Photos are opaque binary attachments in
- * `tenant_attachments` (polymorphic (target_table, target_id), no title/caption
- * text column) reached only through a snapshot on their parent entity; there is
- * no stable free-text field to ILIKE and no per-photo detail route to link to.
- * A photo surfaces through its parent (the job, snag or site report) instead.
+ * "Everything searchable" completion — the remaining registers, same pattern
+ * (RLS tenant client, org-pinned, sanitized `.or(ilike)`, PER_TYPE cap, loud
+ * fail):
+ *   - suppliers: name/email/phone/category → /suppliers/[id]. Management-only.
+ *   - finances (Costs): category/notes, PLUS entries on a matched job →
+ *     /finances. Management-only. MONEY-SAFETY: no amount/vat/total column is
+ *     selected and no monetary value ever appears in a hit title/subtitle —
+ *     only description + date.
+ *   - blueprints (Drawings): drawing number/title, PLUS drawings on a matched
+ *     job → /jobs/[jobId]/blueprints (job_id is NOT NULL on blueprints).
+ *   - assets + fleet vehicles: name/internal ref/serial/registration (reg
+ *     plate). A matched asset that has a `fleet_vehicles` 1:1 profile surfaces
+ *     as a VEHICLE hit (→ /fleet/vehicles/[assetId]); otherwise as an ASSET hit
+ *     (→ /assets/[id]). Both management-only (Operations area).
+ *   - toolbox_talks: topic/presenter, PLUS talks on a matched job → /toolbox/[id].
+ *   - site_diary_entries: work summary, PLUS entries on a matched job → /diary/[id].
+ *   - support_tickets: subject → /support/[id].
+ *   - staff_qualifications: title/card reference → /staff/[userId] (the person
+ *     the card belongs to). Management-only, matching the admin-gated /staff nav.
+ *
+ * PHOTOS & attachments — `tenant_attachments` rows targeting a JOB (photos,
+ * scans, uploads) ARE searched by their `filename` and surface via the parent
+ * job (→ /jobs/[targetId]) — attachments have no standalone detail route.
+ * Attachments on OTHER targets (customers/quotes/invoices/suppliers/
+ * memberships/leads) stay deliberately unsearched: each of those targets is
+ * either a management-only surface (so a filename hit would leak Sales/Money
+ * existence to staff through a member-labelled hit type) or has no clean
+ * detail mapping (memberships), and every one of those parents is already
+ * discoverable by its own searched columns. Photos with no meaningful
+ * filename still surface through their parent entity, as before.
  *
  * All entity filtering is pushed into SQL (RLS-scoped via the user JWT) and the
  * free-text term is neutralised by the shared sanitizer before it reaches any
  * `.or()` / `ilike` pattern. Up to 8 hits per entity type are returned.
  *
  * Query waves exist only because of the id chaining: wave 1 is everything
- * independent (customers, staff, RAMS, permits) fired in parallel, wave 2 is
- * the entities keyed off matched customer ids (jobs, quotes, leads), wave 3 is
- * everything keyed off matched job/quote/customer ids (invoices, job documents,
- * snags, purchase orders, site reports) fired in parallel. Three round trips,
- * each maximally parallel.
+ * independent (customers, staff, RAMS, permits, suppliers, assets, support
+ * tickets, staff qualifications, job attachments) fired in parallel, wave 2 is
+ * the entities keyed off matched customer/asset ids (jobs, quotes, leads,
+ * fleet-vehicle profiles), wave 3 is everything keyed off matched
+ * job/quote/customer ids (invoices, job documents, snags, purchase orders,
+ * site reports, finances, blueprints, toolbox talks, diary entries) fired in
+ * parallel. Three round trips, each maximally parallel.
  */
 
 type Hit = {
@@ -93,7 +120,17 @@ type Hit = {
     | "job_document"
     | "snag"
     | "purchase_order"
-    | "site_report";
+    | "site_report"
+    | "supplier"
+    | "finance"
+    | "blueprint"
+    | "asset"
+    | "vehicle"
+    | "toolbox_talk"
+    | "diary_entry"
+    | "support_ticket"
+    | "staff_qualification"
+    | "attachment";
   id: string;
   title: string;
   subtitle: string | null;
@@ -101,8 +138,16 @@ type Hit = {
 };
 
 /**
- * Hit types that belong to the Sales/Money area (owner/admin only). A staff
- * Cmd+K result set excludes these, matching the nav + page/API role boundary.
+ * Hit types that belong to the Sales/Money/Operations/People-admin areas
+ * (owner/admin only). A staff Cmd+K result set excludes these, matching the
+ * nav + page/API role boundary EXACTLY (app/(app)/_nav/nav-model.ts):
+ *   - Sales (ADMIN_ROLES):      customer, quote, lead
+ *   - Money (ADMIN_ROLES):      invoice, finance (Costs)
+ *   - Operations (ADMIN_ROLES): purchase_order, supplier, asset, vehicle
+ *   - People → Staff (ADMIN_ROLES): staff_qualification (links to /staff/[id])
+ * Member-visible families mirror the ALL_ROLES nav children: blueprints
+ * (Drawings), toolbox talks, site diary, snagging, support, jobs, documents,
+ * site reports, RAMS/permits, job attachments.
  */
 const MANAGEMENT_ONLY_SEARCH_TYPES = new Set<Hit["type"]>([
   "customer",
@@ -110,7 +155,77 @@ const MANAGEMENT_ONLY_SEARCH_TYPES = new Set<Hit["type"]>([
   "invoice",
   "lead",
   "purchase_order",
+  "supplier",
+  "finance",
+  "asset",
+  "vehicle",
+  "staff_qualification",
 ]);
+
+/**
+ * Tie-break priority for the merged result sort. The first 12 values are
+ * BYTE-IDENTICAL to TYPE_PRIORITY in lib/search/rank.ts (whose SearchHit union
+ * is a closed set this route has outgrown); the new families rank after them.
+ * The comparator below reuses the exported matchScore, so ranking behaviour
+ * for the original families is exactly sortHitsByMatch's.
+ */
+const TYPE_PRIORITY: Record<Hit["type"], number> = {
+  customer: 0,
+  invoice: 1,
+  quote: 2,
+  job: 3,
+  purchase_order: 4,
+  site_report: 5,
+  job_document: 6,
+  risk_assessment: 7,
+  permit: 8,
+  snag: 9,
+  lead: 10,
+  staff: 11,
+  supplier: 12,
+  asset: 13,
+  vehicle: 14,
+  blueprint: 15,
+  toolbox_talk: 16,
+  diary_entry: 17,
+  support_ticket: 18,
+  finance: 19,
+  staff_qualification: 20,
+  attachment: 21,
+};
+
+/** sortHitsByMatch's exact algorithm over the widened Hit union: exact/prefix/
+ * substring title match first (matchScore), type priority breaking ties;
+ * Array.sort is stable so equal hits keep their wave order. */
+function sortHits(hs: Hit[], q: string): Hit[] {
+  return [...hs].sort((a, b) => {
+    const sa = matchScore(a.title, q);
+    const sb = matchScore(b.title, q);
+    if (sa !== sb) return sa - sb;
+    return TYPE_PRIORITY[a.type] - TYPE_PRIORITY[b.type];
+  });
+}
+
+/** Supplier own columns (org-scoped register; email is citext). */
+const SUPPLIER_SEARCH_COLUMNS = ["name", "email", "phone", "category"] as const;
+/** Asset own columns — the identifiers a user actually types: name, the firm's
+ * internal ref, the serial number and the registration (reg plate). */
+const ASSET_SEARCH_COLUMNS = [
+  "name",
+  "asset_ref",
+  "serial_number",
+  "registration",
+] as const;
+/** Finances (Costs) own columns. TEXT ONLY — never a money column. */
+const FINANCE_SEARCH_COLUMNS = ["category", "notes"] as const;
+/** Blueprint own columns: the sheet number as issued + its title. */
+const BLUEPRINT_SEARCH_COLUMNS = ["drawing_number", "title"] as const;
+/** Toolbox talk own columns: the safety topic + who delivered it. */
+const TOOLBOX_SEARCH_COLUMNS = ["topic", "presenter"] as const;
+/** Site diary own columns: what was done that day. */
+const DIARY_SEARCH_COLUMNS = ["work_summary"] as const;
+/** Staff qualification own columns: the human name + card/cert number. */
+const QUALIFICATION_SEARCH_COLUMNS = ["title", "reference_no"] as const;
 
 /** Hits surfaced per entity type. */
 const PER_TYPE = 8;
@@ -182,30 +297,44 @@ export async function GET(req: NextRequest) {
     return respond.json({ hits: [] satisfies Hit[] });
   }
 
-  // risk_assessments + permits_to_work post-date the generated types → loose cast.
-  const loose = supabase as unknown as {
-    from: (t: string) => {
-      select: (c: string) => {
-        eq: (k: string, v: unknown) => {
-          or: (f: string) => {
-            limit: (n: number) => Promise<{
-              data: Array<Record<string, string | null>> | null;
-              error: SupabaseReadError | null;
-            }>;
-          };
-        };
-      };
-    };
+  // Tables that post-date the generated types → loose cast. `eq` chains so a
+  // read can stack the org pin with a second structural pin (the attachments
+  // read pins target_table = 'jobs' as well as org_id).
+  type LooseResult = Promise<{
+    data: Array<Record<string, string | null>> | null;
+    error: SupabaseReadError | null;
+  }>;
+  type LooseFilter = {
+    eq: (k: string, v: unknown) => LooseFilter;
+    or: (f: string) => { limit: (n: number) => LooseResult };
   };
+  const loose = supabase as unknown as {
+    from: (t: string) => { select: (c: string) => LooseFilter };
+  };
+  /** A dependent read whose id chain is empty contributes nothing (never a
+   * match-everything filter) — same shape as a successful empty read. */
+  const NO_ROWS: LooseResult = Promise.resolve({ data: [], error: null });
 
   const hits: Hit[] = [];
 
   // ── Wave 1 (parallel): everything that does NOT depend on another entity's
   //    ids — customers (name + structured address + legacy notes), staff
-  //    memberships, RAMS and permits. Customer ids are collected up to
+  //    memberships, RAMS, permits, suppliers, assets, support tickets, staff
+  //    qualifications and job attachments. Customer ids are collected up to
   //    CHAIN_LIMIT so dependent entities for an address-matched customer
-  //    surface even when the customer isn't itself in the top hits.
-  const [customersRes, membershipsRes, ramsRes, permitsRes] = await Promise.all([
+  //    surface even when the customer isn't itself in the top hits; asset ids
+  //    likewise chain into the wave-2 fleet-vehicle profile lookup.
+  const [
+    customersRes,
+    membershipsRes,
+    ramsRes,
+    permitsRes,
+    suppliersRes,
+    assetsRes,
+    ticketsRes,
+    qualificationsRes,
+    attachmentsRes,
+  ] = await Promise.all([
     supabase
       .from("customers")
       .select(
@@ -223,13 +352,37 @@ export async function GET(req: NextRequest) {
     loose.from("risk_assessments").select("id, reference, title, status").eq("org_id", ctx.org.id).or(`reference.ilike.${like},title.ilike.${like}`).limit(PER_TYPE),
     // Permit number (reference) + title.
     loose.from("permits_to_work").select("id, reference, title, status").eq("org_id", ctx.org.id).or(`reference.ilike.${like},title.ilike.${like}`).limit(PER_TYPE),
+    // Suppliers: name / email / phone / category. Management-only hit type.
+    loose.from("suppliers").select("id, name, email, phone, category").eq("org_id", ctx.org.id).or(ilikeOrFilter(q, SUPPLIER_SEARCH_COLUMNS) ?? "").limit(PER_TYPE),
+    // Assets: the identifiers a user types (name / internal ref / serial / reg
+    // plate). Fetched to CHAIN_LIMIT because the wave-2 fleet_vehicles lookup
+    // splits these into vehicle vs plain-asset hits — a matched van must not
+    // vanish just because eight other assets matched first.
+    loose.from("assets").select("id, name, asset_ref, serial_number, registration, category, status").eq("org_id", ctx.org.id).or(ilikeOrFilter(q, ASSET_SEARCH_COLUMNS) ?? "").limit(CHAIN_LIMIT),
+    // Support tickets: subject. RLS scopes to the org; the /support surface is
+    // member-visible (Help → Support, ALL_ROLES).
+    loose.from("support_tickets").select("id, ticket_number, subject, status").eq("org_id", ctx.org.id).or(`subject.ilike.${like}`).limit(PER_TYPE),
+    // Staff qualifications: card title + certificate number → the person's
+    // profile. Management-only (matches the admin-gated /staff nav).
+    loose.from("staff_qualifications").select("id, user_id, title, reference_no, qualification_type").eq("org_id", ctx.org.id).or(ilikeOrFilter(q, QUALIFICATION_SEARCH_COLUMNS) ?? "").limit(PER_TYPE),
+    // Job attachments (photos/scans/uploads) by filename — JOB targets only
+    // (see the header PHOTOS note for why other targets stay unsearched).
+    loose.from("tenant_attachments").select("id, target_id, filename").eq("org_id", ctx.org.id).eq("target_table", "jobs").or(`filename.ilike.${like}`).limit(PER_TYPE),
   ]);
 
   // A failed wave must 500, never degrade to "no results for that domain" —
   // silently dropping customers/staff/RAMS/permits from the palette is the
   // silent-empty-state lie this route exists to avoid.
   const wave1Error =
-    customersRes.error ?? membershipsRes.error ?? ramsRes.error ?? permitsRes.error;
+    customersRes.error ??
+    membershipsRes.error ??
+    ramsRes.error ??
+    permitsRes.error ??
+    suppliersRes.error ??
+    assetsRes.error ??
+    ticketsRes.error ??
+    qualificationsRes.error ??
+    attachmentsRes.error;
   if (wave1Error) {
     console.error("[search] wave 1 read failed", wave1Error);
     return respond.error(500, "query_failed");
@@ -250,17 +403,64 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  for (const s of (suppliersRes.data ?? []).slice(0, PER_TYPE)) {
+    hits.push({
+      type: "supplier",
+      id: String(s.id),
+      title: s.name ?? "Supplier",
+      subtitle: [s.category, s.email ?? s.phone].filter(Boolean).join(" · ") || null,
+      href: `/suppliers/${s.id}`,
+    });
+  }
+  for (const t of ticketsRes.data ?? []) {
+    hits.push({
+      type: "support_ticket",
+      id: String(t.id),
+      title: t.subject ?? "Support ticket",
+      subtitle: `Ticket${t.ticket_number ? ` #${t.ticket_number}` : ""}${t.status ? ` · ${String(t.status).replace(/_/g, " ")}` : ""}`,
+      href: `/support/${t.id}`,
+    });
+  }
+  for (const ql of qualificationsRes.data ?? []) {
+    hits.push({
+      type: "staff_qualification",
+      id: String(ql.id),
+      title: ql.title ?? "Qualification",
+      subtitle: `Qualification${ql.reference_no ? ` · ${ql.reference_no}` : ""}`,
+      // No standalone route — a qualification lives on the person's profile.
+      href: `/staff/${ql.user_id}`,
+    });
+  }
+  for (const a of attachmentsRes.data ?? []) {
+    hits.push({
+      type: "attachment",
+      id: String(a.id),
+      title: a.filename ?? "Attachment",
+      subtitle: "File · on job",
+      // Attachments have no standalone detail route — open the parent job.
+      href: `/jobs/${a.target_id}`,
+    });
+  }
+
   // ── Wave 2 (parallel): jobs / quotes / leads keyed off their own columns +
-  //    the matched customer ids.
+  //    the matched customer ids, PLUS the fleet-vehicle profile lookup for the
+  //    matched assets (a vehicle is an asset with a 1:1 fleet_vehicles row —
+  //    the profile decides whether an asset hit renders as a VEHICLE).
   const jobOr = combineOr(ilikeOrFilter(q, JOB_SEARCH_COLUMNS), custIdBranch);
   const quoteOr = combineOr(`number.ilike.${like}`, custIdBranch);
   const leadOr = combineOr(ilikeOrFilter(q, LEAD_SEARCH_COLUMNS), custIdBranch);
   if (!jobOr || !quoteOr || !leadOr) {
     // Own-column branches are always present for a 2+ char term; narrows types.
-    return respond.json({ hits: roleVisible(hits) });
+    return respond.json({ hits: sortHits(roleVisible(hits), q) });
   }
 
-  const [jobsRes, quotesRes, leadsRes] = await Promise.all([
+  const assets = assetsRes.data ?? [];
+  const assetIdBranch = inIdsBranch(
+    "asset_id",
+    assets.map((a) => a.id),
+  );
+
+  const [jobsRes, quotesRes, leadsRes, vehicleProfilesRes] = await Promise.all([
     supabase
       .from("jobs")
       .select(
@@ -282,9 +482,21 @@ export async function GET(req: NextRequest) {
       .eq("org_id", ctx.org.id)
       .or(leadOr)
       .limit(PER_TYPE),
+    // Which matched assets are vehicles? 1:1 profile keyed on asset_id, still
+    // org-pinned. No matched assets → no read at all (empty chain contributes
+    // nothing, never a match-everything filter).
+    assetIdBranch
+      ? loose
+          .from("fleet_vehicles")
+          .select("asset_id, vehicle_class, operational_status")
+          .eq("org_id", ctx.org.id)
+          .or(assetIdBranch)
+          .limit(CHAIN_LIMIT)
+      : NO_ROWS,
   ]);
 
-  const wave2Error = jobsRes.error ?? quotesRes.error ?? leadsRes.error;
+  const wave2Error =
+    jobsRes.error ?? quotesRes.error ?? leadsRes.error ?? vehicleProfilesRes.error;
   if (wave2Error) {
     console.error("[search] wave 2 read failed", wave2Error);
     return respond.error(500, "query_failed");
@@ -330,6 +542,38 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // Assets split by fleet profile: a profiled asset is a VEHICLE (reg plate →
+  // the vehicle workspace), the rest are plain ASSET hits. Each side keeps the
+  // PER_TYPE cap.
+  const vehicleAssetIds = new Set(
+    (vehicleProfilesRes.data ?? []).map((v) => String(v.asset_id)),
+  );
+  let assetCount = 0;
+  let vehicleCount = 0;
+  for (const a of assets) {
+    const isVehicle = vehicleAssetIds.has(String(a.id));
+    if (isVehicle) {
+      if (vehicleCount >= PER_TYPE) continue;
+      vehicleCount += 1;
+    } else {
+      if (assetCount >= PER_TYPE) continue;
+      assetCount += 1;
+    }
+    const ident = [a.registration, a.asset_ref, a.serial_number]
+      .filter(Boolean)
+      .join(" · ");
+    hits.push({
+      type: isVehicle ? "vehicle" : "asset",
+      id: String(a.id),
+      title: a.name ?? (isVehicle ? "Vehicle" : "Asset"),
+      subtitle:
+        [isVehicle ? "Vehicle" : a.category || "Asset", ident]
+          .filter(Boolean)
+          .join(" · ") || null,
+      href: isVehicle ? `/fleet/vehicles/${a.id}` : `/assets/${a.id}`,
+    });
+  }
+
   // ── Wave 3 (parallel): everything keyed off the ids matched above, PLUS each
   //    entity's own searchable columns. All are RLS-scoped tenant reads,
   //    org-pinned to the ACTIVE org and bounded to PER_TYPE rows.
@@ -362,10 +606,24 @@ export async function GET(req: NextRequest) {
     jobIdBranch,
     custIdBranch,
   );
+  const financeOr = combineOr(ilikeOrFilter(q, FINANCE_SEARCH_COLUMNS), jobIdBranch);
+  const blueprintOr = combineOr(ilikeOrFilter(q, BLUEPRINT_SEARCH_COLUMNS), jobIdBranch);
+  const toolboxOr = combineOr(ilikeOrFilter(q, TOOLBOX_SEARCH_COLUMNS), jobIdBranch);
+  const diaryOr = combineOr(ilikeOrFilter(q, DIARY_SEARCH_COLUMNS), jobIdBranch);
   // Every branch above carries at least its own-column ILIKE (present for a 2+
   // char term), so none is null; the `?? ""` narrows the type without ever
   // being reached.
-  const [invoicesRes, jobDocsRes, snagsRes, posRes, siteReportsRes] = await Promise.all([
+  const [
+    invoicesRes,
+    jobDocsRes,
+    snagsRes,
+    posRes,
+    siteReportsRes,
+    financesRes,
+    blueprintsRes,
+    toolboxRes,
+    diaryRes,
+  ] = await Promise.all([
     supabase
       .from("invoices")
       .select("id, number, status, total")
@@ -396,6 +654,32 @@ export async function GET(req: NextRequest) {
       .eq("org_id", ctx.org.id)
       .or(siteReportOr ?? "")
       .limit(PER_TYPE),
+    // Costs (finances): MONEY-SAFETY — no amount / vat / total column is
+    // selected; the hit carries description + date only.
+    loose
+      .from("finances")
+      .select("id, category, notes, created_at, job_id")
+      .eq("org_id", ctx.org.id)
+      .or(financeOr ?? "")
+      .limit(PER_TYPE),
+    loose
+      .from("blueprints")
+      .select("id, job_id, drawing_number, title, status, discipline")
+      .eq("org_id", ctx.org.id)
+      .or(blueprintOr ?? "")
+      .limit(PER_TYPE),
+    loose
+      .from("toolbox_talks")
+      .select("id, topic, presenter, talk_date, job_id")
+      .eq("org_id", ctx.org.id)
+      .or(toolboxOr ?? "")
+      .limit(PER_TYPE),
+    loose
+      .from("site_diary_entries")
+      .select("id, entry_date, work_summary, job_id")
+      .eq("org_id", ctx.org.id)
+      .or(diaryOr ?? "")
+      .limit(PER_TYPE),
   ]);
 
   const wave3Error =
@@ -403,7 +687,11 @@ export async function GET(req: NextRequest) {
     jobDocsRes.error ??
     snagsRes.error ??
     posRes.error ??
-    siteReportsRes.error;
+    siteReportsRes.error ??
+    financesRes.error ??
+    blueprintsRes.error ??
+    toolboxRes.error ??
+    diaryRes.error;
   if (wave3Error) {
     console.error("[search] wave 3 read failed", wave3Error);
     return respond.error(500, "query_failed");
@@ -455,6 +743,49 @@ export async function GET(req: NextRequest) {
       href: `/site-reports/${sr.id}`,
     });
   }
+  for (const f of financesRes.data ?? []) {
+    // MONEY-SAFETY: description + date only — never an amount in the label.
+    const day = f.created_at ? String(f.created_at).slice(0, 10) : null;
+    hits.push({
+      type: "finance",
+      id: String(f.id),
+      title: f.category ? `Cost · ${f.category}` : "Cost entry",
+      subtitle:
+        [day, f.notes ? String(f.notes).slice(0, 60) : null]
+          .filter(Boolean)
+          .join(" · ") || null,
+      // Costs have no standalone detail route — the register is the surface.
+      href: "/finances",
+    });
+  }
+  for (const b of blueprintsRes.data ?? []) {
+    hits.push({
+      type: "blueprint",
+      id: String(b.id),
+      title: b.drawing_number ? `${b.drawing_number} · ${b.title ?? ""}`.trim() : (b.title ?? "Drawing"),
+      subtitle: `Drawing${b.discipline ? ` · ${b.discipline}` : ""}${b.status ? ` · ${String(b.status).replace(/_/g, " ")}` : ""}`,
+      // Drawings live in the job's drawing register (job_id is NOT NULL).
+      href: `/jobs/${b.job_id}/blueprints`,
+    });
+  }
+  for (const tt of toolboxRes.data ?? []) {
+    hits.push({
+      type: "toolbox_talk",
+      id: String(tt.id),
+      title: tt.topic ?? "Toolbox talk",
+      subtitle: `Toolbox talk${tt.talk_date ? ` · ${tt.talk_date}` : ""}${tt.presenter ? ` · ${tt.presenter}` : ""}`,
+      href: `/toolbox/${tt.id}`,
+    });
+  }
+  for (const de of diaryRes.data ?? []) {
+    hits.push({
+      type: "diary_entry",
+      id: String(de.id),
+      title: `Site diary · ${de.entry_date ?? String(de.id).slice(0, 8)}`,
+      subtitle: de.work_summary ? String(de.work_summary).slice(0, 80) : null,
+      href: `/diary/${de.id}`,
+    });
+  }
 
   // ── Staff (unchanged): bounded membership fetch + in-memory name/email match.
   const qLower = q.toLowerCase();
@@ -498,5 +829,6 @@ export async function GET(req: NextRequest) {
   // exact/prefix title match on the user's term wins regardless of which wave or
   // entity type surfaced it, with type priority breaking ties. Array.sort is
   // stable, so within an equal score+priority the original wave order stands.
-  return respond.json({ hits: sortHitsByMatch(roleVisible(hits), q) });
+  // (sortHits IS sortHitsByMatch's algorithm — see TYPE_PRIORITY above.)
+  return respond.json({ hits: sortHits(roleVisible(hits), q) });
 }

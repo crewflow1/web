@@ -102,6 +102,37 @@ export interface CtoBoard {
    * empty — never a green card conjured from absent data.
    */
   reliabilityHealth: HealthCard | null;
+  /**
+   * REAL engineering telemetry via the dark provider adapters (L9a / P7):
+   * GitHub PRs and Vercel deployments. Each half is `null` while its adapter is
+   * dark (no credential) or unreadable this cycle — the section then renders the
+   * SAME honest not-connected state the board has always shown, with the basis
+   * naming the exact activation switch. When an adapter is connectable, the half
+   * carries facts read straight from the provider API — never invented.
+   */
+  engineering: {
+    github: {
+      openPrs: number;
+      draftPrs: number;
+      recent: ReadonlyArray<{
+        number: number;
+        title: string;
+        author: string | null;
+        draft: boolean;
+        updatedAt: string | null;
+      }>;
+    } | null;
+    vercel: {
+      total: number;
+      errored: number;
+      building: number;
+      production: number;
+      latestState: string | null;
+      latestAt: string | null;
+    } | null;
+    /** Plain English: where the telemetry comes from, or why each half is absent. */
+    basis: string;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -156,12 +187,41 @@ export interface CtoHealthInput {
   atRisk: number;
 }
 
+/** GitHub PR telemetry, folded from the dark adapter's `listPullRequests`. */
+export interface CtoGithubInput {
+  pulls: ReadonlyArray<{
+    number: number;
+    title: string;
+    author: string | null;
+    draft: boolean;
+    updatedAt: string | null;
+  }>;
+}
+
+/** Vercel deployment telemetry, folded from the dark adapter's `listDeployments`. */
+export interface CtoVercelInput {
+  deployments: ReadonlyArray<{
+    state: string;
+    target: string | null;
+    createdAt: string | null;
+  }>;
+}
+
 export interface CtoInput {
   launch: CtoLaunchInput | null;
   reliability: CtoReliabilityInput | null;
   shadow: CtoShadowInput | null;
   aiCost: CtoAiCostInput | null;
   health: CtoHealthInput | null;
+  /**
+   * OPTIONAL adapter-fed telemetry (L9a). `undefined`/`null` while the GitHub /
+   * Vercel dark adapters are unconfigured (which is always, today) or
+   * unreadable this cycle — the board's engineering section then states the
+   * dark-adapter reason instead of inventing telemetry. Optional (not required)
+   * so every existing caller and test remains a complete input by construction.
+   */
+  github?: CtoGithubInput | null;
+  vercel?: CtoVercelInput | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -444,6 +504,48 @@ export function computeCtoBoard(input: CtoInput, now: Date): CtoBoard {
     ),
   );
 
+  // ── Engineering telemetry (dark adapters) ─────────────────────────────
+  const github = input.github ?? null;
+  const vercel = input.vercel ?? null;
+  const githubHalf =
+    github == null
+      ? null
+      : {
+          openPrs: github.pulls.length,
+          draftPrs: github.pulls.filter((p) => p.draft).length,
+          recent: github.pulls.slice(0, 8).map((p) => ({
+            number: p.number,
+            title: p.title,
+            author: p.author,
+            draft: p.draft,
+            updatedAt: p.updatedAt,
+          })),
+        };
+  let vercelHalf: CtoBoard["engineering"]["vercel"] = null;
+  if (vercel != null) {
+    const ds = vercel.deployments;
+    const latest = ds.length > 0 ? ds[0]! : null;
+    vercelHalf = {
+      total: ds.length,
+      errored: ds.filter((d) => d.state === "ERROR" || d.state === "CANCELED").length,
+      building: ds.filter((d) => d.state === "BUILDING" || d.state === "QUEUED").length,
+      production: ds.filter((d) => d.target === "production").length,
+      latestState: latest?.state ?? null,
+      latestAt: latest?.createdAt ?? null,
+    };
+  }
+  const basisBits: string[] = [];
+  basisBits.push(
+    github == null
+      ? "GitHub adapter is dark (set GITHUB_TOKEN + GITHUB_REPO to enable PR telemetry) — no PR figure is fabricated."
+      : `PR telemetry read live from the configured GitHub repository (${github.pulls.length} pull request${github.pulls.length === 1 ? "" : "s"} in the window).`,
+  );
+  basisBits.push(
+    vercel == null
+      ? "Vercel adapter is dark (set VERCEL_TOKEN to enable deployment telemetry) — no deploy figure is fabricated."
+      : `Deployment telemetry read live from the configured Vercel scope (${vercel.deployments.length} deployment${vercel.deployments.length === 1 ? "" : "s"} in the window).`,
+  );
+
   return {
     asOf: now.toISOString(),
     periodLabel,
@@ -458,5 +560,231 @@ export function computeCtoBoard(input: CtoInput, now: Date): CtoBoard {
           },
     reliabilityHealth:
       input.reliability == null ? null : deriveHealth(input.reliability.tasks, now),
+    engineering: {
+      github: githubHalf,
+      vercel: vercelHalf,
+      basis: basisBits.join(" "),
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// PR review — the DETERMINISTIC checklist over one fetched unified diff
+// (L9a / P7). The `cto_pr_review` task handler fetches the diff through the
+// dark GitHub adapter and defers here; this function is pure string analysis —
+// NO model, NO clock beyond the injected `now`, NO I/O. When the adapter is
+// dark the handler never reaches this function: it completes with an honest
+// not-configured envelope instead.
+// ---------------------------------------------------------------------------
+
+/** The fetched diff the checklist reviews. */
+export interface PrDiffInput {
+  prNumber: number;
+  title: string | null;
+  author: string | null;
+  /** The unified diff body, exactly as GitHub serves it. */
+  diff: string;
+}
+
+export type PrChecklistStatus = "pass" | "attention";
+
+export interface PrReviewChecklistItem {
+  key: string;
+  item: string;
+  status: PrChecklistStatus;
+  detail: string;
+}
+
+export interface PrReviewChecklistResult {
+  kind: "cto_pr_review";
+  summary: string;
+  reasoning: string;
+  /** 1 over a present diff, 0 when the diff is empty (insufficient). */
+  confidence: number;
+  insufficient: boolean;
+  generatedAt: string;
+  sources: string[];
+  severity: "ok" | "warning" | "critical";
+  /** Every review needs a human before it means anything — always true. */
+  approvalRequired: true;
+  signals: {
+    prNumber: number;
+    title: string | null;
+    author: string | null;
+    filesChanged: number;
+    additions: number;
+    deletions: number;
+    migrationsTouched: string[];
+    /** Credential-shaped identifiers INTRODUCED by added lines (never values). */
+    credentialShapedAdditions: string[];
+    testFilesTouched: number;
+    dependencyManifestTouched: boolean;
+    todoAdditions: number;
+  };
+  checklist: PrReviewChecklistItem[];
+  [key: string]: unknown;
+}
+
+/** Credential-shaped identifier introduced by a `+` line — the NAME only, never a value. */
+const CREDENTIAL_SHAPED_ID = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_(?:API_KEY|SECRET|TOKEN|PASSWORD)\b/g;
+
+const plural = (n: number) => (n === 1 ? "" : "s");
+
+/**
+ * Compute the deterministic PR-review checklist from one unified diff. Pure
+ * string analysis, reproducible from the diff alone: file/line counts read from
+ * the diff headers, and four review flags a CTO reads first — migrations
+ * touched, credential-shaped identifiers introduced, dependency-manifest edits,
+ * TODOs added — each cross-referenced against whether tests moved with the
+ * change. It REPORTS for a human; it approves nothing and merges nothing.
+ */
+export function computePrReviewChecklist(input: PrDiffInput, now: Date): PrReviewChecklistResult {
+  const sources = ["github:pull_request_diff"];
+  const diff = input.diff ?? "";
+  if (diff.trim().length === 0) {
+    return {
+      kind: "cto_pr_review",
+      summary: `Insufficient data — PR #${input.prNumber} returned an empty diff.`,
+      reasoning:
+        "The fetched diff was empty, so no line-level review can be derived. This is an honest empty read, not a clean pass manufactured from absent data.",
+      confidence: 0,
+      insufficient: true,
+      generatedAt: now.toISOString(),
+      sources,
+      severity: "ok",
+      approvalRequired: true,
+      signals: {
+        prNumber: input.prNumber,
+        title: input.title,
+        author: input.author,
+        filesChanged: 0,
+        additions: 0,
+        deletions: 0,
+        migrationsTouched: [],
+        credentialShapedAdditions: [],
+        testFilesTouched: 0,
+        dependencyManifestTouched: false,
+        todoAdditions: 0,
+      },
+      checklist: [],
+    };
+  }
+
+  const files: string[] = [];
+  let additions = 0;
+  let deletions = 0;
+  let todoAdditions = 0;
+  const credentialShaped = new Set<string>();
+
+  for (const line of diff.split("\n")) {
+    const header = line.match(/^diff --git a\/(?:.+) b\/(.+)$/);
+    if (header) {
+      files.push(header[1]!);
+      continue;
+    }
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      additions += 1;
+      if (/\bTODO\b/.test(line)) todoAdditions += 1;
+      for (const m of line.matchAll(CREDENTIAL_SHAPED_ID)) credentialShaped.add(m[0]!);
+      continue;
+    }
+    if (line.startsWith("-") && !line.startsWith("---")) deletions += 1;
+  }
+
+  const migrationsTouched = files.filter((f) => f.startsWith("supabase/migrations/")).sort();
+  const testFilesTouched = files.filter((f) => /(^|\/)__tests__\/|\.test\.[jt]sx?$/.test(f)).length;
+  const dependencyManifestTouched = files.some(
+    (f) => f === "package.json" || f === "package-lock.json",
+  );
+  const credentialShapedAdditions = [...credentialShaped].sort();
+
+  const checklist: PrReviewChecklistItem[] = [
+    {
+      key: "size",
+      item: "Change size is reviewable",
+      status: additions + deletions > 1500 ? "attention" : "pass",
+      detail: `${files.length} file${plural(files.length)}, +${additions}/−${deletions} lines.`,
+    },
+    {
+      key: "migrations",
+      item: "Migration discipline",
+      status: migrationsTouched.length > 0 ? "attention" : "pass",
+      detail:
+        migrationsTouched.length > 0
+          ? `Touches ${migrationsTouched.length} migration file${plural(migrationsTouched.length)} (${migrationsTouched.join(", ")}) — verify the slot against the applied tip before merge.`
+          : "No migration files touched.",
+    },
+    {
+      key: "credentials",
+      item: "No new credential-shaped identifiers",
+      status: credentialShapedAdditions.length > 0 ? "attention" : "pass",
+      detail:
+        credentialShapedAdditions.length > 0
+          ? `Added lines introduce credential-shaped identifier${plural(credentialShapedAdditions.length)}: ${credentialShapedAdditions.join(", ")} — confirm each is a dark-gated seam, never a live key.`
+          : "No credential-shaped identifier appears in the added lines.",
+    },
+    {
+      key: "tests",
+      item: "Tests move with the change",
+      status: testFilesTouched === 0 && files.length > 0 ? "attention" : "pass",
+      detail:
+        testFilesTouched > 0
+          ? `${testFilesTouched} test file${plural(testFilesTouched)} touched.`
+          : "No test file is touched by this diff.",
+    },
+    {
+      key: "dependencies",
+      item: "Dependency manifest unchanged",
+      status: dependencyManifestTouched ? "attention" : "pass",
+      detail: dependencyManifestTouched
+        ? "package.json / package-lock.json changed — review the new dependency surface."
+        : "No dependency manifest change.",
+    },
+    {
+      key: "todos",
+      item: "No new TODO debt",
+      status: todoAdditions > 0 ? "attention" : "pass",
+      detail:
+        todoAdditions > 0
+          ? `${todoAdditions} added line${plural(todoAdditions)} carry a TODO.`
+          : "No TODO is introduced.",
+    },
+  ];
+
+  const attention = checklist.filter((c) => c.status === "attention");
+  const severity: PrReviewChecklistResult["severity"] =
+    credentialShapedAdditions.length > 0 ? "critical" : attention.length > 0 ? "warning" : "ok";
+  const title = input.title ? ` (“${input.title}”)` : "";
+  const summary =
+    attention.length === 0
+      ? `PR #${input.prNumber}${title}: all ${checklist.length} deterministic checks pass — ${files.length} file${plural(files.length)}, +${additions}/−${deletions}.`
+      : `PR #${input.prNumber}${title}: ${attention.length} of ${checklist.length} checks need attention — ${attention.map((c) => c.item).join("; ")}.`;
+  const reasoning =
+    `Deterministic checklist over the fetched unified diff: file and line counts come from the diff headers; migrations, credential-shaped identifiers, test coverage, dependency-manifest edits and TODOs are exact string matches over the changed paths and added lines. Nothing is approved or merged here — merge is an irreversible act registered only as approval-gated executor-tool metadata, and this review is input for the human who holds that approval.`;
+
+  return {
+    kind: "cto_pr_review",
+    summary,
+    reasoning,
+    confidence: 1,
+    insufficient: false,
+    generatedAt: now.toISOString(),
+    sources,
+    severity,
+    approvalRequired: true,
+    signals: {
+      prNumber: input.prNumber,
+      title: input.title,
+      author: input.author,
+      filesChanged: files.length,
+      additions,
+      deletions,
+      migrationsTouched,
+      credentialShapedAdditions,
+      testFilesTouched,
+      dependencyManifestTouched,
+      todoAdditions,
+    },
+    checklist,
   };
 }
