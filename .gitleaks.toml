@@ -22,10 +22,4 @@ description = "Known-safe Stripe live-key prefix checks and test fixtures"
 regexes = [
   '''sk_live_abc123''',
   '''startsWith\("sk_live_"\)''',
-  # lib/hq/finance.ts forecastMetric: a METRIC-ID string constant
-  # (`const KEY = "revenue_forecast_3m"`) that generic-api-key matched on the
-  # identifier name alone — no secret body, a display key for a finance metric.
-  # The constant is renamed METRIC_ID at HEAD; this entry keeps the HISTORIC
-  # commit (78464a47) passing, since the PR scan walks the commit range.
-  '''const KEY = "revenue_forecast_3m"''',
 ]
