@@ -63,11 +63,9 @@ function formDataToPatch(
       "resend_connected",
       "whatsapp_connected",
     ],
-    feature_flags: [
-      "enable_ai_coo",
-      "enable_whatsapp_outbound",
-      "enable_self_service_billing",
-    ],
+    // feature_flags carries NO writable fields: the old JSONB toggles were a
+    // false control panel (read by nothing); production flags are Vercel env.
+    feature_flags: [],
   };
 
   const patch: Record<string, unknown> = {};

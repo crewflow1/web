@@ -480,30 +480,21 @@ function SectionIntegrations({ settings }: { settings: HqSettings }) {
   );
 }
 
-function SectionFeatureFlags({ settings }: { settings: HqSettings }) {
-  const s = settings.feature_flags;
+function SectionFeatureFlags(_props: { settings: HqSettings }) {
+  // Deliberately NO toggles: the switches that used to render here persisted
+  // to JSONB and were read by nothing — a super-admin could "enable WhatsApp"
+  // and believe it worked. Production flags are Vercel env vars; this panel
+  // now states that truth instead of counterfeiting control.
   return (
     <SectionShell id="feature_flags">
       <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-        Operator-only flags. Customer plan / role flags live elsewhere.
+        Production feature flags are <span className="font-semibold">Vercel environment variables</span>{" "}
+        (<code className="font-mono">NEXT_PUBLIC_FEATURE_*</code> /{" "}
+        <code className="font-mono">FEATURE_*</code>), changed via a deploy —
+        never from this panel. The live activation state of every gated
+        capability is documented in{" "}
+        <code className="font-mono">docs/launch/PRODUCTION-ACTIVATION-MATRIX.md</code>.
       </p>
-      <div className="space-y-2">
-        <Toggle
-          name="enable_ai_coo"
-          defaultChecked={s.enable_ai_coo}
-          label="Enable AI COO ranker on /admin/alerts"
-        />
-        <Toggle
-          name="enable_whatsapp_outbound"
-          defaultChecked={s.enable_whatsapp_outbound}
-          label="Enable outbound WhatsApp from HQ"
-        />
-        <Toggle
-          name="enable_self_service_billing"
-          defaultChecked={s.enable_self_service_billing}
-          label="Enable customer self-service billing in /billing"
-        />
-      </div>
     </SectionShell>
   );
 }

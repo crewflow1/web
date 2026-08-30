@@ -75,11 +75,25 @@ export const config = {
   //                          Inbound calls from Twilio / WhatsApp / Meta will
   //                          NEVER have a Supabase session cookie, so the
   //                          middleware MUST NOT redirect to /login.
+  //   - api/v1             → public API: key-authed (Authorization: Bearer
+  //                          crw_…) and 404-while-dark at the route guard; a
+  //                          machine client can never carry a session cookie.
+  //   - api/sso            → SAML ACS / OIDC callback: the IdP POSTs an
+  //                          assertion — the whole point is the user has no
+  //                          session YET. Routes 404 while the org's SSO is
+  //                          off and validate assertions fail-closed.
+  //   - scim/v2            → SCIM provisioning: IdP-to-server bearer-token
+  //                          protocol (401 without the minted token; 401
+  //                          while dark). Discovered live: the auth
+  //                          middleware 307'd all three machine surfaces to
+  //                          /login, making them unusable regardless of
+  //                          flags — the built-dark class this exclusion
+  //                          list exists for, invisible until a real probe.
   //
   // The middleware MUST NOT redirect these to /login or vendor signature
   // verification never gets a chance to run and the webhook delivery fails
   // with 307.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|manifest.webmanifest|icon.svg|opengraph-image|pdf.worker.min.mjs|sw.js|offline|icons/|api/og|api/health|api/cron|api/demo|api/webhooks|api/receptionist).*)",
+    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|manifest.webmanifest|icon.svg|opengraph-image|pdf.worker.min.mjs|sw.js|offline|icons/|api/og|api/health|api/cron|api/demo|api/webhooks|api/receptionist|api/v1|api/sso|scim/v2).*)",
   ],
 };

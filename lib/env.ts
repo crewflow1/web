@@ -274,11 +274,24 @@ const envSchema = z.object({
   // account (org_payment_connections.status='connected'). Unset in every
   // environment today.
   STRIPE_CONNECT_SECRET_KEY: z.string().optional(),
+
+  // -- Sage accounting client (read by lib/integrations/accounting/oauth.ts;
+  // was consumed-but-undeclared — the schema is the census of what exists) --
+  SAGE_CLIENT_ID: z.string().optional(),
+  SAGE_CLIENT_SECRET: z.string().optional(),
+  SAGE_API_BASE_URL: z.string().optional(),
+
+  // -- Autonomous-apply kill switches (HIGHEST blast radius in the repo).
+  // Declared for boot-time visibility ONLY: each consumer requires the exact
+  // literal "on" (pinned by __tests__/security/autonomous-apply-dark.test.ts)
+  // and activation is CEO stage-gated per ADR-0011. Unset everywhere. --------
+  FEATURE_HQ_AUTONOMOUS_APPLY: z.string().optional(),
+  CREWFLOW_EXECUTOR_APPLY: z.string().optional(),
+  CREWFLOW_HQ_APPLY_ON_APPROVAL: z.string().optional(),
+  CREWFLOW_EXECUTOR_SHADOW: z.string().optional(),
+
   STRIPE_INVOICE_WEBHOOK_SECRET: z.string().optional(),
 
-  // -- Inngest ------------------------------------------------------------
-  INNGEST_EVENT_KEY: z.string().optional(),
-  INNGEST_SIGNING_KEY: z.string().optional(),
 
   // -- Observability ------------------------------------------------------
   // Server/edge DSN (falls back to the public one in the SDK configs). Dark
@@ -291,13 +304,9 @@ const envSchema = z.object({
   SENTRY_AUTH_TOKEN: z.string().optional(),
   NEXT_PUBLIC_POSTHOG_KEY: z.string().optional(),
   NEXT_PUBLIC_POSTHOG_HOST: z.string().default("https://eu.i.posthog.com"),
-  POSTHOG_PERSONAL_API_KEY: z.string().optional(),
-  BETTERSTACK_LOGS_TOKEN: z.string().optional(),
-  BETTERSTACK_UPTIME_HEARTBEAT_URL: z.string().optional(),
 
   // -- Internal auth ------------------------------------------------------
   CRON_SECRET: z.string().optional(),
-  INTERNAL_API_SECRET: z.string().optional(),
 
   // -- Super-admin access gate -------------------------------------------
   // Comma-separated email allowlist. Users with one of these emails see
