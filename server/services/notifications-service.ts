@@ -8,6 +8,18 @@ import { enqueuePushForNotifications } from "@/lib/notifications/push";
 import { enqueueSmsForNotifications } from "@/lib/notifications/sms";
 import { getPreferencesForUserKeys } from "@/server/services/notification-preferences-service";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
+
+/** The legacy `related_id` alias column is uuid-typed; `source_id` is text.
+ *  Mirroring a non-uuid source id (e.g. a retention-milestone slug like
+ *  "first_customer") into it made Postgres reject the ENTIRE insert — the
+ *  notification silently never existed (loud log only). Mirror only real
+ *  uuids; legacy readers only ever consumed uuid references (the column type
+ *  is the proof). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function uuidOrNull(v: string | null | undefined): string | null {
+  return v != null && UUID_RE.test(v) ? v : null;
+}
+
 import {
   notificationCategoryForType,
   type NotificationRow,
@@ -95,9 +107,10 @@ export async function createNotification(
     action_url: input.action_url ?? null,
     metadata: input.metadata ?? {},
     // Legacy aliases — keeps the old NotificationsBell behaviour
-    // and any existing readers working.
+    // and any existing readers working. related_id is uuid-typed: mirror
+    // only a real uuid (see uuidOrNull) or the whole insert is rejected.
     related_table: input.source_module ?? null,
-    related_id: input.source_id ?? null,
+    related_id: uuidOrNull(input.source_id),
   };
   const res = await admin().insert(payload);
   if (res.error) {
@@ -136,8 +149,10 @@ async function insertNotificationsReturning(
     metadata: n.metadata ?? {},
     // Legacy aliases — keeps the old NotificationsBell + any existing
     // readers working (mirror of createNotification's dual-write).
+    // related_id is uuid-typed: mirror only a real uuid or Postgres rejects
+    // the ENTIRE batch (how milestone notifications silently never landed).
     related_table: n.source_module ?? null,
-    related_id: n.source_id ?? null,
+    related_id: uuidOrNull(n.source_id),
   }));
   const c = createAdminClient();
   const { data, error } = await c
