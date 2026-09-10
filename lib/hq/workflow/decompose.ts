@@ -103,6 +103,17 @@ const CUSTOMER_ONBOARDING: SagaTemplate = {
   ],
 };
 
+/**
+ * The AI-assisted decomposition sentinel (P15, armed 2026-09-10). NOT a
+ * template: choosing it in the picker routes createSaga through the GOVERNED
+ * maybeDecomposeWithAi seam (./ai-decompose.ts — high tier, £100 ceiling,
+ * dedupe, ledger; the model's proposal is re-validated against the pure model
+ * before it is trusted). While the high tier is dark or the seam refuses, the
+ * saga is NOT created and the operator sees an honest error — a novel
+ * directive is never silently mis-planned onto a template.
+ */
+export const AI_ASSISTED_TEMPLATE_KEY = "__ai_assisted__";
+
 export const SAGA_TEMPLATES: ReadonlyArray<SagaTemplate> = [
   PRODUCT_LAUNCH,
   SDLC_LIFECYCLE,

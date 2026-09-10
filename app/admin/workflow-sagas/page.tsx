@@ -4,6 +4,7 @@ import { requireHqPage } from "@/server/auth/hq";
 import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { listSagas, SAGA_TEMPLATES, type SagaRow } from "@/server/services/hq-workflow";
+import { AI_ASSISTED_TEMPLATE_KEY } from "@/lib/hq/workflow/decompose";
 import { relativeTime } from "@/lib/time/relative";
 import { presentSagaState } from "@/lib/hq/presentation-state";
 import { DecisionStateBadge } from "@/app/admin/_components/decision-state";
@@ -152,6 +153,9 @@ async function NewSagaForm() {
                 {t.label} — {t.steps.length} steps
               </option>
             ))}
+            <option value={AI_ASSISTED_TEMPLATE_KEY}>
+              AI-assisted — draft a plan for a novel directive (governed)
+            </option>
           </select>
         </label>
         <button

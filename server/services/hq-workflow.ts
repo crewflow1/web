@@ -16,7 +16,13 @@ import {
   type SagaProgress,
   type StepStatus,
 } from "@/lib/hq/workflow/model";
-import { decomposeDirective, getTemplate } from "@/lib/hq/workflow/decompose";
+import {
+  AI_ASSISTED_TEMPLATE_KEY,
+  decomposeDirective,
+  getTemplate,
+} from "@/lib/hq/workflow/decompose";
+import { maybeDecomposeWithAi } from "@/lib/hq/workflow/ai-decompose";
+import type { SagaPlan } from "@/lib/hq/workflow/decompose";
 import { drainSagaStepTasks } from "@/server/services/hq-saga-step-runner";
 import type { DrainSummary } from "@/server/sdk/tasks";
 
@@ -227,22 +233,33 @@ export type CreateSagaInput = {
 };
 
 /**
- * Decompose a directive with a DETERMINISTIC template and persist the saga plus its
- * step graph. Super-admin only. The deterministic decomposition (decomposeDirective)
- * is the substrate; the AI-assisted seam (lib/hq/workflow/ai-decompose.ts) is dark
- * and is not consulted here — the service builds the deterministic saga so it never
- * depends on a bound model.
+ * Decompose a directive and persist the saga plus its step graph. Super-admin
+ * only. The DETERMINISTIC template decomposition (decomposeDirective) is the
+ * substrate; since the 2026-09-10 activation the operator may instead choose
+ * AI_ASSISTED_TEMPLATE_KEY for a genuinely novel directive, which consults the
+ * GOVERNED maybeDecomposeWithAi seam (high tier · £100 ceiling · dedupe ·
+ * ledger · proposal re-validated against the pure model). The seam refusing —
+ * dark tier, blocked budget, invalid proposal — FAILS the create with an
+ * honest error rather than silently substituting a template: a plan the
+ * operator asked the AI to draft must never be quietly replaced.
  */
 export async function createSaga(input: CreateSagaInput): Promise<SagaResult> {
   const denied = actorGate(input.creator);
   if (denied) return denied;
 
-  const decomposed = decomposeDirective(
-    { title: input.title, templateKey: input.templateKey },
-    new Date(),
-  );
-  if (!decomposed.ok) return { ok: false, error: decomposed.error };
-  const plan = decomposed.plan;
+  let plan: SagaPlan;
+  if (input.templateKey === AI_ASSISTED_TEMPLATE_KEY) {
+    const proposed = await maybeDecomposeWithAi({ directive: input.title });
+    if (!proposed) return { ok: false, error: "ai_decomposition_unavailable" };
+    plan = { ...proposed, templateKey: AI_ASSISTED_TEMPLATE_KEY };
+  } else {
+    const decomposed = decomposeDirective(
+      { title: input.title, templateKey: input.templateKey },
+      new Date(),
+    );
+    if (!decomposed.ok) return { ok: false, error: decomposed.error };
+    plan = decomposed.plan;
+  }
 
   const admin = createAdminClient();
   const { data: sagaRow, error: sagaErr } = await sagas(admin)
@@ -287,7 +304,13 @@ export async function createSaga(input: CreateSagaInput): Promise<SagaResult> {
     action: "saga.created",
     targetTable: "hq_workflow_sagas",
     targetId: sagaRow.id,
-    metadata: { title: plan.title, template_key: plan.templateKey, steps: plan.steps.length },
+    metadata: {
+      title: plan.title,
+      template_key: plan.templateKey,
+      steps: plan.steps.length,
+      decomposition:
+        input.templateKey === AI_ASSISTED_TEMPLATE_KEY ? "ai_assisted" : "template",
+    },
   });
 
   return { ok: true, saga: await assembleSaga(admin, sagaRow) };

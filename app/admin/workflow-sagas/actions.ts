@@ -43,6 +43,8 @@ function describeError(error: string): string {
   switch (error) {
     case "forbidden":
       return "You are not a permitted operator.";
+    case "ai_decomposition_unavailable":
+      return "AI decomposition is unavailable right now (model dark, budget ceiling reached, or the proposed plan failed validation) — no saga was created. Pick a deterministic template, or retry later.";
     case "title_required":
       return "A title is required.";
     case "unknown_template":
