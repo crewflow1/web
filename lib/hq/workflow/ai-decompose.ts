@@ -1,21 +1,25 @@
 import "server-only";
 
 /**
- * CrewFlow HQ — the AI-assisted saga decomposition seam, GOVERNED and DARK.
+ * CrewFlow HQ — the AI-assisted saga decomposition seam, GOVERNED.
  *
  * When a directive cannot be matched to a deterministic template — a genuinely
- * novel cross-department plan — this is where an AI-assisted decomposition WOULD
- * propose the step graph. It is dark today and returns `null`, so the caller falls
- * back to the DETERMINISTIC template decomposition (lib/hq/workflow/decompose.ts),
- * which is the substrate and is always available. No saga is ever left unplanned.
+ * novel cross-department plan — this is where an AI-assisted decomposition
+ * proposes the step graph. LIVE since 2026-09-10 (P15): the operator opts in by
+ * choosing AI_ASSISTED_TEMPLATE_KEY in the saga picker, and createSaga
+ * (server/services/hq-workflow.ts) consults this seam ONLY behind that sentinel.
+ * A `null` here fails the create with an honest `ai_decomposition_unavailable`
+ * error — the deterministic templates (lib/hq/workflow/decompose.ts) remain the
+ * substrate for every non-sentinel key, and a template is NEVER silently
+ * substituted for a plan the operator asked the AI to draft.
  *
  * THE GATE IS ACTIVATION, NOT A KEY — the governance-closure idiom
  * (server/services/receptionist.ts `extractFields`, lib/telephony/ai-turn.ts). This
  * is deliberately NOT a credential check: a vendor key with no bound cost tier must
  * change nothing. So:
  *
- *   1. gate on the EXISTING generative tier activation (`isInferenceTierActivated`).
- *      Dark ⇒ return null before any work, and the deterministic path runs.
+ *   1. gate on this class's OWN tier activation (`isTierActivated("high")`).
+ *      Dark ⇒ return null before any work, and the caller surfaces the error.
  *   2. reach the model ONLY through the shared text door (`getTextProvider`), which
  *      itself refuses without a bound tier — this file constructs no SDK and reads
  *      no vendor credential, so the closure ratchet's pinned counts are untouched.
