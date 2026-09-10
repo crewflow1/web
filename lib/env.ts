@@ -92,6 +92,17 @@ const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
 
+  // The organisation HQ's own (non-tenant) AI spend is billed to — read by
+  // hqBudgetOrgId() (lib/ai/governor/attribution.ts), which fails CLOSED to
+  // null when unset. Twenty HQ-billed AI features refuse without it. It MUST
+  // name an EXISTING public.organizations row: the reserve RPC's FK turns a
+  // stale id into a fail-closed refusal that is invisible in the ledger
+  // (2026-09-10 incident — the launch-readiness "HQ AI attribution" row now
+  // checks existence, not just presence). Undeclared here until that incident.
+  // (Plain string, not .uuid(): the env schema THROWS on parse failure and a
+  // malformed value must degrade AI attribution, never brick the whole boot.)
+  CREWFLOW_INTERNAL_ORG_ID: z.string().optional(),
+
   // -- Shared Memory embeddings (Directive 009 M1 PR4) --------------------
   // Names the active embedding vendor for semantic recall. Default "openai"
   // (text-embedding-3-small). The vendor's own key (e.g. OPENAI_API_KEY)
