@@ -36,7 +36,7 @@ The house invariant (verified in code): `activated` can never be true without th
 | Q2 | Maintenance-reminder emails | `NEXT_PUBLIC_FEATURE_MAINTENANCE_REMINDERS=true` | Starts autonomous outbound email to real customers (cron; Resend already live; both surfaces read one predicate) | **ENABLE** |
 | Q3 | GDPR erasure (real) | `FEATURE_GDPR_ERASURE=true` | Irreversible destruction — but triple-locked (flag + org OWNER + slug token) and Art.17 arguably requires it live | **ENABLE** |
 | Q4 | Retention purge (real) | `FEATURE_RETENTION_PURGE=true` | Flips org-enabled policies from dry-run to real deletion (statutory exclusions DB-enforced) | **ENABLE** (no org has policies enabled yet ⇒ inert today) |
-| Q5 | Resend delivery events | `NEXT_PUBLIC_FEATURE_RESEND_EVENTS` + `RESEND_WEBHOOK_SECRET` | Needs a webhook secret from YOUR Resend dashboard (L2, free, ingest-only; starts honest bounce-suppression) | **ENABLE** — steps below when you say go |
+| Q5 | Resend delivery events | `NEXT_PUBLIC_FEATURE_RESEND_EVENTS` + `RESEND_WEBHOOK_SECRET` | ✅ **LIVE — PRODUCTION-PROVEN 2026-09-10**: CEO-configured webhook + secret; unsigned/bogus-signature POSTs 401 (was 404-dark); one controlled test email → genuine Svix-signed `sent`+`delivered` events persisted to append-only `comm_events` in <20s (provider event+message ids present); idempotency = UNIQUE (provider, provider_event_id) verified in prod schema + benign-23505 handler path; no secret exposed anywhere | DONE |
 
 ## L2 — needs a CEO credential/config (no/negligible cost)
 
