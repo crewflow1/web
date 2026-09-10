@@ -59,9 +59,9 @@ function describeAiDecompositionFailure(reason: string): string {
     case "provider_failure":
       return base + "The model provider call failed (network or provider error). Nothing was charged beyond the failed attempt's floor. Safe to retry.";
     case "provider_invalid_response":
-      return base + "The model returned an unusable response. Safe to retry; if it persists, report it as an engineering issue.";
+      return base + "The model returned an unusable response (empty or truncated). Retry after a few minutes — an immediate identical retry can be suppressed as a duplicate — or adjust the directive title slightly. If it persists, report it as an engineering issue.";
     case "parse_failure":
-      return base + "The model's response was not valid JSON and was refused. Safe to retry; if it persists, report it as an engineering issue.";
+      return base + "The model's response was not valid JSON and was refused. Retry after a few minutes — an immediate identical retry can be suppressed as a duplicate — or adjust the directive title slightly. If it persists, report it as an engineering issue.";
     case "plan_validation_failure":
       return base + "The model proposed a step graph that failed validation and was refused — an invalid plan is never persisted. Retry, or use a deterministic template.";
     default:

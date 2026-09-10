@@ -232,7 +232,7 @@ describe("Anthropic provider.generate — text, tokens, options, failure", () =>
 
   it("returns an empty result for a blank prompt WITHOUT touching the network", async () => {
     const out = await provider.generate("   ");
-    expect(out).toEqual({ text: "", model: "claude-haiku-4-5-20251001", inputTokens: 0, outputTokens: 0 });
+    expect(out).toEqual({ text: "", model: "claude-haiku-4-5-20251001", inputTokens: 0, outputTokens: 0, stopReason: null });
     expect(anthropicCreate).not.toHaveBeenCalled();
   });
 
@@ -302,7 +302,7 @@ describe("OpenAI provider.generate — text, tokens, options, failure", () => {
 
   it("returns an empty result for a blank prompt WITHOUT touching the network", async () => {
     const out = await provider.generate("");
-    expect(out).toEqual({ text: "", model: "gpt-4o-mini", inputTokens: 0, outputTokens: 0 });
+    expect(out).toEqual({ text: "", model: "gpt-4o-mini", inputTokens: 0, outputTokens: 0, stopReason: null });
     expect(openaiCreate).not.toHaveBeenCalled();
   });
 

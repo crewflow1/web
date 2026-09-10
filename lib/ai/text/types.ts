@@ -66,6 +66,14 @@ export type TextResult = {
   inputTokens: number;
   /** Billed output/completion tokens (provider truth, for the ledger). */
   outputTokens: number;
+  /**
+   * Why generation stopped, normalised: "end_turn" | "max_tokens" | vendor
+   * string | null when the vendor reported nothing. "max_tokens" means the
+   * output was TRUNCATED — a structured-output caller must refuse it rather
+   * than parse a half answer (2026-09-10 saga incident: a truncated-but-
+   * parseable plan would silently persist HALF a step graph).
+   */
+  stopReason: string | null;
 };
 
 /**

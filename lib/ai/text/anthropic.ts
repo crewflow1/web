@@ -51,7 +51,7 @@ export function createAnthropicTextProvider(apiKey: string, model: string = DEFA
     async generate(prompt: string, opts?: TextGenerationOptions): Promise<TextResult> {
       // Blank prompt: never touch the network (deterministic, free).
       if (prompt.trim().length === 0) {
-        return { text: "", model, inputTokens: 0, outputTokens: 0 };
+        return { text: "", model, inputTokens: 0, outputTokens: 0, stopReason: null };
       }
 
       const { default: Anthropic } = await import("@anthropic-ai/sdk");
@@ -95,6 +95,8 @@ export function createAnthropicTextProvider(apiKey: string, model: string = DEFA
         model: msg.model ?? model,
         inputTokens: msg.usage?.input_tokens ?? 0,
         outputTokens: msg.usage?.output_tokens ?? 0,
+        // Vendor truth: "max_tokens" here means the text above is TRUNCATED.
+        stopReason: msg.stop_reason ?? null,
       };
     },
   };
