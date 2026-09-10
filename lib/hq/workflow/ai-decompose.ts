@@ -54,7 +54,7 @@ export async function maybeDecomposeWithAi(input: AiDecomposeInput): Promise<Sag
   // 1. DARK SHORT-CIRCUIT — THIS call's OWN tier must be armed, not merely
   //    "some generative tier". The global any-tier gate (isInferenceTierActivated)
   //    was the partial-binding hole: with only `cheap`/`mid` bound + a vendor key
-  //    it answers true, `getTextProvider()` hands back a live provider, and the
+  //    it answers true, `getTextProvider("high")` hands back a live provider, and the
   //    governor's per-tier dark short-circuit runs this `complex`/`high` call
   //    ungoverned. Gate on the high tier — the class this call declares — so a
   //    dark high tier falls back to the template decomposition before any provider.
@@ -68,7 +68,7 @@ export async function maybeDecomposeWithAi(input: AiDecomposeInput): Promise<Sag
 
   // 2. The model is reachable ONLY through the shared door, which refuses without
   //    a bound tier. Null ⇒ dark ⇒ deterministic fallback.
-  const provider = getTextProvider();
+  const provider = getTextProvider("high");
   if (!provider) return null;
 
   try {

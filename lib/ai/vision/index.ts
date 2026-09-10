@@ -44,7 +44,8 @@ import "server-only";
  */
 
 import type { VisionProvider } from "./types";
-import { isInferenceTierActivated } from "@/lib/ai/governor/readiness";
+import { isTierActivated } from "@/lib/ai/governor/readiness";
+import { TIER_MODEL } from "@/lib/ai/governor/registry";
 import { createAnthropicVisionProvider } from "./anthropic";
 
 export type {
@@ -64,18 +65,21 @@ export type {
  */
 export function getVisionProvider(): VisionProvider | null {
   // THE AUTHORISATION. A vendor key is not permission to spend.
-  // PER-MODALITY: a generative (cheap/mid/high) tier must be bound — the
-  // global any-tier answer would let an embedding-only activation open this
-  // door on a bare key, recreating the exact defect the closure wave fixed.
-  if (!isInferenceTierActivated()) return null;
+  // PER-TIER (activation diff 2026-09-10): vision serves the classification
+  // class (OCR/extraction), so the CHEAP tier specifically must be bound and
+  // its model is what runs — a mid/high-only activation must NOT open this
+  // door, and execution can never diverge from the cheap-tier accounting.
+  const binding = TIER_MODEL.cheap;
+  if (!binding || !isTierActivated("cheap")) return null;
 
   const name = (process.env.AI_VISION_PROVIDER ?? "anthropic").trim().toLowerCase();
 
   switch (name) {
     case "anthropic": {
+      if (binding.provider !== "anthropic") return null;
       const key = process.env.ANTHROPIC_API_KEY;
       if (!key) return null;
-      return createAnthropicVisionProvider(key);
+      return createAnthropicVisionProvider(key, binding.model);
     }
 
     // Future vendors slot in here — configuration only:

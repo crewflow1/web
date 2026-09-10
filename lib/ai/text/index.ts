@@ -5,7 +5,7 @@ import "server-only";
  *
  * CEO Directive 009 Module 1, PR5. This is the ONE place that knows which LLM
  * vendor is active for the lifecycle reducers. Everything upstream (the
- * lifecycle worker) asks `getTextProvider()` for "a provider" and gets `null`
+ * lifecycle worker) asks `getTextProvider("mid")` for "a provider" and gets `null`
  * when nothing is configured. That null is the whole graceful-degradation
  * contract — identical to the embedding seam:
  *
@@ -47,9 +47,13 @@ import "server-only";
  */
 
 import type { TextProvider } from "./types";
-import { isInferenceTierActivated } from "@/lib/ai/governor/readiness";
+import { TIER_MODEL, type AiTier } from "@/lib/ai/governor/registry";
+import { isTierActivated } from "@/lib/ai/governor/readiness";
 import { createAnthropicTextProvider } from "./anthropic";
 import { createOpenAiTextProvider } from "./openai";
+
+/** The generative tiers this door can serve (embedding/transcription have their own doors). */
+export type InferenceTier = Extract<AiTier, "cheap" | "mid" | "high">;
 
 export type { TextProvider, TextResult, TextModelInfo, TextGenerationOptions } from "./types";
 export { textCostUsd } from "./cost";
@@ -69,35 +73,48 @@ export { textCostUsd } from "./cost";
  * credential cannot satisfy, and putting it after the vendor branches would mean
  * a provider object briefly exists for a call that must never happen.
  */
-export function getTextProvider(): TextProvider | null {
+// tier is REQUIRED, deliberately: a defaulted "mid" silently re-created the
+// execution/accounting divergence for the next cheap/high caller — a missing
+// argument must be a compile error, not a 2x mispricing.
+export function getTextProvider(tier: InferenceTier): TextProvider | null {
   // THE AUTHORISATION. A vendor key is not permission to spend; a bound cost
   // tier is. Nothing below can be reached without one.
-  // PER-MODALITY: a generative (cheap/mid/high) tier must be bound — the
-  // global any-tier answer would let an embedding-only activation open this
-  // door on a bare key, recreating the exact defect the closure wave fixed.
-  if (!isInferenceTierActivated()) return null;
+  // PER-TIER (activation diff 2026-09-10): the caller's OWN tier must be
+  // bound, and the provider is constructed with THAT tier's model — the old
+  // any-inference-tier gate + hard-coded default model meant a mid caller
+  // could run the cheap model while being priced at the mid binding, the
+  // execution/accounting divergence this diff closes across the whole door.
+  const binding = TIER_MODEL[tier];
+  if (!binding || !isTierActivated(tier)) return null;
 
   const name = (process.env.MEMORY_TEXT_PROVIDER ?? "auto").trim().toLowerCase();
 
   switch (name) {
     case "auto": {
-      const anthropicKey = process.env.ANTHROPIC_API_KEY;
-      if (anthropicKey) return createAnthropicTextProvider(anthropicKey);
-      const openaiKey = process.env.OPENAI_API_KEY;
-      if (openaiKey) return createOpenAiTextProvider(openaiKey);
+      // The BINDING chooses the vendor; env keys only supply credentials.
+      if (binding.provider === "anthropic") {
+        const key = process.env.ANTHROPIC_API_KEY;
+        return key ? createAnthropicTextProvider(key, binding.model) : null;
+      }
+      if (binding.provider === "openai") {
+        const key = process.env.OPENAI_API_KEY;
+        return key ? createOpenAiTextProvider(key, binding.model) : null;
+      }
       return null;
     }
 
     case "anthropic": {
+      if (binding.provider !== "anthropic") return null; // never run a different vendor's model name
       const key = process.env.ANTHROPIC_API_KEY;
       if (!key) return null;
-      return createAnthropicTextProvider(key);
+      return createAnthropicTextProvider(key, binding.model);
     }
 
     case "openai": {
+      if (binding.provider !== "openai") return null;
       const key = process.env.OPENAI_API_KEY;
       if (!key) return null;
-      return createOpenAiTextProvider(key);
+      return createOpenAiTextProvider(key, binding.model);
     }
 
     // Future providers slot in here — configuration only:
@@ -105,6 +122,12 @@ export function getTextProvider(): TextProvider | null {
     //   case "azure-openai": ...
     //   case "local":   ...
 
+    // NOTE (activation review): this switch silences the TEXT DOOR only —
+    // the vision door (AI_VISION_PROVIDER) and the three governed direct-SDK
+    // legs (lead summary, receptionist extraction, research) do not read it.
+    // The ESTATE kill switches are: unset ANTHROPIC_API_KEY (immediate) or
+    // revert TIER_MODEL (reviewed diff). Documented in
+    // docs/launch/PRODUCTION-ACTIVATION-MATRIX.md.
     case "":
     case "none":
     case "off":
@@ -127,6 +150,8 @@ export function getTextProvider(): TextProvider | null {
  * means AUTHORISED as well as configured: a vendor key with no bound cost tier
  * answers false, because it can produce no provider.
  */
+/** NOTE: answers for the MID (drafting) tier specifically — the tier every
+ *  UI gate that calls this guards. */
 export function isTextConfigured(): boolean {
-  return getTextProvider() !== null;
+  return getTextProvider("mid") !== null;
 }

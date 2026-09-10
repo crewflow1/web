@@ -72,14 +72,14 @@ export async function generateConversationResponse(
     }));
   if (!context) return fallbackResponse(request.channel, "no_context");
 
-  // PER-TIER OWN-CLASS GATE. `getTextProvider()` opens on ANY generative tier,
+  // PER-TIER OWN-CLASS GATE. `getTextProvider("mid")` opens on ANY generative tier,
   // so with only `cheap` bound + a vendor key this `drafting`/`mid` path would
   // resolve a LIVE provider that the governor's per-tier dark short-circuit then
   // runs ungoverned. This call's own tier must be armed first — same posture as
   // the self-SDK services — before a provider is resolved.
   if (!isTierActivated("mid")) return fallbackResponse(request.channel, "no_provider");
 
-  const provider = getTextProvider();
+  const provider = getTextProvider("mid");
   // No provider configured → deterministic fallback (the DEFAULT path in CI, where no LLM key is set — so
   // generation is reproducible end to end and byte-for-byte the pre-R13 acknowledgement).
   if (!provider) return fallbackResponse(request.channel, "no_provider");
@@ -104,7 +104,7 @@ export async function generateConversationResponse(
     // receptionist and the WhatsApp draft-first path reach a model through —
     // governing it here governs both, with no per-channel duplication.
     //
-    // DARK TODAY: no tier is bound and no credential is set, so `getTextProvider()`
+    // DARK TODAY: no tier is bound and no credential is set, so `getTextProvider("mid")`
     // above already returned null and this line is unreachable in production; the
     // deterministic acknowledgement is the live behaviour, unchanged.
     //

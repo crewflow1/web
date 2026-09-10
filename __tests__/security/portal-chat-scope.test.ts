@@ -245,11 +245,13 @@ describe("(c) the auto-ack is deterministic and no model is reachable while dark
     );
   });
 
-  it("no generative tier is bound in this build (dark) — so no model can run", () => {
-    expect(isAnyTierBound()).toBe(false);
+  it("the mid tier is bound but this keyless env cannot run a model — the ack stays deterministic", () => {
+    // Post-activation form of the dark pin: binding present, credential
+    // absent in unit tests ⇒ the tier is NOT activated and the text door
+    // resolves NO provider, so the auto-ack path stays fully deterministic.
+    expect(isAnyTierBound()).toBe(true);
     expect(isTierActivated("mid")).toBe(false);
-    // The text door is closed while dark: the ack path resolves NO provider.
-    expect(getTextProvider()).toBeNull();
+    expect(getTextProvider("mid")).toBeNull();
   });
 
   it("chat.auto_reply is a registered drafting feature (the review point)", () => {
@@ -283,7 +285,7 @@ describe("(c) source contract — the automated ack write", () => {
 
   it("gates on its own tier BEFORE resolving a provider (no model while dark)", () => {
     const gateIdx = SERVICE.indexOf('isTierActivated("mid")');
-    const providerIdx = SERVICE.indexOf("getTextProvider()");
+    const providerIdx = SERVICE.indexOf('getTextProvider("mid")');
     expect(gateIdx).toBeGreaterThan(-1);
     expect(providerIdx).toBeGreaterThan(-1);
     expect(gateIdx).toBeLessThan(providerIdx);

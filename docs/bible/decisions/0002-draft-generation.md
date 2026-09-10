@@ -156,3 +156,18 @@ autonomous task-runner that invokes generation; richer run telemetry
 (`ai.run_started`, `ai.budget_warned`/`ai.budget_exceeded`); cross-employee budget
 enforcement; and additional draft `kind`s and employee context adapters. Each is
 its own reviewable change.
+
+## Activation-era note (2026-09-10)
+
+The `temperature: 0` half of "bounded" is now MODEL-AWARE at the Anthropic
+adapter (`lib/ai/text/anthropic.ts`): the 4.7+ generation (`claude-sonnet-5`,
+`claude-opus-5`) removed sampling parameters — a non-default value returns a
+400 — so the adapter forwards `temperature` only to pre-4.6-generation models
+(Haiku 4.5, where extraction callers' `temperature: 0` still buys stability)
+and drops it otherwise, additionally disabling default-on adaptive thinking
+there so tight `maxTokens` draft caps are not consumed by reasoning tokens.
+Boundedness on the newer models is carried by the pinned model id, the
+`maxTokens` cap, the fixed prompts, and the governor envelope — pinned in
+`__tests__/memory/text-provider.test.ts` (model-aware adapter behaviour) and
+`__tests__/ai/tier-bindings.test.ts` (bindings).
+

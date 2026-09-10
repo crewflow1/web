@@ -108,17 +108,24 @@ describe("the task-class routing table is DATA, with models in exactly one place
     }
   });
 
-  it("EVERY tier is currently mapped to NO provider — the build is dark", () => {
-    for (const tier of AI_TIERS) {
-      expect(TIER_MODEL[tier], `${tier} must be unbound`).toBeNull();
-    }
-    // The dark pin for the NEW modality, by name: admitting 'embedding' to the
-    // registry must not have armed it. Binding it is a deliberate future diff.
+  it("the 2026-09-10 activation armed EXACTLY cheap/mid/high — embedding and transcription stay dark", () => {
+    // The armed truth, pinned so it can only change through a reviewed diff
+    // (exact ids + prices are re-pinned in __tests__/ai/tier-bindings.test.ts).
+    expect(TIER_MODEL.cheap?.model).toBe("claude-haiku-4-5-20251001");
+    expect(TIER_MODEL.mid?.model).toBe("claude-sonnet-5");
+    expect(TIER_MODEL.high?.model).toBe("claude-opus-5");
+    // The dark pins that REMAIN: admitting these modalities to the registry
+    // must not have armed them. Binding either is its own deliberate diff
+    // (embedding needs a vendor + pgvector decision; transcription needs the
+    // transport implementation in lib/ai/transcription.ts as well).
     expect(TIER_MODEL.embedding).toBeNull();
-    expect(isAnyTierBound()).toBe(false);
-    for (const cls of AI_TASK_CLASSES) {
-      expect(resolveModel(cls), `${cls} must resolve to no model`).toBeNull();
-    }
+    expect(TIER_MODEL.transcription).toBeNull();
+    expect(isAnyTierBound()).toBe(true);
+    expect(resolveModel("classification")?.model).toBe("claude-haiku-4-5-20251001");
+    expect(resolveModel("drafting")?.model).toBe("claude-sonnet-5");
+    expect(resolveModel("complex")?.model).toBe("claude-opus-5");
+    expect(resolveModel("embedding")).toBeNull();
+    expect(resolveModel("transcription")).toBeNull();
   });
 
   it("every registered feature declares a task class the routing table knows", () => {
@@ -280,12 +287,15 @@ describe("with NO provider bound, the wrapper is a pure pass-through", () => {
     expect(adminClientCalls.count).toBe(0);
   });
 
-  it("is dark even with a vendor credential set — a key alone activates nothing", async () => {
+  it("a DARK modality stays a pure pass-through even with every vendor credential set", async () => {
+    // The invariant survives the activation: a key alone still arms nothing.
+    // cheap/mid/high are now bound (their calls take the real governed path),
+    // so the pin moves to the modality that REMAINS dark — transcription.
     vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-not-real");
     vi.stubEnv("OPENAI_API_KEY", "sk-not-real");
     const outcome = await invokeWithGovernor(
-      "expense.receipt_extraction",
-      "classification",
+      "voice_note.transcription",
+      "transcription",
       async () => ({ value: "still degraded", usage: null }),
       { orgId: ORG },
     );
@@ -317,38 +327,61 @@ describe("with NO provider bound, the wrapper is a pure pass-through", () => {
 // =====================================================================
 
 describe("activation readiness — no binding ⇒ NEVER activated", () => {
-  it("reports dark today, with a checklist of what is missing", () => {
+  it("reports the ARMED inference tiers and the still-dark modalities, honestly", () => {
+    // Activated readiness still tells the whole truth: bindings present for
+    // cheap/mid/high; embedding/transcription report dark with their blockers.
+    vi.stubEnv("ANTHROPIC_API_KEY", "present");
     const r = getAiGovernorReadiness();
-    expect(r.activated).toBe(false);
-    expect(r.anyTierBound).toBe(false);
-    expect(isGovernorActivated()).toBe(false);
-    expect(r.blockers.length).toBeGreaterThan(0);
+    expect(r.anyTierBound).toBe(true);
+    expect(isGovernorActivated()).toBe(true);
     for (const tier of r.tiers) {
-      expect(tier.modelBindingPresent).toBe(false);
-      expect(tier.providerResolvable).toBe(false);
-      expect(tier.provider).toBeNull();
-      expect(tier.model).toBeNull();
+      if (tier.tier === "cheap" || tier.tier === "mid" || tier.tier === "high") {
+        expect(tier.modelBindingPresent).toBe(true);
+        expect(tier.provider).toBe("anthropic");
+        expect(tier.providerResolvable).toBe(true);
+      } else {
+        expect(tier.modelBindingPresent).toBe(false);
+        expect(tier.providerResolvable).toBe(false);
+        expect(tier.provider).toBeNull();
+        expect(tier.model).toBeNull();
+      }
     }
   });
 
-  it("stays dark with EVERY known vendor credential present — the invariant", () => {
-    // The exact shape of the comms incident (#433) transposed to AI: everything
-    // an operator controls is satisfied, and the capability still does not exist.
+  it("an armed tier WITHOUT its vendor credential is NOT resolvable — no false green", () => {
+    // The #433 invariant survives in its real remaining form: binding alone is
+    // not activation; the credential must also be present.
+    const r = getAiGovernorReadiness();
+    for (const tier of r.tiers) {
+      if (tier.tier === "cheap" || tier.tier === "mid" || tier.tier === "high") {
+        expect(tier.modelBindingPresent).toBe(true);
+        expect(tier.providerResolvable).toBe(false);
+      }
+    }
+    expect(isGovernorActivated()).toBe(false);
+  });
+
+  it("the DARK modalities stay dark with EVERY known vendor credential present — the invariant", () => {
+    // #433 transposed to what remains dark: credentials satisfied, and the
+    // embedding/transcription capabilities still do not exist.
     for (const v of KNOWN_VENDOR_CREDENTIALS) vi.stubEnv(v, "present");
     const r = getAiGovernorReadiness();
     expect(r.credentialsPresent.length).toBe(KNOWN_VENDOR_CREDENTIALS.length);
-    expect(r.activated).toBe(false);
-    expect(isGovernorActivated()).toBe(false);
+    const emb = r.tiers.find((t) => t.tier === "embedding");
+    const stt = r.tiers.find((t) => t.tier === "transcription");
+    expect(emb?.providerResolvable).toBe(false);
+    expect(stt?.providerResolvable).toBe(false);
   });
 
   it("still REPORTS the drift — a credential with no binding is named, not hidden", () => {
     // The credential's presence is a fact an operator must see either way: it is
     // either an activation half-done or a key that should be removed. What
     // changed with the governance closure is what it IMPLIES, asserted below.
-    vi.stubEnv("ANTHROPIC_API_KEY", "present");
+    vi.stubEnv("OPENAI_API_KEY", "present");
     const r = getAiGovernorReadiness();
-    expect(r.credentialsPresent).toContain("ANTHROPIC_API_KEY");
-    expect(r.activated).toBe(false);
+    expect(r.credentialsPresent).toContain("OPENAI_API_KEY");
+    // OpenAI's key has no armed binding naming it — the drift is REPORTED
+    // (present credential, nothing it can arm), never hidden.
     expect(r.blockers.length).toBeGreaterThan(0);
   });
 
@@ -373,7 +406,10 @@ describe("activation readiness — no binding ⇒ NEVER activated", () => {
     const both = getAiGovernorReadiness();
     expect(both.credentialsPresent.length).toBe(KNOWN_VENDOR_CREDENTIALS.length);
     expect(both.ungovernedCredentialRisk).toBe(false);
-    expect(both.activated).toBe(false);
+    // Since the 2026-09-10 activation, binding + credential = activated —
+    // and every one of those calls flows through the governed ledger, which
+    // is exactly why the risk flag above stays false.
+    expect(both.activated).toBe(true);
   });
 
   it("no credentials ⇒ no drift risk", () => {

@@ -232,14 +232,14 @@ async function buildDraft(
   prompt: { system: string; user: string },
   maxTokens: number,
 ): Promise<BuiltDraft> {
-  // PER-TIER OWN-CLASS GATE. `getTextProvider()` opens on ANY generative tier,
+  // PER-TIER OWN-CLASS GATE. `getTextProvider("mid")` opens on ANY generative tier,
   // so a partial binding (only `cheap`) + a vendor key would hand this
   // `drafting`/`mid` engine a LIVE provider that the governor's per-tier dark
   // short-circuit then runs ungoverned. Gate on this call's own tier first —
   // same posture as the self-SDK services — before a provider is resolved.
   if (!isTierActivated("mid")) return fallbackBuilt(kind, context, "no_provider");
 
-  const provider = getTextProvider();
+  const provider = getTextProvider("mid");
 
   // No provider configured → deterministic fallback (the DEFAULT path in CI, where
   // no LLM key is set — so generation is reproducible end-to-end). Since the
@@ -261,7 +261,7 @@ async function buildDraft(
   const startedAt = Date.now();
   let result: TextResult;
   try {
-    // GOVERNED. Until this change the only gate was `getTextProvider()` — a bare
+    // GOVERNED. Until this change the only gate was `getTextProvider("mid")` — a bare
     // credential check — so a key on a deploy switched the whole Draft Engine on
     // outside the £100/month ceiling and outside the ledger. Both governor
     // refusals degrade to the DETERMINISTIC draft, so generation stays TOTAL and

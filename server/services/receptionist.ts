@@ -4,7 +4,12 @@ import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
-import { invokeWithGovernor, isTierActivated, type GovernedCall } from "@/lib/ai/governor";
+import {
+  invokeWithGovernor,
+  isTierActivated,
+  TIER_MODEL,
+  type GovernedCall,
+} from "@/lib/ai/governor";
 import {
   evaluateReply,
   isAutoSendable,
@@ -2685,7 +2690,10 @@ async function extractFieldsWithProvider(
 ): Promise<GovernedCall<InboundExtraction>> {
   const { default: Anthropic } = await import("@anthropic-ai/sdk");
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
-  const model = "claude-haiku-4-5";
+  // Canonical cheap-tier binding — execution and governor accounting can
+  // never diverge (activation diff 2026-09-10; the cheap gate above refuses
+  // before this line when the tier is dark).
+  const model = TIER_MODEL.cheap?.model ?? "claude-haiku-4-5-20251001";
   const msg = await client.messages.create(
     {
       model,

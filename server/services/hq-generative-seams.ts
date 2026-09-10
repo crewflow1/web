@@ -31,7 +31,7 @@ import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
  *
  * PER-TIER OWN-CLASS GATE, BEFORE THE DOOR. `drafting` maps to the `mid` tier,
  * so this call's own tier must be armed (isTierActivated("mid")) BEFORE any
- * provider is resolved — the C35-C partial-binding rule: `getTextProvider()`
+ * provider is resolved — the C35-C partial-binding rule: `getTextProvider("mid")`
  * opens on ANY generative tier, and a provider object that exists for a call
  * that must never happen is one someone will run.
  *
@@ -156,7 +156,7 @@ export async function generateDepartmentDraft(
   // OWN-CLASS TIER GATE FIRST (C35-C): drafting → mid. Dark mid tier ⇒ no
   // provider is ever resolved, and the deterministic artifact stands alone.
   if (!isTierActivated("mid")) return null;
-  const provider = getTextProvider();
+  const provider = getTextProvider("mid");
   if (!provider) return null;
   if (!isSupportedProvider(provider.info.provider)) return null;
 

@@ -116,7 +116,7 @@ export async function maybeGenerateVoiceTurn(input: VoiceTurnInput): Promise<str
   // 1. DARK SHORT-CIRCUIT — THIS call's OWN tier must be armed, not merely
   //    "some generative tier". The global any-tier gate (isInferenceTierActivated)
   //    was the partial-binding hole: with only `cheap` bound + a vendor key it
-  //    answers true, `getTextProvider()` hands back a live provider, and the
+  //    answers true, `getTextProvider("mid")` hands back a live provider, and the
   //    governor's per-tier dark short-circuit runs this `drafting`/`mid` call
   //    ungoverned. Gate on the mid tier — the class this call declares — so a
   //    dark mid tier falls back to deterministic TwiML before any provider.
@@ -125,7 +125,7 @@ export async function maybeGenerateVoiceTurn(input: VoiceTurnInput): Promise<str
 
   // 2. The model is reachable ONLY through the shared door, which refuses
   //    without a bound tier. Null ⇒ dark ⇒ deterministic fallback.
-  const provider = getTextProvider();
+  const provider = getTextProvider("mid");
   if (!provider) return null;
 
   try {

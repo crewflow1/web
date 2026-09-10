@@ -18,7 +18,15 @@ import "server-only";
 
 import type { TextGenerationOptions, TextModelInfo, TextProvider, TextResult } from "./types";
 
-const DEFAULT_MODEL = "claude-haiku-4-5";
+// Inert fallback only — getTextProvider always passes the tier binding's model.
+const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
+
+/** Pre-4.6-generation models (Haiku 4.5) still accept sampling params and do
+ *  not run default-on thinking; 4.6+ models (sonnet-5/opus-5) reject
+ *  non-default temperature and think by default. */
+function acceptsSampling(model: string): boolean {
+  return model.startsWith("claude-haiku-4-5");
+}
 
 /**
  * 20s. Generous, matching the embedding provider: the lifecycle worker runs on
@@ -53,7 +61,22 @@ export function createAnthropicTextProvider(apiKey: string, model: string = DEFA
         {
           model,
           max_tokens: opts?.maxTokens ?? DEFAULT_MAX_TOKENS,
-          ...(opts?.temperature != null ? { temperature: opts.temperature } : {}),
+          // MODEL-AWARE compatibility (activation diff 2026-09-10, verified
+          // against platform.claude.com the same day):
+          //  · temperature is DEPRECATED on the 4.7+ generation — a
+          //    non-default value 400s on claude-sonnet-5 / claude-opus-5 —
+          //    but still honoured on Haiku 4.5, where our extraction callers'
+          //    temperature:0 genuinely buys output stability. Forward it only
+          //    where the API accepts it.
+          //  · thinking is ON BY DEFAULT (adaptive) on sonnet-5/opus-5, and
+          //    thinking tokens are drawn from max_tokens — a 200-token draft
+          //    cap shared with thinking returns truncated/empty text. These
+          //    single-shot, tool-free drafting calls disable it explicitly
+          //    (accepted at default effort on both models).
+          ...(acceptsSampling(model) && opts?.temperature != null
+            ? { temperature: opts.temperature }
+            : {}),
+          ...(acceptsSampling(model) ? {} : { thinking: { type: "disabled" as const } }),
           ...(opts?.system ? { system: opts.system } : {}),
           messages: [{ role: "user", content: prompt }],
         },

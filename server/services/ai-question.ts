@@ -30,7 +30,7 @@ import {
  * GOVERNED. The model call passes through `invokeWithGovernor`
  * (lib/ai/governor.ts): the £100/org/month ceiling, the recent-duplicate
  * refusal, and the durable tokens/latency/cost ledger. Until this change the
- * only gates were `isAiConfigured()` and `getTextProvider()` — both bare
+ * only gates were `isAiConfigured()` and `getTextProvider("mid")` — both bare
  * credential checks — so setting `ANTHROPIC_API_KEY` on a deploy would have
  * switched this TENANT-FACING answer box on with no ceiling and no ledger row.
  * Both refusals return the deterministic answer, which is exactly what this
@@ -85,10 +85,10 @@ export async function askAi(input: {
   const slim = slimSnapshot(snap);
 
   // ONE model door — the shared provider abstraction. No vendor SDK, no API
-  // key read: `getTextProvider()` owns selection, the governor's activation
+  // key read: `getTextProvider("mid")` owns selection, the governor's activation
   // requirement, and graceful null. When it yields nothing usable, the
   // deterministic answer stands in unchanged.
-  // PER-TIER OWN-CLASS GATE. `getTextProvider()` opens on ANY generative tier,
+  // PER-TIER OWN-CLASS GATE. `getTextProvider("mid")` opens on ANY generative tier,
   // so a partial binding (only `cheap`) + a vendor key would hand this
   // `drafting`/`mid` handler a LIVE provider that the governor's per-tier dark
   // short-circuit then runs ungoverned. Gate on this call's own tier first —
@@ -96,7 +96,7 @@ export async function askAi(input: {
   if (!isTierActivated("mid")) {
     return deterministicAnswer(question, slim);
   }
-  const provider = getTextProvider();
+  const provider = getTextProvider("mid");
   if (!provider || !isSupportedProvider(provider.info.provider)) {
     return deterministicAnswer(question, slim);
   }

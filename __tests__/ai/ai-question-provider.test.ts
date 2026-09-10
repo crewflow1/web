@@ -279,7 +279,7 @@ describe("ai-question wiring (source-pinned architecture)", () => {
 
   it("the handler's ONLY model door is getTextProvider — no vendor SDK", () => {
     const code = read(HANDLER);
-    expect(code).toMatch(/getTextProvider\s*\(\s*\)/);
+    expect(code).toMatch(/getTextProvider\s*\(\s*"mid"\s*\)/);
     expect(code).not.toMatch(/@anthropic-ai\/sdk/);
     expect(code).not.toMatch(/\bnew\s+Anthropic\b/);
     expect(code).not.toMatch(/import\(\s*["']openai["']\s*\)/);
@@ -311,7 +311,7 @@ describe("ai-question wiring (source-pinned architecture)", () => {
     // that documents a removal must not read as the removal having failed.
     expect(code).not.toMatch(/^\s*isAiConfigured,\s*$/m);
     expect(code).not.toMatch(/if \(!isAiConfigured\(\)\)/);
-    expect(code).toMatch(/const provider = getTextProvider\(\)/);
+    expect(code).toMatch(/const provider = getTextProvider\("mid"\)/);
   });
 
   it("the model call is GOVERNED — the £100 ceiling and the ledger are in the path", () => {

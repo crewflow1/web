@@ -189,5 +189,16 @@ export function quoteWriterStatusLine(readiness: QuoteWriterReadiness): string {
       "exactly as it always has."
     );
   }
+  if (readiness.pipelineImplemented && readiness.modelBindingPresent) {
+    // Armed build, missing credential (activation diff 2026-09-10): the model
+    // is chosen but this deployment carries no provider key, so nothing can
+    // be generated and nothing leaves CrewFlow. Honest, distinct from OFF.
+    return (
+      "AI quote drafting is configured but not connected in this deployment — a provider " +
+      "credential or configuration step is missing (see the readiness blockers), so nothing " +
+      "is generated and nothing is sent to any third party. " +
+      "Writing a quote works exactly as it always has."
+    );
+  }
   return "AI quote drafting is unavailable in this build.";
 }

@@ -197,7 +197,9 @@ describe("self-SDK services gate on their OWN tier, never the global predicate",
   // registered class, and the bare global predicate is banned in all three.
   const SELF_SDK_TIER: ReadonlyArray<[string, string]> = [
     ["server/services/research-llm.ts", 'isTierActivated("high")'],
-    ["server/services/lead-summary.ts", 'isTierActivated("mid")'],
+    // cheap since the activation diff: the call always executed the cheap
+    // model; registering it drafting/mid was the documented ledger mispricing.
+    ["server/services/lead-summary.ts", 'isTierActivated("cheap")'],
     ["server/services/receptionist.ts", 'isTierActivated("cheap")'],
   ];
   for (const [file, gate] of SELF_SDK_TIER) {
@@ -280,15 +282,21 @@ describe("THE RATCHET — no ungoverned inference path may return", () => {
     expect(ungovernedEntryPoints().length).toBe(AI_UNGOVERNED_INFERENCE_ENTRY_POINTS);
     expect(AI_UNGOVERNED_INFERENCE_ENTRY_POINTS).toBe(0);
 
-    // And the operator-facing consequence, with both credentials present — the
-    // worst case an operator can create without touching the build.
+    // And the operator-facing consequence, with both credentials present.
+    // Post-activation: binding + credential IS activation — and the risk flag
+    // stays false precisely because every such call is governed and ledgered.
+    // try/finally so a failing assertion can never leak stubbed keys into the
+    // rest of this file (the leak briefly made the dark-path proofs vacuous).
     vi.stubEnv("ANTHROPIC_API_KEY", "present");
     vi.stubEnv("OPENAI_API_KEY", "present");
-    const r = getAiGovernorReadiness();
-    expect(r.credentialsPresent.length).toBe(2);
-    expect(r.activated).toBe(false);
-    expect(r.ungovernedCredentialRisk).toBe(false);
-    vi.unstubAllEnvs();
+    try {
+      const r = getAiGovernorReadiness();
+      expect(r.credentialsPresent.length).toBe(2);
+      expect(r.activated).toBe(true);
+      expect(r.ungovernedCredentialRisk).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("pins the SDK-construction allowlist by COUNT and by name", () => {
@@ -340,12 +348,17 @@ describe("THE RATCHET — no ungoverned inference path may return", () => {
     // a generative door on a bare key.
     for (const door of [TEXT_DOOR, VISION_DOOR]) {
       const code = CODE.get(door)!;
-      expect(code, `${door} must import the per-modality activation predicate`).toMatch(
-        /isInferenceTierActivated/,
+      // Since the activation diff the doors are PER-TIER, stricter than the
+      // old per-modality predicate: the caller's OWN tier must be bound AND
+      // credentialed, and the provider is constructed with THAT binding's
+      // model — execution can never diverge from the priced binding.
+      expect(code, `${door} must resolve the caller's tier binding`).toMatch(/TIER_MODEL/);
+      expect(code, `${door} must gate on the caller's own tier activation`).toMatch(
+        /isTierActivated\(/,
       );
       // Ordering is the load-bearing part: a provider object that exists for a
       // call which must never happen is a provider object someone will use.
-      const idxGate = code.indexOf("if (!isInferenceTierActivated())");
+      const idxGate = code.search(/if \(!binding \|\| !isTierActivated\(/);
       const idxKey = code.search(CREDENTIAL_READ);
       expect(idxGate, `${door} must refuse before it resolves a vendor`).toBeGreaterThan(-1);
       expect(idxKey).toBeGreaterThan(-1);
@@ -480,7 +493,11 @@ describe("the registry is once again the COMPLETE list of what may spend", () =>
       // deterministic facts and forbidden from reasoning past them.
       "insights.narrative": "drafting",
       "insights.question": "drafting",
-      "lead.summary": "drafting",
+      // classification since the 2026-09-10 activation diff: the call has
+      // always executed the cheap model over structured lead facts with a
+      // 400-token cap; pricing it at the mid binding was the documented
+      // ledger mispricing the activation closed.
+      "lead.summary": "classification",
       // Prose a human approves before it reaches a customer — the textbook case.
       "hq.draft": "drafting",
       // Internal, short, low-stakes compression that no customer ever sees, so
@@ -664,8 +681,14 @@ describe("THE DARK-PATH PROOF — the admin client is never constructed", () => 
     });
   });
 
-  it("the build really is dark — otherwise every assertion below is vacuous", () => {
-    expect(isAnyTierBound()).toBe(false);
+  it("this test env cannot reach a provider — otherwise every assertion below is vacuous", () => {
+    // Post-activation form: tiers are BOUND, but this process carries no
+    // vendor credential, so isTierActivated is false for every tier and the
+    // callers' own dark gates are what these proofs exercise. If a credential
+    // ever leaks into the unit-test env, this trips first with a clear cause.
+    expect(isAnyTierBound()).toBe(true);
+    expect(process.env.ANTHROPIC_API_KEY ?? "").toBe("");
+    expect(process.env.OPENAI_API_KEY ?? "").toBe("");
     expect(isGovernorActivated()).toBe(false);
   });
 
