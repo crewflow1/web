@@ -8,10 +8,11 @@ import "server-only";
  * proposes the step graph. LIVE since 2026-09-10 (P15): the operator opts in by
  * choosing AI_ASSISTED_TEMPLATE_KEY in the saga picker, and createSaga
  * (server/services/hq-workflow.ts) consults this seam ONLY behind that sentinel.
- * A `null` here fails the create with an honest `ai_decomposition_unavailable`
- * error — the deterministic templates (lib/hq/workflow/decompose.ts) remain the
- * substrate for every non-sentinel key, and a template is NEVER silently
- * substituted for a plan the operator asked the AI to draft.
+ * A refusal here fails the create with `ai_decomposition_unavailable:<reason>`
+ * — each stage names itself (2026-09-10 incident) — and the deterministic
+ * templates (lib/hq/workflow/decompose.ts) remain the substrate for every
+ * non-sentinel key: a template is NEVER silently substituted for a plan the
+ * operator asked the AI to draft.
  *
  * THE GATE IS ACTIVATION, NOT A KEY — the governance-closure idiom
  * (server/services/receptionist.ts `extractFields`, lib/telephony/ai-turn.ts). This
@@ -33,8 +34,8 @@ import "server-only";
  * model (which the governance-closure ratchet forbids).
  *
  * EVERY MODEL PROPOSAL IS RE-VALIDATED against the pure model before it is trusted —
- * an untrusted graph (cycles, dangling dependencies, bad ordinals) is refused and
- * degrades to null, so the model can never introduce a malformed saga.
+ * an untrusted graph (cycles, dangling dependencies, bad ordinals) is refused
+ * (`plan_validation_failure`), so the model can never introduce a malformed saga.
  */
 
 import { getTextProvider } from "@/lib/ai/text";
@@ -105,7 +106,10 @@ export async function maybeDecomposeWithAi(input: AiDecomposeInput): Promise<AiD
   //    dark high tier falls back to the template decomposition before any provider.
   if (!isTierActivated("high")) return refuse("model_dark");
   const directive = input.directive.trim();
-  if (!directive) return refuse("plan_validation_failure", "empty directive");
+  // An empty directive is an INPUT defect, not a model one — the action layer's
+  // zod gate makes this unreachable from the UI, but a future direct caller
+  // must not be told "the model proposed an invalid graph" when no model ran.
+  if (!directive) return refuse("provider_invalid_response", "empty directive — nothing to decompose");
 
   // HQ has no tenant — attribute the spend to CrewFlow's own org, fail-closed.
   const orgId = hqBudgetOrgId();
@@ -161,7 +165,11 @@ export async function maybeDecomposeWithAi(input: AiDecomposeInput): Promise<AiD
     // The provider leg threw (the governor settles the claim as a failure
     // before rethrowing, so nothing is stranded). Log the message, never the
     // prompt or a response body.
-    return refuse("provider_failure", e instanceof Error ? e.message : String(e));
+    return refuse(
+      "provider_failure",
+      // First 120 chars only — some SDK messages embed response-body fragments.
+      (e instanceof Error ? e.message : String(e)).slice(0, 120),
+    );
   }
 }
 
@@ -228,7 +236,9 @@ function parseAndValidate(raw: string): AiDecomposeOutcome {
   });
 
   const validation = validateStepGraph(steps);
-  if (!validation.ok) return refuse("plan_validation_failure", validation.errors.join("; "));
+  if (!validation.ok) // Log the COUNT only: validation messages interpolate model-generated step
+  // titles, and the standing rule is stage names in logs, never model prose.
+  return refuse("plan_validation_failure", `${validation.errors.length} graph error(s)`);
 
   // An AI-decomposed saga carries no deterministic template key.
   return { plan: { title, templateKey: "", status: "planned", steps }, reason: null };

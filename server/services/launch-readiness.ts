@@ -78,12 +78,13 @@ async function checkHqAttribution(): Promise<ChecklistRow> {
           summary:
             "CREWFLOW_INTERNAL_ORG_ID is set but names NO existing organisation — every HQ-billed AI call is refused fail-closed with no ledger row. Point it at a real org (or recreate the internal org) and redeploy.",
         };
-  } catch {
+  } catch (e) {
+    console.error("[launch-readiness] hq-ai-attribution lookup failed", e);
     return {
       id: "hq-ai-attribution",
       label: "HQ AI attribution",
       status: "amber",
-      summary: "Could not verify the internal budget organisation (lookup failed).",
+      summary: "Could not verify the internal budget organisation (lookup failed — see server log).",
     };
   }
 }
