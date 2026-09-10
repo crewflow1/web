@@ -43,6 +43,7 @@ const SLUG = "e2e-harness-org";
 const VEHICLE_ID = "d4444444-4444-4444-4444-444444444444";
 const VEHICLE_NAME = "Fleet Mobile E2E Van";
 const FUEL_NOTE = "FLEETMOBILE-E2E-FUEL";
+const FUEL_LOG_ID = "d4444444-4444-4444-4444-444444444445";
 // A 7-figure fuel spend. `£6,234,567.00` is comma-grouped and non-wrapping —
 // exactly the token that overflowed the grid-cols-2 fleet tiles before the fix.
 const BIG_SPEND = 6_234_567;
@@ -79,11 +80,17 @@ async function pageHasNoHorizontalScroll(
 
 /** The fleet `Stat` value line: the tabular-nums <p> inside the tile card. */
 function statValue(page: import("@playwright/test").Page, label: string | RegExp) {
-  // The card's class begins with `min-w-0`; scope to the card carrying `label`,
-  // then read its value line (the only tabular-nums <p> in the tile). `truncate`
-  // clips it visually but innerText keeps the full underlying figure.
+  // Scope to the Stat CARD's own class pair (`min-w-0 rounded-xl`), never the
+  // bare `min-w-0` substring: the app shell's <main> also carries `min-w-0`
+  // and contains every tile's text, so the old selector could resolve <main>
+  // and read the FIRST tile on the page (the "Vehicles" count — the literal
+  // "3" of three CI flakes: 2026-08-29 baseline, PR #852, PR #858; proven
+  // from the PR #858 trace snapshot, where the page carried the correct
+  // £6,234,567.00 all along). The card class pair is unique to Stat tiles,
+  // so `.first()` is now the labelled card's value line and nothing else.
+  // `truncate` clips it visually but innerText keeps the full figure.
   return page
-    .locator('[class*="min-w-0"]')
+    .locator('[class*="min-w-0 rounded-xl"]')
     .filter({ hasText: label })
     .locator("p.tabular-nums")
     .first();
@@ -109,52 +116,65 @@ test.describe("7-figure fleet fuel tiles at 375px do not scroll the page sideway
         .maybeSingle()
     ).data?.user_id;
 
-    // ── Reset this spec's own rows (fixed refs, never Date.now()) ─────────────
-    // Order matters: the fuel log's composite FK (asset_id, org_id) → assets,
-    // and fleet_vehicles' → assets, so clear children before the asset.
-    await db.from("asset_fuel_logs").delete().eq("org_id", orgId).eq("asset_id", VEHICLE_ID);
-    await db.from("fleet_vehicles").delete().eq("org_id", orgId).eq("asset_id", VEHICLE_ID);
-    await db.from("assets").delete().eq("org_id", orgId).eq("id", VEHICLE_ID);
-
-    // The vehicle spans two tables: the base `assets` row (fixed id so the
-    // detail-page URL is stable) and its `fleet_vehicles` extension (what makes
-    // it a fleet vehicle and surfaces the stat grids).
+    // ── Seed this spec's own rows — UPSERTS on fixed ids, so the seed is
+    // idempotent AND concurrency-safe (a --repeat-each run executes this
+    // beforeAll in parallel workers; the old delete+insert raced itself into
+    // assets_pkey duplicates). Order matters for the FKs: asset → extension.
     // registration/category live on `assets` (the RPC writes them there); the
     // fleet_vehicles extension carries only the vehicle-specific fields.
-    const asset = await db.from("assets").insert({
-      id: VEHICLE_ID,
-      org_id: orgId,
-      name: VEHICLE_NAME,
-      category: "Vehicle",
-      registration: "FM24E2E",
-      status: "active",
-      created_by: ownerId ?? null,
-    });
+    const asset = await db.from("assets").upsert(
+      {
+        id: VEHICLE_ID,
+        org_id: orgId,
+        name: VEHICLE_NAME,
+        category: "Vehicle",
+        registration: "FM24E2E",
+        status: "active",
+        created_by: ownerId ?? null,
+      },
+      { onConflict: "id" },
+    );
     if (asset.error) throw new Error(`fleet-mobile seed (asset): ${asset.error.message}`);
 
-    const ext = await db.from("fleet_vehicles").insert({
-      asset_id: VEHICLE_ID,
-      org_id: orgId,
-      vehicle_class: "van",
-      operational_status: "in_service",
-      created_by: ownerId ?? null,
-    });
+    const ext = await db.from("fleet_vehicles").upsert(
+      {
+        asset_id: VEHICLE_ID,
+        org_id: orgId,
+        vehicle_class: "van",
+        operational_status: "in_service",
+        created_by: ownerId ?? null,
+      },
+      { onConflict: "asset_id" },
+    );
     if (ext.error) throw new Error(`fleet-mobile seed (fleet_vehicles): ${ext.error.message}`);
 
-    // ONE 7-figure fuel log. `cost` is stored in pounds (lib/fleet/fuel sums it
-    // straight), so £6,234,567.00 lands in the fuel-spend tiles. A past
-    // `filled_on` clears the no-future-date guard.
-    const fuel = await db.from("asset_fuel_logs").insert({
-      org_id: orgId,
-      asset_id: VEHICLE_ID,
-      filled_on: "2020-06-15",
-      odometer_miles: 48_250,
-      litres: 620.5,
-      cost: BIG_SPEND,
-      is_full_fill: true,
-      notes: FUEL_NOTE,
-      created_by: ownerId ?? null,
-    });
+    // EXACTLY ONE 7-figure fuel log: a FIXED-ID UPSERT, the same shape as the
+    // asset — any number of concurrent workers converge on one identical row
+    // (no probe-then-insert window), and the vehicle-scoped exact-token
+    // assertion can never see a doubled sum. Any stray rows from older seed
+    // shapes are cleared first. `cost` is stored in pounds (lib/fleet/fuel
+    // sums it straight); a past `filled_on` clears the no-future-date guard.
+    await db
+      .from("asset_fuel_logs")
+      .delete()
+      .eq("org_id", orgId)
+      .eq("asset_id", VEHICLE_ID)
+      .neq("id", FUEL_LOG_ID);
+    const fuel = await db.from("asset_fuel_logs").upsert(
+      {
+        id: FUEL_LOG_ID,
+        org_id: orgId,
+        asset_id: VEHICLE_ID,
+        filled_on: "2020-06-15",
+        odometer_miles: 48_250,
+        litres: 620.5,
+        cost: BIG_SPEND,
+        is_full_fill: true,
+        notes: FUEL_NOTE,
+        created_by: ownerId ?? null,
+      },
+      { onConflict: "id" },
+    );
     if (fuel.error) throw new Error(`fleet-mobile seed (fuel): ${fuel.error.message}`);
   });
 
