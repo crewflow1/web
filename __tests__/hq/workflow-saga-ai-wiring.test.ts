@@ -142,7 +142,7 @@ beforeEach(() => {
 
 describe("createSaga — the AI-assisted sentinel path", () => {
   it("routes the sentinel through the seam and persists the proposal with AI provenance", async () => {
-    h.maybeDecomposeWithAi.mockResolvedValue(aiPlan());
+    h.maybeDecomposeWithAi.mockResolvedValue({ plan: aiPlan(), reason: null });
 
     const res = await createSaga({
       creator: HQ,
@@ -166,8 +166,8 @@ describe("createSaga — the AI-assisted sentinel path", () => {
     expect(meta.template_key).toBe(AI_ASSISTED_TEMPLATE_KEY);
   });
 
-  it("a refusing seam (null) FAILS the create honestly — nothing persisted, no silent template", async () => {
-    h.maybeDecomposeWithAi.mockResolvedValue(null);
+  it("a refusing seam FAILS the create honestly WITH the stage reason — nothing persisted, no silent template", async () => {
+    h.maybeDecomposeWithAi.mockResolvedValue({ plan: null, reason: "budget_refused" });
 
     const res = await createSaga({
       creator: HQ,
@@ -175,7 +175,7 @@ describe("createSaga — the AI-assisted sentinel path", () => {
       templateKey: AI_ASSISTED_TEMPLATE_KEY,
     });
 
-    expect(res).toEqual({ ok: false, error: "ai_decomposition_unavailable" });
+    expect(res).toEqual({ ok: false, error: "ai_decomposition_unavailable:budget_refused" });
     expect(h.state.sagas).toHaveLength(0);
     expect(h.state.steps).toHaveLength(0);
     expect(h.state.activity).toHaveLength(0);
@@ -235,9 +235,23 @@ describe("the surface offers — and honestly describes — the AI path", () => 
     expect(page).toMatch(/AI-assisted/);
   });
 
-  it("the action layer maps ai_decomposition_unavailable to an honest operator message", () => {
+  it("the action layer maps EVERY failure stage to its own operator message (no blending)", () => {
     const actions = read("app/admin/workflow-sagas/actions.ts");
-    expect(actions).toMatch(/case "ai_decomposition_unavailable":/);
-    expect(actions).toMatch(/no saga was created/i);
+    expect(actions).toMatch(/ai_decomposition_unavailable/);
+    for (const reason of [
+      "model_dark",
+      "attribution_missing",
+      "budget_refused",
+      "duplicate_suppressed",
+      "provider_failure",
+      "provider_invalid_response",
+      "parse_failure",
+      "plan_validation_failure",
+    ]) {
+      expect(actions, `describeAiDecompositionFailure must map ${reason}`).toMatch(
+        new RegExp(`case "${reason}":`),
+      );
+    }
+    expect(actions).toMatch(/No saga was created/);
   });
 });

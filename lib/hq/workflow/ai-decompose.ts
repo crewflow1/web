@@ -8,10 +8,11 @@ import "server-only";
  * proposes the step graph. LIVE since 2026-09-10 (P15): the operator opts in by
  * choosing AI_ASSISTED_TEMPLATE_KEY in the saga picker, and createSaga
  * (server/services/hq-workflow.ts) consults this seam ONLY behind that sentinel.
- * A `null` here fails the create with an honest `ai_decomposition_unavailable`
- * error — the deterministic templates (lib/hq/workflow/decompose.ts) remain the
- * substrate for every non-sentinel key, and a template is NEVER silently
- * substituted for a plan the operator asked the AI to draft.
+ * A refusal here fails the create with `ai_decomposition_unavailable:<reason>`
+ * — each stage names itself (2026-09-10 incident) — and the deterministic
+ * templates (lib/hq/workflow/decompose.ts) remain the substrate for every
+ * non-sentinel key: a template is NEVER silently substituted for a plan the
+ * operator asked the AI to draft.
  *
  * THE GATE IS ACTIVATION, NOT A KEY — the governance-closure idiom
  * (server/services/receptionist.ts `extractFields`, lib/telephony/ai-turn.ts). This
@@ -33,8 +34,8 @@ import "server-only";
  * model (which the governance-closure ratchet forbids).
  *
  * EVERY MODEL PROPOSAL IS RE-VALIDATED against the pure model before it is trusted —
- * an untrusted graph (cycles, dangling dependencies, bad ordinals) is refused and
- * degrades to null, so the model can never introduce a malformed saga.
+ * an untrusted graph (cycles, dangling dependencies, bad ordinals) is refused
+ * (`plan_validation_failure`), so the model can never introduce a malformed saga.
  */
 
 import { getTextProvider } from "@/lib/ai/text";
@@ -49,12 +50,53 @@ export type AiDecomposeInput = {
 };
 
 /**
- * Propose a saga plan for a directive with AI assistance, or `null` when the seam
- * is dark, blocked, deduplicated, the provider failed, or the model's proposal did
- * not validate. Never throws — the caller must always be able to fall back to the
- * deterministic template decomposition.
+ * WHY a discriminated failure reason (2026-09-10 production incident): the first
+ * live attempt failed with every stage collapsed into one `null`, and the ledger
+ * could not distinguish "dark model" from "budget refused" from "bad proposal" —
+ * the operator saw one blended error and the on-call had nothing to trace. Each
+ * refusal now names its stage. The reasons are OPERATOR-SAFE: no provider error
+ * bodies, no prompt text, no secrets — stage names only (details go to the
+ * server log).
  */
-export async function maybeDecomposeWithAi(input: AiDecomposeInput): Promise<SagaPlan | null> {
+export const AI_DECOMPOSE_FAILURE_REASONS = [
+  /** The high tier is not activated in this build/deploy (binding or credential). */
+  "model_dark",
+  /** CREWFLOW_INTERNAL_ORG_ID is unset/empty — HQ spend cannot be attributed. */
+  "attribution_missing",
+  /** The governor refused the claim: ceiling, employee limit, or the reservation
+   *  store refused (outage — or the configured internal budget org does not
+   *  exist, which the reserve RPC's FK turns into the same refusal). */
+  "budget_refused",
+  /** An identical directive is in flight or recently succeeded (dedupe window). */
+  "duplicate_suppressed",
+  /** The provider call itself threw (network, 4xx/5xx, timeout). */
+  "provider_failure",
+  /** The provider answered with no usable text. */
+  "provider_invalid_response",
+  /** The text was not parseable JSON (after fence-stripping). */
+  "parse_failure",
+  /** Parsed, but the proposal failed the pure model's graph validation. */
+  "plan_validation_failure",
+] as const;
+export type AiDecomposeFailureReason = (typeof AI_DECOMPOSE_FAILURE_REASONS)[number];
+
+export type AiDecomposeOutcome =
+  | { plan: SagaPlan; reason: null }
+  | { plan: null; reason: AiDecomposeFailureReason };
+
+function refuse(reason: AiDecomposeFailureReason, detail?: string): AiDecomposeOutcome {
+  // Server-side breadcrumb for the on-call; the operator sees only the reason
+  // via the caller's error mapping. Never log the directive or provider bodies.
+  console.error(`[hq.saga_decomposition] refused: ${reason}${detail ? ` (${detail})` : ""}`);
+  return { plan: null, reason };
+}
+
+/**
+ * Propose a saga plan for a directive with AI assistance. On failure, `plan` is
+ * null and `reason` names the exact stage that refused — the caller surfaces it
+ * as a distinct, honest operator error. Never throws.
+ */
+export async function maybeDecomposeWithAi(input: AiDecomposeInput): Promise<AiDecomposeOutcome> {
   // 1. DARK SHORT-CIRCUIT — THIS call's OWN tier must be armed, not merely
   //    "some generative tier". The global any-tier gate (isInferenceTierActivated)
   //    was the partial-binding hole: with only `cheap`/`mid` bound + a vendor key
@@ -62,18 +104,21 @@ export async function maybeDecomposeWithAi(input: AiDecomposeInput): Promise<Sag
   //    governor's per-tier dark short-circuit runs this `complex`/`high` call
   //    ungoverned. Gate on the high tier — the class this call declares — so a
   //    dark high tier falls back to the template decomposition before any provider.
-  if (!isTierActivated("high")) return null;
+  if (!isTierActivated("high")) return refuse("model_dark");
   const directive = input.directive.trim();
-  if (!directive) return null;
+  // An empty directive is an INPUT defect, not a model one — the action layer's
+  // zod gate makes this unreachable from the UI, but a future direct caller
+  // must not be told "the model proposed an invalid graph" when no model ran.
+  if (!directive) return refuse("provider_invalid_response", "empty directive — nothing to decompose");
 
   // HQ has no tenant — attribute the spend to CrewFlow's own org, fail-closed.
   const orgId = hqBudgetOrgId();
-  if (!orgId) return null;
+  if (!orgId) return refuse("attribution_missing");
 
   // 2. The model is reachable ONLY through the shared door, which refuses without
-  //    a bound tier. Null ⇒ dark ⇒ deterministic fallback.
+  //    a bound tier. Null ⇒ dark.
   const provider = getTextProvider("high");
-  if (!provider) return null;
+  if (!provider) return refuse("model_dark", "text door returned no provider");
 
   try {
     // 3. GOVERNED. The registry classes this as `complex`; the governor owns the
@@ -107,32 +152,67 @@ export async function maybeDecomposeWithAi(input: AiDecomposeInput): Promise<Sag
       },
       { orgId, userId: null, dedupeContent: directive },
     );
-    if (outcome.status !== "ran") return null; // blocked / duplicate → deterministic fallback
+    if (outcome.status === "blocked") {
+      // `reason` distinguishes ceiling/employee-limit from a reservation-store
+      // refusal (outage, or an internal budget org the reserve RPC's FK does
+      // not recognise) — operationally very different, so name it in the log.
+      return refuse("budget_refused", outcome.reason);
+    }
+    if (outcome.status === "duplicate") return refuse("duplicate_suppressed", outcome.reason);
+    if (!outcome.value.trim()) return refuse("provider_invalid_response", "empty text");
     return parseAndValidate(outcome.value);
   } catch (e) {
-    console.error("[hq-workflow] AI decomposition failed", e);
+    // The provider leg threw (the governor settles the claim as a failure
+    // before rethrowing, so nothing is stranded). Log the message, never the
+    // prompt or a response body.
+    return refuse(
+      "provider_failure",
+      // First 120 chars only — some SDK messages embed response-body fragments.
+      (e instanceof Error ? e.message : String(e)).slice(0, 120),
+    );
   }
-  // blocked / duplicate / provider error / parse failure → deterministic fallback.
-  return null;
+}
+
+/**
+ * Extract the first JSON object from model text — the house pattern
+ * (server/services/receptionist.ts): strip markdown code fences, then parse;
+ * on failure, brace-match the first object. Models WILL fence JSON even when
+ * told not to; refusing fenced-but-valid JSON is a parse defect, not a safety
+ * property (the graph validation below is the safety property).
+ */
+function extractJsonObject(text: string): unknown {
+  const trimmed = text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "");
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const m = trimmed.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    try {
+      return JSON.parse(m[0]);
+    } catch {
+      return null;
+    }
+  }
 }
 
 /**
  * Parse the model's JSON and re-validate it against the PURE model. Any deviation —
- * malformed JSON, missing fields, a cyclic or dangling-dependency graph — yields
- * null, so a model proposal can never introduce an invalid saga. PURE apart from
- * the exception boundary.
+ * malformed JSON, missing fields, a cyclic or dangling-dependency graph — refuses
+ * with the stage that failed, so a model proposal can never introduce an invalid
+ * saga. PURE apart from the exception boundary.
  */
-function parseAndValidate(raw: string): SagaPlan | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== "object" || parsed === null) return null;
+function parseAndValidate(raw: string): AiDecomposeOutcome {
+  const parsed = extractJsonObject(raw);
+  if (parsed === null) return refuse("parse_failure");
+  if (typeof parsed !== "object") return refuse("parse_failure", "non-object JSON");
   const obj = parsed as Record<string, unknown>;
   const title = typeof obj.title === "string" ? obj.title.trim() : "";
-  if (!title || !Array.isArray(obj.steps)) return null;
+  if (!title || !Array.isArray(obj.steps)) {
+    return refuse("plan_validation_failure", "missing title or steps");
+  }
 
   const bornPending: StepStatus = "pending";
   const steps: SagaStep[] = [];
@@ -156,8 +236,10 @@ function parseAndValidate(raw: string): SagaPlan | null {
   });
 
   const validation = validateStepGraph(steps);
-  if (!validation.ok) return null;
+  if (!validation.ok) // Log the COUNT only: validation messages interpolate model-generated step
+  // titles, and the standing rule is stage names in logs, never model prose.
+  return refuse("plan_validation_failure", `${validation.errors.length} graph error(s)`);
 
   // An AI-decomposed saga carries no deterministic template key.
-  return { title, templateKey: "", status: "planned", steps };
+  return { plan: { title, templateKey: "", status: "planned", steps }, reason: null };
 }

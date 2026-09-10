@@ -5,6 +5,8 @@ import { CRON_ROUTES } from "@/lib/ops/cron-routes";
 import { buildOpsSnapshot } from "@/server/services/ops-snapshot";
 import { readAutomationHealth } from "@/server/services/automation-dispatcher";
 import { isInferenceTierActivated } from "@/lib/ai/governor/readiness";
+import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
  * Phase 8 — launch readiness aggregator.
@@ -36,10 +38,62 @@ function fileExists(rel: string): boolean {
   return existsSync(resolve(process.cwd(), rel));
 }
 
+/**
+ * HQ AI attribution — EXISTENCE, not presence (2026-09-10 incident): the env
+ * var was set but named an organisation that no longer existed (erased in DR
+ * testing), so every HQ-billed AI call fail-closed refused with zero ledger
+ * footprint while every presence check stayed green. Presence checks cannot
+ * catch a stale id; only the database can.
+ */
+async function checkHqAttribution(): Promise<ChecklistRow> {
+  const orgId = hqBudgetOrgId();
+  if (!orgId) {
+    return {
+      id: "hq-ai-attribution",
+      label: "HQ AI attribution",
+      status: "amber",
+      summary:
+        "CREWFLOW_INTERNAL_ORG_ID unset — all HQ-billed AI (research, narratives, drafts, saga decomposition, memory) refuses fail-closed.",
+    };
+  }
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from("organizations")
+      .select("id")
+      .eq("id", orgId)
+      .maybeSingle();
+    if (error) throw error;
+    return data
+      ? {
+          id: "hq-ai-attribution",
+          label: "HQ AI attribution",
+          status: "green",
+          summary: "CREWFLOW_INTERNAL_ORG_ID names an existing organisation — HQ AI spend is attributable.",
+        }
+      : {
+          id: "hq-ai-attribution",
+          label: "HQ AI attribution",
+          status: "red",
+          summary:
+            "CREWFLOW_INTERNAL_ORG_ID is set but names NO existing organisation — every HQ-billed AI call is refused fail-closed with no ledger row. Point it at a real org (or recreate the internal org) and redeploy.",
+        };
+  } catch (e) {
+    console.error("[launch-readiness] hq-ai-attribution lookup failed", e);
+    return {
+      id: "hq-ai-attribution",
+      label: "HQ AI attribution",
+      status: "amber",
+      summary: "Could not verify the internal budget organisation (lookup failed — see server log).",
+    };
+  }
+}
+
 export async function buildLaunchReadiness(): Promise<LaunchReadiness> {
-  const [ops, autoHealth] = await Promise.all([
+  const [ops, autoHealth, hqAttribution] = await Promise.all([
     buildOpsSnapshot(),
     readAutomationHealth(),
+    checkHqAttribution(),
   ]);
 
   // Aggregate cron health.
@@ -116,6 +170,7 @@ export async function buildLaunchReadiness(): Promise<LaunchReadiness> {
         ? "Generative tiers activated (binding + credential) — governed LLM prose + OCR live."
         : "No activated generative tier — deterministic fallback only. Phase 5 surface still works.",
     },
+    hqAttribution,
     {
       id: "security-doc",
       label: "Security contract",

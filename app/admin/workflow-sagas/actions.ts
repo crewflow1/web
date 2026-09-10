@@ -39,12 +39,44 @@ function backTo(params: Record<string, string>, path = "/admin/workflow-sagas"):
   redirect(`${path}?${sp.toString()}`);
 }
 
+/**
+ * Each AI-decomposition failure stage gets its OWN operator message
+ * (2026-09-10 incident: one blended message made a broken internal-org
+ * attribution indistinguishable from a dark model). Messages are stage-level
+ * only — no provider errors, no prompt text, no secrets.
+ */
+function describeAiDecompositionFailure(reason: string): string {
+  const base = "No saga was created. ";
+  switch (reason) {
+    case "model_dark":
+      return base + "AI decomposition is not activated in this deployment (the high inference tier has no model binding or credential). Use a deterministic template, or ask an engineer to check /admin/ai-costs.";
+    case "attribution_missing":
+      return base + "HQ AI spend has nowhere to be billed: the internal budget organisation is not configured (CREWFLOW_INTERNAL_ORG_ID). An engineer must fix the deployment configuration — retrying will not help.";
+    case "budget_refused":
+      return base + "The AI budget refused the claim — the monthly ceiling is reached, or the budget store refused (an outage, or the configured internal budget organisation does not exist). Check /admin/ai-costs; if budget remains, this is a configuration issue, not spend.";
+    case "duplicate_suppressed":
+      return base + "An identical directive was decomposed very recently, so the duplicate was suppressed to avoid double spend. Change the title slightly, or wait a few minutes.";
+    case "provider_failure":
+      return base + "The model provider call failed (network or provider error). Nothing was charged beyond the failed attempt's floor. Safe to retry.";
+    case "provider_invalid_response":
+      return base + "The model returned an unusable response. Safe to retry; if it persists, report it as an engineering issue.";
+    case "parse_failure":
+      return base + "The model's response was not valid JSON and was refused. Safe to retry; if it persists, report it as an engineering issue.";
+    case "plan_validation_failure":
+      return base + "The model proposed a step graph that failed validation and was refused — an invalid plan is never persisted. Retry, or use a deterministic template.";
+    default:
+      return base + "AI decomposition is unavailable right now. Pick a deterministic template, or retry later.";
+  }
+}
+
 function describeError(error: string): string {
+  if (error.startsWith("ai_decomposition_unavailable")) {
+    const reason = error.includes(":") ? error.slice(error.indexOf(":") + 1) : "";
+    return describeAiDecompositionFailure(reason);
+  }
   switch (error) {
     case "forbidden":
       return "You are not a permitted operator.";
-    case "ai_decomposition_unavailable":
-      return "AI decomposition is unavailable right now (model dark, budget ceiling reached, or the proposed plan failed validation) — no saga was created. Pick a deterministic template, or retry later.";
     case "title_required":
       return "A title is required.";
     case "unknown_template":

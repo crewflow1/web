@@ -250,8 +250,13 @@ export async function createSaga(input: CreateSagaInput): Promise<SagaResult> {
   let plan: SagaPlan;
   if (input.templateKey === AI_ASSISTED_TEMPLATE_KEY) {
     const proposed = await maybeDecomposeWithAi({ directive: input.title });
-    if (!proposed) return { ok: false, error: "ai_decomposition_unavailable" };
-    plan = { ...proposed, templateKey: AI_ASSISTED_TEMPLATE_KEY };
+    if (!proposed.plan) {
+      // The seam names the exact stage that refused (2026-09-10 incident:
+      // one blended error hid a broken internal-org attribution). The action
+      // layer maps each reason to a distinct, secret-free operator message.
+      return { ok: false, error: `ai_decomposition_unavailable:${proposed.reason}` };
+    }
+    plan = { ...proposed.plan, templateKey: AI_ASSISTED_TEMPLATE_KEY };
   } else {
     const decomposed = decomposeDirective(
       { title: input.title, templateKey: input.templateKey },
