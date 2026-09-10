@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { AI_TIERS, TIER_MODEL, featureDefinition, isAnyTierBound } from "@/lib/ai/governor/registry";
+import { TIER_MODEL, featureDefinition, isAnyTierBound } from "@/lib/ai/governor/registry";
 import {
   QUOTE_WRITER_FEATURE,
   QUOTE_WRITER_TASK_CLASS,
@@ -256,21 +256,27 @@ describe("ai_quote_drafts — org scope, lifecycle, and immutable evidence", () 
 // =====================================================================
 
 describe("A. no provider is activated by this wave", () => {
-  it("EVERY tier still maps to null — the quote writer changed no binding", () => {
-    for (const tier of AI_TIERS) expect(TIER_MODEL[tier], tier).toBeNull();
-    expect(isAnyTierBound()).toBe(false);
+  it("the 2026-09-10 activation bound mid to claude-sonnet-5; the dark modalities stay null", () => {
+    expect(TIER_MODEL.mid?.model).toBe("claude-sonnet-5");
+    expect(TIER_MODEL.embedding).toBeNull();
+    expect(TIER_MODEL.transcription).toBeNull();
+    expect(isAnyTierBound()).toBe(true);
   });
 
-  it("the quote writer reports UNAVAILABLE, with a checklist", () => {
+  it("the quote writer reports UNAVAILABLE while the credential is absent, with a checklist", () => {
+    // This test env carries no vendor key: binding present, still unavailable
+    // — the #433 no-false-green invariant in its surviving, armed-build form.
     const r = getQuoteWriterReadiness();
     expect(r.available).toBe(false);
-    expect(r.modelBindingPresent).toBe(false);
+    expect(r.modelBindingPresent).toBe(true);
     // …and it is honest about what IS built, which is what makes the dark
     // message useful rather than merely negative.
     expect(r.pipelineImplemented).toBe(true);
     expect(r.featureRegistered).toBe(true);
     expect(r.tier).toBe("mid");
-    expect(r.blockers.join(" ")).toMatch(/no model bound to the 'mid' tier/);
+    // Specific, not merely non-empty: the one thing missing in this env is
+    // the vendor credential.
+    expect(r.blockers.join(" ")).toMatch(/ANTHROPIC_API_KEY/);
   });
 
   it("`available` can NEVER be true without a binding — the #433 invariant", () => {
@@ -303,11 +309,19 @@ describe("A. no provider is activated by this wave", () => {
     expect(getQuoteWriterReadiness(activated, false).available).toBe(false);
   });
 
-  it("the dark status line tells an operator the TRUE thing", () => {
+  it("the dark status lines tell an operator the TRUE thing, in every dark state", () => {
+    // This keyless test env exercises the armed-but-uncredentialed branch.
     const line = quoteWriterStatusLine(getQuoteWriterReadiness());
-    expect(line).toMatch(/switched OFF/i);
+    expect(line).toMatch(/not connected in this deployment/i);
     expect(line).toMatch(/nothing is sent to any third party/i);
     expect(line).toMatch(/exactly as it always has/i);
+    // The unbound branch keeps its own honest copy (exercised directly).
+    const unbound = quoteWriterStatusLine({
+      ...getQuoteWriterReadiness(),
+      modelBindingPresent: false,
+      available: false,
+    });
+    expect(unbound).toMatch(/switched OFF/i);
   });
 
   it("introduces NO new credential env var in ANY file of this wave", () => {
@@ -461,7 +475,7 @@ describe("every model call goes through the governor, as a registered drafting c
     // Exactly one call site. A second would be a second, ungoverned door.
     expect((code.match(/invokeWithGovernor\(/g) ?? [])).toHaveLength(1);
     // The provider itself is reached exactly once, inside that wrapper's leg.
-    expect((code.match(/getTextProvider\(\)/g) ?? [])).toHaveLength(1);
+    expect((code.match(/getTextProvider\("mid"\)/g) ?? [])).toHaveLength(1);
   });
 
   it("the dark gate comes BEFORE any database read", () => {

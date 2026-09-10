@@ -112,7 +112,7 @@ describe("Phase 5 — askAi handler", () => {
     // It is now the model door itself (`getTextProvider()`, which requires the
     // governor to be activated), because a key with no bound cost tier is not
     // permission to spend. The fallback it degrades to is unchanged.
-    expect(HANDLER).toMatch(/const provider = getTextProvider\(\)/);
+    expect(HANDLER).toMatch(/const provider = getTextProvider\("mid"\)/);
     expect(HANDLER).toMatch(/if \(!provider \|\| !isSupportedProvider/);
     expect(HANDLER).toMatch(/deterministicAnswer/);
     expect(HANDLER).not.toMatch(/if \(!isAiConfigured\(\)\)/);

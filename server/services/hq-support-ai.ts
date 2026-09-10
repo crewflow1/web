@@ -247,7 +247,7 @@ async function generateReplyDraftViaModel(
   deterministicBody: string,
 ): Promise<{ body: string; provenance: "anthropic" | "openai"; model: string } | null> {
   if (!isTierActivated("mid")) return null; // dark mid tier → deterministic only
-  const provider = getTextProvider();
+  const provider = getTextProvider("mid");
   if (!provider) return null;
   const vendor = provider.info.provider;
   if (vendor !== "anthropic" && vendor !== "openai") return null;

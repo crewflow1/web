@@ -167,9 +167,49 @@ export type AiModelBinding = {
  * can be changed without a trace.
  */
 export const TIER_MODEL: Readonly<Record<AiTier, AiModelBinding | null>> = {
-  cheap: null,
-  mid: null,
-  high: null,
+  // ── INFERENCE TIERS — ARMED 2026-09-10 (CEO-approved activation diff). ──
+  // Prices verified against platform.claude.com/docs the same day. Envelopes
+  // are per-call worst cases measured from the actual call sites (OCR whole-
+  // PDF for cheap; quote-writer for mid; research evidence packs for high) —
+  // `ai_reservations_month_totals.overrun_count` is the calibration tell.
+  //
+  // LIFECYCLE — Haiku 4.5: Anthropic lists it Active with availability
+  // committed not sooner than 2026-10-15 (the nearest horizon in this
+  // lineup; ≥60 days' emailed notice precedes any retirement). Its eventual
+  // retirement must arrive as a REVIEWED REBIND DIFF here — never an alias
+  // drift or a silent fallback. The pinned snapshot id (not the alias) makes
+  // an unnoticed model swap impossible; __tests__/ai/tier-bindings.test.ts
+  // pins these exact ids and that standing rule.
+  cheap: {
+    provider: "anthropic",
+    model: "claude-haiku-4-5-20251001",
+    usdPerMTokIn: 1,
+    usdPerMTokOut: 5,
+    // Worst case = imports.ocr: one multi-page scanned PDF as a single
+    // vision call (~8k-30k input tokens) + OCR_MAX_TOKENS=2048 output.
+    reserveInputTokens: 32_000,
+    reserveOutputTokens: 2_048,
+  },
+  mid: {
+    provider: "anthropic",
+    model: "claude-sonnet-5",
+    usdPerMTokIn: 2,
+    usdPerMTokOut: 10,
+    // Worst case = quote.writer_draft: system + 60-entry price book +
+    // 12k-char untrusted budget (~7.3k in) and its 2,000-token output cap.
+    reserveInputTokens: 8_000,
+    reserveOutputTokens: 2_000,
+  },
+  high: {
+    provider: "anthropic",
+    model: "claude-opus-5",
+    usdPerMTokIn: 5,
+    usdPerMTokOut: 25,
+    // Worst case = research.analysis/sales_prep: uncapped evidence pack
+    // (5k-20k+ in) and the 3,200-token sales-prep output cap.
+    reserveInputTokens: 24_000,
+    reserveOutputTokens: 3_200,
+  },
   // The embedding modality's own switch. For an embedding model,
   // `usdPerMTokOut` and `reserveOutputTokens` are 0 — embeddings bill input
   // only — and `reserveInputTokens` is the worst-case BATCH size the worker
@@ -460,7 +500,11 @@ export const AI_FEATURES = {
   "lead.summary": {
     key: "lead.summary",
     label: "Lead summary",
-    taskClass: "drafting",
+    // classification, not drafting: the call has ALWAYS executed the cheap
+    // model (a short structured-facts fold, 400-token cap). Registered as
+    // drafting it was priced with the mid binding while running Haiku — the
+    // documented ledger mispricing this activation diff closes.
+    taskClass: "classification",
     degradesTo:
       "The deterministic summary assembled from the lead's own structured fields (deterministicSummary). Same return shape, so no UI branches on it.",
   },

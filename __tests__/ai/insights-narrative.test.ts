@@ -191,7 +191,7 @@ describe("insights layer wiring (source-pinned architecture)", () => {
 
   it("the generator's ONLY model door is getTextProvider — no vendor SDK", () => {
     const code = read(GENERATOR);
-    expect(code).toMatch(/getTextProvider\s*\(\s*\)/);
+    expect(code).toMatch(/getTextProvider\s*\(\s*"mid"\s*\)/);
     expect(code).not.toMatch(/@anthropic-ai\/sdk/);
     expect(code).not.toMatch(/\bnew\s+Anthropic\b/);
     expect(code).not.toMatch(/import\(\s*["']openai["']\s*\)/);

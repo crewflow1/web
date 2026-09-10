@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
  *     have pushed every drafting/classification call into the reservation path
  *     with a NULL binding — a floor claim for a call that reaches no model;
  *   - at the doors, binding an embedding model would have let a bare
- *     ANTHROPIC_API_KEY open `getTextProvider()` — recreating the exact
+ *     ANTHROPIC_API_KEY open `getTextProvider("mid")` — recreating the exact
  *     key-only activation the governance closure removed.
  *
  * This file arms ONE tier at a time (a mutable TIER_MODEL stands in for the
@@ -170,7 +170,7 @@ describe("the provider doors are per-modality — no cross-activation", () => {
     // Anthropic provider — a key-only activation reachable by binding a model
     // for a different modality entirely.
     bindOnly("embedding", EMBED_BINDING);
-    expect(getTextProvider()).toBeNull();
+    expect(getTextProvider("mid")).toBeNull();
   });
 
   it("only 'embedding' bound: the VISION door stays shut too", () => {

@@ -35,7 +35,7 @@ import { invokeWithGovernor, isTierActivated } from "@/lib/ai/governor";
  * GOVERNED. The provider call passes through `invokeWithGovernor`
  * (lib/ai/governor.ts) — the £100/org/month ceiling, the recent-duplicate
  * refusal, and the tokens/latency/cost ledger. Until this change it did not: the
- * only gate was `getTextProvider()`, a bare credential check, so setting
+ * only gate was `getTextProvider("mid")`, a bare credential check, so setting
  * `ANTHROPIC_API_KEY` on a deploy would have switched THIS TENANT-FACING path on
  * outside the ceiling entirely. Budget refusal and duplicate refusal both return
  * `null`, which is the same value every other degraded leg here returns, so no
@@ -136,7 +136,7 @@ export async function generateInsightNarrative(
   payload: unknown,
   actor: { orgId: string; userId?: string | null },
 ): Promise<InsightNarrative | null> {
-  // PER-TIER OWN-CLASS GATE. `getTextProvider()` opens on ANY generative tier
+  // PER-TIER OWN-CLASS GATE. `getTextProvider("mid")` opens on ANY generative tier
   // (isInferenceTierActivated), so with only `cheap` bound + a vendor key it
   // hands back a LIVE provider for this `drafting`/`mid` call — which the
   // governor's per-tier dark short-circuit would then run ungoverned (no
@@ -144,7 +144,7 @@ export async function generateInsightNarrative(
   // own tier first, exactly as the self-SDK services do, so a dark `mid` tier
   // takes the deterministic-only leg before any provider is resolved.
   if (!isTierActivated("mid")) return null;
-  const provider = getTextProvider();
+  const provider = getTextProvider("mid");
   if (!provider) return null; // feature off → deterministic-only
   if (!isSupportedProvider(provider.info.provider)) return null;
 

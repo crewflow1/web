@@ -224,7 +224,7 @@ describe("draft engine — the service generates only, within the Phase-3 mandat
   });
 
   it("degrades to the deterministic fallback — no provider / throw / bad JSON all fall back", () => {
-    expect(code).toMatch(/getTextProvider\s*\(\s*\)/);
+    expect(code).toMatch(/getTextProvider\s*\(\s*"mid"\s*\)/);
     expect(code).toMatch(/deterministicDraft/);
     expect(code).toMatch(/no_provider/);
   });

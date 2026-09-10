@@ -206,7 +206,7 @@ describe("lib/telephony is dark + fail-closed", () => {
     expect(code).not.toMatch(/process\.env\.ANTHROPIC_API_KEY/);
     // Reaches a model only through the shared door (no own SDK construction).
     expect(code).not.toMatch(/new\s+Anthropic\b|@anthropic-ai\/sdk/);
-    expect(code).toMatch(/getTextProvider\(\)/);
+    expect(code).toMatch(/getTextProvider\("mid"\)/);
   });
 });
 

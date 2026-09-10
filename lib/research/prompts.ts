@@ -230,7 +230,11 @@ export function buildAnalysisMessages(input: AnalysisPromptInput): {
     input.companiesHouseText ? `COMPANIES HOUSE:\n${input.companiesHouseText}` : null,
     "",
     "WEBSITE TEXT (verbatim, may be truncated):",
-    input.siteText || "(no readable text was extracted)",
+    // HARD INPUT CAP (activation review P2): the high-tier reservation
+    // envelope is 24k input tokens; an uncapped site dump could exceed the
+    // claim and pass the ceiling by the shortfall. ~64k chars ≈ 16k tokens
+    // leaves headroom for the structured sections above.
+    (input.siteText || "(no readable text was extracted)").slice(0, 64_000),
   ]
     .filter(Boolean)
     .join("\n");

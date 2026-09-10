@@ -30,12 +30,15 @@ import type {
   VisionResult,
 } from "./types";
 
+import { TIER_MODEL } from "@/lib/ai/governor/registry";
+
 /**
- * The vision model. Haiku: the cheapest model that reads a UK invoice reliably,
- * and the same one both former OCR paths had hard-coded (one of them pinned to a
- * dated snapshot, one not — a drift this consolidation also removes).
+ * The vision model resolves from the CANONICAL cheap-tier binding — execution
+ * and governor accounting can never diverge (activation diff 2026-09-10; the
+ * previous hard-coded alias string was exactly that divergence). The literal
+ * fallback exists only for the impossible null case and mirrors the binding.
  */
-const DEFAULT_MODEL = "claude-haiku-4-5";
+const DEFAULT_MODEL = TIER_MODEL.cheap?.model ?? "claude-haiku-4-5-20251001";
 
 /** Default output cap when a caller does not state one. Bounds cost. */
 const DEFAULT_MAX_TOKENS = 1024;

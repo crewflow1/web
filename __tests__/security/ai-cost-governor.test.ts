@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { AI_TASK_CLASSES, AI_TIERS, TIER_MODEL, isAnyTierBound } from "@/lib/ai/governor/registry";
+import { AI_TASK_CLASSES } from "@/lib/ai/governor/registry";
 import {
   getAiGovernorReadiness,
   isGovernorActivated,
@@ -31,8 +31,9 @@ const tierModelRef = vi.hoisted(
 vi.mock("@/lib/ai/governor/registry", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/ai/governor/registry")>();
   // Same object identity across the whole module graph; the runtime test mutates
-  // its keys. `isAnyTierBound` stays actual (it closes over the real, all-null
-  // table), so the darkness pins above keep reading false regardless.
+  // its keys. NOTE (post-activation): `isAnyTierBound` stays actual and now
+  // closes over the real, ARMED table — runtime darkness/armed pins therefore
+  // live in the unmocked suites, and this file pins SOURCE + scenarios only.
   return { ...actual, TIER_MODEL: tierModelRef };
 });
 
@@ -372,21 +373,34 @@ describe("the monthly rollups are invoker-rights and month-correct", () => {
 // =====================================================================
 
 describe("A. no provider is activated and no credential is introduced", () => {
-  it("EVERY tier maps to null in the source — the routing table is literally dark", () => {
+  it("the routing table binds EXACTLY the CEO-approved 2026-09-10 set, in source", () => {
+    // The activation flipped these pins from all-null to the reviewed
+    // bindings. They stay SOURCE pins: any rebind (including the eventual
+    // Haiku 4.5 retirement replacement) must arrive as a reviewed diff that
+    // updates this test in the same commit — never an alias drift.
     const code = codeOf(read(REGISTRY));
-    expect(code).toMatch(/cheap:\s*null/);
-    expect(code).toMatch(/mid:\s*null/);
-    expect(code).toMatch(/high:\s*null/);
-    // And at runtime.
-    for (const tier of AI_TIERS) expect(TIER_MODEL[tier]).toBeNull();
-    expect(isAnyTierBound()).toBe(false);
+    expect(code).toMatch(/model:\s*"claude-haiku-4-5-20251001"/);
+    expect(code).toMatch(/model:\s*"claude-sonnet-5"/);
+    expect(code).toMatch(/model:\s*"claude-opus-5"/);
+    // The modalities that REMAIN dark, in source and at runtime.
+    expect(code).toMatch(/embedding:\s*null/);
+    expect(code).toMatch(/transcription:\s*null/);
+    // Runtime-shape assertions live in __tests__/ai/governor-seam.test.ts and
+    // __tests__/ai/tier-bindings.test.ts — THIS suite mocks TIER_MODEL with a
+    // mutable ref for its governed-path scenarios, so only SOURCE pins here.
   });
 
-  it("the registry names NO vendor and NO model — activation is a visible diff, not a config value", () => {
+  it("the registry names ONE vendor and ONLY the three approved models — never from the environment", () => {
     const code = codeOf(read(REGISTRY));
-    expect(code).not.toMatch(/claude-|gpt-4|gpt-5|gemini|mistral|llama|haiku|sonnet|opus/i);
-    // The tier→model binding is not readable from the environment either: a
-    // model change alters cost and quality for every tenant at once.
+    // No foreign vendor may appear, and no UNPINNED Anthropic alias either:
+    // strip the three approved ids, then require zero model-shaped residue.
+    const residue = code
+      .replaceAll("claude-haiku-4-5-20251001", "")
+      .replaceAll("claude-sonnet-5", "")
+      .replaceAll("claude-opus-5", "");
+    expect(residue).not.toMatch(/claude-|gpt-4|gpt-5|gemini|mistral|llama|haiku|sonnet|opus/i);
+    // The binding is still not readable from the environment: a model change
+    // alters cost and quality for every tenant at once — reviewed diffs only.
     expect(code).not.toMatch(/process\.env/);
   });
 
@@ -434,10 +448,12 @@ describe("A. no provider is activated and no credential is introduced", () => {
     }
   });
 
-  it("the DARK READINESS SURFACES report false", () => {
+  it("binding WITHOUT the vendor credential still reports NOT activated — no false green", () => {
+    // The armed build's surviving form of the dark pin: this test env carries
+    // no ANTHROPIC_API_KEY, so despite the three bindings nothing resolves.
+    // Binding alone is never activation (the #433 invariant, kept).
     const r = getAiGovernorReadiness();
-    expect(r.activated).toBe(false);
-    expect(r.anyTierBound).toBe(false);
+    expect(r.anyTierBound).toBe(true);
     expect(isGovernorActivated()).toBe(false);
     expect(r.tiers.every((t) => !t.providerResolvable)).toBe(true);
     expect(r.blockers.length).toBeGreaterThan(0);

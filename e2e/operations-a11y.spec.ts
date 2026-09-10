@@ -78,7 +78,27 @@ test.describe("operations — accessibility + mobile", () => {
         .match({ org_id: orgId, ...match })
         .maybeSingle();
       if (found.error) throw new Error(`ops a11y seed: find ${what} — ${found.error.message}`);
-      if (found.data?.id) return found.data.id as string;
+      if (found.data?.id) {
+        // REFRESH THE DATE FIELDS, don't merely reuse: several insert fields
+        // are RELATIVE dates (days(n)). On the persistent local DB a row
+        // seeded weeks ago still matches by sentinel key but its "due in N
+        // days" has drifted into the past, flipping the rendered chip
+        // ("Due …" → "Was due …"). Only ISO-dated fields are refreshed (a
+        // wholesale update trips write-once domain triggers, e.g. issued
+        // inspections), and a trigger refusal is logged, not fatal — CI's
+        // fresh DB never needs the refresh at all.
+        const dateFields = Object.fromEntries(
+          Object.entries(insert).filter(
+            ([, v]) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v),
+          ),
+        );
+        if (Object.keys(dateFields).length > 0) {
+          const refreshed = await t(table).update(dateFields).eq("id", found.data.id);
+          if (refreshed.error)
+            console.warn(`ops a11y seed: refresh ${what} skipped — ${refreshed.error.message}`);
+        }
+        return found.data.id as string;
+      }
       const made = await t(table)
         .insert({ org_id: orgId, ...insert })
         .select("id")

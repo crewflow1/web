@@ -14,7 +14,7 @@ import "server-only";
  *  1. ONE INVOCATION PATH. The only way a model is reached is
  *     `invokeWithGovernor(QUOTE_WRITER_FEATURE, "drafting", …)`. No vendor SDK
  *     is imported here or anywhere in the feature; the model arrives through
- *     `getTextProvider()`, the existing Directive-009 abstraction, exactly as
+ *     `getTextProvider("mid")`, the existing Directive-009 abstraction, exactly as
  *     the conversation engine reaches one.
  *
  *  2. NO DETERMINISTIC LEG, AND THAT IS SAID OUT LOUD. Every other governed
@@ -350,10 +350,10 @@ export function resolveQuoteWriterModel(
   // PER-TIER OWN-CLASS GATE, EXPLICIT. `readiness.available` already requires the
   // `mid` tier (the `drafting` class) to be provider-resolvable, so this is
   // belt-and-braces — but stating it here keeps the invariant LOCAL and uniform
-  // with every other door caller: `getTextProvider()` opens on ANY generative
+  // with every other door caller: `getTextProvider("mid")` opens on ANY generative
   // tier, and only this call's own tier may authorise resolving a provider.
   if (!isTierActivated("mid")) return null;
-  const provider = getTextProvider();
+  const provider = getTextProvider("mid");
   if (!provider) return null;
   return {
     info: provider.info,

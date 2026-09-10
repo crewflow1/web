@@ -24,10 +24,10 @@ import { createOpenAiTextProvider } from "@/lib/ai/text/openai";
  * door — the /insights narrative and question box, HQ drafts, memory
  * summarisation, the receptionist's conversation engine — while every cost tier
  * still mapped to NO model, so the spend never met the £100/org/month ceiling or
- * the ledger. `getTextProvider()` therefore requires a GENERATIVE tier to be
- * armed — `isInferenceTierActivated()`, PER-MODALITY since the embeddings
- * governance train: a bound `embedding` tier must never open this door, so the
- * global any-tier predicate would be the wrong gate.
+ * the ledger. `getTextProvider(tier)` therefore requires the CALLER'S OWN
+ * generative tier to be armed and constructs the provider with THAT tier's
+ * bound model — since the 2026-09-10 activation diff the binding chooses the
+ * vendor too, so execution and governor accounting can never diverge.
  *
  * That is mocked below rather than left to the real (dark) build, because the
  * vendor-SELECTION rules this file exists to pin are only observable once the
@@ -39,16 +39,17 @@ import { createOpenAiTextProvider } from "@/lib/ai/text/openai";
 
 // Both SDKs are dynamically imported by the providers; mock them so generate()
 // is deterministic and never touches the network.
-const { anthropicCreate, openaiCreate, inferenceActivatedMock } = vi.hoisted(() => ({
+const { anthropicCreate, openaiCreate, tierActivatedMock } = vi.hoisted(() => ({
   anthropicCreate: vi.fn(),
   openaiCreate: vi.fn(),
-  inferenceActivatedMock: vi.fn(),
+  tierActivatedMock: vi.fn(),
 }));
 vi.mock("@/lib/ai/governor/readiness", async (importOriginal) => {
   // Keep the real readiness surface (other suites assert on it); control ONLY
-  // the activation predicate the factory gates on.
+  // the activation predicate the factory gates on. PER-TIER since the
+  // activation diff: the door asks about the CALLER'S tier, never "any tier".
   const actual = await importOriginal<typeof import("@/lib/ai/governor/readiness")>();
-  return { ...actual, isInferenceTierActivated: () => inferenceActivatedMock() };
+  return { ...actual, isTierActivated: (t: string) => tierActivatedMock(t) };
 });
 vi.mock("@anthropic-ai/sdk", () => ({
   default: vi.fn().mockImplementation(() => ({
@@ -112,7 +113,7 @@ describe("getTextProvider — null when unconfigured, provider when configured",
       delete process.env[k];
     }
     // Vendor selection is only reachable once the governor authorises the call.
-    inferenceActivatedMock.mockReturnValue(true);
+    tierActivatedMock.mockReturnValue(true);
   });
   afterEach(() => {
     for (const k of ENV) {
@@ -123,7 +124,7 @@ describe("getTextProvider — null when unconfigured, provider when configured",
   });
 
   it("returns null when no provider key is set (graceful degradation)", () => {
-    expect(getTextProvider()).toBeNull();
+    expect(getTextProvider("mid")).toBeNull();
     expect(isTextConfigured()).toBe(false);
   });
 
@@ -135,10 +136,10 @@ describe("getTextProvider — null when unconfigured, provider when configured",
     // absent from the invocation ledger, because `invokeWithGovernor` is a
     // deliberate pass-through until a tier is bound. Activation, not a
     // credential, is now the gate.
-    inferenceActivatedMock.mockReturnValue(false);
+    tierActivatedMock.mockReturnValue(false);
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     process.env.OPENAI_API_KEY = "sk-test";
-    expect(getTextProvider()).toBeNull();
+    expect(getTextProvider("mid")).toBeNull();
     expect(isTextConfigured()).toBe(false);
   });
 
@@ -148,53 +149,64 @@ describe("getTextProvider — null when unconfigured, provider when configured",
     // activation false the vendor branches must not be reached at all, which is
     // observable because the unknown-name warning never fires.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    inferenceActivatedMock.mockReturnValue(false);
+    tierActivatedMock.mockReturnValue(false);
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     process.env.MEMORY_TEXT_PROVIDER = "totally-made-up";
-    expect(getTextProvider()).toBeNull();
+    expect(getTextProvider("mid")).toBeNull();
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
-  it("auto-prefers Anthropic when its key is present", () => {
+  it("auto serves the BINDING's vendor and model — mid ⇒ claude-sonnet-5", () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
-    const p = getTextProvider();
+    const p = getTextProvider("mid");
     expect(p?.info.provider).toBe("anthropic");
-    expect(p?.info.model).toBe("claude-haiku-4-5");
+    expect(p?.info.model).toBe("claude-sonnet-5");
     expect(isTextConfigured()).toBe(true);
   });
 
-  it("auto-falls back to OpenAI when only its key is present", () => {
-    process.env.OPENAI_API_KEY = "sk-test";
-    const p = getTextProvider();
-    expect(p?.info.provider).toBe("openai");
-    expect(p?.info.model).toBe("gpt-4o-mini");
+  it("resolves each tier to ITS OWN bound model (cheap=haiku snapshot, high=opus)", () => {
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    expect(getTextProvider("cheap")?.info.model).toBe("claude-haiku-4-5-20251001");
+    expect(getTextProvider("high")?.info.model).toBe("claude-opus-5");
   });
 
-  it("auto prefers Anthropic over OpenAI when BOTH keys are present", () => {
+  it("NEVER runs a different vendor than the binding priced — OpenAI key alone yields null", () => {
+    // The binding names anthropic; running OpenAI here would execute a model
+    // the governor never priced. The old auto-fallback was exactly that
+    // divergence — closed by the activation diff.
+    process.env.OPENAI_API_KEY = "sk-test";
+    expect(getTextProvider("mid")).toBeNull();
+  });
+
+  it("with BOTH keys present the binding's vendor (anthropic) is served", () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     process.env.OPENAI_API_KEY = "sk-test";
-    expect(getTextProvider()?.info.provider).toBe("anthropic");
+    expect(getTextProvider("mid")?.info.provider).toBe("anthropic");
   });
 
-  it("honours an explicit provider name, case/space-insensitively", () => {
+  it("an explicit vendor name that CONTRADICTS the binding yields null, never a swap", () => {
+    // MEMORY_TEXT_PROVIDER stays a kill switch and a same-vendor pin — it can
+    // no longer route a tier to a vendor whose model the binding never priced.
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     process.env.OPENAI_API_KEY = "sk-test";
     process.env.MEMORY_TEXT_PROVIDER = "  OpenAI  ";
-    expect(getTextProvider()?.info.provider).toBe("openai");
+    expect(getTextProvider("mid")).toBeNull();
+    process.env.MEMORY_TEXT_PROVIDER = "  Anthropic  ";
+    expect(getTextProvider("mid")?.info.provider).toBe("anthropic");
   });
 
   it("returns null for a named provider whose key is missing", () => {
     process.env.OPENAI_API_KEY = "sk-test";
     process.env.MEMORY_TEXT_PROVIDER = "anthropic"; // no anthropic key
-    expect(getTextProvider()).toBeNull();
+    expect(getTextProvider("mid")).toBeNull();
   });
 
   it("treats none/off/disabled/empty as explicitly off, even with a key set", () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     for (const off of ["none", "off", "disabled", ""]) {
       process.env.MEMORY_TEXT_PROVIDER = off;
-      expect(getTextProvider()).toBeNull();
+      expect(getTextProvider("mid")).toBeNull();
     }
   });
 
@@ -202,8 +214,8 @@ describe("getTextProvider — null when unconfigured, provider when configured",
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     process.env.MEMORY_TEXT_PROVIDER = "totally-made-up";
-    expect(() => getTextProvider()).not.toThrow();
-    expect(getTextProvider()).toBeNull();
+    expect(() => getTextProvider("mid")).not.toThrow();
+    expect(getTextProvider("mid")).toBeNull();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
@@ -220,7 +232,7 @@ describe("Anthropic provider.generate — text, tokens, options, failure", () =>
 
   it("returns an empty result for a blank prompt WITHOUT touching the network", async () => {
     const out = await provider.generate("   ");
-    expect(out).toEqual({ text: "", model: "claude-haiku-4-5", inputTokens: 0, outputTokens: 0 });
+    expect(out).toEqual({ text: "", model: "claude-haiku-4-5-20251001", inputTokens: 0, outputTokens: 0 });
     expect(anthropicCreate).not.toHaveBeenCalled();
   });
 
@@ -239,24 +251,38 @@ describe("Anthropic provider.generate — text, tokens, options, failure", () =>
     expect(out.outputTokens).toBe(8);
   });
 
-  it("forwards system, maxTokens, temperature and the abort signal", async () => {
+  it("is MODEL-AWARE: Haiku keeps temperature (no thinking param); Sonnet 5 drops it and disables thinking", async () => {
+    // temperature is deprecated on the 4.7+ generation — a non-default value
+    // 400s on claude-sonnet-5 / claude-opus-5 — but still honoured on Haiku
+    // 4.5, where extraction callers' temperature:0 genuinely buys stability.
+    // And thinking is ON BY DEFAULT on sonnet/opus, drawing from max_tokens:
+    // the adapter disables it there so 200-token draft caps aren't consumed
+    // by reasoning; Haiku (extended-thinking era) gets no thinking param.
     anthropicCreate.mockResolvedValue({
-      model: "claude-haiku-4-5",
+      model: "claude-haiku-4-5-20251001",
       content: [{ type: "text", text: "ok" }],
       usage: { input_tokens: 1, output_tokens: 1 },
     });
     const ctrl = new AbortController();
     await provider.generate("p", { system: "be terse", maxTokens: 256, temperature: 0.2, signal: ctrl.signal });
-    expect(anthropicCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        model: "claude-haiku-4-5",
-        max_tokens: 256,
-        temperature: 0.2,
-        system: "be terse",
-        messages: [{ role: "user", content: "p" }],
-      }),
-      expect.objectContaining({ signal: ctrl.signal }),
-    );
+    const haikuReq = anthropicCreate.mock.calls[0]![0];
+    expect(haikuReq).toMatchObject({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 256,
+      temperature: 0.2,
+      system: "be terse",
+    });
+    expect(haikuReq).not.toHaveProperty("thinking");
+
+    const sonnet = createAnthropicTextProvider("sk-ant-test", "claude-sonnet-5");
+    await sonnet.generate("p", { system: "be terse", maxTokens: 256, temperature: 0, signal: ctrl.signal });
+    const sonnetReq = anthropicCreate.mock.calls[1]![0];
+    expect(sonnetReq).toMatchObject({
+      model: "claude-sonnet-5",
+      max_tokens: 256,
+      thinking: { type: "disabled" },
+    });
+    expect(sonnetReq).not.toHaveProperty("temperature");
   });
 
   it("propagates a rate-limit error (the worker, not the provider, retries)", async () => {

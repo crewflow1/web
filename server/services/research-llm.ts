@@ -46,6 +46,7 @@ import {
   isTierActivated,
   type AiFeature,
   type GovernedCall,
+  TIER_MODEL,
 } from "@/lib/ai/governor";
 import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
 import type { ResearchProvenance } from "@/lib/research/model";
@@ -61,7 +62,11 @@ import {
 } from "@/lib/research/prompts";
 
 const RESEARCH_LLM_TIMEOUT_MS = 22_000;
-const ANTHROPIC_MODEL = "claude-haiku-4-5";
+// Resolved from the canonical HIGH binding — this service registered its two
+// features as complex→high, and executing a cheaper hard-coded model while
+// being priced at the high envelope was the divergence the activation diff
+// closes (fallback mirrors the binding; the high gate refuses when dark).
+const ANTHROPIC_MODEL = TIER_MODEL.high?.model ?? "claude-opus-5";
 const OPENAI_MODEL = "gpt-4o-mini";
 
 type LlmProvider = Exclude<ResearchProvenance, "deterministic">;

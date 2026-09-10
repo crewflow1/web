@@ -34,6 +34,9 @@ vi.mock("@/lib/ai/text", () => ({ getTextProvider: providerMock }));
 vi.mock("@/lib/ai/governor", () => ({
   invokeWithGovernor: governorMock,
   isTierActivated: tierMock,
+  // Post-activation: transitive imports (lead-summary via receptionist etc.)
+  // read the binding table; a minimal armed shape keeps this mock honest.
+  TIER_MODEL: { cheap: { provider: "anthropic", model: "claude-haiku-4-5-20251001" }, mid: null, high: null, embedding: null, transcription: null },
 }));
 vi.mock("@/lib/ai/governor/attribution", () => ({
   hqBudgetOrgId: () => "hq-org-1",

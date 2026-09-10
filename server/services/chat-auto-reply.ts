@@ -3,6 +3,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getTextProvider } from "@/lib/ai/text";
 import { invokeWithGovernor, isTierActivated } from "@/lib/ai/governor";
 
+/** Deliberate build-time hold — see the CEO HOLD comment at the tier gate. */
+const CHAT_AUTO_REPLY_GENERATIVE = false;
+
 /**
  * MP Phase 8 "Live Chat" — the automated acknowledgement a portal chat gets the
  * moment a customer sends a message, and the AI-dark seam behind it.
@@ -80,7 +83,16 @@ async function maybeGenerateChatReply(input: {
   // provider. While dark (today) this is the line that guarantees no model call.
   if (!isTierActivated("mid")) return null;
 
-  const provider = getTextProvider();
+  // CEO HOLD (activation diff 2026-09-10): the portal live chat AUTO-POSTS
+  // its acknowledgement to a real customer with no human review — the ONLY
+  // customer-facing surface where arming the mid tier would put unreviewed
+  // model prose in front of a customer (every other armed surface is
+  // draft-first or internal). The deterministic acknowledgement keeps
+  // auto-posting exactly as before; flipping this constant is a separate,
+  // explicit CEO decision recorded in docs/launch/PRODUCTION-ACTIVATION-MATRIX.md.
+  if (!CHAT_AUTO_REPLY_GENERATIVE) return null;
+
+  const provider = getTextProvider("mid");
   if (!provider) return null;
 
   const system = [

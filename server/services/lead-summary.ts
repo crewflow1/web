@@ -4,6 +4,7 @@ import { readFailure } from "@/lib/supabase/read-failure";
 import {
   invokeWithGovernor,
   isTierActivated,
+  TIER_MODEL,
   type GovernedCall,
 } from "@/lib/ai/governor";
 
@@ -113,7 +114,7 @@ export async function summariseLead(
   // any-tier predicate would let an embedding-only activation switch it on
   // while its own tier is dark — ungoverned spend through the per-tier
   // short-circuit. Its own class's tier is the only honest gate.
-  if (!isTierActivated("mid")) {
+  if (!isTierActivated("cheap")) {
     return deterministicSummary(lead, photoCount ?? 0);
   }
 
@@ -133,7 +134,7 @@ export async function summariseLead(
   try {
     const outcome = await invokeWithGovernor(
       "lead.summary",
-      "drafting",
+      "classification",
       () => summariseWithProvider(leadFacts),
       {
         orgId,
@@ -196,7 +197,10 @@ async function summariseWithProvider(
   // (Previously claimed safe on the old gate, which required the bound vendor's
   // credential to be present, so this is not a bare-key assumption.
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
-  const model = "claude-haiku-4-5";
+  // Resolve from the canonical cheap binding — execution and accounting can
+  // never diverge again (the literal fallback mirrors the binding and exists
+  // only for the impossible null case; the gate above refuses when dark).
+  const model = TIER_MODEL.cheap?.model ?? "claude-haiku-4-5-20251001";
   const msg = await client.messages.create(
     {
       model,
