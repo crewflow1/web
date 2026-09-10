@@ -27,9 +27,11 @@
  *                         EXIST in this build.        (build-time fact — TRUE)
  *   featureRegistered   — `quote.writer_draft` is in the governor's registry, so a
  *                         call could be governed.     (build-time fact — TRUE)
- *   modelBindingPresent — the drafting tier maps to a model.        (FALSE)
+ *   modelBindingPresent — the drafting tier maps to a model. (TRUE since the
+ *                         2026-09-10 arming: mid → claude-sonnet-5)
  *   credentialsPresent  — the vendor secret is set.        (configuration)
- *   available           — all four. FALSE today.
+ *   available           — all four; true wherever the armed deploy also
+ *                         carries the vendor credential.
  *
  * Splitting "built" from "bound" is what lets the dark UI say the true and
  * useful thing — "this is built and waiting on a decision" — rather than the

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { TIER_MODEL } from "@/lib/ai/governor/registry";
+import { textCostUsd } from "@/lib/ai/text/cost";
 
 /**
  * TIER_MODEL — the CEO-approved 2026-09-10 production bindings, pinned.
@@ -76,6 +77,22 @@ describe("TIER_MODEL — the approved production bindings", () => {
     );
     expect(src).toMatch(/not sooner than 2026-10-15/);
     expect(src).toMatch(/REVIEWED REBIND DIFF/);
+  });
+
+  it("every ARMED binding has a row in the observability price table (textCostUsd)", () => {
+    // lib/ai/text/cost.ts is OBSERVABILITY, not the ceiling — but a missing row
+    // silently nulls cost_usd on reply audits and insight narratives. The
+    // activation diff shipped without these rows once; never again.
+    for (const tier of ["cheap", "mid", "high"] as const) {
+      const b = TIER_MODEL[tier]!;
+      expect(
+        textCostUsd(
+          { provider: b.provider, model: b.model },
+          { inputTokens: 1_000_000, outputTokens: 1_000_000 },
+        ),
+        `${tier} (${b.provider}:${b.model}) must be priced in lib/ai/text/cost.ts`,
+      ).toBe(b.usdPerMTokIn + b.usdPerMTokOut);
+    }
   });
 
   it("no binding may ever quietly shrink its worst-case envelope below the measured call shapes", () => {

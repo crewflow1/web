@@ -223,7 +223,13 @@ describe("research-ai — the model layer degrades gracefully (no key ⇒ determ
     // credential and a bill.
     expect(code).toMatch(/if\s*\(!isTierActivated\(\"high\"\)\)\s*return null;/);
     expect(code).toMatch(/if\s*\(!budgetOrgId\)\s*return null;/);
-    expect(code).toMatch(/if\s*\(!anthropicKey\s*&&\s*!openaiKey\)/);
+    // SINGLE-VENDOR (2026-09-10 census fix): the unbound `gpt-4o-mini` fallback
+    // is gone — the only model this leg may run is the high-tier binding's, so
+    // execution can never diverge from the governor's settlement price. The
+    // key check is the bound vendor's alone, and it survives one layer down,
+    // inside the governed provider leg.
+    expect(code).toMatch(/if\s*\(!anthropicKey\)\s*return \{ value: null, usage: null \};/);
+    expect(code).not.toMatch(/gpt-4o-mini|new\s+OpenAI|from\s*\(?["']openai["']/);
     expect(code).toMatch(/export function researchAiEnabled/);
   });
 

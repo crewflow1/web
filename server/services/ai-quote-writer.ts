@@ -322,8 +322,9 @@ async function readPriceBook(
  * The one shape this module knows a model by.
  *
  * Injectable ONLY so the eval harness can drive the pipeline with canned
- * responses. Production never passes it — `resolveQuoteWriterModel()` returns
- * null while no tier is bound, which is the dark state.
+ * responses. Production never passes it — `resolveQuoteWriterModel()` resolves
+ * from the armed mid-tier binding (2026-09-10), and returns null wherever the
+ * tier is dark or the credential absent.
  */
 export type QuoteWriterModel = {
   info: { provider: string; model: string };

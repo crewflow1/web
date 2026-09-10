@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { CRON_ROUTES } from "@/lib/ops/cron-routes";
 import { buildOpsSnapshot } from "@/server/services/ops-snapshot";
 import { readAutomationHealth } from "@/server/services/automation-dispatcher";
+import { isInferenceTierActivated } from "@/lib/ai/governor/readiness";
 
 /**
  * Phase 8 — launch readiness aggregator.
@@ -106,14 +107,14 @@ export async function buildLaunchReadiness(): Promise<LaunchReadiness> {
     {
       id: "ai-config",
       label: "AI layer",
-      status: ops.env.some((e) => e.name === "ANTHROPIC_API_KEY" && e.present)
-        ? "green"
-        : "amber",
-      summary: ops.env.some(
-        (e) => e.name === "ANTHROPIC_API_KEY" && e.present,
-      )
-        ? "Anthropic configured — LLM prose + OCR active."
-        : "No AI key — deterministic fallback only. Phase 5 surface still works.",
+      // BINDING-AWARE, never key-presence — a bare credential arms nothing
+      // (lib/ai/governor/readiness.ts). Green only when the generative tiers
+      // are genuinely activated (binding + credential); a stray key on a
+      // dark build must not show a false green.
+      status: isInferenceTierActivated() ? "green" : "amber",
+      summary: isInferenceTierActivated()
+        ? "Generative tiers activated (binding + credential) — governed LLM prose + OCR live."
+        : "No activated generative tier — deterministic fallback only. Phase 5 surface still works.",
     },
     {
       id: "security-doc",

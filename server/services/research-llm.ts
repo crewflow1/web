@@ -49,6 +49,7 @@ import {
   TIER_MODEL,
 } from "@/lib/ai/governor";
 import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
+import { acceptsSampling } from "@/lib/ai/text/anthropic";
 import type { ResearchProvenance } from "@/lib/research/model";
 import {
   buildAnalysisMessages,
@@ -67,7 +68,6 @@ const RESEARCH_LLM_TIMEOUT_MS = 22_000;
 // being priced at the high envelope was the divergence the activation diff
 // closes (fallback mirrors the binding; the high gate refuses when dark).
 const ANTHROPIC_MODEL = TIER_MODEL.high?.model ?? "claude-opus-5";
-const OPENAI_MODEL = "gpt-4o-mini";
 
 type LlmProvider = Exclude<ResearchProvenance, "deterministic">;
 
@@ -133,14 +133,15 @@ async function callJson(
 /**
  * The provider leg, isolated so the governor can time it and account for it.
  *
- * NOTE THE ACCOUNTING SUBTLETY. This function may make TWO vendor calls (an
- * Anthropic attempt, then an OpenAI fallback). It reports the usage of whichever
- * one ANSWERED. A failed first attempt has usually billed its input tokens, so
- * that is a known, bounded under-count of at most one failed call per run —
- * stated here rather than hidden, and much smaller than the alternative error of
- * reserving budget twice for one logical call. It never throws: an exhausted
- * fallback chain returns `usage: null`, which tells the governor NO PROVIDER WAS
- * REACHED so it releases the claim instead of inventing a phantom invocation.
+ * SINGLE-VENDOR BY DESIGN (2026-09-10 census fix). This leg used to fall back
+ * to a hard-coded `gpt-4o-mini` when `OPENAI_API_KEY` was present — a model
+ * the registry never authorised, executed while the governor settled at the
+ * bound high-tier (Opus) envelope. Execution and accounting must never
+ * diverge, so the fallback is gone: the ONLY model this leg may run is the
+ * one the high-tier binding names. A failed call returns `usage: null`, which
+ * tells the governor NO PROVIDER WAS REACHED so it releases the claim instead
+ * of inventing a phantom invocation, and the runner proceeds on the
+ * deterministic evidence (`degradesTo`).
  */
 async function callJsonWithProvider(
   system: string,
@@ -148,75 +149,43 @@ async function callJsonWithProvider(
   maxTokens: number,
 ): Promise<GovernedCall<LlmText | null>> {
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  const openaiKey = process.env.OPENAI_API_KEY;
-  if (!anthropicKey && !openaiKey) return { value: null, usage: null };
+  if (!anthropicKey) return { value: null, usage: null };
 
-  if (anthropicKey) {
-    try {
-      const { default: Anthropic } = await import("@anthropic-ai/sdk");
-      const client = new Anthropic({ apiKey: anthropicKey });
-      const msg = await client.messages.create(
-        {
-          model: ANTHROPIC_MODEL,
-          max_tokens: maxTokens,
-          system,
-          messages: [{ role: "user", content: user }],
+  try {
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const client = new Anthropic({ apiKey: anthropicKey });
+    const msg = await client.messages.create(
+      {
+        model: ANTHROPIC_MODEL,
+        max_tokens: maxTokens,
+        system,
+        messages: [{ role: "user", content: user }],
+        // 4.6+ models think ADAPTIVELY by default and thinking tokens consume
+        // max_tokens — a research cap shared with thinking risks truncated or
+        // empty JSON. Same compatibility rule as the shared adapter
+        // (lib/ai/text/anthropic.ts).
+        ...(acceptsSampling(ANTHROPIC_MODEL)
+          ? {}
+          : { thinking: { type: "disabled" as const } }),
+      },
+      { signal: AbortSignal.timeout(RESEARCH_LLM_TIMEOUT_MS) },
+    );
+    const block = msg.content[0];
+    if (block && block.type === "text" && block.text.trim()) {
+      return {
+        value: { text: block.text, provider: "anthropic" },
+        usage: {
+          provider: "anthropic",
+          model: msg.model ?? ANTHROPIC_MODEL,
+          inputTokens: msg.usage?.input_tokens ?? 0,
+          outputTokens: msg.usage?.output_tokens ?? 0,
         },
-        { signal: AbortSignal.timeout(RESEARCH_LLM_TIMEOUT_MS) },
-      );
-      const block = msg.content[0];
-      if (block && block.type === "text" && block.text.trim()) {
-        return {
-          value: { text: block.text, provider: "anthropic" },
-          usage: {
-            provider: "anthropic",
-            model: msg.model ?? ANTHROPIC_MODEL,
-            inputTokens: msg.usage?.input_tokens ?? 0,
-            outputTokens: msg.usage?.output_tokens ?? 0,
-          },
-        };
-      }
-    } catch (e) {
-      console.error("[research-llm] anthropic call failed", {
-        err: e instanceof Error ? e.message : String(e),
-      });
-      // Fall through to OpenAI if we have a key for it.
+      };
     }
-  }
-
-  if (openaiKey) {
-    try {
-      const { default: OpenAI } = await import("openai");
-      const client = new OpenAI({ apiKey: openaiKey });
-      const res = await client.chat.completions.create(
-        {
-          model: OPENAI_MODEL,
-          max_tokens: maxTokens,
-          response_format: { type: "json_object" },
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: user },
-          ],
-        },
-        { signal: AbortSignal.timeout(RESEARCH_LLM_TIMEOUT_MS) },
-      );
-      const text = res.choices[0]?.message?.content?.trim();
-      if (text) {
-        return {
-          value: { text, provider: "openai" },
-          usage: {
-            provider: "openai",
-            model: res.model ?? OPENAI_MODEL,
-            inputTokens: res.usage?.prompt_tokens ?? 0,
-            outputTokens: res.usage?.completion_tokens ?? 0,
-          },
-        };
-      }
-    } catch (e) {
-      console.error("[research-llm] openai call failed", {
-        err: e instanceof Error ? e.message : String(e),
-      });
-    }
+  } catch (e) {
+    console.error("[research-llm] anthropic call failed", {
+      err: e instanceof Error ? e.message : String(e),
+    });
   }
 
   // Nothing answered. `usage: null` is load-bearing: it tells the governor no
