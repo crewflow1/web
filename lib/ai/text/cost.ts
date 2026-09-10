@@ -12,10 +12,18 @@
 /**
  * "Version 1" LLM pricing — USD per 1,000,000 tokens, split input/output
  * because LLM vendors bill the two differently. Keyed by `${provider}:${model}`.
- * Values current as of 2026-06.
+ * Values verified against the official Anthropic pricing page 2026-09-10
+ * (the activation diff's verification pass); the three LIVE TIER_MODEL
+ * bindings MUST always have a row here or textCostUsd silently nulls the
+ * cost_usd observability fields (receptionist reply audit, insight
+ * narratives) — pinned by __tests__/ai/tier-bindings.test.ts.
  */
 const PRICE_PER_MTOK_USD: Readonly<Record<string, { input: number; output: number }>> = {
-  // Anthropic
+  // Anthropic — the three armed TIER_MODEL bindings (2026-09-10):
+  "anthropic:claude-haiku-4-5-20251001": { input: 1, output: 5 },
+  "anthropic:claude-sonnet-5": { input: 2, output: 10 },
+  "anthropic:claude-opus-5": { input: 5, output: 25 },
+  // Anthropic — legacy/alias rows kept for historical ledger re-pricing:
   "anthropic:claude-haiku-4-5": { input: 1, output: 5 },
   "anthropic:claude-3-5-haiku-latest": { input: 0.8, output: 4 },
   "anthropic:claude-sonnet-4-5": { input: 3, output: 15 },

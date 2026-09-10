@@ -4,9 +4,10 @@ import "server-only";
  * Voice Telephony (Wave 8) — the AI spoken-turn seam, GOVERNED and DARK.
  *
  * When an inbound voice call is answered, this is where the AI receptionist's
- * spoken reply is generated. It is dark today and returns `null`, so the webhook
- * plays its deterministic acknowledgement TwiML — a caller hears the fixed
- * greeting, exactly as today.
+ * spoken reply is generated. The mid tier is armed (2026-09-10), but the VOICE
+ * CHANNEL is dark (feature flag off, no telephony provider provisioned), so no
+ * call reaches this in production; the webhook's deterministic acknowledgement
+ * TwiML remains the degradation path when it lights up.
  *
  * REACHABILITY: this seam only does work with a NON-EMPTY transcript, and a
  * transcript only exists inside the conversational loop — Twilio delivers the

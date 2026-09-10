@@ -104,9 +104,10 @@ export async function generateConversationResponse(
     // receptionist and the WhatsApp draft-first path reach a model through —
     // governing it here governs both, with no per-channel duplication.
     //
-    // DARK TODAY: no tier is bound and no credential is set, so `getTextProvider("mid")`
-    // above already returned null and this line is unreachable in production; the
-    // deterministic acknowledgement is the live behaviour, unchanged.
+    // The mid tier is ARMED (2026-09-10), so with the vendor credential present
+    // `getTextProvider("mid")` returns a live provider; the deterministic
+    // acknowledgement remains the degradation path — and the live behaviour
+    // wherever the ingestion channels are dark (prod today: no routes provisioned).
     //
     // EVENT-DRIVEN: this runs on an INBOUND MESSAGE — a real conversational
     // turn that just happened — never on a page render or a poll.

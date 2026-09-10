@@ -24,7 +24,7 @@ const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 /** Pre-4.6-generation models (Haiku 4.5) still accept sampling params and do
  *  not run default-on thinking; 4.6+ models (sonnet-5/opus-5) reject
  *  non-default temperature and think by default. */
-function acceptsSampling(model: string): boolean {
+export function acceptsSampling(model: string): boolean {
   return model.startsWith("claude-haiku-4-5");
 }
 

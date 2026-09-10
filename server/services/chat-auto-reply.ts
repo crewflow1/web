@@ -17,11 +17,12 @@ const CHAT_AUTO_REPLY_GENERATIVE = false;
  * back, marked as automated (messages.auto_generated = true), telling them the
  * message landed and a person will follow up. That reassurance is:
  *
- *   • DETERMINISTIC TODAY. No inference tier is bound (see lib/ai/governor —
- *     every tier maps to null), so `maybeGenerateChatReply` returns null WITHOUT
- *     reaching a model, and the fixed `DETERMINISTIC_CHAT_ACK` string is posted.
- *     A model is NEVER called while dark: the tier gate below short-circuits
- *     before a provider is even resolved.
+ *   • DETERMINISTIC TODAY — BY CEO HOLD, not by a dark tier. The mid tier is
+ *     armed (2026-09-10), but CHAT_AUTO_REPLY_GENERATIVE below is false, so
+ *     `maybeGenerateChatReply` returns null WITHOUT reaching a model and the
+ *     fixed `DETERMINISTIC_CHAT_ACK` string is posted. This is the only surface
+ *     that would auto-post unreviewed AI prose to a customer; it stays held
+ *     until an explicit CEO decision flips the build constant.
  *
  *   • GOVERNED WHEN IT LIGHTS UP. The (future) AI reply is routed through
  *     `invokeWithGovernor` under the registered `chat.auto_reply` feature

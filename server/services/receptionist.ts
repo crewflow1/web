@@ -2504,9 +2504,11 @@ export async function recordWhatsAppDeliveryReceipt(
  * (lib/ai/governor.ts) so the £100/month/org ceiling, the recent-duplicate
  * refusal and the invocation ledger are already in the path on activation day.
  *
- * DARK TODAY: no tier is bound, so `isGovernorActivated()` is false and the
- * deterministic extraction (keyword urgency + postcode regex) is the live
- * behaviour — unchanged, and reached without the governor touching the database.
+ * The cheap tier is ARMED (2026-09-10), so on a deploy carrying the vendor
+ * credential this extraction runs governed; the deterministic extraction
+ * (keyword urgency + postcode regex) remains the degradation path — and the
+ * live behaviour wherever the INGESTION CHANNELS are dark (no phone number /
+ * WhatsApp / inbound-email route provisioned, which is prod today).
  *
  * THE GATE IS ACTIVATION, NOT A KEY. It used to be `isAiConfigured()`, a bare
  * credential check, which meant `ANTHROPIC_API_KEY` on a deploy would have run

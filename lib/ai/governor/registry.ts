@@ -17,11 +17,12 @@
  * codebase already learned this lesson once: lib/ai/text/index.ts made vendor
  * selection configuration-only. This does the same for model TIER.
  *
- * EVERY TIER CURRENTLY MAPS TO `null`. Nothing generative is authorised, so no
- * tier resolves to a model and `invokeWithGovernor` short-circuits before it
- * reaches a provider. Activation is a deliberate edit HERE, paired with
+ * ARMED 2026-09-10 (CEO-approved binding): cheap/mid/high map to real models
+ * below; embedding and transcription REMAIN `null` (each is its own future
+ * reviewed diff). A `null` tier still short-circuits `invokeWithGovernor`
+ * before any provider. Every rebind is a deliberate edit HERE, paired with
  * credentials and CEO authorisation — see ./readiness.ts for why credentials
- * alone can never switch it on.
+ * alone can never switch a tier on.
  *
  * Pure data + types. No `server-only`, no SDK, no I/O — importable by the edge
  * readiness probe, the HQ page, and the tests alike.
@@ -153,7 +154,8 @@ export type AiModelBinding = {
 };
 
 /**
- * Tier → model. THE activation switch, and it is deliberately all `null`.
+ * Tier → model. THE activation switch. cheap/mid/high are ARMED (2026-09-10,
+ * CEO-approved); embedding/transcription are deliberately `null`.
  *
  * A `null` binding means the tier reaches no provider, so `invokeWithGovernor`
  * runs the caller's existing degraded path and records nothing. Populating an
@@ -288,8 +290,9 @@ export type AiFeatureDefinition = {
  * rejects an unregistered key, so a new AI surface cannot reach a provider
  * without an entry here — which is the review point.
  *
- * Every entry below is BUILT AND DARK today: the code paths exist and, with no
- * bound tier, they behave exactly as they did before this file existed.
+ * Entries below whose tier is armed (cheap/mid/high, 2026-09-10) are LIVE at
+ * their gates; entries on a null tier (embedding/transcription) or behind a
+ * channel/flag/CEO hold still behave exactly as before this file existed.
  *
  * NOTE THE ONE ASYMMETRY, because it is the honest part. Most capabilities
  * degrade to a DETERMINISTIC ANSWER — a regex, an empty draft, a fixed
@@ -329,9 +332,11 @@ export const AI_FEATURES = {
    * `drafting`, exactly like `receptionist.reply_draft`: customer-facing prose,
    * and — like that key — it degrades to a DETERMINISTIC acknowledgement rather
    * than to nothing, so the customer always gets a reply and cannot tell whether
-   * a model ran. DARK today: no generative tier is bound, so
-   * `maybeGenerateChatReply` returns null before the governor is reached and the
-   * fixed `DETERMINISTIC_CHAT_ACK` is posted. Whatever posts it, the message is
+   * a model ran. HELD by the CEO (2026-09-10): the mid tier is armed, but the
+   * CHAT_AUTO_REPLY_GENERATIVE build constant (server/services/chat-auto-reply.ts)
+   * keeps `maybeGenerateChatReply` returning null — the only surface that would
+   * auto-post unreviewed AI prose to a customer stays deterministic until an
+   * explicit CEO decision. The fixed `DETERMINISTIC_CHAT_ACK` is posted. Whatever posts it, the message is
    * stamped auto_generated = true so the panel labels it "Automated" — an AI
    * reply is never passed off as a person.
    */
@@ -348,10 +353,11 @@ export const AI_FEATURES = {
    * the caller), the same class as the WhatsApp/SMS reply draft, and it reaches
    * a model only through the shared text door under the governor.
    *
-   * DARK: no generative tier is bound, so `maybeGenerateVoiceTurn`
-   * (lib/telephony/ai-turn.ts) returns null before the governor is reached and
-   * the caller speaks the deterministic acknowledgement TwiML. There is no
-   * spoken AI turn until a tier is bound.
+   * The mid tier is armed (2026-09-10), but the VOICE CHANNEL is dark:
+   * NEXT_PUBLIC_FEATURE_VOICE_INBOUND is off and no telephony provider is
+   * provisioned, so `maybeGenerateVoiceTurn` (lib/telephony/ai-turn.ts) is
+   * unreachable in production. There is no spoken AI turn until the channel
+   * is activated (an external Twilio/Vapi decision, not a binding).
    */
   "receptionist.voice_turn": {
     key: "receptionist.voice_turn",
@@ -582,10 +588,12 @@ export const AI_FEATURES = {
    * governance-closure ratchet forbids), so binding a tier is what arms it, not
    * a key alone.
    *
-   * DARK: no generative tier is bound, so `maybeDecomposeWithAi` returns null
-   * before the governor is reached and the caller uses the DETERMINISTIC
-   * template decomposition (lib/hq/workflow/decompose.ts) — the substrate the
-   * whole feature rests on. There is no AI-planned saga until a tier is bound.
+   * LIVE behind an explicit operator opt-in: the high tier is armed
+   * (2026-09-10) and createSaga consults `maybeDecomposeWithAi` ONLY when the
+   * operator picks the AI-assisted sentinel (lib/hq/workflow/decompose.ts
+   * AI_ASSISTED_TEMPLATE_KEY). The deterministic templates remain the
+   * substrate for every other key; a refusing seam fails the create honestly
+   * rather than silently substituting a template.
    */
   "hq.saga_decomposition": {
     key: "hq.saga_decomposition",
