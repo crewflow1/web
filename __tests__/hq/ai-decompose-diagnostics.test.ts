@@ -47,7 +47,11 @@ vi.mock("@/lib/ai/text", () => ({
   getTextProvider: () => h.provider,
 }));
 
-import { maybeDecomposeWithAi } from "@/lib/hq/workflow/ai-decompose";
+import {
+  maybeDecomposeWithAi,
+  SAGA_DECOMPOSE_MAX_TOKENS,
+} from "@/lib/hq/workflow/ai-decompose";
+import { TIER_MODEL } from "@/lib/ai/governor/registry";
 
 const VALID_PLAN_JSON = JSON.stringify({
   title: "Ship the reliability push",
@@ -57,14 +61,15 @@ const VALID_PLAN_JSON = JSON.stringify({
   ],
 });
 
-function providerReturning(text: string) {
+function providerReturning(text: string, over: { stopReason?: string | null; outputTokens?: number } = {}) {
   return {
     info: { provider: "anthropic" },
     generate: vi.fn().mockResolvedValue({
       text,
       model: "claude-opus-5",
       inputTokens: 100,
-      outputTokens: 50,
+      outputTokens: over.outputTokens ?? 50,
+      stopReason: over.stopReason ?? "end_turn",
     }),
   };
 }
@@ -131,6 +136,38 @@ describe("each refusal stage names itself", () => {
     h.provider = providerReturning("   ");
     const out = await maybeDecomposeWithAi({ directive: "Anything" });
     expect(out).toEqual({ plan: null, reason: "provider_invalid_response" });
+  });
+
+  it("TRUNCATED output → provider_invalid_response, EVEN when the fragment parses (attempt-2 incident)", async () => {
+    // 2026-09-10 attempt 2: output_tokens == max_tokens exactly; the plan was
+    // cut mid-JSON. Worse: a truncated fragment that HAPPENS to parse must
+    // also be refused — half a step graph must never persist as the plan.
+    h.provider = providerReturning(VALID_PLAN_JSON, {
+      stopReason: "max_tokens",
+      outputTokens: SAGA_DECOMPOSE_MAX_TOKENS,
+    });
+    const out = await maybeDecomposeWithAi({ directive: "Anything" });
+    expect(out).toEqual({ plan: null, reason: "provider_invalid_response" });
+  });
+
+  it("output at the cap WITHOUT a stop reason is still refused (belt for vendors that omit it)", async () => {
+    h.provider = providerReturning(VALID_PLAN_JSON, {
+      stopReason: null,
+      outputTokens: SAGA_DECOMPOSE_MAX_TOKENS,
+    });
+    const out = await maybeDecomposeWithAi({ directive: "Anything" });
+    expect(out).toEqual({ plan: null, reason: "provider_invalid_response" });
+  });
+
+  it("the output cap NEVER exceeds the high tier's reservation envelope", () => {
+    // The governor's claim is sized by the ENVELOPE; a cap above it could
+    // settle above the reservation. 3,200 is the armed high envelope.
+    expect(SAGA_DECOMPOSE_MAX_TOKENS).toBeLessThanOrEqual(
+      TIER_MODEL.high!.reserveOutputTokens,
+    );
+    // And it must be comfortably above the measured attempt-2 need (1,500 was
+    // too small for a real Opus-5 plan).
+    expect(SAGA_DECOMPOSE_MAX_TOKENS).toBeGreaterThanOrEqual(2_500);
   });
 
   it("non-JSON text → parse_failure", async () => {

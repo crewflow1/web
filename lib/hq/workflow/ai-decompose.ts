@@ -44,6 +44,16 @@ import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
 import { validateStepGraph, type SagaStep, type StepStatus } from "./model";
 import type { SagaPlan } from "./decompose";
 
+/**
+ * Output cap for the decomposition call. 3,000 — sized by the 2026-09-10
+ * ATTEMPT-2 incident: Opus-5 hit the previous 1,500 cap mid-JSON
+ * (output_tokens == cap exactly in the ledger) and the truncated plan was
+ * refused at parse. MUST stay ≤ TIER_MODEL.high.reserveOutputTokens (3,200):
+ * the governor's claim is sized by the ENVELOPE, so a cap above it could
+ * settle above the reservation. Pinned by the diagnostics suite.
+ */
+export const SAGA_DECOMPOSE_MAX_TOKENS = 3_000;
+
 export type AiDecomposeInput = {
   /** The free-form directive to decompose. */
   directive: string;
@@ -131,17 +141,22 @@ export async function maybeDecomposeWithAi(input: AiDecomposeInput): Promise<AiD
           system: [
             "You are CrewFlow's HQ workflow planner.",
             "Decompose the directive into an ordered, cross-department step graph.",
-            "Return ONE JSON object only:",
+            "Return ONE JSON object ONLY — no prose before or after it, no markdown code fences:",
             '{ "title": "...", "steps": [ { "title": "...", "department": "...", "role": "...", "dependsOnOrdinal": number|null } ] }',
             "Rules:",
+            "- 3 to 9 steps; each step title under 12 words",
             "- steps are 1-based and listed in order; dependsOnOrdinal (if set) MUST reference an EARLIER step",
             "- every step names the department and role that owns it",
             "- do not invent work the directive does not imply",
           ].join("\n"),
-          maxTokens: 1500,
+          maxTokens: SAGA_DECOMPOSE_MAX_TOKENS,
         });
         return {
-          value: res.text,
+          // Carry the truncation evidence through the governor with the text:
+          // a plan cut at max_tokens must be REFUSED even when the fragment
+          // happens to parse — half a step graph persisting silently is the
+          // failure mode, and validation alone cannot always detect it.
+          value: { text: res.text, stopReason: res.stopReason, outputTokens: res.outputTokens },
           usage: {
             provider: provider.info.provider,
             model: res.model,
@@ -159,8 +174,18 @@ export async function maybeDecomposeWithAi(input: AiDecomposeInput): Promise<AiD
       return refuse("budget_refused", outcome.reason);
     }
     if (outcome.status === "duplicate") return refuse("duplicate_suppressed", outcome.reason);
-    if (!outcome.value.trim()) return refuse("provider_invalid_response", "empty text");
-    return parseAndValidate(outcome.value);
+    const res = outcome.value;
+    if (res.stopReason === "max_tokens" || res.outputTokens >= SAGA_DECOMPOSE_MAX_TOKENS) {
+      // ATTEMPT-2 incident (2026-09-10): output_tokens == cap, plan cut
+      // mid-JSON. Refuse BEFORE parsing — a truncated fragment that happens
+      // to parse must never persist as if it were the whole plan.
+      return refuse(
+        "provider_invalid_response",
+        `output truncated at max_tokens (${res.outputTokens}/${SAGA_DECOMPOSE_MAX_TOKENS}, stop=${res.stopReason ?? "?"})`,
+      );
+    }
+    if (!res.text.trim()) return refuse("provider_invalid_response", "empty text");
+    return parseAndValidate(res.text);
   } catch (e) {
     // The provider leg threw (the governor settles the claim as a failure
     // before rethrowing, so nothing is stranded). Log the message, never the

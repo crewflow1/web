@@ -31,7 +31,7 @@ export function createOpenAiTextProvider(apiKey: string, model: string = DEFAULT
     async generate(prompt: string, opts?: TextGenerationOptions): Promise<TextResult> {
       // Blank prompt: never touch the network (deterministic, free).
       if (prompt.trim().length === 0) {
-        return { text: "", model, inputTokens: 0, outputTokens: 0 };
+        return { text: "", model, inputTokens: 0, outputTokens: 0, stopReason: null };
       }
 
       const { default: OpenAI } = await import("openai");
@@ -56,6 +56,11 @@ export function createOpenAiTextProvider(apiKey: string, model: string = DEFAULT
         model: res.model ?? model,
         inputTokens: res.usage?.prompt_tokens ?? 0,
         outputTokens: res.usage?.completion_tokens ?? 0,
+        // Normalise OpenAI's "length" to the shared truncation marker.
+        stopReason:
+          res.choices[0]?.finish_reason === "length"
+            ? "max_tokens"
+            : (res.choices[0]?.finish_reason ?? null),
       };
     },
   };
