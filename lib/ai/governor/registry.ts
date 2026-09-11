@@ -17,9 +17,10 @@
  * codebase already learned this lesson once: lib/ai/text/index.ts made vendor
  * selection configuration-only. This does the same for model TIER.
  *
- * ARMED 2026-09-10 (CEO-approved binding): cheap/mid/high map to real models
- * below; embedding and transcription REMAIN `null` (each is its own future
- * reviewed diff). A `null` tier still short-circuits `invokeWithGovernor`
+ * ARMED: cheap/mid/high 2026-09-10 and embedding 2026-09-11 (each a
+ * CEO-approved reviewed diff); transcription REMAINS `null` (its own future
+ * reviewed diff — it needs a transport implementation too). A `null` tier
+ * still short-circuits `invokeWithGovernor`
  * before any provider. Every rebind is a deliberate edit HERE, paired with
  * credentials and CEO authorisation — see ./readiness.ts for why credentials
  * alone can never switch a tier on.

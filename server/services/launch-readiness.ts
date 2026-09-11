@@ -5,6 +5,7 @@ import { CRON_ROUTES } from "@/lib/ops/cron-routes";
 import { buildOpsSnapshot } from "@/server/services/ops-snapshot";
 import { readAutomationHealth } from "@/server/services/automation-dispatcher";
 import { isEmbeddingActivated, isInferenceTierActivated } from "@/lib/ai/governor/readiness";
+import { TIER_MODEL } from "@/lib/ai/governor/registry";
 import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -130,7 +131,9 @@ async function checkEmbeddingEstate(): Promise<ChecklistRow> {
     const parts = [
       activated
         ? "tier activated (binding + credential)"
-        : "tier dark by design (no binding)",
+        : TIER_MODEL.embedding
+          ? "tier bound, awaiting its vendor credential (OPENAI_API_KEY)"
+          : "tier dark by design (no binding)",
       flag ? "worker flag ON" : "worker flag off",
       `${pending} row(s) queued`,
     ];

@@ -394,8 +394,8 @@ describe("activation readiness — no binding ⇒ NEVER activated", () => {
     expect(r.credentialsPresent).toContain("OPENAI_API_KEY");
     // OPENAI_API_KEY now arms the embedding binding (2026-09-11), while the
     // three anthropic tiers still miss THEIR credential in this env — the
-    // blockers list keeps naming what is genuinely missing, never hidden.
-    expect(r.blockers.length).toBeGreaterThan(0);
+    // blockers list names the SPECIFIC missing key, never a vague count.
+    expect(r.blockers).toContain("ANTHROPIC_API_KEY");
   });
 
   it("a credential with no binding is NO LONGER an ungoverned-spend risk", () => {
