@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { CRON_ROUTES } from "@/lib/ops/cron-routes";
 import { buildOpsSnapshot } from "@/server/services/ops-snapshot";
 import { readAutomationHealth } from "@/server/services/automation-dispatcher";
-import { isInferenceTierActivated } from "@/lib/ai/governor/readiness";
+import { isEmbeddingActivated, isInferenceTierActivated } from "@/lib/ai/governor/readiness";
 import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -89,11 +89,74 @@ async function checkHqAttribution(): Promise<ChecklistRow> {
   }
 }
 
+/**
+ * Embedding estate — an honest state row so semantic recall's darkness is
+ * VISIBLE, not discovered. The estate has two independent switches (the
+ * TIER_MODEL.embedding binding+credential, and the DB worker flag) plus a
+ * queue whose depth says whether a backfill is pending or stalled. Green only
+ * when tier + flag agree ON; amber for every deliberate-dark combination
+ * (each named honestly); never red — dark-by-design is not a failure.
+ */
+async function checkEmbeddingEstate(): Promise<ChecklistRow> {
+  const activated = isEmbeddingActivated();
+  try {
+    const admin = createAdminClient();
+    const [{ data: settingsRow, error: sErr }, pendingRes] = await Promise.all([
+      admin.from("hq_settings").select("data").eq("id", "singleton").maybeSingle(),
+      admin
+        .from("hq_memories")
+        .select("id", { count: "exact", head: true })
+        .is("embedded_at", null)
+        .neq("embedding_status", "failed"),
+    ]);
+    if (sErr) throw sErr;
+    if (pendingRes.error) throw pendingRes.error;
+    const blob = ((settingsRow as { data?: unknown } | null)?.data ?? {}) as Record<
+      string,
+      unknown
+    >;
+    const flag =
+      ((blob.memory_embedding as Record<string, unknown> | undefined)?.worker_enabled ??
+        false) === true;
+    const pending = pendingRes.count ?? 0;
+    if (activated && flag) {
+      return {
+        id: "embedding-estate",
+        label: "Embedding estate",
+        status: "green",
+        summary: `Embedding tier activated and worker enabled — ${pending} row(s) queued.`,
+      };
+    }
+    const parts = [
+      activated
+        ? "tier activated (binding + credential)"
+        : "tier dark by design (no binding)",
+      flag ? "worker flag ON" : "worker flag off",
+      `${pending} row(s) queued`,
+    ];
+    return {
+      id: "embedding-estate",
+      label: "Embedding estate",
+      status: "amber",
+      summary: `Semantic recall is dark — ${parts.join("; ")}. Recall serves lexical/structural signals only.`,
+    };
+  } catch (e) {
+    console.error("[launch-readiness] embedding-estate lookup failed", e);
+    return {
+      id: "embedding-estate",
+      label: "Embedding estate",
+      status: "amber",
+      summary: "Could not verify the embedding estate (lookup failed — see server log).",
+    };
+  }
+}
+
 export async function buildLaunchReadiness(): Promise<LaunchReadiness> {
-  const [ops, autoHealth, hqAttribution] = await Promise.all([
+  const [ops, autoHealth, hqAttribution, embeddingEstate] = await Promise.all([
     buildOpsSnapshot(),
     readAutomationHealth(),
     checkHqAttribution(),
+    checkEmbeddingEstate(),
   ]);
 
   // Aggregate cron health.
@@ -171,6 +234,7 @@ export async function buildLaunchReadiness(): Promise<LaunchReadiness> {
         : "No activated generative tier — deterministic fallback only. Phase 5 surface still works.",
     },
     hqAttribution,
+    embeddingEstate,
     {
       id: "security-doc",
       label: "Security contract",
