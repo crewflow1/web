@@ -17,9 +17,10 @@
  * codebase already learned this lesson once: lib/ai/text/index.ts made vendor
  * selection configuration-only. This does the same for model TIER.
  *
- * ARMED 2026-09-10 (CEO-approved binding): cheap/mid/high map to real models
- * below; embedding and transcription REMAIN `null` (each is its own future
- * reviewed diff). A `null` tier still short-circuits `invokeWithGovernor`
+ * ARMED: cheap/mid/high 2026-09-10 and embedding 2026-09-11 (each a
+ * CEO-approved reviewed diff); transcription REMAINS `null` (its own future
+ * reviewed diff — it needs a transport implementation too). A `null` tier
+ * still short-circuits `invokeWithGovernor`
  * before any provider. Every rebind is a deliberate edit HERE, paired with
  * credentials and CEO authorisation — see ./readiness.ts for why credentials
  * alone can never switch a tier on.
@@ -212,11 +213,32 @@ export const TIER_MODEL: Readonly<Record<AiTier, AiModelBinding | null>> = {
     reserveInputTokens: 24_000,
     reserveOutputTokens: 3_200,
   },
-  // The embedding modality's own switch. For an embedding model,
-  // `usdPerMTokOut` and `reserveOutputTokens` are 0 — embeddings bill input
-  // only — and `reserveInputTokens` is the worst-case BATCH size the worker
-  // may submit in one call, not one document's tokens.
-  embedding: null,
+  // The embedding modality's own switch — ARMED 2026-09-11 (CEO-approved:
+  // "Provider: OpenAI, Model: text-embedding-3-small"). For an embedding
+  // model, `usdPerMTokOut` and `reserveOutputTokens` are 0 — embeddings bill
+  // input only — and `reserveInputTokens` is the worst-case BATCH the worker
+  // may submit in one governed call, not one document's tokens: the claim RPC
+  // clamps each row to 32,000 chars ≈ 8,000 estimated tokens × the 32-row
+  // batch = 256,000. Worst-case reservation ≈ $0.00512 (~1p claim after the
+  // 1p floor), so over-reservation cannot starve the £100 ceiling; the floor
+  // also satisfies the single-row minimum (a max-size row needs 8,000).
+  // Price verified against the official OpenAI pricing page 2026-09-11:
+  // $0.02 / 1M input tokens; 1536 dimensions matching hq_memories.embedding
+  // vector(1536). The provider factory (lib/ai/embeddings/index.ts) refuses
+  // any model other than text-embedding-3-small, so a drive-by model edit
+  // here goes DARK rather than running an unreviewed model.
+  // ACTIVATION still requires OPENAI_API_KEY in the deploy env AND the
+  // memory_embedding.worker_enabled DB flag — this binding alone arms the
+  // READ-side query probe only when the credential is present, and spends
+  // nothing until the worker flag flips.
+  embedding: {
+    provider: "openai",
+    model: "text-embedding-3-small",
+    usdPerMTokIn: 0.02,
+    usdPerMTokOut: 0,
+    reserveInputTokens: 256_000,
+    reserveOutputTokens: 0,
+  },
   // The transcription (STT) modality's own switch — the governor-side COST
   // binding, distinct from the transport binding in lib/ai/transcription.ts
   // (TRANSCRIPTION_MODEL). Both are null today. On activation BOTH are bound

@@ -18,7 +18,8 @@ import { describeIntegration, serviceClient, ukTodayIso } from "../_harness";
  * with genuine concurrency (separate PostgREST requests, one transaction per
  * connection).
  *
- * The embedding tier is DARK in this build (TIER_MODEL.embedding === null), so
+ * The embedding tier is BOUND (2026-09-11: openai/text-embedding-3-small) but
+ * this suite is registry-independent — it drives the budget RPCs directly, so
  * — exactly as the sibling suite does — these tests call the SQL directly
  * rather than through `invokeWithGovernor`. The SQL is where the guarantee
  * lives, and it must hold for the day the tier is bound.

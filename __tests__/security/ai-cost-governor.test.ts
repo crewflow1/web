@@ -382,8 +382,10 @@ describe("A. no provider is activated and no credential is introduced", () => {
     expect(code).toMatch(/model:\s*"claude-haiku-4-5-20251001"/);
     expect(code).toMatch(/model:\s*"claude-sonnet-5"/);
     expect(code).toMatch(/model:\s*"claude-opus-5"/);
-    // The modalities that REMAIN dark, in source and at runtime.
-    expect(code).toMatch(/embedding:\s*null/);
+    // Embedding armed 2026-09-11 (reviewed diff): source-pin its exact model
+    // id here too, so a drive-by rebind trips a security gate as well.
+    expect(code).toMatch(/model:\s*"text-embedding-3-small"/);
+    // The modality that REMAINS dark, in source and at runtime.
     expect(code).toMatch(/transcription:\s*null/);
     // Runtime-shape assertions live in __tests__/ai/governor-seam.test.ts and
     // __tests__/ai/tier-bindings.test.ts — THIS suite mocks TIER_MODEL with a

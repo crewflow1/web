@@ -108,23 +108,21 @@ describe("the task-class routing table is DATA, with models in exactly one place
     }
   });
 
-  it("the 2026-09-10 activation armed EXACTLY cheap/mid/high — embedding and transcription stay dark", () => {
+  it("the armed lineup: cheap/mid/high (2026-09-10) + embedding (2026-09-11) — transcription stays dark", () => {
     // The armed truth, pinned so it can only change through a reviewed diff
     // (exact ids + prices are re-pinned in __tests__/ai/tier-bindings.test.ts).
     expect(TIER_MODEL.cheap?.model).toBe("claude-haiku-4-5-20251001");
     expect(TIER_MODEL.mid?.model).toBe("claude-sonnet-5");
     expect(TIER_MODEL.high?.model).toBe("claude-opus-5");
-    // The dark pins that REMAIN: admitting these modalities to the registry
-    // must not have armed them. Binding either is its own deliberate diff
-    // (embedding needs a vendor + pgvector decision; transcription needs the
-    // transport implementation in lib/ai/transcription.ts as well).
-    expect(TIER_MODEL.embedding).toBeNull();
+    expect(TIER_MODEL.embedding?.model).toBe("text-embedding-3-small");
+    // The dark pin that REMAINS: transcription is unbound AND has no
+    // transport (lib/ai/transcription.ts) — its own future reviewed diff.
     expect(TIER_MODEL.transcription).toBeNull();
     expect(isAnyTierBound()).toBe(true);
     expect(resolveModel("classification")?.model).toBe("claude-haiku-4-5-20251001");
     expect(resolveModel("drafting")?.model).toBe("claude-sonnet-5");
     expect(resolveModel("complex")?.model).toBe("claude-opus-5");
-    expect(resolveModel("embedding")).toBeNull();
+    expect(resolveModel("embedding")?.model).toBe("text-embedding-3-small");
     expect(resolveModel("transcription")).toBeNull();
   });
 
@@ -176,8 +174,12 @@ describe("the 'embedding' modality is its own tier, never a generative price ban
     }
   });
 
-  it("TIER_MODEL.embedding === null — the modality ships DARK", () => {
-    expect(TIER_MODEL.embedding).toBeNull();
+  it("TIER_MODEL.embedding is ARMED to the factory's one accepted model", () => {
+    // ARMED 2026-09-11. The provider factory (lib/ai/embeddings/index.ts)
+    // hard-refuses any other model id, so this pin and the factory must move
+    // together in any future rebind diff.
+    expect(TIER_MODEL.embedding?.provider).toBe("openai");
+    expect(TIER_MODEL.embedding?.model).toBe("text-embedding-3-small");
   });
 });
 
@@ -339,6 +341,15 @@ describe("activation readiness — no binding ⇒ NEVER activated", () => {
         expect(tier.modelBindingPresent).toBe(true);
         expect(tier.provider).toBe("anthropic");
         expect(tier.providerResolvable).toBe(true);
+      } else if (tier.tier === "embedding") {
+        // Bound to openai, but ONLY the anthropic key is stubbed here — the
+        // per-vendor split is the honest report: binding present, vendor
+        // credential absent, NOT resolvable; provider/model report null by
+        // the resolvable-only rule, and the blocker NAMES the missing key.
+        expect(tier.modelBindingPresent).toBe(true);
+        expect(tier.providerResolvable).toBe(false);
+        expect(tier.provider).toBeNull();
+        expect(tier.blockers).toContain("OPENAI_API_KEY");
       } else {
         expect(tier.modelBindingPresent).toBe(false);
         expect(tier.providerResolvable).toBe(false);
@@ -361,15 +372,16 @@ describe("activation readiness — no binding ⇒ NEVER activated", () => {
     expect(isGovernorActivated()).toBe(false);
   });
 
-  it("the DARK modalities stay dark with EVERY known vendor credential present — the invariant", () => {
-    // #433 transposed to what remains dark: credentials satisfied, and the
-    // embedding/transcription capabilities still do not exist.
+  it("with every credential present: embedding resolves (armed 2026-09-11), transcription STAYS dark", () => {
+    // #433 in its remaining form: a credential arms only what a reviewed
+    // binding names. Embedding is now bound (openai) so the key resolves it;
+    // transcription has no binding, so no credential can ever open it.
     for (const v of KNOWN_VENDOR_CREDENTIALS) vi.stubEnv(v, "present");
     const r = getAiGovernorReadiness();
     expect(r.credentialsPresent.length).toBe(KNOWN_VENDOR_CREDENTIALS.length);
     const emb = r.tiers.find((t) => t.tier === "embedding");
     const stt = r.tiers.find((t) => t.tier === "transcription");
-    expect(emb?.providerResolvable).toBe(false);
+    expect(emb?.providerResolvable).toBe(true);
     expect(stt?.providerResolvable).toBe(false);
   });
 
@@ -380,9 +392,10 @@ describe("activation readiness — no binding ⇒ NEVER activated", () => {
     vi.stubEnv("OPENAI_API_KEY", "present");
     const r = getAiGovernorReadiness();
     expect(r.credentialsPresent).toContain("OPENAI_API_KEY");
-    // OpenAI's key has no armed binding naming it — the drift is REPORTED
-    // (present credential, nothing it can arm), never hidden.
-    expect(r.blockers.length).toBeGreaterThan(0);
+    // OPENAI_API_KEY now arms the embedding binding (2026-09-11), while the
+    // three anthropic tiers still miss THEIR credential in this env — the
+    // blockers list names the SPECIFIC missing key, never a vague count.
+    expect(r.blockers).toContain("ANTHROPIC_API_KEY");
   });
 
   it("a credential with no binding is NO LONGER an ungoverned-spend risk", () => {
