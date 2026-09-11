@@ -18,6 +18,7 @@ import {
 import { listAiEmployees } from "@/server/services/ai-employees";
 import {
   MEMORY_STATUSES,
+  PURGED_STATUS,
   STATUS_LABELS,
   confidenceNote,
   departmentLabel,
@@ -39,7 +40,7 @@ import {
   buildTypeMap,
 } from "../_components";
 import { importancePill } from "../_styles";
-import { setStatusAction, togglePinAction } from "../actions";
+import { purgeMemoryAction, setStatusAction, togglePinAction } from "../actions";
 
 /**
  * Shared Memory Engine — memory detail (CEO Directive 002, Phase 2).
@@ -137,13 +138,15 @@ export default async function MemoryDetailPage({
                 </p>
               ) : null}
             </div>
-            <Link
-              href={`/admin/memory/${m.id}/edit`}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
-            >
-              <Pencil className="h-3.5 w-3.5" aria-hidden />
-              Edit
-            </Link>
+            {m.status !== "purged" ? (
+              <Link
+                href={`/admin/memory/${m.id}/edit`}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
+              >
+                <Pencil className="h-3.5 w-3.5" aria-hidden />
+                Edit
+              </Link>
+            ) : null}
           </div>
         </header>
 
@@ -303,6 +306,18 @@ export default async function MemoryDetailPage({
         </div>
 
         {/* Quick actions */}
+        {m.status === PURGED_STATUS ? (
+          <Section
+            title="Curation"
+            subtitle="This memory has been purged — its content, vector and version snapshots were irreversibly erased."
+          >
+            <p className="text-sm text-slate-400">
+              The tombstone (id, timestamps, timeline and purge attribution)
+              is retained as audit evidence. Purged memories cannot be edited,
+              re-activated or re-embedded.
+            </p>
+          </Section>
+        ) : (
         <Section
           title="Curation"
           subtitle="Operator actions — each is audit-logged + added to the timeline."
@@ -351,7 +366,59 @@ export default async function MemoryDetailPage({
               </button>
             </form>
           </div>
+
+          {/* Danger zone — real erasure (E2). Archive (the status control
+              above) is the reversible default; purge is the one-way door. */}
+          <div className="mt-5 rounded-lg border border-red-900/60 bg-red-950/20 p-4">
+            <h3 className="text-sm font-semibold text-red-300">
+              Purge — irreversible erasure
+            </h3>
+            <p className="mt-1 text-xs leading-relaxed text-slate-400">
+              Permanently erases this memory&apos;s title, summary, body, tags,
+              search index, embedding vector and <em>every version snapshot</em>.
+              A tombstone (id, timestamps, timeline, who purged it and why)
+              is kept as audit evidence. A purged memory can never be
+              recalled, re-embedded or restored — prefer{" "}
+              <span className="font-medium text-slate-300">Archive</span> unless
+              the content itself must cease to exist (e.g. a data-subject
+              erasure request).
+            </p>
+            <form action={purgeMemoryAction} className="mt-3 flex flex-wrap items-end gap-3">
+              <input type="hidden" name="id" value={m.id} />
+              <label className="text-[11px] font-medium text-slate-400">
+                Reason (recorded on the tombstone)
+                <input
+                  type="text"
+                  name="reason"
+                  required
+                  minLength={3}
+                  maxLength={500}
+                  placeholder="e.g. DSAR erasure request"
+                  className="mt-1 block w-64 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-600"
+                />
+              </label>
+              <label className="text-[11px] font-medium text-slate-400">
+                Type <span className="font-mono text-red-300">PURGE</span> to confirm
+                <input
+                  type="text"
+                  name="confirm"
+                  required
+                  pattern="PURGE"
+                  autoComplete="off"
+                  placeholder="PURGE"
+                  className="mt-1 block w-28 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-600"
+                />
+              </label>
+              <button
+                type="submit"
+                className="rounded-md border border-red-800 bg-red-950/60 px-3 py-1.5 text-xs font-semibold text-red-200 transition hover:bg-red-900/60"
+              >
+                Purge permanently
+              </button>
+            </form>
+          </div>
         </Section>
+        )}
 
         {/* Version history */}
         <Section
@@ -478,6 +545,8 @@ function prettySaved(saved: string): string {
       return "Unpinned.";
     case "status":
       return "Status updated.";
+    case "purged":
+      return "Memory purged — content, vector and version snapshots erased. The tombstone and audit trail remain.";
     default:
       return "Saved.";
   }
