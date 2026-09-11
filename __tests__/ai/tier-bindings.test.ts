@@ -63,8 +63,26 @@ describe("TIER_MODEL — the approved production bindings", () => {
     });
   });
 
-  it("embedding and transcription REMAIN dark — each is its own future reviewed diff", () => {
-    expect(TIER_MODEL.embedding).toBeNull();
+  it("embedding = text-embedding-3-small at its verified price and the 32-row batch envelope", () => {
+    // ARMED 2026-09-11 (CEO-approved: "Provider: OpenAI, Model:
+    // text-embedding-3-small"). Price verified against the official OpenAI
+    // pricing page the same day ($0.02/MTok in; embeddings bill input only).
+    // The envelope is the worker's structural worst case: 32 rows × 32,000
+    // clamped chars ≈ 8,000 est. tokens each = 256,000.
+    expect(TIER_MODEL.embedding).toEqual({
+      provider: "openai",
+      model: "text-embedding-3-small",
+      usdPerMTokIn: 0.02,
+      usdPerMTokOut: 0,
+      reserveInputTokens: 256_000,
+      reserveOutputTokens: 0,
+    });
+    // A single max-size row estimates 8,000 tokens — the envelope must always
+    // admit it or that row permanently fails via batch_exceeds_envelope.
+    expect(TIER_MODEL.embedding!.reserveInputTokens).toBeGreaterThanOrEqual(8_000);
+  });
+
+  it("transcription REMAINS dark — its own future reviewed diff (needs a transport too)", () => {
     expect(TIER_MODEL.transcription).toBeNull();
   });
 
