@@ -1170,6 +1170,14 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   // MP Wave R4 — WhatsApp assistant pending-review queue (assistant-review.ts):
   // fetchAllRows-paged, org-pinned, .eq('status','pending_review').
   whatsapp_assistant_actions: "PAGED: fetchAllRows, org-pinned pending-review queue",
+  // Transcription prereqs (built dark) — the ONLY set-read on the inbound-media
+  // ledger is the duplicate-recovery probe (lib/ai/transcription.ts
+  // resolveDuplicateTranscription): .eq('org_id').eq('content_hash')
+  // .eq('transcript_status','completed').limit(1) — a single-row re-read of a
+  // transcript the org already paid for, never a completeness scan. The media
+  // pipeline's own row lookups are .maybeSingle() by (org_id, media_id).
+  whatsapp_inbound_media:
+    "SINGLE: only the transcription duplicate-recovery probe — org+content_hash+completed, .limit(1); pipeline row lookups are .maybeSingle()",
   accounting_pushed_entities: "PAGED: fetchAllRows (accounting-export ledger reconcile read)",
   activity_log: "PAGED: fetchAllRows on every read (activity feed, dashboard tile, AI aggregates)",
   // L9a / P10 — Documentation AI release-notes composition

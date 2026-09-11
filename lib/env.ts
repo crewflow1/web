@@ -44,10 +44,10 @@ const envSchema = z.object({
   // lib/ai/transcription.ts TRANSCRIPTION_MODEL, deliberately null) AND this
   // credential is present. Both absent ⇒ transcribeVoiceNote() returns a
   // `deferred` result with transcript=null and NEVER fabricates a transcript.
-  // A free-string provider selector so arming a vendor needs no schema edit;
-  // deliberately NOT ANTHROPIC_API_KEY/OPENAI_API_KEY (those are the governed
-  // inference doors — transcription is a separate audio→text modality).
-  TRANSCRIPTION_PROVIDER: z.string().optional(),
+  // Deliberately NOT ANTHROPIC_API_KEY/OPENAI_API_KEY (those are the governed
+  // inference doors — transcription is a separate audio→text modality). Which
+  // vendor/model transcribes is a build-time binding (TRANSCRIPTION_MODEL),
+  // not an env selector — so there is no TRANSCRIPTION_PROVIDER variable.
   TRANSCRIPTION_API_KEY: z.string().optional(),
 
   // -- Twilio + Vapi (required when telephony code runs) ------------------
