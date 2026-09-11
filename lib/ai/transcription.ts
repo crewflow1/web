@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { invokeWithGovernor, isTierActivated, type GovernedCall } from "@/lib/ai/governor";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -29,18 +30,19 @@ import { invokeWithGovernor, isTierActivated, type GovernedCall } from "@/lib/ai
  * still sees the voice note, its media bytes, and the deterministic placeholder
  * summary the ingestion core already produced. That is the honest degraded path.
  *
- * WHY IT IS NOT ROUTED THROUGH invokeWithGovernor TODAY.
- * The governor's ledger (`ai_invocations.task_class` CHECK) admits only the
- * registered generative + embedding classes. Transcription is a new modality;
- * admitting it to the ledger CHECK is a migration that belongs to the ACTIVATION
- * diff (alongside binding a real STT model and calibrating its reservation
- * envelope), not to this dark seam. Until then there is nothing to meter: the
- * binding is null, so no provider call, no cost, no ledger row — the same
- * "wiring the dark seam changed nothing" property the governor itself relies on.
- * When a model is bound, the activator wires the real vendor call through
- * `invokeWithGovernor` with a newly-registered `voice_note.transcription`
- * feature. This module constructs NO vendor SDK and reads NO generative
- * credential, so it is not an ungoverned inference entry point.
+ * GOVERNOR WIRING — ALREADY IN PLACE (migration 20261191000000).
+ * The governor's ledger (`ai_invocations.task_class` CHECK) ALREADY admits the
+ * `transcription` class: migration 20261191 widened the CHECK and the registry
+ * carries the `voice_note.transcription` feature (task class `transcription`,
+ * its own tier). `transcribeVoiceNoteGoverned` below routes through
+ * `invokeWithGovernor` today — while dark that is a no-op short-circuit (the
+ * tier's TIER_MODEL binding is null, so no reservation, no ledger row, no
+ * spend), preserving the "wiring the dark seam changed nothing" property. The
+ * ACTIVATION diff's remaining work is binding a real STT model (here and in
+ * TIER_MODEL.transcription), implementing the vendor transport, and calibrating
+ * the reservation envelope against MAX_TRANSCRIPTION_AUDIO_SECONDS. This module
+ * constructs NO vendor SDK and reads NO generative credential, so it is not an
+ * ungoverned inference entry point.
  */
 
 /**
@@ -96,6 +98,13 @@ export type TranscriptionInput = {
   audio: Uint8Array;
   /** Vendor MIME (e.g. `audio/ogg; codecs=opus`), when known. */
   mimeType: string | null;
+  /**
+   * DECLARED audio duration in seconds, when the caller knows it. Meta's
+   * inbound descriptor declares none today, so this is usually absent — the
+   * byte cap then stands in as the duration proxy (see
+   * MAX_TRANSCRIPTION_AUDIO_SECONDS).
+   */
+  durationSeconds?: number | null;
 };
 
 /**
@@ -182,11 +191,32 @@ async function runBoundTranscription(
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Hard cap on the audio accepted for transcription. Mirrors the media pipeline's
- * MAX_WHATSAPP_MEDIA_BYTES (25 MB): a byte count is the cheapest defence against
- * a hostile or malformed media id inflating an STT bill.
+ * Hard cap on the DURATION of audio accepted for transcription (5 minutes). STT
+ * is billed per second of audio, so duration — not bytes — is the true spend
+ * axis; this constant is the number the ACTIVATION diff calibrates the
+ * governor's reservation envelope against.
+ *
+ * ENFORCEMENT TODAY IS BY PROXY. Meta's inbound media descriptor declares no
+ * duration and we deliberately do NOT parse audio containers here (a parser is
+ * attack surface and this validator must stay pure). So:
+ *   • when a caller DOES know the duration it passes `durationSeconds` and an
+ *     over-long note is refused as `too_long`, and
+ *   • when it doesn't (today's WhatsApp path), the tightened
+ *     MAX_TRANSCRIPTION_AUDIO_BYTES below IS the duration proxy.
  */
-export const MAX_TRANSCRIPTION_AUDIO_BYTES = 25 * 1024 * 1024;
+export const MAX_TRANSCRIPTION_AUDIO_SECONDS = 300;
+
+/**
+ * Hard cap on the audio BYTES accepted for transcription — deliberately 10 MB,
+ * TIGHTER than the media pipeline's MAX_WHATSAPP_MEDIA_BYTES (25 MB). A
+ * WhatsApp voice note is minutes of low-bitrate opus, not hours: 25 MB of opus
+ * is 5+ hours of audio, which no legitimate voice note is. Because the inbound
+ * descriptor declares no duration (and we refuse to ship a container parser in
+ * a pure validator), this byte cap doubles as the DURATION PROXY backing
+ * MAX_TRANSCRIPTION_AUDIO_SECONDS: it is the cheapest defence against a hostile
+ * or malformed media id inflating an STT bill.
+ */
+export const MAX_TRANSCRIPTION_AUDIO_BYTES = 10 * 1024 * 1024;
 
 /**
  * The audio MIME types a voice note may carry, base type only (parameters like
@@ -210,20 +240,34 @@ const ALLOWED_AUDIO_MIME: ReadonlySet<string> = new Set([
 
 export type AudioValidation =
   | { ok: true; mimeBase: string }
-  | { ok: false; reason: "empty" | "too_large" | "unsupported_mime" };
+  | { ok: false; reason: "empty" | "too_large" | "too_long" | "unsupported_mime" };
 
 /**
  * Validate voice-note audio before it can reach the (governed) transcription
  * call. Pure and side-effect-free — no I/O, no throw — so it is trivially tested
  * and can gate the spend decision without itself being able to fail open.
+ *
+ * `durationSeconds` is a DECLARED duration when the caller knows one (today's
+ * WhatsApp descriptor doesn't declare it; a future caller or the activation
+ * diff's provider metadata may). A declared duration over
+ * MAX_TRANSCRIPTION_AUDIO_SECONDS refuses as `too_long`; with no declared
+ * duration the tightened byte cap is the documented duration proxy.
  */
 export function validateVoiceNoteAudio(input: {
   audio: Uint8Array;
   mimeType: string | null;
+  durationSeconds?: number | null;
 }): AudioValidation {
   if (!input.audio || input.audio.byteLength === 0) return { ok: false, reason: "empty" };
   if (input.audio.byteLength > MAX_TRANSCRIPTION_AUDIO_BYTES) {
     return { ok: false, reason: "too_large" };
+  }
+  if (
+    typeof input.durationSeconds === "number" &&
+    Number.isFinite(input.durationSeconds) &&
+    input.durationSeconds > MAX_TRANSCRIPTION_AUDIO_SECONDS
+  ) {
+    return { ok: false, reason: "too_long" };
   }
   const base = (input.mimeType?.split(";")[0] ?? "").trim().toLowerCase();
   if (!base || !ALLOWED_AUDIO_MIME.has(base)) return { ok: false, reason: "unsupported_mime" };
@@ -274,7 +318,11 @@ export async function transcribeVoiceNoteGoverned(
   input: TranscriptionInput & { userId?: string | null },
 ): Promise<TranscriptionResult> {
   // 1. Safe validation — reject before any spend decision.
-  const valid = validateVoiceNoteAudio({ audio: input.audio, mimeType: input.mimeType });
+  const valid = validateVoiceNoteAudio({
+    audio: input.audio,
+    mimeType: input.mimeType,
+    durationSeconds: input.durationSeconds,
+  });
   if (!valid.ok) {
     return { status: "failed", transcript: null, error: `audio_${valid.reason}` };
   }
@@ -313,10 +361,155 @@ export async function transcribeVoiceNoteGoverned(
       },
     );
     if (outcome.status === "ran") return outcome.value;
+    // A governor DUPLICATE means this org ALREADY PAID to transcribe these exact
+    // bytes (the dedupe key is the SHA-256 of the audio). A webhook redelivery
+    // must not lose a transcript the org already paid for — re-read the
+    // persisted transcript from the media ledger and return it. No provider
+    // call, no new spend. Falls back to an honest defer when nothing persisted.
+    if (outcome.status === "duplicate") {
+      return resolveDuplicateTranscription(input);
+    }
   } catch (e) {
     // The governor settles the failure + rethrows; degrade honestly, never fabricate.
     return { status: "failed", transcript: null, error: e instanceof Error ? e.message : String(e) };
   }
-  // blocked / duplicate ⇒ defer honestly (never a fabricated transcript).
+  // blocked ⇒ defer honestly (never a fabricated transcript).
+  return { status: "deferred", transcript: null, reason: "no_model_bound" };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TRANSCRIPT PERSISTENCE — the media-ledger seam (whatsapp_inbound_media).
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Migration 20261127000000 gave the inbound-media ledger `transcript` +
+// `transcript_status` columns; the two helpers below are the ONLY writers and
+// the duplicate-recovery reader. Both are service-role paths (the table has no
+// tenant write policy) and both are UNREACHABLE in prod today — the WhatsApp
+// transport is null, so no inbound media ever reaches them. Built dark.
+//
+// EVIDENCE DISCIPLINE: the UPDATE touches ONLY transcript/transcript_status.
+// content_hash and storage_path are write-once, enforced for every role by
+// tg_whatsapp_media_evidence_immutable — this code must never include them in a
+// payload, and doesn't.
+
+/** SHA-256 hex of the exact audio bytes — identical to the media ledger's `content_hash`. */
+export function voiceNoteContentHash(audio: Uint8Array): string {
+  return audioDedupeKey(audio);
+}
+
+/**
+ * Persist one transcription outcome onto the org's media-ledger row for these
+ * exact bytes (keyed org_id + content_hash — the pipeline stored the SHA-256 of
+ * the same bytes). Rules:
+ *
+ *   • completed ⇒ { transcript, transcript_status: "completed" }
+ *   • failed    ⇒ { transcript_status: "failed" }   (transcript untouched)
+ *   • deferred  ⇒ { transcript_status: "deferred" } (transcript untouched)
+ *   • NEVER DOWNGRADES: a row already holding a completed transcript is
+ *     excluded from the UPDATE (`transcript_status <> 'completed'`), so a
+ *     redelivery while dark can never erase a transcript the org paid for.
+ *   • NEVER touches content_hash / storage_path (write-once evidence).
+ *
+ * Best-effort and never throws — the webhook must ack Meta regardless.
+ * Returns true when the update statement succeeded (matching 0 rows is still
+ * a success; the media row may legitimately not exist yet).
+ */
+export async function persistVoiceNoteTranscription(input: {
+  orgId: string;
+  audio: Uint8Array;
+  result: TranscriptionResult;
+}): Promise<boolean> {
+  const payload: { transcript?: string; transcript_status: string } =
+    input.result.status === "completed"
+      ? { transcript: input.result.transcript, transcript_status: "completed" }
+      : { transcript_status: input.result.status === "failed" ? "failed" : "deferred" };
+  try {
+    const admin = createAdminClient();
+    const { error } = await (admin.from("whatsapp_inbound_media" as never) as unknown as {
+      update: (p: unknown) => {
+        eq: (k: string, v: string) => {
+          eq: (k: string, v: string) => {
+            neq: (k: string, v: string) => Promise<{ error: { message: string } | null }>;
+          };
+        };
+      };
+    })
+      .update(payload)
+      .eq("org_id", input.orgId)
+      .eq("content_hash", voiceNoteContentHash(input.audio))
+      .neq("transcript_status", "completed");
+    if (error) {
+      console.error("[transcription] transcript persist failed", error.message);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error(
+      "[transcription] transcript persist threw",
+      e instanceof Error ? e.message : String(e),
+    );
+    return false;
+  }
+}
+
+/**
+ * DUPLICATE RECOVERY — the governor refused to pay twice for these exact bytes,
+ * so return the transcript the org already paid for, read back from the media
+ * ledger (org_id + content_hash, completed rows only). When none is persisted
+ * (e.g. the first attempt's persist failed) this defers honestly — it NEVER
+ * fabricates and NEVER triggers a new provider call.
+ *
+ * Only reachable from the governed wrapper's ACTIVATED path (a duplicate
+ * outcome requires a reservation attempt, which the dark short-circuit never
+ * makes) — so it is dark-unreachable today, like everything downstream of
+ * activation. Never throws.
+ */
+export async function resolveDuplicateTranscription(
+  input: TranscriptionInput,
+): Promise<TranscriptionResult> {
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await (admin.from("whatsapp_inbound_media" as never) as unknown as {
+      select: (cols: string) => {
+        eq: (k: string, v: string) => {
+          eq: (k: string, v: string) => {
+            eq: (k: string, v: string) => {
+              limit: (n: number) => Promise<{
+                data: Array<{ transcript: string | null }> | null;
+                error: { message: string } | null;
+              }>;
+            };
+          };
+        };
+      };
+    })
+      .select("transcript")
+      .eq("org_id", input.orgId)
+      .eq("content_hash", voiceNoteContentHash(input.audio))
+      .eq("transcript_status", "completed")
+      .limit(1);
+    if (!error) {
+      const transcript = data?.[0]?.transcript;
+      if (typeof transcript === "string" && transcript.trim().length > 0) {
+        // The ledger row doesn't record which provider produced it; label the
+        // recovery with the live binding (non-null on any reachable path).
+        const binding = TRANSCRIPTION_MODEL as TranscriptionModelBinding | null;
+        return {
+          status: "completed",
+          transcript,
+          provider: binding?.provider ?? "persisted",
+          model: binding?.model ?? "persisted",
+        };
+      }
+    } else {
+      console.error("[transcription] duplicate re-read failed", error.message);
+    }
+  } catch (e) {
+    console.error(
+      "[transcription] duplicate re-read threw",
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+  // Nothing persisted (or the read failed) ⇒ defer honestly, never fabricate.
   return { status: "deferred", transcript: null, reason: "no_model_bound" };
 }

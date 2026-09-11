@@ -36,6 +36,7 @@ import {
   transcribeVoiceNoteGoverned,
   validateVoiceNoteAudio,
   MAX_TRANSCRIPTION_AUDIO_BYTES,
+  MAX_TRANSCRIPTION_AUDIO_SECONDS,
   isTranscriptionActivated,
 } from "@/lib/ai/transcription";
 import { invokeWithGovernor } from "@/lib/ai/governor";
@@ -123,6 +124,36 @@ describe("safe validation — rejects before any spend decision", () => {
     });
   });
 
+  it("pins the caps: 10 MB bytes (the duration proxy) and 300 s duration", () => {
+    // The byte cap is deliberately TIGHTER than the 25 MB media-storage cap: a
+    // voice note is minutes of opus, not hours, and with no declared duration
+    // the byte cap IS the duration proxy backing the seconds constant. The
+    // seconds constant is exported for the activation diff's reservation
+    // envelope calibration.
+    expect(MAX_TRANSCRIPTION_AUDIO_BYTES).toBe(10 * 1024 * 1024);
+    expect(MAX_TRANSCRIPTION_AUDIO_SECONDS).toBe(300);
+  });
+
+  it("refuses a DECLARED over-long duration as too_long", () => {
+    expect(
+      validateVoiceNoteAudio({
+        audio,
+        mimeType: "audio/ogg",
+        durationSeconds: MAX_TRANSCRIPTION_AUDIO_SECONDS + 1,
+      }),
+    ).toEqual({ ok: false, reason: "too_long" });
+    // At the cap exactly, still fine.
+    expect(
+      validateVoiceNoteAudio({
+        audio,
+        mimeType: "audio/ogg",
+        durationSeconds: MAX_TRANSCRIPTION_AUDIO_SECONDS,
+      }).ok,
+    ).toBe(true);
+    // Unknown duration ⇒ the byte cap stands in as the proxy; no refusal.
+    expect(validateVoiceNoteAudio({ audio, mimeType: "audio/ogg", durationSeconds: null }).ok).toBe(true);
+  });
+
   it("refuses a non-audio / unknown MIME (a hostile media id cannot reach a provider)", () => {
     expect(validateVoiceNoteAudio({ audio, mimeType: "application/x-msdownload" }).ok).toBe(false);
     expect(validateVoiceNoteAudio({ audio, mimeType: null }).ok).toBe(false);
@@ -132,6 +163,28 @@ describe("safe validation — rejects before any spend decision", () => {
     const r = await transcribeVoiceNoteGoverned({ orgId: ORG, audio: new Uint8Array(0), mimeType: "audio/ogg" });
     expect(r.status).toBe("failed");
     expect(r.transcript).toBeNull();
+    expect(adminConstructions.count).toBe(0);
+  });
+
+  it("refuses too-large audio BEFORE any spend decision (no reservation, no provider)", async () => {
+    const huge = { byteLength: MAX_TRANSCRIPTION_AUDIO_BYTES + 1 } as unknown as Uint8Array;
+    const r = await transcribeVoiceNoteGoverned({ orgId: ORG, audio: huge, mimeType: "audio/ogg" });
+    expect(r.status).toBe("failed");
+    expect(r.transcript).toBeNull();
+    if (r.status === "failed") expect(r.error).toBe("audio_too_large");
+    expect(adminConstructions.count).toBe(0);
+  });
+
+  it("refuses a declared over-long note BEFORE any spend decision", async () => {
+    const r = await transcribeVoiceNoteGoverned({
+      orgId: ORG,
+      audio,
+      mimeType: "audio/ogg",
+      durationSeconds: MAX_TRANSCRIPTION_AUDIO_SECONDS + 60,
+    });
+    expect(r.status).toBe("failed");
+    expect(r.transcript).toBeNull();
+    if (r.status === "failed") expect(r.error).toBe("audio_too_long");
     expect(adminConstructions.count).toBe(0);
   });
 });

@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
     customers: [] as Row[],
     tenant_attachments: [] as Row[],
     whatsapp_assistant_actions: [] as Row[],
+    whatsapp_inbound_media: [] as Row[],
   },
 }));
 
@@ -49,7 +50,10 @@ function makeBuilder(table: string) {
     },
     eq(k: string, v: unknown) {
       filters.push((r) => r[k] === v);
-      if (op === "update") return { eq: (k2: string, v2: unknown) => { filters.push((r) => r[k2] === v2); return Promise.resolve(applyUpdate()); } };
+      return builder;
+    },
+    neq(k: string, v: unknown) {
+      filters.push((r) => r[k] !== v);
       return builder;
     },
     in(k: string, vals: unknown[]) {
@@ -132,6 +136,7 @@ beforeEach(() => {
   h.db.customers = [];
   h.db.tenant_attachments = [];
   h.db.whatsapp_assistant_actions = [];
+  h.db.whatsapp_inbound_media = [];
 });
 
 describe("classifyAssistantIntent — deterministic, media-shape then keywords", () => {
@@ -276,6 +281,67 @@ describe("voice-note note path — governed STT, dark-safe, org-scoped", () => {
     // No transcript ⇒ the note body is NOT a made-up string.
     const job = h.db.jobs.find((j) => j.id === "job-v")!;
     expect(String(job.notes ?? "")).not.toContain("SHOULD");
+  });
+
+  it("persists the (dark) transcription outcome onto the media row WITHOUT touching evidence columns", async () => {
+    const { createHash } = await import("node:crypto");
+    const bytes = new Uint8Array([9, 9, 9, 9]);
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    h.db.jobs.push({ id: "job-v", org_id: ORG_A, customer_id: "c1", status: "in-progress", notes: null });
+    // The media pipeline stored the row with the evidence columns set.
+    h.db.whatsapp_inbound_media.push({
+      id: "media-1",
+      org_id: ORG_A,
+      media_id: "MV1",
+      content_hash: hash,
+      storage_path: "whatsapp/ORG_A/MV1.ogg",
+      transcript_status: "none",
+      transcript: null,
+    });
+    await runWhatsAppAssistantActions({
+      orgId: ORG_A,
+      wamid: "wamid.voice",
+      enquiryId: null,
+      message: voiceMsg(),
+      jobId: "job-v",
+      media: { bytes, mimeType: "audio/ogg" },
+    });
+    const row = h.db.whatsapp_inbound_media[0]!;
+    // Dark outcome persisted honestly: deferred, transcript still null.
+    expect(row.transcript_status).toBe("deferred");
+    expect(row.transcript).toBeNull();
+    // Evidence columns untouched (write-once; the immutability trigger would
+    // reject any attempt — this pins that no attempt is even made).
+    expect(row.content_hash).toBe(hash);
+    expect(row.storage_path).toBe("whatsapp/ORG_A/MV1.ogg");
+  });
+
+  it("never DOWNGRADES a completed transcript on redelivery (the org already paid)", async () => {
+    const { createHash } = await import("node:crypto");
+    const bytes = new Uint8Array([7, 7, 7]);
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    h.db.jobs.push({ id: "job-v", org_id: ORG_A, customer_id: "c1", status: "in-progress", notes: null });
+    h.db.whatsapp_inbound_media.push({
+      id: "media-2",
+      org_id: ORG_A,
+      media_id: "MV2",
+      content_hash: hash,
+      storage_path: "p",
+      transcript_status: "completed",
+      transcript: "the boiler is fixed",
+    });
+    await runWhatsAppAssistantActions({
+      orgId: ORG_A,
+      wamid: "wamid.voice2",
+      enquiryId: null,
+      message: voiceMsg({ wamid: "wamid.voice2" }),
+      jobId: "job-v",
+      media: { bytes, mimeType: "audio/ogg" },
+    });
+    const row = h.db.whatsapp_inbound_media[0]!;
+    // The dark redelivery's `deferred` outcome must NOT erase the paid transcript.
+    expect(row.transcript_status).toBe("completed");
+    expect(row.transcript).toBe("the boiler is fixed");
   });
 
   it("never writes a voice note against ANOTHER org's job", async () => {

@@ -2,7 +2,11 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { uploadTenantAttachmentAsService } from "@/server/services/tenant-attachments";
-import { transcribeVoiceNoteGoverned, type TranscriptionResult } from "@/lib/ai/transcription";
+import {
+  transcribeVoiceNoteGoverned,
+  persistVoiceNoteTranscription,
+  type TranscriptionResult,
+} from "@/lib/ai/transcription";
 
 /** The transcription outcome recorded on a voice-note action, for observability. */
 type TranscriptionStatus = TranscriptionResult["status"];
@@ -402,6 +406,12 @@ export async function runWhatsAppAssistantActions(
             status: t.status,
             reason: t.status === "deferred" ? t.reason : t.status === "failed" ? t.error : undefined,
           };
+          // Persist the outcome onto the media-ledger row for these exact bytes
+          // (org_id + content_hash), so a redelivery never re-pays for a
+          // transcript the org already has. Best-effort — never throws, never
+          // touches the write-once content_hash/storage_path evidence columns,
+          // and never downgrades a completed transcript.
+          await persistVoiceNoteTranscription({ orgId, audio: input.media.bytes, result: t });
           // ONLY a completed transcript replaces the note body. A deferred/failed
           // outcome leaves the deterministic placeholder — never a fabrication.
           if (t.status === "completed" && t.transcript.trim().length > 0) {
