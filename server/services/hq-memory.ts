@@ -821,6 +821,58 @@ export async function setMemoryStatus(
 }
 
 // ---------------------------------------------------------------------
+// Purge — real erasure (E2). A thin, faithful wrapper over the atomic SQL
+// primitive `hq_memory_purge` (20261228000000), which scrubs the memory's
+// content (title/summary/body/tags/keywords → redaction markers, the
+// GENERATED search_tsv empties with them), NULLs the embedding + all its
+// metadata, scrubs every hq_memory_versions snapshot of the memory, and
+// leaves an immutable tombstone (status='purged', purged_at/by/reason).
+// The SQL layer also writes the content-free 'purged' timeline event and
+// guarantees the tombstone can never re-enter the embedding queue or
+// recall. IRREVERSIBLE — callers (the /admin/memory action) must have
+// collected an explicit typed confirmation first. Callers audit to
+// admin_activity_log themselves (action 'memory.purged', no content).
+// ---------------------------------------------------------------------
+
+export type PurgeResult =
+  | { ok: true; id: string; hadEmbedding: boolean; versionsScrubbed: number }
+  | { ok: false; error: string };
+
+type PurgeRpcRow = {
+  ok: boolean;
+  reason?: string;
+  memory_id?: string;
+  had_embedding?: boolean;
+  versions_scrubbed?: number;
+};
+
+export async function purgeMemory(
+  id: string,
+  reason: string,
+  actor: Actor,
+): Promise<PurgeResult> {
+  const admin = createAdminClient();
+  const { data, error } = await callRpc<PurgeRpcRow>(admin, "hq_memory_purge", {
+    p_memory_id: id,
+    p_actor: actor.email,
+    p_reason: reason,
+  });
+  if (error || !data) {
+    console.error("[hq-memory] purgeMemory failed", error);
+    return { ok: false, error: error?.message ?? "Purge failed" };
+  }
+  if (!data.ok) {
+    return { ok: false, error: data.reason ?? "Purge refused" };
+  }
+  return {
+    ok: true,
+    id,
+    hadEmbedding: data.had_embedding === true,
+    versionsScrubbed: data.versions_scrubbed ?? 0,
+  };
+}
+
+// ---------------------------------------------------------------------
 // AI write path (Volume X §6/§12; CEO Directive 009 Module 1, PR2).
 //
 // `rememberMemory` is the service-layer surface the future SDK

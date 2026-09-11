@@ -8,6 +8,7 @@ import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
   createMemory,
+  purgeMemory,
   setMemoryPinned,
   setMemoryStatus,
   updateMemory,
@@ -320,4 +321,79 @@ export async function setStatusAction(formData: FormData): Promise<void> {
   revalidatePath("/admin/memory");
   revalidatePath(`/admin/memory/${parsed.data.id}`);
   redirect(`/admin/memory/${parsed.data.id}?saved=status`);
+}
+
+// --------------------------------------------------------------------
+// Purge — real erasure (E2). IRREVERSIBLE.
+//
+// Distinct from every action above: it destroys the memory's content,
+// vector, and version snapshots (tombstone survives as audit evidence).
+// Defence in depth on top of requireAdmin:
+//   * the operator must TYPE the exact confirmation word ("PURGE") — a
+//     mis-click or replayed form without it performs ZERO writes;
+//   * a non-empty reason is mandatory (it becomes the durable
+//     purge_reason on the tombstone + the audit metadata);
+//   * the audit row carries NO memory content — only the id, the reason,
+//     and the scrub counts the SQL primitive reports.
+// --------------------------------------------------------------------
+
+const PURGE_CONFIRM_WORD = "PURGE";
+
+const purgeSchema = z.object({
+  id: z.string().uuid(),
+  reason: z.string().trim().min(3).max(500),
+  confirm: z.literal(PURGE_CONFIRM_WORD),
+});
+
+export async function purgeMemoryAction(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const parsed = purgeSchema.safeParse({
+    id: formData.get("id"),
+    reason: formData.get("reason"),
+    confirm: formData.get("confirm"),
+  });
+  if (!parsed.success) {
+    const idRaw = String(formData.get("id") ?? "");
+    const back = UUID_RE.test(idRaw) ? `/admin/memory/${idRaw}` : "/admin/memory";
+    redirect(
+      `${back}?error=${encodeURIComponent(
+        `Purge refused — type ${PURGE_CONFIRM_WORD} to confirm and give a reason (3+ characters).`,
+      )}`,
+    );
+  }
+
+  const result = await purgeMemory(parsed.data.id, parsed.data.reason, {
+    id: admin.id,
+    email: admin.email,
+  });
+  if (!result.ok) {
+    redirect(
+      `/admin/memory/${parsed.data.id}?error=${encodeURIComponent(
+        result.error === "already_purged"
+          ? "This memory is already purged."
+          : "Couldn't purge memory.",
+      )}`,
+    );
+  }
+
+  // The company-wide audit truth. NO content — the tombstone row + the
+  // per-memory 'purged' event are the durable evidence.
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "memory.purged",
+    targetTable: "hq_memories",
+    targetId: parsed.data.id,
+    metadata: {
+      memory_id: parsed.data.id,
+      reason: parsed.data.reason,
+      had_embedding: result.hadEmbedding,
+      versions_scrubbed: result.versionsScrubbed,
+    },
+  });
+
+  revalidatePath("/admin/memory");
+  revalidatePath("/admin/memory/search");
+  revalidatePath(`/admin/memory/${parsed.data.id}`);
+  redirect(`/admin/memory/${parsed.data.id}?saved=purged`);
 }

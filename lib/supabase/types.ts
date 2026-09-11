@@ -8343,6 +8343,9 @@ export type Database = {
           organisation_name: string | null
           owner_employee_id: string | null
           pinned: boolean
+          purge_reason: string | null
+          purged_at: string | null
+          purged_by: string | null
           salience: number
           search_tsv: unknown
           source: string
@@ -8392,6 +8395,9 @@ export type Database = {
           organisation_name?: string | null
           owner_employee_id?: string | null
           pinned?: boolean
+          purge_reason?: string | null
+          purged_at?: string | null
+          purged_by?: string | null
           salience?: number
           search_tsv?: unknown
           source?: string
@@ -8441,6 +8447,9 @@ export type Database = {
           organisation_name?: string | null
           owner_employee_id?: string | null
           pinned?: boolean
+          purge_reason?: string | null
+          purged_at?: string | null
+          purged_by?: string | null
           salience?: number
           search_tsv?: unknown
           source?: string

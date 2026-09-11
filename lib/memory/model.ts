@@ -126,7 +126,18 @@ export const STATUS_LABELS: Record<MemoryStatus, string> = {
   superseded: "Superseded",
 };
 
+/**
+ * The terminal PURGE state (E2 — real erasure). DELIBERATELY not a member of
+ * MEMORY_STATUSES: that list is the OPERATOR-SETTABLE vocabulary (the status
+ * dropdown + setStatusAction's zod enum), and 'purged' must never be reachable
+ * by a plain status flip — only via the `hq_memory_purge` primitive, which
+ * scrubs content + vector and is guarded one-way at the SQL layer. Mirrors the
+ * widened hq_memories_status_check in 20261228000000_hq_memory_purge.sql.
+ */
+export const PURGED_STATUS = "purged" as const;
+
 export function memoryStatusLabel(s: string): string {
+  if (s === PURGED_STATUS) return "Purged";
   return STATUS_LABELS[s as MemoryStatus] ?? s;
 }
 
@@ -266,6 +277,10 @@ export const EVENT_TYPES = [
   "superseded",
   "archived",
   "expired",
+  // E2 real-erasure transition. Mirrors the widened
+  // hq_memory_events.event_type CHECK in 20261228000000_hq_memory_purge.sql
+  // — kept in lock-step.
+  "purged",
 ] as const;
 export type MemoryEventType = (typeof EVENT_TYPES)[number];
 
@@ -285,6 +300,7 @@ export const EVENT_LABELS: Record<MemoryEventType, string> = {
   superseded: "Superseded by a duplicate",
   archived: "Archived",
   expired: "Expired",
+  purged: "Purged (content erased)",
 };
 
 export function eventLabel(t: string): string {
