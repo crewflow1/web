@@ -148,14 +148,13 @@ export default async function AiCostsPage({ searchParams }: { searchParams: SP }
           <p className="mt-3 rounded-md border border-slate-300 bg-white p-3 text-xs text-slate-700">
             A vendor credential is present ({readiness.credentialsPresent.join(", ")}) while no
             tier is bound. This is <strong>not</strong> ungoverned spend — every provider door
-            (lib/ai/text, lib/ai/vision) requires a bound cost tier, so the credential switches
-            nothing on. It is reported because it is an activation half-done: either bind a tier
-            deliberately, or remove the credential. Embeddings are the one exception and are
-            governed separately.
+            (lib/ai/text, lib/ai/vision, lib/ai/embeddings) requires its OWN bound cost tier,
+            so a credential alone switches nothing on. It is reported because it is an
+            activation half-done: either bind a tier deliberately, or remove the credential.
           </p>
         ) : null}
 
-        <dl className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <dl className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           {AI_TIERS.map((tier) => {
             const binding = TIER_MODEL[tier];
             return (
