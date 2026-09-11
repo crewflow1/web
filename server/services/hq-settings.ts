@@ -87,8 +87,30 @@ export async function updateSection<S extends SectionId>(
 ): Promise<UpdateResult> {
   const schema = SECTION_SCHEMAS[section];
 
-  // 1. Read current so we can compute the diff + merge.
-  const before = await getSettings();
+  // 1. Read current so we can compute the diff + merge. The RAW blob is read
+  //    alongside the normalised view: hq_settings is one JSONB singleton that
+  //    ALSO carries sections this module does not own — the infra flags read
+  //    by SQL gate functions (memory_embedding.worker_enabled,
+  //    memory_lifecycle.worker_enabled, event_spine), which are seeded by
+  //    migrations and flipped by service-role SQL, never by this UI. Before
+  //    2026-09-11 the upsert below rebuilt the blob from SECTION_IDS only, so
+  //    ANY settings save silently deleted those keys and every fail-dark gate
+  //    read `false` — an invisible off-switch for the embedding/lifecycle
+  //    workers and the event-spine consumer. The raw blob is now the upsert
+  //    base, so keys outside SECTION_IDS survive every save byte-for-byte.
+  const rawRes = await adminTable("hq_settings")
+    .select("data")
+    .eq("id", "singleton")
+    .maybeSingle();
+  if (rawRes.error) {
+    console.error("[hq-settings] read failed", rawRes.error.message);
+    return { ok: false, error: "Could not load current settings — try again." };
+  }
+  const rawBlob = ((rawRes.data as { data?: unknown } | null)?.data ?? {}) as Record<
+    string,
+    unknown
+  >;
+  const before = mergeSettings(rawBlob);
   const beforeSection = before[section] as Record<string, unknown>;
 
   // 2. Validate the incoming patch on top of current.
@@ -112,8 +134,10 @@ export async function updateSection<S extends SectionId>(
     return { ok: true, changedKeys: [] };
   }
 
-  // 3. UPSERT the merged blob.
-  const nextData = { ...before, [section]: afterSection };
+  // 3. UPSERT the merged blob — RAW FIRST, so sections this module does not
+  //    own (infra gate flags) are preserved; the known sections then overlay
+  //    their normalised values, and the edited section its new value.
+  const nextData = { ...rawBlob, ...before, [section]: afterSection };
   const up = await adminTable("hq_settings").upsert(
     {
       id: "singleton",
