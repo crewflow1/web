@@ -75,3 +75,39 @@ memory content.
 All of the above is proven on real Postgres in
 `__tests__/integration/memory/purge-path.test.ts`, and the migration's source
 contract is pinned by `__tests__/security/memory-purge-invariants.test.ts`.
+
+## Erasure boundary — what a purge does NOT reach
+
+A purge erases the memory row, its version snapshots, and its relationship
+labels. `admin_activity_log` is append-only by trigger for every role — a
+deliberate audit-immutability control that outranks redaction — so purge
+does not touch it; instead, as of 2026-09-11 the memory actions write
+CONTENT-FREE metadata there (shape only: `title_chars`, class, visibility),
+so nothing needing erasure enters the audit trail. Bounded residue: rows
+written before 2026-09-11 may carry a memory's title (a short label, never
+the body); at the time of this change production held exactly two such
+rows, both naming still-live memories. Purge deliberately does **not**
+cascade into records that are their own artefacts:
+
+- **Consolidation lessons** — a `long_term` memory synthesised FROM several
+  sources is a separate record; if it quotes purged content, locate and
+  purge it separately (it is findable via `/admin/memory/search`).
+- **AI task outputs / drafts** that quoted recalled content before the
+  purge — governed artefacts with their own review and retention paths.
+- **`hq_sales_*` rows sharing provenance** — the `memory_id` link is set
+  NULL by the FK; the sales record's own content persists and is erased
+  through the sales/GDPR paths, not through memory purge.
+
+A data-subject erasure should therefore search for the subject across
+memories AND consolidations, purging each hit — the locate-and-erase loop,
+not a single cascade.
+
+## Backups and point-in-time windows
+
+Purged content persists in database backups until those backups age out:
+the dated off-platform dumps (retained per the ops backup policy) and any
+provider point-in-time-recovery window. This is the standard UK-GDPR
+backup posture: erasure is effective in the live system immediately and in
+backups on their rotation schedule; a restore performed while a backup
+still contains purged content must be followed by re-running the recorded
+purges (`admin_activity_log` `action='memory.purged'` is the replay list).

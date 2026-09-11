@@ -160,10 +160,11 @@ end $$;
 
 -- ---------------------------------------------------------------------------
 -- 5. Tombstone immutability guard. Once purged, a memory can never be
---    un-purged, re-titled, re-bodied, or re-embedded — by ANY caller, App or
---    SQL. Bookkeeping columns (access_count, updated_at, …) stay writable so a
---    stray reinforce sweep cannot blow up a whole batch, but every
---    resurrection vector raises. Purge itself passes (OLD.status <> 'purged').
+--    un-purged, re-titled, re-bodied, re-tagged, re-pinned, or re-embedded —
+--    by ANY caller, App or SQL. Bookkeeping columns (access_count,
+--    recalled_at, updated_at) stay writable so a stray reinforce sweep cannot
+--    blow up a whole batch, but every content/resurrection vector raises.
+--    Purge itself passes (OLD.status <> 'purged').
 -- ---------------------------------------------------------------------------
 create or replace function public._hq_memories_purge_guard()
 returns trigger language plpgsql as $$
@@ -173,8 +174,18 @@ begin
       raise exception 'hq_memories: a purged memory cannot leave the purged state (id %)', old.id
         using errcode = 'check_violation';
     end if;
-    if (new.title, new.summary, new.body)
-         is distinct from (old.title, old.summary, old.body) then
+    if (new.title, new.summary, new.body,
+        new.tags, new.keywords, new.organisation_name,
+        new.embedding_placeholder, new.pinned)
+         is distinct from
+       (old.title, old.summary, old.body,
+        old.tags, old.keywords, old.organisation_name,
+        old.embedding_placeholder, old.pinned) then
+      -- Review P2-4: the FULL scrub set is immutable — not only the original
+      -- content but every content-carrying column and `pinned`, so no new
+      -- content can be attached to a tombstone and it can never be re-pinned
+      -- into recall's pinned channel. Bookkeeping (access_count, recalled_at,
+      -- updated_at) stays writable so a stray reinforce cannot blow up.
       raise exception 'hq_memories: purged memory content is immutable (id %)', old.id
         using errcode = 'check_violation';
     end if;

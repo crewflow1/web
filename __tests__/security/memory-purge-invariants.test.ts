@@ -304,3 +304,19 @@ describe("memory purge — every re/defined engine function is hardened", () => 
     expect(exec).not.toMatch(/pg_net|net\.http|extensions\.http/i);
   });
 });
+
+describe("audit residue is prevented at the SOURCE (review P1-1)", () => {
+  it("the memory actions write NO content into the append-only activity log", () => {
+    // admin_activity_log is append-only by trigger for every role, so any
+    // content copied into it is unredactable forever. The actions therefore
+    // log shape (title_chars), never the title itself.
+    const src = readFileSync(
+      resolve(__dirname, "../../app/admin/memory/actions.ts"),
+      "utf8",
+    );
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+    // No metadata object may carry a raw title value.
+    expect(code).not.toMatch(/metadata:\s*\{[^}]*\btitle:\s/);
+    expect(code).toMatch(/title_chars/);
+  });
+});

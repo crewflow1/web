@@ -178,8 +178,12 @@ export async function createMemoryAction(formData: FormData): Promise<void> {
     action: "hq_memory.created",
     targetTable: "hq_memories",
     targetId: result.id,
+    // CONTENT-FREE by rule (2026-09-11): admin_activity_log is append-only
+    // for every role, so anything copied here is unredactable forever — a
+    // purged memory's title used to survive in these rows. Log shape, never
+    // content; the memory row itself is the content's one erasable home.
     metadata: {
-      title: built.value.title,
+      title_chars: built.value.title.length,
       memory_type: built.value.memoryType,
       visibility: built.value.visibility,
       importance: built.value.importance,
@@ -226,7 +230,8 @@ export async function updateMemoryAction(formData: FormData): Promise<void> {
     action: "hq_memory.updated",
     targetTable: "hq_memories",
     targetId: idRaw,
-    metadata: { title: built.value.title, memory_type: built.value.memoryType },
+    // Content-free by rule — see the created-path note above.
+    metadata: { title_chars: built.value.title.length, memory_type: built.value.memoryType },
   });
 
   revalidatePath("/admin/memory");

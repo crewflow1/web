@@ -138,13 +138,15 @@ export default async function MemoryDetailPage({
                 </p>
               ) : null}
             </div>
-            <Link
-              href={`/admin/memory/${m.id}/edit`}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
-            >
-              <Pencil className="h-3.5 w-3.5" aria-hidden />
-              Edit
-            </Link>
+            {m.status !== "purged" ? (
+              <Link
+                href={`/admin/memory/${m.id}/edit`}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-slate-800"
+              >
+                <Pencil className="h-3.5 w-3.5" aria-hidden />
+                Edit
+              </Link>
+            ) : null}
           </div>
         </header>
 

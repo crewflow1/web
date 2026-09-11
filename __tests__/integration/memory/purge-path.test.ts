@@ -1,5 +1,6 @@
 import { beforeAll, afterAll, it, expect } from "vitest";
 import { anonClient, describeIntegration, serviceClient } from "../_harness";
+import { purgeMemory } from "@/server/services/hq-memory";
 
 /**
  * Shared Memory — REAL PURGE semantics, real-Postgres proof (E2).
@@ -332,6 +333,56 @@ describeIntegration("Shared Memory · REAL PURGE semantics (hq_memory_purge, E2)
       rels: rels.data,
     });
     expect(everything.includes(t), "content token must be gone everywhere").toBe(false);
+  });
+
+  // ===================================================================
+  // (a2) SERVICE-LEVEL purge scrubs the admin_activity_log title residue
+  //      (review P1-1: hq_memory.created/.updated rows copy the title).
+  // ===================================================================
+  it("purge leaves the append-only audit trail intact and content-free at the seam (P1-1 contract)", async () => {
+    const t = token();
+    const id = await seedMemory({ title: `Residue probe ${t}`, body: `body ${t}` });
+    // A pre-2026-09-11-style row WITH a title: the append-only trigger makes
+    // it unredactable — the documented, bounded residue. Pin that purge does
+    // NOT weaken the audit control to chase it.
+    const ins = await svc()
+      .from("admin_activity_log" as never)
+      .insert({
+        actor_email: "ops@crewflow.uk",
+        action: "hq_memory.created",
+        target_table: "hq_memories",
+        target_id: id,
+        metadata: { title: `Residue probe ${t}`, memory_class: "semantic" },
+      } as never);
+    expect(ins.error).toBeNull();
+
+    const res = await purgeMemory(id, "dsar erasure probe (service path)", {
+      id: "00000000-0000-4000-8000-000000000001",
+      email: "ops@crewflow.uk",
+    });
+    expect(res.ok, JSON.stringify(res)).toBe(true);
+
+    // The audit table is APPEND-ONLY for every role — even service_role
+    // cannot rewrite it. The purge must not have tried to weaken that.
+    const direct = await svc()
+      .from("admin_activity_log" as never)
+      .update({ metadata: {} } as never)
+      .eq("target_id", id);
+    expect(direct.error, "append-only trigger must refuse UPDATE").not.toBeNull();
+
+    const logs = await svc()
+      .from("admin_activity_log" as never)
+      .select("action, metadata")
+      .eq("target_table", "hq_memories")
+      .eq("target_id", id);
+    const rows = (logs.data as Row[]) ?? [];
+    // The legacy-style row survives verbatim (documented residue)...
+    const created = rows.find((r) => r.action === "hq_memory.created");
+    expect(created).toBeDefined();
+    // ...and every row the CURRENT code wrote for this purge is content-free.
+    for (const r of rows.filter((r) => r.action !== "hq_memory.created")) {
+      expect(JSON.stringify(r).includes(t), `${r.action} must carry no content`).toBe(false);
+    }
   });
 
   // ===================================================================

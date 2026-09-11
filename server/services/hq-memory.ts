@@ -864,6 +864,12 @@ export async function purgeMemory(
   if (!data.ok) {
     return { ok: false, error: data.reason ?? "Purge refused" };
   }
+  // AUDIT-RESIDUE NOTE (review P1-1, resolved at the SOURCE): the memory
+  // actions no longer copy the title into admin_activity_log metadata (it is
+  // append-only by trigger — for every role — so a purge-time redaction is
+  // impossible without weakening audit immutability, which outranks it).
+  // Rows written BEFORE 2026-09-11 may carry a title; that bounded residue
+  // is documented in docs/hq-memory-privacy.md.
   return {
     ok: true,
     id,
