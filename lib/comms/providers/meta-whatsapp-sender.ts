@@ -47,6 +47,27 @@ export function createMetaWhatsAppProvider(): WhatsAppProvider {
         );
       }
 
+      // FOUNDER-TEST ALLOWLIST (activation-hardening P3), defence-in-depth at
+      // the very last hop: when WHATSAPP_TEST_RECIPIENT_ALLOWLIST is set (see
+      // lib/env.ts — activation-day protocol), an unlisted recipient THROWS
+      // before any network contact. The transport seam records the refusal
+      // ("not_on_test_allowlist") BEFORE the provider is even resolved; this
+      // guard exists so no OTHER present-or-future caller of the provider can
+      // bypass the protocol. Unset ⇒ no restriction. Read at call time
+      // (process.env, not the boot snapshot) so the switch is operational.
+      const allowlistRaw = process.env.WHATSAPP_TEST_RECIPIENT_ALLOWLIST;
+      if (typeof allowlistRaw === "string" && allowlistRaw.trim().length > 0) {
+        const allowed = new Set(
+          allowlistRaw
+            .split(",")
+            .map((e) => e.replace(/\D/g, ""))
+            .filter((e) => e.length > 0),
+        );
+        if (!allowed.has(message.to.replace(/\D/g, ""))) {
+          throw new Error("meta-whatsapp: not_on_test_allowlist");
+        }
+      }
+
       const res = await fetch(
         `https://graph.facebook.com/${version}/${encodeURIComponent(phoneNumberId)}/messages`,
         {

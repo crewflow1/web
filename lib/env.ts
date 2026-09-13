@@ -37,6 +37,15 @@ const envSchema = z.object({
   WHATSAPP_ACCESS_TOKEN: z.string().optional(),
   WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
   WHATSAPP_GRAPH_VERSION: z.string().optional(),
+  // FOUNDER-TEST RECIPIENT ALLOWLIST (activation-day safety net). Optional,
+  // comma-separated E.164 numbers. When SET, the WhatsApp transport refuses any
+  // recipient not on the list (recorded refusal "not_on_test_allowlist") — so
+  // the first live sends can only ever reach the founder's own test handset(s).
+  // When UNSET there is no restriction. Operational plan (CEO founder-only test
+  // protocol): this WILL be set on activation day and is removed only by an
+  // explicit CEO decision once the founder test passes. It is a narrowing
+  // gate layered on top of (never instead of) the flag/credential gates.
+  WHATSAPP_TEST_RECIPIENT_ALLOWLIST: z.string().optional(),
 
   // -- Voice-note transcription (ARMED 2026-09-13) ------------------------
   // OPTIONAL dedicated-key OVERRIDE for the STT tier — an independent kill
@@ -170,6 +179,16 @@ const envSchema = z.object({
   // when it is absent — so with no secret the webhook rejects everything (dark),
   // exactly like WHATSAPP_APP_SECRET on the Meta webhook. Absent in prod/CI/dev.
   INBOUND_EMAIL_WEBHOOK_SECRET: z.string().optional(),
+
+  // -- Normalised inbound channel endpoint (api/receptionist/inbound) ------
+  // The shared secret the per-channel adapters present in the
+  // `x-crewflow-channel-secret` header. COARSE gate only: it proves "a channel
+  // adapter is calling", never which org (attribution is resolved from the
+  // provisioned route tables — see the route's security note). Compared
+  // timing-safely at the route. Absent ⇒ the endpoint rejects everything
+  // (dark) — the prod/CI/dev default. Declared here (2026-09-13 hardening) so
+  // the env census knows the variable; it was previously read undeclared.
+  CHANNEL_INBOUND_SECRET: z.string().optional(),
 
   // -- Resend delivery events (MP Wave R4 — DARK, two-switch gated) --------
   // The endpoint signing secret (whsec_<base64>) for the Resend delivery-events

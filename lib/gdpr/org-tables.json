@@ -15,6 +15,7 @@
     "ai_receptionist_setups",
     "ai_reply_audits",
     "ai_reply_delivery_receipts",
+    "ai_reply_send_claims",
     "ai_reply_transports",
     "api_keys",
     "api_request_log",
@@ -228,6 +229,7 @@
     "whatsapp_assistant_actions",
     "whatsapp_inbound_media",
     "whatsapp_number_routes",
+    "whatsapp_optouts",
     "whatsapp_webhook_events",
     "worker_acknowledgements",
     "worker_signoff_tokens"
@@ -243,6 +245,7 @@
     "ai_org_budget_ceilings": "service telemetry: AI budget governance internals (per-org ceiling override) — HQ-side control config, not tenant business data",
     "ai_reply_audits": "AI reply transport internals",
     "ai_reply_delivery_receipts": "AI reply transport internals",
+    "ai_reply_send_claims": "AI reply transport internals (pre-send idempotency claims, mirrors ai_reply_transports)",
     "ai_reply_transports": "AI reply transport internals",
     "api_keys": "credentials: API key hashes",
     "api_request_log": "service telemetry: public API access log (key_id/method/route/status/ts + caller-supplied request_id since 20261226 — an opaque correlation token, pattern-clamped to [A-Za-z0-9._-]{1,200}, stored verbatim; not a free-text field and carries no name/contact data by construction) — operational request metadata, no tenant business data",
@@ -294,7 +297,8 @@
     "cis_subcontractors": "supplier_id",
     "customer_portal_preferences": "customer_id",
     "fleet_vehicles": "asset_id",
-    "lead_followup_state": "lead_id"
+    "lead_followup_state": "lead_id",
+    "whatsapp_optouts": "wa_id"
   },
   "_erasure_comment": "GDPR ERASURE / account-teardown (Art. 17) classification — the DESTRUCTIVE mirror of the export census, consumed by lib/gdpr/erase-tables.ts and server/services/gdpr-erase.ts. Every table in `known` is classified into exactly one disposition: `erasure_anonymise` (statutory-retention records — UK Companies Act s386 / HMRC 6-year financial + tax + payroll duties, plus accountability trails carrying PII: the ROW is KEPT and only PII-named columns are scrubbed, so the statutory numbers/dates/references survive), `erasure_retain` (CrewFlow platform-side records and erasure/export EVIDENCE logs — NOT the tenant's data to erase; left byte-for-byte untouched), or — the DEFAULT for everything not named here — HARD DELETE. Default-destroy is the GDPR-safe default for erasure (the mirror image of export's default-don't-export): a newly-added org-scoped table is DESTROYED unless a reviewer explicitly preserves it, so personal data is never silently retained. The bidirectional drift guard (LIVE ⊆ known, and known == anonymise ∪ retain ∪ hard_delete with no overlap) forces every new live table to be consciously classified. Reasons are recorded so a reviewer / DPO can audit each preservation call. These lists live in JSON (not .ts) for the same reason as the export registry — the source-tree 'who names table X' census walks only .ts/.tsx.",
   "erasure_anonymise": {

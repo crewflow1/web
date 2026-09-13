@@ -167,6 +167,9 @@ describe("response handling — completed, metered, sanitised", () => {
         model: "gpt-4o-mini-transcribe",
         inputTokens: 8,
         outputTokens: 0,
+        // P1-3: vendor-reported seconds are AUTHORITATIVE — the shape says so,
+        // and only this source may drive the over-cap refusal upstream.
+        secondsSource: "vendor",
       });
     }
   });
@@ -192,6 +195,9 @@ describe("response handling — completed, metered, sanitised", () => {
       expect(r.usage?.inputTokens).toBe(
         Math.max(1, Math.ceil((audio.byteLength * 8) / 12_000)),
       );
+      // ...and the shape NAMES it an estimate (P1-3): metering only — it can
+      // never drive the over-cap refusal of a transcript the org paid for.
+      expect(r.usage?.secondsSource).toBe("estimate");
     } else {
       throw new Error("expected completed");
     }
