@@ -312,3 +312,32 @@ describe("lib/ai/embeddings/governed.ts source hygiene", () => {
     expect(JSON.parse('"\\u0000"')).toBe(NUL);
   });
 });
+
+// =====================================================================
+// EmbeddingFeature — the compile-time closed set (2026-09-13 residue fix)
+// =====================================================================
+
+describe("EmbeddingFeature is a CLOSED, registry-anchored set", () => {
+  // COMPILE-LEVEL PIN. `EmbeddingFeature` is `Extract<AiFeature, ...>` so the
+  // governed door passes `input.feature` to `invokeWithGovernor` with NO cast
+  // — the `as AiFeature` it used to carry could have smuggled any string. The
+  // MutuallyAssignable check fails tsc if the set ever widens, narrows (e.g. a
+  // member dropped from the registry makes Extract silently discard it), or
+  // drifts from exactly the two authorised keys.
+  type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+  const CLOSED_SET: MutuallyAssignable<
+    import("@/lib/ai/embeddings/governed").EmbeddingFeature,
+    "memory.embedding_write" | "memory.embedding_query"
+  > = true;
+
+  it("holds exactly memory.embedding_write | memory.embedding_query", () => {
+    expect(CLOSED_SET).toBe(true);
+  });
+
+  it("the governed call carries the feature with NO cast in source", () => {
+    const ROOT = resolve(__dirname, "..", "..");
+    const text = readFileSync(resolve(ROOT, "lib/ai/embeddings/governed.ts"), "utf8");
+    expect(text).not.toMatch(/as AiFeature/);
+    expect(text).toMatch(/Extract<\s*AiFeature,/);
+  });
+});

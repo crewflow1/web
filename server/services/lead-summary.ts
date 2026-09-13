@@ -198,9 +198,17 @@ async function summariseWithProvider(
   // credential to be present, so this is not a bare-key assumption.
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
   // Resolve from the canonical cheap binding — execution and accounting can
-  // never diverge again (the literal fallback mirrors the binding and exists
-  // only for the impossible null case; the gate above refuses when dark).
-  const model = TIER_MODEL.cheap?.model ?? "claude-haiku-4-5-20251001";
+  // never diverge. HARD READ, no literal fallback (2026-09-13 hardening): the
+  // cheap gate above refuses before this leg when the tier is dark, so a null
+  // binding here means that guarantee broke — throw (this leg's failure
+  // idiom), the governor settles the claim as a failure, and the caller
+  // degrades to the deterministic summary. NEVER run a model the registry
+  // did not name.
+  const binding = TIER_MODEL.cheap;
+  if (!binding) {
+    throw new Error("lead-summary: cheap tier binding missing — refusing unbound model call");
+  }
+  const model = binding.model;
   const msg = await client.messages.create(
     {
       model,

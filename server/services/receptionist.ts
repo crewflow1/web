@@ -2693,9 +2693,17 @@ async function extractFieldsWithProvider(
   const { default: Anthropic } = await import("@anthropic-ai/sdk");
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
   // Canonical cheap-tier binding — execution and governor accounting can
-  // never diverge (activation diff 2026-09-10; the cheap gate above refuses
-  // before this line when the tier is dark).
-  const model = TIER_MODEL.cheap?.model ?? "claude-haiku-4-5-20251001";
+  // never diverge. HARD READ, no literal fallback (2026-09-13 hardening): the
+  // cheap gate refuses before this leg when the tier is dark, so a null
+  // binding here means that guarantee broke — throw (this leg's failure
+  // idiom), the governor settles the claim as a failure, and the caller falls
+  // back to the deterministic extraction. NEVER run a model the registry did
+  // not name.
+  const binding = TIER_MODEL.cheap;
+  if (!binding) {
+    throw new Error("receptionist: cheap tier binding missing — refusing unbound model call");
+  }
+  const model = binding.model;
   const msg = await client.messages.create(
     {
       model,

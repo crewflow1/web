@@ -46,8 +46,15 @@ import { getEmbeddingProvider } from "./index";
 import type { EmbeddingModelInfo, EmbeddingResult } from "./types";
 
 /** The registry keys allowed to embed. A closed set on purpose — a new
- * embedding surface must register a feature (a reviewed diff) to spend. */
-export type EmbeddingFeature = "memory.embedding_write" | "memory.embedding_query";
+ * embedding surface must register a feature (a reviewed diff) to spend.
+ * `Extract` ties the set to the registry's own `AiFeature` union: a member
+ * that drops out of the registry drops out of this type at compile time, so
+ * the governed call below needs no cast — and can never smuggle a key the
+ * registry does not know. */
+export type EmbeddingFeature = Extract<
+  AiFeature,
+  "memory.embedding_write" | "memory.embedding_query"
+>;
 
 export type GovernedEmbedOutcome =
   /** Vectors produced. `governed` is false only on the deterministic exemption. */
@@ -137,7 +144,8 @@ export async function governedEmbed(input: {
   let outcome: GovernorOutcome<EmbeddingResult>;
   try {
     outcome = await invokeWithGovernor<EmbeddingResult>(
-      input.feature as AiFeature,
+      // No cast: EmbeddingFeature is a compile-time subset of AiFeature.
+      input.feature,
       "embedding",
       async () => {
         const res = await provider.embed(

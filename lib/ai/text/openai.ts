@@ -10,20 +10,23 @@ import "server-only";
  * SDK is dynamically imported, and `generate()` THROWS on failure so the worker
  * owns skip / retry / backoff.
  *
- * Model: `gpt-4o-mini` — matches the fallback already in `lib/ai/llm.ts`.
+ * Model: ALWAYS the caller's tier binding — the factory passes `binding.model`
+ * and this transport has NO default of its own (2026-09-13 hardening: the old
+ * `DEFAULT_MODEL` fallback was a literal the registry never authorised).
  */
 
 import type { TextGenerationOptions, TextModelInfo, TextProvider, TextResult } from "./types";
 
-const DEFAULT_MODEL = "gpt-4o-mini";
 const TEXT_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_TOKENS = 1024;
 
 /**
  * Build the OpenAI provider for a given key. Pure construction — no network
- * call here, so the factory can hand one out cheaply.
+ * call here, so the factory can hand one out cheaply. `model` is REQUIRED:
+ * only the factory's tier binding may name a model, so a construction site
+ * that forgets one is a compile error, never a silent literal.
  */
-export function createOpenAiTextProvider(apiKey: string, model: string = DEFAULT_MODEL): TextProvider {
+export function createOpenAiTextProvider(apiKey: string, model: string): TextProvider {
   const info: TextModelInfo = { provider: "openai", model };
 
   return {

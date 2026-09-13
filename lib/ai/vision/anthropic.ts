@@ -30,16 +30,6 @@ import type {
   VisionResult,
 } from "./types";
 
-import { TIER_MODEL } from "@/lib/ai/governor/registry";
-
-/**
- * The vision model resolves from the CANONICAL cheap-tier binding — execution
- * and governor accounting can never diverge (activation diff 2026-09-10; the
- * previous hard-coded alias string was exactly that divergence). The literal
- * fallback exists only for the impossible null case and mirrors the binding.
- */
-const DEFAULT_MODEL = TIER_MODEL.cheap?.model ?? "claude-haiku-4-5-20251001";
-
 /** Default output cap when a caller does not state one. Bounds cost. */
 const DEFAULT_MAX_TOKENS = 1024;
 
@@ -50,11 +40,13 @@ const VISION_TIMEOUT_MS = 20_000;
  * Build the Anthropic vision provider for a key. Pure construction — no network
  * call and no SDK import until `extract` runs, so the factory can hand one out
  * cheaply and a caller that never extracts pays nothing.
+ *
+ * `model` is REQUIRED (2026-09-13 hardening): the door (./index) gates on the
+ * cheap-tier binding and passes `binding.model`, so ONLY the registry can name
+ * the model that runs — the old defaulted parameter carried a literal fallback
+ * the registry never authorised, one refactor away from executing.
  */
-export function createAnthropicVisionProvider(
-  apiKey: string,
-  model: string = DEFAULT_MODEL,
-): VisionProvider {
+export function createAnthropicVisionProvider(apiKey: string, model: string): VisionProvider {
   const info: VisionModelInfo = { provider: "anthropic", model };
 
   return {
