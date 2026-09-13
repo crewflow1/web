@@ -72,6 +72,10 @@ function adminTable(name: string) {
     };
     select: (cols: string) => {
       eq: (k: string, v: unknown) => {
+        maybeSingle: () => Promise<{
+          data: Record<string, unknown> | null;
+          error: { message: string } | null;
+        }>;
         eq: (k: string, v: unknown) => {
           maybeSingle: () => Promise<{
             data: Record<string, unknown> | null;
@@ -253,14 +257,28 @@ export async function processClaimedMessage(
   // org-less admin activity log (recordAdminActivity) — NOT the notifications
   // table, whose org_id is NOT NULL and would silently reject a null-org insert.
   if (!resolvedOrgId) {
-    await recordAdminActivity({
-      actorId: null,
-      actorEmail: null,
-      action: "whatsapp.unrouted_number",
-      targetTable: "whatsapp_webhook_events",
-      targetId: msg.wamid,
-      metadata: { phone_number_id: msg.phone_number_id, wamid: msg.wamid },
-    }).catch(() => undefined);
+    // target_id is uuid NOT NULL — a wamid string fails the insert SILENTLY
+    // (same class as review P1-1, pre-existing on main; fixed in this wave).
+    // The claimed event row's uuid anchors the audit; one indexed read.
+    const evRow = await adminTable("whatsapp_webhook_events")
+      .select("id")
+      .eq("event_key", eventKey)
+      .maybeSingle();
+    const eventRowId = (evRow.data as { id?: string } | null)?.id ?? null;
+    if (eventRowId) {
+      await recordAdminActivity({
+        actorId: null,
+        actorEmail: null,
+        action: "whatsapp.unrouted_number",
+        targetTable: "whatsapp_webhook_events",
+        targetId: eventRowId,
+        metadata: { phone_number_id: msg.phone_number_id, wamid: msg.wamid },
+      }).catch(() => undefined);
+    } else {
+      console.error("[whatsapp-webhook] unrouted-number audit skipped — event row not found", {
+        event_key: eventKey,
+      });
+    }
     await markProcessed(eventKey);
     return "unrouted";
   }

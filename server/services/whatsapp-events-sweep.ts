@@ -47,7 +47,12 @@ import type {
 export const WHATSAPP_SWEEP_MAX_ATTEMPTS = 5;
 
 /** Rows re-processed per tick — each re-run is a full ingestion pass, so keep it small. */
-export const WHATSAPP_SWEEP_BATCH = 10;
+// 5, not 10 (review P3-1): each re-run can include a governed AI draft
+// (2-8s) and the route's maxDuration is 60s — a mid-batch platform kill
+// burns attempts with no error stamp, and five successive kills at the same
+// queue position would dead-letter a healthy message. Half the batch keeps
+// worst-case wall time comfortably inside the budget.
+export const WHATSAPP_SWEEP_BATCH = 5;
 
 export type WhatsAppSweepSummary = {
   ok: boolean;
@@ -62,6 +67,7 @@ export type WhatsAppSweepSummary = {
 };
 
 type SweepRow = {
+  id: string;
   event_key: string;
   kind: string;
   attempts: number;
@@ -197,8 +203,12 @@ async function deadLetter(row: SweepRow, leaseCutoffIso: string): Promise<boolea
     actorEmail: null,
     action: "whatsapp.event_dead_lettered",
     targetTable: "whatsapp_webhook_events",
-    targetId: row.event_key,
+    // target_id is uuid NOT NULL (review P1-1: an event_key string here made
+    // the insert fail 22P02 SILENTLY — the loud give-up was never loud). The
+    // row id is the uuid; the human-readable event_key rides in metadata.
+    targetId: row.id,
     metadata: {
+      event_key: row.event_key,
       kind: row.kind,
       attempts: row.attempts,
       last_error: row.error_message,
@@ -230,7 +240,7 @@ export async function sweepWhatsAppWebhookEvents(opts?: {
   const leaseCutoffIso = new Date(Date.now() - WHATSAPP_CLAIM_LEASE_MS).toISOString();
 
   const scan = await eventsTable()
-    .select("event_key, kind, attempts, error_message, payload")
+    .select("id, event_key, kind, attempts, error_message, payload")
     .is("processed_at", null)
     .is("dead_lettered_at", null)
     .or(retryablePredicate(leaseCutoffIso))

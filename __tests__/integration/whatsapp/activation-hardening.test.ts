@@ -520,6 +520,22 @@ describeIntegration("whatsapp activation hardening · real Postgres", () => {
     expect(after.data?.[0]?.processed_at, "dead-letter is NOT completion").toBeNull();
     expect(after.data?.[0]?.error_message).toBe("permanent poison");
 
+    // THE LOUD GIVE-UP ACTUALLY LANDS (review P1-1): the audit row's uuid
+    // target_id must be the event row's id — an event_key string here failed
+    // the NOT NULL uuid column SILENTLY and the promise of HQ visibility was
+    // never delivered. Assert the row exists and carries the event_key in
+    // metadata.
+    const audit = await svc()
+      .from("admin_activity_log")
+      .select("action, target_id, metadata")
+      .eq("action", "whatsapp.event_dead_lettered")
+      .eq("target_id", row.data!.id);
+    expect(audit.error).toBeNull();
+    expect(audit.data?.length, "dead-letter audit row must land").toBe(1);
+    expect((audit.data?.[0]?.metadata as Record<string, unknown>).event_key).toBe(
+      `msg:${wamid}`,
+    );
+
     // Dead-lettered ⇒ no longer a sweep candidate.
     const again = await sweepWhatsAppWebhookEvents({ batch: 50 });
     const touched = await svc()

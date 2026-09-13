@@ -78,7 +78,9 @@ export async function recordWhatsAppOptOut(input: {
     actorEmail: null,
     action: "whatsapp.opt_out_recorded",
     targetTable: "whatsapp_optouts",
-    targetId: waId,
+    // target_id is uuid NOT NULL — the org uuid anchors the row (review P1-1:
+    // a digits-only wa_id here failed the insert silently); wa_id is metadata.
+    targetId: input.orgId,
     metadata: { org_id: input.orgId, wa_id: waId, source_wamid: input.sourceWamid },
   }).catch(() => undefined);
 }
@@ -103,7 +105,7 @@ export async function removeWhatsAppOptOut(input: {
     actorEmail: null,
     action: "whatsapp.opt_out_removed",
     targetTable: "whatsapp_optouts",
-    targetId: waId,
+    targetId: input.orgId,
     metadata: { org_id: input.orgId, wa_id: waId, source_wamid: input.sourceWamid },
   }).catch(() => undefined);
 }
