@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
+  estimateAudioSeconds,
   resolveTranscriptionApiKey,
   runOpenAiTranscription,
   sanitiseTranscript,
@@ -30,6 +31,39 @@ const okResponse = (body: unknown) =>
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+});
+
+describe("estimateAudioSeconds — the F2 metering ladder's middle rung", () => {
+  function wavBytes(seconds: number, byteRate = 16_000): Uint8Array {
+    const data = new Uint8Array(44 + seconds * byteRate);
+    data.set([0x52, 0x49, 0x46, 0x46], 0); // RIFF
+    data.set([0x57, 0x41, 0x56, 0x45], 8); // WAVE
+    new DataView(data.buffer).setUint32(28, byteRate, true);
+    return data;
+  }
+
+  it("WAV: exact from the RIFF byte-rate header (the self-test's own format)", () => {
+    expect(estimateAudioSeconds("audio/wav", wavBytes(2))).toBe(2);
+    expect(estimateAudioSeconds("audio/x-wav", wavBytes(7))).toBe(7);
+  });
+
+  it("opus/ogg: 12kbps floor gives an UPPER bound — a real 16-32kbps note over-estimates, never under", () => {
+    // 60s of 16kbps opus = 120,000 bytes → floor estimate ceil(80s) ≥ real 60s.
+    const bytes = new Uint8Array(120_000);
+    expect(estimateAudioSeconds("audio/ogg", bytes)).toBe(80);
+  });
+
+  it("the 2026-09-13 incident shape: a 2s WAV no longer meters as 300", () => {
+    // First prod self-test: token-type vendor usage → flat 300 fallback →
+    // 2p instead of the 1p floor. The estimator makes it honest.
+    expect(estimateAudioSeconds("audio/wav", wavBytes(2))).toBeLessThan(10);
+  });
+
+  it("floors at 1 and survives garbage headers", () => {
+    expect(estimateAudioSeconds("audio/wav", new Uint8Array(0))).toBe(1);
+    expect(estimateAudioSeconds("audio/wav", new Uint8Array(50))).toBe(1);
+    expect(estimateAudioSeconds("audio/mpeg", new Uint8Array(10))).toBe(1);
+  });
 });
 
 describe("credential resolution — the 2026-09-13 doctrine, in one place", () => {
@@ -137,7 +171,7 @@ describe("response handling — completed, metered, sanitised", () => {
     }
   });
 
-  it("ABSENT/invalid usage NEVER under-reports — worst-case cap is metered", async () => {
+  it("ABSENT/invalid usage NEVER under-reports — invalid seconds fall to the cap; an absent report meters the byte estimate", async () => {
     expect(usageSecondsToTokens(undefined)).toBe(MAX_TRANSCRIPTION_AUDIO_SECONDS);
     expect(usageSecondsToTokens(null)).toBe(MAX_TRANSCRIPTION_AUDIO_SECONDS);
     expect(usageSecondsToTokens(0)).toBe(MAX_TRANSCRIPTION_AUDIO_SECONDS);
@@ -151,7 +185,13 @@ describe("response handling — completed, metered, sanitised", () => {
     vi.stubGlobal("fetch", vi.fn(async () => okResponse({ text: "no usage here" })));
     const r = await runOpenAiTranscription({ orgId: "o1", audio, mimeType: "audio/ogg" }, BINDING);
     if (r.status === "completed") {
-      expect(r.usage?.inputTokens).toBe(MAX_TRANSCRIPTION_AUDIO_SECONDS);
+      // F2 ladder (2026-09-13): absent vendor usage now meters the
+      // CONSERVATIVE BYTE ESTIMATE (12kbps floor ⇒ an upper bound on true
+      // duration), not the flat 300 worst case that distorted telemetry
+      // ~150x on the first prod self-test. Still never under-reports.
+      expect(r.usage?.inputTokens).toBe(
+        Math.max(1, Math.ceil((audio.byteLength * 8) / 12_000)),
+      );
     } else {
       throw new Error("expected completed");
     }

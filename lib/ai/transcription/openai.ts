@@ -138,6 +138,43 @@ export function usageSecondsToTokens(seconds: unknown): number {
 }
 
 /**
+ * Conservative duration ESTIMATE from the audio bytes, in whole seconds —
+ * the middle rung of the metering ladder (F2 follow-up, 2026-09-13).
+ *
+ * The first production self-test proved gpt-4o-mini-transcribe returns
+ * TOKEN-type usage, not `{seconds}` — so the flat worst-case fallback metered
+ * a 2-second clip as 300 "seconds" (2p instead of the 1p floor): safe, but a
+ * ~150x distortion of per-call cost telemetry. This estimator replaces the
+ * flat fallback while preserving the NEVER-UNDER-REPORT doctrine:
+ *
+ *   - WAV: exact — the RIFF header's byte-rate field (offset 28, LE u32)
+ *     divides the payload precisely (the self-test's own format).
+ *   - Everything else: bytes at a FLOOR bitrate of 12 kbps — at or below any
+ *     plausible voice-note encoding (WhatsApp opus is 16-32 kbps), so the
+ *     estimate is an UPPER bound on true duration. Over-estimating by up to
+ *     ~2.7x on real opus is pennies-safe; under-estimating would let spend
+ *     hide from the ceiling, so the floor is deliberately low, never typical.
+ *
+ * Vendor-reported `{seconds}` (whisper-class models, or a future shape
+ * change) always wins over this estimate. Result is at least 1, uncapped —
+ * the over-cap refusal upstream must see the honest magnitude.
+ */
+export function estimateAudioSeconds(mimeBase: string, bytes: Uint8Array): number {
+  if (bytes.byteLength === 0) return 1;
+  if ((mimeBase === "audio/wav" || mimeBase === "audio/x-wav") && bytes.byteLength > 44) {
+    const riff = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
+    const wave = bytes[8] === 0x57 && bytes[9] === 0x41 && bytes[10] === 0x56 && bytes[11] === 0x45;
+    if (riff && wave) {
+      const byteRate =
+        (bytes[28]! | (bytes[29]! << 8) | (bytes[30]! << 16) | (bytes[31]! << 24)) >>> 0;
+      if (byteRate > 0) return Math.max(1, Math.ceil((bytes.byteLength - 44) / byteRate));
+    }
+  }
+  const FLOOR_BITS_PER_SECOND = 12_000;
+  return Math.max(1, Math.ceil((bytes.byteLength * 8) / FLOOR_BITS_PER_SECOND));
+}
+
+/**
  * The bound-provider call: one multipart POST to /v1/audio/transcriptions.
  *
  * THROWS on any transport/vendor failure — status-coded, BODY-FREE messages
@@ -213,10 +250,19 @@ export async function runOpenAiTranscription(
   const body = (parsed ?? {}) as { text?: unknown; usage?: { seconds?: unknown } | null };
 
   const transcript = sanitiseTranscript(typeof body.text === "string" ? body.text : "");
+  // Metering ladder: vendor-reported seconds > conservative byte estimate.
+  // (gpt-4o-*-transcribe returns token-type usage — proven on the first prod
+  // self-test — so the estimate is the working rung today; a vendor `seconds`
+  // field, if it ever appears, is authoritative.)
+  const vendorSeconds = body.usage?.seconds;
+  const meteredSeconds =
+    typeof vendorSeconds === "number" && Number.isFinite(vendorSeconds) && vendorSeconds > 0
+      ? Math.ceil(vendorSeconds)
+      : estimateAudioSeconds((input.mimeType ?? "").split(";")[0]!.trim().toLowerCase(), input.audio);
   const usage: TranscriptionUsage = {
     provider: binding.provider,
     model: binding.model,
-    inputTokens: usageSecondsToTokens(body.usage?.seconds),
+    inputTokens: meteredSeconds,
     outputTokens: 0,
   };
 
