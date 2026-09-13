@@ -226,3 +226,62 @@ describe("resolveInboundOrg — per-channel dispatch to the provisioned-route re
     expect(h.resolveOrgForDialedNumber).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// 4. ACTIVATION HARDENING (P2-5) — timing-safe auth + replay idempotency
+// ---------------------------------------------------------------------------
+describe("P2-5 — shared-secret comparison is timing-safe; dedup_key threads to the enquiry backstop", () => {
+  const src = codeOf(read(ROUTE));
+
+  beforeEach(() => {
+    vi.stubEnv("CHANNEL_INBOUND_SECRET", SECRET);
+    h.resolveOrgForDialedNumber.mockReset().mockResolvedValue(null);
+    h.resolveOrgForNumber.mockReset().mockResolvedValue(null);
+    h.resolveOrgForAddress.mockReset().mockResolvedValue(null);
+    h.processInboundEnquiry.mockClear();
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("SOURCE: the secret is compared with node:crypto timingSafeEqual — the `===` byte-oracle is gone", () => {
+    expect(src).toMatch(/timingSafeEqual\(/);
+    // The old short-circuiting comparison must not survive anywhere.
+    expect(src).not.toMatch(/supplied\s*!==\s*expected/);
+  });
+
+  it("BEHAVIOUR: correct secret authorises; wrong secret of the SAME length and of a DIFFERENT length both 401", async () => {
+    h.resolveOrgForDialedNumber.mockResolvedValue("org-REAL");
+    const ok = await callRoute(post({ to: "+441234567890", channel: "phone", raw_text: "hi" }));
+    expect(ok.status).toBe(200);
+
+    const sameLen = await callRoute(
+      post({ to: "+441234567890", channel: "phone" }, "x".repeat(SECRET.length)),
+    );
+    expect(sameLen.status).toBe(401);
+    const diffLen = await callRoute(post({ to: "+441234567890", channel: "phone" }, "short"));
+    expect(diffLen.status).toBe(401);
+  });
+
+  it("threads dedup_key into the enquiry as provider_message_id — arming the (org, provider_message_id) replay backstop", async () => {
+    h.resolveOrgForDialedNumber.mockResolvedValue("org-REAL");
+    const res = await callRoute(
+      post({ to: "+441234567890", channel: "phone", raw_text: "hi", dedup_key: "CAxyz123" }),
+    );
+    expect(res.status).toBe(200);
+    const arg = (
+      h.processInboundEnquiry.mock.calls[0] as unknown as [
+        { dedup_key: string | null; provider_message_id: string | null },
+      ]
+    )[0];
+    expect(arg.dedup_key).toBe("CAxyz123");
+    expect(arg.provider_message_id).toBe("CAxyz123");
+  });
+
+  it("an adapter that sends no dedup_key keeps at-least-once behaviour (provider_message_id null)", async () => {
+    h.resolveOrgForDialedNumber.mockResolvedValue("org-REAL");
+    await callRoute(post({ to: "+441234567890", channel: "phone", raw_text: "hi" }));
+    const arg = (
+      h.processInboundEnquiry.mock.calls[0] as unknown as [{ provider_message_id: string | null }]
+    )[0];
+    expect(arg.provider_message_id).toBeNull();
+  });
+});

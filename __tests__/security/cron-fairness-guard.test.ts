@@ -204,6 +204,8 @@ const ALLOWLIST: Record<string, string> = {
     "Loops a FIXED small horizon (m=0..monthsAhead) creating partitions idempotently — a bounded closed set in one pass, no external feed.",
   "task-reaper":
     "A single LIMIT-bounded RPC (hq_ai_task_reap p_limit); the iteration is in SQL over expired leases, not a TS loop over a persistent external candidate set.",
+  "whatsapp-events-sweep":
+    "LIMIT-bounded (batch ≤50, default 10) scan of retryable ingress rows ordered by created_at ASC; each candidate is taken via an atomic CAS reclaim (attempts + candidacy re-asserted in the UPDATE), so an overlapping pass or webhook redelivery loses cleanly and never double-processes. Self-draining: a re-run either completes the row (processed_at stamped — leaves the candidate set) or counts an attempt toward the max-attempts DEAD-LETTER (dead_lettered_at — also leaves the set), so the same head cannot be re-serviced forever. Dark-safe: the route 204s before telemetry while NEXT_PUBLIC_FEATURE_WHATSAPP is off (no events can exist while the webhook 404s).",
   "weather-watch-sync":
     "Network-free reconciliation: pure district derivation + internal upsert/update, NO external provider call per item; processes the complete paged live-job set in one pass — nothing goes on any wire, so no per-item latency can blow a budget.",
   "weather-delay-detect":

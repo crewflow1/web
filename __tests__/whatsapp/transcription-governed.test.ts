@@ -69,8 +69,10 @@ vi.mock("@/lib/supabase/admin", () => ({
 import {
   transcribeVoiceNoteGoverned,
   validateVoiceNoteAudio,
+  minimumAudioSeconds,
   MAX_TRANSCRIPTION_AUDIO_BYTES,
   MAX_TRANSCRIPTION_AUDIO_SECONDS,
+  PRESPEND_CEILING_BITS_PER_SECOND,
   isTranscriptionActivated,
   TRANSCRIPTION_MODEL,
 } from "@/lib/ai/transcription";
@@ -171,12 +173,15 @@ describe("transcribeVoiceNoteGoverned — ARMED + KEY runs the REAL governed pat
       expect(r.transcript).toBe("boiler fixed on site");
       expect(r.provider).toBe("openai");
       expect(r.model).toBe("gpt-4o-mini-transcribe");
-      // Duration-as-tokens: ceil(3.2s) = 4 "tokens", output side zero.
+      // Duration-as-tokens: ceil(3.2s) = 4 "tokens", output side zero. The
+      // seconds came from the vendor's own usage report, and the shape SAYS so
+      // (P1-3): only vendor-authoritative seconds may drive the over-cap refusal.
       expect(r.usage).toEqual({
         provider: "openai",
         model: "gpt-4o-mini-transcribe",
         inputTokens: 4,
         outputTokens: 0,
+        secondsSource: "vendor",
       });
       expect(r.recovered).toBeUndefined();
     }
@@ -405,6 +410,92 @@ describe("safe validation — rejects before any spend decision", () => {
     if (r.status === "failed") expect(r.error).toBe("audio_too_long");
     expect(adminState.constructions).toBe(0);
   });
+});
+
+describe("P1-3 — the paid-then-refused voice-note class is structurally impossible", () => {
+  const okResponse = (body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  /** A genuine 3-minute voice note at 32 kbps opus ≈ 720 KB. */
+  const genuineNote = new Uint8Array(720 * 1024);
+  /** A 10 MB "voice note" — ≥ 43 minutes even at the 32 kbps ceiling. */
+  const hostileNote = new Uint8Array(MAX_TRANSCRIPTION_AUDIO_BYTES);
+
+  it("PRE-SPEND bound: certainly-at-least seconds — WAV exact, 32 kbps ceiling otherwise", () => {
+    // Opus/unknown: bytes at the 32 kbps CEILING — a LOWER bound on duration.
+    expect(PRESPEND_CEILING_BITS_PER_SECOND).toBe(32_000);
+    expect(minimumAudioSeconds("audio/ogg", genuineNote)).toBe(
+      Math.floor((genuineNote.byteLength * 8) / 32_000), // 184s — under the cap
+    );
+    expect(minimumAudioSeconds("audio/ogg", hostileNote)).toBeGreaterThan(
+      MAX_TRANSCRIPTION_AUDIO_SECONDS, // 2621s — provably over-cap
+    );
+    // WAV: the RIFF header's byte-rate divides the payload EXACTLY.
+    const wav = new Uint8Array(44 + 32_000); // 2s at 16,000 B/s
+    wav.set([0x52, 0x49, 0x46, 0x46], 0); // RIFF
+    wav.set([0x57, 0x41, 0x56, 0x45], 8); // WAVE
+    wav[28] = 0x80; wav[29] = 0x3e; // byteRate 16000 LE
+    expect(minimumAudioSeconds("audio/wav", wav)).toBe(2);
+  });
+
+  it("a genuine 3-minute 32 kbps note PASSES pre-spend validation (the class this fix rescues)", () => {
+    expect(validateVoiceNoteAudio({ audio: genuineNote, mimeType: "audio/ogg; codecs=opus" })).toEqual({
+      ok: true,
+      mimeBase: "audio/ogg",
+    });
+  });
+
+  it("REGRESSION: the genuine note transcribes and is NOT refused when the vendor reports no seconds (estimate stays metering-only)", async () => {
+    // Pre-fix: the 12 kbps-floor METERING estimate (an upper bound — here 492s
+    // for 184-284s of real audio) fed the over-cap check, so this note was
+    // transcribed, BILLED, then refused. Now the estimate meters honestly and
+    // can never refuse: the transcript survives, the real settle still runs.
+    vi.stubEnv("TRANSCRIPTION_API_KEY", "sk-present");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => okResponse({ text: "three minutes of site notes" })), // no usage.seconds
+    );
+    const r = await transcribeVoiceNoteGoverned({
+      orgId: ORG,
+      audio: genuineNote,
+      mimeType: "audio/ogg; codecs=opus",
+    });
+    expect(r.status).toBe("completed");
+    if (r.status === "completed") {
+      expect(r.transcript).toBe("three minutes of site notes");
+      const estimate = Math.ceil((genuineNote.byteLength * 8) / 12_000);
+      expect(estimate).toBeGreaterThan(MAX_TRANSCRIPTION_AUDIO_SECONDS); // the old refusal trigger
+      expect(r.usage?.inputTokens).toBe(estimate); // metering unchanged: never under-bills
+      expect(r.usage?.secondsSource).toBe("estimate");
+    }
+    // The paid call is fully governed and settled — no refusal, no lost spend.
+    expect(adminState.rpcCalls.map((c) => c.fn)).toEqual([
+      "ai_reserve_invocation",
+      "ai_settle_reservation",
+    ]);
+  });
+
+  it("a 10 MB opus is refused PRE-SPEND: no reservation, no provider, no bill", async () => {
+    vi.stubEnv("TRANSCRIPTION_API_KEY", "sk-present");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const r = await transcribeVoiceNoteGoverned({
+      orgId: ORG,
+      audio: hostileNote,
+      mimeType: "audio/ogg",
+    });
+    expect(r.status).toBe("failed");
+    if (r.status === "failed") expect(r.error).toBe("audio_too_long");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(adminState.constructions, "provably over-cap ⇒ zero spend machinery").toBe(0);
+    expect(adminState.rpcCalls).toEqual([]);
+  });
+
+  // (The vendor-authoritative over-cap refusal — usage {seconds: 5200} still
+  // refused post-call with the REAL settle — is pinned above in the ARMED
+  // suite: "OVER-CAP audio (review F1)".)
 });
 
 describe("the governor is the AUTHORITY over the task class", () => {

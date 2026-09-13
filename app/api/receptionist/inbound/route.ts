@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import { isMaintenanceMode } from "@/lib/maintenance";
 import { z } from "zod";
 import { processInboundEnquiry } from "@/server/services/receptionist";
@@ -104,9 +105,21 @@ export async function POST(request: Request): Promise<NextResponse> {
   const rl = enforce(request, "receptionist_inbound", DEFAULT_LIMITS.api);
   if (rl) return rl as unknown as NextResponse;
 
+  // Constant-time secret comparison (P2-5): `===` short-circuits on the first
+  // differing byte, leaking a timing oracle an attacker can walk byte-by-byte.
+  // Same posture as verifyMetaSignature on the Meta webhook. The length check
+  // is unavoidable (timingSafeEqual requires equal lengths) and leaks only the
+  // secret's LENGTH class, not its content. Absent secret ⇒ reject everything
+  // (dark) — unchanged.
   const expected = process.env.CHANNEL_INBOUND_SECRET;
   const supplied = request.headers.get("x-crewflow-channel-secret");
-  if (!expected || !supplied || supplied !== expected) {
+  const authorised = (() => {
+    if (!expected || !supplied) return false;
+    const a = Buffer.from(supplied, "utf8");
+    const b = Buffer.from(expected, "utf8");
+    return a.length === b.length && timingSafeEqual(a, b);
+  })();
+  if (!authorised) {
     return NextResponse.json(
       { ok: false, error: "unauthorized" },
       { status: 401 },
@@ -170,6 +183,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       raw_text: parsed.data.raw_text ?? null,
       caller: parsed.data.caller ?? null,
       dedup_key: parsed.data.dedup_key ?? null,
+      // P2-5 — replay idempotency: the adapter's stable per-event id doubles
+      // as the enquiry's provider_message_id, arming the partial-unique
+      // (org, provider_message_id) DB backstop (20261043) on THIS endpoint
+      // too. Before this, only the outbound reply was deduped — a replayed
+      // POST re-created the enquiry AND the lead. Optional field: an adapter
+      // that sends no dedup_key keeps today's at-least-once behaviour.
+      provider_message_id: parsed.data.dedup_key ?? null,
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {

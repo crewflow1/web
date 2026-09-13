@@ -97,9 +97,21 @@ describeIntegration("whatsapp draft-first engine · real Postgres", () => {
     const audits = await auditsForOrg(org);
     expect(audits).toHaveLength(1);
     expect(audits[0]?.channel).toBe("whatsapp_msg");
+    // AUTO-SEND POSTURE (P2-9, 2026-09-13): a clean WhatsApp acknowledgement
+    // classifies `allow` but is DOWNGRADED to a held `review` while
+    // WHATSAPP_AUTO_SEND=false — the AI drafts, a human sends.
+    expect(audits[0]?.verdict).toBe("review");
+    expect(audits[0]?.allowed).toBe(false);
   });
 
-  it("DARK transport: the reply records no_provider on channel=whatsapp — NEVER sms, nothing sent", async () => {
+  it("AUTO-SEND POSTURE: the eligible reply is HELD — zero transports, NEVER an sms row, nothing sent", async () => {
+    // Pre-P2-9 this recorded a failed/no_provider WhatsApp transport (the
+    // `allow` verdict reached the dark transport seam). Under the standing
+    // draft-first posture the draft is HELD for the HQ review inbox instead:
+    // no transport attempt of ANY kind — which subsumes the original no-SMS
+    // fallback guarantee (an untransported reply cannot leak over SMS either).
+    // The transport seam itself (no_provider, opted_out, allowlist, claims) is
+    // proven via the human-reviewed send path in the hardening suite.
     vi.stubEnv(WHATSAPP_FLAG, "true");
     const org = await freshOrg();
     await enableWhatsApp(org);
@@ -113,12 +125,7 @@ describeIntegration("whatsapp draft-first engine · real Postgres", () => {
     });
 
     const transports = await transportsForOrg(org);
-    expect(transports).toHaveLength(1);
-    expect(transports[0]?.channel).toBe("whatsapp"); // the dark WhatsApp transport
-    expect(transports[0]?.status).toBe("failed");
-    expect(transports[0]?.failure_reason).toBe("no_provider");
-    // The no-fallback guarantee, proven in the ledger: not one SMS transport for this org.
-    expect(transports.filter((t) => t.channel === "sms")).toHaveLength(0);
+    expect(transports).toHaveLength(0);
   });
 
   it("FAIL CLOSED — feature flag off: a live org still drafts nothing", async () => {

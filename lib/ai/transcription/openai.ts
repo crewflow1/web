@@ -255,15 +255,20 @@ export async function runOpenAiTranscription(
   // self-test — so the estimate is the working rung today; a vendor `seconds`
   // field, if it ever appears, is authoritative.)
   const vendorSeconds = body.usage?.seconds;
-  const meteredSeconds =
-    typeof vendorSeconds === "number" && Number.isFinite(vendorSeconds) && vendorSeconds > 0
-      ? Math.ceil(vendorSeconds)
-      : estimateAudioSeconds((input.mimeType ?? "").split(";")[0]!.trim().toLowerCase(), input.audio);
+  const vendorAuthoritative =
+    typeof vendorSeconds === "number" && Number.isFinite(vendorSeconds) && vendorSeconds > 0;
+  const meteredSeconds = vendorAuthoritative
+    ? Math.ceil(vendorSeconds as number)
+    : estimateAudioSeconds((input.mimeType ?? "").split(";")[0]!.trim().toLowerCase(), input.audio);
   const usage: TranscriptionUsage = {
     provider: binding.provider,
     model: binding.model,
     inputTokens: meteredSeconds,
     outputTokens: 0,
+    // P1-3: name the rung so the seam can distinguish "the vendor PROVED this
+    // duration" (over-cap refusal may fire) from "our deliberate over-estimate"
+    // (metering only — never grounds to refuse a paid transcript).
+    secondsSource: vendorAuthoritative ? "vendor" : "estimate",
   };
 
   return {

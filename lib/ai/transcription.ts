@@ -145,6 +145,17 @@ export type TranscriptionUsage = {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  /**
+   * WHERE the metered seconds came from (P1-3, 2026-09-13):
+   *   "vendor"   — the provider's own usage report ({seconds}) — AUTHORITATIVE.
+   *   "estimate" — the transport's conservative byte estimate (12 kbps floor,
+   *                a deliberate UPPER bound so metering never under-bills).
+   * The post-call over-cap refusal fires ONLY on "vendor": an over-bound
+   * ESTIMATE must never refuse a genuinely-under-cap note the org already paid
+   * to transcribe. Optional so historical shapes stay valid; absent is treated
+   * as "estimate" (never refuse on it).
+   */
+  secondsSource?: "vendor" | "estimate";
 };
 
 export type TranscriptionResult =
@@ -279,15 +290,61 @@ export type AudioValidation =
   | { ok: false; reason: "empty" | "too_large" | "too_long" | "unsupported_mime" };
 
 /**
+ * The CEILING bitrate the pre-spend duration LOWER BOUND assumes (P1-3): a
+ * WhatsApp voice note is opus at 16-32 kbps, so dividing the bytes by 32 kbps
+ * yields seconds the audio CERTAINLY-AT-LEAST runs — an under-estimate on any
+ * plausible encoding. The mirror image of the transport's 12 kbps metering
+ * FLOOR (an over-estimate; lib/ai/transcription/openai.ts): TWO estimates for
+ * TWO purposes. Refusing pre-spend on a lower bound can never refuse a genuine
+ * under-cap note; metering on an upper bound can never under-bill. Neither
+ * number may serve the other's purpose.
+ */
+export const PRESPEND_CEILING_BITS_PER_SECOND = 32_000;
+
+/**
+ * Duration the audio PROVABLY at least runs, in whole seconds (P1-3 pre-spend
+ * bound). Pure and bounded: for WAV the RIFF header's byte-rate field makes
+ * the duration EXACT (a fixed-offset 4-byte read, not a container parser); for
+ * everything else, bytes at the 32 kbps ceiling bitrate above. Used ONLY to
+ * refuse `too_long` BEFORE any spend when even this certainly-at-least figure
+ * exceeds the cap — a 10 MB "voice note" is ≥ 43 minutes at 32 kbps and can be
+ * refused with zero provider contact, while a genuine 3-minute 32 kbps note
+ * (≈ 720 KB ⇒ bound ≈ 184s) sails through.
+ */
+export function minimumAudioSeconds(mimeBase: string, bytes: Uint8Array): number {
+  if (bytes.byteLength === 0) return 0;
+  if ((mimeBase === "audio/wav" || mimeBase === "audio/x-wav") && bytes.byteLength > 44) {
+    const riff = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
+    const wave = bytes[8] === 0x57 && bytes[9] === 0x41 && bytes[10] === 0x56 && bytes[11] === 0x45;
+    if (riff && wave) {
+      const byteRate =
+        (bytes[28]! | (bytes[29]! << 8) | (bytes[30]! << 16) | (bytes[31]! << 24)) >>> 0;
+      // Exact for WAV; floor (not ceil) keeps it a LOWER bound.
+      if (byteRate > 0) return Math.floor((bytes.byteLength - 44) / byteRate);
+    }
+  }
+  return Math.floor((bytes.byteLength * 8) / PRESPEND_CEILING_BITS_PER_SECOND);
+}
+
+/**
  * Validate voice-note audio before it can reach the (governed) transcription
  * call. Pure and side-effect-free — no I/O, no throw — so it is trivially tested
  * and can gate the spend decision without itself being able to fail open.
  *
  * `durationSeconds` is a DECLARED duration when the caller knows one (today's
  * WhatsApp descriptor doesn't declare it; a future caller or the activation
- * diff's provider metadata may). A declared duration over
- * MAX_TRANSCRIPTION_AUDIO_SECONDS refuses as `too_long`; with no declared
- * duration the tightened byte cap is the documented duration proxy.
+ * diff's provider metadata may). Refusals, in order:
+ *   • a DECLARED duration over MAX_TRANSCRIPTION_AUDIO_SECONDS → `too_long`;
+ *   • bytes over the tightened cap → `too_large`;
+ *   • an unlisted MIME → `unsupported_mime`;
+ *   • (P1-3) a PROVABLE over-cap: even the certainly-at-least duration bound
+ *     (minimumAudioSeconds — WAV-exact or bytes at a 32 kbps ceiling) exceeds
+ *     the cap → `too_long` BEFORE any spend. A note this bound admits is never
+ *     refused here — the previous byte-only proxy let a genuine 2-4-minute
+ *     16-32 kbps note through to a PAID call that the post-call check then
+ *     refused: transcribed, billed, discarded. That class is now impossible:
+ *     pre-spend refusal is provable-only, and the post-call refusal fires only
+ *     on vendor-authoritative seconds.
  */
 export function validateVoiceNoteAudio(input: {
   audio: Uint8Array;
@@ -307,6 +364,9 @@ export function validateVoiceNoteAudio(input: {
   }
   const base = (input.mimeType?.split(";")[0] ?? "").trim().toLowerCase();
   if (!base || !ALLOWED_AUDIO_MIME.has(base)) return { ok: false, reason: "unsupported_mime" };
+  if (minimumAudioSeconds(base, input.audio) > MAX_TRANSCRIPTION_AUDIO_SECONDS) {
+    return { ok: false, reason: "too_long" };
+  }
   return { ok: true, mimeBase: base };
 }
 
@@ -415,16 +475,27 @@ export async function transcribeVoiceNoteGoverned(
           TRANSCRIPTION_MODEL as TranscriptionModelBinding,
         );
         if (result.status === "completed" && result.usage) {
-          // OVER-CAP REFUSAL (review F1): WhatsApp declares no duration, so
-          // the 10MB byte cap is the only pre-spend duration proxy — and
-          // 10MB of low-bitrate opus can be ~5,000-7,000 REAL seconds. The
-          // vendor has already billed those seconds, so the REAL usage is
-          // settled exactly once (never under-reported, never clamped, never
-          // thrown-and-floored-to-1p, which would hide the true cost) — but
-          // the TRANSCRIPT of audio beyond the product's stated 300s cap is
+          // OVER-CAP REFUSAL (review F1, tightened by P1-3 2026-09-13): fires
+          // ONLY on VENDOR-AUTHORITATIVE seconds. The vendor has already
+          // billed them, so the REAL usage is settled exactly once (never
+          // under-reported, never clamped, never thrown-and-floored-to-1p,
+          // which would hide the true cost) — but the TRANSCRIPT of audio the
+          // vendor PROVED runs beyond the product's stated 300s cap is
           // REFUSED: it fails the row rather than persisting a transcript the
           // validator would have rejected had the duration been declared.
-          if (result.usage.inputTokens > MAX_TRANSCRIPTION_AUDIO_SECONDS) {
+          //
+          // An ESTIMATE can no longer trigger this refusal: the transport's
+          // 12 kbps-floor estimate is a deliberate UPPER bound for metering
+          // (never under-bills — unchanged), so judging the CAP by it refused
+          // genuine 2-4-minute 16-32 kbps notes AFTER paying for them
+          // (transcribed → billed → discarded). Provable over-cap input is now
+          // refused PRE-SPEND by the validator's certainly-at-least bound;
+          // anything that passed that bound and lacks vendor seconds keeps its
+          // paid transcript.
+          if (
+            result.usage.secondsSource === "vendor" &&
+            result.usage.inputTokens > MAX_TRANSCRIPTION_AUDIO_SECONDS
+          ) {
             return {
               value: {
                 status: "failed" as const,

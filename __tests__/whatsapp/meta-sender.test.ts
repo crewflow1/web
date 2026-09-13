@@ -87,6 +87,31 @@ describe("createMetaWhatsAppProvider — identity + the Graph API send contract"
   });
 });
 
+describe("createMetaWhatsAppProvider — founder-test recipient allowlist (activation-hardening P3)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("allowlist SET + recipient NOT listed ⇒ throws not_on_test_allowlist BEFORE any network contact", async () => {
+    vi.stubEnv("WHATSAPP_TEST_RECIPIENT_ALLOWLIST", "+447700900001,+447700900002");
+    await expect(
+      createMetaWhatsAppProvider().send({ to: "+447700900123", body: "x" }),
+    ).rejects.toThrow(/not_on_test_allowlist/);
+    expect(fetchMock, "an unlisted recipient must never reach the wire").not.toHaveBeenCalled();
+  });
+
+  it("allowlist SET + recipient listed ⇒ sends (digits-normalised comparison)", async () => {
+    vi.stubEnv("WHATSAPP_TEST_RECIPIENT_ALLOWLIST", " +44 7700 900123 ");
+    fetchMock.mockResolvedValue(okResponse({ messages: [{ id: "wamid.ALLOW.1" }] }));
+    const acceptance = await createMetaWhatsAppProvider().send({ to: "+447700900123", body: "hi" });
+    expect(acceptance.providerMessageId).toBe("wamid.ALLOW.1");
+  });
+
+  it("allowlist UNSET ⇒ no restriction (today's posture; SET on activation day per the CEO founder-only protocol)", async () => {
+    fetchMock.mockResolvedValue(okResponse({ messages: [{ id: "wamid.OPEN.1" }] }));
+    const acceptance = await createMetaWhatsAppProvider().send({ to: "+447700900123", body: "hi" });
+    expect(acceptance.providerMessageId).toBe("wamid.OPEN.1");
+  });
+});
+
 describe("getWhatsAppProvider — configured AND enabled ⇒ the real Meta provider (creds mocked present)", () => {
   // Credentials alone are NOT sufficient: getWhatsAppProvider also requires
   // NEXT_PUBLIC_FEATURE_WHATSAPP="true", so the flag kills the human-approval send path too

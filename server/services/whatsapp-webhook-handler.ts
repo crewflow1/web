@@ -15,6 +15,11 @@ import {
   resolveJobForCaller,
   runWhatsAppAssistantActions,
 } from "@/server/services/whatsapp-assistant-actions";
+import { detectOptOutSignal } from "@/lib/receptionist/optout";
+import {
+  recordWhatsAppOptOut,
+  removeWhatsAppOptOut,
+} from "@/server/services/whatsapp-optout";
 
 /**
  * WhatsApp inbound webhook handler — claim → route → hand off.
@@ -54,17 +59,23 @@ function adminTable(name: string) {
     update: (row: unknown) => {
       eq: (k: string, v: unknown) => {
         is: (k: string, v: unknown) => {
-          or: (f: string) => {
-            select: (cols: string) => Promise<{
-              data: Array<{ id: string }> | null;
-              error: { message: string } | null;
-            }>;
+          is: (k: string, v: unknown) => {
+            or: (f: string) => {
+              select: (cols: string) => Promise<{
+                data: Array<{ id: string }> | null;
+                error: { message: string } | null;
+              }>;
+            };
           };
         };
       } & Promise<{ error: { message: string } | null }>;
     };
     select: (cols: string) => {
       eq: (k: string, v: unknown) => {
+        maybeSingle: () => Promise<{
+          data: Record<string, unknown> | null;
+          error: { message: string } | null;
+        }>;
         eq: (k: string, v: unknown) => {
           maybeSingle: () => Promise<{
             data: Record<string, unknown> | null;
@@ -122,10 +133,13 @@ async function claimEvent(
   }
 
   const leaseCutoff = new Date(Date.now() - WHATSAPP_CLAIM_LEASE_MS).toISOString();
+  // Dead-lettered rows (sweep max-attempts terminal state) are NEVER reclaimed
+  // — not even by a fresh Meta redelivery; they are HQ-surfaced give-ups.
   const upd = await adminTable("whatsapp_webhook_events")
     .update({ claimed_at: nowIso, error_message: null })
     .eq("event_key", eventKey)
     .is("processed_at", null)
+    .is("dead_lettered_at", null)
     .or(`error_message.not.is.null,claimed_at.lt.${leaseCutoff}`)
     .select("id");
   if (upd.error) {
@@ -212,25 +226,88 @@ async function handleMessage(
     return;
   }
 
+  const outcome = await processClaimedMessage(msg, eventKey, orgId);
+  if (outcome === "dispatched") result.dispatched++;
+  else if (outcome === "unrouted") result.unrouted++;
+  else result.failed++;
+}
+
+/**
+ * Process ONE ALREADY-CLAIMED message event (the post-claim half of
+ * {@link handleMessage}). Exported for the failed-event sweep
+ * (server/services/whatsapp-events-sweep.ts), which reclaims a failed /
+ * lease-expired row through the SAME machinery and re-runs EXACTLY this —
+ * routing, opt-out handling, the unchanged ingestion core, the assistant
+ * layer, and the processed/failed stamping. The caller must hold the claim.
+ *
+ * `orgId` is the route resolution when the caller already made it (the live
+ * webhook); the sweep omits it and the route is RE-resolved — a number
+ * provisioned after the original failure attributes correctly on retry.
+ */
+export async function processClaimedMessage(
+  msg: NormalizedWhatsAppMessage,
+  eventKey: string,
+  orgId?: string | null,
+): Promise<"dispatched" | "unrouted" | "failed"> {
+  const resolvedOrgId =
+    orgId !== undefined ? orgId : await resolveOrgForNumber(msg.phone_number_id);
+
   // Unrouted number → ack-drop: mark done + record an HQ audit event, never
   // touch tenant data. An unattributable webhook has no org, so this goes to the
   // org-less admin activity log (recordAdminActivity) — NOT the notifications
   // table, whose org_id is NOT NULL and would silently reject a null-org insert.
-  if (!orgId) {
-    result.unrouted++;
-    await recordAdminActivity({
-      actorId: null,
-      actorEmail: null,
-      action: "whatsapp.unrouted_number",
-      targetTable: "whatsapp_webhook_events",
-      targetId: msg.wamid,
-      metadata: { phone_number_id: msg.phone_number_id, wamid: msg.wamid },
-    }).catch(() => undefined);
+  if (!resolvedOrgId) {
+    // target_id is uuid NOT NULL — a wamid string fails the insert SILENTLY
+    // (same class as review P1-1, pre-existing on main; fixed in this wave).
+    // The claimed event row's uuid anchors the audit; one indexed read.
+    const evRow = await adminTable("whatsapp_webhook_events")
+      .select("id")
+      .eq("event_key", eventKey)
+      .maybeSingle();
+    const eventRowId = (evRow.data as { id?: string } | null)?.id ?? null;
+    if (eventRowId) {
+      await recordAdminActivity({
+        actorId: null,
+        actorEmail: null,
+        action: "whatsapp.unrouted_number",
+        targetTable: "whatsapp_webhook_events",
+        targetId: eventRowId,
+        metadata: { phone_number_id: msg.phone_number_id, wamid: msg.wamid },
+      }).catch(() => undefined);
+    } else {
+      console.error("[whatsapp-webhook] unrouted-number audit skipped — event row not found", {
+        event_key: eventKey,
+      });
+    }
     await markProcessed(eventKey);
-    return;
+    return "unrouted";
   }
+  const orgIdFinal = resolvedOrgId;
 
   try {
+    // P2-7 — STOP/opt-out handling, BEFORE the ingestion core, so the drafting
+    // gate downstream already sees the suppression for this very message. TEXT
+    // messages only (a caption/placeholder is not an instruction), whole-
+    // message keyword match (lib/receptionist/optout.ts owns the contract).
+    // Recording THROWS on a DB failure → markFailed → the event stays
+    // retryable: an opt-out is never silently dropped. Only an explicit
+    // START/UNSTOP removes suppression — an ordinary follow-up never does.
+    if (msg.message_type === "text" && msg.caller) {
+      const signal = detectOptOutSignal(msg.raw_text);
+      if (signal === "opt_out") {
+        await recordWhatsAppOptOut({
+          orgId: orgIdFinal,
+          waId: msg.caller,
+          sourceWamid: msg.wamid,
+        });
+      } else if (signal === "opt_in") {
+        await removeWhatsAppOptOut({
+          orgId: orgIdFinal,
+          waId: msg.caller,
+          sourceWamid: msg.wamid,
+        });
+      }
+    }
     // Hand off to the UNCHANGED ingestion core — same path as phone/SMS. The wamid is BOTH
     // the outbound dedup_key (repeated deliveries fold to one reply) AND the inbound message
     // identity `provider_message_id` (Part 11) — the partial-unique DB backstop to the ingress
@@ -238,7 +315,7 @@ async function handleMessage(
     // (contact_name is captured in the normalized message + the webhook_events payload, but
     // InboundEnquiryInput does not accept it today — a deliberate follow-up.)
     const dispatch = await processInboundEnquiry({
-      org_id: orgId,
+      org_id: orgIdFinal,
       channel: "whatsapp_msg",
       raw_text: msg.raw_text,
       caller: msg.caller,
@@ -247,7 +324,6 @@ async function handleMessage(
       provider_timestamp: msg.provider_timestamp,
       has_media: msg.has_media,
     });
-    result.dispatched++;
 
     // MEDIA + ASSISTANT AUTO-ACTIONS — best-effort, AFTER the durable enquiry is
     // recorded. This is the P2 assistant layer: fetch inbound media bytes (dark
@@ -257,7 +333,7 @@ async function handleMessage(
     // enquiry is already durable, and the event is marked processed regardless.
     // Idempotent throughout (media id + (org,wamid,action_type)), so a retry that
     // reaches here again cannot double-act.
-    await runAssistantLayer(orgId, msg, dispatch.enquiry_id).catch((e) => {
+    await runAssistantLayer(orgIdFinal, msg, dispatch.enquiry_id).catch((e) => {
       console.error("[whatsapp-webhook] assistant layer failed (swallowed)", {
         wamid: msg.wamid,
         message: e instanceof Error ? e.message : String(e),
@@ -265,10 +341,11 @@ async function handleMessage(
     });
 
     await markProcessed(eventKey);
+    return "dispatched";
   } catch (e) {
     // Leave processed_at NULL so a retry re-runs — never a silent drop.
-    result.failed++;
     await markFailed(eventKey, e instanceof Error ? e.message : String(e));
+    return "failed";
   }
 }
 
@@ -334,21 +411,36 @@ async function handleStatus(
     return;
   }
 
-  // A status transition (sent/delivered/read/failed) is CLAIMED, then correlated to its
-  // outbound message via the WhatsApp receipt authority (PR3). recordWhatsAppDeliveryReceipt
-  // is the DISTINCT WhatsApp writer (captive to this handler; the SMS writer stays captive to
-  // the Twilio route) sharing the channel-agnostic core: it resolves the SENT transport by
-  // this wamid and appends an idempotent receipt on channel='whatsapp', copying org/audit from
-  // that row. An unknown wamid (EVERY wamid while outbound is dark — nothing was sent) records
-  // nothing and is a benign no-op. Only a genuine WRITE error leaves the event retryable.
+  const outcome = await processClaimedStatus(st, eventKey);
+  if (outcome === "failed") result.failed++;
+}
+
+/**
+ * Process ONE ALREADY-CLAIMED status event (the post-claim half of
+ * {@link handleStatus}) — exported for the failed-event sweep, exactly like
+ * {@link processClaimedMessage}. The caller must hold the claim.
+ *
+ * A status transition (sent/delivered/read/failed) is correlated to its
+ * outbound message via the WhatsApp receipt authority (PR3). recordWhatsAppDeliveryReceipt
+ * is the DISTINCT WhatsApp writer (captive to this handler; the SMS writer stays captive to
+ * the Twilio route) sharing the channel-agnostic core: it resolves the SENT transport by
+ * this wamid and appends an idempotent receipt on channel='whatsapp', copying org/audit from
+ * that row. An unknown wamid (EVERY wamid while outbound is dark — nothing was sent) records
+ * nothing and is a benign no-op. Only a genuine WRITE error leaves the event retryable.
+ */
+export async function processClaimedStatus(
+  st: NormalizedWhatsAppStatus,
+  eventKey: string,
+): Promise<"processed" | "failed"> {
   try {
     if (st.receipt) {
       await recordWhatsAppDeliveryReceipt(st.receipt);
     }
     await markProcessed(eventKey);
+    return "processed";
   } catch (e) {
-    result.failed++;
     await markFailed(eventKey, e instanceof Error ? e.message : String(e));
+    return "failed";
   }
 }
 

@@ -1,6 +1,7 @@
 import { afterAll, afterEach, expect, it, vi } from "vitest";
 import { describeIntegration, serviceClient } from "../_harness";
 import {
+  dispatchHumanReviewedReply,
   enforceAndAuditReply,
   processInboundEnquiry,
   recordWhatsAppDeliveryReceipt,
@@ -41,16 +42,35 @@ const EMPLOYEE_SLUG = "voice-receptionist-ai";
 const ALLOW_DRAFT = "Thanks for your message — a member of the team will get back to you shortly.";
 const createdOrgs: string[] = [];
 
-/** Seed an allowed audit on the WhatsApp channel (a random-UUID org — ledgers don't FK org). */
+/**
+ * Seed an allowed audit on the WhatsApp channel (a random-UUID org — ledgers
+ * don't FK org). Under the WhatsApp auto-send posture (P2-9, 2026-09-13) a
+ * clean draft is HELD (`review`) on this channel, so the ALLOWED audit — the
+ * only class the DB transport gate carries — is filed the way production now
+ * files one: through the HUMAN-REVIEWED send seam clearing the held reply.
+ * (The seam also records its own failed/no_provider transport attempt with
+ * dedup_key = the held audit id; the suite's seeded SENT transports use
+ * p_dedup_key null, so the two never collide.)
+ */
 async function seedAllowedAudit(orgId: string): Promise<string> {
-  const outcome = await enforceAndAuditReply({
+  const held = await enforceAndAuditReply({
     org_id: orgId,
     channel: "whatsapp_msg",
     correlation_id: crypto.randomUUID(),
     draft: ALLOW_DRAFT,
   });
-  expect(outcome.decision.allowed, "seed draft must be a clean allow").toBe(true);
-  return outcome.audit_id;
+  expect(held.decision.verdict, "posture: a clean WhatsApp draft is held").toBe("review");
+  const cleared = await dispatchHumanReviewedReply({
+    org_id: orgId,
+    channel: "whatsapp_msg",
+    draft: ALLOW_DRAFT,
+    review_audit_id: held.audit_id,
+    reviewed_by: crypto.randomUUID(),
+    destination: "+447700900123",
+  });
+  expect(cleared.decision?.allowed, "human clearance files the allowed audit").toBe(true);
+  expect(cleared.audit_id, "cleared audit id").toBeTruthy();
+  return cleared.audit_id as string;
 }
 
 /** Seed a SENT WhatsApp transport, returning the wamid it carries (the receipt correlation key). */

@@ -117,6 +117,7 @@ import {
 import { getTransportProvider, smsCostUsd } from "@/lib/comms";
 import type { SmsDeliveryReceipt, DeliveryStatus } from "@/lib/comms";
 import { canRunReceptionistChannel } from "@/server/services/receptionist-channel-eligibility";
+import { isWhatsAppOptedOut } from "@/server/services/whatsapp-optout";
 import { toE164 } from "@/lib/phone";
 import type { NotificationCreate } from "@/lib/notifications/types";
 import type {
@@ -312,11 +313,65 @@ async function writeReplyAudit(params: {
   return auditId;
 }
 
+/**
+ * WHATSAPP AUTO-SEND POSTURE (activation-hardening P2-9) — a BUILD CONSTANT,
+ * deliberately not an env var, mirroring the CHAT_AUTO_REPLY_GENERATIVE CEO
+ * hold (server/services/chat-auto-reply.ts): flipping it is a reviewed diff,
+ * never a config drift.
+ *
+ * HONEST STATUS: false — CEO HOLD. The guardrail's §9 A1 exception lets a
+ * clean ≤320-char draft auto-send (`allow`), which is right for the
+ * missed-call SMS text-back the exception was calibrated on — but it
+ * CONTRADICTS the standing draft-first / no-autonomous-customer-comms posture
+ * for WhatsApp (the WhatsApp milestone shipped "T3 draft-first, outbound
+ * dark"). While false, every WhatsApp-channel draft that classifies `allow`
+ * is DOWNGRADED to `review` in {@link enforceAndAuditReply} — audited as a
+ * held reply, surfaced in the HQ review inbox, sendable only through the
+ * human-reviewed seam ({@link dispatchHumanReviewedReply}, which files its own
+ * audit and is NOT downgraded — the human IS the authority). Scoped to the
+ * WhatsApp transport channel only: phone/SMS behaviour (the R6 text-back, a
+ * separate CEO decision) is byte-for-byte unchanged. Turning WhatsApp
+ * auto-send ON is a CEO decision expressed as a reviewed edit of this
+ * constant.
+ */
+export const WHATSAPP_AUTO_SEND = false;
+
 export async function enforceAndAuditReply(
   input: ReplyAuditContext & { draft: string },
 ): Promise<ReceptionistReplyOutcome> {
-  const decision = enforceReceptionistReply(input.draft);
+  let decision = enforceReceptionistReply(input.draft);
   const correlationId = input.correlation_id ?? crypto.randomUUID();
+
+  // P2-9 — WhatsApp auto-send hold: a clean `allow` on the WhatsApp channel is
+  // DOWNGRADED to a held `review` while WHATSAPP_AUTO_SEND is false. The
+  // downgrade happens BEFORE the audit so the ledger records the verdict that
+  // actually governed (review/held), with the automatic verdict preserved in
+  // metadata. Deny-by-default is only ever tightened here, never loosened —
+  // review/block verdicts pass through untouched, and non-WhatsApp channels
+  // (phone/SMS deterministic ack/text-back) are byte-for-byte unchanged.
+  const isWhatsAppChannel = transportChannelForInbound(input.channel) === "whatsapp";
+  let metadata = input.metadata;
+  if (!WHATSAPP_AUTO_SEND && isWhatsAppChannel && decision.verdict === "allow") {
+    const heldReason =
+      "Held for a human (WhatsApp auto-send posture): the draft classified `allow`, " +
+      "but WhatsApp is draft-first by standing decision (WHATSAPP_AUTO_SEND=false) — " +
+      "the AI drafts, a human sends.";
+    decision = {
+      allowed: false,
+      verdict: "review",
+      categories: decision.categories,
+      reason: heldReason,
+      // Nothing may ride the wire from a held reply; the review inbox sends the draft.
+      safeText: null,
+      result: {
+        ...decision.result,
+        verdict: "review",
+        reason: heldReason,
+        safeText: null,
+      },
+    };
+    metadata = { ...(metadata ?? {}), whatsapp_auto_send_downgraded: true, automatic_verdict: "allow" };
+  }
 
   const auditId = await writeReplyAudit({
     org_id: input.org_id,
@@ -332,7 +387,7 @@ export async function enforceAndAuditReply(
     lead_id: input.lead_id,
     customer_ref: input.customer_ref,
     conversation_id: input.conversation_id,
-    metadata: input.metadata,
+    metadata,
   });
 
   return {
@@ -568,6 +623,115 @@ async function recordTransport(args: {
   return transportId;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PRE-SEND CLAIM (activation-hardening P2-6). The partial-unique sent index is
+// written AFTER provider.send, so it stops the second RECORD, not the second
+// WIRE SEND — two concurrent approvals of one held reply could both reach the
+// provider. The claim moves the atomic step AHEAD of the wire: INSERT into
+// ai_reply_send_claims (PK org_id+dedup_key) is the claim; the loser gets an
+// honest already-sent/in-flight result and never dials the provider.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * How long a pre-send claim is honoured with no SENT transport behind it before
+ * it is treated as orphaned (a crash between claim and record). Generous
+ * against the provider timeout; a reclaim additionally requires that NO sent
+ * transport exists, so a slow-but-successful send is never re-sent.
+ */
+const SEND_CLAIM_LEASE_MS = 10 * 60 * 1000;
+
+type SendClaimTable = {
+  insert: (row: unknown) => Promise<{ error: { message: string; code?: string } | null }>;
+  update: (row: unknown) => {
+    eq: (k: string, v: unknown) => {
+      eq: (k: string, v: unknown) => {
+        lt: (k: string, v: unknown) => {
+          select: (cols: string) => Promise<{
+            data: Array<{ dedup_key: string }> | null;
+            error: { message: string } | null;
+          }>;
+        };
+      };
+    };
+  };
+  delete: () => {
+    eq: (k: string, v: unknown) => {
+      eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
+    };
+  };
+};
+
+function sendClaimTable(): SendClaimTable {
+  const admin = createAdminClient();
+  return admin.from("ai_reply_send_claims" as never) as unknown as SendClaimTable;
+}
+
+/**
+ * Atomically claim the send slot for (org, dedup_key) BEFORE the provider call.
+ * "won" ⇒ this caller may dial the provider. "held" ⇒ another dispatch already
+ * sent (or is in flight) — run nothing. A DB error THROWS (fail closed: a
+ * claim that cannot be verified must block dispatch, exactly like the dedup
+ * probe — never fail open into a possible double wire send).
+ *
+ * On collision, a reclaim is allowed ONLY when BOTH hold: no SENT transport
+ * exists for the key (the winner demonstrably did not complete) AND the
+ * claim's lease has expired (the winner is not merely slow).
+ */
+async function claimSendSlot(orgId: string, dedupKey: string): Promise<"won" | "held"> {
+  const ins = await sendClaimTable().insert({ org_id: orgId, dedup_key: dedupKey });
+  if (!ins.error) return "won";
+  const isDup = ins.error.code === "23505" || (ins.error.message?.includes("duplicate") ?? false);
+  if (!isDup) {
+    throw new Error(`ai_reply_send_claims claim failed: ${ins.error.message}`);
+  }
+  // Someone holds the slot. If they SENT, this is a straight duplicate.
+  const sent = await findSentTransport(orgId, dedupKey);
+  if (sent) return "held";
+  // No sent transport: reclaim only an EXPIRED lease (crash orphan), atomically.
+  const cutoff = new Date(Date.now() - SEND_CLAIM_LEASE_MS).toISOString();
+  const upd = await sendClaimTable()
+    .update({ claimed_at: new Date().toISOString() })
+    .eq("org_id", orgId)
+    .eq("dedup_key", dedupKey)
+    .lt("claimed_at", cutoff)
+    .select("dedup_key");
+  if (upd.error) {
+    throw new Error(`ai_reply_send_claims reclaim failed: ${upd.error.message}`);
+  }
+  return (upd.data?.length ?? 0) > 0 ? "won" : "held";
+}
+
+/**
+ * Release a claim whose send FAILED (recorded failed/provider_error) so a
+ * later retry may attempt again. Best-effort: an unreleased claim self-heals
+ * via the lease; never throw over an already-recorded failure.
+ */
+async function releaseSendSlot(orgId: string, dedupKey: string): Promise<void> {
+  const res = await sendClaimTable().delete().eq("org_id", orgId).eq("dedup_key", dedupKey);
+  if (res.error) {
+    console.error("[receptionist] send-claim release failed (lease will expire)", {
+      org_id: orgId,
+      message: res.error.message,
+    });
+  }
+}
+
+/**
+ * The founder-test recipient allowlist (activation-hardening P3), read at call
+ * time from WHATSAPP_TEST_RECIPIENT_ALLOWLIST (comma-separated E.164; see
+ * lib/env.ts). Returns null when UNSET (no restriction — today's state), or the
+ * digits-normalised set when SET (activation day: founder handsets only).
+ */
+function whatsappTestRecipientAllowlist(): Set<string> | null {
+  const raw = process.env.WHATSAPP_TEST_RECIPIENT_ALLOWLIST;
+  if (typeof raw !== "string" || raw.trim().length === 0) return null;
+  const entries = raw
+    .split(",")
+    .map((e) => e.replace(/\D/g, ""))
+    .filter((e) => e.length > 0);
+  return new Set(entries);
+}
+
 /**
  * The NO-DUPLICATE read: is there already a SENT transport for this org + dedup key?
  * Returns its id when one exists. The partial unique index `(dedup_key) where
@@ -644,6 +808,64 @@ async function transportReply(args: {
     };
   }
 
+  // (a2) WHATSAPP-ONLY REFUSAL GATES (activation hardening) — checked on the
+  //      resolved destination BEFORE any provider resolution, so the recorded
+  //      refusal reason is honest whether or not a provider is configured. SMS
+  //      is deliberately untouched (separate CEO decisions govern it).
+  if (channel === "whatsapp") {
+    // P2-7 — opt-out suppression: a recipient who said STOP is never dialled.
+    // isWhatsAppOptedOut THROWS on a read error — fail closed (the dispatch
+    // fails loudly), never "couldn't read the suppression list, send anyway".
+    if (await isWhatsAppOptedOut(args.org_id, e164)) {
+      const transportId = await recordTransport({
+        reply_audit_id: args.reply_audit_id,
+        org_id: args.org_id,
+        channel,
+        to_ref: e164,
+        status: "failed",
+        correlation_id: args.correlation_id,
+        provider: null,
+        failure_reason: "opted_out",
+        dedup_key: args.dedup_key,
+        metadata: baseMeta,
+      });
+      return {
+        attempted: true,
+        duplicate: false,
+        transport_id: transportId,
+        status: "failed",
+        provider_message_id: null,
+        failure_reason: "opted_out",
+      };
+    }
+    // P3 — founder-test allowlist: when WHATSAPP_TEST_RECIPIENT_ALLOWLIST is
+    // SET, only listed recipients may be dialled (activation-day protocol);
+    // unset ⇒ no restriction. Digits-normalised comparison on both sides.
+    const allowlist = whatsappTestRecipientAllowlist();
+    if (allowlist && !allowlist.has(e164.replace(/\D/g, ""))) {
+      const transportId = await recordTransport({
+        reply_audit_id: args.reply_audit_id,
+        org_id: args.org_id,
+        channel,
+        to_ref: e164,
+        status: "failed",
+        correlation_id: args.correlation_id,
+        provider: null,
+        failure_reason: "not_on_test_allowlist",
+        dedup_key: args.dedup_key,
+        metadata: baseMeta,
+      });
+      return {
+        attempted: true,
+        duplicate: false,
+        transport_id: transportId,
+        status: "failed",
+        provider_message_id: null,
+        failure_reason: "not_on_test_allowlist",
+      };
+    }
+  }
+
   // (b) No configured provider — graceful degradation. `getTransportProvider(channel)`
   //     resolves the provider for THIS channel only (no cross-channel fallback): a dark
   //     WhatsApp resolves to null here and records failed/no_provider on channel='whatsapp',
@@ -670,6 +892,32 @@ async function transportReply(args: {
       provider_message_id: null,
       failure_reason: "no_provider",
     };
+  }
+
+  // (c0) CLAIM BEFORE THE WIRE (P2-6). With a dedup key, the send slot is
+  //      claimed ATOMICALLY ahead of provider.send — two concurrent dispatches
+  //      of one key (e.g. a double-approved held reply) can no longer both
+  //      reach the provider: exactly one wins the INSERT; the loser returns an
+  //      honest duplicate/in-flight result with no wire contact. Keyless sends
+  //      (no dedup_key) keep their pre-existing behaviour — the caller opted
+  //      out of idempotency. A failed send RELEASES the claim so a retry may
+  //      attempt again; a successful send keeps it as the durable tombstone
+  //      alongside the partial-unique sent index (the post-hoc backstop).
+  if (args.dedup_key) {
+    const slot = await claimSendSlot(args.org_id, args.dedup_key);
+    if (slot === "held") {
+      const sentId = await findSentTransport(args.org_id, args.dedup_key);
+      return {
+        attempted: false,
+        duplicate: true,
+        transport_id: sentId,
+        status: "skipped",
+        provider_message_id: null,
+        // sentId null ⇒ the winner is still in flight (claimed, not yet
+        // recorded) — still a duplicate dispatch; nothing more may be sent.
+        failure_reason: sentId ? "duplicate" : "send_in_flight",
+      };
+    }
   }
 
   // (c) A real send. The seam resolves with the provider's acceptance or THROWS; either
@@ -718,6 +966,12 @@ async function transportReply(args: {
       dedup_key: args.dedup_key,
       metadata: { ...baseMeta, error: err instanceof Error ? err.message : String(err) },
     });
+    // The send FAILED and is durably recorded — release the pre-send claim so
+    // a later legitimate retry may attempt again (P2-6). Best-effort: an
+    // unreleased claim self-heals via the lease.
+    if (args.dedup_key) {
+      await releaseSendSlot(args.org_id, args.dedup_key);
+    }
     return {
       attempted: true,
       duplicate: false,
@@ -1933,7 +2187,11 @@ export type MissedCallTextbackResult =
         | "unsupported_channel"
         | "channel_not_enabled"
         | "no_destination"
-        | "duplicate_message";
+        | "duplicate_message"
+        // P2-7: the sender has explicitly opted out (STOP) — no AI drafting,
+        // no auto-ack, until an explicit START. The enquiry itself is still
+        // ingested and visible to the operator.
+        | "opted_out";
     }
   | { attempted: true; dispatch: ReceptionistDispatchOutcome }
   | { attempted: true; error: string };
@@ -1993,6 +2251,22 @@ async function maybeTextBackMissedCall(input: {
   }
   const destination = input.caller?.trim();
   if (!destination) return { attempted: false, reason: "no_destination" };
+
+  // P2-7 — opt-out suppression at the DRAFTING gate: an opted-out WhatsApp
+  // sender gets NO AI turn at all (no draft, no audit, no auto-ack) — not
+  // merely a refused transport. FAIL CLOSED: if the suppression list cannot be
+  // read, suppress rather than risk drafting/acking someone who said STOP.
+  // The enquiry itself is already durably ingested above this gate.
+  if (transportChannelForInbound(input.channel) === "whatsapp") {
+    try {
+      if (await isWhatsAppOptedOut(input.org_id, destination)) {
+        return { attempted: false, reason: "opted_out" };
+      }
+    } catch (err) {
+      console.error("[receptionist] opt-out read failed — suppressing turn (fail closed)", err);
+      return { attempted: false, reason: "opted_out" };
+    }
+  }
 
   try {
     // Route through the R15 CONVERSATION RUNTIME — the single orchestration layer. It resolves this
