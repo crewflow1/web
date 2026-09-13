@@ -4,9 +4,17 @@ import { resolve } from "node:path";
 import { CRON_ROUTES } from "@/lib/ops/cron-routes";
 import { buildOpsSnapshot } from "@/server/services/ops-snapshot";
 import { readAutomationHealth } from "@/server/services/automation-dispatcher";
-import { isEmbeddingActivated, isInferenceTierActivated } from "@/lib/ai/governor/readiness";
+import {
+  isEmbeddingActivated,
+  isInferenceTierActivated,
+  isTierActivated,
+} from "@/lib/ai/governor/readiness";
 import { TIER_MODEL } from "@/lib/ai/governor/registry";
 import { hqBudgetOrgId } from "@/lib/ai/governor/attribution";
+import {
+  isTranscriptionActivated,
+  isTranscriptionModelBound,
+} from "@/lib/ai/transcription";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -154,13 +162,84 @@ async function checkEmbeddingEstate(): Promise<ChecklistRow> {
   }
 }
 
+/**
+ * Transcription estate — the STT twin of the embedding-estate row. The tier is
+ * ARMED (2026-09-13: TRANSCRIPTION_MODEL + TIER_MODEL.transcription bound to
+ * openai/gpt-4o-mini-transcribe), so the honest state is TIER ACTIVATION ×
+ * CHANNEL: even fully activated, the only reachable production surface is the
+ * super-admin self-test on /admin/ai-costs, because the WhatsApp channel
+ * (NEXT_PUBLIC_FEATURE_WHATSAPP + Meta creds) is dark. Green only when tier
+ * AND channel are live; amber for every deliberate-dark combination, each
+ * named; never red — dark-by-design is not a failure. Includes the last
+ * self-test outcome when one is cheaply readable from the audit log.
+ */
+async function checkTranscriptionEstate(): Promise<ChecklistRow> {
+  const tierActivated = isTierActivated("transcription") && isTranscriptionActivated();
+  const bound = TIER_MODEL.transcription !== null && isTranscriptionModelBound();
+  const channelOn = process.env.NEXT_PUBLIC_FEATURE_WHATSAPP === "true";
+
+  // Last self-test outcome — one indexed read, best-effort. The error is BOUND
+  // and thrown into the catch (never discarded — the loud-read shape ledger's
+  // rule): a failed lookup logs and omits the fragment, it does not render a
+  // false "no self-test yet".
+  let selftest = "";
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from("admin_activity_log")
+      .select("metadata, created_at")
+      .eq("action", "transcription.selftest")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (error) throw error;
+    const row = (data?.[0] ?? null) as unknown as {
+      metadata?: { status?: unknown } | null;
+      created_at?: string;
+    } | null;
+    if (row?.metadata && typeof row.metadata.status === "string") {
+      selftest = `; last self-test: ${row.metadata.status}${
+        row.created_at ? ` (${row.created_at.slice(0, 10)})` : ""
+      }`;
+    }
+  } catch (e) {
+    console.error("[launch-readiness] transcription selftest lookup failed", e);
+  }
+
+  if (tierActivated && channelOn) {
+    return {
+      id: "transcription-estate",
+      label: "Transcription estate",
+      status: "green",
+      summary: `STT tier activated and WhatsApp channel on — voice notes transcribe under the governor${selftest}.`,
+    };
+  }
+  const parts = [
+    tierActivated
+      ? "provider armed (binding + credential)"
+      : bound
+        ? "tier bound, awaiting its credential (OPENAI_API_KEY, or the TRANSCRIPTION_API_KEY override)"
+        : "tier dark by design (no binding)",
+    channelOn
+      ? "WhatsApp channel flag on"
+      : "application path blocked by WhatsApp/Meta (channel dark — self-test on /admin/ai-costs is the only reachable surface)",
+  ];
+  return {
+    id: "transcription-estate",
+    label: "Transcription estate",
+    status: "amber",
+    summary: `Voice-note transcription — ${parts.join("; ")}${selftest}.`,
+  };
+}
+
 export async function buildLaunchReadiness(): Promise<LaunchReadiness> {
-  const [ops, autoHealth, hqAttribution, embeddingEstate] = await Promise.all([
-    buildOpsSnapshot(),
-    readAutomationHealth(),
-    checkHqAttribution(),
-    checkEmbeddingEstate(),
-  ]);
+  const [ops, autoHealth, hqAttribution, embeddingEstate, transcriptionEstate] =
+    await Promise.all([
+      buildOpsSnapshot(),
+      readAutomationHealth(),
+      checkHqAttribution(),
+      checkEmbeddingEstate(),
+      checkTranscriptionEstate(),
+    ]);
 
   // Aggregate cron health.
   const cronFailures7d = ops.crons.reduce((acc, c) => acc + c.failures_7d, 0);
@@ -238,6 +317,7 @@ export async function buildLaunchReadiness(): Promise<LaunchReadiness> {
     },
     hqAttribution,
     embeddingEstate,
+    transcriptionEstate,
     {
       id: "security-doc",
       label: "Security contract",

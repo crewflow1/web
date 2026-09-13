@@ -59,6 +59,22 @@ const VENDOR_CREDENTIAL: Readonly<Record<string, string>> = {
   openai: "OPENAI_API_KEY",
 };
 
+/**
+ * Tier → an OPTIONAL dedicated credential that ALSO satisfies that tier, ahead
+ * of the vendor default. Exactly one entry (transcription activation,
+ * 2026-09-13): TRANSCRIPTION_API_KEY is a dedicated OVERRIDE — an independent
+ * kill switch for STT spend — while the bound vendor's own key
+ * (OPENAI_API_KEY, already deployed for the embedding tier) is the DEFAULT
+ * credential. This map mirrors `resolveTranscriptionApiKey`
+ * (lib/ai/transcription/openai.ts — the activation's single new
+ * credential-read site), so readiness and the transport can never disagree
+ * about what arms the tier. The blocker for a bindful, keyless transcription
+ * tier names the DEFAULT key (the override is optional by design).
+ */
+const TIER_CREDENTIAL_OVERRIDE: Readonly<Partial<Record<AiTier, string>>> = {
+  transcription: "TRANSCRIPTION_API_KEY",
+};
+
 export type AiTierReadiness = {
   tier: AiTier;
   /** A concrete provider+model is bound to this tier in this build. */
@@ -148,9 +164,15 @@ export type AiGovernorReadiness = {
  */
 export const AI_UNGOVERNED_INFERENCE_ENTRY_POINTS = 0;
 
-/** Every vendor credential this build knows about, present or not. */
-export const KNOWN_VENDOR_CREDENTIALS: ReadonlyArray<string> =
-  Object.values(VENDOR_CREDENTIAL);
+/**
+ * Every AI credential this build knows about, present or not — the two vendor
+ * keys plus the dedicated per-tier overrides (TRANSCRIPTION_API_KEY since
+ * 2026-09-13), deduplicated. Feeds the readiness report's `credentialsPresent`,
+ * so an operator sees the override named when it is set.
+ */
+export const KNOWN_VENDOR_CREDENTIALS: ReadonlyArray<string> = [
+  ...new Set([...Object.values(VENDOR_CREDENTIAL), ...Object.values(TIER_CREDENTIAL_OVERRIDE)]),
+];
 
 /**
  * Compose one tier's readiness. Exported so a test can assert the invariant
@@ -167,8 +189,17 @@ export function composeTierReadiness(input: {
 }): AiTierReadiness {
   const modelBindingPresent = input.binding !== null;
   const envVar = input.binding ? VENDOR_CREDENTIAL[input.binding.provider] : undefined;
+  // TIER-AWARE (2026-09-13): a tier with a dedicated override credential is
+  // satisfied by EITHER key — the override, or the bound vendor's default.
+  // Today that is only transcription: TRANSCRIPTION_API_KEY OR (an openai
+  // binding riding the deployed OPENAI_API_KEY). Mirrors the transport's own
+  // resolution (resolveTranscriptionApiKey) so the green light and the actual
+  // call can never disagree.
+  const overrideVar = input.binding ? TIER_CREDENTIAL_OVERRIDE[input.tier] : undefined;
   const credentialsPresent =
-    input.credentialPresent ?? (envVar !== undefined && present(process.env[envVar]));
+    input.credentialPresent ??
+    ((overrideVar !== undefined && present(process.env[overrideVar])) ||
+      (envVar !== undefined && present(process.env[envVar])));
 
   // The invariant: no binding ⇒ NEVER resolvable, whatever the environment says.
   const providerResolvable = modelBindingPresent && credentialsPresent;
@@ -176,10 +207,13 @@ export function composeTierReadiness(input: {
   const blockers: string[] = [];
   if (!modelBindingPresent) {
     blockers.push(`no model bound to the '${input.tier}' tier in this build`);
-  } else if (envVar === undefined) {
+  } else if (envVar === undefined && overrideVar === undefined) {
     blockers.push(`no known credential for vendor '${input.binding?.provider}'`);
   } else if (!credentialsPresent) {
-    blockers.push(envVar);
+    // Name the GENUINELY missing key: the vendor default when the tier has one
+    // (a dedicated override is optional by design and never a blocker on its
+    // own), else the override for an unknown-vendor tier that carries one.
+    blockers.push(envVar ?? overrideVar!);
   }
 
   return {

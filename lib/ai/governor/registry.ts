@@ -17,10 +17,10 @@
  * codebase already learned this lesson once: lib/ai/text/index.ts made vendor
  * selection configuration-only. This does the same for model TIER.
  *
- * ARMED: cheap/mid/high 2026-09-10 and embedding 2026-09-11 (each a
- * CEO-approved reviewed diff); transcription REMAINS `null` (its own future
- * reviewed diff — it needs a transport implementation too). A `null` tier
- * still short-circuits `invokeWithGovernor`
+ * ARMED: cheap/mid/high 2026-09-10, embedding 2026-09-11, and transcription
+ * 2026-09-13 (each a CEO-approved reviewed diff; transcription shipped WITH its
+ * transport, lib/ai/transcription/openai.ts). A `null` tier still
+ * short-circuits `invokeWithGovernor`
  * before any provider. Every rebind is a deliberate edit HERE, paired with
  * credentials and CEO authorisation — see ./readiness.ts for why credentials
  * alone can never switch a tier on.
@@ -156,7 +156,7 @@ export type AiModelBinding = {
 
 /**
  * Tier → model. THE activation switch. cheap/mid/high are ARMED (2026-09-10,
- * CEO-approved); embedding/transcription are deliberately `null`.
+ * CEO-approved); embedding ARMED 2026-09-11; transcription ARMED 2026-09-13.
  *
  * A `null` binding means the tier reaches no provider, so `invokeWithGovernor`
  * runs the caller's existing degraded path and records nothing. Populating an
@@ -241,13 +241,38 @@ export const TIER_MODEL: Readonly<Record<AiTier, AiModelBinding | null>> = {
   },
   // The transcription (STT) modality's own switch — the governor-side COST
   // binding, distinct from the transport binding in lib/ai/transcription.ts
-  // (TRANSCRIPTION_MODEL). Both are null today. On activation BOTH are bound
-  // together: TRANSCRIPTION_MODEL does the vendor call; this entry states the
-  // worst-case reservation envelope so the ceiling can claim budget before an
-  // STT call whose true cost (audio seconds) is unknowable in advance. STT
-  // bills on audio, so `usdPerMTokOut`/`reserveOutputTokens` are 0 and
-  // `reserveInputTokens` encodes the worst-case audio duration as a token proxy.
-  transcription: null,
+  // (TRANSCRIPTION_MODEL). ARMED 2026-09-13 (CEO-approved: "Provider: OpenAI,
+  // Model: gpt-4o-mini-transcribe"), BOTH bound in the same reviewed diff:
+  // TRANSCRIPTION_MODEL does the vendor call; this entry prices and reserves it.
+  //
+  // ARITHMETIC — duration billed as a token proxy. STT bills on AUDIO SECONDS;
+  // the ledger meters tokens. The transport reports inputTokens =
+  // ceil(audio seconds) (worst-case MAX_TRANSCRIPTION_AUDIO_SECONDS when the
+  // vendor omits usage — never under-reported), so ONE "token" here is ONE
+  // SECOND of audio. Price verified from the official OpenAI pricing page
+  // 2026-09-13: $0.003/min = $0.00005/s ⇒ per-'token' $0.00005 = $50/MTok.
+  // Output is free and absent: usdPerMTokOut/reserveOutputTokens are 0.
+  //
+  // ENVELOPE — the validator's own 300s duration cap (MAX_TRANSCRIPTION_AUDIO_
+  // SECONDS; the 10 MB byte cap is its proxy when no duration is declared), so
+  // the reservation can never be smaller than the largest note the validator
+  // admits. Worst-case claim: 300 × 50 / 1e6 USD × 0.8 GBP × 100 = 1.2p ⇒ 2p
+  // after the ceil — a single max-length note reserves 2 pence and cannot
+  // starve the £100 ceiling.
+  //
+  // CREDENTIAL — tier-aware in ./readiness.ts: TRANSCRIPTION_API_KEY (optional
+  // dedicated override / independent kill switch) OR the deployed
+  // OPENAI_API_KEY (default since 2026-09-13; same vendor org, restricted key
+  // covering /v1/audio). REACHABILITY — the only production surface is the
+  // super-admin self-test on /admin/ai-costs; the WhatsApp channel stays dark.
+  transcription: {
+    provider: "openai",
+    model: "gpt-4o-mini-transcribe",
+    usdPerMTokIn: 50,
+    usdPerMTokOut: 0,
+    reserveInputTokens: 300,
+    reserveOutputTokens: 0,
+  },
 };
 
 /** The concrete model for a task class, or `null` when the tier is dark or the class reaches no model. */
@@ -401,18 +426,20 @@ export const AI_FEATURES = {
    * declaring `drafting` (to reach the text door) is refused by
    * invokeWithGovernor.
    *
-   * DARK: no STT model is bound (TRANSCRIPTION_MODEL is null), so the seam
-   * returns `deferred` with a null transcript and NEVER fabricates. The note is
-   * recorded with the deterministic placeholder text instead. There is no
-   * transcript until an STT model is bound AND its credential is present AND the
-   * `transcription` tier's cost binding (TIER_MODEL) is set.
+   * ARMED 2026-09-13 (openai/gpt-4o-mini-transcribe, transport + cost binding
+   * in one reviewed diff) — but the WHATSAPP CHANNEL IS DARK (transport null,
+   * flag off), so no tenant voice note reaches this seam in production. The
+   * only reachable surface is the super-admin self-test on /admin/ai-costs,
+   * which runs this exact governed path against synthetic audio. On a keyless
+   * deploy, or any refusal, the seam still defers with a null transcript and
+   * NEVER fabricates.
    */
   "voice_note.transcription": {
     key: "voice_note.transcription",
     label: "WhatsApp voice-note transcription",
     taskClass: "transcription",
     degradesTo:
-      "deferred — a null transcript that is NEVER fabricated. The voice note's job note keeps the deterministic placeholder (its caption / a fixed marker), and the operator still sees the stored audio bytes. Byte-identical to today while dark.",
+      "deferred — a null transcript that is NEVER fabricated. The voice note's job note keeps the deterministic placeholder (its caption / a fixed marker), and the operator still sees the stored audio bytes.",
   },
   /**
    * Quote drafting — a scope of works a human reviews, edits, prices and only

@@ -322,13 +322,23 @@ describe("THE RATCHET — no ungoverned inference path may return", () => {
       "lib/ai/embeddings/index.ts", // the embedding door
       "lib/ai/safety.ts", // defines the probe; gates nothing
       "lib/ai/text/index.ts", // the text door
+      // DELIBERATE ADDITION (transcription activation, 2026-09-13): the STT
+      // transport is the ONE new credential-read site of that wave. It reads
+      // OPENAI_API_KEY as the DEFAULT credential (TRANSCRIPTION_API_KEY is an
+      // optional dedicated override that wins when present — CEO-approved
+      // key-reuse doctrine; see resolveTranscriptionApiKey). It is TRANSPORT
+      // behind a gated seam, not an entry point: lib/ai/transcription.ts
+      // checks binding + credential and transcribeVoiceNoteGoverned validates
+      // and enters invokeWithGovernor BEFORE this file's fetch can run. Raw
+      // fetch, no SDK — so the SDK-construction allowlist above is untouched.
+      "lib/ai/transcription/openai.ts",
       "lib/ai/vision/index.ts", // the vision door
       "server/services/lead-summary.ts", // inside a governed, activation-gated leg
       "server/services/receptionist.ts", // inside a governed, activation-gated leg
       "server/services/research-llm.ts", // inside a governed, activation-gated leg
     ];
     expect(credentialFiles).toEqual(expected);
-    expect(credentialFiles).toHaveLength(7);
+    expect(credentialFiles).toHaveLength(8);
   });
 
   it("`isAiConfigured()` is called NOWHERE — it is a probe, not a gate", () => {

@@ -38,16 +38,21 @@ const envSchema = z.object({
   WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
   WHATSAPP_GRAPH_VERSION: z.string().optional(),
 
-  // -- Voice-note transcription (DARK) -----------------------------------
-  // A GOVERNOR-DARK seam mirroring the AI model-binding pattern: transcription
-  // only reaches a provider when BOTH a build-time binding exists (see
-  // lib/ai/transcription.ts TRANSCRIPTION_MODEL, deliberately null) AND this
-  // credential is present. Both absent ⇒ transcribeVoiceNote() returns a
-  // `deferred` result with transcript=null and NEVER fabricates a transcript.
-  // Deliberately NOT ANTHROPIC_API_KEY/OPENAI_API_KEY (those are the governed
-  // inference doors — transcription is a separate audio→text modality). Which
-  // vendor/model transcribes is a build-time binding (TRANSCRIPTION_MODEL),
-  // not an env selector — so there is no TRANSCRIPTION_PROVIDER variable.
+  // -- Voice-note transcription (ARMED 2026-09-13) ------------------------
+  // OPTIONAL dedicated-key OVERRIDE for the STT tier — an independent kill
+  // switch for transcription spend alone. Doctrine since 2026-09-13 (CEO-
+  // approved activation, openai/gpt-4o-mini-transcribe): when this is set it
+  // WINS; when absent the tier rides the already-deployed OPENAI_API_KEY
+  // (same vendor org — the restricted Model-capabilities key covers
+  // /v1/audio, so a second owner-created key is not technically necessary and
+  // unnecessary key ceremony was explicitly declined). Resolution lives in ONE
+  // place: resolveTranscriptionApiKey (lib/ai/transcription/openai.ts);
+  // readiness mirrors it tier-aware. Transcription still only reaches a
+  // provider when the build-time bindings exist (TRANSCRIPTION_MODEL +
+  // TIER_MODEL.transcription) AND a key resolves — keyless ⇒
+  // transcribeVoiceNote() defers with transcript=null and NEVER fabricates.
+  // Which vendor/model transcribes is a build-time binding, not an env
+  // selector — so there is no TRANSCRIPTION_PROVIDER variable.
   TRANSCRIPTION_API_KEY: z.string().optional(),
 
   // -- Twilio + Vapi (required when telephony code runs) ------------------

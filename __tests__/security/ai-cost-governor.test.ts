@@ -385,21 +385,27 @@ describe("A. no provider is activated and no credential is introduced", () => {
     // Embedding armed 2026-09-11 (reviewed diff): source-pin its exact model
     // id here too, so a drive-by rebind trips a security gate as well.
     expect(code).toMatch(/model:\s*"text-embedding-3-small"/);
-    // The modality that REMAINS dark, in source and at runtime.
-    expect(code).toMatch(/transcription:\s*null/);
+    // Transcription armed 2026-09-13 (reviewed diff, CEO-approved: OpenAI
+    // gpt-4o-mini-transcribe, shipped WITH its transport) — the last modality
+    // is now source-pinned like the rest; no tier remains null.
+    expect(code).toMatch(/model:\s*"gpt-4o-mini-transcribe"/);
+    expect(code).not.toMatch(/transcription:\s*null/);
     // Runtime-shape assertions live in __tests__/ai/governor-seam.test.ts and
     // __tests__/ai/tier-bindings.test.ts — THIS suite mocks TIER_MODEL with a
     // mutable ref for its governed-path scenarios, so only SOURCE pins here.
   });
 
-  it("the registry names ONE vendor and ONLY the three approved models — never from the environment", () => {
+  it("the registry names ONLY the approved vendors and models — never from the environment", () => {
     const code = codeOf(read(REGISTRY));
     // No foreign vendor may appear, and no UNPINNED Anthropic alias either:
-    // strip the three approved ids, then require zero model-shaped residue.
+    // strip the approved ids (three Anthropic generative models, the OpenAI
+    // embedding model implicitly unmatched by the residue pattern, and the
+    // 2026-09-13 OpenAI STT model), then require zero model-shaped residue.
     const residue = code
       .replaceAll("claude-haiku-4-5-20251001", "")
       .replaceAll("claude-sonnet-5", "")
-      .replaceAll("claude-opus-5", "");
+      .replaceAll("claude-opus-5", "")
+      .replaceAll("gpt-4o-mini-transcribe", "");
     expect(residue).not.toMatch(/claude-|gpt-4|gpt-5|gemini|mistral|llama|haiku|sonnet|opus/i);
     // The binding is still not readable from the environment: a model change
     // alters cost and quality for every tenant at once — reviewed diffs only.
@@ -407,8 +413,13 @@ describe("A. no provider is activated and no credential is introduced", () => {
   });
 
   it("NO new credential env var is introduced by ANY file in this wave", () => {
-    // The only two AI credentials this build knows are the ones that already
-    // existed (lib/ai/text/index.ts, lib/ai/safety.ts). This wave adds none.
+    // The vendor AI credentials this build knows are the two that already
+    // existed (lib/ai/text/index.ts, lib/ai/safety.ts) plus — since the
+    // 2026-09-13 transcription activation — TRANSCRIPTION_API_KEY, the
+    // OPTIONAL dedicated override readiness.ts now names tier-aware (its
+    // default credential is the existing OPENAI_API_KEY; the override is the
+    // independent STT kill switch). It was already declared in lib/env.ts by
+    // the dark seam; naming it in readiness is reporting, not a new secret.
     //
     // Two things are swept, because a credential can enter either way:
     //   (a) a direct `process.env.NAME` / `process.env["NAME"]` read;
@@ -416,7 +427,7 @@ describe("A. no provider is activated and no credential is introduced", () => {
     //       variables it probes, and how a new vendor would slip in.
     // Bare identifiers are deliberately NOT swept: a local like `MONTH_KEY` is
     // not a credential, and matching it would make this pin noise.
-    const ALLOWED = new Set(["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]);
+    const ALLOWED = new Set(["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "TRANSCRIPTION_API_KEY"]);
     const CREDENTIAL_SHAPED = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_(?:API_KEY|SECRET|TOKEN|PASSWORD)$/;
 
     for (const file of WAVE_TS) {
@@ -437,7 +448,15 @@ describe("A. no provider is activated and no credential is introduced", () => {
         expect(ALLOWED.has(n), `${file} names credential ${n}`).toBe(true);
       }
     }
-    expect([...KNOWN_VENDOR_CREDENTIALS].sort()).toEqual(["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]);
+    // The known-credential roster: the two vendor keys, plus the dedicated
+    // transcription override (2026-09-13) so the readiness report can name it
+    // when set. Growing this list is a reviewed act — it is how a new secret
+    // becomes visible to operators, never how one becomes a gate.
+    expect([...KNOWN_VENDOR_CREDENTIALS].sort()).toEqual([
+      "ANTHROPIC_API_KEY",
+      "OPENAI_API_KEY",
+      "TRANSCRIPTION_API_KEY",
+    ]);
   });
 
   it("the governor imports NO vendor SDK and opens NO network connection", () => {

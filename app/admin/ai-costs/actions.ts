@@ -8,8 +8,12 @@ import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   AI_MONTHLY_CEILING_HARD_MAX_PENCE,
+  hqBudgetOrgId,
   isAcceptableLimitPence,
 } from "@/lib/ai/governor";
+import { transcribeVoiceNoteGoverned } from "@/lib/ai/transcription";
+import { buildSelftestWav, SELFTEST_WAV_SECONDS } from "@/lib/ai/transcription/selftest";
+import { recordAdminActivity } from "@/server/services/hq-audit";
 
 /**
  * /admin/ai-costs — server actions for the EDITABLE budget controls.
@@ -157,6 +161,92 @@ export async function setEmployeeLimitAction(formData: FormData): Promise<void> 
     backTo({ error: "Couldn't save the limit — try again." });
   }
   backTo({ saved: "limit_set" });
+}
+
+// ── Transcription self-test ─────────────────────────────────────────────────
+
+/**
+ * "Run transcription self-test" — the PROVIDER-PROOF path for the STT tier
+ * (armed 2026-09-13). Generates a ~2-second synthetic WAV in process (pure PCM
+ * sine — our own bytes, no tenant audio) and runs it through the REAL
+ * `transcribeVoiceNoteGoverned` against the HQ budget org: validation →
+ * activation gates → atomic reservation → provider → settle → immutable ledger
+ * row (feature `voice_note.transcription`, visible in the By-feature table on
+ * this page). An honest, labelled ops diagnostic:
+ *
+ *   • It BYPASSES NOTHING. A dark or keyless tier refuses exactly as
+ *     production would (a `deferred` outcome, rendered as such); a governor
+ *     block/duplicate degrades identically. There is no side door.
+ *   • It NEVER exposes a credential. The redirect carries only the outcome
+ *     status, latency, provider/model label, and (for a completed run) the
+ *     transcript of our own synthetic audio — a sine tone, so usually "".
+ *   • Every run is audited (recordAdminActivity `transcription.selftest`).
+ *
+ * Same defence-in-depth gating as every action in this file: the /admin layout
+ * 404s non-allowlisted users AND requireAdmin re-checks isSuperAdminEmail.
+ */
+export async function runTranscriptionSelftestAction(): Promise<void> {
+  const admin = await requireAdmin();
+
+  const orgId = hqBudgetOrgId();
+  if (!orgId) {
+    backTo({
+      st_status: "refused",
+      st_reason:
+        "CREWFLOW_INTERNAL_ORG_ID unset — HQ-billed AI refuses fail-closed (no budget org to attribute the spend to).",
+    });
+  }
+
+  // Nonce-varied bytes: each run is a fresh SHA-256, so the governor's dedupe
+  // window and the seam's persist-first recovery never mask the provider.
+  const audio = buildSelftestWav(Date.now());
+  const startedAt = Date.now();
+  const result = await transcribeVoiceNoteGoverned({
+    orgId,
+    userId: null, // HQ spend runs unattributed to an employee, like all HQ AI.
+    audio,
+    mimeType: "audio/wav",
+    durationSeconds: SELFTEST_WAV_SECONDS,
+  });
+  const latencyMs = Date.now() - startedAt;
+
+  const reason =
+    result.status === "deferred"
+      ? result.reason
+      : result.status === "failed"
+        ? result.error.slice(0, 120)
+        : null;
+  const recovered = result.status === "completed" && result.recovered === true;
+
+  await recordAdminActivity({
+    actorId: admin.id,
+    actorEmail: admin.email,
+    action: "transcription.selftest",
+    targetTable: "ai_invocations",
+    targetId: orgId,
+    metadata: {
+      status: result.status,
+      latency_ms: latencyMs,
+      reason,
+      recovered,
+      provider: result.status === "completed" ? result.provider : null,
+      model: result.status === "completed" ? result.model : null,
+      audio_bytes: audio.byteLength,
+    },
+  });
+
+  backTo({
+    st_status: result.status,
+    st_ms: String(latencyMs),
+    ...(reason ? { st_reason: reason } : {}),
+    ...(result.status === "completed"
+      ? {
+          st_model: `${result.provider}/${result.model}`,
+          st_text: result.transcript.slice(0, 300),
+          ...(recovered ? { st_recovered: "1" } : {}),
+        }
+      : {}),
+  });
 }
 
 export async function clearEmployeeLimitAction(formData: FormData): Promise<void> {
