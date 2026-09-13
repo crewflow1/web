@@ -9,17 +9,16 @@ import "server-only";
  * whatever configuration selects. Swapping vendors adds a sibling file and a
  * factory branch; the worker does not change.
  *
- * Model: `claude-haiku-4-5` — fast + cheap for short summaries, matching the
- * preference already in `lib/ai/llm.ts`. The `@anthropic-ai/sdk` is
- * dynamically imported so it never enters a bundle that doesn't generate text.
- * `generate()` THROWS on failure — the worker owns skip / retry / backoff and
- * records the failure reason.
+ * Model: ALWAYS the caller's tier binding — the factory (`./index`) passes
+ * `binding.model` and this transport has NO default of its own (2026-09-13
+ * hardening: the old inert `DEFAULT_MODEL` fallback was a literal the registry
+ * never authorised, one refactor away from running). The `@anthropic-ai/sdk`
+ * is dynamically imported so it never enters a bundle that doesn't generate
+ * text. `generate()` THROWS on failure — the worker owns skip / retry /
+ * backoff and records the failure reason.
  */
 
 import type { TextGenerationOptions, TextModelInfo, TextProvider, TextResult } from "./types";
-
-// Inert fallback only — getTextProvider always passes the tier binding's model.
-const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 
 /** Pre-4.6-generation models (Haiku 4.5) still accept sampling params and do
  *  not run default-on thinking; 4.6+ models (sonnet-5/opus-5) reject
@@ -41,9 +40,11 @@ const DEFAULT_MAX_TOKENS = 1024;
 /**
  * Build the Anthropic provider for a given key. Pure construction — no network
  * call here, so the factory can hand one out cheaply and the worker reuses it
- * across a batch.
+ * across a batch. `model` is REQUIRED: only the factory's tier binding may
+ * name a model, so a construction site that forgets one is a compile error,
+ * never a silent literal.
  */
-export function createAnthropicTextProvider(apiKey: string, model: string = DEFAULT_MODEL): TextProvider {
+export function createAnthropicTextProvider(apiKey: string, model: string): TextProvider {
   const info: TextModelInfo = { provider: "anthropic", model };
 
   return {

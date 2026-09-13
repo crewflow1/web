@@ -63,11 +63,6 @@ import {
 } from "@/lib/research/prompts";
 
 const RESEARCH_LLM_TIMEOUT_MS = 22_000;
-// Resolved from the canonical HIGH binding — this service registered its two
-// features as complex→high, and executing a cheaper hard-coded model while
-// being priced at the high envelope was the divergence the activation diff
-// closes (fallback mirrors the binding; the high gate refuses when dark).
-const ANTHROPIC_MODEL = TIER_MODEL.high?.model ?? "claude-opus-5";
 
 type LlmProvider = Exclude<ResearchProvenance, "deterministic">;
 
@@ -151,12 +146,23 @@ async function callJsonWithProvider(
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (!anthropicKey) return { value: null, usage: null };
 
+  // Resolved from the canonical HIGH binding — this service registered its two
+  // features as complex→high, so the ONLY model this leg may run is the one
+  // the high-tier binding names. HARD READ, no literal fallback (2026-09-13
+  // hardening): callJson's isTierActivated("high") gate refuses before this
+  // leg when the tier is dark, so a null binding here means that guarantee
+  // broke. `usage: null` tells the governor NO PROVIDER WAS REACHED — the
+  // claim is released and the runner proceeds on the deterministic evidence.
+  const binding = TIER_MODEL.high;
+  if (!binding) return { value: null, usage: null };
+  const anthropicModel = binding.model;
+
   try {
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
     const client = new Anthropic({ apiKey: anthropicKey });
     const msg = await client.messages.create(
       {
-        model: ANTHROPIC_MODEL,
+        model: anthropicModel,
         max_tokens: maxTokens,
         system,
         messages: [{ role: "user", content: user }],
@@ -164,7 +170,7 @@ async function callJsonWithProvider(
         // max_tokens — a research cap shared with thinking risks truncated or
         // empty JSON. Same compatibility rule as the shared adapter
         // (lib/ai/text/anthropic.ts).
-        ...(acceptsSampling(ANTHROPIC_MODEL)
+        ...(acceptsSampling(anthropicModel)
           ? {}
           : { thinking: { type: "disabled" as const } }),
       },
@@ -176,7 +182,7 @@ async function callJsonWithProvider(
         value: { text: block.text, provider: "anthropic" },
         usage: {
           provider: "anthropic",
-          model: msg.model ?? ANTHROPIC_MODEL,
+          model: msg.model ?? anthropicModel,
           inputTokens: msg.usage?.input_tokens ?? 0,
           outputTokens: msg.usage?.output_tokens ?? 0,
         },

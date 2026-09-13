@@ -128,6 +128,19 @@ const envSchema = z.object({
   // enum) so a new provider needs zero env-schema edits.
   MEMORY_TEXT_PROVIDER: z.string().optional(),
 
+  // -- Vision (document/image extraction) door ----------------------------
+  // Names the active vision vendor for the shared vision door
+  // (lib/ai/vision/index.ts): receipt OCR → expense drafts and PDF/photo →
+  // import sheets. Default "anthropic" — the only vendor with a
+  // document-block implementation today. Selection is NOT activation: the
+  // door refuses unless the CHEAP cost tier is bound AND the vendor's own key
+  // (ANTHROPIC_API_KEY) is present, so this variable alone can switch nothing
+  // on — it can only switch the door OFF ("none"/"off"/"disabled") or pin the
+  // vendor. Introduces no credential. Declared here (2026-09-13 residue fix)
+  // because the door already read it undeclared; free string (not an enum) so
+  // a new provider needs zero env-schema edits.
+  AI_VISION_PROVIDER: z.string().optional(),
+
   // -- Email --------------------------------------------------------------
   RESEND_API_KEY: z.string().optional(),
   RESEND_FROM_EMAIL: z.string().default("CrewFlow <hello@crewflow.uk>"),

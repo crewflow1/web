@@ -222,11 +222,35 @@ describe("getTextProvider — null when unconfigured, provider when configured",
 });
 
 // =====================================================================
+// 2b. Constructors REQUIRE a model — compile-level (2026-09-13 residue fix)
+// =====================================================================
+
+describe("provider constructors require the bound model at compile time", () => {
+  it("a construction site that omits the model is a type error, never a silent literal", () => {
+    // The transports used to default the parameter to a DEFAULT_MODEL literal
+    // the registry never authorised. The defaults are gone; only a factory
+    // holding a tier binding can name the model that runs. These stay as
+    // functions (never called) — the assertion is the @ts-expect-error: if a
+    // default ever returns, the suppressed error disappears and tsc fails.
+    const omitted = [
+      // @ts-expect-error — model is required (no transport default survives)
+      () => createAnthropicTextProvider("sk-ant-test"),
+      // @ts-expect-error — model is required (no transport default survives)
+      () => createOpenAiTextProvider("sk-test"),
+    ];
+    expect(omitted).toHaveLength(2);
+  });
+});
+
+// =====================================================================
 // 3. Anthropic provider.generate() — mocked SDK, deterministic
 // =====================================================================
 
 describe("Anthropic provider.generate — text, tokens, options, failure", () => {
-  const provider = createAnthropicTextProvider("sk-ant-test");
+  // The model argument is REQUIRED since the 2026-09-13 residue hardening —
+  // the transport no longer carries a DEFAULT_MODEL literal, so the test names
+  // the cheap binding's model exactly as the factory would.
+  const provider = createAnthropicTextProvider("sk-ant-test", "claude-haiku-4-5-20251001");
 
   afterEach(() => vi.clearAllMocks());
 
@@ -296,7 +320,9 @@ describe("Anthropic provider.generate — text, tokens, options, failure", () =>
 // =====================================================================
 
 describe("OpenAI provider.generate — text, tokens, options, failure", () => {
-  const provider = createOpenAiTextProvider("sk-test");
+  // Model REQUIRED since the 2026-09-13 residue hardening (no DEFAULT_MODEL
+  // literal left in the transport); named here as a binding would name it.
+  const provider = createOpenAiTextProvider("sk-test", "gpt-4o-mini");
 
   afterEach(() => vi.clearAllMocks());
 

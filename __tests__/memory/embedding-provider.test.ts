@@ -294,6 +294,19 @@ describe("OpenAI provider.embed — order, tokens, failure propagation", () => {
 
   afterEach(() => vi.clearAllMocks());
 
+  it("the transport's PINNED model and the registry binding agree (double-lock pin)", async () => {
+    // 2026-09-13 residue review: the const in lib/ai/embeddings/openai.ts is
+    // DELIBERATELY not derived from TIER_MODEL.embedding — deriving would make
+    // the factory's mismatch refusal vacuous and silently follow a drive-by
+    // registry rebind. This pin is the other half of that decision: the const
+    // and the binding may only move together, in one reviewed diff. If the
+    // binding is ever rebound alone, the factory goes dark (refuses) AND this
+    // test fails — loud in CI, dark in prod, never a silent follow.
+    const { TIER_MODEL } = await import("@/lib/ai/governor/registry");
+    expect(provider.info.model).toBe("text-embedding-3-small");
+    expect(TIER_MODEL.embedding?.model).toBe(provider.info.model);
+  });
+
   it("returns an empty result for an empty batch WITHOUT touching the network", async () => {
     const out = await provider.embed([]);
     expect(out).toEqual({ vectors: [], model: "text-embedding-3-small", dimension: 1536, tokens: 0 });

@@ -18,6 +18,9 @@ import { runWeatherWatchSync } from "@/server/services/weather-watch-sync";
  * OR NOT a provider is bound — so that watches already exist the moment one is,
  * and so the readiness surface can report `hasActiveWatches` honestly. The
  * FETCH half stays dark; the producer does not. (See the service header.)
+ * Re-confirmed on the 2026-09-13 residue review: a WEATHER_PROVIDER-unset ⇒
+ * 204 gate here would be WRONG, not merely omitted — it would stop watch
+ * production exactly when it must keep running (pre-activation).
  *
  * This route IS registered in vercel.json (a few times daily) — that is the
  * point of the fix, and the line that distinguishes it from the fetch cron,

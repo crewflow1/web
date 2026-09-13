@@ -23,6 +23,13 @@ import type {
 } from "./types";
 import { assertValidEmbedding, embeddingVersion } from "./versioning";
 
+// DELIBERATELY A PINNED CONST, not derived from TIER_MODEL.embedding (kept on
+// the 2026-09-13 residue review): deriving would make the factory's
+// const-vs-binding mismatch refusal (lib/ai/embeddings/index.ts) vacuous — a
+// drive-by registry rebind would be silently followed instead of going dark.
+// The double-lock is the point: this const and the binding must agree, and a
+// test pins MODEL === TIER_MODEL.embedding.model so the two can only move in
+// one reviewed diff (__tests__/memory/embedding-provider.test.ts).
 const MODEL = "text-embedding-3-small";
 const DIMENSION = 1536;
 

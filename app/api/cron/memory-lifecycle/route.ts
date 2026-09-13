@@ -34,6 +34,17 @@ export async function GET(request: Request): Promise<NextResponse> {
   if (!isCronAuthorised(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  // NO pre-telemetry dark short-circuit here, DELIBERATELY (2026-09-13 residue
+  // review) — unlike memory-embed's 204. That route's whole job is embedding,
+  // so `isEmbeddingConfigured()` (a synchronous env/registry check, no DB) can
+  // prove a dark tick is a guaranteed no-op before telemetry. This worker has
+  // no such cheap predicate: its ONLY gate is the hq_memory_lifecycle_enabled
+  // DB flag, and its expiry/decay/dedup reducers are provider-independent SQL
+  // that must run even with NO text provider bound — so no env check can prove
+  // a no-op, and gating on `getTextProvider(...) === null` would silently stop
+  // TTL expiry and decay archival. Checking the DB flag here would itself be a
+  // DB read, defeating the point of a pre-telemetry short-circuit; the flag-off
+  // case is already a single cheap RPC inside the telemetry envelope.
   const url = new URL(request.url);
   // `limit` bounds how many rows each SQL pass may scan in a single invocation —
   // a manual catch-up kick can raise it; the scheduled tick uses the default.
