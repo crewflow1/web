@@ -297,13 +297,17 @@ describe("transcribeVoiceNoteGoverned — ARMED + KEY runs the REAL governed pat
     if (r.status === "completed") expect(r.transcript).toBe("");
   });
 
-  it("ABSENT usage NEVER under-reports: metered at the worst-case duration cap", async () => {
+  it("ABSENT usage NEVER under-reports: metered at the conservative byte estimate (F2 ladder)", async () => {
     vi.stubEnv("TRANSCRIPTION_API_KEY", "sk-present");
     vi.stubGlobal("fetch", vi.fn(async () => okResponse({ text: "hello" })));
     const r = await transcribeVoiceNoteGoverned({ orgId: ORG, audio, mimeType: "audio/ogg" });
     expect(r.status).toBe("completed");
     if (r.status === "completed") {
-      expect(r.usage?.inputTokens).toBe(MAX_TRANSCRIPTION_AUDIO_SECONDS);
+      // 12kbps-floor estimate: an UPPER bound on true duration (never under),
+      // honest instead of the flat 300 that inflated telemetry ~150x.
+      const expected = Math.max(1, Math.ceil((audio.byteLength * 8) / 12_000));
+      expect(r.usage?.inputTokens).toBe(expected);
+      expect(expected).toBeLessThan(MAX_TRANSCRIPTION_AUDIO_SECONDS);
     }
   });
 });
