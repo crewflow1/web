@@ -192,6 +192,43 @@ describe("transcribeVoiceNoteGoverned — ARMED + KEY runs the REAL governed pat
     );
   });
 
+  it("OVER-CAP audio (review F1): real usage is settled ONCE, the transcript is REFUSED", async () => {
+    // A 10MB low-bitrate opus can be ~5,000+ REAL seconds — the byte cap is
+    // the only pre-spend proxy, so the vendor may bill far beyond the 300s
+    // product cap. The REAL seconds must be settled (never clamped, never
+    // floored via a throw) but the transcript must fail: a note the validator
+    // would have refused (had duration been declared) never persists.
+    vi.stubEnv("TRANSCRIPTION_API_KEY", "sk-present");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        okResponse({ text: "a very long hostile transcript", usage: { seconds: 5200 } }),
+      ),
+    );
+
+    const r = await transcribeVoiceNoteGoverned({
+      orgId: ORG,
+      audio,
+      mimeType: "audio/ogg",
+    });
+
+    expect(r.status).toBe("failed");
+    if (r.status === "failed") {
+      expect(r.transcript).toBeNull();
+      expect(r.error).toBe("transcription_over_duration_cap");
+    }
+    // The full governed lifecycle still ran — the vendor billed those seconds,
+    // so they are settled exactly once at their REAL magnitude.
+    expect(adminState.rpcCalls.map((c) => c.fn)).toEqual([
+      "ai_reserve_invocation",
+      "ai_settle_reservation",
+    ]);
+    const settle = adminState.rpcCalls.find((c) => c.fn === "ai_settle_reservation");
+    // 5,200 'tokens' × $50/MTok × 0.8 × 100 = 20.8 → 21p — the honest overrun,
+    // recorded (and alarmed via overrun_count), never hidden at a 1p floor.
+    expect((settle?.args as Record<string, unknown>).p_cost_pence).toBe(21);
+  });
+
   it("also arms on OPENAI_API_KEY alone — the default-credential doctrine", async () => {
     vi.stubEnv("OPENAI_API_KEY", "sk-shared-key");
     vi.stubGlobal(

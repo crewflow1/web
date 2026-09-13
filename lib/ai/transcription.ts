@@ -167,7 +167,7 @@ export type TranscriptionResult =
    * DARK: no model bound / no credential. transcript is null — NEVER fabricated.
    * The caller stores null and shows the deterministic placeholder instead.
    */
-  | { status: "deferred"; transcript: null; reason: "no_model_bound" | "no_credential" }
+  | { status: "deferred"; transcript: null; reason: "no_model_bound" | "no_credential" | "nothing_persisted" }
   /** A bound provider was called and errored. transcript is null. */
   | { status: "failed"; transcript: null; error: string };
 
@@ -414,6 +414,25 @@ export async function transcribeVoiceNoteGoverned(
           TRANSCRIPTION_MODEL as TranscriptionModelBinding,
         );
         if (result.status === "completed" && result.usage) {
+          // OVER-CAP REFUSAL (review F1): WhatsApp declares no duration, so
+          // the 10MB byte cap is the only pre-spend duration proxy — and
+          // 10MB of low-bitrate opus can be ~5,000-7,000 REAL seconds. The
+          // vendor has already billed those seconds, so the REAL usage is
+          // settled exactly once (never under-reported, never clamped, never
+          // thrown-and-floored-to-1p, which would hide the true cost) — but
+          // the TRANSCRIPT of audio beyond the product's stated 300s cap is
+          // REFUSED: it fails the row rather than persisting a transcript the
+          // validator would have rejected had the duration been declared.
+          if (result.usage.inputTokens > MAX_TRANSCRIPTION_AUDIO_SECONDS) {
+            return {
+              value: {
+                status: "failed" as const,
+                transcript: null,
+                error: "transcription_over_duration_cap",
+              },
+              usage: result.usage,
+            };
+          }
           return { value: result, usage: result.usage };
         }
         return { value: result, usage: null };
@@ -588,5 +607,8 @@ export async function resolveDuplicateTranscription(
     };
   }
   // Nothing persisted (or the read failed) ⇒ defer honestly, never fabricate.
-  return { status: "deferred", transcript: null, reason: "no_model_bound" };
+  // Honest reason (review F3): the duplicate window fired but nothing is
+  // persisted for these bytes (e.g. a non-persisting caller like the
+  // self-test) — that is not a binding problem.
+  return { status: "deferred", transcript: null, reason: "nothing_persisted" };
 }
