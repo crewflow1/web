@@ -82,8 +82,37 @@ describe("TIER_MODEL — the approved production bindings", () => {
     expect(TIER_MODEL.embedding!.reserveInputTokens).toBeGreaterThanOrEqual(8_000);
   });
 
-  it("transcription REMAINS dark — its own future reviewed diff (needs a transport too)", () => {
-    expect(TIER_MODEL.transcription).toBeNull();
+  it("transcription = gpt-4o-mini-transcribe at its verified duration-proxy price and the 300s envelope", () => {
+    // ARMED 2026-09-13 (CEO-approved: "Provider: OpenAI, Model:
+    // gpt-4o-mini-transcribe"), in the same reviewed diff as its transport
+    // (lib/ai/transcription/openai.ts). ARITHMETIC, pinned: STT bills on audio
+    // SECONDS and the transport meters inputTokens = ceil(seconds), so ONE
+    // "token" is ONE second. Price verified from the official OpenAI pricing
+    // page 2026-09-13: $0.003/min = $0.00005/s ⇒ $50/MTok-of-seconds. Output
+    // is free/absent (0). The envelope is the validator's own duration cap
+    // (MAX_TRANSCRIPTION_AUDIO_SECONDS = 300) — worst-case claim 300 × 50/1e6
+    // × 0.8 × 100 = 1.2p ⇒ 2p after the ceil, so a max-length note cannot
+    // starve the £100 ceiling.
+    expect(TIER_MODEL.transcription).toEqual({
+      provider: "openai",
+      model: "gpt-4o-mini-transcribe",
+      usdPerMTokIn: 50,
+      usdPerMTokOut: 0,
+      reserveInputTokens: 300,
+      reserveOutputTokens: 0,
+    });
+  });
+
+  it("the transcription envelope can never shrink below the validator's duration cap", async () => {
+    // The reservation must always admit the largest note the validator lets
+    // through — otherwise a legitimate 300s note would be refused (or, worse,
+    // under-reserved if the cap ever grew without this envelope moving).
+    const { MAX_TRANSCRIPTION_AUDIO_SECONDS } = await import("@/lib/ai/transcription");
+    expect(TIER_MODEL.transcription!.reserveInputTokens).toBeGreaterThanOrEqual(
+      MAX_TRANSCRIPTION_AUDIO_SECONDS,
+    );
+    expect(TIER_MODEL.transcription!.reserveOutputTokens).toBe(0);
+    expect(TIER_MODEL.transcription!.usdPerMTokOut).toBe(0);
   });
 
   it("LIFECYCLE: the registry carries the Haiku 4.5 retirement-handling rule in writing", () => {

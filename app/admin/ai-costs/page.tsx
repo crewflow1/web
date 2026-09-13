@@ -17,11 +17,22 @@ import type { BudgetStatus } from "@/lib/ai/governor/policy";
 import {
   clearEmployeeLimitAction,
   clearOrgCeilingAction,
+  runTranscriptionSelftestAction,
   setEmployeeLimitAction,
   setOrgCeilingAction,
 } from "./actions";
 
-type SP = Promise<{ saved?: string; error?: string }>;
+type SP = Promise<{
+  saved?: string;
+  error?: string;
+  // Transcription self-test outcome (set by runTranscriptionSelftestAction).
+  st_status?: string;
+  st_ms?: string;
+  st_reason?: string;
+  st_model?: string;
+  st_text?: string;
+  st_recovered?: string;
+}>;
 
 const SAVED_LABEL: Record<string, string> = {
   ceiling_set: "Org ceiling saved.",
@@ -186,6 +197,9 @@ export default async function AiCostsPage({ searchParams }: { searchParams: SP }
         ) : null}
       </section>
 
+      {/* 1b. Transcription self-test — the provider-proof path for the STT tier. */}
+      <TranscriptionSelftestSection sp={sp} />
+
       {/* 2. This month, estate-wide. */}
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">This month</h2>
@@ -342,6 +356,91 @@ export default async function AiCostsPage({ searchParams }: { searchParams: SP }
         </div>
       </section>
     </div>
+  );
+}
+
+/**
+ * The transcription self-test — an honest, labelled ops diagnostic for the STT
+ * tier (armed 2026-09-13; its only reachable production surface, since the
+ * WhatsApp channel is dark). One button runs synthetic in-process audio through
+ * the REAL governed path (`voice_note.transcription` against the HQ budget
+ * org — reservation → provider → settle → ledger, visible in the By-feature
+ * table below) and renders the outcome verbatim: a dark/keyless tier shows the
+ * production `deferred` refusal, never a simulated green. No credential is
+ * ever rendered; the transcript shown is of our own synthetic sine tone
+ * (expected empty — the test proves the path, not prose).
+ */
+function TranscriptionSelftestSection({
+  sp,
+}: {
+  sp: {
+    st_status?: string;
+    st_ms?: string;
+    st_reason?: string;
+    st_model?: string;
+    st_text?: string;
+    st_recovered?: string;
+  };
+}) {
+  const status = (sp.st_status ?? "").trim() || null;
+  const armed = TIER_MODEL.transcription !== null;
+  const outcomeTone =
+    status === "completed"
+      ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+      : status === "failed"
+        ? "border-red-300 bg-red-50 text-red-900"
+        : "border-amber-300 bg-amber-50 text-amber-900";
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 className="text-base font-semibold text-slate-900">Transcription self-test</h2>
+        <p className="text-[11px] text-slate-500">
+          runs the REAL governed path (voice_note.transcription, HQ budget org) on ~2s of
+          synthetic in-process audio · every run is audited &amp; ledgered
+        </p>
+      </header>
+      <p className="mt-2 max-w-3xl text-xs text-slate-600">
+        Proves the STT provider end-to-end: validation → reservation → provider → settle →
+        ledger. It bypasses no gate — a dark or keyless tier refuses here exactly as it would in
+        production. A completed run appears against{" "}
+        <code className="font-mono text-[11px]">voice_note.transcription</code> in the By-feature
+        table below. The tone carries no speech, so an empty transcript is the expected success.
+      </p>
+      <form action={runTranscriptionSelftestAction} className="mt-3">
+        <button
+          type="submit"
+          className="rounded bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
+        >
+          Run transcription self-test
+        </button>
+        {!armed ? (
+          <span className="ml-2 text-[11px] text-slate-500">
+            (tier unbound in this build — the run will report the honest refusal)
+          </span>
+        ) : null}
+      </form>
+      {status ? (
+        <div
+          className={`mt-4 rounded-md border p-3 text-xs font-medium ${outcomeTone}`}
+          role="status"
+        >
+          <p>
+            Last run: <span className="font-mono">{status}</span>
+            {sp.st_recovered === "1" ? " (recovered from the media ledger — no new spend)" : ""}
+            {sp.st_ms ? ` · ${sp.st_ms} ms` : ""}
+            {sp.st_model ? ` · ${sp.st_model}` : ""}
+          </p>
+          {sp.st_reason ? (
+            <p className="mt-1 font-mono text-[11px]">reason: {sp.st_reason.slice(0, 160)}</p>
+          ) : null}
+          {status === "completed" ? (
+            <p className="mt-1 font-normal">
+              transcript: {(sp.st_text ?? "").trim() ? `“${(sp.st_text ?? "").slice(0, 300)}”` : "(empty — expected for a synthetic tone)"}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
   );
 }
 

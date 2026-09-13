@@ -256,13 +256,16 @@ describe("ai_quote_drafts — org scope, lifecycle, and immutable evidence", () 
 // =====================================================================
 
 describe("A. no provider is activated by this wave", () => {
-  it("mid = claude-sonnet-5 (2026-09-10); embedding armed 2026-09-11; transcription stays null", () => {
+  it("mid = claude-sonnet-5 (2026-09-10); embedding armed 2026-09-11; transcription armed 2026-09-13", () => {
     expect(TIER_MODEL.mid?.model).toBe("claude-sonnet-5");
     // Embedding armed by the 2026-09-11 reviewed diff (openai
     // text-embedding-3-small) — irrelevant to the quote writer's mid door,
     // pinned exactly in __tests__/ai/tier-bindings.test.ts.
     expect(TIER_MODEL.embedding?.model).toBe("text-embedding-3-small");
-    expect(TIER_MODEL.transcription).toBeNull();
+    // Transcription armed by the 2026-09-13 reviewed diff (openai
+    // gpt-4o-mini-transcribe) — its own modality/tier, equally irrelevant to
+    // the quote writer's mid door; pinned exactly in tier-bindings.test.ts.
+    expect(TIER_MODEL.transcription?.model).toBe("gpt-4o-mini-transcribe");
     expect(isAnyTierBound()).toBe(true);
   });
 

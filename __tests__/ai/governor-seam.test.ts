@@ -108,22 +108,23 @@ describe("the task-class routing table is DATA, with models in exactly one place
     }
   });
 
-  it("the armed lineup: cheap/mid/high (2026-09-10) + embedding (2026-09-11) — transcription stays dark", () => {
+  it("the armed lineup: cheap/mid/high (2026-09-10) + embedding (2026-09-11) + transcription (2026-09-13)", () => {
     // The armed truth, pinned so it can only change through a reviewed diff
     // (exact ids + prices are re-pinned in __tests__/ai/tier-bindings.test.ts).
     expect(TIER_MODEL.cheap?.model).toBe("claude-haiku-4-5-20251001");
     expect(TIER_MODEL.mid?.model).toBe("claude-sonnet-5");
     expect(TIER_MODEL.high?.model).toBe("claude-opus-5");
     expect(TIER_MODEL.embedding?.model).toBe("text-embedding-3-small");
-    // The dark pin that REMAINS: transcription is unbound AND has no
-    // transport (lib/ai/transcription.ts) — its own future reviewed diff.
-    expect(TIER_MODEL.transcription).toBeNull();
+    // Transcription armed 2026-09-13 (CEO-approved) WITH its transport
+    // (lib/ai/transcription/openai.ts) in the same diff — no tier is null.
+    expect(TIER_MODEL.transcription?.model).toBe("gpt-4o-mini-transcribe");
+    expect(TIER_MODEL.transcription?.provider).toBe("openai");
     expect(isAnyTierBound()).toBe(true);
     expect(resolveModel("classification")?.model).toBe("claude-haiku-4-5-20251001");
     expect(resolveModel("drafting")?.model).toBe("claude-sonnet-5");
     expect(resolveModel("complex")?.model).toBe("claude-opus-5");
     expect(resolveModel("embedding")?.model).toBe("text-embedding-3-small");
-    expect(resolveModel("transcription")).toBeNull();
+    expect(resolveModel("transcription")?.model).toBe("gpt-4o-mini-transcribe");
   });
 
   it("every registered feature declares a task class the routing table knows", () => {
@@ -289,12 +290,14 @@ describe("with NO provider bound, the wrapper is a pure pass-through", () => {
     expect(adminClientCalls.count).toBe(0);
   });
 
-  it("a DARK modality stays a pure pass-through even with every vendor credential set", async () => {
-    // The invariant survives the activation: a key alone still arms nothing.
-    // cheap/mid/high are now bound (their calls take the real governed path),
-    // so the pin moves to the modality that REMAINS dark — transcription.
-    vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-not-real");
-    vi.stubEnv("OPENAI_API_KEY", "sk-not-real");
+  it("a KEYLESS tier stays a pure pass-through — binding alone spends nothing", async () => {
+    // Re-anchored for the 2026-09-13 transcription activation: every tier is
+    // now BOUND, so the surviving form of the invariant is per-credential.
+    // This process carries no vendor credential (the unit-test env), so the
+    // transcription tier — bound, keyless — is dark at the seam and the
+    // wrapper runs the caller's function with ZERO database contact.
+    expect(process.env.OPENAI_API_KEY ?? "").toBe("");
+    expect(process.env.TRANSCRIPTION_API_KEY ?? "").toBe("");
     const outcome = await invokeWithGovernor(
       "voice_note.transcription",
       "transcription",
@@ -329,9 +332,11 @@ describe("with NO provider bound, the wrapper is a pure pass-through", () => {
 // =====================================================================
 
 describe("activation readiness — no binding ⇒ NEVER activated", () => {
-  it("reports the ARMED inference tiers and the still-dark modalities, honestly", () => {
+  it("reports the ARMED inference tiers and the keyless modalities, honestly", () => {
     // Activated readiness still tells the whole truth: bindings present for
-    // cheap/mid/high; embedding/transcription report dark with their blockers.
+    // every tier; the OpenAI-bound modalities (embedding, transcription)
+    // report unresolvable with the missing key NAMED while only the anthropic
+    // key is stubbed.
     vi.stubEnv("ANTHROPIC_API_KEY", "present");
     const r = getAiGovernorReadiness();
     expect(r.anyTierBound).toBe(true);
@@ -341,48 +346,71 @@ describe("activation readiness — no binding ⇒ NEVER activated", () => {
         expect(tier.modelBindingPresent).toBe(true);
         expect(tier.provider).toBe("anthropic");
         expect(tier.providerResolvable).toBe(true);
-      } else if (tier.tier === "embedding") {
-        // Bound to openai, but ONLY the anthropic key is stubbed here — the
-        // per-vendor split is the honest report: binding present, vendor
-        // credential absent, NOT resolvable; provider/model report null by
-        // the resolvable-only rule, and the blocker NAMES the missing key.
+      } else {
+        // embedding AND (since 2026-09-13) transcription: bound to openai, but
+        // ONLY the anthropic key is stubbed here — the per-vendor split is the
+        // honest report: binding present, credential absent, NOT resolvable;
+        // provider/model report null by the resolvable-only rule, and the
+        // blocker NAMES the genuinely missing key. For transcription that is
+        // the DEFAULT credential (OPENAI_API_KEY) — the dedicated
+        // TRANSCRIPTION_API_KEY override is optional by design, so its absence
+        // alone is never the named blocker.
         expect(tier.modelBindingPresent).toBe(true);
         expect(tier.providerResolvable).toBe(false);
         expect(tier.provider).toBeNull();
         expect(tier.blockers).toContain("OPENAI_API_KEY");
-      } else {
-        expect(tier.modelBindingPresent).toBe(false);
-        expect(tier.providerResolvable).toBe(false);
-        expect(tier.provider).toBeNull();
-        expect(tier.model).toBeNull();
       }
     }
   });
 
   it("an armed tier WITHOUT its vendor credential is NOT resolvable — no false green", () => {
     // The #433 invariant survives in its real remaining form: binding alone is
-    // not activation; the credential must also be present.
+    // not activation; the credential must also be present. This now covers ALL
+    // FIVE tiers — every one is bound, and this env carries no key.
     const r = getAiGovernorReadiness();
     for (const tier of r.tiers) {
-      if (tier.tier === "cheap" || tier.tier === "mid" || tier.tier === "high") {
-        expect(tier.modelBindingPresent).toBe(true);
-        expect(tier.providerResolvable).toBe(false);
-      }
+      expect(tier.modelBindingPresent).toBe(true);
+      expect(tier.providerResolvable).toBe(false);
     }
     expect(isGovernorActivated()).toBe(false);
   });
 
-  it("with every credential present: embedding resolves (armed 2026-09-11), transcription STAYS dark", () => {
+  it("with every credential present: ALL FIVE tiers resolve (transcription armed 2026-09-13)", () => {
     // #433 in its remaining form: a credential arms only what a reviewed
-    // binding names. Embedding is now bound (openai) so the key resolves it;
-    // transcription has no binding, so no credential can ever open it.
+    // binding names — and since 2026-09-13 every tier carries one, so the full
+    // credential set resolves the full lineup and the checklist is EMPTY.
     for (const v of KNOWN_VENDOR_CREDENTIALS) vi.stubEnv(v, "present");
     const r = getAiGovernorReadiness();
     expect(r.credentialsPresent.length).toBe(KNOWN_VENDOR_CREDENTIALS.length);
+    expect(r.tiers.every((t) => t.providerResolvable)).toBe(true);
+    expect(r.blockers).toEqual([]);
+  });
+
+  it("the transcription credential is TIER-AWARE: the dedicated override OR the OpenAI default", () => {
+    // The honest split of the 2026-09-13 doctrine, asserted both ways:
+    //   • OPENAI_API_KEY alone resolves the tier (the DEFAULT credential —
+    //     same vendor org as the binding; no second key ceremony), and
+    //   • TRANSCRIPTION_API_KEY alone resolves it too (the dedicated override
+    //     and independent kill-switch), even with no vendor key in sight.
+    // Either way, generative tiers stay keyless-dark — no cross-arming.
+    vi.stubEnv("OPENAI_API_KEY", "present");
+    let stt = getAiGovernorReadiness().tiers.find((t) => t.tier === "transcription");
+    expect(stt?.providerResolvable).toBe(true);
+    expect(stt?.blockers).toEqual([]);
+    vi.unstubAllEnvs();
+
+    vi.stubEnv("TRANSCRIPTION_API_KEY", "present");
+    const r = getAiGovernorReadiness();
+    stt = r.tiers.find((t) => t.tier === "transcription");
+    expect(stt?.providerResolvable).toBe(true);
+    // The override arms ONLY transcription: the embedding tier (same vendor)
+    // still names its own missing default key.
     const emb = r.tiers.find((t) => t.tier === "embedding");
-    const stt = r.tiers.find((t) => t.tier === "transcription");
-    expect(emb?.providerResolvable).toBe(true);
-    expect(stt?.providerResolvable).toBe(false);
+    expect(emb?.providerResolvable).toBe(false);
+    expect(emb?.blockers).toContain("OPENAI_API_KEY");
+    for (const t of r.tiers) {
+      if (t.tier !== "transcription") expect(t.providerResolvable).toBe(false);
+    }
   });
 
   it("still REPORTS the drift — a credential with no binding is named, not hidden", () => {

@@ -448,3 +448,74 @@ so a credential with no binding produced real, unmetered spend through the
 4. **Watch the blocked-reason split** — `reservation_unavailable` blocks are a
    plumbing signal, not a money signal. They are logged loudly; a metric would be
    better than a log line once anything is live.
+
+## THE TRANSCRIPTION TIER — ACTIVATION RECORD (2026-09-13)
+
+CEO-approved vendor + model: **OpenAI `gpt-4o-mini-transcribe`**. Both switches
+were bound in ONE reviewed diff, with the transport shipped alongside:
+
+- **Transport binding** — `TRANSCRIPTION_MODEL` (`lib/ai/transcription.ts`) =
+  `{ provider: "openai", model: "gpt-4o-mini-transcribe" }`, dispatched to
+  `lib/ai/transcription/openai.ts`: a raw multipart `fetch` to
+  `POST /v1/audio/transcriptions` — deliberately **no vendor SDK**, so the
+  governance-closure SDK allowlist is untouched. 60s `AbortSignal.timeout`
+  (well under the 10-minute reservation TTL); `response_format json`;
+  `language en`; the transcript is control-char-stripped, trimmed and clamped
+  to 20,000 chars (untrusted user speech — data, never instructions); vendor
+  errors surface as **body-free** status codes (`transcription_http_<n>`,
+  `timeout`, `transcription_network_error`).
+- **Cost binding** — `TIER_MODEL.transcription`
+  (`lib/ai/governor/registry.ts`) = `usdPerMTokIn: 50`, `usdPerMTokOut: 0`,
+  `reserveInputTokens: 300`, `reserveOutputTokens: 0`.
+
+**Arithmetic (duration billed as a token proxy).** STT bills on audio SECONDS;
+the ledger meters tokens. The transport reports `inputTokens = ceil(seconds)`
+from the endpoint's `usage.seconds` — and when usage is absent it NEVER
+under-reports: the call is metered at the worst case
+(`MAX_TRANSCRIPTION_AUDIO_SECONDS` = 300). One "token" is therefore one second:
+$0.003/min = $0.00005/s ⇒ $50/MTok (price verified from the official OpenAI
+pricing page, 2026-09-13). The envelope is the validator's own 300s duration
+cap, so the worst-case claim is 300 × 50/1e6 × 0.8 × 100 = 1.2p ⇒ **2p** after
+the ceil — a single max-length note cannot starve the £100 ceiling.
+
+**Credential doctrine.** `OPENAI_API_KEY` is the **default** credential (same
+vendor org as the embedding tier; the deployed restricted Model-capabilities
+key covers `/v1/audio` — a second owner-created key is not technically
+necessary and unnecessary key ceremony was explicitly declined by the CEO).
+`TRANSCRIPTION_API_KEY` is an **optional dedicated override** that WINS when
+present — an independent kill switch for STT spend alone. Resolution lives in
+one place (`resolveTranscriptionApiKey`, the activation's single new
+credential-read site, allowlisted by name in the closure ratchet); readiness
+(`composeTierReadiness`) mirrors it tier-aware, and a bindful keyless tier's
+blocker names the genuinely missing default key.
+
+**Reachability.** The WhatsApp channel stays DARK (transport null, flag off),
+so no tenant voice note reaches the seam. The tier's only production surface is
+the super-admin **self-test** on `/admin/ai-costs`: ~2s of synthetic in-process
+WAV (nonce-varied so the dedupe hash never collides) through the REAL
+`transcribeVoiceNoteGoverned` against the HQ budget org — validation →
+reservation → provider → settle → ledger — audited as
+`transcription.selftest`. It bypasses no gate: a dark or keyless tier shows the
+production refusal.
+
+**Format note (WhatsApp opus/ogg).** The transport passes the validated base
+MIME through as-is, `audio/ogg` included, with a synthetic filename by
+extension. If the vendor ever rejects ogg at channel-activation time this
+surfaces as `failed`/DLQ — honest, visible — and any model/format change is a
+**reviewed rebind** of `TRANSCRIPTION_MODEL`, never automatic.
+
+**P2s from PR #866's review — implemented in the activation:**
+- *Persist-first re-pay optimisation*: before the governor, a completed
+  transcript already persisted for (org, content_hash) is returned directly —
+  no reservation, no provider call, no re-pay — even after the 900s dedupe
+  window has lapsed. The check sits AFTER the activation gates, so keyless/dark
+  paths stay database-free.
+- *Recovered-provenance marker*: any transcript served from the media ledger
+  (persist-first or duplicate recovery) carries `recovered: true` and no
+  `usage` — provenance for callers and the self-test, and proof nothing new was
+  metered.
+
+**Deferred (unchanged from the prerequisites wave):** a retention/scrub window
+for `whatsapp_inbound_media` transcripts still awaits a column-scrub mode in
+the retention policy layer (the purge primitive is DELETE-only); RAMS-style
+erasure decisions stay with product/legal.

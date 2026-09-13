@@ -183,8 +183,10 @@ describe("resolveDuplicateTranscription — a redelivery never loses a paid tran
     expect(r.status).toBe("completed");
     if (r.status === "completed") {
       expect(r.transcript).toBe("customer confirmed Tuesday");
-      // Recovery re-reads — it never re-meters (no usage ⇒ no double spend).
+      // Recovery re-reads — it never re-meters (no usage ⇒ no double spend),
+      // and it says so: the recovered provenance marker (activation P2).
       expect(r.usage).toBeUndefined();
+      expect(r.recovered).toBe(true);
     }
     // The read is scoped to the org, the exact bytes, and completed rows only.
     expect(h.selectEqs).toEqual([

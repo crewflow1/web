@@ -176,6 +176,19 @@ is dark regardless.
 
 ## 9. Known limitations & deliberate deferrals
 
+- **Voice-note transcription (STT): PROVIDER ARMED 2026-09-13, channel-dark.** The
+  transcription tier is bound end-to-end (`TRANSCRIPTION_MODEL` +
+  `TIER_MODEL.transcription` = OpenAI `gpt-4o-mini-transcribe`, transport in
+  `lib/ai/transcription/openai.ts`) and fully governed (validation-before-spend,
+  atomic reservation, SHA-256 duplicate refusal, persist-first recovery of an
+  already-paid transcript, immutable ledger row). Because THIS channel stays dark
+  (transport null, flag off), no tenant voice note reaches it — the tier's only
+  production surface is the super-admin self-test on `/admin/ai-costs`. When the
+  channel activates, voice notes transcribe under the governor with no further
+  code change; a vendor rejection of WhatsApp's `audio/ogg` (opus) would surface
+  as an honest `failed` outcome (the note keeps its deterministic placeholder),
+  and any model/format change is a reviewed rebind, never automatic. Full
+  activation record: `docs/ai-cost-governor.md` § "THE TRANSCRIPTION TIER".
 - **Media v1 boundary (Part 12):** METADATA ONLY. `has_media` is persisted on the enquiry; a media
   message's caption folds into `raw_text`; the operator sees a safe placeholder (`[image] …`). Rich
   media is **not** downloaded, stored, or interpreted; no provider secret or signed URL is exposed.

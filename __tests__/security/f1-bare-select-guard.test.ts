@@ -1170,14 +1170,16 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   // MP Wave R4 — WhatsApp assistant pending-review queue (assistant-review.ts):
   // fetchAllRows-paged, org-pinned, .eq('status','pending_review').
   whatsapp_assistant_actions: "PAGED: fetchAllRows, org-pinned pending-review queue",
-  // Transcription prereqs (built dark) — the ONLY set-read on the inbound-media
-  // ledger is the duplicate-recovery probe (lib/ai/transcription.ts
-  // resolveDuplicateTranscription): .eq('org_id').eq('content_hash')
-  // .eq('transcript_status','completed').limit(1) — a single-row re-read of a
-  // transcript the org already paid for, never a completeness scan. The media
-  // pipeline's own row lookups are .maybeSingle() by (org_id, media_id).
+  // Transcription — the ONLY set-read on the inbound-media ledger is the
+  // shared persisted-transcript probe (lib/ai/transcription.ts
+  // readPersistedTranscript, serving BOTH the persist-first check and the
+  // duplicate recovery since the 2026-09-13 activation):
+  // .eq('org_id').eq('content_hash').eq('transcript_status','completed')
+  // .limit(1) — a single-row re-read of a transcript the org already paid
+  // for, never a completeness scan. The media pipeline's own row lookups are
+  // .maybeSingle() by (org_id, media_id).
   whatsapp_inbound_media:
-    "SINGLE: only the transcription duplicate-recovery probe — org+content_hash+completed, .limit(1); pipeline row lookups are .maybeSingle()",
+    "SINGLE: only the shared persisted-transcript probe (persist-first + duplicate recovery) — org+content_hash+completed, .limit(1); pipeline row lookups are .maybeSingle()",
   accounting_pushed_entities: "PAGED: fetchAllRows (accounting-export ledger reconcile read)",
   activity_log: "PAGED: fetchAllRows on every read (activity feed, dashboard tile, AI aggregates)",
   // L9a / P10 — Documentation AI release-notes composition
@@ -1189,7 +1191,7 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   // through the sanctioned decision service (hq-decisions.ts), which owns every
   // .from on its tables.
   admin_activity_log:
-    "PAGED: fetchAllRows over a 14-day gte window, stable id order (release-notes composition — the grouped counts must be complete for the window)",
+    "PAGED: fetchAllRows over a 14-day gte window, stable id order (release-notes composition — the grouped counts must be complete for the window). Plus one RECENT-1 display read: launch-readiness's last-transcription-selftest lookup (.eq('action').order desc .limit(1)) — a latest-row probe, never an aggregate.",
   hq_events:
     "PAGED: fetchAllRows over a 14-day gte window, stable id order (release-notes composition — the grouped counts must be complete for the window)",
   retention_policies:

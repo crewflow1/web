@@ -2,59 +2,74 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { invokeWithGovernor, isTierActivated, type GovernedCall } from "@/lib/ai/governor";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  resolveTranscriptionApiKey,
+  runOpenAiTranscription,
+} from "@/lib/ai/transcription/openai";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * VOICE-NOTE TRANSCRIPTION — a GOVERNOR-DARK seam.
+ * VOICE-NOTE TRANSCRIPTION — the STT seam, ARMED 2026-09-13 (CEO-approved).
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * WhatsApp voice notes arrive as `audio` with `voice: true`. Turning that audio
  * into text is an AI capability — a SEPARATE MODALITY from the text/vision
  * inference the cost governor's generative tiers cover, and from embeddings. It
- * is built here DARK, ahead of any provider, in the exact shape the governor's
- * readiness doctrine mandates (lib/ai/governor/readiness.ts):
+ * follows the governor's readiness doctrine (lib/ai/governor/readiness.ts):
  *
  *   modelBindingPresent — a real STT model is bound.        (build-time fact)
  *   credentialsPresent  — the vendor secret is set.         (configuration)
  *   activated           — a transcription CAN reach a provider.
  *
+ * ARMED (2026-09-13, CEO-approved vendor + model): TRANSCRIPTION_MODEL below
+ * binds openai/gpt-4o-mini-transcribe and the transport is implemented
+ * (lib/ai/transcription/openai.ts — raw fetch, no SDK). The paired COST binding
+ * (TIER_MODEL.transcription, lib/ai/governor/registry.ts) is armed in the same
+ * diff, so with the credential present in the deploy environment the tier is
+ * ACTIVE. Its only reachable production surface is the super-admin self-test on
+ * /admin/ai-costs — the WhatsApp channel stays dark (transport null, flag off),
+ * so no tenant voice note reaches this until a separate channel activation.
+ *
  * THE LOAD-BEARING RULE, inherited verbatim from the comms + AI incidents:
  * `activated` can NEVER be true without `modelBindingPresent`. No amount of
  * environment configuration can manufacture a capability this build does not
- * contain. TRANSCRIPTION_MODEL below is deliberately `null` — so today, on every
- * deploy, `isTranscriptionActivated()` is false and `transcribeVoiceNote()`
- * returns `{ status: "deferred", transcript: null }` WITHOUT touching a network.
+ * contain; conversely, removing the credential (both keys — see the doctrine
+ * below) darks the tier without a deploy.
  *
- * IT NEVER FABRICATES. A dark build does not guess, summarise, or invent a
- * transcript — it returns null and says why. A caller stores null; the operator
- * still sees the voice note, its media bytes, and the deterministic placeholder
- * summary the ingestion core already produced. That is the honest degraded path.
+ * CREDENTIAL DOCTRINE (2026-09-13): `TRANSCRIPTION_API_KEY` is an OPTIONAL
+ * dedicated override — an independent kill switch for STT spend alone — and
+ * `OPENAI_API_KEY` (already deployed for the embedding tier; same vendor org,
+ * restricted Model-capabilities key that covers /v1/audio) is the DEFAULT
+ * credential. A second owner-created key is not technically necessary and the
+ * CEO explicitly declined unnecessary key ceremony. The resolution lives in ONE
+ * place (resolveTranscriptionApiKey, the activation's single new
+ * credential-read site) and readiness mirrors it tier-aware.
  *
- * GOVERNOR WIRING — ALREADY IN PLACE (migration 20261191000000).
- * The governor's ledger (`ai_invocations.task_class` CHECK) ALREADY admits the
- * `transcription` class: migration 20261191 widened the CHECK and the registry
- * carries the `voice_note.transcription` feature (task class `transcription`,
- * its own tier). `transcribeVoiceNoteGoverned` below routes through
- * `invokeWithGovernor` today — while dark that is a no-op short-circuit (the
- * tier's TIER_MODEL binding is null, so no reservation, no ledger row, no
- * spend), preserving the "wiring the dark seam changed nothing" property. The
- * ACTIVATION diff's remaining work is binding a real STT model (here and in
- * TIER_MODEL.transcription), implementing the vendor transport, and calibrating
- * the reservation envelope against MAX_TRANSCRIPTION_AUDIO_SECONDS. This module
- * constructs NO vendor SDK and reads NO generative credential, so it is not an
- * ungoverned inference entry point.
+ * IT NEVER FABRICATES. A keyless or refused path does not guess, summarise, or
+ * invent a transcript — it returns null and says why. A caller stores null; the
+ * operator still sees the voice note, its media bytes, and the deterministic
+ * placeholder summary the ingestion core already produced.
+ *
+ * GOVERNOR WIRING — IN PLACE since migration 20261191000000: the ledger's
+ * `task_class` CHECK admits `transcription` and the registry carries the
+ * `voice_note.transcription` feature on its own tier. Every real call below
+ * runs inside `invokeWithGovernor` — ceiling, atomic reservation, SHA-256
+ * duplicate refusal, immutable ledger row.
  */
 
 /**
- * A concrete STT provider+model binding — THE activation switch, deliberately
- * `null`. A non-null value here is a build-time fact that this deploy contains a
- * real transcription capability; it is paired with the vendor credential
- * (TRANSCRIPTION_API_KEY) before a call can happen. Populating this is the
- * single code change that arms transcription — and it is not sufficient alone.
+ * A concrete STT provider+model binding — THE transport activation switch.
+ *
+ * ARMED 2026-09-13: openai/gpt-4o-mini-transcribe ($0.003/min, verified against
+ * the official OpenAI pricing page the same day). Paired with the credential
+ * doctrine above AND the governor's cost binding (TIER_MODEL.transcription)
+ * before a call can happen — this constant alone is necessary, not sufficient.
  *
  * Deliberately NOT read from an environment variable: which model transcribes
  * every tenant's voice notes is a cost + quality decision that belongs in a
- * reviewed diff, exactly like the governor's TIER_MODEL.
+ * reviewed diff, exactly like the governor's TIER_MODEL. Any rebind — including
+ * a format-coverage change if the vendor ever refuses WhatsApp's ogg/opus at
+ * channel-activation time — is a REVIEWED REBIND DIFF here, never automatic.
  */
 export type TranscriptionModelBinding = {
   /** Vendor id, lowercase. */
@@ -63,7 +78,10 @@ export type TranscriptionModelBinding = {
   model: string;
 };
 
-export const TRANSCRIPTION_MODEL: TranscriptionModelBinding | null = null;
+export const TRANSCRIPTION_MODEL: TranscriptionModelBinding | null = {
+  provider: "openai",
+  model: "gpt-4o-mini-transcribe",
+};
 
 const present = (v: string | undefined | null): boolean =>
   typeof v === "string" && v.trim().length > 0;
@@ -74,11 +92,19 @@ export function isTranscriptionModelBound(): boolean {
 }
 
 /**
- * True when the vendor credential is present. Reads `process.env` DIRECTLY (like
- * lib/ai/governor/readiness.ts) rather than the frozen `env` object, so a
- * readiness probe reflects the live configuration and can never throw.
+ * True when a usable STT credential is present, PER THE DOCTRINE: the dedicated
+ * TRANSCRIPTION_API_KEY override, or — for the openai binding — the deployed
+ * OPENAI_API_KEY default. Resolution is delegated to the transport's
+ * `resolveTranscriptionApiKey` so this predicate and the actual call can never
+ * disagree about which key would be used (and so the activation adds exactly
+ * ONE credential-read site, in the transport). Reads live env, never throws.
+ * For a non-openai binding only the dedicated key counts — the shared OpenAI
+ * key must never arm a different vendor's transport.
  */
 export function isTranscriptionCredentialPresent(): boolean {
+  if (TRANSCRIPTION_MODEL?.provider === "openai") {
+    return resolveTranscriptionApiKey() !== null;
+  }
   return present(process.env.TRANSCRIPTION_API_KEY);
 }
 
@@ -129,60 +155,69 @@ export type TranscriptionResult =
       model: string;
       /** Metered usage for the governor's ledger; present only on a real bound call. */
       usage?: TranscriptionUsage;
+      /**
+       * TRUE when this transcript was RECOVERED from the media ledger rather
+       * than produced by a fresh provider call — the persist-first check or the
+       * governor's duplicate re-read. Provenance for callers and the self-test:
+       * a recovered result carries no `usage` (nothing new was metered).
+       */
+      recovered?: true;
     }
   /**
    * DARK: no model bound / no credential. transcript is null — NEVER fabricated.
    * The caller stores null and shows the deterministic placeholder instead.
    */
-  | { status: "deferred"; transcript: null; reason: "no_model_bound" | "no_credential" }
+  | { status: "deferred"; transcript: null; reason: "no_model_bound" | "no_credential" | "nothing_persisted" }
   /** A bound provider was called and errored. transcript is null. */
   | { status: "failed"; transcript: null; error: string };
 
 /**
- * Transcribe one voice note — or DEFER when transcription is dark.
+ * Answer for one voice note WITHOUT ever spending: defer (with the honest
+ * reason) while the seam is dark or keyless — and REFUSE when it is armed.
  *
- * The dark short-circuit is the whole point: with no model bound (today, always)
- * this returns `deferred` with a null transcript before any I/O. It performs no
- * network call, constructs no client, and reads no generative credential. When a
- * model IS bound, the vendor call is delegated to `runBoundTranscription`, which
- * is a documented ACTIVATION seam — it must be implemented alongside the binding,
- * and until then throws rather than pretend. It never returns a made-up string.
+ * SINCE THE ACTIVATION THIS FUNCTION NEVER DISPATCHES THE TRANSPORT. The only
+ * path to a provider is `transcribeVoiceNoteGoverned`'s governed fn — so an
+ * exported, ungoverned entry point to STT spend simply does not exist. A
+ * direct call on a fully-armed deploy gets a fail-closed `failed`
+ * ("ungoverned_transcription_refused"), never a paid call outside the ceiling
+ * and the ledger. It never returns a made-up string.
  */
 export async function transcribeVoiceNote(
   input: TranscriptionInput,
 ): Promise<TranscriptionResult> {
+  void input;
   if (!isTranscriptionModelBound()) {
     return { status: "deferred", transcript: null, reason: "no_model_bound" };
   }
   if (!isTranscriptionCredentialPresent()) {
     return { status: "deferred", transcript: null, reason: "no_credential" };
   }
-  // ACTIVATION PATH (unreachable while TRANSCRIPTION_MODEL is null). The real
-  // vendor call + `invokeWithGovernor` metering is wired here by the activation
-  // diff. Failing loudly rather than fabricating keeps the "never a made-up
-  // transcript" contract even against a half-finished activation.
-  try {
-    return await runBoundTranscription(input, TRANSCRIPTION_MODEL as TranscriptionModelBinding);
-  } catch (e) {
-    return { status: "failed", transcript: null, error: e instanceof Error ? e.message : String(e) };
-  }
+  // ARMED. The governed wrapper never reaches this branch (it dispatches the
+  // transport itself, inside invokeWithGovernor); anything else arriving here
+  // is asking for an UNGOVERNED paid call — refuse, fail closed.
+  return { status: "failed", transcript: null, error: "ungoverned_transcription_refused" };
 }
 
 /**
- * The bound-provider transcription call. Intentionally unimplemented: it is the
- * ACTIVATION seam, wired when TRANSCRIPTION_MODEL is populated (with the vendor
- * transport + governor metering). It throws rather than return a fabricated
- * transcript, so a binding without an implementation fails safe and loud.
+ * The bound-provider transcription call — the transport DISPATCH.
+ *
+ * Exactly one implemented vendor: "openai" routes to the raw-fetch transport
+ * (lib/ai/transcription/openai.ts, activation 2026-09-13). ANY other provider
+ * id keeps the loud refusal: a rebind to a vendor without a reviewed transport
+ * in the same diff must fail safe and loud, never fabricate a transcript.
  */
 async function runBoundTranscription(
-  _input: TranscriptionInput,
+  input: TranscriptionInput,
   binding: TranscriptionModelBinding,
 ): Promise<TranscriptionResult> {
+  if (binding.provider === "openai") {
+    return runOpenAiTranscription(input, binding);
+  }
   throw new Error(
     `[transcription] model ${binding.provider}/${binding.model} is bound but no transport ` +
-      `is implemented — implement the vendor call here (returning status:"completed" with a ` +
-      `populated \`usage\`) in the activation diff. The governor wrapper ` +
-      `(transcribeVoiceNoteGoverned) already meters it. Refusing to fabricate a transcript.`,
+      `is implemented for that vendor — implement it beside lib/ai/transcription/openai.ts ` +
+      `(returning status:"completed" with a populated \`usage\`) in the same reviewed diff ` +
+      `as the rebind. Refusing to fabricate a transcript.`,
   );
 }
 
@@ -294,10 +329,10 @@ function audioDedupeKey(audio: Uint8Array): string {
  *   1. SAFE VALIDATION FIRST. Empty, oversized, or non-audio bytes are refused
  *      as `failed` before any spend decision — a malformed media id can never
  *      reach a provider or the ledger.
- *   2. DARK TRANSPORT ⇒ DEFER, no governor. With no STT model bound (today,
- *      always) `isTranscriptionActivated()` is false, so this returns the seam's
- *      `deferred` result WITHOUT entering the governor — no reads, no writes, no
- *      fabrication. Identical to the pre-governor behaviour while dark.
+ *   2. DARK TRANSPORT ⇒ DEFER, no governor. With no STT model bound, or no
+ *      usable credential (a keyless deploy), `isTranscriptionActivated()` is
+ *      false, so this returns the seam's `deferred` result WITHOUT entering the
+ *      governor — no reads, no writes, no fabrication.
  *   3. FAIL-CLOSED ON A HALF-WIRED ACTIVATION. If the transport is armed
  *      (TRANSCRIPTION_MODEL + credential) but the governor's `transcription`
  *      COST binding (TIER_MODEL.transcription) is still dark, this REFUSES —
@@ -338,6 +373,27 @@ export async function transcribeVoiceNoteGoverned(
     return { status: "deferred", transcript: null, reason: "no_model_bound" };
   }
 
+  // 3b. PERSIST-FIRST (PR #866 review P2): if this org ALREADY PAID to
+  //     transcribe these exact bytes and the transcript is persisted on the
+  //     media ledger, return it — marked `recovered` — WITHOUT any reservation.
+  //     Cheaper and stronger than relying on the governor's duplicate window:
+  //     the dedupe window lapses (900s) but a persisted transcript is forever,
+  //     so a late redelivery re-paid before this check existed. Deliberately
+  //     AFTER the activation gates so the dark/keyless paths stay byte-identical
+  //     (no database contact); a read failure falls through to the governed
+  //     call rather than blocking a legitimate transcription.
+  const persisted = await readPersistedTranscript(input.orgId, input.audio);
+  if (persisted !== null) {
+    const binding = TRANSCRIPTION_MODEL as TranscriptionModelBinding;
+    return {
+      status: "completed",
+      transcript: persisted,
+      provider: binding.provider,
+      model: binding.model,
+      recovered: true,
+    };
+  }
+
   // 4. GOVERNED. The registry classes this as `transcription`; the governor owns
   //    the ceiling, the ledger and the duplicate refusal.
   try {
@@ -345,11 +401,38 @@ export async function transcribeVoiceNoteGoverned(
       "voice_note.transcription",
       "transcription",
       async (): Promise<GovernedCall<TranscriptionResult>> => {
-        const result = await transcribeVoiceNote(input);
-        // Only a COMPLETED call reached a provider ⇒ meter it. A deferred/failed
-        // result took no provider call, so usage is null and the governor
-        // releases the claim and records nothing.
+        // Activated (both gates checked above) ⇒ dispatch the transport
+        // DIRECTLY and let a provider failure THROW through the governor:
+        // a 4xx/timeout after the upload has still cost the vendor leg, so the
+        // reservation must be SETTLED at the failure floor — never released as
+        // if no call happened (a free-failure retry storm would be invisible
+        // to the ceiling). The governor settles + rethrows; the catch below
+        // degrades to an honest `failed`. Only a COMPLETED call carries usage;
+        // a deferred result (defensive — unreachable here) releases.
+        const result = await runBoundTranscription(
+          input,
+          TRANSCRIPTION_MODEL as TranscriptionModelBinding,
+        );
         if (result.status === "completed" && result.usage) {
+          // OVER-CAP REFUSAL (review F1): WhatsApp declares no duration, so
+          // the 10MB byte cap is the only pre-spend duration proxy — and
+          // 10MB of low-bitrate opus can be ~5,000-7,000 REAL seconds. The
+          // vendor has already billed those seconds, so the REAL usage is
+          // settled exactly once (never under-reported, never clamped, never
+          // thrown-and-floored-to-1p, which would hide the true cost) — but
+          // the TRANSCRIPT of audio beyond the product's stated 300s cap is
+          // REFUSED: it fails the row rather than persisting a transcript the
+          // validator would have rejected had the duration been declared.
+          if (result.usage.inputTokens > MAX_TRANSCRIPTION_AUDIO_SECONDS) {
+            return {
+              value: {
+                status: "failed" as const,
+                transcript: null,
+                error: "transcription_over_duration_cap",
+              },
+              usage: result.usage,
+            };
+          }
           return { value: result, usage: result.usage };
         }
         return { value: result, usage: null };
@@ -453,20 +536,12 @@ export async function persistVoiceNoteTranscription(input: {
 }
 
 /**
- * DUPLICATE RECOVERY — the governor refused to pay twice for these exact bytes,
- * so return the transcript the org already paid for, read back from the media
- * ledger (org_id + content_hash, completed rows only). When none is persisted
- * (e.g. the first attempt's persist failed) this defers honestly — it NEVER
- * fabricates and NEVER triggers a new provider call.
- *
- * Only reachable from the governed wrapper's ACTIVATED path (a duplicate
- * outcome requires a reservation attempt, which the dark short-circuit never
- * makes) — so it is dark-unreachable today, like everything downstream of
- * activation. Never throws.
+ * Read back a persisted COMPLETED transcript for this org + these exact bytes
+ * (org_id + content_hash, completed rows only), or null when none exists / the
+ * read fails / the persisted value is blank. Shared by the persist-first check
+ * and the duplicate recovery below. Never throws, never fabricates.
  */
-export async function resolveDuplicateTranscription(
-  input: TranscriptionInput,
-): Promise<TranscriptionResult> {
+async function readPersistedTranscript(orgId: string, audio: Uint8Array): Promise<string | null> {
   try {
     const admin = createAdminClient();
     const { data, error } = await (admin.from("whatsapp_inbound_media" as never) as unknown as {
@@ -484,32 +559,56 @@ export async function resolveDuplicateTranscription(
       };
     })
       .select("transcript")
-      .eq("org_id", input.orgId)
-      .eq("content_hash", voiceNoteContentHash(input.audio))
+      .eq("org_id", orgId)
+      .eq("content_hash", voiceNoteContentHash(audio))
       .eq("transcript_status", "completed")
       .limit(1);
-    if (!error) {
-      const transcript = data?.[0]?.transcript;
-      if (typeof transcript === "string" && transcript.trim().length > 0) {
-        // The ledger row doesn't record which provider produced it; label the
-        // recovery with the live binding (non-null on any reachable path).
-        const binding = TRANSCRIPTION_MODEL as TranscriptionModelBinding | null;
-        return {
-          status: "completed",
-          transcript,
-          provider: binding?.provider ?? "persisted",
-          model: binding?.model ?? "persisted",
-        };
-      }
-    } else {
-      console.error("[transcription] duplicate re-read failed", error.message);
+    if (error) {
+      console.error("[transcription] persisted-transcript read failed", error.message);
+      return null;
     }
+    const transcript = data?.[0]?.transcript;
+    return typeof transcript === "string" && transcript.trim().length > 0 ? transcript : null;
   } catch (e) {
     console.error(
-      "[transcription] duplicate re-read threw",
+      "[transcription] persisted-transcript read threw",
       e instanceof Error ? e.message : String(e),
     );
+    return null;
+  }
+}
+
+/**
+ * DUPLICATE RECOVERY — the governor refused to pay twice for these exact bytes,
+ * so return the transcript the org already paid for, read back from the media
+ * ledger (org_id + content_hash, completed rows only). When none is persisted
+ * (e.g. the first attempt's persist failed) this defers honestly — it NEVER
+ * fabricates and NEVER triggers a new provider call.
+ *
+ * Only reachable from the governed wrapper's ACTIVATED path (a duplicate
+ * outcome requires a reservation attempt, which the dark short-circuit never
+ * makes). Never throws. The result carries `recovered: true` and no `usage` —
+ * nothing new was metered.
+ */
+export async function resolveDuplicateTranscription(
+  input: TranscriptionInput,
+): Promise<TranscriptionResult> {
+  const transcript = await readPersistedTranscript(input.orgId, input.audio);
+  if (transcript !== null) {
+    // The ledger row doesn't record which provider produced it; label the
+    // recovery with the live binding (non-null on any reachable path).
+    const binding = TRANSCRIPTION_MODEL as TranscriptionModelBinding | null;
+    return {
+      status: "completed",
+      transcript,
+      provider: binding?.provider ?? "persisted",
+      model: binding?.model ?? "persisted",
+      recovered: true,
+    };
   }
   // Nothing persisted (or the read failed) ⇒ defer honestly, never fabricate.
-  return { status: "deferred", transcript: null, reason: "no_model_bound" };
+  // Honest reason (review F3): the duplicate window fired but nothing is
+  // persisted for these bytes (e.g. a non-persisting caller like the
+  // self-test) — that is not a binding problem.
+  return { status: "deferred", transcript: null, reason: "nothing_persisted" };
 }
