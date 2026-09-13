@@ -44,7 +44,7 @@ function codeOf(ts: string): string {
 }
 
 /** A `?? "<model-ish literal>"` fallback — the residue class this wave removed. */
-const MODEL_LITERAL_FALLBACK = /\?\?\s*["'](?:claude-|gpt-|text-embedding-|gemini|mistral|llama)/;
+const MODEL_LITERAL_FALLBACK = /\?\?\s*["'`](?:claude-|gpt-|text-embedding-|gemini|mistral|llama)/;
 
 const TOUCHED = [
   "lib/ai/text/anthropic.ts",

@@ -109,7 +109,7 @@ export async function summariseLead(
     .eq("target_id", leadId)
     .eq("org_id", orgId);
 
-  // Not activated (no bound MID tier, or no credential) → deterministic.
+  // Not activated (cheap tier unbound, or its credential absent) → deterministic.
   // PER-TIER on purpose: this service constructs its own SDK, so the global
   // any-tier predicate would let an embedding-only activation switch it on
   // while its own tier is dark — ungoverned spend through the per-tier
