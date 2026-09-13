@@ -26,8 +26,9 @@ const CHAT_AUTO_REPLY_GENERATIVE = false;
  *
  *   • GOVERNED WHEN IT LIGHTS UP. The (future) AI reply is routed through
  *     `invokeWithGovernor` under the registered `chat.auto_reply` feature
- *     (task class `drafting` — customer-facing prose). Binding a tier is the ONE
- *     switch that turns the AI reply on; until then the deterministic ack stands
+ *     (task class `drafting` — customer-facing prose). With the mid tier armed,
+ *     flipping the CEO-hold constant is the ONE remaining switch that turns the
+ *     AI reply on; until then the deterministic ack stands
  *     in, so the customer's experience is identical and honest. When AI does
  *     run, its output is still stamped auto_generated = true and the panel still
  *     labels it "Automated" — an AI reply is never passed off as a person.
@@ -60,11 +61,12 @@ type MessageInsert = {
 /**
  * Produce the automated reply text for a customer's chat message.
  *
- * DARK-SAFE BY CONSTRUCTION. The `drafting` tier gate is checked FIRST — while
- * it is dark (the state today, and until a tier is bound in the registry), this
- * returns null before a provider is resolved or the governor is entered, so no
- * model is ever contacted and nothing is charged. The caller then posts the
- * deterministic ack.
+ * DARK-SAFE BY CONSTRUCTION. The `drafting` tier gate is checked FIRST — on any
+ * deploy where that tier is dark, this returns null before a provider is
+ * resolved or the governor is entered, so no model is ever contacted and
+ * nothing is charged. The mid tier is armed (2026-09-10), so today it is the
+ * CEO HOLD below — not a dark tier — that returns null and keeps this surface
+ * deterministic. The caller then posts the deterministic ack.
  *
  * When a tier IS bound, the model call rides the shared text door under
  * `invokeWithGovernor`, so the £/org/month ceiling, the duplicate refusal and
@@ -81,7 +83,9 @@ async function maybeGenerateChatReply(input: {
   // otherwise hand this `drafting` surface a live provider the governor would
   // then run ungoverned. Gate on this call's own tier — `drafting` maps to the
   // `mid` tier (lib/ai/governor/registry TASK_CLASS_TIER) — before resolving a
-  // provider. While dark (today) this is the line that guarantees no model call.
+  // provider. On a dark-tier deploy this is the line that guarantees no model
+  // call; with mid armed (2026-09-10) it stands as defence-in-depth and the
+  // CEO HOLD below is what actually keeps this surface deterministic today.
   if (!isTierActivated("mid")) return null;
 
   // CEO HOLD (activation diff 2026-09-10): the portal live chat AUTO-POSTS
@@ -161,9 +165,10 @@ export async function postDeterministicChatAck(input: {
   customerMessage: string;
 }): Promise<void> {
   try {
-    // The AI-dark seam. Null today (no tier bound → no model call); the
-    // deterministic ack stands in. When a tier is bound, this returns governed
-    // AI prose — still stamped auto_generated below.
+    // The generative seam. Null today by CEO HOLD (CHAT_AUTO_REPLY_GENERATIVE
+    // is false — the mid tier itself is armed); the deterministic ack stands
+    // in. When the hold is lifted, this returns governed AI prose — still
+    // stamped auto_generated below.
     const generated = await maybeGenerateChatReply({
       orgId: input.orgId,
       customerMessage: input.customerMessage,

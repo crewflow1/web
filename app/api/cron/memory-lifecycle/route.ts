@@ -10,7 +10,9 @@ import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
  *
  * Drives one bounded pass of the lifecycle worker (Bible Volume X §9–§10):
  * expire/decay archival, near-duplicate supersession, and LLM summarisation of
- * long bodies. DARK by default (memory_lifecycle.worker_enabled = false) and a
+ * long bodies. Ships seeded false (memory_lifecycle.worker_enabled) — the live
+ * hq_settings gate decides at runtime (the sibling embedding worker's gate is
+ * ON in prod since 2026-09-11) — and a
  * graceful no-op when no text provider / no embeddings are configured, so this
  * cron is nearly free until the feature is switched on — at which point the
  * company brain starts pruning and compressing itself with no application change.

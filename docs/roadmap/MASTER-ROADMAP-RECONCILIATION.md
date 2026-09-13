@@ -1,5 +1,17 @@
 # Master Roadmap Reconciliation — zero-assumption, code-verified
 
+## ✅ AI-ESTATE ACTIVATION SUPERSEDE — 2026-09-13 (supersedes ONLY the AI-estate classifications in the blocks below; everything else in the 2026-08-30 block stands)
+
+All five AI Cost Governor tiers are now bound and armed (cheap/mid/high 2026-09-10 · embedding 2026-09-11 · transcription 2026-09-13, channel-dark), and the generative trio + embedding are production-proven by real governed ledger rows. The generative-seam atoms are therefore re-classified **B (BUILT+DARK) → A (BUILT+LIVE / armed)**; the "governor `TIER_MODEL` all-null" line in the 2026-08-29 dark-capability inventory is history:
+
+- **R039 AI Quote Writer** — A/LIVE: `quote.writer_draft` rides the armed mid tier (claude-sonnet-5). Ledger evidence pointer: mid-tier proof rows, `docs/launch/PRODUCTION-ACTIVATION-MATRIX.md` §AI-estate proof.
+- **R050 OCR (receipts/supplier-invoices/delivery-notes)** — A/LIVE: `imports.ocr` on the armed cheap tier. Ledger evidence pointer: cheap-tier proof row (`imports.ocr`, claude-haiku-4-5), matrix §AI-estate proof.
+- **R089 P6 Marketing AI** — A/armed: the governed copy seam behind the mid tier is live at its gate (deterministic legs unchanged; ad-analytics sub-part stays EXTERNAL-gated). Evidence pointer: matrix §AI-estate proof (mid tier).
+- **R091 P8 Design AI** — A/armed: the `hq.design_review` critique seam's tier is live (board/legs unchanged). Evidence pointer: matrix §AI-estate proof.
+- **R093 P10 Documentation AI** — A/armed: the doc seam's tier is live (autonomous doc WRITING remains held by doctrine, not by a dark tier). Evidence pointer: matrix §AI-estate proof.
+
+Holds that are NOT dark tiers, stated to prevent re-drift: portal-chat generative auto-reply = CEO build-constant hold; WhatsApp voice-note transcription = channel dark (Meta activation pending; transcription tier itself armed, provider self-test pending — matrix transcription paragraph, PR #871 `9785c8e`).
+
 ## ✅ FINAL-COMPLETION RE-AUDIT — 2026-08-30 (current truth; everything below this block is the 2026-08-29 baseline, preserved as history)
 
 **Method:** MANDATORY zero-based re-run of all 237 atoms against `roadmap/final-completion` (15 independent section auditors, previous statuses treated as hints only), then the 14 surviving current-stage breakers each BUILT or evidence-reclassified with citations — never silently. The JSON (`master-roadmap-reconciliation.json`) is fully rewritten with fresh per-atom evidence.

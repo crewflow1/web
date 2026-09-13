@@ -38,9 +38,11 @@ import "server-only";
  * vendor credential. Unbound ⇒ `null` ⇒ every caller's existing
  * graceful-degradation leg, which is the leg production has always run.
  *
- * This costs nothing where it matters and closes the only thing that did. In
- * production and in CI no credential is set, so the answer was `null` before and
- * is `null` now. The single configuration whose behaviour changes is "a key is
+ * This cost nothing where it mattered and closed the only thing that did. At
+ * the time of the closure no credential was set in production or CI, so the
+ * answer was `null` before and after; since the 2026-09-10 arming (binding +
+ * credential) this door resolves live providers — governed, metered, ceilinged.
+ * The single configuration whose behaviour changed is "a key is
  * present while no tier is bound" — which is not a configuration anyone chose,
  * it is the drift the readiness surface has been shouting about, and the
  * behaviour it used to produce was unmetered spend.

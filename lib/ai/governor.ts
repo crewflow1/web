@@ -810,9 +810,10 @@ export type InvokeWithGovernorInput = {
    * row's UUID. ATTRIBUTION ONLY: it is written to the ledger row so cost
    * aggregates per employee (migration 20261222000000); it never enters the
    * reservation arithmetic, the per-employee LIMIT (that subject stays
-   * `userId` via limitSubjectUserId), or any refusal. While the tiers are dark
-   * the governed path never reaches a settle, so passing this today changes
-   * nothing observable — it means attribution is complete on activation day.
+   * `userId` via limitSubjectUserId), or any refusal. While a tier is dark
+   * the governed path never reaches a settle, so on such a tier passing this
+   * changes nothing observable; with the tiers armed (2026-09-10 onward) it is
+   * what keeps per-employee cost attribution complete on every settled call.
    */
   aiEmployeeId?: string | null;
 };
@@ -834,7 +835,9 @@ export type InvokeWithGovernorInput = {
  *      error, not a runtime condition, so it fails the same way in every
  *      environment rather than degrading quietly in production.
  *   3. NOT ACTIVATED → run the function and return. No reads, no writes. This
- *      is the state today, and it is why wiring the dark seams changed nothing.
+ *      was the estate-wide state before the 2026-09-10 activation — why wiring
+ *      the dark seams changed nothing — and remains the path for any tier that
+ *      is unbound or credential-less in a given deploy.
  *   4. RESERVE — ONE atomic SQL call that decides the ceiling AND the duplicate
  *      question together, under a lock, and claims the budget if it fits. Both
  *      refusals happen WITHOUT calling the function. The whole point, and the

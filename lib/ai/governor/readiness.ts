@@ -94,7 +94,8 @@ export type AiTierReadiness = {
 export type AiGovernorReadiness = {
   /**
    * THE honest headline: can ANY governed call reach a provider right now?
-   * `false` today. Never true without a model binding.
+   * `true` in deployed environments since the 2026-09-10 activation (binding +
+   * credential both present). Never true without a model binding.
    */
   activated: boolean;
   /** Build-time fact: at least one tier maps to a real model. */
