@@ -11,10 +11,11 @@ import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
  *
  * Drives one bounded pass of the embedding worker: reclaim crashed leases,
  * claim pending memories, embed them via the configured provider, store the
- * vectors atomically. The worker is DARK by default (memory_embedding.
- * worker_enabled = false) and a no-op when no provider is configured, so this
- * cron is nearly free until the feature is switched on — at which point new
- * memories become semantically searchable with no application change.
+ * vectors atomically. The worker ships seeded false (memory_embedding.
+ * worker_enabled) and is a no-op when no provider is configured — the live
+ * hq_settings gate decides at runtime, and it is ON in production since
+ * 2026-09-11: new memories become semantically searchable with no application
+ * change, and the cron is nearly free wherever the gate is off.
  *
  * The worker NEVER throws: a provider hiccup is recorded per-memory (retry /
  * backoff / dead-letter in SQL) and reported in the summary, never raised.

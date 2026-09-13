@@ -111,7 +111,8 @@ export function isTranscriptionCredentialPresent(): boolean {
 /**
  * THE headline: can a voice note actually reach a transcription provider? Both
  * gates must pass — a bound model AND a credential — mirroring
- * `isEmbeddingActivated()`. False on every deploy today (binding is null).
+ * `isEmbeddingActivated()`. True in production since the 2026-09-13 arming
+ * (model + key both bound); false wherever either is absent.
  */
 export function isTranscriptionActivated(): boolean {
   return isTranscriptionModelBound() && isTranscriptionCredentialPresent();

@@ -45,7 +45,7 @@ const SAVED_LABEL: Record<string, string> = {
  * /admin/ai-costs — HQ AI spend governance.
  *
  * The operator answer to four questions, in the order they get asked:
- *   1. Can anything spend money right now?  (activation — dark today)
+ *   1. Can anything spend money right now?  (activation — tiers armed 2026-09-10/11/13; the panel states the per-tier truth)
  *   2. What has the estate spent this month, against the £100/org ceiling?
  *   3. Which orgs are near it, over it, or spending anomalously?
  *   4. Which capability is the money going to?
@@ -56,8 +56,9 @@ const SAVED_LABEL: Record<string, string> = {
  * both harder to read. Same conventions throughout — no client JS,
  * force-dynamic, HQ-gated at the layout with a defence-in-depth check here.
  *
- * While the governor is dark every figure below is zero, and that is the point:
- * the measurement surface exists BEFORE the spend does.
+ * While a tier is dark its figures below are zero, and that is the point: the
+ * measurement surface existed BEFORE the spend did (and has metered every
+ * governed call since the estate armed, 2026-09-10 onward).
  */
 
 export const dynamic = "force-dynamic";

@@ -55,7 +55,8 @@
  * independently armable — binding a text model must not authorise transcription
  * spend, and binding an STT model must open no text door — so it carries its own
  * tier (below). Admitted here, and to the ledger's CHECK, by migration 20261191;
- * still DARK (no STT model bound), so it meters nothing until activation.
+ * ARMED 2026-09-13 (model + credential bound). Its only reachable production
+ * surface today is the super-admin self-test — the WhatsApp channel stays dark.
  */
 export const AI_TASK_CLASSES = [
   "deterministic",
@@ -306,7 +307,8 @@ export function reservationEnvelopeOf(
 /**
  * Is ANY tier bound to a real model in this build? A BUILD-TIME fact — the
  * honest answer to "could this deployment spend money on inference at all".
- * False today, and no environment variable can change that.
+ * True since the 2026-09-10 activation diff (all five tiers bound as of
+ * 2026-09-13), and no environment variable can change the answer either way.
  */
 export function isAnyTierBound(): boolean {
   return AI_TIERS.some((t) => TIER_MODEL[t] !== null);
@@ -337,9 +339,11 @@ export type AiFeatureDefinition = {
  * rejects an unregistered key, so a new AI surface cannot reach a provider
  * without an entry here — which is the review point.
  *
- * Entries below whose tier is armed (cheap/mid/high, 2026-09-10) are LIVE at
- * their gates; entries on a null tier (embedding/transcription) or behind a
- * channel/flag/CEO hold still behave exactly as before this file existed.
+ * All five tiers are armed (cheap/mid/high 2026-09-10; embedding 2026-09-11;
+ * transcription 2026-09-13), so entries below are LIVE at their gates — except
+ * where a channel flag, DB flag, or CEO hold still stands (the dark WhatsApp
+ * channel, the chat.auto_reply build-constant hold), and those behave exactly
+ * as before this file existed.
  *
  * NOTE THE ONE ASYMMETRY, because it is the honest part. Most capabilities
  * degrade to a DETERMINISTIC ANSWER — a regex, an empty draft, a fixed
