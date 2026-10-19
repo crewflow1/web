@@ -96,6 +96,24 @@ const FAIR_LOOP: FairLoop[] = [
     orderBefore: [/\.order\(\s*["']last_sync_at["']/, /\.order\(\s*["']org_id["']/],
   },
   {
+    cron: "calendar-sync",
+    driver: "runCalendarSyncTick",
+    // Fairness: the tick consumes the BOUNDED, cursor-ordered lister (the
+    // token-store orders by last_sync_at ASC NULLS FIRST — pinned in
+    // __tests__/security/calendar-sync-cron.test.ts, since the SQL order lives
+    // in lib/integrations/calendar/token-store.ts, not this service file) and a
+    // successful pull advances the cursor (markConnectionSynced bumps
+    // last_sync_at), rotating the serviced connection to the back.
+    fairness: [
+      /listConnectedCalendarConnections\(MAX_CONNECTIONS_PER_TICK\)/,
+      /markConnectionSynced\(/,
+    ],
+    budget: [
+      /PASS_BUDGET_MS/,
+      /-\s*startedAt\s*\+\s*perConnectionBudgetMs\s*>\s*passBudgetMs\)\s*break/,
+    ],
+  },
+  {
     cron: "weather-fetch",
     driver: "runWeatherFetch",
     // Fairness is an IN-MEMORY sort of the district list by each district's most-

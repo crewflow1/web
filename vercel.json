@@ -154,6 +154,10 @@
       "schedule": "0 */6 * * *"
     },
     {
+      "path": "/api/cron/calendar-sync",
+      "schedule": "35 */6 * * *"
+    },
+    {
       "path": "/api/cron/weather-watch-sync",
       "schedule": "20 */6 * * *"
     },

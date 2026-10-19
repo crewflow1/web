@@ -2,6 +2,7 @@ import type { MerchantConnection } from "@/server/services/merchant-connections"
 import type { MerchantProvider } from "@/lib/integrations/merchants/types";
 import { MERCHANT_LABELS } from "@/lib/integrations/merchants/types";
 import {
+  connectMerchantConnection,
   disconnectMerchantConnection,
   importMerchantCatalogueAction,
 } from "./actions";
@@ -14,9 +15,14 @@ import {
  * credential-gated AND feature-gated AND endpoint-gated (and, above that,
  * needs a trade-account integration contract), every merchant is
  * `connectable: false` today, so the connect control renders as a DISABLED
- * "Connect (not configured)" button — it never links to a connect flow while
- * dark. When a merchant becomes connectable the control becomes a live link, and
- * a `connected` merchant shows its trade account with a disconnect control.
+ * "Connect (not configured)" button — it never offers a connect flow while
+ * dark. When a merchant becomes connectable the control becomes the REAL
+ * connect flow: merchants are not OAuth (the deployment credential + endpoint
+ * are env, per contract), so connecting an org is a FORM — the trade account
+ * number (+ optional per-org account secret) posted to the
+ * `connectMerchantConnection` server action, which refuses honestly while dark.
+ * A `connected` merchant shows its trade account with import + disconnect
+ * controls.
  *
  * Presentational + server-safe: it takes already-fetched state as props (the page
  * reads it org-pinned under the caller's JWT) and holds no secrets — the account
@@ -111,13 +117,46 @@ export function MerchantConnectionsPanel({
                   ) : null}
                 </div>
               ) : isConnectable ? (
-                // LIVE: a real link into the connect flow.
-                <a
-                  href={`/api/integrations/merchants/${conn.provider}/connect`}
-                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                // LIVE: the real connect flow — bind the org's trade account
+                // number (and optional merchant-issued account secret, encrypted
+                // before storage) via the server action. No redirect: there is
+                // no third party to hand off to for a cXML trade account.
+                <form
+                  action={connectMerchantConnection}
+                  className="flex flex-wrap items-center justify-end gap-2"
                 >
-                  Connect {label}
-                </a>
+                  <input type="hidden" name="provider" value={conn.provider} />
+                  <label className="sr-only" htmlFor={`merchant-account-${conn.provider}`}>
+                    {label} trade account number
+                  </label>
+                  <input
+                    id={`merchant-account-${conn.provider}`}
+                    name="accountNumber"
+                    required
+                    maxLength={64}
+                    placeholder="Trade account number"
+                    autoComplete="off"
+                    className="w-40 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 shadow-sm placeholder:text-slate-400"
+                  />
+                  <label className="sr-only" htmlFor={`merchant-secret-${conn.provider}`}>
+                    {label} account secret (optional)
+                  </label>
+                  <input
+                    id={`merchant-secret-${conn.provider}`}
+                    name="accountSecret"
+                    type="password"
+                    maxLength={256}
+                    placeholder="Account secret (optional)"
+                    autoComplete="off"
+                    className="w-44 rounded-md border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 shadow-sm placeholder:text-slate-400"
+                  />
+                  <button
+                    type="submit"
+                    className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                  >
+                    Connect {label}
+                  </button>
+                </form>
               ) : (
                 // DARK: disabled — no link to a connect flow while unconfigured.
                 <button
