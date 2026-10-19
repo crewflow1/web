@@ -417,6 +417,106 @@ export async function listPushedExternalEventIds(
   return out;
 }
 
+export type OrgCalendarConnectionState = {
+  provider: CalendarProvider;
+  status: string;
+  externalAccountId: string | null;
+};
+
+/**
+ * TOKEN-FREE connection state for one org, under the service role. The pull
+ * composer's entry points run WITHOUT a user session (the provider webhook and
+ * the cron tick), where a tenant-client read would see zero rows under RLS and
+ * silently report "not connected" — so the composer resolves the live provider
+ * through this org-pinned, secret-free projection instead. Never selects a
+ * token column.
+ */
+export async function listOrgCalendarConnectionStates(
+  orgId: string,
+): Promise<OrgCalendarConnectionState[]> {
+  const admin = createAdminClient();
+  const loose = admin as unknown as {
+    from: (t: string) => {
+      select: (c: string) => {
+        eq: (col: string, val: string) => PromiseLike<{
+          data: Array<{
+            provider: string;
+            status: string;
+            external_account_id: string | null;
+          }> | null;
+          error: { message: string } | null;
+        }>;
+      };
+    };
+  };
+  const { data, error } = await loose
+    .from("calendar_connections")
+    .select("provider, status, external_account_id")
+    .eq("org_id", orgId);
+  if (error) {
+    throw new Error(`calendar connection-state read failed: ${error.message}`);
+  }
+  return (data ?? []).map((row) => ({
+    provider: row.provider as CalendarProvider,
+    status: row.status,
+    externalAccountId: row.external_account_id,
+  }));
+}
+
+export type ConnectedCalendarRef = {
+  orgId: string;
+  provider: CalendarProvider;
+  connectionId: string;
+};
+
+/**
+ * Enumerate every org with a `connected` calendar — the cron tick's work list.
+ * Service-role (the tick has no user session), deliberately TOKEN-FREE (only the
+ * org/provider/id triple is selected) and BOUNDED: the cron processes at most
+ * `limit` connections per tick (oldest-synced first, so a backlog drains fairly)
+ * rather than fanning out unboundedly. Dark ⇒ zero rows can exist, so this also
+ * returns [] (the caller short-circuits on the feature flag before even reaching
+ * here).
+ */
+export async function listConnectedCalendarConnections(
+  limit: number,
+): Promise<ConnectedCalendarRef[]> {
+  const admin = createAdminClient();
+  const loose = admin as unknown as {
+    from: (t: string) => {
+      select: (c: string) => {
+        eq: (col: string, val: string) => {
+          order: (
+            col: string,
+            opts: { ascending: boolean; nullsFirst?: boolean },
+          ) => {
+            limit: (n: number) => PromiseLike<{
+              data: Array<{ id: string; org_id: string; provider: string }> | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
+      };
+    };
+  };
+  const { data, error } = await loose
+    .from("calendar_connections")
+    .select("id, org_id, provider")
+    .eq("status", "connected")
+    .order("last_sync_at", { ascending: true, nullsFirst: true })
+    // Honest bounded sample (F-1): a deliberately partial, cursor-rotated page —
+    // the clamp keeps it under PostgREST's silent 1000 cap.
+    .limit(Math.min(limit, 1000));
+  if (error) {
+    throw new Error(`calendar connected-connections list failed: ${error.message}`);
+  }
+  return (data ?? []).map((row) => ({
+    orgId: row.org_id,
+    provider: row.provider as CalendarProvider,
+    connectionId: row.id,
+  }));
+}
+
 export type StoredWatchChannel = {
   id: string;
   orgId: string;

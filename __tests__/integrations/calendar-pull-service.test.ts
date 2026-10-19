@@ -43,16 +43,17 @@ const h = vi.hoisted(() => {
   type BuilderState = {
     table: string;
     op: string;
+    cols: string;
     row: Record<string, unknown> | Record<string, unknown>[] | null;
     eqs: Array<[string, unknown]>;
   };
   type Resolver = (st: BuilderState) => { data?: unknown; error: unknown };
 
   function makeBuilder(table: string, resolver: Resolver) {
-    const st: BuilderState = { table, op: "select", row: null, eqs: [] };
+    const st: BuilderState = { table, op: "select", cols: "", row: null, eqs: [] };
     const settle = () => Promise.resolve(resolver(st));
     const b: Record<string, unknown> = {
-      select() { st.op = "select"; return b; },
+      select(cols?: string) { st.op = "select"; st.cols = cols ?? ""; return b; },
       update(r: Record<string, unknown>) { st.op = "update"; st.row = r; return b; },
       delete() { st.op = "delete"; return b; },
       upsert(r: Record<string, unknown> | Record<string, unknown>[]) { st.op = "upsert"; st.row = r; return settle(); },
@@ -73,8 +74,12 @@ const h = vi.hoisted(() => {
     return { data: null, error: null };
   };
   const adminResolver: Resolver = (st) => {
-    if (st.table === "calendar_connections" && st.op === "select")
-      return { data: state.tokenRow, error: null };
+    if (st.table === "calendar_connections" && st.op === "select") {
+      // Token read (service-role, maybeSingle) vs. the token-FREE connection
+      // state projection the pull composer resolves the live provider from.
+      if (st.cols.includes("access_token")) return { data: state.tokenRow, error: null };
+      return { data: state.connections, error: null };
+    }
     if (st.table === "calendar_connections" && st.op === "update") return { data: null, error: null };
     if (st.table === "calendar_event_links" && st.op === "select")
       return { data: state.pushedLinks, error: null };

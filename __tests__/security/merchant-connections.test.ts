@@ -44,7 +44,7 @@ const MIG_DATA = "supabase/migrations/20261124000001_merchant_catalogue_and_orde
 const CONNECT = "lib/integrations/merchants/connect.ts";
 const SERVICE = "server/services/merchant-connections.ts";
 const CXML_ADAPTER = "lib/integrations/merchants/adapters/cxml-merchant.ts";
-const PENDING = "lib/integrations/merchants/adapters/pending.ts";
+const ADAPTER_INDEX = "lib/integrations/merchants/adapters/index.ts";
 const CXML = "lib/integrations/merchants/cxml.ts";
 const PRICE_FILE = "lib/integrations/merchants/price-file.ts";
 
@@ -290,10 +290,15 @@ describe("merchant adapters refuse before any fetch", () => {
     expect(code).toMatch(/redirect:\s*"error"/);
   });
 
-  it("the pending adapter contains NO fetch at all (dark-safe skeleton)", () => {
-    const code = codeOf(read(PENDING));
+  it("EVERY merchant binds to the guarded cXML adapter — no pending pretense, no second transport", () => {
+    const code = codeOf(read(ADAPTER_INDEX));
+    // All four merchants use the one vendor-generic, refuse-before-fetch transport.
+    expect(code).toMatch(/travis_perkins:\s*new CxmlMerchantAdapter\("travis_perkins"\)/);
+    expect(code).toMatch(/jewson:\s*new CxmlMerchantAdapter\("jewson"\)/);
+    expect(code).toMatch(/jp_corry:\s*new CxmlMerchantAdapter\("jp_corry"\)/);
+    expect(code).toMatch(/haldane_fisher:\s*new CxmlMerchantAdapter\("haldane_fisher"\)/);
+    // The resolver itself holds no network path.
     expect(code).not.toMatch(/fetch\(/);
-    expect(code).toMatch(/if \(!this\.isAvailable\(\)\)/);
   });
 
   it("adapters refuse behaviourally when dark (no network, unavailable result)", async () => {
@@ -350,9 +355,80 @@ describe("merchant service — org-pinned, loud, secret-free, refuse-before-fetc
   });
 });
 
+describe("merchant CONNECT flow — honest dark refusal, encrypted secret, no 404", () => {
+  const service = codeOf(read(SERVICE));
+  const panel = codeOf(read("app/(app)/settings/integrations/MerchantConnectionsPanel.tsx"));
+  const actions = codeOf(read("app/(app)/settings/integrations/actions.ts"));
+
+  it("the connect writer REFUSES dark BEFORE any DB access", () => {
+    const connectIdx = service.indexOf("export async function connectMerchantProvider");
+    expect(connectIdx).toBeGreaterThan(-1);
+    const body = service.slice(connectIdx);
+    const guardIdx = body.indexOf("if (!isMerchantConnectable(provider))");
+    const writeIdx = body.indexOf('from("merchant_connections")');
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(writeIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(writeIdx);
+  });
+
+  it("a per-org account secret is ENCRYPTED before write, and refused without a key", () => {
+    const connectIdx = service.indexOf("export async function connectMerchantProvider");
+    const body = service.slice(connectIdx);
+    expect(body).toMatch(/isTokenEncryptionConfigured\(\)/);
+    expect(body).toMatch(/encryptToken\(accountSecret\)/);
+    // The ONLY row assignment of the secret column is encrypt-or-null.
+    const assigns = body.match(/account_secret:[^,]+/g) ?? [];
+    expect(assigns.length).toBeGreaterThan(0);
+    for (const a of assigns) {
+      expect(a).toMatch(/encryptToken\(accountSecret\)\s*:\s*null/);
+    }
+  });
+
+  it("the panel drives the server action — the dead /api/integrations/merchants connect link is gone", () => {
+    expect(panel).not.toMatch(/\/api\/integrations\/merchants\//);
+    expect(panel).toMatch(/action=\{connectMerchantConnection\}/);
+    // The dark state remains a disabled control, never a link.
+    expect(panel).toMatch(/Connect \(not configured\)/);
+  });
+
+  it("the connect action is admin-gated and surfaces the service's honest refusal", () => {
+    const idx = actions.indexOf("export async function connectMerchantConnection");
+    expect(idx).toBeGreaterThan(-1);
+    const body = actions.slice(idx);
+    const adminIdx = body.indexOf("isAdminRole(ctx.membership.role)");
+    const callIdx = body.indexOf("connectMerchantProvider({");
+    expect(adminIdx).toBeGreaterThan(-1);
+    expect(callIdx).toBeGreaterThan(-1);
+    expect(adminIdx).toBeLessThan(callIdx);
+    expect(body).toMatch(/throw new Error\(res\.error\)/);
+  });
+
+  it("connect refuses behaviourally while dark (no merchant connectable today)", async () => {
+    const original = { ...process.env };
+    for (const k of ENV_KEYS) delete process.env[k];
+    try {
+      const { connectMerchantProvider } = await import(
+        "@/server/services/merchant-connections"
+      );
+      for (const p of MERCHANT_PROVIDERS) {
+        const res = await connectMerchantProvider({
+          orgId: "00000000-0000-0000-0000-000000000000",
+          provider: p,
+          accountNumber: "ACCT-1",
+          connectedBy: "00000000-0000-0000-0000-000000000001",
+        });
+        expect(res.ok).toBe(false);
+        if (!res.ok) expect(res.reason).toBe("not_configured");
+      }
+    } finally {
+      process.env = { ...original };
+    }
+  });
+});
+
 describe("no secret is ever logged", () => {
   it("no source logs a credential or an account secret", () => {
-    for (const f of [CONNECT, SERVICE, CXML_ADAPTER, PENDING, CXML, PRICE_FILE]) {
+    for (const f of [CONNECT, SERVICE, CXML_ADAPTER, ADAPTER_INDEX, CXML, PRICE_FILE]) {
       const code = codeOf(read(f));
       const logCalls = code.match(/console\.\w+\([^;]*\)/g) ?? [];
       for (const call of logCalls) {

@@ -6,36 +6,34 @@
  * on the merchant's credentials + endpoint + the master feature flag, so they
  * read the environment through the adapters — and all are dark today.
  *
- * ── REAL vs PENDING (the honest split) ──────────────────────────────────────
- * None of the four merchants publishes a public REST API, so — by the same
- * standard the banking substrate applies (TrueLayer is concrete because its Data
- * API host is documented; Plaid/Nordigen are pending) — no merchant qualifies as
- * a documented proprietary API. What IS knowable is the cXML/OCI e-procurement
- * OPEN STANDARD and the CSV price-file format, both real + unit-tested (../cxml,
- * ../price-file). So:
- *   - travis_perkins, jewson → {@link CxmlMerchantAdapter}: the national merchants
- *     whose parent groups run cXML/OCI B2B gateways for trade accounts. Concrete,
- *     standards-based transport — but still DARK (refuse-before-fetch; the
- *     endpoint is contract-provisioned, no default host in the build).
- *   - jp_corry, haldane_fisher → {@link PendingMerchantAdapter}: regional merchants
- *     with no documented API/standard endpoint; honest placeholders, exactly like
- *     Plaid/Nordigen today.
- * The binding is a modelling choice, clearly labelled; EVERY merchant is dark and
- * activates only with real, SSRF-validated credentials + endpoint.
+ * ── ONE TRANSPORT, FOUR MERCHANTS (the honest model) ────────────────────────
+ * None of the four merchants publishes a public REST API. What IS knowable is the
+ * cXML/OCI e-procurement OPEN STANDARD and the CSV price-file format, both real +
+ * unit-tested (../cxml, ../price-file) — and the transport around them
+ * ({@link CxmlMerchantAdapter}) is VENDOR-GENERIC: it is parameterised entirely by
+ * the per-merchant env config (MERCHANT_<P>_API_KEY / _ENDPOINT /
+ * _PRICE_FILE_URL), with no per-vendor code anywhere. So EVERY merchant —
+ * national (Travis Perkins, Jewson) and regional (JP Corry, Haldane Fisher) —
+ * binds to the same concrete, standards-based adapter. The engineering is
+ * complete for all four; what remains per merchant is EXTERNAL: a trade-account
+ * integration contract under which the merchant provisions the endpoint and
+ * issues the credential. Until then every merchant is DARK
+ * (refuse-before-fetch; no default host exists anywhere in the build) and
+ * activation is configuration only — never a code change.
  */
 
 import type { MerchantAdapter } from "./types";
 import type { MerchantProvider } from "../types";
 import { CxmlMerchantAdapter } from "./cxml-merchant";
-import { PendingMerchantAdapter } from "./pending";
 
 const ADAPTERS: Record<MerchantProvider, MerchantAdapter> = {
   // Concrete cXML/OCI transport (real, knowable standard) — dark-safe today.
+  // The adapter is vendor-generic; each binding differs only in which env config
+  // (contract-provisioned endpoint + credential) it resolves.
   travis_perkins: new CxmlMerchantAdapter("travis_perkins"),
   jewson: new CxmlMerchantAdapter("jewson"),
-  // Honest placeholders — no knowable public format for these regional merchants.
-  jp_corry: new PendingMerchantAdapter("jp_corry"),
-  haldane_fisher: new PendingMerchantAdapter("haldane_fisher"),
+  jp_corry: new CxmlMerchantAdapter("jp_corry"),
+  haldane_fisher: new CxmlMerchantAdapter("haldane_fisher"),
 };
 
 /** Resolve the adapter for a merchant. */

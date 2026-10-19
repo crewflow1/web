@@ -23,9 +23,11 @@ import {
   type VatInputsDb,
 } from "@/server/services/vat-quarter-inputs";
 import { getPayrollTaxProfilesForOrg } from "@/server/services/payroll-tax-profile";
+import { isHmrcConnectable } from "@/lib/integrations/hmrc/oauth";
 import {
   prepareVatReturnAction,
   prepareCis300ReturnAction,
+  submitHmrcReturnAction,
 } from "./actions";
 
 /**
@@ -246,6 +248,10 @@ export default async function TaxDashboardPage() {
   const hmrcSubmissions = await getHmrcSubmissions(ctx.org.id);
   const canPrepare =
     ctx.membership.role === "owner" || ctx.membership.role === "admin";
+  // The submit affordance exists ONLY when HMRC is connectable (vendor
+  // recognition + client creds + feature flag — ALL absent today, so it never
+  // renders dark). The action + orchestrator repeat the same guard server-side.
+  const canSubmit = canPrepare && isHmrcConnectable();
 
   const vatDeadline = nextVatDeadline(quarterEndExclusiveIso);
   const yearStartDate = new Date(yearStartIso);
@@ -455,10 +461,12 @@ export default async function TaxDashboardPage() {
         </ul>
       </section>
 
-      {/* HMRC returns — prepared & held internally (never filed) */}
+      {/* HMRC returns — prepared & held internally; submit renders only when
+          HMRC is connectable (never dark) */}
       <HmrcReturnsSection
         submissions={hmrcSubmissions}
         canPrepare={canPrepare}
+        canSubmit={canSubmit}
         quarterStartIso={quarterStartIso}
       />
 
@@ -557,13 +565,24 @@ const HMRC_KIND_LABEL: Record<HmrcSubmission["kind"], string> = {
   fps: "RTI Full Payment Submission",
 };
 
+const HMRC_STATUS_STYLE: Record<string, string> = {
+  prepared: "bg-slate-100 text-slate-700",
+  held: "bg-slate-100 text-slate-700",
+  submitting: "bg-blue-100 text-blue-800",
+  submitted: "bg-blue-100 text-blue-800",
+  accepted: "bg-green-100 text-green-800",
+  rejected: "bg-red-100 text-red-800",
+};
+
 function HmrcReturnsSection({
   submissions,
   canPrepare,
+  canSubmit,
   quarterStartIso,
 }: {
   submissions: HmrcSubmission[];
   canPrepare: boolean;
+  canSubmit: boolean;
   quarterStartIso: string;
 }) {
   return (
@@ -579,17 +598,26 @@ function HmrcReturnsSection({
         </div>
       </div>
 
-      <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-        CrewFlow prepares and holds these returns — it does not file them with
-        HMRC. Live filing needs HMRC to formally recognise CrewFlow as filing
-        software, which is not yet in place.
-      </p>
+      {canSubmit ? (
+        <p className="mt-3 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+          HMRC filing is connected. Submitting a prepared return files it with
+          HMRC — review the frozen figures first; an accepted return cannot be
+          recalled from here.
+        </p>
+      ) : (
+        <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          CrewFlow prepares and holds these returns — it does not file them with
+          HMRC. Live filing needs HMRC to formally recognise CrewFlow as filing
+          software, which is not yet in place.
+        </p>
+      )}
 
       {canPrepare ? (
         <div className="mt-4 flex flex-wrap gap-2">
           {/* Preparing is pure composition over your own figures — no HMRC
-              connection, no filing. The terminal SUBMIT button is deliberately
-              absent (recognition-gated). */}
+              connection, no filing. The terminal SUBMIT control renders per
+              prepared row below, and ONLY when HMRC is connectable
+              (recognition-gated — never dark). */}
           <form action={prepareVatReturnAction}>
             <input type="hidden" name="quarterStart" value={quarterStartIso} />
             <button
@@ -631,9 +659,28 @@ function HmrcReturnsSection({
                   {formatDate(s.createdAt)}
                 </p>
               </div>
-              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium capitalize text-slate-700">
-                {s.status}
-              </span>
+              <div className="flex shrink-0 items-center gap-2">
+                {canSubmit && (s.status === "prepared" || s.status === "held") ? (
+                  // LIVE ONLY (recognition + creds + flag): files this frozen
+                  // return with HMRC via the idempotent submit orchestrator.
+                  // Never rendered dark — canSubmit is false without all gates.
+                  <form action={submitHmrcReturnAction}>
+                    <input type="hidden" name="kind" value={s.kind} />
+                    <input type="hidden" name="submissionId" value={s.id} />
+                    <button
+                      type="submit"
+                      className="rounded-md border border-slate-900 bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+                    >
+                      Submit to HMRC
+                    </button>
+                  </form>
+                ) : null}
+                <span
+                  className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${HMRC_STATUS_STYLE[s.status] ?? "bg-slate-100 text-slate-700"}`}
+                >
+                  {s.status}
+                </span>
+              </div>
             </li>
           ))}
         </ul>

@@ -12,7 +12,10 @@ import {
   TELEMATICS_PROVIDERS,
   type TelematicsProvider,
 } from "@/lib/integrations/telematics/oauth";
-import { disconnectMerchantProvider } from "@/server/services/merchant-connections";
+import {
+  connectMerchantProvider,
+  disconnectMerchantProvider,
+} from "@/server/services/merchant-connections";
 import { runMerchantCatalogueImport } from "@/server/services/merchant-writers";
 import {
   isMerchantProvider,
@@ -133,6 +136,49 @@ export async function disconnectTelematicsConnection(formData: FormData): Promis
   const res = await disconnectTelematicsProvider(ctx.org.id, provider);
   if (!res.ok) {
     throw new Error(res.error ?? "Disconnect failed.");
+  }
+
+  revalidatePath("/settings/integrations");
+}
+
+/**
+ * Merchant CONNECT — wires the panel's per-merchant connect form to
+ * `connectMerchantProvider`. Builders' merchants are not OAuth (the deployment
+ * credential + contract-provisioned endpoint live in env, per merchant), so
+ * connecting an ORG means binding its trade account number — plus an optional
+ * per-org account secret, encrypted before write — to merchant_connections.
+ * This server action IS the connect path the panel drives; there is no
+ * /api/integrations/merchants/.../connect redirect flow, because there is no
+ * third party to redirect to.
+ *
+ * DARK-SAFE, GATES IN ORDER: (1) provider validated; (2) auth + org + admin
+ * (the admin-write RLS on merchant_connections, 20261124, is the real
+ * boundary); (3) the HONEST dark refusal — while the merchant is not
+ * connectable (flag off / no credentials / no endpoint — ALWAYS today) the
+ * service refuses BEFORE any DB write and this throws the real reason instead
+ * of 404ing or pretending. The secret value is never logged and never echoed.
+ */
+export async function connectMerchantConnection(formData: FormData): Promise<void> {
+  const providerRaw = String(formData.get("provider") ?? "");
+  if (!isMerchantProvider(providerRaw)) {
+    throw new Error("Unknown merchant.");
+  }
+  const provider: MerchantProvider = providerRaw;
+
+  const { ctx, user } = await requireOrgContext();
+  if (!isAdminRole(ctx.membership.role)) {
+    throw new Error("Only an owner or admin may connect a merchant.");
+  }
+
+  const res = await connectMerchantProvider({
+    orgId: ctx.org.id,
+    provider,
+    accountNumber: String(formData.get("accountNumber") ?? ""),
+    accountSecret: String(formData.get("accountSecret") ?? ""),
+    connectedBy: user.id,
+  });
+  if (!res.ok) {
+    throw new Error(res.error);
   }
 
   revalidatePath("/settings/integrations");

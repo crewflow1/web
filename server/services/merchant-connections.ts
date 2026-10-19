@@ -4,6 +4,11 @@ import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { readFailure } from "@/lib/supabase/read-failure";
 import {
+  encryptToken,
+  isTokenEncryptionConfigured,
+} from "@/lib/integrations/token-crypto";
+import { isMerchantConnectable } from "@/lib/integrations/merchants/connect";
+import {
   getMerchantAdapter,
   type MerchantProvider,
 } from "@/lib/integrations/merchants/adapters";
@@ -26,10 +31,13 @@ import type {
  * LOUD READS. A failed read throws via `readFailure` rather than degrading to a
  * silent "disconnected".
  *
- * DARK. This service never writes a secret or a `connected` status: that only
- * happens after a real connect handshake, unreachable without merchant
- * credentials. `importMerchantCatalogue` / `submitPurchaseOrderToMerchant` refuse
- * BEFORE any fetch when the adapter is unavailable and change nothing.
+ * DARK. The connect handshake (`connectMerchantProvider`) is the ONLY writer of a
+ * `connected` status or an (encrypted) secret, and it REFUSES — before any DB
+ * write — whenever the merchant is not connectable (flag off / no deployment
+ * credentials / no endpoint), which is ALWAYS today. So no secret and no
+ * `connected` row is reachable dark. `importMerchantCatalogue` /
+ * `submitPurchaseOrderToMerchant` likewise refuse BEFORE any fetch when the
+ * adapter is unavailable and change nothing.
  */
 
 export type MerchantConnection = {
@@ -166,6 +174,110 @@ export async function disconnectMerchantProvider(
   if (error) {
     console.error("[merchants] disconnect failed", { provider, message: error.message });
     return { ok: false, error: error.message };
+  }
+  return { ok: true };
+}
+
+export type ConnectMerchantResult =
+  | { ok: true }
+  | { ok: false; reason: "not_configured" | "invalid" | "error"; error: string };
+
+/** The org's trade account number with the merchant: short, printable, no control chars. */
+const ACCOUNT_HANDLE_RE = /^[\x20-\x7e]{1,64}$/;
+
+/**
+ * Admin CONNECT — the merchant connect handshake. Builders' merchants are NOT
+ * OAuth: the deployment holds the integration credential + contract-provisioned
+ * endpoint (env, per merchant), and connecting an ORG means binding its trade
+ * ACCOUNT NUMBER (plus an optional per-org account secret the merchant issued)
+ * to the merchant_connections row. So the genuine connect flow is this
+ * form-driven write, not a redirect — the panel drives it via a server action.
+ *
+ * DARK GUARD FIRST. When the merchant is not connectable (flag off / no
+ * deployment credential / no endpoint — ALWAYS today) this refuses honestly
+ * BEFORE any DB access: no row is written, no secret is stored, and the caller
+ * gets the real reason (awaiting a trade-account integration contract).
+ *
+ * SECRETS AT REST. An optional per-org account secret is AES-256-GCM encrypted
+ * application-side (token-crypto) BEFORE the write — exactly as the
+ * accounting/banking/telematics substrates store their tokens — and a secret
+ * without INTEGRATION_TOKEN_ENCRYPTION_KEY is refused loudly rather than stored
+ * in plaintext. The secret column is service-role-only on read (column
+ * privilege, 20261124), so it never comes back to a tenant surface.
+ *
+ * AUTHORISATION IS DOUBLED. Runs under the caller's JWT: the admin-write RLS on
+ * merchant_connections is the real boundary; the action layer refuses
+ * non-admins loudly first. Org-pinned via the upsert's org_id. Idempotent: one
+ * row per (org, provider) — reconnecting updates the same row.
+ */
+export async function connectMerchantProvider(params: {
+  orgId: string;
+  provider: MerchantProvider;
+  accountNumber: string;
+  accountSecret?: string | null;
+  connectedBy: string;
+}): Promise<ConnectMerchantResult> {
+  const { orgId, provider, connectedBy } = params;
+
+  // DARK GUARD FIRST — refuse before any DB write while not connectable.
+  if (!isMerchantConnectable(provider)) {
+    return {
+      ok: false,
+      reason: "not_configured",
+      error:
+        `${provider} is not configured in this deployment. A trade-account ` +
+        `integration contract, its credentials and endpoint (and the merchants ` +
+        `feature flag) are required before an account can be connected.`,
+    };
+  }
+
+  const accountNumber = params.accountNumber.trim();
+  if (!ACCOUNT_HANDLE_RE.test(accountNumber)) {
+    return {
+      ok: false,
+      reason: "invalid",
+      error: "Enter the trade account number the merchant issued (up to 64 characters).",
+    };
+  }
+
+  const accountSecret = (params.accountSecret ?? "").trim();
+  if (accountSecret.length > 0 && !isTokenEncryptionConfigured()) {
+    // NEVER store a plaintext secret: no encryption key ⇒ loud refusal.
+    return {
+      ok: false,
+      reason: "error",
+      error:
+        "INTEGRATION_TOKEN_ENCRYPTION_KEY is not configured; refusing to store an account secret.",
+    };
+  }
+
+  const supabase = await createClient();
+  const loose = supabase as unknown as {
+    from: (t: string) => {
+      upsert: (
+        row: Record<string, unknown>,
+        opts: { onConflict: string },
+      ) => PromiseLike<{ error: { message: string } | null }>;
+    };
+  };
+  const { error } = await loose.from("merchant_connections").upsert(
+    {
+      org_id: orgId,
+      provider,
+      status: "connected",
+      external_account_id: accountNumber,
+      // Encrypted at rest; null clears a previously stored secret on reconnect.
+      account_secret: accountSecret.length > 0 ? encryptToken(accountSecret) : null,
+      secret_expires_at: null,
+      connected_by: connectedBy,
+      connected_at: new Date().toISOString(),
+      last_error: null,
+    },
+    { onConflict: "org_id,provider" },
+  );
+  if (error) {
+    console.error("[merchants] connect failed", { provider, message: error.message });
+    return { ok: false, reason: "error", error: error.message };
   }
   return { ok: true };
 }
