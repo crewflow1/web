@@ -1,8 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { resolveEmailRecipient } from "@/lib/notifications/email-routing";
-import { notifyOnFailedPayment } from "@/lib/notifications/events";
+import {
+  MAX_HQ_RECIPIENTS,
+  parseHqRecipients,
+  resolveEmailRecipient,
+  resolveHqQuietHours,
+} from "@/lib/notifications/email-routing";
+import { notifyOnFailedPayment, notifyOnUrgentHqAlert } from "@/lib/notifications/events";
 
 /**
  * AC-1 — the notification→email bridge (Vision 2030, Programme AC).
@@ -70,7 +75,7 @@ describe("resolveEmailRecipient — deny-by-default routing", () => {
     ).toEqual({ to: "org@site.com", replyTo: null });
   });
 
-  it("hq audience with no explicit `to` → null (no wired recipient yet)", () => {
+  it("hq audience with no explicit `to` → null (the bridge resolves HQ separately via parseHqRecipients)", () => {
     expect(
       resolveEmailRecipient({
         directive: {},
@@ -159,5 +164,125 @@ describe("bridge wiring", () => {
 
   it("failed-payment customer notification opts into email", () => {
     expect(EVENTS).toMatch(/email: \{\}/);
+  });
+});
+
+// =====================================================================
+// 4. HQ-audience routing (settings-truth remediation, 2026-10-19)
+// =====================================================================
+//
+// The /admin/settings "HQ email recipients" + quiet-hours controls were
+// phantom (persisted, read by nothing). They are now the REAL routing for
+// hq-audience email: the critical-alert fire opts in, the bridge fans out
+// to the configured list, and quiet hours defer via scheduled_for.
+
+describe("parseHqRecipients — the configured HQ list", () => {
+  it("splits, trims, dedupes (case-insensitively) and drops junk", () => {
+    expect(
+      parseHqRecipients(" ops@crewflow.uk, Ops@crewflow.uk , not-an-email, a@b.co ,,"),
+    ).toEqual(["ops@crewflow.uk", "a@b.co"]);
+  });
+
+  it("empty / null / undefined → [] (HQ email stays dark until configured)", () => {
+    expect(parseHqRecipients("")).toEqual([]);
+    expect(parseHqRecipients(null)).toEqual([]);
+    expect(parseHqRecipients(undefined)).toEqual([]);
+  });
+
+  it("caps the fan-out at MAX_HQ_RECIPIENTS", () => {
+    const raw = Array.from({ length: 30 }, (_, i) => `op${i}@x.co`).join(",");
+    expect(parseHqRecipients(raw)).toHaveLength(MAX_HQ_RECIPIENTS);
+  });
+});
+
+describe("resolveHqQuietHours — defer non-urgent HQ email in the quiet window", () => {
+  // 23:30 UTC = inside a 22:00→07:00 London window (winter: UTC == London).
+  const NIGHT = new Date("2026-01-10T23:30:00.000Z");
+  // 12:00 UTC = well outside it.
+  const NOON = new Date("2026-01-10T12:00:00.000Z");
+  const base = {
+    timezone: "Europe/London",
+    quietStart: "22:00",
+    quietEnd: "07:00",
+    urgentBypass: true,
+  };
+
+  it("outside the window → send now", () => {
+    expect(
+      resolveHqQuietHours({ ...base, now: NOON, urgent: false }),
+    ).toEqual({ send: "now" });
+  });
+
+  it("inside the (midnight-wrapping) window, non-urgent → deferred to the window end", () => {
+    const d = resolveHqQuietHours({ ...base, now: NIGHT, urgent: false });
+    expect(d.send).toBe("deferred");
+    if (d.send === "deferred") {
+      // 23:30 → 07:00 is 7.5 hours.
+      expect(d.scheduledFor.getTime() - NIGHT.getTime()).toBe(7.5 * 3600_000);
+    }
+  });
+
+  it("urgent + bypass ON → sends during quiet hours", () => {
+    expect(
+      resolveHqQuietHours({ ...base, now: NIGHT, urgent: true }),
+    ).toEqual({ send: "now" });
+  });
+
+  it("urgent + bypass OFF → deferred like everything else", () => {
+    const d = resolveHqQuietHours({
+      ...base,
+      urgentBypass: false,
+      now: NIGHT,
+      urgent: true,
+    });
+    expect(d.send).toBe("deferred");
+  });
+
+  it("start === end disables quiet hours; malformed input fails open to sending", () => {
+    expect(
+      resolveHqQuietHours({ ...base, quietStart: "07:00", quietEnd: "07:00", now: NIGHT, urgent: false }),
+    ).toEqual({ send: "now" });
+    expect(
+      resolveHqQuietHours({ ...base, quietStart: "junk", now: NIGHT, urgent: false }),
+    ).toEqual({ send: "now" });
+    expect(
+      resolveHqQuietHours({ ...base, timezone: "Not/AZone", now: NIGHT, urgent: false }),
+    ).toEqual({ send: "now" });
+  });
+
+  it("honours the configured timezone (same instant, different wall clock)", () => {
+    // 23:30 UTC is 10:30 next morning in Auckland (UTC+13 in January) —
+    // outside a 22:00→07:00 window there.
+    expect(
+      resolveHqQuietHours({ ...base, timezone: "Pacific/Auckland", now: NIGHT, urgent: false }),
+    ).toEqual({ send: "now" });
+  });
+});
+
+describe("HQ wiring — the critical-alert fire is the consumer", () => {
+  it("notifyOnUrgentHqAlert opts into email with NO explicit `to` (the configured list routes it)", () => {
+    const n = notifyOnUrgentHqAlert({
+      org_id: "o1",
+      alert_label: "Payment failed streak",
+    });
+    expect(n.audience).toBe("hq");
+    expect(n.priority).toBe("urgent");
+    expect(n.email).toBeDefined();
+    expect(n.email?.to ?? null).toBeNull();
+  });
+
+  it("the bridge resolves HQ recipients + quiet hours from the settings singleton", () => {
+    expect(SVC).toMatch(/parseHqRecipients/);
+    expect(SVC).toMatch(/resolveHqQuietHours/);
+    expect(SVC).toMatch(/from "@\/server\/services\/hq-settings"/);
+    expect(SVC).toMatch(/critical_cc_email/);
+    expect(SVC).toMatch(/scheduled_for: scheduledFor/);
+  });
+
+  it("the routing additions stay pure (no server-only / supabase imports)", () => {
+    expect(ROUTING).not.toMatch(/import "server-only"/);
+    expect(ROUTING).not.toMatch(/from "@\/lib\/supabase/);
+    expect(ROUTING).toMatch(/export function parseHqRecipients/);
+    expect(ROUTING).toMatch(/export function resolveHqQuietHours/);
   });
 });

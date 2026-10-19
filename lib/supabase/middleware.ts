@@ -141,7 +141,9 @@ export async function updateSession(request: NextRequest, requestId?: string) {
     pathname.startsWith("/payment/") || // Stripe Checkout success/cancel return (customer not yet logged in)
     pathname.startsWith("/auth/callback") ||
     pathname === "/api/health" ||
-    pathname === "/api/waitlist" ||
+    // /api/waitlist was removed 2026-10-19 (orphan-route remediation): a
+    // marketing-era endpoint no form ever posted to. The `waitlist` table
+    // and its rows remain; only the dead public write path is gone.
     pathname === "/api/demo";
 
   // Auth-flow pages (login / signup / check-email / reset-password).

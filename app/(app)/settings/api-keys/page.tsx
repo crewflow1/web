@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
+import { isPublicApiJobsEnabled } from "@/lib/public-api/flag";
 import { CreateApiKeyForm, RevokeApiKeyButton } from "./_forms";
 
 /**
@@ -207,6 +208,10 @@ export default async function ApiKeysSettingsPage() {
 }
 
 function Header() {
+  // The /developers docs portal shares the v1 surface's flag and 404s while
+  // it is off — so the link renders exactly when the destination exists
+  // (reachability remediation 2026-10-19; pinned by reachability.test.ts).
+  const showDevelopers = isPublicApiJobsEnabled();
   return (
     <header>
       <div className="text-sm">
@@ -221,6 +226,16 @@ function Header() {
         the platform surface is being decided — keys you create now will keep
         working as endpoints are added.
       </p>
+      {showDevelopers ? (
+        <p className="mt-2 text-sm">
+          <Link
+            href="/developers"
+            className="font-medium text-slate-700 underline decoration-slate-300 underline-offset-2 hover:text-slate-900"
+          >
+            API developer docs →
+          </Link>
+        </p>
+      ) : null}
     </header>
   );
 }

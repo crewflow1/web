@@ -48,7 +48,7 @@ The house invariant (verified in code): `activated` can never be true without th
 | Inbound email ingestion | R034-part | Provider-side route (e.g. Resend Inbound → webhook) + self-generated `INBOUND_EMAIL_WEBHOOK_SECRET` + flag | leads from emails; zero outbound |
 | Microsoft SSO login / account linking | (R161-adj) | Supabase Azure provider config (+ Manual Linking toggle) | then flags |
 | Accounting connect (Xero/QBO/Sage) | (unatomised) | Developer apps at each vendor → client id/secret pairs + `INTEGRATION_TOKEN_ENCRYPTION_KEY` (self-generated) + `FEATURE_ACCOUNTING_CONNECT` | per-tenant OAuth; writes real ledger entries — staged rollout advised |
-| Calendar sync (Google/MS Graph) | (unatomised) | OAuth apps → creds + `FEATURE_CALENDAR_CONNECT` + token key as above | per-user consent |
+| Calendar sync (Google/MS Graph) | (unatomised) | OAuth apps → creds + `FEATURE_CALENDAR_CONNECT` + token key as above | per-user consent; two-way: push on save + inbound pull via webhook watch channels, with the `calendar-sync` cron (scheduled, dark-204) renewing watches + reconciling pulls |
 
 ## L3 — creates or increases cost (CEO billing approval)
 
@@ -62,16 +62,16 @@ The house invariant (verified in code): `activated` can never be true without th
 | PostHog analytics | R223 | Free tier → usage | Consent-gated client-side; your account + key |
 | Self-serve billing | (unatomised) | Stripe fees; tenants self-modify recurring charges | Also **flips entitlement enforcement from allow-all to enforcing** (side effect, documented) — stage carefully |
 | Stripe Connect portal payments | R061 | Platform/Connect fees; KYC liability | Separate `STRIPE_CONNECT_SECRET_KEY` + invoice webhook secret + per-org onboarding |
-| PITR backups | R141 | Paid Supabase add-on | Account-owner dashboard toggle; RPO ~24h→~2min |
+| PITR backups | R141 | Paid Supabase add-on | Account-owner dashboard toggle; RPO ~24h→~2min. **Launch-readiness note:** backup freshness is NOT observable from production (off-platform dumps live on the founder's machine) — cadence is enforced by policy, not telemetry: `docs/ops/OUTAGE-RUNBOOK.md` §6 |
 
 ## L4 — legal/compliance/provider approval → EXTERNAL ACTIVATION BLOCKED
 
 | Capability | Blocker (documentary) |
 |---|---|
-| HMRC MTD submit (VAT / CIS300 / FPS / CIS-verify) | **HMRC vendor recognition** (lib/env.ts:377-383; fraud-header conformance part of the gate). Creds+flag only ever enable CONNECT, never SUBMIT — both module and orchestrator refuse per flow. Internal prepare/hold works today |
-| Open Banking (TrueLayer/Plaid/Nordigen) | **FCA AISP authorisation** (env.ts:437-448) — AND the adapter body is `pending.ts` (code deliberately incomplete until the legal gate opens) |
-| Builders' merchants cXML (Jewson/TP/JP Corry/Haldane Fisher) | **Trade-account integration contracts** — endpoints are provisioned per contract; no public API exists |
-| Telematics (Samsara/Verizon) | Provider account/contract — AND adapter body is `pending.ts` |
+| HMRC MTD submit (VAT / CIS300 / FPS / CIS-verify) | **HMRC vendor recognition** (lib/env.ts:377-383; fraud-header conformance part of the gate). Production credentials are only issued to a RECOGNISED vendor, so the legal gate is upstream of the technical one. The submit orchestrator is now wired to /tax (2026-10-19): the "Submit to HMRC" affordance renders ONLY when `isHmrcConnectable()` (flag+creds — both absent today), the action + orchestrator + adapters each refuse dark before any claim/network, and the CIS statements ledger stays structurally unfilable (`prepared|exported` CHECK untouched). Internal prepare/hold works today |
+| Open Banking (TrueLayer/Plaid/Nordigen) | **FCA AISP authorisation** (env.ts:437-448). All three adapters are complete (the old `pending.ts` skeleton is deleted) and refuse-before-fetch while dark — credentials+flag stay the legal gate |
+| Builders' merchants cXML (Jewson/TP/JP Corry/Haldane Fisher) | **Trade-account integration contracts** — endpoints are provisioned per contract; no public API exists. Engineering is COMPLETE for all four (2026-10-19): one vendor-generic cXML/OCI adapter parameterised per merchant by env (`MERCHANT_<P>_API_KEY/_ENDPOINT/_PRICE_FILE_URL`), and the per-org connect flow is a form-driven trade-account binding on /settings/integrations (merchants are not OAuth; the old dead connect link is gone). Activation = contract + those env vars + `NEXT_PUBLIC_FEATURE_MERCHANTS` |
+| Telematics (Samsara/Verizon) | Provider account/contract. Both adapters are complete (the old `pending.ts` skeleton is deleted) and refuse-before-fetch while dark |
 | Marketplace | Partner onboarding/commercial agreements (flag alone yields an empty catalogue — recommend dark until partners exist) |
 | External penetration test | Firm engagement (scope + rules-of-engagement already written: docs/engineering/EXTERNAL-PROOF-READINESS.md §3) |
 | Ad-campaign analytics (Marketing AI sub-part) | A real ad account must exist; no credential defined by construction |

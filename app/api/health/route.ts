@@ -4,6 +4,7 @@ import { getIntegrationsReadiness } from "@/lib/integrations/readiness";
 import { getWeatherReadiness } from "@/lib/weather/readiness";
 import { getMonitoringReadiness } from "@/lib/monitoring/readiness";
 import { probeDatabase } from "@/lib/health/db-probe";
+import { probeCronFreshness } from "@/lib/health/cron-freshness";
 
 /**
  * Health check endpoint.
@@ -65,7 +66,14 @@ export async function GET() {
   // weather and integrations booleans above are READINESS signals (can-this-channel-send, etc.)
   // and deliberately do NOT gate `ok` — a dark-but-healthy provider is not an outage. The probe
   // never throws and the endpoint always returns HTTP 200 so the JSON body is the source of truth.
-  const db = await probeDatabase();
+  // Cron freshness — a privacy-safe, bucketed "minutes since the last successful cron run"
+  // (null = unknown). Exists so the EXTERNAL outage monitor (GitHub Actions, independent of
+  // Vercel) can alert when the cron scheduler silently stops while the page still serves —
+  // the quiet half of the 5-day-402 incident class. Deliberately does NOT gate `ok`:
+  // unknown-or-stale crons are an alert for the monitor to raise, not a reason for this
+  // endpoint to declare the serving path down. Probed in parallel with the DB so the health
+  // path stays one round-trip wide.
+  const [db, cron] = await Promise.all([probeDatabase(), probeCronFreshness()]);
 
   return NextResponse.json(
     {
@@ -93,6 +101,12 @@ export async function GET() {
         // The build-time half, so a false `available` is diagnosable without
         // shell access: "no adapter" and "no key" need different actions.
         providerImplemented: weather.providerImplemented,
+      },
+      crons: {
+        // Bucketed (5-minute floor, 24h cap) minutes since the last SUCCESSFUL cron run
+        // started; null = unknown (probe could not answer). Booleans/integers only — this
+        // endpoint is public and must never expose timestamps, route names or env vars.
+        lastSuccessAgeMinutes: cron.ageMinutes,
       },
       monitoring: {
         enabled: monitoring.enabled,

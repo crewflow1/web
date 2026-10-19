@@ -95,6 +95,13 @@ export const HQ_AREAS: HqNavArea[] = [
       { href: "/admin/demos", label: "Demos" },
       { href: "/admin/organizations", label: "Signups & intake" },
       { href: "/admin/ai-receptionist", label: "AI Receptionist" },
+      // The receptionist APPROVAL surfaces (WhatsApp day-1 depends on an
+      // operator finding these): same sibling idiom as Home's
+      // /admin/ceo → /admin/ceo/briefings pair. The deeper worklist views
+      // (attention, my-claims) are cards on the hub + links on the
+      // worklist surface itself — reachability.test.ts pins all of it.
+      { href: "/admin/ai-receptionist/review", label: "Receptionist review" },
+      { href: "/admin/ai-receptionist/worklist", label: "Receptionist worklist" },
     ],
   },
   {

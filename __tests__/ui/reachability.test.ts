@@ -207,3 +207,75 @@ describe("/admin/outreach exists, is HQ-gated, and is linked from the HQ nav", (
     expect(actions).not.toMatch(/sendEmail|mailer|transport|nodemailer/i);
   });
 });
+
+// ── 6. HQ receptionist approval surfaces (reachability remediation 2026-10-19) ─
+
+describe("HQ receptionist review/worklist surfaces are reachable (were nav-orphaned)", () => {
+  const SURFACES = [
+    "/admin/ai-receptionist/review",
+    "/admin/ai-receptionist/worklist",
+    "/admin/ai-receptionist/worklist/attention",
+    "/admin/ai-receptionist/worklist/my-claims",
+  ] as const;
+
+  it("every surface's page actually exists", () => {
+    for (const href of SURFACES) {
+      const rel = href.replace("/admin/", "");
+      expect(
+        existsSync(join(ROOT, "app", "admin", ...rel.split("/"), "page.tsx")),
+        `${href} page exists`,
+      ).toBe(true);
+    }
+  });
+
+  it("the HQ nav model (Growth area) carries review + worklist beside the AI-Receptionist hub", () => {
+    const growth = HQ_AREAS.find((a) => a.id === "growth")!;
+    const hrefs = growth.children.map((c) => c.href);
+    expect(hrefs).toContain("/admin/ai-receptionist");
+    expect(hrefs).toContain("/admin/ai-receptionist/review");
+    expect(hrefs).toContain("/admin/ai-receptionist/worklist");
+  });
+
+  it("the hub page links ALL FOUR surfaces as operator cards (route list ↔ hub links)", () => {
+    const hub = read("app", "admin", "ai-receptionist", "page.tsx");
+    for (const href of SURFACES) {
+      expect(hub, `hub links ${href}`).toContain(`href="${href}"`);
+    }
+  });
+
+  it("authorization is unchanged: the surfaces sit behind the HQ layout gate", () => {
+    const layout = read("app", "admin", "layout.tsx");
+    expect(layout).toMatch(/requireHqPage/);
+  });
+});
+
+// ── 7. /developers docs portal (reachability remediation 2026-10-19) ──────────
+
+describe("/developers is linked exactly when it exists (flag-matched, no fake navigation)", () => {
+  it("the page 404s off the SAME flag the links read", () => {
+    const page = read("app", "(marketing)", "developers", "page.tsx");
+    expect(page).toMatch(/isPublicApiJobsEnabled/);
+    expect(page).toMatch(/notFound\(\)/);
+  });
+
+  it("the marketing footer renders the link only when the layouts light showDevelopers", () => {
+    const footer = read("components", "marketing", "footer.tsx");
+    expect(footer).toMatch(/showDevelopers/);
+    expect(footer).toMatch(/href: "\/developers"/);
+    // Dark default: absent prop means no link.
+    expect(footer).toMatch(/showDevelopers = false/);
+    for (const layout of ["(marketing)", "(site)"]) {
+      const src = read("app", layout, "layout.tsx");
+      expect(src, `${layout} layout gates the footer link`).toMatch(
+        /SiteFooterDark showDevelopers=\{isPublicApiJobsEnabled\(\)\}/,
+      );
+    }
+  });
+
+  it("the in-app API-keys page links the docs behind the same flag", () => {
+    const src = read("app", "(app)", "settings", "api-keys", "page.tsx");
+    expect(src).toMatch(/isPublicApiJobsEnabled\(\)/);
+    expect(src).toMatch(/href="\/developers"/);
+    expect(src).toMatch(/showDevelopers \?/);
+  });
+});

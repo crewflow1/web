@@ -4,7 +4,6 @@ import {
   merchantProviderReady,
 } from "@/lib/integrations/merchants/adapters";
 import { CxmlMerchantAdapter } from "@/lib/integrations/merchants/adapters/cxml-merchant";
-import { PendingMerchantAdapter } from "@/lib/integrations/merchants/adapters/pending";
 import { MERCHANT_PROVIDERS } from "@/lib/integrations/merchants/types";
 import {
   parsePriceFileCsv,
@@ -28,7 +27,7 @@ import type { PurchaseOrderPayload } from "@/lib/integrations/merchants/types";
  */
 
 // ---------------------------------------------------------------------------
-// Adapter selection — real (cXML) vs pending, and all dark by default
+// Adapter selection — one vendor-generic cXML transport, all dark by default
 // ---------------------------------------------------------------------------
 
 describe("adapter selection", () => {
@@ -44,14 +43,14 @@ describe("adapter selection", () => {
     process.env = { ...original };
   });
 
-  it("national merchants resolve to the concrete cXML adapter", () => {
-    expect(getMerchantAdapter("travis_perkins")).toBeInstanceOf(CxmlMerchantAdapter);
-    expect(getMerchantAdapter("jewson")).toBeInstanceOf(CxmlMerchantAdapter);
-  });
-
-  it("regional merchants resolve to the honest pending adapter", () => {
-    expect(getMerchantAdapter("jp_corry")).toBeInstanceOf(PendingMerchantAdapter);
-    expect(getMerchantAdapter("haldane_fisher")).toBeInstanceOf(PendingMerchantAdapter);
+  it("EVERY merchant resolves to the concrete, vendor-generic cXML adapter", () => {
+    // The cXML/OCI transport is parameterised entirely by per-merchant env
+    // config, so the regional merchants (JP Corry, Haldane Fisher) bind to the
+    // SAME real adapter as the national ones — the only remaining gap per
+    // merchant is external (the trade-account contract's endpoint + credential).
+    for (const p of MERCHANT_PROVIDERS) {
+      expect(getMerchantAdapter(p)).toBeInstanceOf(CxmlMerchantAdapter);
+    }
   });
 
   it("every merchant maps to an adapter whose provider matches the key", () => {

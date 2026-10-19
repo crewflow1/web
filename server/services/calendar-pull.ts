@@ -26,6 +26,8 @@ import {
   markConnectionSynced,
   markConnectionError,
   listPushedExternalEventIds,
+  listConnectedCalendarConnections,
+  listOrgCalendarConnectionStates,
   upsertPulledEvents,
   findWatchChannelByChannelId,
   readWatchChannel,
@@ -34,7 +36,6 @@ import {
   markWatchNotified,
   deleteWatchChannel,
 } from "@/lib/integrations/calendar/token-store";
-import { listCalendarConnections } from "@/server/services/calendar-connections";
 
 /**
  * Calendar two-way sync — the PULL composer. The inbound mirror of the push
@@ -77,14 +78,20 @@ export type PullSummary = {
   message: string;
 };
 
-/** Resolve the org's single connected + connectable provider, or a dark/absent reason. */
+/**
+ * Resolve the org's single connected + connectable provider, or a dark/absent
+ * reason. SERVICE-ROLE (token-free, org-pinned): the composer's entry points run
+ * with NO user session (the provider webhook, the cron tick), where a tenant
+ * read would see zero rows under RLS and misreport "not connected" — the exact
+ * failure that previously broke the webhook → pull path end to end.
+ */
 async function resolveLiveProvider(
   orgId: string,
 ): Promise<
   | { ok: true; provider: CalendarProvider }
   | { ok: false; provider: CalendarProvider | null; reason: "not_connected" | "skipped_dark" }
 > {
-  const connections = await listCalendarConnections(orgId);
+  const connections = await listOrgCalendarConnectionStates(orgId);
   const active = connections.find((c) => c.status === "connected") ?? null;
   if (!active) return { ok: false, provider: null, reason: "not_connected" };
   if (!isCalendarProviderConnectable(active.provider)) {
@@ -256,8 +263,10 @@ export async function getCalendarFreeBusy(
     refreshToken: stored.refreshToken,
   });
 
-  // Microsoft getSchedule needs the account handle; Google ignores it.
-  const connections = await listCalendarConnections(orgId);
+  // Microsoft getSchedule needs the account handle; Google ignores it. Read it
+  // through the service-role token-free projection — this path may also run
+  // without a user session (see resolveLiveProvider).
+  const connections = await listOrgCalendarConnectionStates(orgId);
   const account = connections.find((c) => c.provider === provider)?.externalAccountId ?? null;
 
   const result = await pullFreeBusy({ provider, tokens, timeMin, timeMax, account });
@@ -417,6 +426,166 @@ export async function stopCalendarWatch(orgId: string): Promise<WatchSummary> {
   }
   await deleteWatchChannel(orgId, stored.connectionId);
   return { ok: true, status: "registered", provider, channelId: watch.channelId, message: "Watch channel stopped." };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRON TICK — watch renewal + bounded periodic pull reconciliation.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Renew a watch channel this close to (or past) its expiry. Providers cap TTLs
+ * (Microsoft ~3 days), so a 6-hourly tick with a 24h renewal window re-registers
+ * every channel comfortably before it lapses. */
+const WATCH_RENEW_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** The most connections one tick processes — bounded fan-out; the oldest-synced
+ * rows go first, so a backlog larger than this drains across ticks. */
+const MAX_CONNECTIONS_PER_TICK = 100;
+
+/**
+ * Wall-clock PASS BUDGET (the bank-sync/telematics fairness pattern). The cron
+ * route's maxDuration is 60s; stopping at 45s leaves headroom to return the
+ * summary. Combined with the oldest-synced-first cursor (the lister orders by
+ * last_sync_at ASC NULLS FIRST, and a successful pull advances last_sync_at,
+ * rotating the connection to the back), a truncated pass resumes from the tail
+ * next tick instead of re-servicing the same head forever.
+ */
+export const PASS_BUDGET_MS = 45_000;
+
+/** Stop BEFORE starting a connection the pass cannot finish inside the budget. */
+const PER_CONNECTION_BUDGET_MS = 10_000;
+
+export type CalendarSyncOrgOutcome = {
+  orgId: string;
+  provider: CalendarProvider;
+  /** What happened to the watch channel this tick. */
+  watch: "kept" | "registered" | "skipped_dark" | "error";
+  /** What happened to the pull this tick. */
+  pull: PullSummary["status"];
+  ok: boolean;
+  message: string;
+};
+
+export type CalendarSyncTickSummary = {
+  ran: boolean;
+  status: "ok" | "skipped_dark";
+  connections: number;
+  outcomes: CalendarSyncOrgOutcome[];
+};
+
+/**
+ * One scheduled calendar-sync tick: for every org with a `connected` calendar
+ * (bounded, oldest-synced first), (a) RENEW the provider watch channel when it is
+ * missing or expiring inside the renewal window — provider watches are
+ * short-lived by design, so without this the push-notification path silently
+ * dies days after connect — and (b) run a PULL reconciliation, which both drains
+ * anything a lost notification skipped and advances the incremental sync cursor.
+ *
+ * DARK-SAFE. The feature flag short-circuit comes FIRST (no DB read at all while
+ * the integration is dark — ALWAYS today); per-connection, a provider that is no
+ * longer connectable is skipped before any provider call (the same guard every
+ * entry point here uses). Zero connected calendars ⇒ `ran: true` with zero
+ * outcomes, which the cron route reports as a cheap no-op.
+ *
+ * NEVER THROWS per org: one org's dead grant must not starve the rest of the
+ * tick. Idempotent: pulls upsert on (connection, external event id) and watch
+ * registration upserts the single per-connection channel row.
+ */
+export async function runCalendarSyncTick(
+  appOrigin: string,
+  opts: { now?: () => number; passBudgetMs?: number; perConnectionBudgetMs?: number } = {},
+): Promise<CalendarSyncTickSummary> {
+  // DARK GUARD FIRST — no DB access while the integration is dark.
+  if (!calendarConnectFeatureEnabled()) {
+    return { ran: false, status: "skipped_dark", connections: 0, outcomes: [] };
+  }
+
+  const now = opts.now ?? Date.now;
+  const passBudgetMs = opts.passBudgetMs ?? PASS_BUDGET_MS;
+  const perConnectionBudgetMs = opts.perConnectionBudgetMs ?? PER_CONNECTION_BUDGET_MS;
+  const startedAt = now();
+
+  const connections = await listConnectedCalendarConnections(MAX_CONNECTIONS_PER_TICK);
+  const outcomes: CalendarSyncOrgOutcome[] = [];
+  // The composer's org-level semantics (resolveLiveProvider) service ONE live
+  // provider per org, so an org that somehow holds two connected rows is
+  // processed once per tick, not twice against the same provider.
+  const seenOrgs = new Set<string>();
+
+  for (const conn of connections) {
+    if (seenOrgs.has(conn.orgId)) continue;
+    seenOrgs.add(conn.orgId);
+    // WALL-CLOCK PASS BUDGET: never BEGIN a connection the pass cannot finish.
+    // The fairness cursor (oldest-synced first; a pull advances last_sync_at)
+    // means the connections left behind lead the next pass.
+    if (now() - startedAt + perConnectionBudgetMs > passBudgetMs) break;
+    // Per-connection dark guard — a provider whose credentials were pulled since
+    // connect is skipped without any provider work.
+    if (!isCalendarProviderConnectable(conn.provider)) {
+      outcomes.push({
+        orgId: conn.orgId,
+        provider: conn.provider,
+        watch: "skipped_dark",
+        pull: "skipped_dark",
+        ok: true,
+        message: "provider no longer connectable; skipped",
+      });
+      continue;
+    }
+
+    let watchOutcome: CalendarSyncOrgOutcome["watch"] = "kept";
+    let pullOutcome: PullSummary["status"] = "error";
+    let ok = true;
+    let message = "";
+
+    // (a) WATCH RENEWAL — register when absent or expiring within the window.
+    try {
+      const watch = await readWatchChannel(conn.orgId, conn.connectionId);
+      const expiresAtMs = watch?.expiration ? Date.parse(watch.expiration) : NaN;
+      const needsRenewal =
+        !watch ||
+        !Number.isFinite(expiresAtMs) ||
+        expiresAtMs - Date.now() <= WATCH_RENEW_WINDOW_MS;
+      if (needsRenewal) {
+        const registered = await registerCalendarWatch(conn.orgId, appOrigin);
+        watchOutcome = registered.ok && registered.status === "registered" ? "registered" : "error";
+        if (!registered.ok) {
+          ok = false;
+          message = registered.message;
+        }
+      }
+    } catch (e) {
+      watchOutcome = "error";
+      ok = false;
+      message = e instanceof Error ? e.message : "watch renewal failed";
+    }
+
+    // (b) PULL RECONCILIATION — drains missed notifications, advances the cursor.
+    try {
+      const pulled = await pullCalendarEvents(conn.orgId);
+      pullOutcome = pulled.status;
+      if (!pulled.ok) {
+        ok = false;
+        message = message || pulled.message;
+      } else if (!message) {
+        message = pulled.message;
+      }
+    } catch (e) {
+      pullOutcome = "error";
+      ok = false;
+      message = message || (e instanceof Error ? e.message : "pull failed");
+    }
+
+    outcomes.push({
+      orgId: conn.orgId,
+      provider: conn.provider,
+      watch: watchOutcome,
+      pull: pullOutcome,
+      ok,
+      message,
+    });
+  }
+
+  return { ran: true, status: "ok", connections: connections.length, outcomes };
 }
 
 export type InboundResult = {

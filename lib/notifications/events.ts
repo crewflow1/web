@@ -490,6 +490,12 @@ export function notifyOnUrgentHqAlert(input: {
     source_module: "alert",
     source_id: null,
     metadata: { alert_label: input.alert_label },
+    // Also deliver by email — a critical alert fire is exactly what the
+    // /admin/settings "HQ email recipients" list exists for. No explicit
+    // `to`: the bridge fans out to the configured recipients (plus the
+    // critical-CC copy) and honours the quiet-hours window. With no
+    // recipients configured, nothing is queued — HQ email stays dark.
+    email: {},
   });
 }
 

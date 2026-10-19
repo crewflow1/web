@@ -7,13 +7,25 @@ import {
   type SectionId,
   type HqSettings,
 } from "@/lib/hq/settings";
+import {
+  getEmailReadiness,
+  getSmsReadiness,
+  getWhatsAppReadiness,
+  type ProviderReadiness,
+} from "@/lib/comms/readiness";
 import { saveSection } from "./actions";
 
 /**
- * /admin/settings — Phase 4.
+ * /admin/settings — Phase 4, rebuilt by the settings-truth remediation
+ * (2026-10-19).
  *
- * Real settings page replacing the HQ-6 stub. Eight sections, each
- * is a small <form> posting to saveSection.bind(null, sectionId).
+ * EVERY control on this page has a real consumer, named in its hint —
+ * the truthfulness rule lives in lib/hq/settings.ts. Seven sections,
+ * each a small <form> posting to saveSection.bind(null, sectionId);
+ * the integrations section additionally renders a READ-ONLY provider
+ * readiness panel derived from lib/comms/readiness.ts (build + env
+ * facts), replacing the hand-flipped *_connected toggles that used to
+ * counterfeit connection state.
  *
  * No client JS — every form is a server action POST. Mirrors the
  * pattern used by /admin/impersonation and /admin/notifications so
@@ -87,10 +99,9 @@ export default async function HqSettingsPage({
       <SectionNotifications settings={settings} />
       <SectionAlerts settings={settings} />
       <SectionBilling settings={settings} />
-      <SectionBranding settings={settings} />
       <SectionSupport settings={settings} />
       <SectionIntegrations settings={settings} />
-      <SectionFeatureFlags settings={settings} />
+      <SectionFeatureFlags />
     </div>
   );
 }
@@ -189,32 +200,10 @@ function SectionGeneral({ settings }: { settings: HqSettings }) {
   return (
     <SectionShell id="general">
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Platform name" hint="Shown in HQ headers and emails.">
-          <input
-            type="text"
-            name="platform_name"
-            defaultValue={s.platform_name}
-            className={inputCls}
-          />
-        </Field>
-        <Field label="Support email" hint="Customer support inbox.">
-          <input
-            type="email"
-            name="support_email"
-            defaultValue={s.support_email}
-            className={inputCls}
-          />
-        </Field>
-        <Field label="Ops Slack URL" hint="Optional — leave blank to disable.">
-          <input
-            type="url"
-            name="ops_slack_url"
-            defaultValue={s.ops_slack_url}
-            placeholder="https://hooks.slack.com/..."
-            className={inputCls}
-          />
-        </Field>
-        <Field label="Timezone" hint="IANA name, e.g. Europe/London.">
+        <Field
+          label="Timezone"
+          hint="IANA name, e.g. Europe/London. Governs the quiet-hours window below."
+        >
           <input
             type="text"
             name="timezone"
@@ -233,7 +222,7 @@ function SectionNotifications({ settings }: { settings: HqSettings }) {
     <SectionShell id="notifications">
       <Field
         label="HQ email recipients"
-        hint="Comma-separated. Every HQ notification email goes to these addresses."
+        hint="Comma-separated. HQ notification emails go to these addresses — today that is every URGENT HQ event: critical alert fires (nightly poll), urgent HQ notes, and impersonation-session starts. Empty = no HQ email."
       >
         <textarea
           name="hq_email_recipients"
@@ -243,7 +232,10 @@ function SectionNotifications({ settings }: { settings: HqSettings }) {
         />
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Quiet hours start" hint="HH:MM (24h)">
+        <Field
+          label="Quiet hours start"
+          hint="HH:MM (24h), in the timezone above. Non-urgent HQ email queued in this window is deferred until it ends."
+        >
           <input
             type="text"
             name="quiet_hours_start"
@@ -251,7 +243,7 @@ function SectionNotifications({ settings }: { settings: HqSettings }) {
             className={inputCls}
           />
         </Field>
-        <Field label="Quiet hours end" hint="HH:MM (24h)">
+        <Field label="Quiet hours end" hint="HH:MM (24h). Equal start and end disables quiet hours.">
           <input
             type="text"
             name="quiet_hours_end"
@@ -260,18 +252,11 @@ function SectionNotifications({ settings }: { settings: HqSettings }) {
           />
         </Field>
       </div>
-      <div className="space-y-2">
-        <Toggle
-          name="send_during_quiet_hours_for_urgent"
-          defaultChecked={s.send_during_quiet_hours_for_urgent}
-          label="Still send urgent alerts during quiet hours"
-        />
-        <Toggle
-          name="daily_digest_enabled"
-          defaultChecked={s.daily_digest_enabled}
-          label="Send a 09:00 digest of the last 24h"
-        />
-      </div>
+      <Toggle
+        name="send_during_quiet_hours_for_urgent"
+        defaultChecked={s.send_during_quiet_hours_for_urgent}
+        label="Still send urgent HQ email during quiet hours"
+      />
     </SectionShell>
   );
 }
@@ -280,36 +265,10 @@ function SectionAlerts({ settings }: { settings: HqSettings }) {
   const s = settings.alerts;
   return (
     <SectionShell id="alerts">
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Field
-          label="Cooldown (hours)"
-          hint="Minimum gap between re-firing the same alert after resolution."
-        >
-          <input
-            type="number"
-            name="cooldown_hours"
-            min={0}
-            max={168}
-            defaultValue={s.cooldown_hours}
-            className={inputCls}
-          />
-        </Field>
-        <Field
-          label="Default snooze (hours)"
-          hint="Used by the snooze button on /admin/alerts."
-        >
-          <input
-            type="number"
-            name="default_snooze_hours"
-            min={1}
-            max={168}
-            defaultValue={s.default_snooze_hours}
-            className={inputCls}
-          />
-        </Field>
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field
           label="Critical CC email"
-          hint="Optional — CC'd on every critical-severity alert."
+          hint="Optional — added as an extra recipient on every critical alert fire's email, alongside the HQ recipients above."
         >
           <input
             type="email"
@@ -330,7 +289,7 @@ function SectionBilling({ settings }: { settings: HqSettings }) {
       <div className="grid gap-4 sm:grid-cols-2">
         <Field
           label="Default invoice due (days)"
-          hint="Net N applied to new invoices."
+          hint="Pre-fills the due date (today + N) on the /admin/billing Record-invoice form."
         >
           <input
             type="number"
@@ -341,62 +300,7 @@ function SectionBilling({ settings }: { settings: HqSettings }) {
             className={inputCls}
           />
         </Field>
-        <Field
-          label="Default setup fee (GBP)"
-          hint="Pre-fills the one-time setup fee for new customers."
-        >
-          <input
-            type="number"
-            name="default_setup_fee_gbp"
-            min={0}
-            max={100000}
-            step={1}
-            defaultValue={s.default_setup_fee_gbp}
-            className={inputCls}
-          />
-        </Field>
       </div>
-      <Field label="Default invoice footer">
-        <textarea
-          name="default_invoice_footer"
-          defaultValue={s.default_invoice_footer}
-          className={textareaCls}
-        />
-      </Field>
-    </SectionShell>
-  );
-}
-
-function SectionBranding({ settings }: { settings: HqSettings }) {
-  const s = settings.branding;
-  return (
-    <SectionShell id="branding">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Logo URL" hint="Public URL — used on PDFs and public quote pages.">
-          <input
-            type="url"
-            name="logo_url"
-            defaultValue={s.logo_url}
-            placeholder="https://crewflow.uk/logo.png"
-            className={inputCls}
-          />
-        </Field>
-        <Field label="Primary brand colour" hint="Hex, e.g. #0f172a">
-          <input
-            type="text"
-            name="primary_color"
-            defaultValue={s.primary_color}
-            className={inputCls}
-          />
-        </Field>
-      </div>
-      <Field label="PDF footer" hint="Optional small print under invoices and quotes.">
-        <textarea
-          name="pdf_footer"
-          defaultValue={s.pdf_footer}
-          className={textareaCls}
-        />
-      </Field>
     </SectionShell>
   );
 }
@@ -405,70 +309,51 @@ function SectionSupport({ settings }: { settings: HqSettings }) {
   const s = settings.support;
   return (
     <SectionShell id="support">
-      <Field label="Default reply signature">
+      <Field
+        label="Default reply signature"
+        hint="Pre-filled into the reply box on /admin/support tickets — visible and editable before every send. Empty = no prefill."
+      >
         <textarea
           name="default_reply_signature"
           defaultValue={s.default_reply_signature}
           className={textareaCls}
         />
       </Field>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field
-          label="Auto-close (days)"
-          hint="Resolved tickets auto-close after N days. 0 disables."
-        >
-          <input
-            type="number"
-            name="auto_close_days"
-            min={0}
-            max={180}
-            defaultValue={s.auto_close_days}
-            className={inputCls}
-          />
-        </Field>
-        <Field
-          label="Escalation email"
-          hint="Operator escalation contact. Optional."
-        >
-          <input
-            type="email"
-            name="escalation_email"
-            defaultValue={s.escalation_email}
-            className={inputCls}
-          />
-        </Field>
-      </div>
     </SectionShell>
   );
 }
 
 function SectionIntegrations({ settings }: { settings: HqSettings }) {
   const s = settings.integrations;
+  // REAL readiness, computed per request from build + env facts — the
+  // same probes /api/health serves. Read-only by construction: there is
+  // nothing here a form could change (connection edits live in Vercel).
+  const email = getEmailReadiness();
+  const sms = getSmsReadiness();
+  const whatsapp = getWhatsAppReadiness();
+  const stripeConfigured =
+    typeof process.env.STRIPE_SECRET_KEY === "string" &&
+    process.env.STRIPE_SECRET_KEY.trim().length > 0;
   return (
     <SectionShell id="integrations">
-      <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-        These toggles record what HQ has wired up. The actual API
-        credentials live in Vercel env vars — flipping a toggle here
-        does NOT connect or disconnect the provider.
-      </p>
       <div className="space-y-2">
-        <Toggle
-          name="stripe_connected"
-          defaultChecked={s.stripe_connected}
-          label="Stripe connected"
-        />
-        <Toggle
-          name="resend_connected"
-          defaultChecked={s.resend_connected}
-          label="Resend connected"
-        />
-        <Toggle
-          name="whatsapp_connected"
-          defaultChecked={s.whatsapp_connected}
-          label="WhatsApp connected"
-        />
+        <ReadinessRow label="Email (Resend)" r={email} />
+        <ReadinessRow label="SMS (Twilio)" r={sms} />
+        <ReadinessRow label="WhatsApp (Meta)" r={whatsapp} />
+        <div className="flex items-start justify-between gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+          <p className="text-xs font-medium text-slate-800">Stripe</p>
+          <p className="text-xs text-slate-600">
+            {stripeConfigured ? (
+              <span className="font-semibold text-emerald-700">
+                Credentials present
+              </span>
+            ) : (
+              <>missing STRIPE_SECRET_KEY</>
+            )}
+          </p>
+        </div>
       </div>
-      <Field label="Notes">
+      <Field label="Notes" hint="Free-form operator record — shown here only.">
         <textarea
           name="notes"
           defaultValue={s.notes}
@@ -480,7 +365,22 @@ function SectionIntegrations({ settings }: { settings: HqSettings }) {
   );
 }
 
-function SectionFeatureFlags(_props: { settings: HqSettings }) {
+function ReadinessRow({ label, r }: { label: string; r: ProviderReadiness }) {
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+      <p className="text-xs font-medium text-slate-800">{label}</p>
+      <p className="text-right text-xs text-slate-600">
+        {r.outboundReady ? (
+          <span className="font-semibold text-emerald-700">Ready to send</span>
+        ) : (
+          <>not ready — {r.blockers.join(", ")}</>
+        )}
+      </p>
+    </div>
+  );
+}
+
+function SectionFeatureFlags() {
   // Deliberately NO toggles: the switches that used to render here persisted
   // to JSONB and were read by nothing — a super-admin could "enable WhatsApp"
   // and believe it worked. Production flags are Vercel env vars; this panel

@@ -209,16 +209,20 @@ describe("server actions — super-admin gate + dual-write to admin_activity_log
       "updateCustomerProgress",
       "updateCustomerNotes",
       "setCustomerLifecycle",
-      "logImpersonationAttempt",
+      // logImpersonationAttempt (the HQ-3.0 audit-only stub) was deleted in
+      // the 2026-10 hygiene pass — HQ-10's startImpersonation is the real,
+      // audited flow (see __tests__/hq/impersonation.test.ts).
     ]) {
       expect(ACTIONS).toMatch(new RegExp(`export async function ${action}`));
     }
+    expect(ACTIONS).not.toMatch(/export async function logImpersonationAttempt/);
   });
 
   it("writes to admin_activity_log via recordAdminActivity for every mutating action", () => {
     const occurrences = (ACTIONS.match(/recordAdminActivity\(/g) ?? []).length;
-    // 5 actions × 1 audit row each.
-    expect(occurrences).toBeGreaterThanOrEqual(5);
+    // 4 customer-OS actions × 1 audit row each (the impersonation stub's row
+    // moved to the real impersonation service).
+    expect(occurrences).toBeGreaterThanOrEqual(4);
   });
 
   it("setup_fee → paid stamps setup_fee_paid_at the first time only", () => {

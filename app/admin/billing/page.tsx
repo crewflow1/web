@@ -23,6 +23,7 @@ import {
   setBillingInvoiceStatus,
   setNextRenewal,
 } from "./actions";
+import { getSettings } from "@/server/services/hq-settings";
 import { ClientConfirmForm } from "../_client-confirm";
 
 /**
@@ -124,10 +125,20 @@ export default async function HqBillingPage({
     return null;
   })();
 
-  // Load invoices for the open row only — never N+1.
+  // Load invoices for the open row only — never N+1. The HQ settings read
+  // (invoice due-date prefill) is likewise only paid when a row is open.
   const openInvoices: BillingInvoiceRow[] = openOrg
     ? await listBillingInvoicesForOrg(openOrg)
     : [];
+  // settings.billing.default_invoice_due_days consumer: pre-fill the
+  // Record-invoice due date with today + N (operator can override).
+  let defaultDueDateIso = "";
+  if (openOrg) {
+    const settings = await getSettings();
+    const due = new Date();
+    due.setUTCDate(due.getUTCDate() + settings.billing.default_invoice_due_days);
+    defaultDueDateIso = due.toISOString().slice(0, 10);
+  }
 
   return (
     <div className="space-y-4">
@@ -194,6 +205,7 @@ export default async function HqBillingPage({
                 row={r}
                 open={openOrg === r.org_id}
                 invoices={openOrg === r.org_id ? openInvoices : []}
+                defaultDueDateIso={defaultDueDateIso}
                 qs={buildQs(sp)}
               />
             ))}
@@ -208,11 +220,13 @@ function CustomerBillingRowView({
   row,
   open,
   invoices,
+  defaultDueDateIso,
   qs,
 }: {
   row: CustomerBillingRow;
   open: boolean;
   invoices: BillingInvoiceRow[];
+  defaultDueDateIso: string;
   qs: URLSearchParams;
 }) {
   const subscriptionPill = SUBSCRIPTION_PILL[row.subscription];
@@ -306,7 +320,11 @@ function CustomerBillingRowView({
       </div>
 
       {open ? (
-        <ExpandedBilling row={row} invoices={invoices} />
+        <ExpandedBilling
+          row={row}
+          invoices={invoices}
+          defaultDueDateIso={defaultDueDateIso}
+        />
       ) : null}
     </li>
   );
@@ -315,9 +333,11 @@ function CustomerBillingRowView({
 function ExpandedBilling({
   row,
   invoices,
+  defaultDueDateIso,
 }: {
   row: CustomerBillingRow;
   invoices: BillingInvoiceRow[];
+  defaultDueDateIso: string;
 }) {
   const renewalIso = row.next_renewal_at
     ? row.next_renewal_at.slice(0, 10)
@@ -401,6 +421,7 @@ function ExpandedBilling({
               <input
                 name="due_date"
                 type="date"
+                defaultValue={defaultDueDateIso}
                 className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
               />
             </label>

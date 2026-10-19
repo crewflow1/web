@@ -117,6 +117,36 @@ export default async function HqAiReceptionistPage({
         </Link>
       </header>
 
+      {/* Operator surfaces — the approval + coordination worklists. These
+          were nav-orphaned (reachable only by typed URL) until the 2026-10-19
+          reachability remediation; WhatsApp day-1 depends on an operator
+          landing on them naturally. Pinned by reachability.test.ts. */}
+      <nav
+        aria-label="Receptionist operator surfaces"
+        className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
+      >
+        <SurfaceCard
+          href="/admin/ai-receptionist/review"
+          title="Review queue"
+          blurb="Approve, edit or reject every receptionist draft before anything is sent."
+        />
+        <SurfaceCard
+          href="/admin/ai-receptionist/worklist"
+          title="Conversation worklist"
+          blurb="The prioritised backlog of conversations needing a human — review, recovery, escalation."
+        />
+        <SurfaceCard
+          href="/admin/ai-receptionist/worklist/attention"
+          title="Attention queue"
+          blurb="Conversations flagged for attention — claim, release or reassign them."
+        />
+        <SurfaceCard
+          href="/admin/ai-receptionist/worklist/my-claims"
+          title="My claims"
+          blurb="The conversations you have claimed and still own."
+        />
+      </nav>
+
       <nav aria-label="Status" className="flex flex-wrap gap-2 text-xs">
         <FilterPill current={filter ?? "all"} value="all" label={`All (${rows.length})`} />
         {AI_RECEPTIONIST_STATUSES.map((s) => (
@@ -234,6 +264,26 @@ function FilterPill({
       }
     >
       {label}
+    </Link>
+  );
+}
+
+function SurfaceCard({
+  href,
+  title,
+  blurb,
+}: {
+  href: string;
+  title: string;
+  blurb: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="block rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
+    >
+      <p className="text-sm font-semibold text-slate-900">{title} →</p>
+      <p className="mt-1 text-xs text-slate-500">{blurb}</p>
     </Link>
   );
 }

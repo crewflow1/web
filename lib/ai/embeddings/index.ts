@@ -18,6 +18,11 @@ import "server-only";
  * names the vendor (default "openai"); the vendor's own key gates it. Adding
  * Anthropic / Google / Azure / Voyage / a local model is a branch here plus a
  * sibling provider file — never a change to the Memory Engine.
+ *
+ * ONE exception to "configuration selects": the deterministic/hash provider is
+ * a dev/CI/bench tool and REFUSES in any production runtime (see
+ * `isProductionRuntime` below) — configuration can never select it where its
+ * meaningless vectors could reach the real corpus.
  */
 
 import type { EmbeddingProvider } from "./types";
@@ -39,11 +44,36 @@ export {
 } from "./versioning";
 
 /**
+ * Affirmative production detection for the deterministic lockdown below.
+ *
+ * TWO signals, EITHER sufficient to refuse:
+ *   - `VERCEL_ENV === "production"` — the Vercel deployment truth, set by the
+ *     platform itself (never by an operator), per the posture in
+ *     app/api/dev/test-login/route.ts.
+ *   - `NODE_ENV === "production"` — what `next build`/`next start` bakes into
+ *     EVERY deployed build, on Vercel or anywhere else. This deliberately also
+ *     covers Vercel PREVIEW deployments (NODE_ENV is "production" there too),
+ *     which point at the single production Supabase and must be refused for
+ *     the same reason.
+ *
+ * Neither signal is operator-set on a deployed build, so no env typo can
+ * configure the refusal away. Everything the deterministic provider exists for
+ * stays non-production: `next dev` (NODE_ENV=development), vitest/CI
+ * (NODE_ENV=test), and the tsx bench harness (scripts/memory-bench.ts —
+ * NODE_ENV unset).
+ */
+function isProductionRuntime(): boolean {
+  return process.env.VERCEL_ENV === "production" || process.env.NODE_ENV === "production";
+}
+
+/**
  * Resolve the configured embedding provider, or `null` when none is usable.
  *
- * Never throws: an unknown provider name or a missing key degrades to `null`
- * (semantic search off) rather than crashing the recall path. Construction is
- * cheap and network-free, so callers may call this per request.
+ * Never throws: an unknown provider name, a missing key, or a selection that
+ * is forbidden in this runtime (the deterministic provider in production)
+ * degrades to `null` (semantic search off) rather than crashing the recall
+ * path. Construction is cheap and network-free, so callers may call this per
+ * request.
  */
 export function getEmbeddingProvider(): EmbeddingProvider | null {
   const name = (process.env.MEMORY_EMBEDDING_PROVIDER ?? "openai").trim().toLowerCase();
@@ -81,6 +111,24 @@ export function getEmbeddingProvider(): EmbeddingProvider | null {
     // only; the production default above is unaffected. (See ./deterministic.)
     case "deterministic":
     case "hash":
+      // PRODUCTION LOCKDOWN (P1, remediation wave A). The provider's own header
+      // says it must NEVER be selected in production: its vectors are stable
+      // hashes with no semantic content, so one env typo on a deploy would fill
+      // the ARMED corpus with meaningless-but-valid vectors that recall would
+      // then rank with a straight face. Before this guard, the env VALUE alone
+      // selected it here, OUTSIDE the activation gate (the deterministic branch
+      // is deliberately ungoverned — zero egress, zero cost). Fail CLOSED in
+      // the factory's existing degradation shape: loud log + null (semantic
+      // search off, every other recall channel unaffected) — never construct.
+      if (isProductionRuntime()) {
+        console.error(
+          `[ai/embeddings] MEMORY_EMBEDDING_PROVIDER="${name}" selects the deterministic/` +
+            "hash provider, which must NEVER run in production (its vectors are " +
+            "semantically meaningless and would poison the corpus) — refusing; " +
+            "semantic search disabled until the configuration is corrected",
+        );
+        return null;
+      }
       return createDeterministicEmbeddingProvider();
 
     // Future real providers slot in here — configuration only:

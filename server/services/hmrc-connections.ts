@@ -130,7 +130,22 @@ export async function getHmrcConnection(orgId: string): Promise<HmrcConnection> 
 // ---------------------------------------------------------------------------
 
 export type HmrcSubmissionKind = "vat_return" | "cis300" | "fps";
-export type HmrcSubmissionStatus = "prepared" | "held";
+/**
+ * The dark-reachable states are ONLY 'prepared' | 'held' — this module writes no
+ * other. The submit lifecycle states ('submitting' | 'accepted' | 'rejected',
+ * plus the legacy 'submitted' slot in the 20261130 CHECK) are written exclusively
+ * by the recognition-gated submit orchestrator (server/services/hmrc-submit.ts)
+ * and appear here only so reads render honestly once a return has moved.
+ */
+export type HmrcSubmissionStatus =
+  | "prepared"
+  | "held"
+  | "submitting"
+  | "submitted"
+  | "accepted"
+  | "rejected";
+/** The states a return may be prepared INTO (all this module ever inserts). */
+export type HmrcPreparedStatus = Extract<HmrcSubmissionStatus, "prepared" | "held">;
 
 export type HmrcSubmission = {
   id: string;
@@ -278,7 +293,7 @@ async function insertSubmission(
     preparedBy: string;
     kind: HmrcSubmissionKind;
     periodKey: string;
-    status: HmrcSubmissionStatus;
+    status: HmrcPreparedStatus;
     payload: unknown;
   },
 ): Promise<PrepareSubmissionResult> {
@@ -342,7 +357,7 @@ export async function prepareVatReturn(params: {
    * FRS never applies and the frozen return is unchanged unless the org opted in.
    */
   flatRateConfig?: FlatRateSchemeConfig;
-  status?: HmrcSubmissionStatus;
+  status?: HmrcPreparedStatus;
 }): Promise<PrepareSubmissionResult> {
   const { orgId, preparedBy } = params;
   const status = params.status ?? "prepared";
@@ -467,7 +482,7 @@ export async function prepareCis300Return(params: {
   orgId: string;
   preparedBy: string;
   taxMonthEnd: string;
-  status?: HmrcSubmissionStatus;
+  status?: HmrcPreparedStatus;
 }): Promise<PrepareSubmissionResult> {
   const { orgId, preparedBy, taxMonthEnd } = params;
   const status = params.status ?? "prepared";
@@ -532,7 +547,7 @@ export async function prepareFpsReturn(params: {
   orgId: string;
   preparedBy: string;
   payrollRunId: string;
-  status?: HmrcSubmissionStatus;
+  status?: HmrcPreparedStatus;
 }): Promise<PrepareSubmissionResult> {
   const { orgId, preparedBy, payrollRunId } = params;
   const status = params.status ?? "prepared";

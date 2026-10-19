@@ -38,6 +38,9 @@ vi.mock("@/server/services/telephony", () => ({
 }));
 vi.mock("@/server/services/receptionist", () => ({
   processInboundEnquiry: vi.fn(),
+  // G-6: the missed-call trigger the lifecycle path invokes on an UNANSWERED
+  // terminal. Mocked hermetically; behaviour pinned in its own suite.
+  processMissedCallTextback: vi.fn(),
 }));
 
 async function loadRoute() {

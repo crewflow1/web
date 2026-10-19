@@ -42,7 +42,6 @@ const SERVICE = "server/services/bank-connections.ts";
 const ADAPTER_TL = "lib/integrations/banking/adapters/truelayer.ts";
 const ADAPTER_PLAID = "lib/integrations/banking/adapters/plaid.ts";
 const ADAPTER_NORDIGEN = "lib/integrations/banking/adapters/nordigen.ts";
-const ADAPTER_PENDING = "lib/integrations/banking/adapters/pending.ts";
 const STATEMENT_MAP = "lib/integrations/banking/statement-map.ts";
 
 /** Strip SQL line comments so NEGATIVE assertions test EXECUTABLE statements. */
@@ -336,12 +335,6 @@ describe("banking adapters REFUSE before fetch (no live bank call dark)", () => 
     expect(nordigen).toMatch(/NORDIGEN_ALLOWED_DOMAIN|gocardless\.com/);
   });
 
-  it("the pending adapter has NO fetch at all (no live bank call reachable)", () => {
-    const code = codeOf(read(ADAPTER_PENDING));
-    expect(code).not.toMatch(/fetch\(/);
-    expect(code).toMatch(/if \(!this\.isAvailable\(\)\)/);
-  });
-
   it("the statement mapper is PURE — no network, no server-only, no clock", () => {
     const code = codeOf(read(STATEMENT_MAP));
     expect(code).not.toMatch(/fetch\(/);
@@ -376,7 +369,7 @@ describe("bank connections service — org-pinned, loud, token-free reads, refus
 
 describe("no secret is ever logged", () => {
   it("no source logs a client secret or a token", () => {
-    for (const f of [OAUTH, CONNECT, CALLBACK, SERVICE, ADAPTER_TL, ADAPTER_PLAID, ADAPTER_NORDIGEN, ADAPTER_PENDING]) {
+    for (const f of [OAUTH, CONNECT, CALLBACK, SERVICE, ADAPTER_TL, ADAPTER_PLAID, ADAPTER_NORDIGEN]) {
       const code = codeOf(read(f));
       const logCalls = code.match(/console\.\w+\([^;]*\)/g) ?? [];
       for (const call of logCalls) {

@@ -54,6 +54,10 @@ vi.mock("@/server/services/telephony", async (importActual) => {
 // reaches Supabase; asserted below to prove the branch calls it.
 vi.mock("@/server/services/receptionist", () => ({
   refreshVoiceExtractionFromTranscript: vi.fn(),
+  // G-6: the missed-call trigger the route invokes on an UNANSWERED terminal.
+  // Mocked hermetically here; its own behaviour is pinned in
+  // twilio-voice-missed-call-trigger.test.ts.
+  processMissedCallTextback: vi.fn(),
 }));
 
 async function loadRoute() {
@@ -83,6 +87,11 @@ async function summaryMock() {
 async function reextractMock() {
   return vi.mocked(
     (await import("@/server/services/receptionist")).refreshVoiceExtractionFromTranscript,
+  );
+}
+async function missedCallMock() {
+  return vi.mocked(
+    (await import("@/server/services/receptionist")).processMissedCallTextback,
   );
 }
 
@@ -140,6 +149,12 @@ describe("POST /api/webhooks/twilio/voice/status — completion enrichment", () 
     (await recentTurnsMock()).mockResolvedValue([]);
     (await summaryMock()).mockResolvedValue(null);
     (await reextractMock()).mockResolvedValue({ refreshed: false });
+    (await missedCallMock()).mockResolvedValue({
+      enquiry_id: "enq-1",
+      lead_id: null,
+      conversation_id: null,
+      textback: { attempted: false, reason: "flag_off" },
+    } as never);
   });
 
   afterEach(async () => {
@@ -152,6 +167,7 @@ describe("POST /api/webhooks/twilio/voice/status — completion enrichment", () 
     (await recentTurnsMock()).mockReset();
     (await summaryMock()).mockReset();
     (await reextractMock()).mockReset();
+    (await missedCallMock()).mockReset();
   });
 
   it("enriches duration_sec + ended_at on a signed `completed` callback, org-pinned by CallSid", async () => {

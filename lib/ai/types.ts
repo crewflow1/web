@@ -1,11 +1,14 @@
 /**
- * Slice 6 (deterministic half) — shared response shapes for
- * /api/ai/activity_summary + /api/ai/lead_insights.
+ * Slice 6 (deterministic half) — shared response shapes for the insight
+ * aggregates (lib/ai/aggregates.ts), consumed IN-PROCESS by /insights and
+ * the dashboard insight cards. The /api/ai/{activity_summary,lead_insights}
+ * HTTP twins were removed 2026-10-19 (orphan-route remediation — nothing
+ * ever fetched them; ADR 0008 makes internal services, not per-capability
+ * endpoints, the stable interface).
  *
- * `summary` is null in this phase — the natural-language prose slot
- * is reserved for when an Anthropic/OpenAI key lands in Vercel. The
- * deterministic fields (counts, latencies, stalled actions) are the
- * meaningful product output today.
+ * `summary` carries the governed narrative when a text tier is bound; the
+ * deterministic fields (counts, latencies, stalled actions) are always the
+ * authoritative product output.
  */
 
 export type ActionCounts = {

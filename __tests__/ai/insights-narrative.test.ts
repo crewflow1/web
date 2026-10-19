@@ -185,8 +185,6 @@ describe("insights layer wiring (source-pinned architecture)", () => {
   const GENERATOR = "lib/ai/insight-narrative.ts";
   const SERVICE = "server/services/ai-insights.ts";
   const PAGE = "app/(app)/insights/page.tsx";
-  const ACTIVITY_ROUTE = "app/api/ai/activity_summary/route.ts";
-  const LEAD_ROUTE = "app/api/ai/lead_insights/route.ts";
   const RENDER = "app/(app)/dashboard/_insights.tsx";
 
   it("the generator's ONLY model door is getTextProvider — no vendor SDK", () => {
@@ -230,13 +228,14 @@ describe("insights layer wiring (source-pinned architecture)", () => {
     expect(code).toMatch(/activityWithNarrative/);
   });
 
-  it("both AI routes resolve the summary through the ONE funnel — the retired path is gone", () => {
-    for (const routePath of [ACTIVITY_ROUTE, LEAD_ROUTE]) {
-      const code = read(routePath);
-      expect(code, routePath).toMatch(/resolveInsightNarrative/);
-      expect(code, routePath).not.toMatch(/maybeGenerateSummary/);
-      expect(code, routePath).not.toMatch(/@\/lib\/ai\/llm/);
-    }
+  it("the orphan /api/ai HTTP twins stay REMOVED — the aggregates are in-process only (ADR 0008)", () => {
+    // 2026-10-19 orphan-route remediation: nothing ever fetched these two
+    // endpoints (the /insights page and the dashboard call the aggregates
+    // in-process), so the routes were deleted. /api/ai/question remains the
+    // only session AI endpoint — it has a real client (the question box).
+    expect(existsSync(resolve(root, "app/api/ai/activity_summary"))).toBe(false);
+    expect(existsSync(resolve(root, "app/api/ai/lead_insights"))).toBe(false);
+    expect(existsSync(resolve(root, "app/api/ai/question/route.ts"))).toBe(true);
   });
 
   it("the ad-hoc lib/ai/llm.ts model path is fully retired", () => {

@@ -30,7 +30,17 @@ const COLS = [
   },
 ];
 
-export function SiteFooterDark() {
+export function SiteFooterDark({
+  showDevelopers = false,
+}: {
+  /**
+   * Render the "API & developer docs" link (→ /developers). The layouts pass
+   * isPublicApiJobsEnabled() so the link exists exactly when the page does —
+   * /developers 404s while FEATURE_PUBLIC_API_JOBS is off, and a footer link
+   * to a 404 would out a dark surface. Pinned by reachability.test.ts.
+   */
+  showDevelopers?: boolean;
+}) {
   const year = new Date().getFullYear();
   return (
     <footer className="border-t border-white/10 bg-navy-950">
@@ -48,7 +58,15 @@ export function SiteFooterDark() {
             links={PILLARS.map((p) => ({ label: p.label, href: `/product/${p.slug}` }))}
           />
           {COLS.map((c) => (
-            <FooterCol key={c.title} title={c.title} links={c.links} />
+            <FooterCol
+              key={c.title}
+              title={c.title}
+              links={
+                c.title === "Resources" && showDevelopers
+                  ? [...c.links, { label: "API & developer docs", href: "/developers" }]
+                  : c.links
+              }
+            />
           ))}
         </div>
         <div className="mt-12 flex flex-col gap-3 border-t border-white/10 pt-6 text-xs text-ink-dim sm:flex-row sm:items-center sm:justify-between">
