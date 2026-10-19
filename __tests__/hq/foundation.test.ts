@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   computeMetrics,
@@ -33,7 +33,6 @@ const LAYOUT = read("app/admin/layout.tsx");
 // against that source of truth, and there are no stubs any more.
 const HQ_MODEL = read("app/admin/_nav/hq-nav-model.ts");
 const OVERVIEW = read("app/admin/overview/page.tsx");
-const COMING_SOON = read("app/admin/_coming-soon.tsx");
 
 function emptySnapshot(): HqSnapshot {
   const buckets = monthBuckets(12);
@@ -267,12 +266,10 @@ describe("Overview page", () => {
 });
 
 describe("Stubs — no dead ends (rule 5)", () => {
-  it("ComingSoonStub always links somewhere working", () => {
-    // Either the optional primary CTA OR the always-rendered overview link.
-    expect(COMING_SOON).toMatch(/href="\/admin\/overview"/);
-  });
-
-  it("ComingSoonStub announces which sprint will ship the section", () => {
-    expect(COMING_SOON).toMatch(/Ships in \{sprint\}/);
+  it("the ComingSoonStub is GONE — every HQ section ships a real page now", () => {
+    // The stub component (app/admin/_coming-soon.tsx, Sprint A) had zero
+    // usages after the product/HQ UX rebuild; deleted 2026-10. Rule 5 is now
+    // satisfied the strong way: no stub exists for a page to dead-end into.
+    expect(existsSync(resolve(ROOT, "app/admin/_coming-soon.tsx"))).toBe(false);
   });
 });

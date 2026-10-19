@@ -5,9 +5,9 @@ import "server-only";
  *
  * The ONLY place Research AI calls a model provider. It takes the prompt
  * messages built from REAL fetched evidence (lib/research/prompts.ts), runs
- * them through Anthropic Claude Haiku 4.5 (preferred) → OpenAI gpt-4o-mini
- * (fallback), parses + re-validates the JSON, and returns typed contracts with
- * provenance.
+ * them through the governed HIGH-tier binding (`TIER_MODEL.high` — single
+ * vendor, Anthropic, no fallback model; see the census note below), parses +
+ * re-validates the JSON, and returns typed contracts with provenance.
  *
  * Graceful degradation is a first-class behaviour, not an error path: when no
  * provider key is configured, or a call times out / fails / returns
@@ -16,8 +16,8 @@ import "server-only";
  * directive's "unknown is acceptable" applied to the model itself.
  *
  * Timeout is generous (22s) versus the dashboard summaries' 8s because the
- * runner route sets maxDuration=60 and makes at most two of these calls; Haiku
- * typically returns in 1–3s, so the ceiling only bites on a degraded provider.
+ * runner route sets maxDuration=60 and makes at most two of these calls; the
+ * ceiling only bites on a degraded provider.
  *
  * GOVERNED (closure wave). This module was NOT in the audit's list of five — it
  * was found by sweeping for provider-SDK constructions rather than for
@@ -71,7 +71,9 @@ type LlmText = { text: string; provider: LlmProvider };
 /**
  * One GOVERNED JSON-mode completion. Returns the raw text + which provider
  * answered, or null on not-activated / no-budget-org / budget refusal /
- * duplicate / timeout / failure. Anthropic first, OpenAI fallback.
+ * duplicate / timeout / failure. Single vendor: the HIGH-tier binding's
+ * Anthropic model only — the old gpt-4o-mini fallback was removed by the
+ * 2026-09-10 census fix (see callJsonWithProvider).
  *
  * `feature` is passed in by each caller rather than fixed here, so the two
  * research calls are accounted for separately in the ledger. The vendor
