@@ -1,5 +1,26 @@
 # Master Roadmap Reconciliation — zero-assumption, code-verified
 
+## ✅ POST-AUDIT REMEDIATION SUPERSEDE — 2026-10-19 (supersedes the classifications named below; everything else in the 2026-09-13 and 2026-08-30 blocks stands)
+
+**Baseline:** `main` = production = `e877fb36` (prod `/api/health` reports `sha: e877fb3`, verified 2026-10-19) · migration parity **389/389**, tip `20261229000000`. The remediation train (#883, five reviewed waves) closed the 2026-10-19 audit: **F = 0 · G = 0 · H = 0.**
+
+**Remediation outcomes (each code-verified in `e877fb36`):**
+
+- **Settings truthfulness** — the `/admin/settings` phantom control panel is gone: toggles read by nothing were removed; the surviving fields (HQ email recipients, quiet hours, urgent-override, timezone) were WIRED to a real consumer (HQ-audience notification email routing), not merely kept.
+- **Orphan routes removed** — `/api/ai/activity_summary`, `/api/ai/lead_insights`, `/api/waitlist` deleted (zero callers). The JSON atoms whose evidence strings still name them (R148 "3 session AI endpoints exist", R153 "1 of 3 /api/ai" / waitlist limiter) are **dated 2026-08-30 audit artifacts and are left untouched by convention** — the JSON is fully rewritten only at a zero-based re-audit; interim deltas are recorded here. Current truth: ONE session AI endpoint remains (`/api/ai/question`); `/api/waitlist` does not exist.
+- **Built-but-unreachable register: EMPTY again** — the receptionist cluster (review/worklist surface at `/admin/ai-receptionist`) and the `/developers` docs portal are now wired into navigation (pinned by `__tests__/ui/reachability.test.ts`); nothing known-built is unreachable.
+- **SDKs exist** — the 2026-08-29 "D on SDKs" API-matrix line is superseded: `sdks/` + `server/sdk` ship with tests (`__tests__/sdk`, `__tests__/openapi-sdk`) and the `/developers` portal documents them. The public API itself remains flag-dark (CEO queue Q1).
+- **Outage event + recovery** — production served HTTP 402 for ~5 days (2026-10-14 → 2026-10-19, Vercel billing suspension) and RECOVERED; an independent GitHub-Actions monitor (`.github/workflows/outage-monitor.yml`, Vercel-independent, probes `/api/health` ~15-min) + `docs/ops/OUTAGE-RUNBOOK.md` now exist. Honest residue: GitHub failure notifications are opt-in — an owner notification-settings action remains.
+
+**Current capability classifications (supersede any older wording):**
+
+- **Transcription tier** — ARMED + **provider-proven**: settled governed self-test ledger rows exist via the `/admin/ai-costs` super-admin self-test; the application path stays **WhatsApp/Meta-blocked** (the only voice-note-producing channel is dark). All five tiers are therefore bound, with cheap/mid/high/embedding production-proven on the real application paths.
+- **HMRC** — submit orchestrator now WIRED to `/tax` behind a **triple dark-gate** (flag + creds + per-call refuse-before-fetch); the CIS statements export ledger remains **structurally unsubmittable** (`prepared|exported` CHECK); legal gate unchanged (HMRC vendor recognition).
+- **Banking (TrueLayer/Plaid/Nordigen)** — all three adapters COMPLETE (the `pending.ts` skeleton is deleted); refuse-before-fetch while dark; FCA AISP authorisation stays the gate.
+- **Telematics (Samsara/Verizon)** — both adapters COMPLETE (`pending.ts` deleted); provider contract stays the gate.
+- **Merchants cXML (Jewson/TP/JP Corry/Haldane Fisher)** — engineering COMPLETE: vendor-generic adapter parameterised per merchant + form-driven per-org connect flow on `/settings/integrations`; trade-account contracts stay the gate.
+- **Calendar sync** — engineering COMPLETE end-to-end (push on save + inbound pull + watch-channel renewal via the `calendar-sync` cron, dark-204); OAuth creds stay the gate (L2).
+
 ## ✅ AI-ESTATE ACTIVATION SUPERSEDE — 2026-09-13 (supersedes ONLY the AI-estate classifications in the blocks below; everything else in the 2026-08-30 block stands)
 
 All five AI Cost Governor tiers are now bound and armed (cheap/mid/high 2026-09-10 · embedding 2026-09-11 · transcription 2026-09-13, channel-dark), and the generative trio + embedding are production-proven by real governed ledger rows. The generative-seam atoms are therefore re-classified **B (BUILT+DARK) → A (BUILT+LIVE / armed)**; the "governor `TIER_MODEL` all-null" line in the 2026-08-29 dark-capability inventory is history:
@@ -12,7 +33,7 @@ All five AI Cost Governor tiers are now bound and armed (cheap/mid/high 2026-09-
 
 Holds that are NOT dark tiers, stated to prevent re-drift: portal-chat generative auto-reply = CEO build-constant hold; WhatsApp voice-note transcription = channel dark (Meta activation pending; transcription tier itself armed, provider self-test pending — matrix transcription paragraph, PR #871 `9785c8e`).
 
-## ✅ FINAL-COMPLETION RE-AUDIT — 2026-08-30 (current truth; everything below this block is the 2026-08-29 baseline, preserved as history)
+## ✅ FINAL-COMPLETION RE-AUDIT — 2026-08-30 (stands except where the 2026-09-13 and 2026-10-19 blocks above supersede it; everything below this block is the 2026-08-29 baseline, preserved as history)
 
 **Method:** MANDATORY zero-based re-run of all 237 atoms against `roadmap/final-completion` (15 independent section auditors, previous statuses treated as hints only), then the 14 surviving current-stage breakers each BUILT or evidence-reclassified with citations — never silently. The JSON (`master-roadmap-reconciliation.json`) is fully rewritten with fresh per-atom evidence.
 

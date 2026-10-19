@@ -145,3 +145,15 @@ Honest recovery numbers today: schema-restore RTO ≈ 30 s · app redeploy RTO
 ≈ 5 min · data RPO ≤ 24 h on daily backups (PITR OFF). The open CEO actions
 (PITR enable, DB password custody, dated dump) are tracked in the support
 runbook's checklist — not here.
+
+## Delta 2026-10-19 (supersedes only the rows it names; procedure unchanged)
+
+- **Migration tip:** `20261229000000` (389/389 repo↔DB parity) — the 2026-08-29
+  row above is history.
+- **Off-platform copy:** the "pending password" caveat above is resolved —
+  dated off-platform dumps have since been produced with stored credentials
+  (DB password custody established; dumps live on the founder's machine).
+  Cadence remains **policy-enforced, not telemetry-observable** — see
+  `docs/ops/OUTAGE-RUNBOOK.md` §6, written after the 2026-10 five-day
+  Vercel-402 outage.
+- **PITR:** still **OFF** (CEO billing decision; unchanged).
