@@ -38,7 +38,13 @@ import { join, relative, resolve } from "node:path";
  *
  * LIMITS (documented, not hidden): the scan is static. It sees
  * `process.env.NAME` and `process.env["NAME"]`; it cannot resolve
- * `process.env[someExpression]`. The two known dynamic-key readers —
+ * DYNAMIC-KEY BLIND SPOT (honest statement): ~15 files read process.env via
+ * helper indirection (process.env[name] — integrations oauth, weather/governor
+ * readiness, billing, token-crypto, merchants, ops-snapshot). The census cannot
+ * statically enforce those names; each was spot-verified declared at review
+ * time, and new dynamic readers remain a residual risk this test does not cover.
+ * Also latent miss-shapes: process.env?.X, destructuring, template-bracket
+ * access — none exist in scanned dirs today (grep-verified at review).
  * lib/cache/kv.ts (loops over KV_ENV_KEYS) and lib/maintenance/readiness.ts
  * (reads via its MAINTENANCE_REMINDERS_FLAG const) — have their names declared
  * in the schema regardless. Comment-stripped, so prose can neither satisfy nor
