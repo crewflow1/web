@@ -57,11 +57,14 @@ import { updateSection } from "@/server/services/hq-settings";
 
 const ACTOR = { id: "u-hq", email: "hq@crewflow.uk" };
 
-/** The exact infra shape prod carries today (seeded by migrations). */
+/** The exact infra shape prod carries today (seeded by migrations), PLUS a
+ *  retired-section residue (branding was removed from SECTION_IDS by the
+ *  settings-truth remediation; its stored keys must survive every save). */
 const INFRA = {
   event_spine: { consumer_enabled: false, note: "seeded" },
   memory_embedding: { worker_enabled: true },
   memory_lifecycle: { worker_enabled: false },
+  branding: { logo_url: "https://legacy", primary_color: "#0f172a", pdf_footer: "" },
 };
 
 beforeEach(() => {
@@ -73,23 +76,25 @@ describe("updateSection preserves sections it does not own", () => {
   it("a save keeps every infra gate flag byte-for-byte (the embedding-activation prerequisite)", async () => {
     const res = await updateSection(
       "general",
-      { platform_name: "CrewFlow Ltd" },
+      { timezone: "Europe/Dublin" },
       ACTOR,
     );
     expect(res.ok).toBe(true);
     expect(h.state.blob.event_spine).toEqual(INFRA.event_spine);
     expect(h.state.blob.memory_embedding).toEqual(INFRA.memory_embedding);
     expect(h.state.blob.memory_lifecycle).toEqual(INFRA.memory_lifecycle);
+    // Retired-section residue survives byte-for-byte too (never migrated).
+    expect(h.state.blob.branding).toEqual(INFRA.branding);
     // And the edited section landed.
-    expect((h.state.blob.general as Row).platform_name).toBe("CrewFlow Ltd");
+    expect((h.state.blob.general as Row).timezone).toBe("Europe/Dublin");
   });
 
   it("two consecutive saves of different sections still lose nothing", async () => {
-    await updateSection("general", { platform_name: "CrewFlow Ltd" }, ACTOR);
-    await updateSection("notifications", { daily_digest_enabled: true }, ACTOR);
+    await updateSection("general", { timezone: "Europe/Dublin" }, ACTOR);
+    await updateSection("notifications", { hq_email_recipients: "ops@crewflow.uk" }, ACTOR);
     expect(h.state.blob.memory_embedding).toEqual(INFRA.memory_embedding);
     expect(h.state.blob.event_spine).toEqual(INFRA.event_spine);
-    expect((h.state.blob.general as Row).platform_name).toBe("CrewFlow Ltd");
+    expect((h.state.blob.general as Row).timezone).toBe("Europe/Dublin");
   });
 
   it("a failed settings read refuses the save rather than writing a rebuilt blob", async () => {
@@ -116,7 +121,7 @@ describe("updateSection preserves sections it does not own", () => {
       .spyOn(h.admin, "from")
       .mockImplementation(failingAdmin.from as never);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const res = await updateSection("general", { platform_name: "X" }, ACTOR);
+    const res = await updateSection("general", { timezone: "Europe/Dublin" }, ACTOR);
     expect(res.ok).toBe(false);
     spy.mockRestore();
   });

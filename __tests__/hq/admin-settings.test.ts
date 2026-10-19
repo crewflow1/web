@@ -73,12 +73,11 @@ describe("Phase 4 — migration: hq_settings", () => {
 // =====================================================================
 
 describe("settings section catalogue", () => {
-  it("covers the eight CEO-directive sections", () => {
+  it("covers the seven truthful sections (branding retired 2026-10-19 — it had no consumer)", () => {
     expect([...SECTION_IDS].sort()).toEqual(
       [
         "alerts",
         "billing",
-        "branding",
         "feature_flags",
         "general",
         "integrations",
@@ -111,8 +110,8 @@ describe("DEFAULT_SETTINGS", () => {
     expect(parsed.success).toBe(true);
   });
 
-  it("general.platform_name defaults to CrewFlow", () => {
-    expect(DEFAULT_SETTINGS.general.platform_name).toBe("CrewFlow");
+  it("general.timezone defaults to Europe/London", () => {
+    expect(DEFAULT_SETTINGS.general.timezone).toBe("Europe/London");
   });
 
   it("notifications.quiet_hours_start matches HH:MM regex", () => {
@@ -121,14 +120,14 @@ describe("DEFAULT_SETTINGS", () => {
     );
   });
 
+  it("notifications.hq_email_recipients defaults EMPTY — HQ email is dark until configured", () => {
+    expect(DEFAULT_SETTINGS.notifications.hq_email_recipients).toBe("");
+  });
+
   it("billing.default_invoice_due_days is sane (0..180)", () => {
     const v = DEFAULT_SETTINGS.billing.default_invoice_due_days;
     expect(v).toBeGreaterThanOrEqual(0);
     expect(v).toBeLessThanOrEqual(180);
-  });
-
-  it("branding.primary_color is a 6-digit hex", () => {
-    expect(DEFAULT_SETTINGS.branding.primary_color).toMatch(/^#[0-9a-fA-F]{6}$/);
   });
 });
 
@@ -149,31 +148,44 @@ describe("mergeSettings", () => {
 
   it("merges per section — unknown sections are ignored", () => {
     const merged = mergeSettings({
-      general: { platform_name: "Custom" },
+      general: { timezone: "Europe/Dublin" },
       junk: { x: 1 },
     });
-    expect(merged.general.platform_name).toBe("Custom");
-    expect(merged.general.support_email).toBe(
-      DEFAULT_SETTINGS.general.support_email,
-    );
+    expect(merged.general.timezone).toBe("Europe/Dublin");
     expect((merged as unknown as { junk?: unknown }).junk).toBeUndefined();
+  });
+
+  it("RETIRED keys in the stored blob are ignored, never an error, never surfaced", () => {
+    // Prod blobs still carry the phantom-field era's keys (platform_name,
+    // branding, *_connected, …). Reads must tolerate them forever; the
+    // stored data itself is never migrated or deleted.
+    const merged = mergeSettings({
+      general: { timezone: "Europe/Dublin", platform_name: "CrewFlow Ltd", ops_slack_url: "https://x" },
+      branding: { logo_url: "https://logo", primary_color: "#123456" },
+      integrations: { notes: "kept", stripe_connected: true },
+    });
+    expect(merged.general.timezone).toBe("Europe/Dublin");
+    expect(merged.integrations.notes).toBe("kept");
+    expect((merged.general as Record<string, unknown>).platform_name).toBeUndefined();
+    expect((merged as unknown as { branding?: unknown }).branding).toBeUndefined();
+    expect((merged.integrations as Record<string, unknown>).stripe_connected).toBeUndefined();
   });
 
   it("falls back to a section's defaults if a corrupt value fails the schema", () => {
     const merged = mergeSettings({
-      general: { platform_name: 123 },
+      general: { timezone: 123 },
     });
-    expect(merged.general.platform_name).toBe(
-      DEFAULT_SETTINGS.general.platform_name,
+    expect(merged.general.timezone).toBe(
+      DEFAULT_SETTINGS.general.timezone,
     );
   });
 
   it("validates email format strictly", () => {
     const merged = mergeSettings({
-      general: { support_email: "not-an-email" },
+      alerts: { critical_cc_email: "not-an-email" },
     });
-    expect(merged.general.support_email).toBe(
-      DEFAULT_SETTINGS.general.support_email,
+    expect(merged.alerts.critical_cc_email).toBe(
+      DEFAULT_SETTINGS.alerts.critical_cc_email,
     );
   });
 });

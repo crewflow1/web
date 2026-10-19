@@ -23,6 +23,7 @@ import {
   generateSupportReplyDraft,
 } from "../actions";
 import { getLatestSupportReplyDraft } from "@/server/services/hq-support-ai";
+import { getSettings } from "@/server/services/hq-settings";
 import { SupportReplyForm } from "./_reply-form";
 
 type SP = Promise<{ saved?: string; error?: string }>;
@@ -49,6 +50,10 @@ export default async function HqSupportTicketDetailPage({
   // P13 — the latest AI reply-draft artifact (a completed support_reply_draft
   // task result). Null = none generated yet; the panel shows its empty state.
   const replyDraft = await getLatestSupportReplyDraft(id);
+
+  // settings.support.default_reply_signature consumer: pre-filled into the
+  // reply box below (visible + editable — never appended server-side).
+  const { support: supportSettings } = await getSettings();
 
   const banner = (() => {
     if (sp.saved)
@@ -213,6 +218,7 @@ export default async function HqSupportTicketDetailPage({
             action={replyAsHq}
             ticketId={ticket.id}
             customerEmail={ticket.owner_email ?? ticket.org_email ?? null}
+            defaultSignature={supportSettings.default_reply_signature}
           />
 
         </section>

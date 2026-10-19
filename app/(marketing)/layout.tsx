@@ -1,6 +1,7 @@
 import { clashDisplay, satoshi } from "@/app/_marketing/fonts";
 import { SiteNav } from "@/components/marketing/nav";
 import { SiteFooterDark } from "@/components/marketing/footer";
+import { isPublicApiJobsEnabled } from "@/lib/public-api/flag";
 import { BookDemoModal } from "@/app/(public)/_book-demo-modal";
 import { JsonLd } from "@/components/seo/json-ld";
 import {
@@ -42,7 +43,7 @@ export default function MarketingLayout({
       <main id="main" className="flex-1">
         {children}
       </main>
-      <SiteFooterDark />
+      <SiteFooterDark showDevelopers={isPublicApiJobsEnabled()} />
       <BookDemoModal />
     </div>
   );

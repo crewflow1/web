@@ -2,7 +2,12 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { queueNotificationEmail } from "@/lib/notifications/email";
-import { resolveEmailRecipient } from "@/lib/notifications/email-routing";
+import {
+  parseHqRecipients,
+  resolveEmailRecipient,
+  resolveHqQuietHours,
+} from "@/lib/notifications/email-routing";
+import { getSettings } from "@/server/services/hq-settings";
 import { resolveNotificationDelivery } from "@/lib/notifications/preferences";
 import { enqueuePushForNotifications } from "@/lib/notifications/push";
 import { enqueueSmsForNotifications } from "@/lib/notifications/sms";
@@ -284,19 +289,90 @@ async function queueEmailsForNotifications(
     Array.from(new Set(pending.map((p) => p.row.org_id))),
   );
 
+  // HQ-AUDIENCE ROUTING (settings-truth remediation, 2026-10-19). An
+  // hq-audience row with an email directive but no explicit `to` fans out
+  // to the operator-configured /admin/settings recipients, honouring the
+  // quiet-hours window (deferred via the queue's scheduled_for — the
+  // drain already sends only rows whose scheduled_for has passed). One
+  // settings read per emit, and only when an HQ row actually needs it.
+  const needsHqSettings = pending.some(
+    (p) =>
+      p.row.audience === "hq" &&
+      !(typeof p.input.email?.to === "string" && p.input.email.to.trim()),
+  );
+  const hqSettings = needsHqSettings
+    ? await getSettings().catch((e) => {
+        console.error(
+          "[notifications] hq settings read failed — HQ email skipped this emit",
+          e instanceof Error ? e.message : String(e),
+        );
+        return null;
+      })
+    : null;
+
   for (const { input, row } of pending) {
     try {
-      const recipient = resolveEmailRecipient({
+      const explicit = resolveEmailRecipient({
         directive: input.email,
         audience: row.audience,
         orgEmail: orgEmails.get(row.org_id) ?? null,
       });
-      if (!recipient) continue;
-      await queueNotificationEmail({
-        notification: row,
-        to_email: recipient.to,
-        reply_to_email: recipient.replyTo,
-      });
+
+      // Recipient fan-out: the explicit/customer resolution stays a single
+      // address; an un-addressed HQ row resolves to the configured list
+      // (plus the critical-CC copy on urgent alert fires).
+      let recipients: Array<{ to: string; replyTo: string | null }>;
+      if (explicit) {
+        recipients = [explicit];
+      } else if (row.audience === "hq" && hqSettings) {
+        const list = parseHqRecipients(
+          hqSettings.notifications.hq_email_recipients,
+        );
+        const cc = hqSettings.alerts.critical_cc_email.trim();
+        if (
+          cc &&
+          row.category === "alert" &&
+          row.priority === "urgent" &&
+          !list.some((a) => a.toLowerCase() === cc.toLowerCase())
+        ) {
+          list.push(cc);
+        }
+        const replyTo =
+          typeof input.email?.replyTo === "string" && input.email.replyTo.trim()
+            ? input.email.replyTo.trim()
+            : null;
+        recipients = list.map((to) => ({ to, replyTo }));
+      } else {
+        recipients = [];
+      }
+      if (recipients.length === 0) continue;
+
+      // Quiet hours apply to HQ-audience email only (the setting is "when
+      // the TEAM is quiet"); customer-facing email is never deferred here.
+      let scheduledFor: string | undefined;
+      if (row.audience === "hq" && hqSettings) {
+        const decision = resolveHqQuietHours({
+          now: new Date(),
+          timezone: hqSettings.general.timezone,
+          quietStart: hqSettings.notifications.quiet_hours_start,
+          quietEnd: hqSettings.notifications.quiet_hours_end,
+          urgent: row.priority === "urgent",
+          urgentBypass:
+            hqSettings.notifications.send_during_quiet_hours_for_urgent,
+        });
+        if (decision.send === "deferred") {
+          scheduledFor = decision.scheduledFor.toISOString();
+        }
+      }
+
+      for (const recipient of recipients) {
+        await queueNotificationEmail({
+          notification: row,
+          to_email: recipient.to,
+          reply_to_email: recipient.replyTo,
+          scheduled_for: scheduledFor,
+        });
+      }
     } catch (e) {
       console.error(
         "[notifications] queueEmailsForNotifications row failed",

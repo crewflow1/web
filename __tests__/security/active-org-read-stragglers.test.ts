@@ -372,11 +372,12 @@ describe("lib/ai/aggregates — every read is pinned to the orgId the payload cl
   });
 
   it("every caller passes ctx.org.id (the ACTIVE org, never a request value)", () => {
+    // The /api/ai/{activity_summary,lead_insights} HTTP twins were removed
+    // 2026-10-19 (orphan-route remediation) — the in-process pages are the
+    // only remaining callers.
     const CALLERS: Array<[string, string[]]> = [
       ["app/(app)/insights/page.tsx", ["computeActivitySummary", "computeLeadInsights"]],
       ["app/(app)/dashboard/page.tsx", ["computeActivitySummary", "computeLeadInsights"]],
-      ["app/api/ai/activity_summary/route.ts", ["computeActivitySummary"]],
-      ["app/api/ai/lead_insights/route.ts", ["computeLeadInsights"]],
     ];
     for (const [path, calls] of CALLERS) {
       const s = src(path);

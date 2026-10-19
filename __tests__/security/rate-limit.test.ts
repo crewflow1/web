@@ -127,7 +127,7 @@ describe("persistent limiter (checkPersistent → rate_limit_hit RPC)", () => {
 
 describe("enforce / enforcePersistent (route-handler 429)", () => {
   function req(ip = "1.2.3.4"): Request {
-    return new Request("https://crewflow.uk/api/waitlist", {
+    return new Request("https://crewflow.uk/api/demo", {
       method: "POST",
       headers: { "x-forwarded-for": ip },
     });
