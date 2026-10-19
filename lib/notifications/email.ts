@@ -290,6 +290,11 @@ export async function drainNotificationEmailQueue(): Promise<DrainResult> {
     .from("notification_email_queue" as never)
     .select("id" as never)
     .eq("status" as never, "queued")
+    // Review P1 (#880): the doc above always PROMISED "scheduled_for in the
+    // past" but the filter was never written — deferred rows (quiet-hours,
+    // retry backoff) were sent on the very next tick. The partial index
+    // (status, scheduled_for) was built for exactly this predicate.
+    .lte("scheduled_for" as never, new Date().toISOString())
     .order("scheduled_for" as never, { ascending: true })
     .limit(DRAIN_BATCH_SIZE);
   if (error) {

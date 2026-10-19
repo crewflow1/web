@@ -222,7 +222,7 @@ function SectionNotifications({ settings }: { settings: HqSettings }) {
     <SectionShell id="notifications">
       <Field
         label="HQ email recipients"
-        hint="Comma-separated. HQ notification emails (today: critical alert fires from the nightly alerts poll) go to these addresses. Empty = no HQ email."
+        hint="Comma-separated. HQ notification emails go to these addresses — today that is every URGENT HQ event: critical alert fires (nightly poll), urgent HQ notes, and impersonation-session starts. Empty = no HQ email."
       >
         <textarea
           name="hq_email_recipients"

@@ -91,6 +91,14 @@ describe("drainNotificationEmailQueue", () => {
     expect(EMAIL).toMatch(/ascending: true/);
   });
 
+  it("sends ONLY rows whose scheduled_for has passed (quiet-hours deferral + retry backoff are real)", () => {
+    // Review P1 (#880): the drain selected every queued row regardless of
+    // scheduled_for — a deferred row went out on the very next tick, making
+    // quiet-hours (and the pre-existing retry backoff) phantom. The filter is
+    // load-bearing; this pin keeps it.
+    expect(EMAIL).toMatch(/\.lte\("scheduled_for" as never, new Date\(\)\.toISOString\(\)\)/);
+  });
+
   it("returns a structured DrainResult summary", () => {
     expect(EMAIL).toMatch(/picked:/);
     expect(EMAIL).toMatch(/sent:/);

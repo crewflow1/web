@@ -79,7 +79,7 @@ export const SECTION_BLURB: Record<SectionId, string> = {
   general:
     "HQ-wide defaults. The timezone governs the quiet-hours window in the HQ email section below.",
   notifications:
-    "Where HQ notification emails go. Today the only HQ email is the critical-alert fire from the nightly alerts poll; quiet hours defer non-urgent HQ email until the window ends.",
+    "Where HQ notification emails go. Today every URGENT HQ event emails: critical alert fires (nightly poll), urgent HQ notes, and impersonation-session starts; quiet hours defer non-urgent HQ email until the window ends.",
   alerts:
     "Extra email copy for the deterministic alert engine — an optional additional recipient on every critical alert fire.",
   billing:
