@@ -1,0 +1,222 @@
+# Independent production outage monitor.
+#
+# WHY THIS EXISTS: production was silently DOWN for 5 days (Vercel billing
+# suspension — HTTP 402 DEPLOYMENT_DISABLED on every route) and nobody was
+# notified. Vercel cannot be trusted to report its own suspension, so the
+# monitor must run on infrastructure independent of Vercel. GitHub Actions is
+# that infrastructure, it is already paid for (free for this repo's usage),
+# and it needs NO new provider, NO new account and NO new secret: the probe
+# hits the public health endpoint, and alerting uses the workflow's own
+# GITHUB_TOKEN to file an issue in this repo.
+#
+# WHAT IT CHECKS, every ~15 minutes:
+#   1. GET https://crewflow.uk/api/health answers HTTP 200 (a 402 here is the
+#      billing-suspension signature; any non-200 means the platform is not
+#      serving).
+#   2. The JSON body says ok:true and db:"ok" (the app can reach Postgres).
+#   3. crons.lastSuccessAgeMinutes <= 45 — the Vercel cron scheduler is alive.
+#      Several crons run every minute, so >45 minutes without a successful run
+#      means scheduled work (notification drains, webhook dispatch, reminders)
+#      has silently stopped even though the page serves. A null value means
+#      the endpoint could not answer (warn only, never alert).
+#
+# HOW IT ALERTS (no new services):
+#   - The run EXITS NON-ZERO, so GitHub emails a workflow-failure notification.
+#   - It creates ONE open issue titled "🚨 PRODUCTION DOWN …" (label
+#     production-outage) and appends a comment per failing probe while the
+#     outage lasts — deduped: never a second open issue. On recovery it
+#     comments and closes the issue.
+#
+# HONEST LIMITATIONS — read before trusting this:
+#   - GitHub cron is BEST-EFFORT: runs can be delayed minutes or occasionally
+#     skipped under load (the schedule below avoids the congested :00/:15/:30
+#     /:45 minutes for that reason). Detection latency is "usually within
+#     ~20 minutes", not a hard SLA.
+#   - GitHub DISABLES scheduled workflows after 60 days without repo activity.
+#     Any commit resets the clock; a dormant repo means a dormant monitor.
+#   - Notifications only reach a human who has them switched on. OWNER ACTION
+#     (one line): watch crewflow1/web ("Watch → All activity") and enable
+#     "Actions → Failed workflows only" at github.com/settings/notifications.
+#   - If GitHub itself is down, there is no monitor. This is independent of
+#     Vercel, not of everything.
+#   - Backup freshness is NOT observable here (dumps live off-platform on the
+#     founder's machine) — that is a runbook policy, see
+#     docs/ops/OUTAGE-RUNBOOK.md.
+#
+# The workflow's only dependency on Vercel is as its TARGET. Everything it
+# runs on (runner, gh CLI, jq) is GitHub-hosted and preinstalled.
+
+name: outage-monitor
+
+on:
+  schedule:
+    # Off the quarter-hour marks: GitHub delays/skips the congested minutes.
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: outage-monitor
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Probe production health
+        id: probe
+        env:
+          HEALTH_URL: https://crewflow.uk/api/health
+          STALE_AFTER_MINUTES: "45"
+        run: |
+          set -uo pipefail
+
+          REASON=""
+
+          check() {
+            local body code ok db age
+            body="$(mktemp)"
+
+            # --retry rides out transient transport errors inside one probe;
+            # a consistently returned bad STATUS (402, 500…) is the signal we
+            # are here to catch, so it is not retried away.
+            code=$(curl -sS -m 25 --retry 2 --retry-delay 10 \
+              -o "$body" -w "%{http_code}" "$HEALTH_URL" 2>/dev/null) || code="000"
+
+            if [ "$code" != "200" ]; then
+              REASON="HTTP $code from $HEALTH_URL (expected 200). A 402 is the Vercel billing-suspension signature (DEPLOYMENT_DISABLED); 000 means no HTTP answer at all."
+              return 1
+            fi
+
+            ok=$(jq -r '.ok' <"$body" 2>/dev/null || echo "unparseable")
+            if [ "$ok" != "true" ]; then
+              REASON="health endpoint answered 200 but ok=$ok. Body: $(head -c 600 "$body")"
+              return 1
+            fi
+
+            db=$(jq -r '.db' <"$body" 2>/dev/null || echo "unparseable")
+            if [ "$db" != "ok" ]; then
+              REASON="database degraded: db=$db. Body: $(head -c 600 "$body")"
+              return 1
+            fi
+
+            # Cron staleness. null = unknown (warn only — never a false alarm).
+            age=$(jq -r '.crons.lastSuccessAgeMinutes' <"$body" 2>/dev/null || echo "null")
+            if [ "$age" = "null" ] || [ -z "$age" ]; then
+              echo "::warning::crons.lastSuccessAgeMinutes is null — cron freshness unobservable this probe."
+              echo "Cron freshness: UNKNOWN (null) this probe." >>"$GITHUB_STEP_SUMMARY"
+            elif [ "$age" -gt "$STALE_AFTER_MINUTES" ] 2>/dev/null; then
+              REASON="cron scheduler stale: last successful cron run started >= ${age} minutes ago (threshold ${STALE_AFTER_MINUTES}m). The site serves but scheduled work (notification/webhook/reminder drains) has stopped."
+              return 1
+            fi
+
+            return 0
+          }
+
+          if check; then
+            echo "Production healthy."
+            echo "down=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "First probe failed: $REASON"
+          echo "Re-probing in 60s to rule out a transient blip…"
+          sleep 60
+
+          if check; then
+            echo "Second probe recovered — treating as a blip, no alert."
+            echo "down=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Second probe also failed: $REASON"
+          echo "down=true" >>"$GITHUB_OUTPUT"
+          {
+            echo "reason<<CREWFLOW_EOF"
+            echo "$REASON"
+            echo "CREWFLOW_EOF"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Raise or update the outage issue (deduped — one open issue)
+        if: steps.probe.outputs.down == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REASON: ${{ steps.probe.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+
+          TITLE="🚨 PRODUCTION DOWN — crewflow.uk health check failing"
+          STAMP="$(date -u '+%Y-%m-%d %H:%M UTC')"
+
+          # Label is created idempotently; a label failure must not mute the alert.
+          gh label create production-outage --color B60205 \
+            --description "Automated: crewflow.uk outage detected by the outage-monitor workflow" \
+            --force 2>/dev/null || true
+
+          NUM=$(gh issue list -R "$REPO" --state open --label production-outage \
+            --json number --jq '.[0].number // empty' 2>/dev/null || echo "")
+
+          if [ -z "$NUM" ]; then
+            BODY=$(printf '%s\n' \
+              "**Automated alert — the independent outage monitor (GitHub Actions) found production failing at ${STAMP}.**" \
+              "" \
+              "**Detected:** ${REASON}" \
+              "" \
+              "**Probe run:** ${RUN_URL}" \
+              "" \
+              "**Act now — in order:**" \
+              "1. Open the runbook: \`docs/ops/OUTAGE-RUNBOOK.md\` (billing-suspension symptoms, recovery verification, webhook replay)." \
+              "2. HTTP 402? → Vercel dashboard → settle billing → verify per the runbook checklist." \
+              "3. db degraded? → Supabase dashboard → is the project paused? → status.supabase.com." \
+              "4. Crons stale with the site up? → Vercel → Settings → Cron Jobs; then \`/admin/ops\`." \
+              "" \
+              "_The monitor probes every ~15 minutes and will append a comment while the outage lasts, then close this issue on recovery. One open issue at a time — do not open duplicates._")
+            URL=$(gh issue create -R "$REPO" --title "$TITLE" \
+              --label production-outage --body "$BODY")
+            echo "Opened outage issue: $URL"
+            NUM="${URL##*/}"
+            # Best-effort pin — GITHUB_TOKEN may lack pin rights; the label +
+            # title keep the issue findable either way.
+            ID=$(gh issue view "$NUM" -R "$REPO" --json id --jq '.id' 2>/dev/null || echo "")
+            if [ -n "$ID" ]; then
+              gh api graphql -f query='mutation($id: ID!) { pinIssue(input: {issueId: $id}) { issue { number } } }' \
+                -f id="$ID" >/dev/null 2>&1 || true
+            fi
+          else
+            gh issue comment "$NUM" -R "$REPO" \
+              --body "Still failing at ${STAMP}: ${REASON} — probe: ${RUN_URL}"
+            echo "Appended to existing outage issue #$NUM"
+          fi
+
+      - name: Fail the run so GitHub sends failure notifications
+        if: steps.probe.outputs.down == 'true'
+        env:
+          # Via env, never ${{ }} inside run: the reason embeds response-body
+          # text, and expression interpolation into a script is injectable.
+          REASON: ${{ steps.probe.outputs.reason }}
+        run: |
+          echo "::error::PRODUCTION DOWN: ${REASON}"
+          exit 1
+
+      - name: Close the outage issue on recovery
+        if: steps.probe.outputs.down != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          NUM=$(gh issue list -R "$REPO" --state open --label production-outage \
+            --json number --jq '.[0].number // empty' 2>/dev/null || echo "")
+          if [ -n "$NUM" ]; then
+            STAMP="$(date -u '+%Y-%m-%d %H:%M UTC')"
+            gh issue comment "$NUM" -R "$REPO" \
+              --body "✅ Recovered: health check green at ${STAMP}. Run the post-recovery verification checklist in \`docs/ops/OUTAGE-RUNBOOK.md\` (sha matches main, crons resumed, webhook replay if the outage exceeded provider retry windows)." || true
+            gh issue close "$NUM" -R "$REPO" --reason completed || true
+            echo "Closed outage issue #$NUM"
+          fi

@@ -47,7 +47,6 @@ const CALLBACK = "app/api/integrations/telematics/[provider]/callback/route.ts";
 const SERVICE = "server/services/telematics-connections.ts";
 const SAMSARA = "lib/integrations/telematics/adapters/samsara.ts";
 const VERIZON = "lib/integrations/telematics/adapters/verizon-connect.ts";
-const PENDING = "lib/integrations/telematics/adapters/pending.ts";
 const READING_MAP = "lib/integrations/telematics/reading-map.ts";
 
 /** Strip SQL line comments so NEGATIVE assertions test EXECUTABLE statements. */
@@ -388,11 +387,6 @@ describe("telematics adapters refuse before any fetch", () => {
     expect(guardIdx).toBeLessThan(fetchIdx);
   });
 
-  it("the pending adapter contains NO fetch at all (dark-safe skeleton)", () => {
-    const code = codeOf(read(PENDING));
-    expect(code).not.toMatch(/fetch\(/);
-    expect(code).toMatch(/if \(!this\.isAvailable\(\)\)/);
-  });
 });
 
 describe("telematics service — org-pinned, loud, token-free, refuse-before-fetch", () => {

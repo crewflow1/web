@@ -390,51 +390,10 @@ export async function setCustomerLifecycle(formData: FormData): Promise<void> {
   );
 }
 
-// --------------------------------------------------------------------
-// Impersonate (stub — audit-only for HQ-3.0)
-//
-// Full impersonation (session swap with a banner injected into the
-// customer workspace) needs its own focused PR. For now this action
-// just records the intent to admin_activity_log so the audit trail
-// is in place when the real flow lands.
-// --------------------------------------------------------------------
-
-const impersonateSchema = z.object({
-  org_id: z.string().uuid(),
-  reason: z.string().trim().min(1, "Reason required").max(500),
-});
-
-export async function logImpersonationAttempt(
-  formData: FormData,
-): Promise<void> {
-  const admin = await requireAdmin();
-  const parsed = impersonateSchema.safeParse({
-    org_id: formData.get("org_id"),
-    reason: formData.get("reason") ?? "",
-  });
-  if (!parsed.success) {
-    redirect(
-      `/admin/customers?error=${encodeURIComponent("Impersonation reason required")}`,
-    );
-  }
-
-  await recordAdminActivity({
-    actorId: admin.id,
-    actorEmail: admin.email,
-    action: "customer.impersonation_requested",
-    targetTable: "organizations",
-    targetId: parsed.data.org_id,
-    metadata: {
-      reason: parsed.data.reason,
-      // Full session-swap implementation lands in HQ-3.1.
-      implemented: false,
-    },
-  });
-
-  redirect(
-    `/admin/customers/${parsed.data.org_id}?saved=impersonation_logged`,
-  );
-}
+// NOTE: the HQ-3.0 `logImpersonationAttempt` audit-only stub that lived here
+// was deleted (2026-10 hygiene): HQ-10 shipped the real impersonation OS
+// (`startImpersonation` in app/admin/impersonation/actions.ts — session swap +
+// banner + audit) and no surface had called the stub since.
 
 // --------------------------------------------------------------------
 // Phase 6 — HQ recovery actions

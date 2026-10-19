@@ -14,9 +14,10 @@ import { VerizonConnectAdapter } from "./verizon-connect";
 
 // Both aggregators are REAL adapters now, each dark-gated identically: they refuse
 // before any fetch until the substrate is connectable (flag + credentials + a bound
-// provider), so no live provider call is reachable today. The PendingTelematicsAdapter
-// skeleton (./pending) remains as the dark-safe template for any FUTURE aggregator
-// added to the provider set before its fetch body is written.
+// provider), so no live provider call is reachable today. (The one-time
+// PendingTelematicsAdapter skeleton was deleted once both fetch bodies existed; a
+// FUTURE aggregator gets the same dark-safe shape — guard-before-fetch, no SDK at
+// module scope — written fresh, per samsara.ts / verizon-connect.ts.)
 const ADAPTERS: Record<TelematicsProvider, TelematicsAdapter> = {
   samsara: new SamsaraAdapter(),
   verizon_connect: new VerizonConnectAdapter(),

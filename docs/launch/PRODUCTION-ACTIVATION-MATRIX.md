@@ -62,16 +62,16 @@ The house invariant (verified in code): `activated` can never be true without th
 | PostHog analytics | R223 | Free tier → usage | Consent-gated client-side; your account + key |
 | Self-serve billing | (unatomised) | Stripe fees; tenants self-modify recurring charges | Also **flips entitlement enforcement from allow-all to enforcing** (side effect, documented) — stage carefully |
 | Stripe Connect portal payments | R061 | Platform/Connect fees; KYC liability | Separate `STRIPE_CONNECT_SECRET_KEY` + invoice webhook secret + per-org onboarding |
-| PITR backups | R141 | Paid Supabase add-on | Account-owner dashboard toggle; RPO ~24h→~2min |
+| PITR backups | R141 | Paid Supabase add-on | Account-owner dashboard toggle; RPO ~24h→~2min. **Launch-readiness note:** backup freshness is NOT observable from production (off-platform dumps live on the founder's machine) — cadence is enforced by policy, not telemetry: `docs/ops/OUTAGE-RUNBOOK.md` §6 |
 
 ## L4 — legal/compliance/provider approval → EXTERNAL ACTIVATION BLOCKED
 
 | Capability | Blocker (documentary) |
 |---|---|
 | HMRC MTD submit (VAT / CIS300 / FPS / CIS-verify) | **HMRC vendor recognition** (lib/env.ts:377-383; fraud-header conformance part of the gate). Creds+flag only ever enable CONNECT, never SUBMIT — both module and orchestrator refuse per flow. Internal prepare/hold works today |
-| Open Banking (TrueLayer/Plaid/Nordigen) | **FCA AISP authorisation** (env.ts:437-448) — AND the adapter body is `pending.ts` (code deliberately incomplete until the legal gate opens) |
+| Open Banking (TrueLayer/Plaid/Nordigen) | **FCA AISP authorisation** (env.ts:437-448). All three adapters are complete (the old `pending.ts` skeleton is deleted) and refuse-before-fetch while dark — credentials+flag stay the legal gate |
 | Builders' merchants cXML (Jewson/TP/JP Corry/Haldane Fisher) | **Trade-account integration contracts** — endpoints are provisioned per contract; no public API exists |
-| Telematics (Samsara/Verizon) | Provider account/contract — AND adapter body is `pending.ts` |
+| Telematics (Samsara/Verizon) | Provider account/contract. Both adapters are complete (the old `pending.ts` skeleton is deleted) and refuse-before-fetch while dark |
 | Marketplace | Partner onboarding/commercial agreements (flag alone yields an empty catalogue — recommend dark until partners exist) |
 | External penetration test | Firm engagement (scope + rules-of-engagement already written: docs/engineering/EXTERNAL-PROOF-READINESS.md §3) |
 | Ad-campaign analytics (Marketing AI sub-part) | A real ad account must exist; no credential defined by construction |
