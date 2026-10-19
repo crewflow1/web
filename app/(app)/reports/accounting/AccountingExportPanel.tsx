@@ -5,21 +5,48 @@ import {
   requestAccountingPush,
   type AccountingPushState,
 } from "./actions";
+import type { AccountingProvider } from "@/lib/integrations/accounting/adapters";
 
 /**
  * Export-to-accounting control for the Reports page.
  *
  * The CSV path is a plain download link — no credentials, works today. The
- * Xero / QuickBooks buttons drive the dark provider-push action, which records a
- * `skipped_dark` audit row and returns a "coming soon" sentence rather than
- * contacting any provider. Route depth is 1, so `useActionState` here is not the
- * deep-swap navigation trap.
+ * provider buttons (Xero / QuickBooks / Sage — every provider the push action
+ * and adapters support) drive the ONE push composition, `syncToProvider`.
+ * Button state follows the org's CONNECTION for that provider (the same state
+ * the connections panel below renders):
+ *   • connected      → a live "Push to {provider}" control; the action resolves
+ *     tokens and pushes the canonical rows through the provider adapter.
+ *   • not connected  → the control renders disabled, pointing at the
+ *     connections panel — a push without a connection can only be refused
+ *     (recorded honestly as skipped_dark), so the panel says so up front
+ *     rather than mislabelling a shipped capability as future work (it
+ *     activates per-org by connecting the provider).
+ * Route depth is 1, so `useActionState` here is not the deep-swap navigation
+ * trap.
  */
-export function AccountingExportPanel() {
+
+const PROVIDER_LABEL: Record<AccountingProvider, string> = {
+  xero: "Xero",
+  quickbooks: "QuickBooks",
+  sage: "Sage",
+};
+
+const PROVIDERS: readonly AccountingProvider[] = ["xero", "quickbooks", "sage"];
+
+export function AccountingExportPanel({
+  connections,
+}: {
+  /** Per-provider connection state, as the reports page loaded it (org-pinned). */
+  connections: Array<{ provider: AccountingProvider; status: string }>;
+}) {
   const [state, formAction, pending] = useActionState<
     AccountingPushState | null,
     FormData
   >(requestAccountingPush, null);
+
+  const isConnected = (provider: AccountingProvider): boolean =>
+    connections.some((c) => c.provider === provider && c.status === "connected");
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -46,28 +73,37 @@ export function AccountingExportPanel() {
           Download CSV
         </a>
 
-        {/* Provider push — dark today. */}
-        <form action={formAction} className="flex items-center gap-2">
-          <button
-            type="submit"
-            name="provider"
-            value="xero"
-            disabled={pending}
-            className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-500 shadow-sm hover:bg-slate-100 disabled:opacity-60"
-            title="Xero API push activates once its OAuth credentials are configured."
-          >
-            Connect Xero (coming soon)
-          </button>
-          <button
-            type="submit"
-            name="provider"
-            value="quickbooks"
-            disabled={pending}
-            className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-500 shadow-sm hover:bg-slate-100 disabled:opacity-60"
-            title="QuickBooks API push activates once its OAuth credentials are configured."
-          >
-            Connect QuickBooks (coming soon)
-          </button>
+        {/* Provider push — one control per supported provider, gated on the
+            org's connection (the state the connections panel below manages). */}
+        <form action={formAction} className="flex flex-wrap items-center gap-2">
+          {PROVIDERS.map((provider) => {
+            const label = PROVIDER_LABEL[provider];
+            const connected = isConnected(provider);
+            return connected ? (
+              <button
+                key={provider}
+                type="submit"
+                name="provider"
+                value={provider}
+                disabled={pending}
+                className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
+                title={`Pushes this organisation's invoices and payments to ${label}.`}
+              >
+                Push to {label}
+              </button>
+            ) : (
+              <button
+                key={provider}
+                type="button"
+                disabled
+                aria-disabled="true"
+                className="cursor-not-allowed rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-400 shadow-sm"
+                title={`Connect ${label} in the accounting connections panel below to enable the push. CSV export works today regardless.`}
+              >
+                Push to {label} (not connected)
+              </button>
+            );
+          })}
         </form>
       </div>
 

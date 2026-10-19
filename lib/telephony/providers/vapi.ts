@@ -134,9 +134,18 @@ export function mapVapiStatus(
       return "transferred";
     case "ended": {
       const r = (endedReason ?? "").toLowerCase();
-      if (r.includes("no-answer") || r.includes("no_answer")) return "no_answer";
+      // Review P2 (#881): Vapi's vocabulary includes "customer-did-not-answer"
+      // — "no-answer" alone missed it, silently recording a genuinely-missed
+      // call as completed (and never texting back). Match the broader family.
+      if (
+        r.includes("no-answer") ||
+        r.includes("no_answer") ||
+        r.includes("did-not-answer") ||
+        r.includes("not-answer")
+      )
+        return "no_answer";
       if (r.includes("busy")) return "busy";
-      if (r.includes("failed") || r.includes("error")) return "failed";
+      if (r.includes("failed") || r.includes("error") || r.includes("not-found")) return "failed";
       if (r.includes("cancel")) return "canceled";
       return "completed";
     }

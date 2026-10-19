@@ -44,6 +44,32 @@ export const TERMINAL_CALL_EVENTS = [
   "canceled",
 ] as const satisfies readonly CallEventType[];
 
+/**
+ * The UNANSWERED terminal states — a call that ended on one of these was MISSED:
+ * nobody (human or AI loop) spoke to the caller. This is the vocabulary the
+ * missed-call text-back trigger keys on at the status-callback edge:
+ *   • `no_answer` / `busy` / `failed` — the provider reports the call never
+ *     connected to an answering leg.
+ *   • `completed` is excluded (the call WAS answered — the receptionist loop or
+ *     a forwarded human spoke), and `canceled` is excluded deliberately: the
+ *     CALLER hung up before the connect, which Twilio reports when they abandon
+ *     during ringing — texting back every abandoned dial is out of scope for the
+ *     R6 contract (missed-call = we failed to answer, not they chose to stop).
+ */
+/**
+ * Statuses proving a human or the AI loop was ALREADY speaking to the caller —
+ * a later `failed` terminal (e.g. a Vapi mid-call pipeline error) is a dropped
+ * conversation, NOT a missed call; texting then is the double-contact the
+ * missed-call trigger must never produce (review P1, #881).
+ */
+export const ANSWERED_CALL_STATUSES = ["in_progress", "answered", "transferred", "completed"] as const;
+
+export const UNANSWERED_TERMINAL_CALL_EVENTS = [
+  "no_answer",
+  "busy",
+  "failed",
+] as const satisfies readonly CallEventType[];
+
 export function isCallEventType(v: unknown): v is CallEventType {
   return typeof v === "string" && (CALL_EVENT_TYPES as readonly string[]).includes(v);
 }

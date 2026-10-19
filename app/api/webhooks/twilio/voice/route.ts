@@ -121,14 +121,24 @@ export async function POST(request: Request): Promise<NextResponse> {
     //    (the CallSid) drives processInboundEnquiry's (org_id, provider_message_id)
     //    partial-unique dedup, so a redelivered origination folds into the same
     //    enquiry. Best-effort: a failure must not break the TwiML.
+    //
+    //    REPLY DEFERRED (G-6): at origination the call is LIVE — the TwiML below
+    //    opens the AI answering loop, so "missed" is unknowable here and a
+    //    text-back now would reach a caller we are actively speaking to. The
+    //    status callback's unanswered TERMINAL (no_answer/busy/failed) owns the
+    //    missed-call decision via processMissedCallTextback, which re-enters the
+    //    SAME ingestion idempotently on this CallSid.
     try {
-      const { lead_id, conversation_id } = await processInboundEnquiry({
-        org_id: orgId,
-        channel: "phone",
-        caller: call.from,
-        dedup_key: call.providerCallId,
-        provider_message_id: call.providerCallId,
-      });
+      const { lead_id, conversation_id } = await processInboundEnquiry(
+        {
+          org_id: orgId,
+          channel: "phone",
+          caller: call.from,
+          dedup_key: call.providerCallId,
+          provider_message_id: call.providerCallId,
+        },
+        { textback: "defer" },
+      );
 
       // LINK the calls row to the lead + conversation the enquiry resolved, so
       // the C41 duration/ended-at and C35c transcript/summary/recording

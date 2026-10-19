@@ -41,6 +41,9 @@ vi.mock("@/server/services/receptionist", () => ({
   // refreshes the lead + enquiry triage. Mocked so this hermetic route test never
   // reaches Supabase; asserted below to prove the branch calls it.
   refreshVoiceExtractionFromTranscript: vi.fn(),
+  // G-6: the missed-call trigger the lifecycle path invokes on an UNANSWERED
+  // terminal. Mocked hermetically; behaviour pinned in its own suite.
+  processMissedCallTextback: vi.fn(),
 }));
 
 async function loadRoute() {

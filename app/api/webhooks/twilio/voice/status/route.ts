@@ -4,16 +4,24 @@ import { isMaintenanceMode } from "@/lib/maintenance";
 import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
 import { getVoiceProvider, isVoiceConfigured } from "@/lib/telephony";
 import { resolveOrgForDialedNumber } from "@/lib/telephony/router";
-import { TERMINAL_CALL_EVENTS } from "@/lib/telephony/types";
+import {
+  TERMINAL_CALL_EVENTS,
+  UNANSWERED_TERMINAL_CALL_EVENTS,
+  ANSWERED_CALL_STATUSES,
+} from "@/lib/telephony/types";
 import {
   appendCallEvent,
   composeCallTranscript,
   loadAllSpokenTurns,
   loadEnquirySummary,
   recordInboundCall,
+  updateCallAssociation,
   updateCallCompletion,
 } from "@/server/services/telephony";
-import { refreshVoiceExtractionFromTranscript } from "@/server/services/receptionist";
+import {
+  processMissedCallTextback,
+  refreshVoiceExtractionFromTranscript,
+} from "@/server/services/receptionist";
 
 /**
  * Twilio inbound-VOICE STATUS callback (Wave 8).
@@ -101,6 +109,60 @@ export async function POST(request: Request): Promise<NextResponse> {
       payload: call.raw,
       occurredAt: call.occurredAt,
     });
+
+    // ── MISSED-CALL TRIGGER (G-6) — the internal detector ──────────────────────
+    // A call whose terminal status is UNANSWERED (no_answer / busy / failed)
+    // was MISSED: nobody — human or the AI loop — spoke to the caller. This is
+    // the one place the telephony layer can PROVE that, so this is where the
+    // missed-call text-back engine is invoked, IN-PROCESS (never HTTP to our
+    // own routes): processMissedCallTextback re-enters the same ingestion
+    // idempotently on the CallSid (origination deferred its reply decision
+    // here) and runs the ONE eligibility-gated reply wiring. Gates hold whole:
+    // voice dark ⇒ this route 503'd above; missed-call flag dark ⇒ `flag_off`;
+    // SMS provider dark ⇒ the dispatch records its honest refusal. DEDUPE: a
+    // redelivered terminal callback is skipped here on the event-append
+    // duplicate (provider_event_id is stable per status), and the per-(org,
+    // CallSid) send claim inside the dispatch is the belt-and-braces — one
+    // missed call can never text the caller twice. BEST-EFFORT: a trigger
+    // failure is logged loud and degraded to a 200, never a 500 that would
+    // retry-storm Twilio (the event append — the lifecycle write — succeeded).
+    if (
+      !result.duplicate &&
+      (UNANSWERED_TERMINAL_CALL_EVENTS as readonly string[]).includes(call.status) &&
+      // Never text a caller the AI (or a human) was already speaking to —
+      // a mid-call failure is a dropped conversation, not a missed call.
+      !(ANSWERED_CALL_STATUSES as readonly string[]).includes(result.priorStatus ?? "")
+    ) {
+      try {
+        const missed = await processMissedCallTextback({
+          org_id: orgId,
+          provider_call_id: call.providerCallId,
+          caller: call.from,
+        });
+        // LINK the calls row to the lead/conversation when the terminal arrived
+        // FIRST (Twilio is unordered) and the ingestion above is what created
+        // them — same reachability contract as the origination edge, matched on
+        // the SAME providerCallId recordInboundCall wrote. Best-effort.
+        if (missed.lead_id) {
+          try {
+            await updateCallAssociation(orgId, call.providerCallId, {
+              leadId: missed.lead_id,
+              conversationId: missed.conversation_id,
+            });
+          } catch (e) {
+            Sentry.captureException(e, {
+              tags: { route: "webhooks/twilio/voice/status", stage: "missed_call_link" },
+            });
+            console.error("[twilio-voice-status] missed-call linkage failed", e);
+          }
+        }
+      } catch (e) {
+        Sentry.captureException(e, {
+          tags: { route: "webhooks/twilio/voice/status", stage: "missed_call" },
+        });
+        console.error("[twilio-voice-status] missed-call trigger failed", e);
+      }
+    }
 
     // ── Call-completion ENRICHMENT (terminal status callback) ─────────────────
     // Twilio delivers the call's total `CallDuration` on the TERMINAL status

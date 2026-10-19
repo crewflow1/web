@@ -210,10 +210,19 @@ export default async function ReportsPage({ searchParams }: { searchParams: SP }
         <ReportSubscriptionsPanel subscriptions={subscriptions} />
       ) : null}
 
-      {/* Accounting export — CSV works now; Xero/QuickBooks are dark seams.
-          Admin-only: generating a bookkeeping export is an admin act, doubled
-          by the admin-write RLS on accounting_export_log. */}
-      {isAdmin ? <AccountingExportPanel /> : null}
+      {/* Accounting export — CSV works now; the Xero / QuickBooks / Sage push
+          buttons follow the org's per-provider connection state (connected ⇒
+          live push; not connected ⇒ disabled, pointing at the connections
+          panel below). Admin-only: generating a bookkeeping export is an admin
+          act, doubled by the admin-write RLS on accounting_export_log. */}
+      {isAdmin ? (
+        <AccountingExportPanel
+          connections={connections.map((c) => ({
+            provider: c.provider,
+            status: c.status,
+          }))}
+        />
+      ) : null}
 
       {/* Accounting connections — connect a Xero / QuickBooks account. DARK:
           the OAuth flow is credential-gated, so the connect buttons render
