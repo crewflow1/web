@@ -65,10 +65,17 @@ const envSchema = z.object({
   TRANSCRIPTION_API_KEY: z.string().optional(),
 
   // -- Twilio + Vapi (required when telephony code runs) ------------------
+  // NOTE (env-contract census): every Twilio adapter in the build (lib/comms/
+  // providers/twilio.ts, lib/telephony/providers/twilio.ts, lib/telephony/
+  // config.ts, lib/comms/readiness.ts) authenticates with ACCOUNT_SID +
+  // AUTH_TOKEN basic auth, and the auth token also verifies inbound
+  // X-Twilio-Signature headers. No key-pair (API Key SID/Secret) auth path
+  // exists, so the previously declared TWILIO_API_KEY_SID / TWILIO_API_KEY_SECRET
+  // had ZERO readers and were removed — a declaration with no reader is a false
+  // claim about what this deployment consumes. Re-declare them only together
+  // with an adapter change that actually uses key-pair auth.
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
-  TWILIO_API_KEY_SID: z.string().optional(),
-  TWILIO_API_KEY_SECRET: z.string().optional(),
   // The outbound SMS sender — the Twilio phone number (E.164) or Messaging
   // Service SID that missed-call text-backs are sent FROM. Optional at boot;
   // its absence (even with the account creds present) is what makes the SMS
@@ -87,8 +94,25 @@ const envSchema = z.object({
   // proxy that rewrites host/proto. Optional; absent, the route reconstructs the
   // URL from the forwarded request headers. Not a secret; carries no credential.
   TWILIO_VOICE_STATUS_CALLBACK_URL: z.string().optional(),
-  VAPI_API_KEY: z.string().optional(),
+  // Vapi's gate is VAPI_WEBHOOK_SECRET — the shared secret its inbound webhooks
+  // present (X-Vapi-Secret / Bearer) AND the credential isVoiceProviderConfigured
+  // ("vapi") keys on. There is deliberately NO VAPI_API_KEY here: the build makes
+  // no outbound Vapi API call (assistant config is returned inline to Vapi's own
+  // webhook), so an API key had ZERO readers and its declaration was removed —
+  // it wrongly implied Vapi activation gated on it.
   VAPI_WEBHOOK_SECRET: z.string().optional(),
+  // OPT-IN switch for Vapi's alternative HMAC verification scheme
+  // (x-vapi-signature). Read at call time by lib/telephony/providers/vapi.ts;
+  // only "true"/"1"/"yes"/"on" enables it, and the HMAC path is only ever tried
+  // IN ADDITION to configuration — never a substitute for VAPI_WEBHOOK_SECRET,
+  // which remains the verifying key. Unset (default) ⇒ shared-secret scheme only.
+  VAPI_WEBHOOK_HMAC: z.string().optional(),
+  // Explicit override for the OpenAI-compatible custom-LLM endpoint Vapi is told
+  // to call for generated voice turns (resolveVapiCustomLlmUrl, lib/telephony/
+  // providers/vapi.ts). NOT a secret and NOT a gate: unset (default) the URL is
+  // derived from NEXT_PUBLIC_APP_URL (else the prod origin). Env-pinned origin —
+  // never a request Host header.
+  VAPI_CUSTOM_LLM_URL: z.string().optional(),
 
   // -- HMRC MTD (Making Tax Digital) — DARK, credential + recognition gated ----
   // The OAuth2 client credentials for HMRC's MTD APIs (VAT digital filing +
@@ -154,6 +178,17 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().optional(),
   RESEND_FROM_EMAIL: z.string().default("CrewFlow <hello@crewflow.uk>"),
   RESEND_REPLY_TO: z.string().default("hello@crewflow.uk"),
+  // The From identity for INTERNAL/system notification emails (demo-request
+  // alerts, admin org approve/reject notices) — kept distinct from the
+  // customer-facing RESEND_FROM_EMAIL so Gmail/Workspace don't drop
+  // hello→hello self-loops. Read at call time by app/api/demo/route.ts and
+  // app/admin/actions.ts; unset ⇒ "CrewFlow Notifications <notify@crewflow.uk>".
+  // Not a secret; was consumed-but-undeclared until the 2026-10 env census.
+  RESEND_NOTIFICATIONS_FROM: z.string().optional(),
+  // Where demo-request notifications are sent. Read by app/api/demo/route.ts;
+  // unset ⇒ hello@crewflow.uk. Not a secret; was consumed-but-undeclared until
+  // the 2026-10 env census.
+  DEMO_NOTIFY_EMAIL: z.string().optional(),
 
   // -- Web Push (PWA) — VAPID keys (MP Wave R4, DARK until set) -----------
   // Standards-based Web Push (RFC 8291/8188/8292) with NO native shell and NO
@@ -234,7 +269,9 @@ const envSchema = z.object({
   // -- Communication Layer: inbound VOICE provider (Wave 8) --------------
   // Names the active inbound-voice telephony provider — the receptionist's
   // FIRST inbound-voice transport. Default "auto": prefer Twilio when its
-  // account creds are set, else Vapi when its key is set, else none. Identical
+  // account creds (TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN) are set, else Vapi
+  // when its WEBHOOK SECRET (VAPI_WEBHOOK_SECRET — the value inbound events
+  // present; there is no Vapi API key in this build) is set, else none. Identical
   // PLUG-IN doctrine to the SMS/WhatsApp seams: with no provider configured
   // getVoiceProvider() returns null ⇒ the voice webhooks 503 and process
   // NOTHING (the posture in prod, CI and dev, which set none of them). Setting
@@ -328,6 +365,14 @@ const envSchema = z.object({
   SAGE_CLIENT_ID: z.string().optional(),
   SAGE_CLIENT_SECRET: z.string().optional(),
   SAGE_API_BASE_URL: z.string().optional(),
+  // Non-secret Sage tunables (mirrors XERO_BANK_ACCOUNT_CODE below): pin the
+  // exact Sage ledger/bank account the export posts to instead of resolving the
+  // first visible one. Read at call time by the Sage adapter's
+  // resolveLedgerAccountId/resolveBankAccountId; unset ⇒ auto-resolve, and when
+  // Sage holds none the push fails LOUD naming these vars. Were
+  // consumed-but-undeclared until the 2026-10 env census.
+  SAGE_SALES_LEDGER_ACCOUNT_ID: z.string().optional(),
+  SAGE_BANK_ACCOUNT_ID: z.string().optional(),
 
   // -- Autonomous-apply kill switches (HIGHEST blast radius in the repo).
   // Declared for boot-time visibility ONLY: each consumer requires the exact
@@ -352,9 +397,63 @@ const envSchema = z.object({
   SENTRY_AUTH_TOKEN: z.string().optional(),
   NEXT_PUBLIC_POSTHOG_KEY: z.string().optional(),
   NEXT_PUBLIC_POSTHOG_HOST: z.string().default("https://eu.i.posthog.com"),
+  // Plain URL to the Sentry project dashboard, rendered as a link on /admin/ops
+  // (server/services/ops-snapshot.ts). Not a secret, gates nothing; unset ⇒ no
+  // link. Was consumed-but-undeclared until the 2026-10 env census.
+  SENTRY_DASHBOARD_URL: z.string().optional(),
 
   // -- Internal auth ------------------------------------------------------
   CRON_SECRET: z.string().optional(),
+
+  // -- Maintenance window (release-support kill switch) --------------------
+  // Toggled on the Vercel production project during a controlled cutover (see
+  // lib/maintenance.ts + the RC3 cutover runbook). MAINTENANCE_MODE: only the
+  // exact literal "on" activates it — customer/app routes return retry-safe
+  // 503s, crons are suppressed, webhooks 503 so providers re-deliver. Any other
+  // value (including a typo) is inert, so this is declared as a free string:
+  // an enum would brick boot on exactly the value that is already harmless.
+  // Unset (the default everywhere) ⇒ every maintenance function is inert.
+  MAINTENANCE_MODE: z.string().optional(),
+  // Operator bypass token for the maintenance 503 (query param / header /
+  // cookie — see isMaintenanceBypassed). A secret while a window is open; unset
+  // ⇒ no bypass channel exists. Both were consumed-but-undeclared (read via
+  // process.env at call time, deliberately edge-safe) until the 2026-10 census.
+  MAINTENANCE_BYPASS: z.string().optional(),
+
+  // -- Vercel KV / Upstash Redis cache (lib/cache/kv.ts) -------------------
+  // The REST endpoint + token @vercel/kv uses. BOTH must be present or
+  // isKvConfigured() is false and every cacheGet/cacheSet silently no-ops (a
+  // cache miss, never an error) — the local-dev/CI posture. The @vercel/kv SDK
+  // reads these same names from env itself. KV_URL / REDIS_URL /
+  // KV_REST_API_READ_ONLY_TOKEN also exist on a Vercel KV store but have ZERO
+  // readers in this build (SDK included on our call path) and are deliberately
+  // NOT declared. Were consumed-but-undeclared until the 2026-10 env census.
+  KV_REST_API_URL: z.string().optional(),
+  KV_REST_API_TOKEN: z.string().optional(),
+
+  // -- HQ research: Companies House ----------------------------------------
+  // API key for the UK Companies House public data API, used by HQ research +
+  // lead sourcing (server/services/hq-research.ts, research-fetch.ts,
+  // hq-lead-sourcing-runner.ts). Read at call time; absent ⇒ those probes
+  // record "not configured"/skip and fetch NOTHING (dark-adapter posture).
+  // Was consumed-but-undeclared until the 2026-10 env census.
+  COMPANIES_HOUSE_API_KEY: z.string().optional(),
+
+  // -- CTO AI engineering telemetry: GitHub + Vercel (DARK adapters) --------
+  // Read-only dark adapters (lib/integrations/github/adapter.ts,
+  // lib/integrations/vercel/adapter.ts): PR list/diff + workflow runs, and
+  // deployment telemetry for the CTO board. Each REFUSES BEFORE FETCH when its
+  // credential is absent — which is the posture in every environment today.
+  // GITHUB_TOKEN is a fine-grained read-only PAT; GITHUB_REPO is the one
+  // `owner/repo` this deployment may read (both required together).
+  // VERCEL_TOKEN gates the Vercel adapter; VERCEL_PROJECT_ID / VERCEL_TEAM_ID
+  // scope its queries (optional refinements, not gates). All five were
+  // consumed-but-undeclared until the 2026-10 env census.
+  GITHUB_TOKEN: z.string().optional(),
+  GITHUB_REPO: z.string().optional(),
+  VERCEL_TOKEN: z.string().optional(),
+  VERCEL_PROJECT_ID: z.string().optional(),
+  VERCEL_TEAM_ID: z.string().optional(),
 
   // -- Super-admin access gate -------------------------------------------
   // Comma-separated email allowlist. Users with one of these emails see
@@ -403,6 +502,15 @@ const envSchema = z.object({
   // credentials (COMMS_VOICE_PROVIDER + TWILIO_*/VAPI_* creds): the flag alone opens
   // no door — isVoiceConfigured() requires BOTH the flag AND a resolvable provider.
   NEXT_PUBLIC_FEATURE_VOICE_INBOUND: z.enum(["true", "false"]).default("false"),
+  // Phase 7 — proactive asset/vehicle MAINTENANCE-REMINDER sending (NOT the
+  // MAINTENANCE_MODE kill switch above — unrelated). DEFAULTS OFF. While off the
+  // reminders drain records skipped_dark and sends NOTHING. The SECOND switch is
+  // a genuinely sendable email provider (getEmailReadiness().outboundReady):
+  // isMaintenanceRemindersSending() requires BOTH. Read at call time by
+  // lib/maintenance/readiness.ts (via its MAINTENANCE_REMINDERS_FLAG const);
+  // only the exact string "true" enables it. Was consumed-but-undeclared until
+  // the 2026-10 env census.
+  NEXT_PUBLIC_FEATURE_MAINTENANCE_REMINDERS: z.enum(["true", "false"]).default("false"),
   // The R28 Conversation Execution Engine's organisational control: whether the org has enabled CONTROLLED
   // LIVE BOOKING EXECUTION. DEFAULTS OFF — until explicitly armed, every prepared booking is `blocked_by_org`.
   // Even when armed, a booking never executes autonomously: the strongest eligibility is `requires_human_review`.
@@ -709,7 +817,14 @@ const envSchema = z.object({
   // -- Vercel system vars (populated automatically) -----------------------
   VERCEL_GIT_COMMIT_SHA: z.string().optional(),
   VERCEL_GIT_COMMIT_AUTHOR_DATE: z.string().optional(),
+  // Deployed branch name — surfaced by /api/health. Platform-injected.
+  VERCEL_GIT_COMMIT_REF: z.string().optional(),
   VERCEL_ENV: z.enum(["development", "preview", "production"]).optional(),
+  // Client-exposed mirrors Vercel injects for NEXT_PUBLIC bundles — read by
+  // sentry.client.config.ts for environment/release tagging. Platform-injected;
+  // never set by hand.
+  NEXT_PUBLIC_VERCEL_ENV: z.string().optional(),
+  NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

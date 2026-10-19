@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { CRON_ROUTES } from "@/lib/ops/cron-routes";
 import { buildOpsSnapshot } from "@/server/services/ops-snapshot";
 import { readAutomationHealth } from "@/server/services/automation-dispatcher";
+import { isEmbeddingConfigured } from "@/lib/ai/embeddings";
 import {
   isEmbeddingActivated,
   isInferenceTierActivated,
@@ -108,6 +109,21 @@ async function checkHqAttribution(): Promise<ChecklistRow> {
  */
 async function checkEmbeddingEstate(): Promise<ChecklistRow> {
   const activated = isEmbeddingActivated();
+  // Review P2 (#878): activation (binding+credential) is not the same as a
+  // CONSTRUCTIBLE provider — the production lockdown refuses deterministic/
+  // hash/typo selections AFTER activation passes. If activated but the
+  // factory refuses, the row must go RED and name it, not stay green while
+  // the cron 204s pre-telemetry and the queue grows silently.
+  const constructible = isEmbeddingConfigured();
+  if (activated && !constructible) {
+    return {
+      id: "embedding-estate",
+      label: "Embedding estate",
+      status: "red",
+      summary:
+        "Embedding tier is ACTIVATED but the provider is REFUSED (MEMORY_EMBEDDING_PROVIDER is deterministic/hash — locked out in production — or an unknown name). Queue will grow silently until the env value is corrected.",
+    };
+  }
   try {
     const admin = createAdminClient();
     const [{ data: settingsRow, error: sErr }, pendingRes] = await Promise.all([

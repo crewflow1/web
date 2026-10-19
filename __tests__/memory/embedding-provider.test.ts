@@ -415,6 +415,98 @@ describe("getEmbeddingProvider — the deterministic offline provider (config sw
   });
 });
 
+// =====================================================================
+// 8.5 Production lockdown — the deterministic provider REFUSES in prod
+//     (P1, remediation wave A: before this, the env VALUE alone selected a
+//     semantically-meaningless provider in production, outside the activation
+//     gate — one typo away from filling the ARMED corpus with hash vectors.)
+// =====================================================================
+
+describe("getEmbeddingProvider — deterministic/hash is REFUSED in production", () => {
+  const ENV = ["MEMORY_EMBEDDING_PROVIDER", "OPENAI_API_KEY", "VERCEL_ENV"] as const;
+  let saved: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    saved = {};
+    for (const k of ENV) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    // NODE_ENV is vitest-managed ("test") and typed read-only; stub it per test
+    // via vi.stubEnv and restore with unstubAllEnvs.
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    for (const k of ENV) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    vi.clearAllMocks();
+  });
+
+  it("(a) VERCEL_ENV=production + deterministic ⇒ null + LOUD console.error", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    process.env.VERCEL_ENV = "production"; // the Vercel deployment truth
+    process.env.MEMORY_EMBEDDING_PROVIDER = "deterministic";
+    expect(getEmbeddingProvider()).toBeNull();
+    expect(isEmbeddingConfigured()).toBe(false);
+    expect(error).toHaveBeenCalledWith(expect.stringMatching(/NEVER run in production/));
+    error.mockRestore();
+  });
+
+  it("(a) NODE_ENV=production alone (non-Vercel prod / preview build) also refuses — both aliases", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubEnv("NODE_ENV", "production"); // baked into every `next build` output
+    for (const alias of ["deterministic", "hash", "  Hash  "]) {
+      process.env.MEMORY_EMBEDDING_PROVIDER = alias;
+      expect(getEmbeddingProvider()).toBeNull();
+    }
+    expect(error).toHaveBeenCalledTimes(3);
+    error.mockRestore();
+  });
+
+  it("(b) production + garbage provider name ⇒ null (fail closed, never throws, never constructs)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    process.env.VERCEL_ENV = "production";
+    vi.stubEnv("NODE_ENV", "production");
+    process.env.OPENAI_API_KEY = "sk-test";
+    embeddingActivatedMock.mockReturnValue(true);
+    process.env.MEMORY_EMBEDDING_PROVIDER = "determinstic"; // the exact typo class the lockdown is for
+    expect(() => getEmbeddingProvider()).not.toThrow();
+    expect(getEmbeddingProvider()).toBeNull();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("(c) production + openai + ARMED + key ⇒ the real provider is UNAFFECTED by the lockdown", () => {
+    process.env.VERCEL_ENV = "production";
+    vi.stubEnv("NODE_ENV", "production");
+    embeddingActivatedMock.mockReturnValue(true);
+    process.env.OPENAI_API_KEY = "sk-test";
+    process.env.MEMORY_EMBEDDING_PROVIDER = "openai";
+    const p = getEmbeddingProvider();
+    expect(p).not.toBeNull();
+    expect(p?.info.provider).toBe("openai");
+  });
+
+  it("(d) non-production (NODE_ENV=test, the CI/bench path) still constructs the deterministic provider", () => {
+    expect(process.env.NODE_ENV).toBe("test"); // vitest's own setting — the real CI condition
+    process.env.MEMORY_EMBEDDING_PROVIDER = "deterministic";
+    expect(getEmbeddingProvider()?.info.provider).toBe("deterministic");
+  });
+
+  it("(d) Vercel PREVIEW env value does not allow it either when the build is a production build", () => {
+    // Preview deployments share the single production Supabase: NODE_ENV is
+    // "production" there, so the refusal holds even with VERCEL_ENV=preview.
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    process.env.VERCEL_ENV = "preview";
+    vi.stubEnv("NODE_ENV", "production");
+    process.env.MEMORY_EMBEDDING_PROVIDER = "deterministic";
+    expect(getEmbeddingProvider()).toBeNull();
+    error.mockRestore();
+  });
+});
+
 describe("deterministic provider.embed — stable, sound, offline", () => {
   const provider = createDeterministicEmbeddingProvider();
 
