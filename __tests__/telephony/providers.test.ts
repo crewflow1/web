@@ -139,6 +139,11 @@ describe("vapi verify + parse", () => {
   it("maps vapi status vocab", () => {
     expect(mapVapiStatus("in-progress")).toBe("in_progress");
     expect(mapVapiStatus("ended")).toBe("completed");
+    // Review P2 (#881): Vapi's real vocabulary — a genuinely-missed call must
+    // never be recorded as completed (it would silently never text back).
+    expect(mapVapiStatus("ended", "customer-did-not-answer")).toBe("no_answer");
+    expect(mapVapiStatus("ended", "assistant-not-found")).toBe("failed");
+    expect(mapVapiStatus("ended", "pipeline-error-openai-llm-failed")).toBe("failed");
     expect(mapVapiStatus("ended", "customer-did-not-answer no-answer")).toBe("no_answer");
     expect(mapVapiStatus("forwarding")).toBe("transferred");
   });

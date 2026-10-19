@@ -126,6 +126,7 @@ describe("POST /api/webhooks/twilio/voice/status — missed-call trigger (G-6)",
       appended: true,
       duplicate: false,
       status: "no_answer",
+      priorStatus: "ringing",
     } as never);
     (await turnsMock()).mockResolvedValue([]);
     (await summaryMock()).mockResolvedValue(null);
@@ -234,5 +235,52 @@ describe("POST /api/webhooks/twilio/voice/status — missed-call trigger (G-6)",
       leadId: "lead-1",
       conversationId: "conv-1",
     });
+  });
+});
+
+
+describe("answered-then-failed never texts (review P1, #881)", () => {
+  beforeEach(async () => {
+    vi.stubEnv("NEXT_PUBLIC_FEATURE_VOICE_INBOUND", "true");
+    vi.stubEnv("COMMS_VOICE_PROVIDER", "twilio");
+    vi.stubEnv("TWILIO_ACCOUNT_SID", "AC_test");
+    vi.stubEnv("TWILIO_AUTH_TOKEN", TOKEN);
+    (await routerMock()).mockResolvedValue("org-1");
+    (await recordMock()).mockResolvedValue({ callId: "call-1", created: true });
+    (await turnsMock()).mockResolvedValue([]);
+  });
+
+  it("a call the AI was ALREADY speaking to that later fails is a dropped conversation, not a missed call", async () => {
+    // Vapi's mid-call pipeline errors map to `failed`; the caller SPOKE to
+    // the AI — texting them is the double-contact the trigger must refuse.
+    (await appendMock()).mockResolvedValue({
+      appended: true,
+      duplicate: false,
+      status: "failed",
+      priorStatus: "in_progress",
+    } as never);
+    const { POST } = await import("@/app/api/webhooks/twilio/voice/status/route");
+    const res = await POST(
+      signedRequest({ ...MISSED, CallSid: "CA-answered-fail", CallStatus: "failed" }),
+    );
+    expect(res.status).toBe(200);
+    const missed = await missedCallMock();
+    expect(missed).not.toHaveBeenCalled();
+  });
+
+  it("a never-answered failed call (priorStatus ringing) still triggers", async () => {
+    (await appendMock()).mockResolvedValue({
+      appended: true,
+      duplicate: false,
+      status: "failed",
+      priorStatus: "ringing",
+    } as never);
+    const { POST } = await import("@/app/api/webhooks/twilio/voice/status/route");
+    const res = await POST(
+      signedRequest({ ...MISSED, CallSid: "CA-preconnect-fail", CallStatus: "failed" }),
+    );
+    expect(res.status).toBe(200);
+    const missed = await missedCallMock();
+    expect(missed).toHaveBeenCalledTimes(1);
   });
 });

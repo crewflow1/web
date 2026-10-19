@@ -56,6 +56,14 @@ export const TERMINAL_CALL_EVENTS = [
  *     during ringing — texting back every abandoned dial is out of scope for the
  *     R6 contract (missed-call = we failed to answer, not they chose to stop).
  */
+/**
+ * Statuses proving a human or the AI loop was ALREADY speaking to the caller —
+ * a later `failed` terminal (e.g. a Vapi mid-call pipeline error) is a dropped
+ * conversation, NOT a missed call; texting then is the double-contact the
+ * missed-call trigger must never produce (review P1, #881).
+ */
+export const ANSWERED_CALL_STATUSES = ["in_progress", "answered", "transferred", "completed"] as const;
+
 export const UNANSWERED_TERMINAL_CALL_EVENTS = [
   "no_answer",
   "busy",

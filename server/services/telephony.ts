@@ -131,6 +131,10 @@ export type AppendCallEventResult = {
   duplicate: boolean;
   /** The call's status after applying the reducer (unchanged on a duplicate). */
   status: CallStatus | null;
+  /** The call's status BEFORE this event was applied (null on duplicates) —
+   *  the missed-call trigger uses it to refuse texting an already-answered
+   *  call that later hit a mid-call failure (review P1, #881). */
+  priorStatus: CallStatus | null;
 };
 
 /**
@@ -154,7 +158,7 @@ export async function appendCallEvent(
 
   if (ins.error) {
     if (isDup(ins.error)) {
-      return { appended: false, duplicate: true, status: null };
+      return { appended: false, duplicate: true, status: null, priorStatus: null };
     }
     const message = ins.error.message;
     Sentry.captureException(new Error(`appendCallEvent insert failed: ${message}`), {
@@ -182,6 +186,11 @@ export async function appendCallEvent(
     throw new Error(`appendCallEvent status read failed: ${current.error.message}`);
   }
   const currentStatus = (current.data?.status as CallStatus | undefined) ?? event.type;
+  // Surfaced to callers (review P1, #881): the missed-call trigger must know
+  // whether the call was EVER answered before this terminal — a Vapi mid-call
+  // pipeline error maps to `failed`, and texting a caller who already spoke
+  // to the AI is the double-contact the trigger exists to avoid.
+  const priorStatus = (current.data?.status as CallStatus | undefined) ?? null;
   const nextStatus = nextCallState(currentStatus, event.type);
   if (nextStatus !== currentStatus) {
     const upd = await table("calls")
@@ -195,7 +204,7 @@ export async function appendCallEvent(
       throw new Error(`appendCallEvent status update failed: ${upd.error.message}`);
     }
   }
-  return { appended: true, duplicate: false, status: nextStatus };
+  return { appended: true, duplicate: false, status: nextStatus, priorStatus };
 }
 
 // =====================================================================

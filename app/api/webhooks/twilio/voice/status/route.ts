@@ -7,6 +7,7 @@ import { resolveOrgForDialedNumber } from "@/lib/telephony/router";
 import {
   TERMINAL_CALL_EVENTS,
   UNANSWERED_TERMINAL_CALL_EVENTS,
+  ANSWERED_CALL_STATUSES,
 } from "@/lib/telephony/types";
 import {
   appendCallEvent,
@@ -127,7 +128,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     // retry-storm Twilio (the event append — the lifecycle write — succeeded).
     if (
       !result.duplicate &&
-      (UNANSWERED_TERMINAL_CALL_EVENTS as readonly string[]).includes(call.status)
+      (UNANSWERED_TERMINAL_CALL_EVENTS as readonly string[]).includes(call.status) &&
+      // Never text a caller the AI (or a human) was already speaking to —
+      // a mid-call failure is a dropped conversation, not a missed call.
+      !(ANSWERED_CALL_STATUSES as readonly string[]).includes(result.priorStatus ?? "")
     ) {
       try {
         const missed = await processMissedCallTextback({

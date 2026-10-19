@@ -35,6 +35,7 @@ import {
 } from "@/server/services/receptionist";
 import {
   UNANSWERED_TERMINAL_CALL_EVENTS,
+  ANSWERED_CALL_STATUSES,
   type NormalizedInboundCall,
 } from "@/lib/telephony/types";
 
@@ -364,7 +365,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     // dispatch backstops it. Best-effort: never breaks the webhook response.
     if (
       !result.duplicate &&
-      (UNANSWERED_TERMINAL_CALL_EVENTS as readonly string[]).includes(call.status)
+      (UNANSWERED_TERMINAL_CALL_EVENTS as readonly string[]).includes(call.status) &&
+      // Never text a caller the AI (or a human) was already speaking to —
+      // a mid-call failure is a dropped conversation, not a missed call.
+      !(ANSWERED_CALL_STATUSES as readonly string[]).includes(result.priorStatus ?? "")
     ) {
       try {
         await processMissedCallTextback({
