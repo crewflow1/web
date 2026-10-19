@@ -32,6 +32,11 @@ comment per failing probe and closing the issue on recovery.
 
 **Honest limitations — do not over-trust it:**
 
+- **The repo is public, so the outage issue is a public broadcast of
+  downtime** (including a response-body snippet). Inherent to the
+  no-new-paid-provider design; accept it, or move the repo private /
+  swap to a paid monitor later.
+
 - GitHub cron is **best-effort**: runs can be delayed minutes or skipped under
   load. Expect detection "usually within ~20 minutes", not an SLA.
 - GitHub **disables scheduled workflows after 60 days with no repo activity**.
@@ -87,8 +92,10 @@ monitor (§1) is the backstop, not the plan.
 
    Vercel crons resume automatically once deployments are re-enabled — there
    is no "re-arm" step — but confirm the every-minute routes
-   (`notifications-drain` is `*/15`; `push-drain`, `sms-drain`, `spine-drain`,
-   `task-reaper`, `webhook-dispatch` are `* * * * *`) have fresh rows. The HQ
+   (`notifications-drain` is `*/15`; `push-drain`, `spine-drain`,
+   `task-reaper` are `* * * * *`) have fresh rows — do NOT expect rows from
+   dark-gated routes (`sms-drain`, `webhook-dispatch` while those channels
+   are dark): they 204 before telemetry by design. The HQ
    view is `/admin/ops`.
 4. **Webhook posture:** §4 per provider — this is where an outage keeps
    costing you *after* recovery.
@@ -168,7 +175,10 @@ schedules; past their window, events are **lost unless replayed manually**.
   next scheduled day. If the outage crossed their fire time and the business
   impact matters, invoke the route once manually with the cron secret (it is
   authenticated; see `vercel.json` for paths) or accept the one-day gap.
-- Telemetry: every run writes a `cron_runs` row; the staleness signal in
+- Telemetry: every run of a LIVE route writes a `cron_runs` row — but
+  dark-gated routes (sms-drain, webhook-dispatch while their channels are
+  dark, memory-embed pre-activation) 204 BEFORE telemetry and write no rows
+  by design; absence of their rows is not scheduler failure. The staleness signal in
   `/api/health` (`crons.lastSuccessAgeMinutes`) is derived from the newest
   successful row and is how the monitor sees scheduler death.
 

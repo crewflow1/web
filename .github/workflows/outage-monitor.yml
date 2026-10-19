@@ -136,9 +136,13 @@ jobs:
           echo "Second probe also failed: $REASON"
           echo "down=true" >>"$GITHUB_OUTPUT"
           {
-            echo "reason<<CREWFLOW_EOF"
+            # Random delimiter per GitHub hardening guidance: the reason embeds
+            # response-body bytes, and a crafted body containing a static
+            # delimiter could break out and overwrite step outputs.
+            EOF_MARKER="EOF_$(openssl rand -hex 16)"
+            echo "reason<<${EOF_MARKER}"
             echo "$REASON"
-            echo "CREWFLOW_EOF"
+            echo "${EOF_MARKER}"
           } >>"$GITHUB_OUTPUT"
 
       - name: Raise or update the outage issue (deduped — one open issue)
