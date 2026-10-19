@@ -165,9 +165,41 @@ const TRACKED_ENV: ReadonlyArray<Omit<EnvVarStatus, "present">> = [
     hint: "Global kill switch — \"on\" returns retry-safe 503s platform-wide. Presence here means it is ACTIVE.",
   },
   {
+    name: "MAINTENANCE_BYPASS",
+    required: false,
+    hint: "Operator bypass token for the maintenance 503. Only meaningful while MAINTENANCE_MODE is on.",
+  },
+  {
     name: "VAPID_PUBLIC_KEY",
     required: false,
     hint: "Web-push channel (pairs with VAPID_PRIVATE_KEY). Unset ⇒ push enqueues nothing.",
+  },
+  // 2026-10 env-contract census: vars that run (or can run) in prod but were
+  // invisible to this panel — presence-only rows so ops truth stays complete.
+  {
+    name: "KV_REST_API_URL",
+    required: false,
+    hint: "Vercel KV / Upstash cache endpoint (pairs with KV_REST_API_TOKEN). Unset ⇒ caching no-ops (miss, never an error).",
+  },
+  {
+    name: "KV_REST_API_TOKEN",
+    required: false,
+    hint: "Vercel KV / Upstash cache token (pairs with KV_REST_API_URL).",
+  },
+  {
+    name: "COMPANIES_HOUSE_API_KEY",
+    required: false,
+    hint: "HQ research + lead sourcing Companies House probes. Unset ⇒ those probes skip (dark).",
+  },
+  {
+    name: "GITHUB_TOKEN",
+    required: false,
+    hint: "CTO AI read-only engineering feed (pairs with GITHUB_REPO). Unset ⇒ adapter refuses before fetch.",
+  },
+  {
+    name: "VERCEL_TOKEN",
+    required: false,
+    hint: "CTO AI deployment telemetry. Unset ⇒ adapter refuses before fetch.",
   },
 ];
 
