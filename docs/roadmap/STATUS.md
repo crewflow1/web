@@ -4,15 +4,26 @@
 > release train updates it. Statuses are evidence-based: `PRODUCTION` means
 > merged **and** migrated **and** deployed **and** verified — not "code exists".
 
-## ✅ Reconciled 2026-08-29 (current truth — read this block, treat everything below as history)
+## ✅ Reconciled 2026-10-19 (current truth — read this block, treat everything below as history)
 
-- **Production `main`:** `88cbe193` (verified against the deployed app, not inferred)
-- **Migration tip:** `20261220000000` — **380/380** repo↔DB parity (production).
-  The `roadmap/final-completion` branch carries `20261221`–`20261227` (repo total 387) — pending release, NOT applied; parity is re-verified at release
-- **Defect state:** P0 = 0 · P1 = 0 — Customer-#1 release gates CLOSED (PRs #849/#850 shipped: invoice void, job cancel, Money authz boundary)
+- **Production `main`:** `e877fb36` (deployed prod reports `sha: e877fb3` on `/api/health`, verified 2026-10-19 — not inferred)
+- **Migration tip:** `20261229000000` — **389/389** repo↔DB parity (production). The `20261221`–`20261227` train released long ago; nothing is pending
+- **AI estate:** ALL FIVE governor tiers bound + armed — cheap/mid/high/embedding **production-proven** by governed ledger rows; transcription **provider-proven** (settled self-test ledger rows via `/admin/ai-costs`), its only producing channel (WhatsApp voice notes) still Meta-dark. Evidence: [`docs/launch/PRODUCTION-ACTIVATION-MATRIX.md`](../launch/PRODUCTION-ACTIVATION-MATRIX.md) §AI-estate proof
+- **2026-10-19 post-audit remediation train landed (#883, five reviewed waves → F=0 · G=0 · H=0):** `/admin/settings` phantom toggles removed and surviving fields wired to real consumers; orphan endpoints (`/api/ai/activity_summary`, `/api/ai/lead_insights`, `/api/waitlist`) removed; receptionist review/worklist + `/developers` made reachable; merchant connect flow + 4 real cXML adapters (Jewson/TP/JP Corry/Haldane Fisher, contract-gated); calendar sync wired end-to-end + `calendar-sync` cron; HMRC submit orchestrator wired behind a triple dark-gate (CIS ledger stays structurally unsubmittable); missed-call textback trigger with answered-guard; quote duplicate; Sage CSV export; embedding provider production lockdown; env-contract census CI guard; independent GitHub-Actions outage monitor + `docs/ops/OUTAGE-RUNBOOK.md`
+- **Outage record:** production returned HTTP 402 for ~5 days (2026-10-14 → 2026-10-19, Vercel billing suspension) and has RECOVERED — the independent monitor + runbook above exist because of it
+- **Defect state:** P0 = 0 · P1 = 0; the 2026-10-19 audit's F/G/H registers are all empty
 - **Next migration prefix:** query `supabase_migrations.schema_migrations` `max(version)+1` — **never trust this file** (or any doc) for the next prefix
-- **Canonical roadmap truth:** [`MASTER-ROADMAP-RECONCILIATION.md`](./MASTER-ROADMAP-RECONCILIATION.md) — where any block below disagrees with it, the reconciliation wins
-- Everything from the historical header below onward is **programme history**, preserved for audit; its commit hashes, tips, wave states and "remaining backlog" claims are stale.
+- **Canonical roadmap truth:** [`MASTER-ROADMAP-RECONCILIATION.md`](./MASTER-ROADMAP-RECONCILIATION.md) (its 2026-10-19 supersede block) — where any block below disagrees with it, the reconciliation wins
+- Everything below is **programme history**, preserved for audit; its commit hashes, tips, wave states and "remaining backlog" claims are stale.
+
+---
+
+## HISTORICAL — Reconciled 2026-08-29 (STALE, kept for audit; superseded by the 2026-10-19 block above)
+
+- **Production `main` (then):** `88cbe193` (verified against the deployed app at the time)
+- **Migration tip (then):** `20261220000000` — **380/380** repo↔DB parity (production at the time).
+  The `roadmap/final-completion` branch carried `20261221`–`20261227` (repo total 387) — since released and applied
+- **Defect state (then):** P0 = 0 · P1 = 0 — Customer-#1 release gates CLOSED (PRs #849/#850 shipped: invoice void, job cancel, Money authz boundary)
 
 ---
 
@@ -98,7 +109,7 @@
 >
 > **Known P2 follow-up (flagged, NOT closed — product decision):** quote transitions INTO `'accepted'` are unguarded, and `acceptQuoteAsOwner` carries no approver gate — closing this safely requires deciding whether staff may record acceptances at all. The object-authz `material_requests` decide/raise-PO arm is likewise a transition-guard follow-up. Neither has live blast radius (prod has 1 user, 0 multi-org).
 
-**Providers:** email **live**; SMS, WhatsApp, voice, Stripe, HMRC, weather **dark**. **AI providers LIVE — corrected 2026-09-13 (the "AI providers DARK" claim here was written 2026-08-01 and is history):** all five governor tiers armed (cheap/mid/high 2026-09-10 · embedding 2026-09-11, worker flag ON in prod · transcription 2026-09-13, channel-dark); generative trio + embedding production-proven — see `docs/launch/PRODUCTION-ACTIVATION-MATRIX.md` §AI-estate proof. Weather now has a real Open-Meteo adapter + fetch pipeline **built-dark** (activation = provider licence + credential + cron schedule); embeddings + all HQ AI paths governed and tier-bound (was: tier-unbound/dark).
+**Providers:** email **live**; SMS, WhatsApp, voice, Stripe, HMRC, weather **dark**. **Corrected 2026-10-19:** "Stripe dark" here means Stripe **Connect portal payments + self-serve billing** (still dark); the platform's own Stripe subscription checkout has been **LIVE — approval-gated** since the 2026-08-30 activation audit. Transcription is now **provider-proven** (settled self-test ledger rows; application path WhatsApp-dark). **AI providers LIVE — corrected 2026-09-13 (the "AI providers DARK" claim here was written 2026-08-01 and is history):** all five governor tiers armed (cheap/mid/high 2026-09-10 · embedding 2026-09-11, worker flag ON in prod · transcription 2026-09-13, channel-dark); generative trio + embedding production-proven — see `docs/launch/PRODUCTION-ACTIVATION-MATRIX.md` §AI-estate proof. Weather now has a real Open-Meteo adapter + fetch pipeline **built-dark** (activation = provider licence + credential + cron schedule); embeddings + all HQ AI paths governed and tier-bound (was: tier-unbound/dark).
 The 2026-07-30 ungoverned-call-site hazard is **CLOSED** — see below.
 
 ## ✅ EMBEDDINGS GOVERNANCE — CLOSED 2026-08-01 (C15, #521, migration `20261080`)

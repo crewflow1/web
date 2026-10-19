@@ -3,10 +3,13 @@
 CrewFlow is a multi-tenant operations platform for UK construction SMBs: leads,
 quotes, jobs, invoicing, CIS, health & safety (RAMS/toolbox talks/permits),
 stock/fleet, a customer portal, and an internal HQ layer — all in a single
-Next.js application deployed at [crewflow.uk](https://crewflow.uk). Email is
-the one live outbound channel; every other external integration is **built
-dark** (code shipped, feature-flag + credential gated, refuses before any
-network fetch) so activation is a config flip, never an engineering project.
+Next.js application deployed at [crewflow.uk](https://crewflow.uk). Live
+external surfaces today: Resend email, Stripe subscription checkout, Sentry,
+enterprise SSO/SCIM + outbound webhooks + web push (customer-configurable), and
+the governed generative-AI estate (all five AI Cost Governor tiers armed).
+Every other external integration is **built dark** (code shipped,
+feature-flag + credential gated, refuses before any network fetch) so
+activation is a config flip, never an engineering project.
 
 > This README describes what is actually deployed. If a doc and the code
 > disagree, the code wins. `__tests__/docs/readme-truth.test.ts` pins the
@@ -82,10 +85,10 @@ scanning.
 
 ## Migration discipline
 
-- Migrations are numbered SQL files in `supabase/migrations/` (currently 387 in
-  the repo; production tip `20261220000000` at the time of writing, with
-  `20261221`–`20261227` pending in the final-roadmap release train — the DB
-  itself, `supabase_migrations.schema_migrations`, is the only authority).
+- Migrations are numbered SQL files in `supabase/migrations/` (currently 389 in
+  the repo; production tip `20261229000000` at the time of writing, 389/389
+  repo↔DB parity — the DB itself, `supabase_migrations.schema_migrations`, is
+  the only authority).
 - **Never take the "next free" prefix from a doc.** Ask the database:
   `select max(version) from supabase_migrations.schema_migrations;` — claim a
   prefix above the production tip AND above every in-flight branch slot, and
@@ -109,7 +112,8 @@ work locally and push at milestones; CI is free, Vercel builds are not.
 
 **LIVE** = deployed and usable in production today. **DARK** = fully built and
 tested, but gated behind a feature flag + missing credential/decision; the code
-refuses before any external fetch. **FUTURE** = not built.
+refuses before any external fetch. **ARMED** = provider-bound and spending real
+credits under the AI Cost Governor's fail-closed ceiling. **FUTURE** = not built.
 
 | Capability | Status |
 |---|---|
@@ -120,15 +124,17 @@ refuses before any external fetch. **FUTURE** = not built.
 | Payroll: estimates, CSV export, payslips | LIVE (no RTI filing — DARK) |
 | Accounting **CSV export** (canonical mapper) | LIVE |
 | Email (Resend), in-app notifications, offline read + selected offline writes, PWA | LIVE |
-| Public API v1 (key-auth, org-scoped) | DARK (flag) |
-| SMS / WhatsApp / voice receptionist / missed-call handling | DARK (provider creds; not live) |
-| Stripe portal payments + self-serve billing | DARK |
-| Accounting push (Xero/QuickBooks/Sage OAuth) | DARK |
-| HMRC MTD VAT / CIS300 filing / RTI | DARK (prepare-only is live) |
-| Calendar sync, open banking, telematics/GPS, merchants cXML, marketplace | DARK |
-| Enterprise SSO/SCIM, outbound webhooks, web-push, PostHog analytics | DARK |
-| Weather pipeline (Open-Meteo adapter, EOT integration) | DARK |
-| **All generative AI** (quote writer, receptionist turns, HQ narratives, embeddings) | DARK — governed, every tier unbound (`TIER_MODEL` all null); a key alone is refused |
+| Public API v1 (key-auth, org-scoped) + `/developers` docs portal + SDKs | DARK (flag — CEO queue; docs portal, OpenAPI + SDKs built) |
+| SMS / WhatsApp / voice receptionist / missed-call textback (answered-guarded trigger) | DARK (provider creds; engineering complete — not live) |
+| Stripe Connect portal payments + self-serve billing | DARK (the platform's own subscription checkout is live separately, approval-gated) |
+| Accounting push (Xero/QuickBooks/Sage OAuth) | DARK (vendor creds + token key; CSV export above covers all three) |
+| HMRC MTD VAT / CIS300 / RTI submission | DARK (submit orchestrator wired behind a triple dark-gate; prepare + export are live; the CIS statements ledger is structurally unsubmittable) |
+| Calendar sync (Google/MS Graph, two-way + renewal cron) | DARK (engineering complete; OAuth creds pending) |
+| Open banking, telematics/GPS, merchants cXML (4 real adapters + connect flow), marketplace | DARK (legal/contract gates; adapters complete) |
+| Enterprise SSO/SCIM, MFA enforcement, outbound webhooks, web-push | LIVE — customer-configurable (per-org opt-in) |
+| PostHog analytics | DARK (key + consent) |
+| Weather pipeline (Open-Meteo adapter, EOT integration) | DARK (commercial licence) |
+| **Generative AI estate** (quote writer, OCR, receptionist drafting, HQ narratives, embeddings, transcription) | ARMED — all five governor tiers bound; cheap/mid/high/embedding production-proven, transcription provider-proven (its only producing channel stays dark); £100/org/month fail-closed ceiling; portal-chat auto-reply held off by CEO decision |
 | Native mobile apps | FUTURE |
 
 The authoritative, evidence-based capability reconciliation is

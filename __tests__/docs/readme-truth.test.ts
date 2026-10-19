@@ -99,10 +99,26 @@ describe("STATUS.md no longer volunteers a NEXT FREE migration prefix", () => {
     expect(status).toMatch(/supabase_migrations\.schema_migrations/);
   });
 
-  it("carries the 2026-08-29 reconciliation header", () => {
+  it("carries the 2026-10-19 reconciliation header as current truth", () => {
+    expect(status).toContain("Reconciled 2026-10-19");
+    expect(status).toContain("e877fb36");
+    expect(status).toContain("20261229000000");
+  });
+
+  it("keeps the 2026-08-29 reconciliation block, demoted to history", () => {
     expect(status).toContain("Reconciled 2026-08-29");
     expect(status).toContain("88cbe193");
     expect(status).toContain("20261220000000");
+    // The old block may no longer present itself as current truth.
+    expect(status).not.toMatch(/Reconciled 2026-08-29 \(current truth/);
+  });
+});
+
+describe("README.md states the armed AI estate truthfully", () => {
+  it("no longer claims every tier is unbound/dark (all five tiers are armed)", () => {
+    expect(readme).not.toMatch(/every tier unbound/i);
+    expect(readme).not.toMatch(/TIER_MODEL.*all null/i);
+    expect(readme).toMatch(/all five governor tiers bound/i);
   });
 });
 
