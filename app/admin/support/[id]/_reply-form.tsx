@@ -12,10 +12,13 @@ export function SupportReplyForm({
   action,
   ticketId,
   customerEmail,
+  defaultSignature,
 }: {
   action: (formData: FormData) => Promise<void> | void;
   ticketId: string;
   customerEmail: string | null;
+  /** settings.support.default_reply_signature — pre-filled, always editable. */
+  defaultSignature?: string;
 }) {
   const [internal, setInternal] = useState(false);
 
@@ -40,6 +43,7 @@ export function SupportReplyForm({
         minLength={1}
         maxLength={10_000}
         rows={5}
+        defaultValue={defaultSignature ? `\n\n${defaultSignature}` : undefined}
         placeholder="Customer-visible reply, OR check 'Internal note' to leave a private HQ-only message…"
         className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
       />

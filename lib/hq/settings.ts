@@ -11,11 +11,31 @@
  *     notifications: NotificationSettings,
  *     alerts: AlertSettings,
  *     billing: BillingSettings,
- *     branding: BrandingSettings,
  *     support: SupportSettings,
  *     integrations: IntegrationsSettings,
  *     feature_flags: FeatureFlagSettings
  *   }
+ *
+ * THE TRUTHFULNESS RULE (settings-truth remediation, 2026-10-19):
+ * every field in these schemas has a REAL consumer outside the settings
+ * surface, and its form hint names that consumer. The 2026-10-19 audit
+ * found 7 working forms persisting 17 fields that NOTHING read, under
+ * descriptions promising effects ("surface on customer-facing pages",
+ * "tune the alert engine") — a phantom control panel. Each field was
+ * reconciled against reality: the ones with a genuine, small wiring step
+ * were wired (HQ alert emails + quiet hours, invoice due-date prefill,
+ * support reply signature); the rest were RETIRED — form field, schema
+ * entry and defaults removed. Do not add a field here without its
+ * consumer landing in the same change.
+ *
+ * Retired keys (platform_name, support_email, ops_slack_url,
+ * daily_digest_enabled, cooldown_hours, default_snooze_hours,
+ * default_setup_fee_gbp, default_invoice_footer, the whole `branding`
+ * section, auto_close_days, escalation_email, *_connected toggles) may
+ * still exist in stored JSONB — mergeSettings simply ignores unknown
+ * keys, and the raw-first upsert in server/services/hq-settings.ts
+ * preserves them byte-for-byte (the #865 blob-preservation invariant).
+ * NEVER migrate or delete the stored data.
  *
  * Adding a new section:
  *   1. Add it to SECTION_IDS + Section types below.
@@ -23,6 +43,7 @@
  *   3. Register in SECTION_SCHEMAS / SECTION_DEFAULTS / SECTION_LABEL.
  *   4. Add a save action in app/admin/settings/actions.ts.
  *   5. Render a form section in the page.
+ *   6. Land the field's real consumer in the same change (see above).
  *
  * No migration required — JSONB absorbs new keys.
  */
@@ -38,7 +59,6 @@ export const SECTION_IDS = [
   "notifications",
   "alerts",
   "billing",
-  "branding",
   "support",
   "integrations",
   "feature_flags",
@@ -47,10 +67,9 @@ export type SectionId = (typeof SECTION_IDS)[number];
 
 export const SECTION_LABEL: Record<SectionId, string> = {
   general: "General",
-  notifications: "Notification preferences",
+  notifications: "HQ email & quiet hours",
   alerts: "Alert preferences",
   billing: "Billing defaults",
-  branding: "Branding",
   support: "Support",
   integrations: "Integrations",
   feature_flags: "Feature flags",
@@ -58,19 +77,17 @@ export const SECTION_LABEL: Record<SectionId, string> = {
 
 export const SECTION_BLURB: Record<SectionId, string> = {
   general:
-    "Platform-level identity. The values you put here surface on customer-facing pages and HQ headers.",
+    "HQ-wide defaults. The timezone governs the quiet-hours window in the HQ email section below.",
   notifications:
-    "Which events fire an HQ email + when the team is quiet. Customer-side prefs live in their own settings page.",
+    "Where HQ notification emails go. Today the only HQ email is the critical-alert fire from the nightly alerts poll; quiet hours defer non-urgent HQ email until the window ends.",
   alerts:
-    "Tune the deterministic alert engine — cooldown between re-fires, snooze defaults, who gets a copy of urgent fires.",
+    "Extra email copy for the deterministic alert engine — an optional additional recipient on every critical alert fire.",
   billing:
-    "Defaults applied when an operator creates a new invoice without overrides. Existing invoices are untouched.",
-  branding:
-    "Customer-facing branding on PDFs, public quote pages, and operator-managed emails.",
+    "Pre-fills applied when an operator records a new invoice on /admin/billing. Existing invoices are untouched.",
   support:
-    "Default support behaviour — signature, auto-close timer, escalation contact.",
+    "Pre-filled signature for the reply box on /admin/support tickets. Visible and editable before every send.",
   integrations:
-    "Which third-party providers are wired in. Read-only reflection of env vars — connection edits live in Vercel.",
+    "Read-only reflection of what THIS deploy can actually send (build + env facts — connection edits live in Vercel), plus free-form operator notes.",
   feature_flags:
     "Read-only truth panel. Production feature flags live in Vercel env (NEXT_PUBLIC_FEATURE_* / FEATURE_*) — a toggle here could not reach them, so none is offered.",
 };
@@ -79,28 +96,24 @@ export const SECTION_BLURB: Record<SectionId, string> = {
 // Section schemas
 // =====================================================================
 
+// Consumer: the quiet-hours evaluation in the notification→email bridge
+// (lib/notifications/email-routing.ts) interprets quiet_hours_* in THIS
+// timezone.
 export const generalSchema = z.object({
-  platform_name: z.string().trim().min(1).max(120).default("CrewFlow"),
-  support_email: z
-    .string()
-    .trim()
-    .email()
-    .default("support@crewflow.uk"),
-  ops_slack_url: z
-    .string()
-    .trim()
-    .url()
-    .or(z.literal(""))
-    .default(""),
   timezone: z.string().trim().min(1).max(60).default("Europe/London"),
 });
 
+// Consumers: resolveHqEmailRecipients + resolveHqQuietHours in
+// lib/notifications/email-routing.ts, called from the notification→email
+// bridge (server/services/notifications-service.ts) for hq-audience
+// notifications that carry an email directive.
 export const notificationSchema = z.object({
   hq_email_recipients: z
     .string()
     .trim()
     .max(2000)
-    // Comma-separated list of operator emails. Empty string = nobody.
+    // Comma-separated list of operator emails. Empty string = nobody —
+    // HQ email stays dark until an operator sets recipients.
     .default(""),
   quiet_hours_start: z
     .string()
@@ -111,12 +124,12 @@ export const notificationSchema = z.object({
     .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "HH:MM")
     .default("07:00"),
   send_during_quiet_hours_for_urgent: z.boolean().default(true),
-  daily_digest_enabled: z.boolean().default(false),
 });
 
+// Consumer: the notification→email bridge adds this address as an extra
+// recipient on urgent alert-category HQ emails (the critical alert fires
+// emitted by server/services/hq-alerts-scheduler.ts).
 export const alertSchema = z.object({
-  cooldown_hours: z.coerce.number().int().min(0).max(168).default(24),
-  default_snooze_hours: z.coerce.number().int().min(1).max(168).default(24),
   critical_cc_email: z
     .string()
     .trim()
@@ -125,6 +138,8 @@ export const alertSchema = z.object({
     .default(""),
 });
 
+// Consumer: app/admin/billing/page.tsx pre-fills the "Record invoice"
+// due-date input with today + N days.
 export const billingSchema = z.object({
   default_invoice_due_days: z.coerce
     .number()
@@ -132,56 +147,24 @@ export const billingSchema = z.object({
     .min(0)
     .max(180)
     .default(30),
-  default_setup_fee_gbp: z.coerce
-    .number()
-    .min(0)
-    .max(100000)
-    .default(1000),
-  default_invoice_footer: z
-    .string()
-    .trim()
-    .max(2000)
-    .default("Thank you for your business."),
 });
 
-export const brandingSchema = z.object({
-  logo_url: z
-    .string()
-    .trim()
-    .url()
-    .or(z.literal(""))
-    .default(""),
-  primary_color: z
-    .string()
-    .trim()
-    .regex(/^#[0-9a-fA-F]{6}$/, "Hex like #1a2b3c")
-    .default("#0f172a"),
-  pdf_footer: z
-    .string()
-    .trim()
-    .max(500)
-    .default(""),
-});
-
+// Consumer: app/admin/support/[id]/page.tsx passes this to the reply
+// form as the textarea's initial content (operator sees + can edit it).
 export const supportSchema = z.object({
   default_reply_signature: z
     .string()
     .trim()
     .max(2000)
     .default("— The CrewFlow team"),
-  auto_close_days: z.coerce.number().int().min(0).max(180).default(14),
-  escalation_email: z
-    .string()
-    .trim()
-    .email()
-    .or(z.literal(""))
-    .default(""),
 });
 
+// The three *_connected toggles that used to live here were a FALSE status
+// panel: hand-flipped booleans persisted to JSONB and read by nothing, under
+// a blurb claiming they reflected env vars. The page now renders the REAL
+// provider readiness (lib/comms/readiness.ts + env presence), read-only.
+// Only the free-form operator notepad remains writable.
 export const integrationsSchema = z.object({
-  stripe_connected: z.boolean().default(false),
-  resend_connected: z.boolean().default(false),
-  whatsapp_connected: z.boolean().default(false),
   notes: z.string().trim().max(2000).default(""),
 });
 
@@ -201,7 +184,6 @@ export const settingsSchema = z.object({
   notifications: notificationSchema,
   alerts: alertSchema,
   billing: billingSchema,
-  branding: brandingSchema,
   support: supportSchema,
   integrations: integrationsSchema,
   feature_flags: featureFlagsSchema,
@@ -211,7 +193,6 @@ export type GeneralSettings = z.infer<typeof generalSchema>;
 export type NotificationSettings = z.infer<typeof notificationSchema>;
 export type AlertSettings = z.infer<typeof alertSchema>;
 export type BillingSettings = z.infer<typeof billingSchema>;
-export type BrandingSettings = z.infer<typeof brandingSchema>;
 export type SupportSettings = z.infer<typeof supportSchema>;
 export type IntegrationsSettings = z.infer<typeof integrationsSchema>;
 export type FeatureFlagSettings = z.infer<typeof featureFlagsSchema>;
@@ -223,7 +204,6 @@ export const SECTION_SCHEMAS = {
   notifications: notificationSchema,
   alerts: alertSchema,
   billing: billingSchema,
-  branding: brandingSchema,
   support: supportSchema,
   integrations: integrationsSchema,
   feature_flags: featureFlagsSchema,
@@ -239,7 +219,6 @@ export const DEFAULT_SETTINGS: HqSettings = settingsSchema.parse({
   notifications: {},
   alerts: {},
   billing: {},
-  branding: {},
   support: {},
   integrations: {},
   feature_flags: {},
@@ -248,6 +227,11 @@ export const DEFAULT_SETTINGS: HqSettings = settingsSchema.parse({
 /**
  * Merge a partial DB blob into the defaults so partial / missing
  * keys are tolerated. Always returns a fully-populated HqSettings.
+ *
+ * Unknown top-level sections AND unknown keys inside a known section
+ * (e.g. the retired fields listed in the header) are ignored, never
+ * an error — zod's non-strict object parse strips them. The stored
+ * blob itself is never rewritten here (reads are non-destructive).
  */
 export function mergeSettings(
   raw: unknown,

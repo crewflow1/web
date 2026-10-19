@@ -50,19 +50,14 @@ function formDataToPatch(
   // surface is awkward to traverse at runtime.
   const BOOLEAN_KEYS: Record<SectionId, string[]> = {
     general: [],
-    notifications: [
-      "send_during_quiet_hours_for_urgent",
-      "daily_digest_enabled",
-    ],
+    notifications: ["send_during_quiet_hours_for_urgent"],
     alerts: [],
     billing: [],
-    branding: [],
     support: [],
-    integrations: [
-      "stripe_connected",
-      "resend_connected",
-      "whatsapp_connected",
-    ],
+    // integrations carries ONE writable field (notes): the old *_connected
+    // toggles were a false status panel (hand-flipped, read by nothing) —
+    // the page now renders real provider readiness, read-only.
+    integrations: [],
     // feature_flags carries NO writable fields: the old JSONB toggles were a
     // false control panel (read by nothing); production flags are Vercel env.
     feature_flags: [],
