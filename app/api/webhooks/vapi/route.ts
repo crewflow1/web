@@ -30,9 +30,13 @@ import {
 } from "@/server/services/telephony";
 import {
   processInboundEnquiry,
+  processMissedCallTextback,
   refreshVoiceExtractionFromTranscript,
 } from "@/server/services/receptionist";
-import type { NormalizedInboundCall } from "@/lib/telephony/types";
+import {
+  UNANSWERED_TERMINAL_CALL_EVENTS,
+  type NormalizedInboundCall,
+} from "@/lib/telephony/types";
 
 /**
  * Vapi inbound-VOICE webhook (Wave 8).
@@ -310,17 +314,25 @@ export async function POST(request: Request): Promise<NextResponse> {
     // both the dedup_key and the provider_message_id, so processInboundEnquiry's
     // (org_id, provider_message_id) partial-unique dedup folds every redelivery
     // into the same enquiry. Best-effort: a failure must not break the response.
+    //
+    // REPLY DEFERRED (G-6): lifecycle events arrive here for LIVE calls too
+    // (origination / in-progress), where missed-ness is unknowable — the Vapi
+    // assistant is actively answering. Ingestion is reply-deferred; the
+    // UNANSWERED terminal branch below owns the missed-call decision.
     {
       try {
-        const { lead_id, conversation_id } = await processInboundEnquiry({
-          org_id: orgId,
-          channel: "phone",
-          caller: call.from,
-          dedup_key: call.providerCallId,
-          // Correlate the enquiry to the call by CallSid, so the spoken-turn loop
-          // can populate its raw_text (mirrors the Twilio origination edge).
-          provider_message_id: call.providerCallId,
-        });
+        const { lead_id, conversation_id } = await processInboundEnquiry(
+          {
+            org_id: orgId,
+            channel: "phone",
+            caller: call.from,
+            dedup_key: call.providerCallId,
+            // Correlate the enquiry to the call by CallSid, so the spoken-turn loop
+            // can populate its raw_text (mirrors the Twilio origination edge).
+            provider_message_id: call.providerCallId,
+          },
+          { textback: "defer" },
+        );
 
         // LINK the calls row to the lead + conversation the enquiry resolved, so
         // the C41 duration/ended-at and C35c transcript/summary/recording
@@ -342,6 +354,27 @@ export async function POST(request: Request): Promise<NextResponse> {
       } catch (e) {
         Sentry.captureException(e, { tags: { route: "webhooks/vapi", stage: "enquiry" } });
         console.error("[vapi] enquiry delegation failed", e);
+      }
+    }
+
+    // ── MISSED-CALL TRIGGER (G-6) — same internal detector as the Twilio status
+    // edge. An UNANSWERED terminal (no_answer / busy / failed) proves the call
+    // was missed; invoke the engine in-process. Dedupe: skipped on a redelivered
+    // (duplicate) event append, and the per-(org, CallSid) send claim inside the
+    // dispatch backstops it. Best-effort: never breaks the webhook response.
+    if (
+      !result.duplicate &&
+      (UNANSWERED_TERMINAL_CALL_EVENTS as readonly string[]).includes(call.status)
+    ) {
+      try {
+        await processMissedCallTextback({
+          org_id: orgId,
+          provider_call_id: call.providerCallId,
+          caller: call.from,
+        });
+      } catch (e) {
+        Sentry.captureException(e, { tags: { route: "webhooks/vapi", stage: "missed_call" } });
+        console.error("[vapi] missed-call trigger failed", e);
       }
     }
 

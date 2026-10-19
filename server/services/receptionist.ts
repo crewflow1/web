@@ -2191,7 +2191,13 @@ export type MissedCallTextbackResult =
         // P2-7: the sender has explicitly opted out (STOP) — no AI drafting,
         // no auto-ack, until an explicit START. The enquiry itself is still
         // ingested and visible to the operator.
-        | "opted_out";
+        | "opted_out"
+        // G-6: the caller asked for ingestion ONLY — this inbound event arrived
+        // at a voice ORIGINATION edge, where the call is still live and
+        // missed-ness is unknowable. The text-back decision belongs to the
+        // provider's TERMINAL status (processMissedCallTextback), which fires
+        // only when the call provably ended unanswered.
+        | "deferred_to_terminal";
     }
   | { attempted: true; dispatch: ReceptionistDispatchOutcome }
   | { attempted: true; error: string };
@@ -2332,6 +2338,18 @@ async function maybeTextBackMissedCall(input: {
 
 export async function processInboundEnquiry(
   input: InboundEnquiryInput,
+  /**
+   * G-6 — who owns the reply decision for THIS ingestion.
+   *   • omitted / `"attempt"` (the default, every pre-existing caller): step 6
+   *     runs the eligibility-gated reply wiring exactly as before.
+   *   • `"defer"`: ingestion only — the reply is NOT attempted here because the
+   *     caller knows the triggering event cannot yet prove a missed call (the
+   *     voice ORIGINATION edges, where the call is still live). The provider's
+   *     TERMINAL status then invokes {@link processMissedCallTextback}, which
+   *     reuses the SAME ingestion (idempotent on the CallSid) and the SAME
+   *     reply wiring — no new door to a provider.
+   */
+  opts?: { textback?: "attempt" | "defer" },
 ): Promise<{
   enquiry_id: string;
   lead_id: string | null;
@@ -2608,17 +2626,23 @@ export async function processInboundEnquiry(
   // On a resume the prior run already ran (or deliberately skipped) the
   // textback for this exact provider message; re-running it could text the
   // caller twice for one missed call.
+  // A "defer" caller (the voice origination edges) gets ingestion ONLY: at
+  // origination the call is still live, so "missed" is unknowable — the
+  // provider's unanswered TERMINAL status owns the reply decision via
+  // processMissedCallTextback below.
   const textback: MissedCallTextbackResult = resumedAfterPartialIngest
     ? { attempted: false, reason: "duplicate_message" }
-    : await maybeTextBackMissedCall({
-        org_id: input.org_id,
-        channel: input.channel,
-        conversation_id: conversationId,
-        enquiry_id: enquiryId,
-        lead_id: leadId,
-        caller: input.caller ?? null,
-        dedup_key: input.dedup_key ?? null,
-      });
+    : opts?.textback === "defer"
+      ? { attempted: false, reason: "deferred_to_terminal" }
+      : await maybeTextBackMissedCall({
+          org_id: input.org_id,
+          channel: input.channel,
+          conversation_id: conversationId,
+          enquiry_id: enquiryId,
+          lead_id: leadId,
+          caller: input.caller ?? null,
+          dedup_key: input.dedup_key ?? null,
+        });
 
   // The OUTBOUND reply is threaded onto the conversation timeline by the R15 CONVERSATION RUNTIME
   // ({@link runConversationTurn}), which `maybeTextBackMissedCall` now delegates to — so the runtime
@@ -2627,6 +2651,86 @@ export async function processInboundEnquiry(
   // the INBOUND turn (step 0 above) and hands the turn to the runtime.
 
   return { enquiry_id: enquiryId, lead_id: leadId, conversation_id: conversationId, textback };
+}
+
+/**
+ * G-6 — the INTERNAL missed-call trigger (the terminal half of the voice edges).
+ *
+ * Before this, the missed-call text-back engine had NO internal detector: the
+ * voice origination webhooks delegated at call START (where missed-ness is
+ * unknowable — the R6 flag would have texted "sorry we missed you" to a caller
+ * the AI loop was actively answering), and nothing invoked the engine when a
+ * call actually ENDED unanswered. The reconciliation:
+ *
+ *   • ORIGINATION ingests with `{ textback: "defer" }` — enquiry/lead recorded,
+ *     reply decision deferred.
+ *   • The provider's UNANSWERED TERMINAL status (`no_answer` / `busy` / `failed`
+ *     — {@link UNANSWERED_TERMINAL_CALL_EVENTS} in lib/telephony/types.ts) calls
+ *     THIS function in-process (never via HTTP to our own routes).
+ *
+ * It composes the two existing primitives and adds no new door:
+ *   1. INGEST through the UNCHANGED {@link processInboundEnquiry} (deferred
+ *      reply), idempotent on the CallSid — when origination already ingested,
+ *      the (org_id, provider_message_id) dedup folds this into the SAME
+ *      enquiry; when origination was lost (Twilio is at-least-once and
+ *      unordered), the missed call still produces its enquiry + lead here.
+ *   2. REPLY through the UNCHANGED eligibility-gated wiring
+ *      ({@link maybeTextBackMissedCall} → the R15 conversation runtime → the
+ *      ONE canonical dispatch). Every existing gate holds: missed-call flag
+ *      dark ⇒ `flag_off`, SMS provider dark ⇒ the dispatch records its honest
+ *      refusal (`no_provider`), and the per-(org, CallSid) send CLAIM makes a
+ *      redelivered terminal callback's second attempt a duplicate no-op —
+ *      one missed call can never text the caller twice.
+ *
+ * NEVER THROWS past ingestion: the reply wiring already swallows outbound
+ * failures (ingestion is durable first). An ingestion failure does throw — the
+ * webhook caller treats it as best-effort, exactly like the origination edges.
+ */
+export async function processMissedCallTextback(input: {
+  org_id: string;
+  /** The provider's stable per-call id (Twilio CallSid / Vapi call id). */
+  provider_call_id: string;
+  /** The CALLER's number — the destination a text-back would answer to. */
+  caller: string | null;
+}): Promise<{
+  enquiry_id: string;
+  lead_id: string | null;
+  conversation_id: string | null;
+  textback: MissedCallTextbackResult;
+}> {
+  // 1. INGEST (idempotent on the CallSid), reply deferred — this function owns
+  //    the ONE reply attempt below, so the ingestion step must never race it.
+  const ingested = await processInboundEnquiry(
+    {
+      org_id: input.org_id,
+      channel: "phone",
+      caller: input.caller,
+      dedup_key: input.provider_call_id,
+      provider_message_id: input.provider_call_id,
+    },
+    { textback: "defer" },
+  );
+
+  // 2. REPLY through the unchanged wiring. Eligibility (the flag), destination,
+  //    opt-out, the canonical pipeline's policy/audit/deny-by-default gates and
+  //    the (org, CallSid) send claim all decide inside — this call site adds no
+  //    new judgement and no new door to a provider.
+  const textback = await maybeTextBackMissedCall({
+    org_id: input.org_id,
+    channel: "phone",
+    conversation_id: ingested.conversation_id,
+    enquiry_id: ingested.enquiry_id,
+    lead_id: ingested.lead_id,
+    caller: input.caller,
+    dedup_key: input.provider_call_id,
+  });
+
+  return {
+    enquiry_id: ingested.enquiry_id,
+    lead_id: ingested.lead_id,
+    conversation_id: ingested.conversation_id,
+    textback,
+  };
 }
 
 // =====================================================================

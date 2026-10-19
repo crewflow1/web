@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
 import {
   requireOrgContext,
@@ -330,6 +331,187 @@ export async function createQuote(
   return formSuccess({
     successMessage: "Quote saved.",
     redirectTo: `/quotes/${quote.id}`,
+  });
+}
+
+/**
+ * G-7 — duplicate a quote as a NEW DRAFT (the locked-quote banner's affordance).
+ *
+ * A locked quote (accepted / declined / expired) can't be edited in place, so
+ * the way to re-quote the same work is a fresh draft cloned from it. The clone
+ * copies the COMMERCIAL CONTENT — line items (descriptions, quantities, units,
+ * prices, VAT rates, order), terms, notes, and the customer / property / lead
+ * references (in-org by construction: the source read is active-org pinned) —
+ * and mints everything identity- or lifecycle-shaped FRESH:
+ *
+ *   • a NEW quote number via the same SECURITY DEFINER `next_quote_number`
+ *     allocation createQuote uses (numbers are never reused);
+ *   • status `draft`, a NEW public_token (the source's share link must never
+ *     open the copy), created_by = the duplicating user;
+ *   • NO approval / sent / viewed / accepted / declined / signature state, no
+ *     job linkage, no variation identity — the copy has lived none of that;
+ *   • `valid_until` is NOT copied (the clone-default lesson: validity is
+ *     anchored to the ORIGINAL's send date, so carrying it would mint a draft
+ *     already past — or about to pass — its expiry; the user sets a fresh one).
+ *
+ * Totals are RECOMPUTED from the cloned lines through the same computeTotals
+ * createQuote uses, so the draft's figures agree with its own content even if
+ * the source row's stored totals had drifted.
+ *
+ * Reads are PAGED (F-1): the builder-page comment applies here doubly — a bare
+ * select clamps at max_rows, and a clone that silently dropped lines past the
+ * cap would misprice the re-quote.
+ *
+ * Navigation: FormState + redirectTo consumed by <StateForm>'s full-document
+ * location.assign — NEVER redirect() here (the Next 15.5 deep-swap commit race;
+ * /quotes/[id] is one of the measured-lossy depths).
+ */
+export async function duplicateQuoteAsDraft(
+  id: string,
+  _prevState: FormState,
+  _formData: FormData,
+): Promise<FormState> {
+  const { user, ctx } = await requireOrgContext();
+  requireManagementRole(ctx);
+  const parsedId = idSchema.safeParse(id);
+  if (!parsedId.success) return formError("Invalid quote id.");
+
+  const supabase = await createClient();
+
+  // Source quote — ACTIVE-org pinned (#456 read-side class): a by-id read alone
+  // would let a multi-org member clone another org's quote INTO the active org,
+  // carrying its customer reference across the tenant boundary.
+  const { data: source, error: srcErr } = await supabase
+    .from("quotes")
+    .select("id, number, customer_id, property_id, lead_id, notes, terms")
+    .eq("id", parsedId.data)
+    .eq("org_id", ctx.org.id)
+    .maybeSingle();
+  if (srcErr) throw readFailure("quote duplicate: source", srcErr);
+  if (!source) return formError("Quote not found.");
+
+  // PAGED (F-1): clone EVERY line — a clamped read would silently truncate the
+  // re-quote. Same ordering contract as the builder page.
+  type RawLineRow = {
+    description: string;
+    qty: number | string | null;
+    unit: string | null;
+    unit_price: number | string | null;
+    vat_rate: number | string | null;
+    sort_order: number | null;
+  };
+  const { data: rawLines, error: linesErr } = await fetchAllRows<RawLineRow>(
+    (from, to) =>
+      supabase
+        .from("quote_line_items")
+        .select("description, qty, unit, unit_price, vat_rate, sort_order")
+        .eq("quote_id", parsedId.data)
+        .eq("org_id", ctx.org.id)
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: RawLineRow[] | null;
+        error: unknown;
+      }>,
+  );
+  if (linesErr) throw readFailure("quote duplicate: line items", linesErr);
+
+  const lineItems: LineItem[] = (rawLines ?? []).map((li) => ({
+    description: li.description,
+    qty: Number(li.qty ?? 1),
+    unit: li.unit ?? "ea",
+    unit_price: Number(li.unit_price ?? 0),
+    vat_rate: Number(li.vat_rate ?? 20),
+  }));
+  const totals = computeTotals(lineItems);
+
+  // Fresh identity: a NEW number from the same per-org allocation.
+  const { data: numberRpc, error: numErr } = await supabase.rpc(
+    "next_quote_number",
+    { target_org: ctx.org.id },
+  );
+  if (numErr || !numberRpc) {
+    console.error("[quotes] duplicate: number allocation failed", numErr);
+    return formError("Couldn't allocate a quote number. Try again.");
+  }
+
+  const { data: draft, error: insErr } = await supabase
+    .from("quotes")
+    .insert({
+      org_id: ctx.org.id,
+      customer_id: source.customer_id,
+      property_id: source.property_id ?? null,
+      lead_id: source.lead_id ?? null,
+      number: numberRpc as unknown as string,
+      status: "draft",
+      currency: "GBP",
+      subtotal: totals.subtotal,
+      vat_total: totals.vat_total,
+      total: totals.total,
+      notes: source.notes ?? null,
+      terms: source.terms ?? null,
+      // Deliberately NOT copied: validity anchors to the original's send date.
+      valid_until: null,
+      public_token: crypto.randomUUID(),
+      created_by: user.id,
+    })
+    .select("id")
+    .single();
+  if (insErr || !draft) {
+    console.error("[quotes] duplicate: insert failed", insErr);
+    return formError("Couldn't create the duplicate. Try again.");
+  }
+
+  if (lineItems.length > 0) {
+    const rows: LineItemInsert[] = lineItems.map((li, idx) => ({
+      quote_id: draft.id,
+      org_id: ctx.org.id,
+      description: li.description,
+      qty: li.qty,
+      unit: li.unit,
+      unit_price: li.unit_price,
+      vat_rate: li.vat_rate,
+      line_total: totals.lines[idx]?.line_total ?? 0,
+      sort_order: idx,
+    }));
+    const { error: liErr } = await supabase.from("quote_line_items").insert(rows);
+    if (liErr) {
+      console.error("[quotes] duplicate: line items insert failed", liErr);
+      // Same recovery contract as createQuote: the parent draft exists, so
+      // bounce to it with the explanatory banner rather than losing the copy.
+      return formSuccess({
+        successMessage: "Duplicate created but line items didn't copy — open it and re-add.",
+        redirectTo: `/quotes/${draft.id}?error=line_items_failed`,
+      });
+    }
+  }
+
+  // Audit trail — the house `_record_activity` idiom (SECURITY DEFINER via the
+  // admin client), naming both ends of the provenance. Best-effort like the
+  // self-approval stamp: a misconfigured service-role key must not fail an
+  // otherwise-successful duplicate.
+  try {
+    const admin = createAdminClient();
+    await admin.rpc("_record_activity", {
+      p_org_id: ctx.org.id,
+      p_action: "quote.duplicated",
+      p_target_table: "quotes",
+      p_target_id: draft.id,
+      p_metadata: {
+        source_quote_id: source.id,
+        source_number: source.number,
+        actor_id: user.id,
+        line_items: lineItems.length,
+      },
+    } as never);
+  } catch (e) {
+    console.error("[quotes] duplicate: audit log failed", e);
+  }
+
+  revalidatePath("/quotes");
+  return formSuccess({
+    successMessage: "Duplicated as a new draft.",
+    redirectTo: `/quotes/${draft.id}?saved=duplicated`,
   });
 }
 

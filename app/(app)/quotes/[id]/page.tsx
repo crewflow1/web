@@ -14,6 +14,7 @@ import {
   updateQuote,
   sendQuote,
   deleteQuote,
+  duplicateQuoteAsDraft,
   acceptQuoteAsOwner,
   declineQuoteAsOwner,
   requestQuoteApproval,
@@ -21,6 +22,7 @@ import {
 } from "../actions";
 import type { LineItem } from "@/lib/quotes/schema";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
+import { StateForm } from "@/components/forms/StateForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
 import { formatVariationLabel } from "@/lib/variations/schema";
@@ -107,6 +109,8 @@ const SAVED_MAP: Record<string, string> = {
   accepted: "Accepted. Draft invoice created.",
   declined: "Marked as declined.",
   variation_created: "Variation created.",
+  duplicated:
+    "Duplicated as a new draft. You're now on the copy — the original is unchanged.",
   eot_agreed:
     "Agreed completion date recorded. This job's dates were not changed — update them yourself if the programme is moving.",
   eot_reclassified:
@@ -655,9 +659,22 @@ export default async function EditQuotePage({
           role="status"
           className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600"
         >
-          This quote is {status}. Edit a locked quote by changing its status
-          first, or duplicate it as a new draft (not yet implemented — for
-          now, create a new one).
+          <p>
+            This quote is {status} and can no longer be edited. To re-quote the
+            same work, duplicate it as a new draft — the copy gets its own quote
+            number and starts from draft with these line items and terms.
+          </p>
+          {/* FormState + location.assign via StateForm — never redirect() here
+              (the Next 15.5 deep-swap commit race; /quotes/[id] is a measured-
+              lossy depth). Mirrors the sibling quote actions. */}
+          <StateForm action={duplicateQuoteAsDraft.bind(null, quote.id)} className="mt-3">
+            <button
+              type="submit"
+              className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+            >
+              Duplicate as new draft
+            </button>
+          </StateForm>
         </div>
       ) : (
         <QuoteBuilder

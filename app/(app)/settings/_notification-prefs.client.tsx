@@ -160,7 +160,8 @@ export function NotificationPrefsForm({
         {pushConfigured
           ? " Push notifications go to the devices you've enabled above."
           : " Push notifications aren't available on this workspace yet."}{" "}
-        Text messages are coming soon.
+        Text messages send once SMS is set up for this workspace — the choices
+        you save here take effect as soon as it is.
       </p>
 
       <SubmitButton pending={pending}>Save preferences</SubmitButton>
