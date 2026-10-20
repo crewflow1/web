@@ -62,7 +62,7 @@ The house invariant (verified in code): `activated` can never be true without th
 | PostHog analytics | R223 | Free tier → usage | Consent-gated client-side; your account + key |
 | Self-serve billing | (unatomised) | Stripe fees; tenants self-modify recurring charges | Also **flips entitlement enforcement from allow-all to enforcing** (side effect, documented) — stage carefully |
 | Stripe Connect portal payments | R061 | Platform/Connect fees; KYC liability | Separate `STRIPE_CONNECT_SECRET_KEY` + invoice webhook secret + per-org onboarding |
-| PITR backups | R141 | Paid Supabase add-on | **PITR itself = CEO-DEFERRED (COST, not a defect): $100/mo per 7-day retention; reconsider at paying customers.** RPO ~24h→~2min, DB-only. ‖ **Off-platform backup is now AUTOMATED + MONITORED (2026-10-20):** `scripts/ops/off-platform-backup.sh` weekly via launchd — encrypted (AES-256) DB + Storage, validated fail-loud, SHA256 checksums, retention, heartbeat to `ops_backup_runs`; **freshness now visible in `/admin/ops`** (GREEN ≤7d · WARNING >7d · RED >10d or failed), reversing the old "not observable" caveat. Encrypted R2 upload pending the owner credential. Runbook: `docs/ops/off-platform-backup-automation.md` |
+| PITR backups | R141 | Paid Supabase add-on | **PITR itself = CEO-DEFERRED (COST, not a defect): $100/mo per 7-day retention; reconsider at paying customers.** RPO ~24h→~2min, DB-only. ‖ **Off-platform backup is now AUTOMATED + MONITORED (2026-10-20):** `scripts/ops/off-platform-backup.sh` weekly via launchd — encrypted (AES-256) DB + Storage, validated fail-loud, SHA256 checksums, retention, heartbeat to `ops_backup_runs`; **freshness now visible in `/admin/ops`** (GREEN ≤7d · WARNING >7d · RED >10d or failed), reversing the old "not observable" caveat. ‖ **DR lane = GREEN (2026-10-20):** encrypted artifact ships **off-machine to a private Backblaze B2 bucket** (`crewflow-prod-backups`, rclone, bucket-scoped key, no card); a **hard upload gate** makes any incomplete off-site upload abort as `failed` (never recorded as success). **Round-trip PROVEN:** local encrypt → B2 upload → independent download → decrypt → checksum → isolated DB restore (exact-match counts) → Storage object byte-for-byte. Runbook: `docs/ops/off-platform-backup-automation.md` |
 
 ## L4 — legal/compliance/provider approval → EXTERNAL ACTIVATION BLOCKED
 
@@ -99,7 +99,7 @@ PITR toggle (L3) · GitHub branch-protection required checks · Supabase Azure p
 
 ## Honest remaining items (2026-10-19 — not code; stated so they are not rediscovered)
 
-- **PITR is OFF** (L3 — paid Supabase add-on; CEO dashboard toggle). Off-platform dumps remain policy-enforced, not telemetry-observable.
+- **PITR is OFF** (L3 — paid Supabase add-on; CEO dashboard toggle). The off-platform backup gap it left is now closed: encrypted, off-machine (Backblaze B2), automated weekly, monitored in `/admin/ops`, and round-trip proven (DR lane GREEN, 2026-10-20) — no longer policy-enforced-only.
 - **GitHub branch protection is OFF** (founder GitHub-settings action; required checks listed under CEO dashboard actions).
 - **Outage-monitor notifications are opt-in** — the owner must enable GitHub Actions failure notifications (and watch the `production-outage` issue label) for the independent monitor to actually page a human; limitations documented in-file and in `docs/ops/OUTAGE-RUNBOOK.md` §1.
 

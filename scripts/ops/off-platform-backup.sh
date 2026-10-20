@@ -39,7 +39,7 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PA
 LINK_DIR="${CF_BACKUP_LINK_DIR:-$HOME/Code/web}"
 BACKUP_ROOT="${CF_BACKUP_ROOT:-$HOME/CrewFlow-backups}"
 ENC_KEY_FILE="${CF_BACKUP_ENC_KEY:-$HOME/.config/crewflow-backup/backup.key}"
-RCLONE_REMOTE="${CF_BACKUP_RCLONE_REMOTE:-r2:crewflow-prod-backups}"
+RCLONE_REMOTE="${CF_BACKUP_RCLONE_REMOTE:-crewflow-b2:crewflow-prod-backups}"
 RETENTION="${CF_BACKUP_RETENTION:-8}"
 case "$RETENTION" in ''|*[!0-9]*) RETENTION=8 ;; esac; [ "$RETENTION" -ge 1 ] || RETENTION=1  # never 0 (would prune everything)
 LOG_DIR="${CF_BACKUP_LOG_DIR:-$HOME/.local/state/crewflow-backup/logs}"
@@ -240,6 +240,12 @@ if command -v rclone >/dev/null 2>&1 && rclone listremotes 2>/dev/null | grep -q
 else
   UPLOAD_STATUS="pending_no_remote"; log "remote not configured — encrypted artifact staged locally; upload pending owner credential"
 fi
+
+# Off-site durability is part of a COMPLETE backup: anything other than a verified upload
+# must NOT be recorded as success. On failure the local encrypted copy still exists and is
+# NOT pruned (the ERR trap exits here, before retention).
+STAGE="upload_gate"
+[ "$UPLOAD_STATUS" = "uploaded" ] || { ERR="off-site encrypted upload did not succeed (upload_status=$UPLOAD_STATUS)"; log "UPLOAD GATE FAIL: $ERR"; false; }
 
 # === Stage 9: retention / rotation (local plaintext dirs + encrypted artifacts + remote) ===
 STAGE="retention"

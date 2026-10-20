@@ -48,8 +48,11 @@ do not assume PITR is available just because WAL archiving is on.
 | Granularity | one snapshot/day | any second within the retention window |
 
 At 200 paying companies, a 24h RPO means a bad day could erase a full day of
-every customer's jobs/quotes/invoices with no way back. **PITR is the
-launch-blocking requirement here.**
+every customer's jobs/quotes/invoices with no way back. PITR closes that gap
+(RPO ~24h → ~2min). **It is NOT a customer-#1 launch blocker** — it is
+**CEO-deferred as a cost decision** ($100/mo per 7-day retention), to reconsider
+once there are paying customers. Until then the daily logical backups plus the
+automated encrypted off-platform backup (below) are the recovery floor.
 
 ## Step 1 — Confirm current backup posture (dashboard, ~2 min)
 
@@ -107,7 +110,8 @@ comms. Practise it on a throwaway project first.
 
 ## Step 4 — Pre-launch DR checklist
 
-- [ ] PITR add-on enabled, retention ≥ 7 days (Step 2). **Launch blocker.**
+- [ ] PITR add-on enabled, retention ≥ 7 days (Step 2). **CEO-deferred — cost**, not a customer-#1 blocker; reconsider once there are paying customers.
+- [x] Automated encrypted off-platform backup live + monitored (see "Current state 2026-10-20" below) — the recovery floor while PITR is deferred.
 - [ ] One **rehearsed** restore on a scratch project, RTO measured and recorded.
 - [ ] `pg_stat_archiver.failed_count` alerting — a rising value means WAL
       archiving is broken and backups are silently degrading. Add to the
@@ -165,12 +169,23 @@ The 52-day silent lapse (Aug 29 → Oct 20 2026) is fixed by an automated, valid
 - `scripts/ops/off-platform-backup.sh` (weekly via `scripts/ops/com.crewflow.backup.plist`)
   dumps DB (schema + public + auth) **and all Supabase Storage objects**, generates + verifies
   checksums, **validates fail-loud** (pg_dump completeness/truncation), **encrypts locally**
-  (AES-256), ships ONLY the encrypted artifact to R2, applies retention, and writes a heartbeat
-  to `ops_backup_runs`. `status=success` is recorded only after every validation stage passes.
+  (AES-256), ships ONLY the encrypted artifact **off-machine to a private Backblaze B2 bucket**
+  (`crewflow-prod-backups`, via rclone), applies retention, and writes a heartbeat
+  to `ops_backup_runs`. `status=success` is recorded only after every validation stage passes —
+  **including a hard upload gate**: a failed or incomplete off-site upload aborts the run (exit
+  non-zero, heartbeat `failed`) and can never be recorded as a complete backup.
+- **End-to-end round-trip PROVEN (2026-10-20):** encrypted local backup → B2 upload (bytes verified)
+  → independent B2 download (checksum match) → decrypt → content-checksum 11/11 → isolated DB restore
+  (321 tables, business counts exact-match) → ≥1 Storage object byte-for-byte (sha256 match). The
+  remote receives **only ciphertext** — never plaintext PII. B2 free tier (10 GB) covers current
+  volume at $0; no card on file.
 - **Backup freshness IS now observable from production** (reversing the §6 "not telemetry-observable"
   caveat): `/admin/ops` → "Off-platform backup (DR)" shows **GREEN ≤7d / WARNING >7d / RED >10d or
   last run failed**. The scheduler is only an execution mechanism; the heartbeat is the source of truth.
-- Full setup, the R2 owner action, and the restore procedure: `docs/ops/off-platform-backup-automation.md`.
+- Full setup, the B2 remote config, and the restore procedure: `docs/ops/off-platform-backup-automation.md`.
+- **DR lane status: GREEN** — off-platform encrypted off-machine backup is live, monitored, and
+  round-trip proven. The encryption key (`~/.config/crewflow-backup/backup.key`) is backed up
+  off-machine by the founder (without it, backups are unrecoverable).
 - **PITR** remains OFF — a deliberate COST decision (CEO; $100/mo per 7-day retention), to reconsider
   when CrewFlow has paying customers. PITR covers the DB only; the off-platform backup additionally
   covers Storage objects and survives account/project loss.
