@@ -66,6 +66,23 @@ export type RecentCronFailure = {
   duration_ms: number | null;
 };
 
+/**
+ * Off-platform encrypted-backup health, from `ops_backup_runs`.
+ * The Mac scheduler is only an execution mechanism; this is the source of truth.
+ * green ≤7d since last validated success · amber >7d · red >10d or last run failed
+ * or no successful backup on record.
+ */
+export type BackupHealth = {
+  status: "green" | "amber" | "red";
+  last_success_at: string | null;
+  last_success_age_hours: number | null;
+  last_run_status: "running" | "success" | "failed" | null;
+  last_run_at: string | null;
+  migration_tip: string | null;
+  upload_status: string | null;
+  summary: string;
+};
+
 export type OpsSnapshot = {
   /** Overall traffic-light status. */
   status: "green" | "amber" | "red";
@@ -75,6 +92,8 @@ export type OpsSnapshot = {
   email: Awaited<ReturnType<typeof getEmailQueueStats>>;
   crons: ReadonlyArray<CronRouteHealth>;
   recent_failures: ReadonlyArray<RecentCronFailure>;
+  /** Off-platform backup DR health. */
+  backup: BackupHealth;
   /**
    * Optional deep link to the Sentry project dashboard, from the
    * SENTRY_DASHBOARD_URL env var. A plain URL — not a secret — rendered
@@ -329,12 +348,144 @@ async function readCronHealth(
   return { per_route, recent_failures: failures };
 }
 
+/**
+ * Read off-platform backup health from `ops_backup_runs`. Fails toward amber
+ * (never false-green) if the table is unreadable.
+ */
+async function readBackupHealth(
+  admin: ReturnType<typeof createAdminClient>,
+): Promise<BackupHealth> {
+  const base: BackupHealth = {
+    status: "red",
+    last_success_at: null,
+    last_success_age_hours: null,
+    last_run_status: null,
+    last_run_at: null,
+    migration_tip: null,
+    upload_status: null,
+    summary: "No off-platform backup on record.",
+  };
+  try {
+    const tbl = admin.from("ops_backup_runs" as never) as unknown as {
+      select: (c: string) => {
+        eq: (k: string, v: string) => {
+          order: (
+            k: string,
+            o: { ascending: boolean },
+          ) => {
+            limit: (n: number) => Promise<{
+              data: Array<Record<string, unknown>> | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
+        order: (
+          k: string,
+          o: { ascending: boolean },
+        ) => {
+          limit: (n: number) => Promise<{
+            data: Array<Record<string, unknown>> | null;
+            error: { message: string } | null;
+          }>;
+        };
+      };
+    };
+    const [succ, last] = await Promise.all([
+      tbl
+        .select("finished_at,migration_tip,upload_status")
+        .eq("status", "success")
+        .order("finished_at", { ascending: false })
+        .limit(1),
+      tbl
+        .select("status,started_at")
+        .order("started_at", { ascending: false })
+        .limit(5),
+    ]);
+    if (succ.error || last.error) {
+      return {
+        ...base,
+        status: "amber",
+        summary: "Backup status unavailable (ops_backup_runs read error).",
+      };
+    }
+    const runs = (last.data ?? []) as Array<Record<string, unknown>>;
+    const lastRun = runs[0];
+    // Most recent run that actually finished (success|failed). A newer "running"
+    // row must NOT hide an older failure, and a stuck "running" is itself a warning.
+    const lastTerminal = runs.find(
+      (r) => r.status === "success" || r.status === "failed",
+    );
+    const lastSuccess = succ.data?.[0];
+    const lastRunStatus =
+      (lastRun?.status as BackupHealth["last_run_status"]) ?? null;
+    const lastRunAt = (lastRun?.started_at as string | undefined) ?? null;
+    const lastSuccessAt =
+      (lastSuccess?.finished_at as string | undefined) ?? null;
+    const ageH =
+      lastSuccessAt != null
+        ? (Date.now() - new Date(lastSuccessAt).getTime()) / 3_600_000
+        : null;
+    const stuckRunning =
+      lastRun?.status === "running" &&
+      lastRun?.started_at != null &&
+      Date.now() - new Date(lastRun.started_at as string).getTime() >
+        6 * 3_600_000;
+
+    let status: BackupHealth["status"];
+    let summary: string;
+    if (lastTerminal?.status === "failed") {
+      status = "red";
+      summary =
+        "Most recent completed off-platform backup FAILED — investigate immediately.";
+    } else if (ageH == null) {
+      status = "red";
+      summary = "No successful off-platform backup on record.";
+    } else if (ageH > 10 * 24) {
+      status = "red";
+      summary = `Last validated backup ${Math.round(
+        ageH / 24,
+      )}d ago (>10d) — backup is STALE.`;
+    } else if (ageH > 7 * 24) {
+      status = "amber";
+      summary = `Last validated backup ${Math.round(
+        ageH / 24,
+      )}d ago (>7d) — a scheduled run may have been missed.`;
+    } else if (stuckRunning) {
+      status = "amber";
+      summary =
+        "A backup run appears stuck/incomplete (running >6h); last success still within 7d.";
+    } else {
+      status = "green";
+      summary = `Last validated backup ${Math.round(ageH)}h ago (upload: ${
+        (lastSuccess?.upload_status as string) ?? "n/a"
+      }).`;
+    }
+    return {
+      status,
+      last_success_at: lastSuccessAt,
+      last_success_age_hours: ageH == null ? null : Math.round(ageH),
+      last_run_status: lastRunStatus,
+      last_run_at: lastRunAt,
+      migration_tip: (lastSuccess?.migration_tip as string) ?? null,
+      upload_status: (lastSuccess?.upload_status as string) ?? null,
+      summary,
+    };
+  } catch {
+    return {
+      ...base,
+      status: "amber",
+      summary: "Backup status unavailable (ops_backup_runs query failed).",
+    };
+  }
+}
+
 export async function buildOpsSnapshot(): Promise<OpsSnapshot> {
   const admin = createAdminClient();
   const env = readEnv();
-  const [email, cronHealth] = await Promise.all([
+  const [email, cronHealth, backup] = await Promise.all([
     getEmailQueueStats(),
     readCronHealth(admin),
+    readBackupHealth(admin),
   ]);
 
   // Compute traffic-light status.
@@ -351,7 +502,10 @@ export async function buildOpsSnapshot(): Promise<OpsSnapshot> {
     summary = `Missing required env vars: ${missingRequired
       .map((e) => e.name)
       .join(", ")}.`;
-  } else if (anyCronFailing || emailBacklog) {
+  } else if (backup.status === "red") {
+    status = "red";
+    summary = `Off-platform backup: ${backup.summary}`;
+  } else if (anyCronFailing || emailBacklog || backup.status === "amber") {
     status = "amber";
     const reasons: string[] = [];
     if (anyCronFailing) {
@@ -372,6 +526,9 @@ export async function buildOpsSnapshot(): Promise<OpsSnapshot> {
         `email queue ${email.queued} queued · ${email.permanent_failures} permanent failures`,
       );
     }
+    if (backup.status === "amber") {
+      reasons.push(`off-platform backup: ${backup.summary}`);
+    }
     summary = reasons.join(" · ");
   } else {
     status = "green";
@@ -389,6 +546,7 @@ export async function buildOpsSnapshot(): Promise<OpsSnapshot> {
     email,
     crons: cronHealth.per_route,
     recent_failures: cronHealth.recent_failures,
+    backup,
     sentry_url:
       typeof sentryUrl === "string" && sentryUrl.startsWith("https://")
         ? sentryUrl
