@@ -131,6 +131,71 @@ export default async function OpsPage() {
         ) : null}
       </section>
 
+      {/* Off-platform backup (DR) — the validated heartbeat is the source of truth */}
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-base font-semibold text-slate-900">
+            Off-platform backup (DR)
+          </h2>
+          <span
+            className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${STATUS_PILL[snapshot.backup.status]}`}
+          >
+            {snapshot.backup.status.toUpperCase()}
+          </span>
+        </div>
+        <p className="text-sm text-slate-700">{snapshot.backup.summary}</p>
+        <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Kpi
+            label="Last success (UTC)"
+            value={
+              snapshot.backup.last_success_at
+                ? snapshot.backup.last_success_at
+                    .slice(0, 16)
+                    .replace("T", " ")
+                : "—"
+            }
+          />
+          <Kpi
+            label="Age"
+            value={
+              snapshot.backup.last_success_age_hours == null
+                ? "—"
+                : snapshot.backup.last_success_age_hours <= 48
+                  ? `${snapshot.backup.last_success_age_hours}h`
+                  : `${Math.round(snapshot.backup.last_success_age_hours / 24)}d`
+            }
+            tone={
+              snapshot.backup.status === "green"
+                ? undefined
+                : snapshot.backup.status
+            }
+          />
+          <Kpi
+            label="Last run"
+            value={snapshot.backup.last_run_status ?? "—"}
+            tone={
+              snapshot.backup.last_run_status === "failed" ? "red" : undefined
+            }
+          />
+          <Kpi
+            label="Remote upload"
+            value={snapshot.backup.upload_status ?? "—"}
+            tone={
+              snapshot.backup.upload_status &&
+              snapshot.backup.upload_status !== "uploaded"
+                ? "amber"
+                : undefined
+            }
+          />
+        </dl>
+        <p className="mt-3 text-xs text-slate-500">
+          Encrypted off-platform backup (DB schema + public + auth data +
+          Supabase Storage), validated before it counts as success. GREEN ≤7d ·
+          WARNING &gt;7d · RED &gt;10d or last run failed. The Mac scheduler is
+          only an execution mechanism — this heartbeat is the source of truth.
+        </p>
+      </section>
+
       {/* Cron status — the FULL vercel.json roster, grouped by family */}
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <header className="flex items-baseline justify-between">
@@ -238,7 +303,7 @@ function Kpi({
   tone,
 }: {
   label: string;
-  value: number;
+  value: number | string;
   tone?: "amber" | "red";
 }) {
   const valueCls =

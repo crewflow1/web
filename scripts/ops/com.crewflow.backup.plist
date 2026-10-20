@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  CrewFlow off-platform encrypted backup — weekly launchd agent.
+
+  The scheduler is ONLY an execution mechanism. Backup health is judged by the
+  validated heartbeat in ops_backup_runs (surfaced in /admin/ops), NOT by whether
+  this agent fired. launchd (unlike cron) runs a MISSED StartCalendarInterval job
+  once on the next wake; and if the Mac is off long enough that a run is skipped,
+  /admin/ops goes WARNING (>7d) then RED (>10d) — so a miss can never be silent.
+
+  INSTALL (one-time, founder):
+    cp scripts/ops/off-platform-backup.sh ~/.local/bin/crewflow-off-platform-backup.sh
+    chmod +x ~/.local/bin/crewflow-off-platform-backup.sh
+    cp scripts/ops/com.crewflow.backup.plist ~/Library/LaunchAgents/com.crewflow.backup.plist
+    launchctl load  ~/Library/LaunchAgents/com.crewflow.backup.plist   # (or: launchctl bootstrap gui/$UID ...)
+  RUN NOW (manual):   launchctl start com.crewflow.backup
+  STATUS:             launchctl list | grep com.crewflow.backup
+  UNINSTALL:          launchctl unload ~/Library/LaunchAgents/com.crewflow.backup.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.crewflow.backup</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/moetalibi/.local/bin/crewflow-off-platform-backup.sh</string>
+  </array>
+
+  <!-- Weekly: Sunday 03:17 local. A missed run (Mac asleep/off) fires on next wake. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>0</integer>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>17</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- node/supabase are in /opt/homebrew/bin, not on launchd's default PATH. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/moetalibi/.local/state/crewflow-backup/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/moetalibi/.local/state/crewflow-backup/launchd.err.log</string>
+
+  <!-- Low priority; do not keep alive (it's a periodic job, not a daemon). -->
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+</dict>
+</plist>
