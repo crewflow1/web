@@ -41,6 +41,7 @@ BACKUP_ROOT="${CF_BACKUP_ROOT:-$HOME/CrewFlow-backups}"
 ENC_KEY_FILE="${CF_BACKUP_ENC_KEY:-$HOME/.config/crewflow-backup/backup.key}"
 RCLONE_REMOTE="${CF_BACKUP_RCLONE_REMOTE:-r2:crewflow-prod-backups}"
 RETENTION="${CF_BACKUP_RETENTION:-8}"
+case "$RETENTION" in ''|*[!0-9]*) RETENTION=8 ;; esac; [ "$RETENTION" -ge 1 ] || RETENTION=1  # never 0 (would prune everything)
 LOG_DIR="${CF_BACKUP_LOG_DIR:-$HOME/.local/state/crewflow-backup/logs}"
 
 HOST_TAG="$(hostname -s 2>/dev/null || echo mac)"
@@ -56,7 +57,7 @@ MIG_TIP=""
 UPLOAD_STATUS="skipped"
 
 mkdir -p "$BK" "$LOG_DIR" "$(dirname "$ENC_KEY_FILE")"
-chmod 700 "$BACKUP_ROOT" "$BK" "$(dirname "$ENC_KEY_FILE")" 2>/dev/null || true
+chmod 700 "$BACKUP_ROOT" "$BK" "$LOG_DIR" "$(dirname "$ENC_KEY_FILE")" 2>/dev/null || true
 LOG_FILE="$LOG_DIR/backup-${DATE}.log"
 
 log(){ printf '%s [%s] %s\n' "$(date -u +%H:%M:%S)" "$STAGE" "$*" | tee -a "$LOG_FILE" >&2; }
@@ -121,13 +122,16 @@ log "db dumps complete"
 
 # === Stage 3: Supabase Storage objects (customer documents) ===
 STAGE="storage_dump"
-mkdir -p "$BK/storage"
+rm -rf "$BK/storage"; mkdir -p "$BK/storage"   # clean slate so the count cross-check is exact on re-runs
 STORAGE_OK=1
-# Enumerate buckets from the DB (authoritative), then copy each recursively.
-BUCKETS="$( ( cd "$LINK_DIR" && supabase db query --linked "select id from storage.buckets order by id;" ) 2>/dev/null | grep -oE '"id": "[^"]+"' | sed 's/.*: "//; s/"$//' || true)"
-if [ -z "$BUCKETS" ]; then
-  log "WARN: no buckets enumerated (storage may be empty) — recording empty storage set"
-fi
+# Authoritative object count from the DB is the cross-check that makes a SILENT
+# storage-skip impossible: enumeration failure (empty-vs-error ambiguity) is treated
+# as FATAL, and the captured count must equal storage.objects at validate time.
+BUCKETS_JSON="$( ( cd "$LINK_DIR" && supabase db query --linked "select id from storage.buckets order by id;" ) 2>/dev/null )"
+echo "$BUCKETS_JSON" | grep -q '"rows"' || { ERR="bucket enumeration failed (no rows in response)"; log "FATAL: $ERR"; false; }
+BUCKETS="$(echo "$BUCKETS_JSON" | grep -oE '"id": "[^"]+"' | sed 's/.*: "//; s/"$//')"
+EXPECTED_OBJ="$( ( cd "$LINK_DIR" && supabase db query --linked "select count(*) n from storage.objects;" ) 2>/dev/null | grep -oE '"n": [0-9]+' | grep -oE '[0-9]+' | head -1)"
+[ -n "$EXPECTED_OBJ" ] || { ERR="could not read authoritative storage.objects count"; log "FATAL: $ERR"; false; }
 STORAGE_OBJ_COUNT=0
 for b in $BUCKETS; do
   # cp appends the bucket name to the dest, so dest is "$BK/storage" (not ".../$b")
@@ -138,10 +142,10 @@ for b in $BUCKETS; do
     log "storage bucket '$b': $n object(s)"
   else
     STORAGE_OK=0
-    log "WARN: storage copy failed for bucket '$b'"
+    log "ERROR: storage copy failed for bucket '$b'"
   fi
 done
-log "storage objects captured: $STORAGE_OBJ_COUNT"
+log "storage objects captured: $STORAGE_OBJ_COUNT (db authoritative: $EXPECTED_OBJ)"
 
 # === Stage 4: checksums (generate) ===
 STAGE="checksum"
@@ -157,6 +161,8 @@ validate_fail(){ ERR="validation failed: $1"; log "VALIDATION FAIL: $1"; return 
 [ -s "$BK/schema.sql" ] || validate_fail "schema.sql missing/empty"
 [ "$(grep -c '^CREATE ' "$BK/schema.sql")" -ge 50 ] || validate_fail "schema.sql has too few CREATE statements (truncated?)"
 [ "$(wc -c < "$BK/schema.sql")" -ge 100000 ] || validate_fail "schema.sql suspiciously small (truncated?)"
+SCHEMA_LAST="$(grep -v '^[[:space:]]*$' "$BK/schema.sql" | tail -1)"
+[ "${SCHEMA_LAST: -1}" = ";" ] || validate_fail "schema.sql last statement not terminated (truncated?)"
 # 5c. data-only dumps: non-empty + pg_dump header + completeness footer (truncation guard)
 for f in data.sql auth-data.sql; do
   [ -s "$BK/$f" ] || validate_fail "$f missing/empty"
@@ -166,8 +172,9 @@ done
 # 5d. data.sql must set replica role (FK-safe load) and contain table data sections
 grep -q "session_replication_role = replica" "$BK/data.sql" || validate_fail "data.sql missing replica-role guard"
 grep -q "Type: TABLE DATA" "$BK/data.sql" || validate_fail "data.sql has no table data sections"
-# 5e. storage: every enumerated bucket copied without failure
+# 5e. storage: every bucket copied AND captured count == authoritative DB count (anti-silent-skip)
 [ "$STORAGE_OK" = "1" ] || validate_fail "one or more storage buckets failed to copy"
+[ "$STORAGE_OBJ_COUNT" = "$EXPECTED_OBJ" ] || validate_fail "storage object count mismatch: captured $STORAGE_OBJ_COUNT vs DB $EXPECTED_OBJ"
 log "validation PASSED (dumps complete, checksums OK, storage captured)"
 
 # === Stage 6: local encryption (AES-256) — remote gets ONLY this ===
@@ -182,10 +189,15 @@ fi
 shasum -a 256 "$ENC_ARTIFACT" | awk '{print $1}' > "${ENC_ARTIFACT}.sha256"
 ENC_BYTES=$(wc -c < "$ENC_ARTIFACT" | tr -d ' ')
 log "encrypted artifact: $ENC_ARTIFACT ($ENC_BYTES bytes), sha256 recorded"
-# 6b. prove decryptability immediately (decrypt header to a throwaway, verify tar lists)
-openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass "file:$ENC_KEY_FILE" -in "$ENC_ARTIFACT" 2>/dev/null | tar -tf - >/dev/null 2>&1 \
-  || { ERR="encrypted artifact failed decrypt+list self-test"; log "DECRYPT SELF-TEST FAIL"; false; }
-log "encryption self-test PASSED (artifact decrypts + tar lists cleanly)"
+# 6b. prove the artifact decrypts AND the decrypted CONTENT is intact (extract + verify vs SHA256SUMS).
+#     (tar -t only lists headers and AES-CBC has no AEAD, so list-only would miss data corruption.)
+ENC_VERIFY_DIR="$(mktemp -d)"; chmod 700 "$ENC_VERIFY_DIR"
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass "file:$ENC_KEY_FILE" -in "$ENC_ARTIFACT" 2>/dev/null | tar -xf - -C "$ENC_VERIFY_DIR" \
+  || { rm -rf "$ENC_VERIFY_DIR"; ERR="encrypted artifact failed decrypt+extract self-test"; log "DECRYPT SELF-TEST FAIL"; false; }
+( cd "$ENC_VERIFY_DIR/$DATE" && shasum -a 256 -c SHA256SUMS >/dev/null 2>&1 ) \
+  || { rm -rf "$ENC_VERIFY_DIR"; ERR="decrypted content failed checksum verification (integrity)"; log "DECRYPT INTEGRITY FAIL"; false; }
+rm -rf "$ENC_VERIFY_DIR"
+log "encryption self-test PASSED (decrypts + extracted content matches SHA256SUMS)"
 
 # === Stage 7: build manifest (sizes, checksums, validation) ===
 STAGE="manifest"
@@ -245,6 +257,6 @@ log "retention applied (keep last $RETENTION)"
 STAGE="done"
 STATUS="success"
 FINISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-write_heartbeat "success" "$FINISHED_AT"
+write_heartbeat "success" "$FINISHED_AT" || true
 log "BACKUP SUCCESS (db+storage dumped, validated, encrypted, upload=$UPLOAD_STATUS, tip=$MIG_TIP)"
 exit 0

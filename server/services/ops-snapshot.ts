@@ -399,7 +399,7 @@ async function readBackupHealth(
       tbl
         .select("status,started_at")
         .order("started_at", { ascending: false })
-        .limit(1),
+        .limit(5),
     ]);
     if (succ.error || last.error) {
       return {
@@ -408,7 +408,13 @@ async function readBackupHealth(
         summary: "Backup status unavailable (ops_backup_runs read error).",
       };
     }
-    const lastRun = last.data?.[0];
+    const runs = (last.data ?? []) as Array<Record<string, unknown>>;
+    const lastRun = runs[0];
+    // Most recent run that actually finished (success|failed). A newer "running"
+    // row must NOT hide an older failure, and a stuck "running" is itself a warning.
+    const lastTerminal = runs.find(
+      (r) => r.status === "success" || r.status === "failed",
+    );
     const lastSuccess = succ.data?.[0];
     const lastRunStatus =
       (lastRun?.status as BackupHealth["last_run_status"]) ?? null;
@@ -419,30 +425,40 @@ async function readBackupHealth(
       lastSuccessAt != null
         ? (Date.now() - new Date(lastSuccessAt).getTime()) / 3_600_000
         : null;
+    const stuckRunning =
+      lastRun?.status === "running" &&
+      lastRun?.started_at != null &&
+      Date.now() - new Date(lastRun.started_at as string).getTime() >
+        6 * 3_600_000;
 
     let status: BackupHealth["status"];
     let summary: string;
-    if (lastRunStatus === "failed") {
+    if (lastTerminal?.status === "failed") {
       status = "red";
-      summary = "Last off-platform backup FAILED — investigate immediately.";
+      summary =
+        "Most recent completed off-platform backup FAILED — investigate immediately.";
     } else if (ageH == null) {
       status = "red";
       summary = "No successful off-platform backup on record.";
-    } else if (ageH <= 7 * 24) {
-      status = "green";
-      summary = `Last validated backup ${Math.round(ageH)}h ago (upload: ${
-        (lastSuccess?.upload_status as string) ?? "n/a"
-      }).`;
-    } else if (ageH <= 10 * 24) {
-      status = "amber";
-      summary = `Last validated backup ${Math.round(
-        ageH / 24,
-      )}d ago (>7d) — a scheduled run may have been missed.`;
-    } else {
+    } else if (ageH > 10 * 24) {
       status = "red";
       summary = `Last validated backup ${Math.round(
         ageH / 24,
       )}d ago (>10d) — backup is STALE.`;
+    } else if (ageH > 7 * 24) {
+      status = "amber";
+      summary = `Last validated backup ${Math.round(
+        ageH / 24,
+      )}d ago (>7d) — a scheduled run may have been missed.`;
+    } else if (stuckRunning) {
+      status = "amber";
+      summary =
+        "A backup run appears stuck/incomplete (running >6h); last success still within 7d.";
+    } else {
+      status = "green";
+      summary = `Last validated backup ${Math.round(ageH)}h ago (upload: ${
+        (lastSuccess?.upload_status as string) ?? "n/a"
+      }).`;
     }
     return {
       status,
