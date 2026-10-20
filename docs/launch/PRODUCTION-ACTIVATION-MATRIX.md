@@ -62,7 +62,7 @@ The house invariant (verified in code): `activated` can never be true without th
 | PostHog analytics | R223 | Free tier → usage | Consent-gated client-side; your account + key |
 | Self-serve billing | (unatomised) | Stripe fees; tenants self-modify recurring charges | Also **flips entitlement enforcement from allow-all to enforcing** (side effect, documented) — stage carefully |
 | Stripe Connect portal payments | R061 | Platform/Connect fees; KYC liability | Separate `STRIPE_CONNECT_SECRET_KEY` + invoice webhook secret + per-org onboarding |
-| PITR backups | R141 | Paid Supabase add-on | Account-owner dashboard toggle; RPO ~24h→~2min. **Launch-readiness note:** backup freshness is NOT observable from production (off-platform dumps live on the founder's machine) — cadence is enforced by policy, not telemetry: `docs/ops/OUTAGE-RUNBOOK.md` §6 |
+| PITR backups | R141 | Paid Supabase add-on | **PITR itself = CEO-DEFERRED (COST, not a defect): $100/mo per 7-day retention; reconsider at paying customers.** RPO ~24h→~2min, DB-only. ‖ **Off-platform backup is now AUTOMATED + MONITORED (2026-10-20):** `scripts/ops/off-platform-backup.sh` weekly via launchd — encrypted (AES-256) DB + Storage, validated fail-loud, SHA256 checksums, retention, heartbeat to `ops_backup_runs`; **freshness now visible in `/admin/ops`** (GREEN ≤7d · WARNING >7d · RED >10d or failed), reversing the old "not observable" caveat. Encrypted R2 upload pending the owner credential. Runbook: `docs/ops/off-platform-backup-automation.md` |
 
 ## L4 — legal/compliance/provider approval → EXTERNAL ACTIVATION BLOCKED
 

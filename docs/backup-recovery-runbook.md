@@ -157,3 +157,20 @@ runbook's checklist — not here.
   `docs/ops/OUTAGE-RUNBOOK.md` §6, written after the 2026-10 five-day
   Vercel-402 outage.
 - **PITR:** still **OFF** (CEO billing decision; unchanged).
+
+## Current state 2026-10-20 — off-platform backup is now AUTOMATED + MONITORED
+
+The 52-day silent lapse (Aug 29 → Oct 20 2026) is fixed by an automated, validated,
+**encrypted** off-platform backup with a **loud** health monitor:
+- `scripts/ops/off-platform-backup.sh` (weekly via `scripts/ops/com.crewflow.backup.plist`)
+  dumps DB (schema + public + auth) **and all Supabase Storage objects**, generates + verifies
+  checksums, **validates fail-loud** (pg_dump completeness/truncation), **encrypts locally**
+  (AES-256), ships ONLY the encrypted artifact to R2, applies retention, and writes a heartbeat
+  to `ops_backup_runs`. `status=success` is recorded only after every validation stage passes.
+- **Backup freshness IS now observable from production** (reversing the §6 "not telemetry-observable"
+  caveat): `/admin/ops` → "Off-platform backup (DR)" shows **GREEN ≤7d / WARNING >7d / RED >10d or
+  last run failed**. The scheduler is only an execution mechanism; the heartbeat is the source of truth.
+- Full setup, the R2 owner action, and the restore procedure: `docs/ops/off-platform-backup-automation.md`.
+- **PITR** remains OFF — a deliberate COST decision (CEO; $100/mo per 7-day retention), to reconsider
+  when CrewFlow has paying customers. PITR covers the DB only; the off-platform backup additionally
+  covers Storage objects and survives account/project loss.
