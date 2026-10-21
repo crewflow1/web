@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
@@ -23,6 +23,11 @@ export default async function JobValuationsPage({
 }) {
   const { id: jobId } = await params;
   const { ctx } = await requireOrgContext();
+  // Money boundary: valuations/applications-for-payment expose the full internal
+  // contract + retention position. Staff/field members must never obtain those
+  // figures — not even by direct URL while the tab is hidden. Fail CLOSED here,
+  // server-side, before any valuations read (same posture as cash/invoices).
+  requireManagementRole(ctx);
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
   const supabase = await createClient();

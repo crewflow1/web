@@ -22,8 +22,11 @@ const TABS: { label: string; sub: string; adminOnly?: boolean }[] = [
   // can see a complete figure (staff_compensation makes co-worker pay admin-only,
   // 20261218); the page itself redirects non-admins. Hide the tab to match.
   { label: "Commercial", sub: "/commercial", adminOnly: true },
-  { label: "Valuations", sub: "/valuations" },
-  { label: "Billing", sub: "/billing" },
+  // Valuations + Billing expose contract value, retention and debtor position —
+  // money. Management-only, like Commercial. (The pages themselves also fail
+  // closed server-side; hiding the tab is defence-in-depth, not the boundary.)
+  { label: "Valuations", sub: "/valuations", adminOnly: true },
+  { label: "Billing", sub: "/billing", adminOnly: true },
   { label: "Drawings", sub: "/blueprints" },
   { label: "Timeline", sub: "/timeline" },
   { label: "Certificate", sub: "/certificate" },
