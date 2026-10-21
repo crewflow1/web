@@ -81,4 +81,4 @@ Rehearsal reference: a realistic 12-person book (6 customers, 4 jobs, 3 invoices
 
 ## Known limits to set expectations on (day one, honestly)
 
-- Quotes: no discount field, no duplicate-quote button (use templates); payroll figures are estimates — keep filing RTI via their existing route; HMRC VAT/CIS filing is prepare/export only; no incident/RIDDOR log yet (keep the paper accident book); bank feed is manual CSV reconcile; "My jobs" panel on My Day currently shows nothing (workers use Today's rota / Jobs tab — fix scheduled).
+- Quotes: no discount field, no duplicate-quote button (use templates); payroll figures are estimates — keep filing RTI via their existing route; HMRC VAT/CIS filing is prepare/export only; no incident/RIDDOR log yet (keep the paper accident book); bank feed is manual CSV reconcile.

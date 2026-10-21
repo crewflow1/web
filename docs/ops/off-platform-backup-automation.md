@@ -1,8 +1,14 @@
 # Off-platform encrypted backup automation (DR control)
 
 Automated, validated, **encrypted** off-platform backups of the single production
-Supabase project, shipped to remote object storage (Cloudflare R2). This is the
-defence against **account/project-level loss**, which PITR cannot cover.
+Supabase project, shipped off-machine to a **private Backblaze B2 bucket**
+(`crewflow-prod-backups`). This is the defence against **account/project-level loss**,
+which PITR cannot cover.
+
+> **DR lane status: GREEN (2026-10-20).** Live, monitored, weekly, and round-trip
+> proven end-to-end (local encrypt → B2 upload → independent download → decrypt →
+> checksum → isolated DB restore with exact-match counts → Storage object byte-for-byte).
+> The remote stores **only ciphertext**; B2 free tier covers current volume at $0 (no card).
 
 ## Reliability model (read this first)
 - **The Mac scheduler (`launchd`) is only an execution mechanism — NOT the source of truth.**
@@ -27,9 +33,12 @@ Staged; `status="success"` is recorded **only after every stage passes**:
    using the local key. **Immediately self-tests decryptability** (decrypt + `tar -t`). The remote only ever
    receives this encrypted artifact — never plaintext dumps, Storage objects, auth data or PII.
 7. **manifest** — sizes, checksums, migration tip, storage object count → `MANIFEST.json`.
-8. **upload** — `rclone copy` the encrypted artifact (+ its `.sha256`) to R2; verifies remote byte-size.
-   If no remote is configured yet, records `upload_status=pending_no_remote` (backup still valid locally).
-9. **retention** — keeps the last `CF_BACKUP_RETENTION` (default 8) locally and remotely; prunes older.
+8. **upload** — `rclone copy` the encrypted artifact (+ its `.sha256`) to the B2 bucket; verifies remote byte-size.
+   If no remote is configured, records `upload_status=pending_no_remote` (backup still valid locally).
+9. **upload gate** — a complete backup REQUIRES a verified off-site upload. If `upload_status` is anything
+   other than `uploaded`, the run **aborts** (exit non-zero, heartbeat `failed`); the local encrypted copy is
+   kept and retention is skipped. A failed/incomplete upload can never be recorded as a complete backup.
+10. **retention** — keeps the last `CF_BACKUP_RETENTION` (default 8) locally and remotely; prunes older.
 Heartbeat rows (`running` → `success`/`failed`) are written to `ops_backup_runs` throughout.
 
 ## Encryption key (critical)
@@ -47,22 +56,22 @@ If the Mac is off/asleep across the slot, `launchd` runs the job on next wake. I
 enough that no run completes, `/admin/ops` turns **WARNING at 7d** and **RED at 10d** — visible to
 HQ on every login. The guarantee is not "the Mac is always on"; it's "staleness is always loud."
 
-## Remote object storage — OWNER ACTION REQUIRED (Cloudflare R2)
-Everything above runs today; the **encrypted upload** needs you to create the destination. R2 free
-tier: 10 GB storage, free egress (our encrypted backups are ≈180 MB × 8 ≈ 1.5 GB). Minimal steps:
-1. Create/sign in to a **Cloudflare account** (free). *(R2 may require adding a card to enable the
-   service even on the free tier — do not add payment without deciding; free-tier usage incurs no charge.
-   If you prefer no card, Backblaze B2's 10 GB free tier is the alternative; ask and I'll switch the uploader.)*
-2. **R2 → Create bucket** named `crewflow-prod-backups` (private).
-3. **R2 → Manage API Tokens → Create API Token**, scoped **Object Read & Write to that ONE bucket only**.
-   Copy the Access Key ID + Secret + the account's S3 endpoint.
-4. On the Mac, install rclone (`brew install rclone`) and configure a remote named `r2` for that bucket:
-   `rclone config` → new remote → type `s3` → provider `Cloudflare` → paste keys + endpoint.
-   The credential lives only in `~/.config/rclone/rclone.conf` (600) — **never** in git/logs/telemetry/the app.
-Tell me when done and I'll prove the encrypted upload + a full remote download→decrypt→restore round-trip.
+## Remote object storage — DONE (Backblaze B2, private bucket)
+Off-site durability is **live and proven**. The destination is a **private Backblaze B2 bucket**
+`crewflow-prod-backups` (B2 free tier: 10 GB storage, no card required; our encrypted backups are
+≈180 MB × 8 ≈ 1.5 GB). Configuration (reference — already in place):
+- rclone remote **`crewflow-b2`** (B2 backend) in `~/.config/rclone/rclone.conf` (600). The script
+  default is `crewflow-b2:crewflow-prod-backups` (override via `CF_BACKUP_RCLONE_REMOTE`).
+- The B2 application key is **scoped to that one bucket** (read+write), stored **only** in
+  `rclone.conf` — never in git/logs/telemetry/the app. The bootstrap `b2.env` was deleted after
+  the key was written into rclone.conf.
+- **Round-trip proven 2026-10-20:** encrypted upload → independent B2 download (checksum match) →
+  decrypt → content checksum → isolated DB restore (exact-match counts) → Storage object byte-for-byte.
+- Rotating the key: create a new bucket-scoped B2 app key, update the `crewflow-b2` remote in
+  `rclone.conf`, delete the old key in the B2 console. No code change.
 
 ## Restore procedure (remote)
-1. `rclone copy r2:crewflow-prod-backups/<date>.tar.enc .` ; verify against `<date>.tar.enc.sha256`.
+1. `rclone copy crewflow-b2:crewflow-prod-backups/<date>.tar.enc .` ; verify against `<date>.tar.enc.sha256`.
 2. `openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass file:~/.config/crewflow-backup/backup.key -in <date>.tar.enc | tar -xf -`
 3. DB: build schema from migrations on a clean/isolated Supabase project, then `psql < <date>/auth-data.sql`, `psql < <date>/data.sql`.
 4. Storage: `supabase storage cp --recursive <date>/storage/<bucket> ss:///<bucket>` per bucket.
@@ -70,4 +79,4 @@ Tell me when done and I'll prove the encrypted upload + a full remote download�
 
 ## Retention / rotation
 `CF_BACKUP_RETENTION` (default 8) newest backups kept locally (plaintext dated dirs + encrypted
-artifacts) and remotely; older pruned each run. At ≈180 MB/backup this stays well under R2's 10 GB free tier.
+artifacts) and remotely; older pruned each run. At ≈180 MB/backup this stays well under B2's 10 GB free tier.
