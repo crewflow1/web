@@ -66,7 +66,7 @@ describe("migration — slot + single definer", () => {
     void files;
   });
 
-  it("is the ONLY migration defining webhook_endpoints/webhook_deliveries policies or grants", () => {
+  it("webhook_endpoints/webhook_deliveries policies+grants live ONLY in the known definers", () => {
     const definers = readdirSync(MIG_DIR)
       .filter((f) => f.endsWith(".sql"))
       .filter((f) => {
@@ -74,7 +74,16 @@ describe("migration — slot + single definer", () => {
         return /(create policy|revoke|grant)[\s\S]{0,300}?public\.webhook_(endpoints|deliveries)\b/i.test(src);
       })
       .sort();
-    expect(definers).toEqual(["20261087000000_outbound_webhooks.sql"]);
+    // 20261087 is the canonical definer. Slice 1.5 PR 1 (20261231) adds the ONE
+    // grant 20261087 omitted: the authenticated DELETE its own admin-only DELETE
+    // policy always intended (the table-level grant was missing, so the delete
+    // path 42501'd the moment the feature flips on). PR 1 adds no policy and no
+    // other webhook grant. Any OTHER migration touching webhook grants/policies
+    // is unexpected and still fails this pin.
+    expect(definers).toEqual([
+      "20261087000000_outbound_webhooks.sql",
+      "20261231000000_slice15_pr1_privilege_holes_hygiene.sql",
+    ]);
   });
 });
 
