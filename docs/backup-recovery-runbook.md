@@ -189,3 +189,34 @@ The 52-day silent lapse (Aug 29 → Oct 20 2026) is fixed by an automated, valid
 - **PITR** remains OFF — a deliberate COST decision (CEO; $100/mo per 7-day retention), to reconsider
   when CrewFlow has paying customers. PITR covers the DB only; the off-platform backup additionally
   covers Storage objects and survives account/project loss.
+
+### ⚠️ Restoring onto a BRAND-NEW Supabase project created after 2026-10-30 — Data API grants
+
+From **2026-10-30** Supabase no longer auto-grants the Data API roles (`anon`,
+`authenticated`) on tables in `public` **at creation time**. CrewFlow's historical
+migrations mostly relied on that old auto-grant (only ~16 of 188 table-creating
+migrations grant explicitly). Consequence for disaster recovery:
+
+- **Restoring in place / PITR / restoring onto the EXISTING project:** no action —
+  the live tables already carry their grants (Supabase retained them).
+- **Restoring onto a FRESH project created on/after 2026-10-30** (e.g. account loss,
+  region move — the exact tier the off-platform dump protects): rebuilding the schema
+  from the historical migrations will produce tables with **no Data API grants**, so
+  the restored app returns `42501 permission denied` on nearly every read even though
+  the data is present. **After loading schema + data, re-grant the Data API roles:**
+
+  ```sql
+  grant usage on schema public to anon, authenticated;
+  grant select, insert, update, delete on all tables in schema public to authenticated;
+  grant select on all tables in schema public to anon;  -- only if anon reads are expected
+  alter default privileges in schema public
+    grant select, insert, update, delete on tables to authenticated;
+  ```
+
+  RLS still governs row visibility — these grants only restore table reachability.
+  Verify with a login + a spot read before declaring the restore healthy.
+
+Going forward, every NEW client-facing table must grant the Data API role(s)
+explicitly in its own migration (or be marked service-role-only). This is enforced
+in CI by `__tests__/security/data-api-grant-guardrail.test.ts`, so a future restore
+from migrations authored after this date will not reintroduce the gap.

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
 import { loadJobForOrg } from "@/lib/jobs/load";
 import { loadJobBilling, type BillingStageView } from "@/server/services/billing";
 import { formatGbp } from "@/lib/money";
@@ -35,6 +35,11 @@ const STATUS_LABEL: Record<StageStatus, string> = {
 export default async function JobBillingPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: jobId } = await params;
   const { ctx } = await requireOrgContext();
+  // Money boundary: this "Get paid" surface shows contract value, billed,
+  // received and debtor position. Staff/field members must never obtain those
+  // figures — not even by direct URL while the tab is hidden. Fail CLOSED here,
+  // server-side, before any billing read (same posture as cash/invoices).
+  requireManagementRole(ctx);
   const isManager = ctx.membership.role === "owner" || ctx.membership.role === "admin";
   // ACTIVE-org read-pin (#456 read-side class): resolve the subject job through
   // the org-pinned chokepoint BEFORE delegating to the billing service. Without
