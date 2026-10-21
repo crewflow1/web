@@ -73,7 +73,7 @@ Off-site durability is **live and proven**. The destination is a **private Backb
 ## Restore procedure (remote)
 1. `rclone copy crewflow-b2:crewflow-prod-backups/<date>.tar.enc .` ; verify against `<date>.tar.enc.sha256`.
 2. `openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass file:~/.config/crewflow-backup/backup.key -in <date>.tar.enc | tar -xf -`
-3. DB: build schema from migrations on a clean/isolated Supabase project, then `psql < <date>/auth-data.sql`, `psql < <date>/data.sql`.
+3. DB: build schema from migrations on a clean/isolated Supabase project, then `psql < <date>/auth-data.sql`, `psql < <date>/data.sql`. **If that project was created on/after 2026-10-30, you MUST then re-grant the Data API roles** or the app returns `42501 permission denied` — see `docs/backup-recovery-runbook.md` → "Restoring onto a BRAND-NEW Supabase project created after 2026-10-30".
 4. Storage: `supabase storage cp --recursive <date>/storage/<bucket> ss:///<bucket>` per bucket.
 5. Verify row counts + a storage object byte-for-byte (see the proof log).
 

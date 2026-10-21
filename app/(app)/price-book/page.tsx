@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
 import { formatPence } from "@/lib/money";
 import {
   listPriceBookItems,
@@ -23,15 +23,20 @@ import {
  *
  * Reads are ORG-PINNED to the active org (ctx.org.id) and paged (F-1) inside the
  * query helpers; RLS is the backstop. Money is stored as integer pence and
- * rendered via formatPence. Every member can maintain the library (the
- * customers/quotes posture); a hard DELETE is admin-only, so a non-admin sees
- * archive/restore instead.
+ * rendered via formatPence.
+ *
+ * MONEY BOUNDARY: the price book IS pricing data — the rate library a quote is
+ * built from. Staff/field members must never see it (the "staff can't see
+ * prices" rule), so this surface is management-only. Fail CLOSED here,
+ * server-side, before any price read — not merely by hiding the nav link. A
+ * hard DELETE remains admin-only within the management cohort.
  */
 
 export const dynamic = "force-dynamic";
 
 export default async function PricingPage() {
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx);
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
 
   const [items, templates] = await Promise.all([
