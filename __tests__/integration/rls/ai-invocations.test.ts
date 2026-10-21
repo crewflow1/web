@@ -319,38 +319,39 @@ describeIntegration("ai_invocations · isolation, rollups, teardown (20261062)",
     expect(byOrg.get(orgB)).toBe(7_777);
   });
 
-  it("the rollup is INVOKER-RIGHTS — org A's admin gets nothing for org B", async () => {
-    // THE pin. A SECURITY DEFINER rollup would be a cross-tenant read
-    // primitive: any authenticated caller could name another tenant's id and
-    // receive their spend. The function holds no privilege of its own, so RLS
-    // has already decided what is visible before the aggregate runs.
+  // Slice 1.5 PR 1 (20261231000000) locked the AI-cost rollups to service_role:
+  // they are HQ cost-control surfaces (app/admin/ai-costs + lib/ai/governor +
+  // server/services/ai-cost-snapshot — all the service-role admin client), and
+  // the app-usage audit found NO tenant surface that calls them. The former
+  // anon+authenticated grant was latent over-privilege. A tenant is now DENIED
+  // the rollup at the grant layer (42501) — a STRONGER guarantee than the prior
+  // invoker-rights RLS scoping (which merely returned a foreign org zero rows).
+  // The cross-tenant estate aggregate for service_role is proven above.
+  it("the rollup is service_role-only — org A's admin is DENIED (42501), not cross-tenant scoped", async () => {
     const today = ukTodayIso();
-    const { data, error } = await rpc(userClient(adminA.token)).rpc(
+    const { error } = await rpc(userClient(adminA.token)).rpc(
       "ai_invocations_month_totals",
       { p_org_id: orgB, p_month: today },
     );
-    expect(error ? true : (data ?? []).length === 0, "org B's totals leaked").toBe(true);
+    expect(error?.code, `org A admin must be denied the governor rollup: ${error?.message}`).toBe("42501");
   });
 
-  it("the rollup is invoker-rights for the ESTATE query too — a null org is not a skeleton key", async () => {
+  it("the ESTATE query (null org) is DENIED to a tenant admin — not a skeleton key, not reachable at all", async () => {
     const today = ukTodayIso();
-    const { data, error } = await rpc(userClient(adminA.token)).rpc(
+    const { error } = await rpc(userClient(adminA.token)).rpc(
       "ai_invocations_month_totals",
       { p_org_id: null, p_month: today },
     );
-    expect(error, error?.message).toBeNull();
-    const orgs = (data ?? []).map((r) => String(r.org_id));
-    expect(orgs).not.toContain(orgB);
-    expect(orgs.every((o) => o === orgA)).toBe(true);
+    expect(error?.code, `the estate query must be denied to a tenant: ${error?.message}`).toBe("42501");
   });
 
-  it("a plain member gets NO totals at all", async () => {
+  it("a plain member is DENIED the rollup entirely (42501)", async () => {
     const today = ukTodayIso();
-    const { data, error } = await rpc(userClient(staffA.token)).rpc(
+    const { error } = await rpc(userClient(staffA.token)).rpc(
       "ai_invocations_month_totals",
       { p_org_id: orgA, p_month: today },
     );
-    expect(error ? true : (data ?? []).length === 0, "totals leaked to a member").toBe(true);
+    expect(error?.code, `a member must be denied the governor rollup: ${error?.message}`).toBe("42501");
   });
 
   it("the per-feature rollup splits the spend by capability", async () => {
