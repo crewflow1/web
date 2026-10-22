@@ -116,8 +116,15 @@ jobs:
       # Boots Postgres + Auth + Storage and applies supabase/migrations on the
       # fresh runner volume. ubuntu-latest ships a running Docker daemon, so no
       # extra container setup is required.
-      - name: Start Supabase local stack
-        run: supabase start
+      #
+      # Wrapped in a bounded, classified retry: `supabase start` pulls ~10 images
+      # and shared-IP runners trip Docker Hub's anonymous pull limit, surfacing
+      # as `toomanyrequests` before any migration/test runs. The wrapper retries
+      # ONLY transient registry/network pull failures; a real migration/config/DB
+      # error fails immediately and loudly (see the script header). Never "retry
+      # until green".
+      - name: Start Supabase local stack (retry transient registry failures)
+        run: bash scripts/ci/supabase-start-with-retry.sh
 
       # Map the running stack's connection details onto the names the harness
       # reads (__tests__/integration/_harness.ts), then run the integration
@@ -224,8 +231,11 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: 2.98.2
-      - name: Start Supabase local stack
-        run: supabase start
+      # Same bounded, classified retry as the integration job — absorbs Docker
+      # Hub `toomanyrequests` image-pull flakes without weakening the stack,
+      # while a real boot/migration failure still fails immediately.
+      - name: Start Supabase local stack (retry transient registry failures)
+        run: bash scripts/ci/supabase-start-with-retry.sh
 
       # One shell so the exported env survives across build → test → the
       # Playwright-managed `next start` (webServer inherits this process's env).
