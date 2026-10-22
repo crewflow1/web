@@ -1,0 +1,57 @@
+-- Performance (P2A) — index cron_runs(started_at desc) for the HQ monitoring sweep.
+--
+-- ROOT CAUSE (production Sentry + EXPLAIN ANALYZE, 2026-10-22)
+-- ---------------------------------------------------------------------------
+-- The HQ monitoring sweep (server/services/hq-monitoring-runner.ts → readSignals)
+-- reads the most-recent CRON_WINDOW = 200 rows to derive cron health:
+--     select route, ok, completed_at from cron_runs order by started_at desc limit 200
+-- cron_runs is ~177K rows / 98 MB in production. Its two existing indexes lead
+-- with `route` and `ok` respectively (started_at is their SECOND column), so
+-- NEITHER can serve a GLOBAL `order by started_at desc`. Production
+-- EXPLAIN (ANALYZE, BUFFERS) showed a Parallel Seq Scan over all ~177K rows plus
+-- a top-N heapsort — ~1.9s warm and ~3.7s under production load (Sentry). This
+-- read sits on hot cron paths: hq-runners-tick (every 15 min; ~39% of its p50)
+-- and inside hq-roster-workers-tick.
+--
+-- FIX: an ADDITIVE btree on (started_at desc). The exact query above then reads
+-- the top 200 straight off the index (no seq scan, no sort). The QUERY IS
+-- UNCHANGED, so the result set is byte-for-byte identical — an index changes only
+-- the plan, never results. Verified on a 177K-row representative dataset:
+--   BEFORE  Seq Scan + top-N heapsort   (22 ms local / ~1.9-3.7s prod)
+--   AFTER   Index Scan reading 200 rows (0.058 ms)
+--
+-- WRITE OVERHEAD: LOW EXPECTED (characterised, not zero — every added btree has a
+-- maintenance + WAL + storage cost):
+--   * Storage: one single-column, NON-covering btree on an 8-byte timestamptz over
+--     ~177K rows ≈ 5-6 MB (vs. the existing 23-31 MB two-column indexes).
+--   * Write maintenance: one extra index entry per cron_runs INSERT. started_at is
+--     monotonic (append-only), so entries land at the right edge of the btree — no
+--     mid-tree page splits, the cheapest insert pattern; each insert also WAL-logs
+--     that one small index tuple.
+--   * The table already maintains TWO started_at-containing indexes per insert;
+--     this adds a third, marginal, append-friendly one.
+-- Net: per-insert cost rises slightly; the benefit (turning a full 98 MB
+-- seq-scan+sort into a ~200-row index read on hot, frequent cron paths) outweighs
+-- it — to be re-confirmed by production cron_runs write-latency after deploy.
+-- (Separate follow-up, NOT this slice, and only after proving no required consumer:
+--  cron_runs_route_started_idx shows idx_scan=3 in prod — effectively unused,
+--  31 MB — a later drop would more than offset this index's write cost.)
+--
+-- DEPLOY NOTE: a plain (in-transaction) build on 177K rows is sub-second for a
+-- single-column timestamptz btree, so the brief write-blocking ShareLock is
+-- negligible on this telemetry table — matching the repo's migration convention
+-- (20260709 scale_indexes, 20261040 org_id_indexes). For an entirely
+-- write-lock-free build, create it as an ops step BEFORE applying this migration:
+--     create index concurrently cron_runs_started_idx
+--       on public.cron_runs (started_at desc);   -- run OUTSIDE a transaction
+-- after which this `if not exists` statement no-ops on deploy.
+--
+-- SEMANTICS UNCHANGED: no columns, data, RLS (cron_runs stays service-role-only),
+-- cron execution, duplicate-run guard, retries, idempotency, locks/leases, queue
+-- claiming, HQ governor, AI spend controls, tenant isolation, or audit behaviour
+-- is touched. Additive + idempotent.
+--
+-- ROLLBACK:  drop index if exists public.cron_runs_started_idx;
+
+create index if not exists cron_runs_started_idx
+  on public.cron_runs (started_at desc);
