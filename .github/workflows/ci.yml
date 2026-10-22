@@ -92,6 +92,11 @@ jobs:
     name: integration (real Postgres)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Least-privilege GITHUB_TOKEN for this job: checkout (contents) + GHCR
+    # image pulls (packages). Nothing else is granted.
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -113,16 +118,30 @@ jobs:
         with:
           version: 2.98.2
 
+      # Authenticate to GHCR before pulling the Supabase stack. The CLI pulls
+      # from ghcr.io (setup-cli exports SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io;
+      # the throttled image was ghcr.io/supabase/postgres), and anonymous GHCR
+      # pulls are billed to the shared GitHub-runner IP — the proven cause of the
+      # `toomanyrequests` throttling. Authenticating with the built-in
+      # GITHUB_TOKEN moves these pulls onto this account's rate budget. No
+      # repository secret and no Docker Hub account are involved, so there is no
+      # fork-secret exposure surface.
+      - name: Authenticate to GHCR (Supabase image registry)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # Boots Postgres + Auth + Storage and applies supabase/migrations on the
       # fresh runner volume. ubuntu-latest ships a running Docker daemon, so no
       # extra container setup is required.
       #
-      # Wrapped in a bounded, classified retry: `supabase start` pulls ~10 images
-      # and shared-IP runners trip Docker Hub's anonymous pull limit, surfacing
-      # as `toomanyrequests` before any migration/test runs. The wrapper retries
-      # ONLY transient registry/network pull failures; a real migration/config/DB
-      # error fails immediately and loudly (see the script header). Never "retry
-      # until green".
+      # The bounded, classified retry wrapper stays as defense-in-depth: GHCR
+      # auth reduces throttling; the retry absorbs any residual transient
+      # registry/network fault. The wrapper retries ONLY transient pull failures;
+      # a real migration/config/DB error fails immediately and loudly (see the
+      # script header). Never "retry until green".
       - name: Start Supabase local stack (retry transient registry failures)
         run: bash scripts/ci/supabase-start-with-retry.sh
 
@@ -210,6 +229,11 @@ jobs:
     name: e2e (real app, real Postgres)
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Least-privilege GITHUB_TOKEN: checkout (contents) + GHCR pulls (packages).
+    # Playwright-report upload uses the runtime token, not these scopes.
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -231,9 +255,19 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: 2.98.2
-      # Same bounded, classified retry as the integration job — absorbs Docker
-      # Hub `toomanyrequests` image-pull flakes without weakening the stack,
-      # while a real boot/migration failure still fails immediately.
+      # Authenticate to GHCR before pulling the Supabase stack — same rationale
+      # as the integration job (ghcr.io/supabase/* pulls, built-in GITHUB_TOKEN,
+      # no repository secret, no fork-secret surface).
+      - name: Authenticate to GHCR (Supabase image registry)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Same bounded, classified retry as the integration job — defense-in-depth
+      # for residual transient GHCR/network faults, while a real boot/migration
+      # failure still fails immediately.
       - name: Start Supabase local stack (retry transient registry failures)
         run: bash scripts/ci/supabase-start-with-retry.sh
 
