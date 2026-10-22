@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { isCronAuthorised } from "@/lib/cron/auth";
 import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { ROSTER_BUDGET, parseCursor, runRosterWindow } from "@/lib/cron/roster-budget";
 import { enqueueSecurityPosture, drainSecurityTasks } from "@/server/services/hq-security-runner";
 import { enqueueDevopsHealth, drainDevopsTasks } from "@/server/services/hq-devops-runner";
 import {
@@ -136,6 +138,50 @@ async function safe<T>(
   }
 }
 
+/**
+ * Read the fairness cursor the previous tick persisted in its telemetry row.
+ * NARROW, route-filtered, single-row read — served by `cron_runs_route_started_idx
+ * (route, started_at desc)` (verified: Index Scan, not the P2A global
+ * `cron_runs_started_idx`), so it does NOT reintroduce the P2A monitoring-scan
+ * bottleneck. Any missing / malformed / out-of-range value ⇒ start at 0 (never
+ * trust persisted JSON). The current tick's row is written only AFTER this fn
+ * returns, so this always reads a PRIOR tick, never itself.
+ */
+async function readRosterCursor(): Promise<number> {
+  try {
+    const admin = createAdminClient();
+    const res = await (
+      admin.from("cron_runs" as never) as unknown as {
+        select: (cols: string) => {
+          eq: (col: string, val: string) => {
+            order: (
+              col: string,
+              opts: { ascending: boolean },
+            ) => {
+              limit: (
+                n: number,
+              ) => Promise<{ data: Array<{ summary: unknown }> | null; error: unknown }>;
+            };
+          };
+        };
+      }
+    )
+      .select("summary")
+      .eq("route", "hq-roster-workers-tick")
+      .order("started_at", { ascending: false })
+      .limit(1);
+    return parseCursor(res.data?.[0]?.summary ?? null, WORKERS.length);
+  } catch (e) {
+    // A real DB/network read error is NON-FATAL to the tick (best-effort cron
+    // convention, same as withCronTelemetry's swallowed write): fall back to a
+    // full pass from 0 — correctness-safe, fairness restarts for one tick. It is
+    // LOGGED, not swallowed silently. (No rows / malformed summary do NOT reach
+    // here — parseCursor already maps those to 0 without throwing.)
+    console.error("[hq-roster-workers-tick] cursor read failed; starting from 0", e);
+    return 0;
+  }
+}
+
 export async function GET(request: Request): Promise<NextResponse> {
   if (!isCronAuthorised(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -143,16 +189,37 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   const { status, payload } = await withCronTelemetry("hq-roster-workers-tick", async () => {
     const now = new Date();
-    const workers: Record<string, unknown> = {};
-    for (const worker of WORKERS) {
-      workers[worker.label] = await safe(worker.label, async () => {
-        // Claim-one per worker per tick — bounded pass across all 12 (limit 1 each).
-        const enqueued = await worker.enqueue(now);
-        const drained = await worker.drain(1);
-        return { enqueued, drained };
-      });
-    }
-    return { ok: true, workers };
+    // Resume from where the previous successful tick stopped (fairness cursor),
+    // and stop STARTING new legs once the wall-clock budget is reached. A leg
+    // already started runs through the existing engine path unchanged.
+    const startIndex = await readRosterCursor();
+    const { workers, deferred, processed, nextIndex } = await runRosterWindow({
+      startIndex,
+      stopClaimingAtMs: ROSTER_BUDGET.STOP_CLAIMING_AT_MS,
+      now: () => Date.now(),
+      workers: WORKERS.map((worker) => ({
+        label: worker.label,
+        // Claim-one per worker per tick — enqueue (deduped per day/week) then drain(1).
+        run: () =>
+          safe(worker.label, async () => {
+            const enqueued = await worker.enqueue(now);
+            const drained = await worker.drain(1);
+            return { enqueued, drained };
+          }),
+      })),
+    });
+
+    // `next_index` is persisted by withCronTelemetry's `summary: payload` write
+    // (verified: payload === the returned object); readRosterCursor() reads it
+    // back next tick. `cursor` is human-facing metadata. Planned deferral is NOT
+    // a failure: ok stays true, so the monitoring sweep raises no alert.
+    return {
+      ok: true,
+      workers,
+      deferred,
+      next_index: nextIndex,
+      cursor: { from: startIndex, next: nextIndex, processed },
+    };
   });
 
   return NextResponse.json(payload, { status });
