@@ -5,7 +5,7 @@ import { anonClient, describeIntegration, serviceClient, userClient } from "../_
  * Slice 1.5 — PR 2 regression guard (real Postgres).
  *
  * Proves BOTH sides of the C-class least-privilege migration
- * supabase/migrations/20261232000000_slice15_pr2_cclass_least_privilege.sql:
+ * supabase/migrations/20261233000000_slice15_pr2_cclass_least_privilege.sql:
  *   • every service-role-only table is now UNREACHABLE by anon + authenticated
  *     (no client grant → 42501); and
  *   • every legitimate authenticated READ the change preserves still SUCCEEDS
@@ -170,7 +170,7 @@ const LOCK_PROBE = [
 ];
 const KEEP_PROBE = ["receptionist_conversations", "internal_notes", "portal_uploads", "admin_alert_state"];
 
-describeIntegration("Slice 1.5 PR2 C-class least-privilege (20261232000000)", () => {
+describeIntegration("Slice 1.5 PR2 C-class least-privilege (20261233000000)", () => {
   let grants: Grant[] = [];
   let token = "";
   let userId = "";
