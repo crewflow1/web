@@ -27,20 +27,34 @@ const rpc = (client: unknown) =>
 
 const WRITE = new Set(["INSERT", "UPDATE", "DELETE", "TRUNCATE"]);
 
-// TIER 1 — fully locked (no authenticated reader, absent from the GDPR census):
+// TIER 1 — fully locked (no authenticated reader, absent from the GDPR export):
 // no client grant of any kind.
-const FULLY_LOCKED = ["impersonation_sessions", "admin_activity_log"];
+//
+// email_webhook_events + whatsapp_webhook_events were originally A.6 TIER-2
+// (write-locked, SELECT kept) on the premise they were GDPR-exported. Slice 1.5
+// PR 2 (20261233000000) proved otherwise: both are in lib/gdpr/org-tables.json
+// `excluded`, so ORG_EXPORT_TABLES (= known MINUS excluded) never includes them
+// and the authenticated export loop never reads them — their only callers are
+// the service-role webhook handlers. PR 2 therefore removed their now-proven-
+// unnecessary SELECT, and they are asserted FULLY LOCKED here (strengthened, not
+// weakened). See slice15-pr2-cclass-least-privilege.test.ts.
+const FULLY_LOCKED = [
+  "impersonation_sessions",
+  "admin_activity_log",
+  "email_webhook_events",
+  "whatsapp_webhook_events",
+];
 
 // TIER 2 — write-locked but SELECT KEPT. Org-scoped tables an authenticated path
 // legitimately reads: the activity feed via RLS, and every org-scoped GDPR-census
 // table which gdpr-export reads through the authenticated SSR client. Revoking
 // SELECT here breaks those reads (42501); only the write verbs are stripped, and
 // SELECT stays RLS-gated (no permissive read policy today ⇒ non-member/anon read
-// zero rows).
+// zero rows). (The 17 receptionist_* below additionally lose their anon SELECT +
+// non-SELECT verbs in Slice 1.5 PR 2 — asserted there — which does not conflict
+// with this tier's "no client WRITE" assertion.)
 const WRITE_LOCKED_KEEP_SELECT = [
   "activity_log",
-  "email_webhook_events",
-  "whatsapp_webhook_events",
   "receptionist_conversations",
   "receptionist_messages",
   "receptionist_conversation_actions",
