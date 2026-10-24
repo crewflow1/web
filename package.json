@@ -17,6 +17,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:security": "vitest run --config vitest.security.config.ts",
     "test:e2e": "playwright test",
+    "test:e2e:cross-browser": "playwright test --config playwright.matrix.config.ts",
     "predev": "node scripts/copy-pdf-worker.mjs",
     "prebuild": "node scripts/copy-pdf-worker.mjs",
     "db:types": "supabase gen types typescript --linked > lib/supabase/types.ts"
