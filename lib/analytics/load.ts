@@ -19,6 +19,7 @@ import {
   analyticsConfigured,
   readConsentFromCookieString,
 } from "@/lib/analytics/consent";
+import { setAnalyticsSink } from "@/lib/analytics/events";
 
 let started = false;
 
@@ -51,6 +52,15 @@ export async function loadAnalyticsIfAllowed(): Promise<void> {
       autocapture: false,
       disable_session_recording: true,
       person_profiles: "identified_only",
+    });
+    // Register the capture sink so `trackEvent` can send — only now, after a
+    // consent-gated init. Until this runs, every trackEvent call is a no-op.
+    setAnalyticsSink((event, properties) => {
+      try {
+        posthog.capture(event, properties);
+      } catch {
+        // never let a capture failure surface to the user
+      }
     });
   } catch (e) {
     // Roll back so a transient import failure can be retried on the next call.
