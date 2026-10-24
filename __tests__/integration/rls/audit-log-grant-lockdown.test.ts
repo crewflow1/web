@@ -32,7 +32,7 @@ const WRITE = new Set(["INSERT", "UPDATE", "DELETE", "TRUNCATE"]);
 //
 // email_webhook_events + whatsapp_webhook_events were originally A.6 TIER-2
 // (write-locked, SELECT kept) on the premise they were GDPR-exported. Slice 1.5
-// PR 2 (20261232000000) proved otherwise: both are in lib/gdpr/org-tables.json
+// PR 2 (20261233000000) proved otherwise: both are in lib/gdpr/org-tables.json
 // `excluded`, so ORG_EXPORT_TABLES (= known MINUS excluded) never includes them
 // and the authenticated export loop never reads them — their only callers are
 // the service-role webhook handlers. PR 2 therefore removed their now-proven-
