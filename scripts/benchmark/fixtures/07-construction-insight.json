@@ -1,0 +1,51 @@
+{
+  "workload": "construction_insight",
+  "title": "Construction insight",
+  "description": "Generate an actionable insight from aggregated job/site data, like lib/ai/insight-narrative.ts produces for the dashboard. Must be grounded strictly in the numbers.",
+  "taskClass": "insight_narrative",
+  "tier": "mid",
+  "mode": "text",
+  "system": "You are CrewFlow's insight engine. From the aggregated figures, surface the single most important, actionable insight for the business owner, with the number that justifies it and a recommended action. British English. Do not invent data.",
+  "items": [
+    {
+      "id": "ins-1",
+      "input": "Last 90 days across 14 jobs: average gross margin 19% (target 25%). Three jobs under 10% margin: all fixed-price bathroom refits where material costs overran by avg 31%. Labour on target. Material prices rose 8% in the period. Quotes older than 60 days: 6 still open.",
+      "rubric": {
+        "mustInclude": ["margin", "bathroom", "material", "action"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 40,
+        "maxWords": 220
+      }
+    },
+    {
+      "id": "ins-2",
+      "input": "Cash position: GBP 14,200 in bank. Overdue receivables GBP 28,900 across 9 invoices (oldest 47 days). Upcoming payables next 14 days GBP 19,400 (incl. VAT bill GBP 8,100 due in 9 days). Two clients account for GBP 21,000 of the overdue total.",
+      "rubric": {
+        "mustInclude": ["overdue", "28,900", "vat", "action"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 40,
+        "maxWords": 220
+      }
+    },
+    {
+      "id": "ins-3",
+      "input": "Scheduling: next 2 weeks have 4 outdoor jobs booked. Weather forecast shows rain on 6 of the next 10 working days, including the 2 days booked for the roof job at 22 Larch Close. Two fitters on annual leave next Thursday/Friday. One job (driveway) has a hard client deadline of the 14th.",
+      "rubric": {
+        "mustInclude": ["rain", "roof", "action"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 40,
+        "maxWords": 220
+      }
+    },
+    {
+      "id": "ins-4",
+      "input": "Supplier spend last quarter: GBP 61,000 total. Buildbase 42% (GBP 25,600), Jewson 28%, Screwfix 14%, others 16%. Buildbase prices on 3 common SKUs are 6-11% above Jewson for identical products. No trade discount negotiated with Buildbase despite volume.",
+      "rubric": {
+        "mustInclude": ["buildbase", "jewson", "discount", "action"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 40,
+        "maxWords": 220
+      }
+    }
+  ]
+}

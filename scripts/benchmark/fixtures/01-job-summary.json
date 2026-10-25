@@ -1,0 +1,51 @@
+{
+  "workload": "job_summary",
+  "title": "Job summary",
+  "description": "Summarise a construction job's current status for a time-poor owner: progress, money, blockers, next action. Mirrors lib/ai/insight-narrative.ts style outputs.",
+  "taskClass": "insight_narrative",
+  "tier": "cheap",
+  "mode": "text",
+  "system": "You are CrewFlow, an assistant for a UK construction business. Summarise the job for the owner in plain British English: current progress, financial position, any blockers, and the single most important next action. Be concise and factual. Do not invent figures not present in the data.",
+  "items": [
+    {
+      "id": "job-1",
+      "input": "Job: Loft conversion, 14 Maple Rise, Leeds. Status: in progress, week 4 of 7. Budget GBP 32,400. Costs to date GBP 21,850 (labour 12,300, materials 8,200, plant 1,350). Invoiced GBP 18,000, paid GBP 18,000. Open tasks: Velux fitting (waiting on supplier, 3 days late), first-fix electrics (scheduled Thu), plasterboard delivery booked Mon. Weather: dry week forecast. Client last contacted 6 days ago.",
+      "rubric": {
+        "mustInclude": ["week 4", "32,400", "21,850", "velux", "next"],
+        "mustNotInclude": ["as an ai", "i cannot", "i do not have"],
+        "minWords": 40,
+        "maxWords": 200
+      }
+    },
+    {
+      "id": "job-2",
+      "input": "Job: Rear extension, 3 Cobbler's Lane, Wakefield. Status: on hold. Budget GBP 58,000. Costs to date GBP 39,100. Invoiced GBP 42,000, paid GBP 30,000 (GBP 12,000 overdue 21 days). Blocker: building control refused the steel beam calc, revised SE drawings due in 5 days. Labour stood down. Client anxious, called twice this week.",
+      "rubric": {
+        "mustInclude": ["on hold", "building control", "12,000", "overdue", "next"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 40,
+        "maxWords": 200
+      }
+    },
+    {
+      "id": "job-3",
+      "input": "Job: Bathroom refit, Flat 2, Dock Street, Hull. Status: near complete, snagging. Budget GBP 9,800. Final costs GBP 9,240. Invoiced GBP 9,800, paid GBP 4,900 (50% deposit). Remaining: seal shower tray, touch-up grout, remove waste. Handover planned Friday. Client happy, left positive note.",
+      "rubric": {
+        "mustInclude": ["snagging", "9,800", "4,900", "handover", "friday"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 35,
+        "maxWords": 180
+      }
+    },
+    {
+      "id": "job-4",
+      "input": "Job: Driveway resurfacing, Unit 7 Brookside Trading Estate, Doncaster. Status: not started. Budget GBP 14,200. Costs to date GBP 0. Deposit GBP 4,260 received. Start date pushed twice due to tarmac supplier shortage, now provisionally booked in 9 days. Two-day job, dry weather needed. Client flexible but wants a firm date.",
+      "rubric": {
+        "mustInclude": ["not started", "14,200", "deposit", "supplier", "date"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 35,
+        "maxWords": 180
+      }
+    }
+  ]
+}

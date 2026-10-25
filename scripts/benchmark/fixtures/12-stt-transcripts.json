@@ -1,0 +1,23 @@
+{
+  "workload": "transcription",
+  "title": "Speech-to-text (voice notes)",
+  "description": "Synthetic tradesperson voice notes. Audio is generated locally with macOS `say` (synthetic TTS, no real voice) by gen-audio.sh; the reference transcripts below are the ground truth for WER. Production path is OpenAI Whisper (lib/ai/transcription/openai.ts); local candidate is faster-whisper / whisper.cpp. NO real audio, NO real person's voice.",
+  "productionBaseline": { "provider": "openai", "model": "whisper-1" },
+  "items": [
+    {
+      "id": "stt-1",
+      "voice": "Daniel",
+      "reference": "Right, quick note for the Maple Rise loft job. Plasterboard is back ordered until Monday so I have moved first fix to Tuesday. Electrician is confirmed for Thursday. We still need three more sheets of ply, order them today. The skip is full so book a collection."
+    },
+    {
+      "id": "stt-2",
+      "voice": "Daniel",
+      "reference": "Site meeting update for the kitchen job. The client wants to move the sink to the island which means a new plumbing run, roughly six hundred pounds extra. Proceed with the screed now and connect the underfloor heating later because the manifold arrived damaged."
+    },
+    {
+      "id": "stt-3",
+      "voice": "Daniel",
+      "reference": "End of week recap. Three quotes went out worth forty eight thousand pounds and one was accepted. Two jobs completed and both paid. Chase the overdue invoice again, the client promised payment on Friday. The new labourer starts Monday so check his card and add him to the insurance."
+    }
+  ]
+}
