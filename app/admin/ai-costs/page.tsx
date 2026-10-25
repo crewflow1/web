@@ -11,7 +11,7 @@ import {
   type EmployeeLimitControlRow,
   type OrgCeilingControlRow,
 } from "@/server/services/ai-budget-controls";
-import { buildAiCostReport, type AiCostReport, type AiCostWindow } from "@/server/services/ai-cost-report";
+import { buildAiCostReport, readAccountingHealth, type AiCostReport, type AiCostWindow } from "@/server/services/ai-cost-report";
 import { formatPence } from "@/lib/ai/governor";
 import { AI_FEATURE_KEYS, AI_FEATURES, AI_TIERS, TIER_MODEL } from "@/lib/ai/governor/registry";
 import type { BudgetStatus } from "@/lib/ai/governor/policy";
@@ -93,6 +93,14 @@ export default async function AiCostsPage({ searchParams }: { searchParams: SP }
   const report = await buildAiCostReport().catch((e: unknown) => {
     return { error: e instanceof Error ? e.message : String(e) } as const;
   });
+  // Accounting-health probe: can we guarantee every completed invocation is in the
+  // ledger? A read error is itself a degraded state (fail toward "degraded").
+  const health = await readAccountingHealth().catch((e: unknown) => ({
+    degraded: true as const,
+    stuckReservations: -1,
+    oldestStuckMinutes: null,
+    probeError: e instanceof Error ? e.message : String(e),
+  }));
 
   return (
     <div className="space-y-6">
@@ -122,6 +130,22 @@ export default async function AiCostsPage({ searchParams }: { searchParams: SP }
           {errorMsg}
         </p>
       ) : null}
+
+      {/* Accounting-health banner — flags if completed spend may be unaccounted. */}
+      {health.degraded ? (
+        <p className="rounded-md border border-red-300 bg-red-50 p-3 text-sm font-medium text-red-900" role="alert">
+          ⚠️ ACCOUNTING DEGRADED — cost reporting may be incomplete.{" "}
+          {"probeError" in health
+            ? `The accounting-health probe failed: ${health.probeError}.`
+            : `${health.stuckReservations} reservation(s) are past their TTL without a confirmed settlement${
+                health.oldestStuckMinutes != null ? ` (oldest ${health.oldestStuckMinutes} min)` : ""
+              }. Some completed invocations may not be in the ledger until reconciled.`}
+        </p>
+      ) : (
+        <p className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800" role="status">
+          Accounting healthy — every settled invocation is accounted; no reservations past TTL unsettled.
+        </p>
+      )}
 
       {/* 0. Observability windows — today / this week / this month (Phase 0). */}
       {"error" in report ? (

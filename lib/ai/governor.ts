@@ -684,6 +684,11 @@ export async function reserveBudget(input: {
  * lapses. That errs towards over-blocking for ten minutes rather than
  * under-counting spend, which is the safe direction for a safety limit.
  */
+/** Settle attempts on a transient RPC error, incl. the first. Small + bounded. */
+const SETTLE_ATTEMPTS = 3;
+/** Backoff before each RETRY (not the first attempt). Only paid on failure. */
+const SETTLE_BACKOFF_MS = [0, 100, 250];
+
 export async function settleReservation(input: {
   reservationId: string;
   success: boolean;
@@ -696,37 +701,69 @@ export async function settleReservation(input: {
   /** Used only if the reservation has vanished, so the spend is still recorded. */
   fallback: RecordInvocationInput;
 }): Promise<boolean> {
-  try {
-    const { data, error } = await db(createAdminClient()).rpc(SETTLE_FN, {
-      p_reservation_id: input.reservationId,
-      p_success: input.success,
-      p_cost_pence: Math.max(0, Math.round(input.costPence || 0)),
-      p_provider: input.usage.provider,
-      p_model: input.usage.model,
-      p_input_tokens: Math.max(0, Math.round(input.usage.inputTokens || 0)),
-      p_output_tokens: Math.max(0, Math.round(input.usage.outputTokens || 0)),
-      p_latency_ms: Math.max(0, Math.round(input.latencyMs || 0)),
-      p_error_code: input.success ? null : (input.errorCode ?? "unknown_error"),
-      p_ai_employee_id: input.aiEmployeeId ?? null,
-    });
-    if (error) {
-      console.error("[ai/governor] settlement failed", error);
-      return false;
+  const args = {
+    p_reservation_id: input.reservationId,
+    p_success: input.success,
+    p_cost_pence: Math.max(0, Math.round(input.costPence || 0)),
+    p_provider: input.usage.provider,
+    p_model: input.usage.model,
+    p_input_tokens: Math.max(0, Math.round(input.usage.inputTokens || 0)),
+    p_output_tokens: Math.max(0, Math.round(input.usage.outputTokens || 0)),
+    p_latency_ms: Math.max(0, Math.round(input.latencyMs || 0)),
+    p_error_code: input.success ? null : (input.errorCode ?? "unknown_error"),
+    p_ai_employee_id: input.aiEmployeeId ?? null,
+  };
+
+  // EXACTLY-ONCE via idempotent RETRY. The settle RPC is idempotent on the
+  // reservation (FOR UPDATE + state='reserved' guard: it either inserts the one
+  // ledger row and flips the reservation to 'settled', or returns 'already_settled'
+  // and inserts NOTHING). So the AMBIGUOUS case — the client sees an RPC error but
+  // Postgres actually committed — is safe to RETRY: the retry observes
+  // 'already_settled' and never writes a second row. A genuine pre-commit error is
+  // settled by the retry. We therefore NEVER fall back to a blind recordInvocation()
+  // on an RPC error (that is the double-count trap); recordInvocation is used ONLY
+  // for 'not_found' (the reservation is gone, so there is no committed row to clash with).
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < SETTLE_ATTEMPTS; attempt++) {
+    if (attempt > 0 && SETTLE_BACKOFF_MS[attempt]) {
+      await new Promise((r) => setTimeout(r, SETTLE_BACKOFF_MS[attempt]));
     }
-    const row = (Array.isArray(data) ? (data[0] as Record<string, unknown> | undefined) : undefined) ?? {};
-    const outcome = String(row.outcome ?? "");
-    if (outcome === "settled") return true;
-    if (outcome === "already_settled") {
-      // Idempotent: the first settlement already wrote the ledger row.
-      return true;
+    try {
+      const { data, error } = await db(createAdminClient()).rpc(SETTLE_FN, args);
+      if (error) {
+        lastError = error;
+        console.error(`[ai/governor] settlement RPC error (attempt ${attempt + 1}/${SETTLE_ATTEMPTS})`, error);
+        continue; // retry the IDEMPOTENT rpc — no blind insert
+      }
+      const row = (Array.isArray(data) ? (data[0] as Record<string, unknown> | undefined) : undefined) ?? {};
+      const outcome = String(row.outcome ?? "");
+      if (outcome === "settled" || outcome === "already_settled") return true;
+      if (outcome === "not_found") {
+        // The reservation is gone — no committed ledger row exists for it, so a
+        // direct write cannot double-count. Record the spend so it is not lost.
+        console.error(`[ai/governor] reservation ${input.reservationId} vanished (${outcome})`);
+        return await recordInvocation(input.fallback);
+      }
+      lastError = new Error(`unknown settle outcome: ${outcome || "(empty)"}`);
+      console.error(`[ai/governor] settlement unknown outcome (attempt ${attempt + 1})`, outcome);
+      continue; // treat an unrecognised outcome as transient and retry
+    } catch (e) {
+      lastError = e;
+      console.error(`[ai/governor] settlement threw (attempt ${attempt + 1}/${SETTLE_ATTEMPTS})`, e);
     }
-    // 'not_found' — the reservation is gone. Record the spend anyway.
-    console.error(`[ai/governor] reservation ${input.reservationId} vanished (${outcome})`);
-    return await recordInvocation(input.fallback);
-  } catch (e) {
-    console.error("[ai/governor] settlement threw", e);
-    return false;
   }
+
+  // Retries exhausted. Do NOT blind-insert (the RPC may have committed; a naive
+  // recordInvocation would double-count). The reservation stays 'reserved' and,
+  // once its TTL lapses, becomes a 'reserved'+expired row that readAccountingHealth
+  // counts and /admin/ai-costs flags as ACCOUNTING DEGRADED — an explicit,
+  // visible incomplete-accounting signal, never a silent gap.
+  console.error(
+    `[ai/governor] ACCOUNTING DEGRADED: settlement for reservation ${input.reservationId} ` +
+      `unconfirmed after ${SETTLE_ATTEMPTS} attempts — left 'reserved' for TTL-based reconciliation`,
+    lastError,
+  );
+  return false;
 }
 
 /**

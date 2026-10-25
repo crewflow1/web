@@ -107,6 +107,62 @@ async function fetchWindow(window: AiCostWindow["window"]): Promise<AiCostWindow
   return mapWindow(window, (data ?? {}) as Record<string, unknown>);
 }
 
+export type AiAccountingHealth = {
+  /** True when one or more invocations may be unaccounted (see stuckReservations). */
+  degraded: boolean;
+  /**
+   * Reservations still `state='reserved'` PAST their TTL (`expires_at < now()`).
+   * In normal operation a claim is settled or released within its TTL; a lapsed
+   * 'reserved' row means a settlement was never confirmed (a crash OR a settlement
+   * RPC that failed permanently after the provider call). Either way the ledger may
+   * be incomplete for these — the honest "accounting degraded" signal.
+   */
+  stuckReservations: number;
+  /** Age of the oldest stuck reservation, minutes; null when none. */
+  oldestStuckMinutes: number | null;
+};
+
+/**
+ * Accounting-health probe: are there invocations whose settlement was never
+ * confirmed? Read-only over the EXISTING ai_cost_reservations table (no second
+ * ledger). F-1-safe: a head COUNT + a single ordered row. LOUD on read error —
+ * an unreadable health probe is itself a degraded state, reported as such.
+ */
+export async function readAccountingHealth(): Promise<AiAccountingHealth> {
+  type Q = {
+    select: (c: string, o?: { count?: "exact"; head?: boolean }) => Q;
+    eq: (k: string, v: unknown) => Q;
+    lt: (k: string, v: unknown) => Q;
+    order: (k: string, o: { ascending: boolean }) => Q;
+    limit: (n: number) => PromiseLike<{ data: Array<{ created_at: string }> | null; error: { message: string } | null }>;
+  } & PromiseLike<{ count: number | null; error: { message: string } | null }>;
+  const admin = createAdminClient() as unknown as { from: (t: string) => Q };
+  const nowIso = new Date().toISOString();
+
+  const countRes = await admin
+    .from("ai_cost_reservations")
+    .select("id", { count: "exact", head: true })
+    .eq("state", "reserved")
+    .lt("expires_at", nowIso);
+  if (countRes.error) throw new Error(`accounting-health count failed: ${countRes.error.message}`);
+  const stuck = countRes.count ?? 0;
+
+  let oldestStuckMinutes: number | null = null;
+  if (stuck > 0) {
+    const oldestRes = await admin
+      .from("ai_cost_reservations")
+      .select("created_at")
+      .eq("state", "reserved")
+      .lt("expires_at", nowIso)
+      .order("created_at", { ascending: true })
+      .limit(1);
+    if (oldestRes.error) throw new Error(`accounting-health oldest failed: ${oldestRes.error.message}`);
+    const oldest = oldestRes.data?.[0]?.created_at;
+    if (oldest) oldestStuckMinutes = Math.round((Date.now() - new Date(oldest).getTime()) / 60000);
+  }
+  return { degraded: stuck > 0, stuckReservations: stuck, oldestStuckMinutes };
+}
+
 /** The full Phase-0 report: today / this week / this month. */
 export async function buildAiCostReport(): Promise<AiCostReport> {
   const [today, week, month] = await Promise.all([

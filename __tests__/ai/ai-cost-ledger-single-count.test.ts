@@ -77,12 +77,38 @@ describe("settleReservation — exactly one accounting row per invocation", () =
     expect(insertMock).toHaveBeenCalledTimes(1); // the fallback — the ONLY write here
   });
 
-  it("RPC error: no row written (best-effort gap, not a double-write)", async () => {
-    rpcMock.mockResolvedValue({ data: null, error: { message: "boom" } });
+  it("RPC failure BEFORE commit → idempotent retry eventually settles exactly once", async () => {
+    // attempt 1 errors (pre-commit), attempt 2 settles.
+    rpcMock
+      .mockResolvedValueOnce({ data: null, error: { message: "transient" } })
+      .mockResolvedValueOnce({ data: [{ outcome: "settled" }], error: null });
     const { settleReservation } = await import("@/lib/ai/governor");
     const ok = await settleReservation(settleArgs());
-    expect(ok).toBe(false);
-    expect(insertMock).not.toHaveBeenCalled();
+    expect(ok).toBe(true);
+    expect(rpcMock).toHaveBeenCalledTimes(2); // retried the IDEMPOTENT rpc
+    expect(insertMock).not.toHaveBeenCalled(); // never a blind fallback on RPC error
+  });
+
+  it("RPC response LOST after DB commit → retry sees 'already_settled' → still ONE row (no double-count)", async () => {
+    // attempt 1 "errors" (response lost though Postgres committed); attempt 2 the
+    // idempotent rpc reports the commit already happened → NO second row.
+    rpcMock
+      .mockResolvedValueOnce({ data: null, error: { message: "network reset" } })
+      .mockResolvedValueOnce({ data: [{ outcome: "already_settled" }], error: null });
+    const { settleReservation } = await import("@/lib/ai/governor");
+    const ok = await settleReservation(settleArgs());
+    expect(ok).toBe(true);
+    expect(rpcMock).toHaveBeenCalledTimes(2);
+    expect(insertMock).not.toHaveBeenCalled(); // the committed-but-lost case does NOT double-write
+  });
+
+  it("PERMANENT DB failure → degraded (ok=false), NO blind insert (never double-count)", async () => {
+    rpcMock.mockResolvedValue({ data: null, error: { message: "db down" } });
+    const { settleReservation } = await import("@/lib/ai/governor");
+    const ok = await settleReservation(settleArgs());
+    expect(ok).toBe(false); // explicit degraded — surfaced via /admin/ai-costs, not silent
+    expect(rpcMock).toHaveBeenCalledTimes(3); // bounded retries exhausted
+    expect(insertMock).not.toHaveBeenCalled(); // the RPC may have committed — never blind-insert
   });
 
   it("a failed invocation is settled (success=false), still one row", async () => {

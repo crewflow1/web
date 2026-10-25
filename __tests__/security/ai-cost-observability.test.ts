@@ -12,6 +12,7 @@ import { resolve } from "node:path";
  */
 const ROOT = resolve(__dirname, "..", "..");
 const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
+const codeOf = (ts: string) => ts.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 const sqlOnly = (s: string) =>
   s.split("\n").map((l) => { const i = l.indexOf("--"); return i === -1 ? l : l.slice(0, i); }).join("\n");
 
@@ -63,6 +64,39 @@ describe("writer — additive population, no behaviour change", () => {
     expect(src).toMatch(/is_fallback: input\.isFallback \?\? false/);
     // null (not 0) when cached tokens are unknown
     expect(src).toMatch(/input\.usage\.cachedInputTokens == null\s*\n?\s*\? null/);
+  });
+});
+
+describe("exactly-once settlement — no undercount, no double-count", () => {
+  const gov = read(GOVERNOR);
+  const report = read(REPORT);
+  // Scope to the settleReservation function body (other functions also have `if (error)`).
+  const settleFn = codeOf(
+    gov.slice(
+      gov.indexOf("export async function settleReservation"),
+      gov.indexOf("export async function releaseReservation"),
+    ),
+  );
+  it("settleReservation RETRIES the idempotent RPC on error (never a blind insert)", () => {
+    expect(settleFn).toMatch(/SETTLE_ATTEMPTS/);
+    // The RPC-error branch retries (continue) and does NOT call recordInvocation.
+    const errBranch = settleFn.slice(settleFn.indexOf("if (error) {"), settleFn.indexOf("const row ="));
+    expect(errBranch).toMatch(/continue;/);
+    expect(errBranch).not.toMatch(/recordInvocation/);
+  });
+  it("recordInvocation is used ONLY for the 'not_found' (reservation-gone) case", () => {
+    // Exactly one recordInvocation call in settle, and it sits after the not_found check.
+    expect(settleFn.match(/recordInvocation\(/g)?.length).toBe(1);
+    expect(settleFn.indexOf('outcome === "not_found"')).toBeLessThan(settleFn.indexOf("recordInvocation("));
+  });
+  it("exhausted retries surface an explicit ACCOUNTING DEGRADED signal (not silent)", () => {
+    expect(gov).toMatch(/ACCOUNTING DEGRADED/);
+  });
+  it("degraded visibility reuses the reservations table — no second cost ledger", () => {
+    expect(report).toMatch(/readAccountingHealth/);
+    expect(report).toMatch(/from\(["']ai_cost_reservations["']\)/);
+    // No new ledger table is created by this PR's migration.
+    expect(sqlOnly(read(MIG))).not.toMatch(/create table/i);
   });
 });
 
