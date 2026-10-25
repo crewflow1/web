@@ -29,7 +29,9 @@
 --    (bypasses RLS + grants). Each table was classified by whether a *user-JWT*
 --    code path legitimately reads it:
 --      • 82 relations → touched EXCLUSIVELY by service_role (createAdminClient)
---        or have no app references at all → FULLY LOCKED here.
+--        or have no app references at all → FULLY LOCKED here. (84 on current
+--        main: the 2 #901 hq_sales_sourcing_* tables, created after this census,
+--        are added to the sweep below — re-verified against the live catalogue.)
 --      • 20 relations → a user-JWT path legitimately reads them → authenticated
 --        SELECT KEPT (everything else revoked).
 --    No table has ANY legitimate authenticated INSERT/UPDATE/DELETE path (the
@@ -113,7 +115,7 @@ revoke all privileges on table public.receptionist_review_resolutions from anon,
 grant select on table public.receptionist_review_resolutions to authenticated;
 
 -- ═════════════════════════════════════════════════════════════════════════════
--- CLASS B — FULLY LOCKED (82 relations that hold a live client grant, plus every
+-- CLASS B — FULLY LOCKED (84 relations that hold a live client grant, plus every
 -- current hq_events partition swept dynamically). No client reader of any kind:
 -- every reference is createAdminClient (service_role), or the relation has no app
 -- references at all. Revoke ALL client privileges from anon + authenticated.
@@ -205,6 +207,17 @@ revoke all privileges on table public.hq_sales_research_reports from anon, authe
 revoke all privileges on table public.hq_sales_sources from anon, authenticated;
 revoke all privileges on table public.hq_sales_task_types from anon, authenticated;
 revoke all privileges on table public.hq_sales_timeline_events from anon, authenticated;
+
+-- HQ SALES SOURCING POOL — the Companies House FREE bulk-dataset pipeline (#901,
+-- migration 20261234000000). Both tables are written ONLY by the service-role
+-- streaming importer (scripts/sourcing/companies-house-bulk-import.ts) and read
+-- ONLY by the service_role HQ sourcing runner (server/services/hq-lead-sourcing-
+-- runner.ts) + app/admin/*; no user-JWT path. They were created AFTER this PR's
+-- original census, so they still carry the setup-time default anon/authenticated
+-- grant — re-verified on current main via the live grant census (both show
+-- grantees anon,authenticated; RLS on; zero policies). Added to the C-class sweep.
+revoke all privileges on table public.hq_sales_sourcing_imports from anon, authenticated;
+revoke all privileges on table public.hq_sales_sourcing_pool from anon, authenticated;
 revoke all privileges on table public.hq_settings from anon, authenticated;
 revoke all privileges on table public.hq_timeline from anon, authenticated;
 revoke all privileges on table public.hq_workflow_sagas from anon, authenticated;

@@ -5,7 +5,7 @@ import { anonClient, describeIntegration, serviceClient, userClient } from "../_
  * Slice 1.5 — PR 2 regression guard (real Postgres).
  *
  * Proves BOTH sides of the C-class least-privilege migration
- * supabase/migrations/20261233000000_slice15_pr2_cclass_least_privilege.sql:
+ * supabase/migrations/20261236000000_slice15_pr2_cclass_least_privilege.sql:
  *   • every service-role-only table is now UNREACHABLE by anon + authenticated
  *     (no client grant → 42501); and
  *   • every legitimate authenticated READ the change preserves still SUCCEEDS
@@ -145,6 +145,8 @@ const FULLY_LOCKED = [
   "hq_sales_recommendations",
   "hq_sales_research_reports",
   "hq_sales_sources",
+  "hq_sales_sourcing_imports",
+  "hq_sales_sourcing_pool",
   "hq_sales_task_types",
   "hq_sales_timeline_events",
   "hq_settings",
@@ -162,6 +164,7 @@ const LOCK_PROBE = [
   "ops_backup_runs", // the latent grant recorded by PR 1 for this PR
   "hq_settings",
   "hq_events", // partitioned parent — client path must be closed
+  "hq_sales_sourcing_pool", // #901 sourcing pool — created after original census
   "billing_invoices",
   "email_webhook_events", // reclassified from A.6 keep-SELECT → full lock
   "whatsapp_webhook_events",
@@ -170,7 +173,7 @@ const LOCK_PROBE = [
 ];
 const KEEP_PROBE = ["receptionist_conversations", "internal_notes", "portal_uploads", "admin_alert_state"];
 
-describeIntegration("Slice 1.5 PR2 C-class least-privilege (20261233000000)", () => {
+describeIntegration("Slice 1.5 PR2 C-class least-privilege (20261236000000)", () => {
   let grants: Grant[] = [];
   let token = "";
   let userId = "";
