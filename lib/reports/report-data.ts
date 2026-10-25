@@ -30,7 +30,6 @@ import {
 import { UTILISATION_WINDOW_DAYS } from "@/server/services/intelligence";
 import { loadStockCogsCostRows, type StockClient } from "@/server/services/stock";
 import { trailingDayWindow } from "@/lib/intelligence/window";
-import { bucketPipelineLeads, type RawPipelineLead } from "@/app/(app)/leads/pipeline";
 import { LEAD_STAGES, LEAD_STAGE_LABELS, type LeadStage } from "@/lib/leads/schema";
 import type { ReportKey } from "./registry";
 import {
@@ -314,22 +313,31 @@ async function buildUtilisationDocument(
 // Pipeline (reuses the leads bucketing authority)
 // ---------------------------------------------------------------------------
 
+/** Narrow row shape the pipeline REPORT needs — just the two scalars the
+ *  per-stage aggregate reads. The /leads kanban still reads the full row (score
+ *  inputs + customer/assignee embeds) via `bucketPipelineLeads`; the report does
+ *  not, so it must not pay for columns and embeds it discards. */
+type PipelineAggRow = { status: string; estimated_value: number | string | null };
+
 async function buildPipelineDocument(
   client: ReportsDb,
   orgId: string,
   now: Date,
 ): Promise<ReportDocument> {
-  const { data, error } = await fetchAllRows<RawPipelineLead>((from, to) =>
+  // Read ONLY status + estimated_value (org-pinned, loud, F-1-paged) and DROP the
+  // two unused resource embeds (customer, assigned) the kanban needs — the report
+  // emits only count + Σ(estimated_value) per stage, never the per-card score,
+  // sort or contact data. The arithmetic below mirrors bucketPipelineLeads 1:1:
+  //   - the LEAD_STAGES membership gate runs FIRST, so `archived`/legacy/unknown
+  //     statuses land in no stage AND are excluded from totalValue (identical to
+  //     the kanban authority's pinned exclusion contract); and
+  //   - each value coerces via Number(estimated_value ?? 0), the same per-lead
+  //     number the kanban accumulates — so counts, per-stage totals, stage order
+  //     and totalValue are byte-identical to the previous full-row path.
+  const { data, error } = await fetchAllRows<PipelineAggRow>((from, to) =>
     client
       .from("leads")
-      .select(
-        `
-        id, status, source, urgency, postcode, service, estimated_value,
-        last_activity_at, customer_id, assigned_to,
-        customer:customers ( id, name ),
-        assigned:users!leads_assigned_to_fkey ( id, full_name, email )
-      `,
-      )
+      .select("status, estimated_value")
       .eq("org_id", orgId)
       .neq("status", "archived")
       .order("last_activity_at", { ascending: false })
@@ -338,13 +346,41 @@ async function buildPipelineDocument(
   );
   if (error) throw readFailure("reports: pipeline leads", error);
 
-  const { byStage, totalValue } = bucketPipelineLeads((data ?? []) as RawPipelineLead[]);
+  const counts = {
+    new: 0,
+    contacted: 0,
+    qualified: 0,
+    quoted: 0,
+    won: 0,
+    lost: 0,
+    job_booked: 0,
+  } as Record<LeadStage, number>;
+  const values = {
+    new: 0,
+    contacted: 0,
+    qualified: 0,
+    quoted: 0,
+    won: 0,
+    lost: 0,
+    job_booked: 0,
+  } as Record<LeadStage, number>;
+  let totalValue = 0;
 
-  const stages: PipelineStageRow[] = (LEAD_STAGES as readonly LeadStage[]).map((stage) => {
-    const leads = byStage[stage];
-    const value = round2(leads.reduce((s, l) => s + (l.estimated_value ?? 0), 0));
-    return { stage, label: LEAD_STAGE_LABELS[stage], count: leads.length, value };
-  });
+  for (const row of (data ?? []) as PipelineAggRow[]) {
+    if (!(LEAD_STAGES as readonly string[]).includes(row.status)) continue;
+    const stage = row.status as LeadStage;
+    const value = Number(row.estimated_value ?? 0);
+    counts[stage] += 1;
+    values[stage] += value;
+    totalValue += value;
+  }
+
+  const stages: PipelineStageRow[] = (LEAD_STAGES as readonly LeadStage[]).map((stage) => ({
+    stage,
+    label: LEAD_STAGE_LABELS[stage],
+    count: counts[stage],
+    value: round2(values[stage]),
+  }));
 
   return pipelineToDocument({
     stages,
