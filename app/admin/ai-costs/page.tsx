@@ -11,6 +11,7 @@ import {
   type EmployeeLimitControlRow,
   type OrgCeilingControlRow,
 } from "@/server/services/ai-budget-controls";
+import { buildAiCostReport, readAccountingHealth, type AiCostReport, type AiCostWindow } from "@/server/services/ai-cost-report";
 import { formatPence } from "@/lib/ai/governor";
 import { AI_FEATURE_KEYS, AI_FEATURES, AI_TIERS, TIER_MODEL } from "@/lib/ai/governor/registry";
 import type { BudgetStatus } from "@/lib/ai/governor/policy";
@@ -87,6 +88,19 @@ export default async function AiCostsPage({ searchParams }: { searchParams: SP }
   const trend = await buildAiCostTrend();
   const controls = await buildAiBudgetControls();
   const { readiness } = snap;
+  // Phase-0 observability windows. Best-effort: a report read error degrades this
+  // one panel (shown with the error) rather than breaking the whole page.
+  const report = await buildAiCostReport().catch((e: unknown) => {
+    return { error: e instanceof Error ? e.message : String(e) } as const;
+  });
+  // Accounting-health probe: can we guarantee every completed invocation is in the
+  // ledger? A read error is itself a degraded state (fail toward "degraded").
+  const health = await readAccountingHealth().catch((e: unknown) => ({
+    degraded: true as const,
+    stuckReservations: -1,
+    oldestStuckMinutes: null,
+    probeError: e instanceof Error ? e.message : String(e),
+  }));
 
   return (
     <div className="space-y-6">
@@ -116,6 +130,32 @@ export default async function AiCostsPage({ searchParams }: { searchParams: SP }
           {errorMsg}
         </p>
       ) : null}
+
+      {/* Accounting-health banner — flags if completed spend may be unaccounted. */}
+      {health.degraded ? (
+        <p className="rounded-md border border-red-300 bg-red-50 p-3 text-sm font-medium text-red-900" role="alert">
+          ⚠️ ACCOUNTING DEGRADED — cost reporting may be incomplete.{" "}
+          {"probeError" in health
+            ? `The accounting-health probe failed: ${health.probeError}.`
+            : `${health.stuckReservations} reservation(s) are past their TTL without a confirmed settlement${
+                health.oldestStuckMinutes != null ? ` (oldest ${health.oldestStuckMinutes} min)` : ""
+              }. Some completed invocations may not be in the ledger until reconciled.`}
+        </p>
+      ) : (
+        <p className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800" role="status">
+          Accounting healthy — every settled invocation is accounted; no reservations past TTL unsettled.
+        </p>
+      )}
+
+      {/* 0. Observability windows — today / this week / this month (Phase 0). */}
+      {"error" in report ? (
+        <section className="rounded-xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+          <h2 className="text-base font-semibold text-amber-900">Spend windows</h2>
+          <p className="mt-1 text-sm text-amber-800">Cost report unavailable: {report.error}</p>
+        </section>
+      ) : (
+        <WindowsSection report={report} />
+      )}
 
       {/* 1. Activation — the honest headline, first. */}
       <section
@@ -869,6 +909,75 @@ function OrgRow({ org }: { org: AiCostOrgRow }) {
         ) : null}
       </td>
     </tr>
+  );
+}
+
+function WindowCard({ w, title }: { w: AiCostWindow; title: string }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <div className="flex items-baseline justify-between">
+        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+        <span className="text-lg font-bold text-slate-900">{formatPence(w.costPence)}</span>
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600">
+        <dt>Invocations</dt><dd className="text-right tabular-nums text-slate-900">{w.invocations.toLocaleString("en-GB")}</dd>
+        <dt>Input tokens</dt><dd className="text-right tabular-nums text-slate-900">{w.inputTokens.toLocaleString("en-GB")}</dd>
+        <dt>Output tokens</dt><dd className="text-right tabular-nums text-slate-900">{w.outputTokens.toLocaleString("en-GB")}</dd>
+        <dt>Cached tokens</dt><dd className="text-right tabular-nums text-slate-900">{w.cachedInputTokens.toLocaleString("en-GB")}</dd>
+        <dt>Latency p50 / p95</dt><dd className="text-right tabular-nums text-slate-900">{Math.round(w.latencyP50Ms)} / {Math.round(w.latencyP95Ms)} ms</dd>
+        <dt>Failures</dt><dd className="text-right tabular-nums text-slate-900">{w.failures}</dd>
+        <dt>Fallback events</dt><dd className="text-right tabular-nums text-slate-900">{w.fallbackEvents}</dd>
+      </dl>
+    </div>
+  );
+}
+
+function BreakdownList({ title, rows }: { title: string; rows: { key: string; costPence: number; count: number }[] }) {
+  return (
+    <div>
+      <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</h4>
+      {rows.length === 0 ? (
+        <p className="mt-1 text-xs text-slate-400">No spend this month.</p>
+      ) : (
+        <ul className="mt-1 space-y-0.5 text-xs text-slate-700">
+          {rows.slice(0, 8).map((r) => (
+            <li key={r.key} className="flex justify-between gap-3">
+              <span className="truncate">{r.key}</span>
+              <span className="tabular-nums text-slate-900">{formatPence(r.costPence)} · {r.count}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Phase-0 observability: AI spend by window (today / this week / this month) and,
+ * for the month, by provider / model / engine. Reads the service-role
+ * `ai_cost_window` rollup over the existing ai_invocations ledger. "Engine" is
+ * 'hosted' for every call today — the column that will show 'local' as the
+ * local-first roadmap lands. All zeros while the governor is dark — by design.
+ */
+function WindowsSection({ report }: { report: AiCostReport }) {
+  const m = report.month;
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-base font-semibold text-slate-900">Spend windows</h2>
+        <span className="text-xs text-slate-500">Europe/London · live from the invocation ledger</span>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <WindowCard w={report.today} title="Today" />
+        <WindowCard w={report.week} title="This week" />
+        <WindowCard w={report.month} title="This month" />
+      </div>
+      <div className="mt-5 grid gap-5 sm:grid-cols-3">
+        <BreakdownList title="This month · by provider" rows={m.byProvider} />
+        <BreakdownList title="This month · by model" rows={m.byModel} />
+        <BreakdownList title="This month · by engine" rows={m.byEngine} />
+      </div>
+    </section>
   );
 }
 

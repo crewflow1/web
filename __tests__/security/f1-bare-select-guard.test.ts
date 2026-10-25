@@ -1138,6 +1138,13 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   // outside this scanner's scope.
   hq_sales_sourcing_pool:
     "bounded promotion batch: readEligiblePool .limit(min(SOURCING_BATCH_LIMIT*3,1000))=30 newest-first, promote <=10/week; the pool is the catalogue and promotion is an intentional trickle, not a completeness read",
+  // ai_cost_reservations (Phase-0 accounting health, server/services/ai-cost-report.ts
+  // readAccountingHealth): a head-only COUNT (no rows) of reservations past TTL still
+  // 'reserved', plus a single .limit(1) oldest-stuck read. Bounded by construction —
+  // a degraded-accounting indicator, never a completeness scan. The governor's other
+  // reservation reads are per-reservation by id (FOR UPDATE in the settle RPC).
+  ai_cost_reservations:
+    "bounded: head-count + .limit(1) oldest-stuck probe (accounting-health indicator); never a full-set read",
   // staff_compensation (20261218) — the self-or-admin-gated home of hourly_pay +
   // emergency_contact (moved off co-worker-readable public.users). EVERY set-read
   // is an id-batch `.in('user_id', memberIds)` where memberIds is drawn from an
