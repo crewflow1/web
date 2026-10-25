@@ -24,6 +24,7 @@ import {
   type ConvertibleLead,
 } from "@/lib/leads/convert";
 import { recomputeLeadScore } from "@/server/services/lead-score";
+import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
 
 /**
  * Lead pipeline server actions.
@@ -100,6 +101,14 @@ export async function createLead(
   // Refresh the lead-score cache from the row as just written (non-fatal on
   // failure — the pipeline + detail pages compute the score live regardless).
   await recomputeLeadScore(supabase, ctx.org.id, data.id);
+
+  // Funnel: lead created (fires after a confirmed insert). No-op until analytics
+  // are configured + consent-granted. org_id + the source enum; no PII.
+  trackEvent(ANALYTICS_EVENTS.LEAD_CREATED, {
+    org_id: ctx.org.id,
+    source: result.data.source,
+  });
+
   revalidatePath("/leads");
   return formSuccess({
     successMessage: "Lead saved.",

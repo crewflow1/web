@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireManagementApi } from "@/server/auth/session";
 import { createInvoiceSchema, INVOICE_STATUSES } from "@/lib/invoices/schema";
 import { invoiceDueDate } from "@/lib/invoices/due-date";
+import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
 
 /**
  * Invoices list + create-from-quote.
@@ -181,6 +182,14 @@ export async function POST(request: NextRequest) {
     console.error("[invoices] insert failed", insErr);
     return respond.error(500, "Failed to create invoice");
   }
+
+  // Funnel: invoice created (fires after a confirmed insert; this route always
+  // bills from an accepted quote). No-op until analytics are configured +
+  // consent-granted. org_id + an origin enum; no PII, no money.
+  trackEvent(ANALYTICS_EVENTS.INVOICE_CREATED, {
+    org_id: ctx.org.id,
+    origin: "from_quote",
+  });
 
   return respond.json(inserted, { status: 201 });
 }

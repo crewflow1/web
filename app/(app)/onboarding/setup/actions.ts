@@ -10,6 +10,7 @@ import {
   type ChecklistStepId,
 } from "@/lib/onboarding/checklist";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
+import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
 
 /**
  * Guided onboarding server actions.
@@ -70,6 +71,12 @@ export async function markStarted(): Promise<void> {
   const state = await readState();
   if (typeof state.started_at === "string") return;
   await writeState({ ...state, started_at: new Date().toISOString() });
+
+  // Funnel: onboarding started (fires once per org — the guard above returns
+  // early once started_at is stamped). No-op until analytics are configured +
+  // consent-granted (lib/analytics/events.ts). org_id only, no PII.
+  const { ctx } = await requireOrgContext();
+  trackEvent(ANALYTICS_EVENTS.ONBOARDING_STARTED, { org_id: ctx.org.id });
 }
 
 /**
@@ -89,6 +96,17 @@ export async function markCompleted(): Promise<void> {
   // correlation_id) in automation_runs, best-effort — a dispatch failure never
   // blocks the completion stamp.
   const { ctx } = await requireOrgContext();
+
+  // Funnel: onboarding completed (fires once per org — same once-per-org guard
+  // as the dispatch below). No-op until analytics are configured + consent-
+  // granted. org_id + a skipped-steps count only; no PII.
+  trackEvent(ANALYTICS_EVENTS.ONBOARDING_COMPLETED, {
+    org_id: ctx.org.id,
+    steps_skipped: Array.isArray(state.dismissed_steps)
+      ? state.dismissed_steps.length
+      : 0,
+  });
+
   await dispatchAutomation({
     type: "onboarding.completed",
     org_id: ctx.org.id,

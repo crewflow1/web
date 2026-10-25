@@ -41,6 +41,7 @@ import {
   notifyOwnersOfLeaveRequest,
   notifyStaffOfLeaveDecision,
 } from "@/lib/email/send-leave";
+import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
 
 /**
  * Staff CRUD + rota + leave server actions.
@@ -162,6 +163,14 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
         error: "Couldn't send the invite email. Check the address and try again.",
       };
     }
+    // Funnel: staff invited (new-email magic-link path). No-op until analytics
+    // are configured + consent-granted. org_id + role/outcome enums; no PII.
+    trackEvent(ANALYTICS_EVENTS.STAFF_ADDED, {
+      org_id: ctx.org.id,
+      role_type: data.role,
+      outcome: "invite_sent",
+    });
+
     revalidatePath("/staff");
     return {
       ok: true,
@@ -228,6 +237,14 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
       .from("staff_compensation")
       .upsert({ user_id: existing.id, ...compUpdates, updated_by: user.id }, { onConflict: "user_id" });
   }
+
+  // Funnel: staff invited (existing-user direct-add path). No-op until analytics
+  // are configured + consent-granted. org_id + role/outcome enums; no PII.
+  trackEvent(ANALYTICS_EVENTS.STAFF_ADDED, {
+    org_id: ctx.org.id,
+    role_type: data.role,
+    outcome: "added",
+  });
 
   revalidatePath("/staff");
   return {

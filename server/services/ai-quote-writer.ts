@@ -44,6 +44,7 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
 import { requireOrgContext, type OrgContext } from "@/server/auth/session";
 import { getTextProvider } from "@/lib/ai/text";
 import {
@@ -496,6 +497,15 @@ export async function generateQuoteDraft(
   if (!draftId) {
     return { status: "failed", error: "the draft could not be saved" };
   }
+
+  // Funnel: AI feature used (fires only when a draft is produced, validated and
+  // stored — the single success outcome of this reach-a-model path, which is
+  // event-driven and never on a render path). No-op until analytics are
+  // configured + consent-granted. org_id + a feature enum; no PII, no content.
+  trackEvent(ANALYTICS_EVENTS.AI_DRAFT_CREATED, {
+    org_id: ctx.org.id,
+    feature: "quote_writer",
+  });
 
   return {
     status: "created",

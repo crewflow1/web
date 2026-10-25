@@ -24,6 +24,7 @@ import { loadJobForOrg } from "@/lib/jobs/load";
 import { verifyQuoteReferences } from "@/lib/crm/reference-integrity";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { storeSignatureImage } from "@/server/services/signature-capture";
+import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
 import type { Database } from "@/lib/supabase/types";
 import {
   type FormState,
@@ -272,6 +273,14 @@ export async function createQuote(
       echoValuesFromForm(formData),
     );
   }
+
+  // Funnel: quote created (fires after the parent quote row is confirmed
+  // inserted). No-op until analytics are configured + consent-granted. org_id +
+  // a line-item count; no PII, no money.
+  trackEvent(ANALYTICS_EVENTS.QUOTE_CREATED, {
+    org_id: ctx.org.id,
+    line_count: parsed.data.line_items.length,
+  });
 
   // Insert line items.
   const rows: LineItemInsert[] = parsed.data.line_items.map((li, idx) => ({
@@ -709,6 +718,11 @@ export async function sendQuote(id: string) {
     redirect(`/quotes/${id}?error=send_failed`);
   }
 
+  // Funnel: quote sent (fires after the status transition to 'sent' is
+  // confirmed, before the redirect below). No-op until analytics are configured
+  // + consent-granted. org_id only; no PII.
+  trackEvent(ANALYTICS_EVENTS.QUOTE_SENT, { org_id: ctx.org.id });
+
   // Dispatch `quote.sent` so the automation OS can run custom rules on it
   // (e.g. "when a quote is sent, remind me to follow up"). sendQuote is the sole
   // path that transitions a quote to 'sent', so coverage is complete. Idempotent
@@ -1084,6 +1098,15 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
     redirect(`/quotes/${id}?error=accept_failed`);
   }
 
+  // Funnel: quote accepted via the owner-on-behalf path (the pre-existing
+  // 'accepted' short-circuit above means this fires only on the real
+  // transition, before the downstream redirects). No-op until analytics are
+  // configured + consent-granted. org_id + channel enum; no PII, no money.
+  trackEvent(ANALYTICS_EVENTS.QUOTE_ACCEPTED, {
+    org_id: quote.org_id,
+    channel: "owner",
+  });
+
   // Auto-create a job (status=new) from the accepted quote — mirrors the
   // public-portal path so an owner-accepted quote produces the same
   // job → invoice chain. Skipped for variations (they already carry the
@@ -1341,6 +1364,17 @@ export async function acceptQuoteByToken(
     console.error("[quotes] public accept failed", updErr);
     return { ok: false, error: "Couldn't record acceptance" };
   }
+
+  // Funnel: quote accepted via the public portal token (the 'accepted'
+  // short-circuit above means this fires only on the real transition). Emitted
+  // SERVER-SIDE with org_id + channel enum ONLY — never the customer's identity,
+  // and never via the consent-gated browser sink the portal deliberately omits
+  // (lib/analytics/consent.ts isFirstPartySurface). No-op until analytics are
+  // configured + consent-granted.
+  trackEvent(ANALYTICS_EVENTS.QUOTE_ACCEPTED, {
+    org_id: quote.org_id,
+    channel: "portal_token",
+  });
 
   // Phase G — write into the polymorphic signatures table so the operator
   // can see the full e-sign audit trail on the quote detail page. Customer
