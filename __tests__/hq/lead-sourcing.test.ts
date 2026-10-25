@@ -87,7 +87,8 @@ const poolRow = (number: string, name: string) => ({
   sic_codes: ["41202"],
   matched_sic: ["41202"],
   incorporation_date: "2019-03-14",
-  snapshot_date: "2026-10-01",
+  // Real pool column (the table has first_/last_snapshot_date, never `snapshot_date`).
+  last_snapshot_date: "2026-10-01",
 });
 
 const CTX = {

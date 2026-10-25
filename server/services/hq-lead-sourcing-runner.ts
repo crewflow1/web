@@ -353,7 +353,7 @@ export type PoolCandidate = {
 };
 
 /** LOUD read of up to `limit` un-promoted, active pool rows (newest snapshot first). */
-async function readEligiblePool(limit: number): Promise<PoolCandidate[]> {
+export async function readEligiblePool(limit: number): Promise<PoolCandidate[]> {
   const admin = createAdminClient();
   const { data, error } = await (
     admin.from("hq_sales_sourcing_pool" as never) as unknown as {
@@ -372,11 +372,15 @@ async function readEligiblePool(limit: number): Promise<PoolCandidate[]> {
     }
   )
     .select(
-      "id, company_number, name, status, postcode, sic_codes, matched_sic, incorporation_date, snapshot_date",
+      "id, company_number, name, status, postcode, sic_codes, matched_sic, incorporation_date, last_snapshot_date",
     )
     .eq("active", true)
     .eq("promoted", false)
-    .order("snapshot_date", { ascending: false })
+    // Newest snapshot first. The pool has NO `snapshot_date` column — it tracks
+    // `first_snapshot_date` / `last_snapshot_date`; `last_snapshot_date` is the
+    // canonical "most recently seen" field and matches the partial index
+    // `(active, promoted, last_snapshot_date desc) where active and not promoted`.
+    .order("last_snapshot_date", { ascending: false })
     // Provably <=1000 (F-1): a deliberately-bounded promotion batch — callers pass
     // SOURCING_BATCH_LIMIT*3 (=30); the clamp is the F-1 honest-bound idiom.
     .limit(Math.min(Math.max(1, limit), 1000));
@@ -390,7 +394,7 @@ async function readEligiblePool(limit: number): Promise<PoolCandidate[]> {
     sicCodes: Array.isArray(r.sic_codes) ? (r.sic_codes as string[]) : [],
     matchedSic: Array.isArray(r.matched_sic) ? (r.matched_sic as string[]) : [],
     incorporationDate: (r.incorporation_date as string | null) ?? null,
-    snapshotDate: (r.snapshot_date as string | null) ?? null,
+    snapshotDate: (r.last_snapshot_date as string | null) ?? null,
   }));
 }
 
