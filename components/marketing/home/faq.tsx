@@ -18,7 +18,7 @@ const FAQS = [
   },
   {
     q: "Is my data safe?",
-    a: "Daily automated backups with point-in-time recovery and storage redundancy, hosted to UK standards under UK GDPR.",
+    a: "Daily automated backups with encrypted off-site copies and storage redundancy, hosted to UK standards under UK GDPR.",
   },
   {
     q: "What does it cost?",
