@@ -136,6 +136,24 @@ async function run(): Promise<void> {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   log("start", { snapshot: args.snapshot, dryRun: args.dryRun, force: args.force });
 
+  // ── ACTIVATION GUARD ────────────────────────────────────────────────────────
+  // Production DB writes require an EXPLICIT enable flag. Merging this PR to the
+  // default branch must NOT silently begin monthly ingestion: with the flag absent
+  // or not "true", any write-mode run (scheduled OR manual non-dry-run) exits
+  // SAFELY with an auditable "disabled" result and writes NOTHING. A --dry-run never
+  // writes, so validation stays possible without the flag. Activation is a single
+  // config flip (set the `CH_BULK_IMPORT_ENABLED` GitHub Actions variable to "true"),
+  // never a code change — and it is a VARIABLE, not a new secret.
+  const enabled = process.env.CH_BULK_IMPORT_ENABLED?.trim().toLowerCase() === "true";
+  if (!args.dryRun && !enabled) {
+    log(
+      "DISABLED — production bulk import is not activated; no DB writes. " +
+        "Set the CH_BULK_IMPORT_ENABLED variable to 'true' to enable, or pass --dry-run to validate.",
+      { snapshot: args.snapshot, activated: false },
+    );
+    return; // exit 0 — an auditable, side-effect-free "disabled" completion
+  }
+
   let db: SupabaseClient | null = null;
   if (!args.dryRun) {
     if (!url || !key) throw new Error("NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required (omit with --dry-run)");

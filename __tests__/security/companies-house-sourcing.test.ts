@@ -105,6 +105,45 @@ describe("importer — writes only pool tables, no outreach/officer, dry-run + i
   });
 });
 
+describe("importer — activation guard (merging must NOT auto-start ingestion)", () => {
+  const src = read(IMPORTER);
+  const code = codeOf(src);
+  it("requires CH_BULK_IMPORT_ENABLED=true for any write-mode run", () => {
+    expect(code).toMatch(/CH_BULK_IMPORT_ENABLED/);
+    // disabled unless dry-run OR explicitly enabled
+    expect(code).toMatch(/!args\.dryRun\s*&&\s*!enabled/);
+    expect(src).toMatch(/DISABLED/);
+  });
+  it("evaluates the guard BEFORE any DB connect or download (no side effects while disabled)", () => {
+    const guardAt = code.indexOf("CH_BULK_IMPORT_ENABLED");
+    const connectAt = code.indexOf("createClient(");
+    const fetchAt = code.indexOf("await fetch(");
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(guardAt).toBeLessThan(connectAt);
+    expect(guardAt).toBeLessThan(fetchAt);
+  });
+  it("discards the raw file in a finally block", () => {
+    expect(code).toMatch(/finally\s*\{[\s\S]*rm\(dir,\s*\{\s*recursive:\s*true/);
+  });
+});
+
+describe("workflow — no accidental production activation / fork exposure", () => {
+  const wf = read(".github/workflows/companies-house-bulk-sourcing.yml");
+  // Strip YAML comment lines so a comment mentioning "pull_request" doesn't false-positive.
+  const wfExec = wf.split("\n").map((l) => (l.trimStart().startsWith("#") ? "" : l)).join("\n");
+  it("has NO pull_request trigger (forks cannot run it or reach secrets)", () => {
+    expect(wfExec).not.toMatch(/\bpull_request\b/);
+    expect(wfExec).toMatch(/\bschedule:/);
+    expect(wfExec).toMatch(/\bworkflow_dispatch:/);
+  });
+  it("passes the activation variable through to the importer", () => {
+    expect(wf).toMatch(/CH_BULK_IMPORT_ENABLED:\s*\$\{\{\s*vars\.CH_BULK_IMPORT_ENABLED\s*\}\}/);
+  });
+  it("uses least privilege (contents: read)", () => {
+    expect(wf).toMatch(/permissions:\s*\n\s*contents:\s*read/);
+  });
+});
+
 describe("canonical SIC source", () => {
   it("is defined once in the shared module and is not server-only", () => {
     const sic = read(SIC);

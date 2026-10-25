@@ -8,11 +8,20 @@
 #
 # SAFETY / ACTIVATION:
 #   • The `schedule` trigger only fires from the repository's DEFAULT branch, so this
-#     workflow is DORMANT on the feature branch — it cannot run against production
-#     until merged AND the two repo secrets below are configured.
+#     workflow is DORMANT on the feature branch.
+#   • ACTIVATION GUARD (merging this PR does NOT start monthly ingestion): the importer
+#     makes NO production DB writes unless the GitHub Actions VARIABLE
+#     `CH_BULK_IMPORT_ENABLED` is exactly "true". Absent/false ⇒ every write-mode run
+#     (scheduled OR manual non-dry-run) exits safely with an auditable "DISABLED"
+#     result and writes nothing. Activation = set that one variable to "true" (a
+#     config flip, not a new secret, not a code change). Until then: PRODUCTION BULK
+#     IMPORT ACTIVE: NO.
+#   • Only `schedule` + `workflow_dispatch` triggers — NO `pull_request` trigger, so a
+#     fork/PR can never run this workflow or reach the production secrets.
 #   • It writes ONLY the service-role-only pool tables; it creates no prospects, sends
 #     nothing, and does no officer enrichment.
-#   • Manual runs default to --dry-run (no DB writes) for safe testing.
+#   • Manual runs default to --dry-run (no DB writes) for safe testing; a manual
+#     non-dry-run still requires the activation variable (same guard).
 #   • Required repo secrets (Actions → Secrets): NEXT_PUBLIC_SUPABASE_URL,
 #     SUPABASE_SERVICE_ROLE_KEY. The service key never appears in logs.
 
@@ -56,6 +65,9 @@ jobs:
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # ACTIVATION GUARD: absent/false ⇒ the importer makes NO DB writes (auditable
+          # "DISABLED" exit). Set this repo VARIABLE to "true" to activate — no new secret.
+          CH_BULK_IMPORT_ENABLED: ${{ vars.CH_BULK_IMPORT_ENABLED }}
           # Scheduled runs: real import. Manual runs: honour the dry_run input (default true).
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
           SNAPSHOT: ${{ inputs.snapshot }}
