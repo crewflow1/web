@@ -487,14 +487,17 @@ export default async function EditQuotePage({
               </form>
             ) : null}
 
-            {/* Approved → mark as sent (status only) */}
+            {/* Approved → mark as sent (status only, no email). Secondary to
+                the real "Email quote PDF" action below, which is what actually
+                reaches the customer. This is the exception path for operators
+                who sent the quote by another channel. */}
             {status === "approved" ? (
               <form action={sendQuote.bind(null, id)}>
                 <button
                   type="submit"
-                  className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-slate-800"
+                  className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
                 >
-                  Mark as sent
+                  Mark as sent (no email)
                 </button>
               </form>
             ) : null}
