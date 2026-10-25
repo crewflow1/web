@@ -48,9 +48,9 @@ describe("buildAiCostReport", () => {
       fallbackEvents: 2,
       latencyP95Ms: 3400,
     });
-    expect(report.month.byProvider[0]).toEqual({ key: "anthropic", count: 3, costPence: 42, inputTokens: undefined, outputTokens: undefined, cachedInputTokens: undefined });
-    expect(report.month.byFeature[0]).toMatchObject({ key: "quote.writer_draft", count: 2, costPence: 40, inputTokens: 900 });
-    expect(report.month.topOrgs[0].key).toBe("org-1");
+    expect(report.month.byProvider[0]!).toEqual({ key: "anthropic", count: 3, costPence: 42, inputTokens: undefined, outputTokens: undefined, cachedInputTokens: undefined });
+    expect(report.month.byFeature[0]!).toMatchObject({ key: "quote.writer_draft", count: 2, costPence: 40, inputTokens: 900 });
+    expect(report.month.topOrgs[0]!.key).toBe("org-1");
   });
 
   it("coerces string numerics and tolerates missing arrays", async () => {

@@ -10,13 +10,19 @@
 
 -- ── Additive columns (defaulted, so every existing writer/row is unaffected) ──
 alter table public.ai_invocations
-  -- Cached input tokens (prompt-cache hits), where the provider reports them.
-  -- 0 until the provider adapters surface cache usage; never fabricated.
-  add column if not exists cached_input_tokens integer not null default 0
-    check (cached_input_tokens >= 0),
-  -- Which engine served the call. Today every governed call is 'hosted'; the
-  -- column is the seam the local-first roadmap will populate ('local') and keeps
-  -- deterministic fallbacks nameable if a caller ever records one.
+  -- Cached input tokens (prompt-cache hits). NULLABLE ON PURPOSE: null = the
+  -- provider did not report it / it was not captured (the honest state today, for
+  -- every historical row and every current writer). A non-null number means the
+  -- provider actually reported that many cached tokens. We never write 0 for
+  -- "unknown" — 0 would falsely claim the provider reported zero cache hits.
+  add column if not exists cached_input_tokens integer
+    check (cached_input_tokens is null or cached_input_tokens >= 0),
+  -- Which engine served the call. Default 'hosted' is FACTUALLY CORRECT for every
+  -- historical and current row, not fabricated provenance: no local-inference
+  -- engine has ever existed in CrewFlow, so every ai_invocations row to date WAS a
+  -- hosted-provider call (ai_invocations.provider is NOT NULL and names that
+  -- vendor). The column is the seam the local-first roadmap will populate ('local')
+  -- and keeps a deterministic fallback nameable if a caller ever records one.
   add column if not exists engine text not null default 'hosted'
     check (engine in ('hosted', 'local', 'deterministic')),
   -- True when THIS call was a fallback after a cheaper/local engine was skipped
@@ -24,7 +30,7 @@ alter table public.ai_invocations
   add column if not exists is_fallback boolean not null default false;
 
 comment on column public.ai_invocations.cached_input_tokens is
-  'Prompt-cache input tokens where the provider reports them; 0 otherwise (never fabricated).';
+  'Prompt-cache input tokens the provider reported; NULL = not reported / not captured (never 0-for-unknown).';
 comment on column public.ai_invocations.engine is
   'hosted | local | deterministic — which engine served the call (today: hosted).';
 comment on column public.ai_invocations.is_fallback is
@@ -74,7 +80,8 @@ as $$
     select
       (select coalesce(jsonb_agg(r), '[]'::jsonb) from (
         select feature as key, count(*) n, sum(estimated_cost_pence) pence,
-               sum(input_tokens) in_tok, sum(output_tokens) out_tok, sum(cached_input_tokens) cached_tok
+               sum(input_tokens) in_tok, sum(output_tokens) out_tok,
+               coalesce(sum(cached_input_tokens), 0) cached_tok
         from win group by feature order by sum(estimated_cost_pence) desc) r) as by_feature,
       (select coalesce(jsonb_agg(r), '[]'::jsonb) from (
         select provider as key, count(*) n, sum(estimated_cost_pence) pence

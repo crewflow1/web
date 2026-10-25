@@ -25,8 +25,11 @@ describe("migration — additive + service-role-only rollup", () => {
     expect(sql).toMatch(/alter table public\.ai_invocations/i);
     expect(sql).not.toMatch(/create table/i);
   });
-  it("adds the three observability columns with safe defaults", () => {
-    expect(sql).toMatch(/add column if not exists cached_input_tokens integer not null default 0/i);
+  it("adds the three observability columns; cached is NULLABLE (null = unknown, honest)", () => {
+    // cached_input_tokens is nullable (no NOT NULL / no default 0) — null = provider
+    // did not report, never a fabricated zero.
+    expect(sql).toMatch(/add column if not exists cached_input_tokens integer\s*\n\s*check \(cached_input_tokens is null or cached_input_tokens >= 0\)/i);
+    expect(sql).not.toMatch(/cached_input_tokens integer not null default 0/i);
     expect(sql).toMatch(/add column if not exists engine text not null default 'hosted'/i);
     expect(sql).toMatch(/add column if not exists is_fallback boolean not null default false/i);
   });
@@ -58,7 +61,8 @@ describe("writer — additive population, no behaviour change", () => {
   it("records engine + is_fallback + cached tokens with honest defaults", () => {
     expect(src).toMatch(/engine: input\.engine \?\? "hosted"/);
     expect(src).toMatch(/is_fallback: input\.isFallback \?\? false/);
-    expect(src).toMatch(/cached_input_tokens: Math\.max\(0, Math\.round\(input\.usage\.cachedInputTokens \|\| 0\)\)/);
+    // null (not 0) when cached tokens are unknown
+    expect(src).toMatch(/input\.usage\.cachedInputTokens == null\s*\n?\s*\? null/);
   });
 });
 

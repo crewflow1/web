@@ -465,7 +465,11 @@ export async function recordInvocation(input: RecordInvocationInput): Promise<bo
         model: input.usage.model,
         input_tokens: Math.max(0, Math.round(input.usage.inputTokens || 0)),
         output_tokens: Math.max(0, Math.round(input.usage.outputTokens || 0)),
-        cached_input_tokens: Math.max(0, Math.round(input.usage.cachedInputTokens || 0)),
+        // null when the provider did not report cached tokens — never 0-for-unknown.
+        cached_input_tokens:
+          input.usage.cachedInputTokens == null
+            ? null
+            : Math.max(0, Math.round(input.usage.cachedInputTokens)),
         estimated_cost_pence: Math.max(0, Math.round(costPence)),
         latency_ms: Math.max(0, Math.round(input.latencyMs || 0)),
         engine: input.engine ?? "hosted",
