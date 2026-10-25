@@ -142,6 +142,11 @@ describe("workflow — no accidental production activation / fork exposure", () 
   it("uses least privilege (contents: read)", () => {
     expect(wf).toMatch(/permissions:\s*\n\s*contents:\s*read/);
   });
+  it("schedule cannot bypass the guard: DRY_RUN only honours dry_run on workflow_dispatch", () => {
+    // On a `schedule` event this expression is false ⇒ write-mode ⇒ still requires
+    // CH_BULK_IMPORT_ENABLED. A scheduled run can neither force dry-run nor skip the guard.
+    expect(wf).toMatch(/DRY_RUN:\s*\$\{\{\s*github\.event_name == 'workflow_dispatch' && inputs\.dry_run\s*\}\}/);
+  });
 });
 
 describe("canonical SIC source", () => {
