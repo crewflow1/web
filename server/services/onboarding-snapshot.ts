@@ -18,6 +18,20 @@ import type {
  * any other keys the rest of the app writes there.
  */
 
+/**
+ * Minimal quote-row shape the dashboard can hand in so this service derives its
+ * all-quotes count in-memory instead of issuing its own `quotes` read. The
+ * dashboard's coreWave already fetches every org quote (a strict superset of
+ * these columns) under the same user JWT — see the A2 reuse in the dashboard
+ * page. `status`/`accepted_at` are unused here (the count is unfiltered) but are
+ * carried so the one row type serves the retention snapshot too.
+ */
+export type DashboardQuoteRow = {
+  status: string | null;
+  accepted_at: string | null;
+  created_at: string;
+};
+
 export type DismissedStepsJson = {
   dismissed_steps?: string[];
   /** Best-effort stamp of when the operator first opened /onboarding/setup. */
@@ -30,6 +44,17 @@ export type DismissedStepsJson = {
 
 export async function buildOnboardingSnapshot(
   orgId: string,
+  opts?: {
+    /**
+     * Pre-fetched org quote rows (or their in-flight promise) to derive the
+     * all-quotes count from, instead of issuing a dedicated `quotes` count
+     * read. The dashboard already fetches the full quote ledger in its
+     * coreWave; passing it in avoids a duplicate `quotes` round-trip per load.
+     * When omitted (e.g. the /onboarding/setup pages) the count is read as
+     * before. Same user-JWT security context either way.
+     */
+    quotes?: DashboardQuoteRow[] | Promise<DashboardQuoteRow[]>;
+  },
 ): Promise<OnboardingSnapshot> {
   const supabase = await createClient();
 
@@ -65,10 +90,15 @@ export async function buildOnboardingSnapshot(
       .from("invoices")
       .select("id", { count: "exact", head: true })
       .eq("org_id", orgId),
-    supabase
-      .from("quotes")
-      .select("id", { count: "exact", head: true })
-      .eq("org_id", orgId),
+    // Quotes: derive the all-quotes count from the shared row set when the
+    // caller hands one in (same org, unfiltered — count === rows.length);
+    // otherwise read it. `.then` keeps this concurrent with the sibling counts.
+    opts?.quotes
+      ? Promise.resolve(opts.quotes).then((rows) => ({ count: rows.length }))
+      : supabase
+          .from("quotes")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId),
     supabase
       .from("imports")
       .select("id", { count: "exact", head: true })

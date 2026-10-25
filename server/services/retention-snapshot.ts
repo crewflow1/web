@@ -6,7 +6,10 @@ import {
   OVERDUE_COLLECTABLE_STATUSES,
   invoiceBusinessToday,
 } from "@/lib/invoices/overdue";
-import { buildOnboardingSnapshot } from "@/server/services/onboarding-snapshot";
+import {
+  buildOnboardingSnapshot,
+  type DashboardQuoteRow,
+} from "@/server/services/onboarding-snapshot";
 import type { OnboardingSnapshot } from "@/lib/onboarding/checklist";
 import type {
   MilestoneId,
@@ -45,6 +48,16 @@ export async function buildRetentionSnapshot(
      * (e.g. the AI-question path) we build our own as before.
      */
     onboarding?: OnboardingSnapshot | Promise<OnboardingSnapshot>;
+    /**
+     * Pre-fetched org quote rows (or their in-flight promise) to derive the
+     * three quote signals from (7-day created count, 7-day accepted count,
+     * newest-quote timestamp) instead of issuing three dedicated `quotes`
+     * reads. The dashboard already fetches the full quote ledger in its
+     * coreWave; this set is its strict superset, so the in-memory filters
+     * yield identical values. When omitted (e.g. the AI-question path) the
+     * three reads run as before. Same user-JWT security context either way.
+     */
+    quotes?: DashboardQuoteRow[] | Promise<DashboardQuoteRow[]>;
   },
 ): Promise<RetentionSignals> {
   const supabase = await createClient();
@@ -55,7 +68,12 @@ export async function buildRetentionSnapshot(
   // Reuse the onboarding snapshot wholesale — gives us org + counts +
   // dismissed + timestamps in one call. Awaiting a passed-in promise is
   // safe: promises memoise, so a shared promise runs the work only once.
-  const onboarding = await (opts?.onboarding ?? buildOnboardingSnapshot(orgId));
+  // The shared quote rows (when provided) are awaited alongside it — same
+  // single await-gate as before, no added serialisation.
+  const [onboarding, sharedQuotes] = await Promise.all([
+    opts?.onboarding ?? buildOnboardingSnapshot(orgId),
+    opts?.quotes ? Promise.resolve(opts.quotes) : Promise.resolve(null),
+  ]);
 
   // ------------------------------------------------------------------
   // Parallel batched reads. All RLS-scoped via user JWT.
@@ -77,17 +95,35 @@ export async function buildRetentionSnapshot(
       .select("id", { count: "exact", head: true })
       .eq("org_id", orgId)
       .gte("created_at", sevenDaysAgo),
-    supabase
-      .from("quotes")
-      .select("id", { count: "exact", head: true })
-      .eq("org_id", orgId)
-      .gte("created_at", sevenDaysAgo),
-    supabase
-      .from("quotes")
-      .select("id", { count: "exact", head: true })
-      .eq("org_id", orgId)
-      .eq("status", "accepted")
-      .gte("accepted_at", sevenDaysAgo),
+    // Quotes created in the last 7 days — derived from the shared superset when
+    // present (same org; created_at >= sevenDaysAgo), else read as a count.
+    sharedQuotes
+      ? {
+          count: sharedQuotes.filter((q) => q.created_at >= sevenDaysAgo).length,
+        }
+      : supabase
+          .from("quotes")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .gte("created_at", sevenDaysAgo),
+    // Quotes accepted in the last 7 days — status 'accepted' AND accepted_at in
+    // window. A row with a null accepted_at fails the DB `.gte`, so the
+    // in-memory guard requires a non-null accepted_at too (identical population).
+    sharedQuotes
+      ? {
+          count: sharedQuotes.filter(
+            (q) =>
+              q.status === "accepted" &&
+              q.accepted_at != null &&
+              q.accepted_at >= sevenDaysAgo,
+          ).length,
+        }
+      : supabase
+          .from("quotes")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .eq("status", "accepted")
+          .gte("accepted_at", sevenDaysAgo),
     // PAGED (F-1): this set feeds BOTH `invoices_sent` and the `invoiced_gbp_7d`
     // SUM below, so a bare `.select()` clamped at max_rows (1000) would under-
     // state a busy org's 7-day invoiced revenue AND its sent-count. The count is
@@ -164,13 +200,26 @@ export async function buildRetentionSnapshot(
       .is("resolved_at" as never, null),
     // Most-recent activity: pick newest created_at across the three
     // tables. One small query each — they index `org_id, created_at`.
-    supabase
-      .from("quotes")
-      .select("created_at")
-      .eq("org_id", orgId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+    // Derived from the shared quote set when present (max created_at ===
+    // the newest-first single-row read the DB would return).
+    sharedQuotes
+      ? {
+          data: sharedQuotes.length
+            ? {
+                created_at: sharedQuotes.reduce(
+                  (max, q) => (q.created_at > max ? q.created_at : max),
+                  sharedQuotes[0]!.created_at,
+                ),
+              }
+            : null,
+        }
+      : supabase
+          .from("quotes")
+          .select("created_at")
+          .eq("org_id", orgId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
   ]);
 
   const invoicesTotalRows =
