@@ -400,6 +400,8 @@ export type InvocationUsage = {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  /** Prompt-cache input tokens where the provider reports them; omitted ⇒ 0. */
+  cachedInputTokens?: number;
 };
 
 export type RecordInvocationInput = {
@@ -426,6 +428,10 @@ export type RecordInvocationInput = {
    * any budget decision.
    */
   aiEmployeeId?: string | null;
+  /** Which engine served the call. Default 'hosted' (today's only engine). */
+  engine?: "hosted" | "local" | "deterministic";
+  /** True when this call was a fallback after a cheaper/local engine was skipped/failed. */
+  isFallback?: boolean;
 };
 
 /**
@@ -459,8 +465,11 @@ export async function recordInvocation(input: RecordInvocationInput): Promise<bo
         model: input.usage.model,
         input_tokens: Math.max(0, Math.round(input.usage.inputTokens || 0)),
         output_tokens: Math.max(0, Math.round(input.usage.outputTokens || 0)),
+        cached_input_tokens: Math.max(0, Math.round(input.usage.cachedInputTokens || 0)),
         estimated_cost_pence: Math.max(0, Math.round(costPence)),
         latency_ms: Math.max(0, Math.round(input.latencyMs || 0)),
+        engine: input.engine ?? "hosted",
+        is_fallback: input.isFallback ?? false,
         success: input.success,
         // The ledger's CHECK requires a code on failure and none on success.
         error_code: input.success ? null : (input.errorCode ?? "unknown_error"),
