@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import {
@@ -227,6 +228,40 @@ export const PROGRESS_CURVE_WIDTH = 320;
 export const PROGRESS_CURVE_HEIGHT = 120;
 
 /**
+ * The three progress reads for one job, in parallel — DEDUPED PER REQUEST.
+ *
+ * Clock-independent by construction: none of the three gathers take `now` (the
+ * reads are the same whatever day it is), so the read set is a pure function of
+ * (orgId, jobId). The job-detail overview renders TWO independent streamed
+ * sections that each need it — the Progress panel (_job-progress.tsx) and the
+ * Delays & EOT panel, whose `loadEotEvidencePack` composes progress from this
+ * same owner (eot-pack.ts). Before this cache they each ran their own copy, so
+ * one render read job_progress_observations / site_reports /
+ * job_programme_baselines (+ job_milestones) TWICE. React.cache() collapses
+ * that to one set of reads per server request — the same idiom
+ * server/auth/session.ts uses for memberships/getUser — WITHOUT changing the
+ * two callers' own `now` (the trend/"days since" stay each panel's own day)
+ * and WITHOUT touching the streamed Suspense structure: both sections still
+ * render as independent async children, they just share the reads.
+ *
+ * The cache is request-scoped (React.cache), so it never leaks a tenant's rows
+ * across requests, and the key is (orgId, jobId) — both strings, compared by
+ * value — so a second org/job in the same request still reads its own data.
+ */
+const gatherJobProgressData = cache(async function gatherJobProgressData(
+  orgId: string,
+  jobId: string,
+) {
+  const supabase = (await createClient()) as unknown as ProgressClient;
+  const [observations, reports, programme] = await Promise.all([
+    gatherProgressObservations(supabase, orgId, jobId),
+    gatherProgressReports(supabase, orgId, jobId),
+    gatherProgrammeBaseline(supabase, orgId, jobId),
+  ]);
+  return { observations, reports, programme };
+});
+
+/**
  * Load one job's progress: both sources, merged, summarised and laid out.
  *
  * `now` is passed in so the trend and "days since" are the page's day, and are
@@ -237,12 +272,7 @@ export async function loadJobProgress(
   jobId: string,
   now: Date = new Date(),
 ): Promise<JobProgressView> {
-  const supabase = (await createClient()) as unknown as ProgressClient;
-  const [observations, reports, programme] = await Promise.all([
-    gatherProgressObservations(supabase, orgId, jobId),
-    gatherProgressReports(supabase, orgId, jobId),
-    gatherProgrammeBaseline(supabase, orgId, jobId),
-  ]);
+  const { observations, reports, programme } = await gatherJobProgressData(orgId, jobId);
 
   const points = buildProgressSeries({
     observations: observations.rows,
