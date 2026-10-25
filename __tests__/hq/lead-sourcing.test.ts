@@ -26,6 +26,7 @@ const {
   runReadyTaskMock,
   drainTaskTypeMock,
   knownNumbersData,
+  poolData,
 } = vi.hoisted(() => ({
   createCompanyMock: vi.fn(),
   enqueueTaskMock: vi.fn(),
@@ -35,6 +36,8 @@ const {
   drainTaskTypeMock: vi.fn(),
   /** Rows the mocked known-company-numbers read returns. */
   knownNumbersData: { rows: [] as Array<{ companies_house_number: string | null }> },
+  /** Rows the mocked eligible-pool read returns (empty ⇒ fall through to REST/dark). */
+  poolData: { rows: [] as Array<Record<string, unknown>> },
 }));
 
 vi.mock("@/server/services/hq-sales", () => ({
@@ -55,14 +58,37 @@ vi.mock("@/server/sdk/tasks", () => ({
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => ({
     from: () => ({
+      // knownCompanyNumbers: select().in().limit(); readEligiblePool: select().eq().eq().order().limit()
       select: () => ({
         in: () => ({
           limit: () => Promise.resolve({ data: knownNumbersData.rows, error: null }),
         }),
+        eq: () => ({
+          eq: () => ({
+            order: () => ({
+              limit: () => Promise.resolve({ data: poolData.rows, error: null }),
+            }),
+          }),
+        }),
       }),
+      // markPoolPromoted: update().eq()
+      update: () => ({ eq: () => Promise.resolve({ error: null }) }),
     }),
   }),
 }));
+
+/** A sourcing-pool row as readEligiblePool selects it. */
+const poolRow = (number: string, name: string) => ({
+  id: `pool-${number}`,
+  company_number: number,
+  name,
+  status: "Active",
+  postcode: "BT1 1AA",
+  sic_codes: ["41202"],
+  matched_sic: ["41202"],
+  incorporation_date: "2019-03-14",
+  snapshot_date: "2026-10-01",
+});
 
 const CTX = {
   identity: { employeeId: "emp-sales-1", slug: "sales-ai" },
@@ -88,6 +114,7 @@ beforeEach(() => {
   enqueueTaskMock.mockReset();
   resolveWorkerIdentityMock.mockReset();
   knownNumbersData.rows = [];
+  poolData.rows = [];
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -112,7 +139,8 @@ describe("A. lead_sourcing handler — DARK path (no key): completes, honestly, 
       kind: "lead_sourcing",
       sourced: 0,
       dark: true,
-      reason: "companies-house key not configured",
+      // New contract: dark only when NEITHER a bulk pool NOR a key is available.
+      reason: "no bulk pool available and companies-house key not configured",
     });
     // Refusal BEFORE the adapter: no network call of any kind was made…
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -229,6 +257,62 @@ describe("B. lead_sourcing handler — ARMED path (spied register): sanctioned d
     );
     await expect(leadSourcingHandler(CTX)).rejects.toThrow(/advanced search failed/);
     expect(createCompanyMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("D. lead_sourcing handler — BULK POOL path (KEYLESS default)", () => {
+  it("promotes from the pool with NO Companies House key — API-key absence does NOT disable bulk sourcing", async () => {
+    vi.stubEnv("COMPANIES_HOUSE_API_KEY", ""); // no key at all
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    poolData.rows = [poolRow("NI111111", "Belfast Groundworks Ltd"), poolRow("NI222222", "Lagan Civils Ltd")];
+    createCompanyMock.mockResolvedValueOnce({ ok: true, id: "co-1" }).mockResolvedValueOnce({ ok: true, id: "co-2" });
+
+    const { leadSourcingHandler } = await import("@/server/services/hq-lead-sourcing-runner");
+    const result = (await leadSourcingHandler(CTX)) as Record<string, unknown>;
+
+    expect(result.dark).toBe(false);
+    expect(result.mode).toBe("bulk_pool");
+    expect(result.sourced).toBe(2);
+    expect(fetchSpy).not.toHaveBeenCalled(); // keyless, no register fetch
+    expect(createCompanyMock).toHaveBeenCalledTimes(2);
+    const input = createCompanyMock.mock.calls[0]![0];
+    expect(input).toMatchObject({
+      status: "new", // never advances/contacts — no outreach
+      source: "companies_house",
+      country: "United Kingdom",
+      region: "Northern Ireland",
+      companiesHouseNumber: "NI111111",
+      industry: "Construction",
+    });
+    expect(input.primaryEmail).toBeNull();
+  });
+
+  it("enforces the 10/week promotion cap even when the pool is large", async () => {
+    vi.stubEnv("COMPANIES_HOUSE_API_KEY", "");
+    poolData.rows = Array.from({ length: 25 }, (_, i) => poolRow(`NI${1000 + i}`, `NI Co ${i}`));
+    createCompanyMock.mockImplementation(() => Promise.resolve({ ok: true, id: "co-x" }));
+
+    const { leadSourcingHandler } = await import("@/server/services/hq-lead-sourcing-runner");
+    const result = (await leadSourcingHandler(CTX)) as Record<string, unknown>;
+
+    expect(result.mode).toBe("bulk_pool");
+    expect(result.sourced).toBe(10); // SOURCING_BATCH_LIMIT
+    expect(createCompanyMock).toHaveBeenCalledTimes(10);
+  });
+
+  it("skips pool companies already on the book (dedupe by company number)", async () => {
+    vi.stubEnv("COMPANIES_HOUSE_API_KEY", "");
+    poolData.rows = [poolRow("NI111111", "A"), poolRow("NI222222", "B")];
+    knownNumbersData.rows = [{ companies_house_number: "NI111111" }];
+    createCompanyMock.mockResolvedValue({ ok: true, id: "co-2" });
+
+    const { leadSourcingHandler } = await import("@/server/services/hq-lead-sourcing-runner");
+    const result = (await leadSourcingHandler(CTX)) as Record<string, unknown>;
+
+    expect(result.sourced).toBe(1);
+    expect(result.skippedExisting).toBe(1);
+    expect(createCompanyMock.mock.calls[0]![0].companiesHouseNumber).toBe("NI222222");
   });
 });
 

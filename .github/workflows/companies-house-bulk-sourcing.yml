@@ -1,0 +1,67 @@
+# Companies House FREE bulk-dataset sourcing — monthly NI construction pool refresh.
+#
+# Runs the streaming importer (scripts/sourcing/companies-house-bulk-import.ts) on a
+# GitHub-hosted runner — NOT Vercel — because the monthly file is ~470 MB zipped /
+# multi-GB CSV, past serverless limits. The runner streams the download, unzips with
+# `unzip -p`, filters line-by-line (NI + construction SIC + active), and upserts the
+# eligible-company pool. A monthly ~5–10 min job is well within free GitHub minutes.
+#
+# SAFETY / ACTIVATION:
+#   • The `schedule` trigger only fires from the repository's DEFAULT branch, so this
+#     workflow is DORMANT on the feature branch — it cannot run against production
+#     until merged AND the two repo secrets below are configured.
+#   • It writes ONLY the service-role-only pool tables; it creates no prospects, sends
+#     nothing, and does no officer enrichment.
+#   • Manual runs default to --dry-run (no DB writes) for safe testing.
+#   • Required repo secrets (Actions → Secrets): NEXT_PUBLIC_SUPABASE_URL,
+#     SUPABASE_SERVICE_ROLE_KEY. The service key never appears in logs.
+
+name: Companies House bulk sourcing
+
+on:
+  schedule:
+    # Monthly on the 7th at 04:17 UTC. The free product is published within 5 working
+    # days of the prior month-end, so the 7th is safely after the new snapshot lands.
+    - cron: "17 4 7 * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Parse + filter + count, but write nothing to the DB"
+        type: boolean
+        default: true
+      snapshot:
+        description: "Snapshot date YYYY-MM-01 (default: current month)"
+        type: string
+        required: false
+
+concurrency:
+  group: companies-house-bulk-sourcing
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - name: Run bulk import
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # Scheduled runs: real import. Manual runs: honour the dry_run input (default true).
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          SNAPSHOT: ${{ inputs.snapshot }}
+        run: |
+          ARGS=""
+          if [ "${DRY_RUN}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ -n "${SNAPSHOT}" ]; then ARGS="$ARGS --snapshot=${SNAPSHOT}"; fi
+          echo "Running importer with args: ${ARGS:-(scheduled real import)}"
+          npx tsx scripts/sourcing/companies-house-bulk-import.ts ${ARGS}

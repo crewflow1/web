@@ -244,8 +244,8 @@ const HIGH_VALUE_TABLES = new Set<string>([
 // "file:line" → reason. Keep tight; every entry is a documented smell.
 const ALLOWLIST: Record<string, string> = {
   // R088 lead-sourcing dedupe — per-run id-batch probe (see the limit-clamp
-  // guard's twin entry).
-  "server/services/hq-lead-sourcing-runner.ts:195":
+  // guard's twin entry). (Line moved 195→187 when the bulk-pool path landed.)
+  "server/services/hq-lead-sourcing-runner.ts:187":
     "id-batch dedupe probe: which of THIS RUN's candidate company numbers already exist — .in('companies_house_number', numbers) where numbers is the sourcing batch (SOURCING_BATCH_MAX=10 per run), so the set is structurally bounded by the IN-list, never a scan; the .limit(1000) is the honest-bound clamp. Completeness holds per batch: an unknown number inserts via the sanctioned createCompany door, a known one skips.",
   // Surfaced only once the guard learned to see the `table()` `.from`-wrapper
   // indirection (below). The read is GENUINELY BOUNDED, just not in a way the
@@ -1127,6 +1127,17 @@ describe("F-1 bare-select guard — high-value table reads must page or be singl
  *   SINGLE     — only ever an existence / single-row probe (.limit(1)).
  */
 const COVERAGE_REVIEWED: Record<string, string> = {
+  // hq_sales_sourcing_pool (20261234) — the Companies House bulk eligible-company
+  // catalogue. Its ONE set-read (hq-lead-sourcing-runner readEligiblePool) is a
+  // DELIBERATELY-BOUNDED weekly promotion batch: .limit(min(SOURCING_BATCH_LIMIT*3,
+  // 1000)) = 30, newest-snapshot-first, from which at most SOURCING_BATCH_LIMIT (10)
+  // are promoted into prospects. It is NOT completeness-sensitive — the pool is the
+  // full catalogue by design and promotion is an intentional trickle (the 10/week
+  // cap), so seeing only the top-N is correct, never a silent truncation. The
+  // importer that POPULATES the pool runs in GitHub Actions, streamed + unbounded,
+  // outside this scanner's scope.
+  hq_sales_sourcing_pool:
+    "bounded promotion batch: readEligiblePool .limit(min(SOURCING_BATCH_LIMIT*3,1000))=30 newest-first, promote <=10/week; the pool is the catalogue and promotion is an intentional trickle, not a completeness read",
   // staff_compensation (20261218) — the self-or-admin-gated home of hourly_pay +
   // emergency_contact (moved off co-worker-readable public.users). EVERY set-read
   // is an id-batch `.in('user_id', memberIds)` where memberIds is drawn from an

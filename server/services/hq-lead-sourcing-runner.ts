@@ -49,6 +49,7 @@ import "server-only";
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { CONSTRUCTION_SIC_CODES } from "@/lib/sourcing/construction-sic";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { createCompany, type CompanyWriteInput } from "@/server/services/hq-sales";
 import { enqueueTask } from "@/server/services/hq-tasks";
@@ -83,21 +84,12 @@ const SEARCH_PAGE_SIZE = 50;
 const SEARCH_TIMEOUT_MS = 15_000;
 
 /**
- * UK SIC 2007 Section F — Construction (divisions 41–43), the official code
- * list. A documented public standard, not invented org config: it is the
- * machine-readable form of the same "construction sector" the qualification
- * rubric's `sectorOf` classifies on.
+ * UK SIC 2007 Section F — Construction (divisions 41–43). The canonical list now
+ * lives in `@/lib/sourcing/construction-sic` (imported above) so the live REST
+ * path and the free BULK-dataset pipeline share ONE allowlist; re-exported here
+ * for existing importers/tests.
  */
-export const CONSTRUCTION_SIC_CODES: readonly string[] = [
-  // 41 — construction of buildings
-  "41100", "41201", "41202",
-  // 42 — civil engineering
-  "42110", "42120", "42130", "42210", "42220", "42910", "42990",
-  // 43 — specialised construction activities
-  "43110", "43120", "43130", "43210", "43220", "43290",
-  "43310", "43320", "43330", "43341", "43342", "43390",
-  "43910", "43991", "43999",
-];
+export { CONSTRUCTION_SIC_CODES };
 
 // ---------------------------------------------------------------------
 // Week stamp — one sourcing run per ISO week (UTC Monday), the same weekly
@@ -235,6 +227,13 @@ export type LeadSourcingResult = {
   skippedExisting: number;
   /** createCompany failures this run (logged; the run still reports honestly). */
   insertFailures: number;
+  /**
+   * Where this run's candidates came from. `bulk_pool` = the free monthly
+   * Companies House BULK dataset pool (the keyless DEFAULT); `companies_house_advanced_search`
+   * = the optional live REST path (only when the pool is empty AND a key is set);
+   * `dark` = nothing available.
+   */
+  mode: "bulk_pool" | "companies_house_advanced_search" | "dark" | null;
   /** The recorded prospects, for the artifact reader. */
   companies: Array<{ id: string; name: string; companyNumber: string }>;
   /**
@@ -266,6 +265,7 @@ function baseResult(weekOf: string): LeadSourcingResult {
     candidates: 0,
     skippedExisting: 0,
     insertFailures: 0,
+    mode: null,
     companies: [],
     provenance: {
       source: "lead_sourcing",
@@ -332,30 +332,168 @@ function candidateToCompanyInput(c: SourcedCandidate): CompanyWriteInput {
 }
 
 // ---------------------------------------------------------------------
-// The handler. DETERMINISTIC + adapter-gated — no LLM, no governed seam.
+// BULK-POOL path (the keyless DEFAULT) — promote eligible companies the free
+// monthly Companies House bulk importer has already filtered into
+// `hq_sales_sourcing_pool`. No key, no fetch: the register work happened in the
+// GitHub-Actions importer; this leg just promotes a weekly trickle through the
+// same sanctioned `createCompany` door the REST path uses.
+// ---------------------------------------------------------------------
+
+/** A sourcing-pool row as read for promotion (register facts only). */
+export type PoolCandidate = {
+  id: string;
+  companyNumber: string;
+  name: string;
+  status: string | null;
+  postcode: string | null;
+  sicCodes: string[];
+  matchedSic: string[];
+  incorporationDate: string | null;
+  snapshotDate: string | null;
+};
+
+/** LOUD read of up to `limit` un-promoted, active pool rows (newest snapshot first). */
+async function readEligiblePool(limit: number): Promise<PoolCandidate[]> {
+  const admin = createAdminClient();
+  const { data, error } = await (
+    admin.from("hq_sales_sourcing_pool" as never) as unknown as {
+      select: (c: string) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            order: (k: string, o: { ascending: boolean }) => {
+              limit: (n: number) => PromiseLike<{
+                data: Array<Record<string, unknown>> | null;
+                error: SupabaseReadError | null;
+              }>;
+            };
+          };
+        };
+      };
+    }
+  )
+    .select(
+      "id, company_number, name, status, postcode, sic_codes, matched_sic, incorporation_date, snapshot_date",
+    )
+    .eq("active", true)
+    .eq("promoted", false)
+    .order("snapshot_date", { ascending: false })
+    // Provably <=1000 (F-1): a deliberately-bounded promotion batch — callers pass
+    // SOURCING_BATCH_LIMIT*3 (=30); the clamp is the F-1 honest-bound idiom.
+    .limit(Math.min(Math.max(1, limit), 1000));
+  if (error) throw readFailure("hq-lead-sourcing: eligible pool", error);
+  return (Array.isArray(data) ? data : []).map((r) => ({
+    id: String(r.id),
+    companyNumber: String(r.company_number ?? "").toUpperCase(),
+    name: String(r.name ?? ""),
+    status: (r.status as string | null) ?? null,
+    postcode: (r.postcode as string | null) ?? null,
+    sicCodes: Array.isArray(r.sic_codes) ? (r.sic_codes as string[]) : [],
+    matchedSic: Array.isArray(r.matched_sic) ? (r.matched_sic as string[]) : [],
+    incorporationDate: (r.incorporation_date as string | null) ?? null,
+    snapshotDate: (r.snapshot_date as string | null) ?? null,
+  }));
+}
+
+/** Map a pool row onto the sanctioned write door's input (register facts only). */
+function poolRowToCompanyInput(c: PoolCandidate): CompanyWriteInput {
+  const base = candidateToCompanyInput({
+    companyNumber: c.companyNumber,
+    name: c.name,
+    status: c.status,
+    incorporatedOn: c.incorporationDate,
+    sicCodes: c.sicCodes,
+    registeredOffice: c.postcode,
+  });
+  return {
+    ...base,
+    region: "Northern Ireland", // the bulk pool is NI-filtered by construction
+    summary:
+      `Sourced from the Companies House FREE bulk dataset (snapshot ${c.snapshotDate ?? "unknown"}): ` +
+      `active Northern Ireland construction company (SIC ${c.matchedSic.join(", ") || "F"}). ` +
+      `Register status: ${c.status ?? "unknown"}.`,
+  };
+}
+
+/** Mark a promoted pool row so the next run never re-promotes it. Best-effort. */
+async function markPoolPromoted(poolId: string, companyId: string): Promise<void> {
+  const admin = createAdminClient();
+  const { error } = await (
+    admin.from("hq_sales_sourcing_pool" as never) as unknown as {
+      update: (v: Record<string, unknown>) => {
+        eq: (k: string, v: unknown) => PromiseLike<{ error: SupabaseReadError | null }>;
+      };
+    }
+  )
+    .update({ promoted: true, promoted_at: new Date().toISOString(), promoted_company_id: companyId })
+    .eq("id", poolId);
+  if (error) {
+    // Non-fatal: the company is created and the dedupe read will skip it next
+    // run regardless; log and continue rather than fail a successful promotion.
+    console.error("[hq-lead-sourcing] markPoolPromoted failed", { poolId, error });
+  }
+}
+
+// ---------------------------------------------------------------------
+// The handler. DETERMINISTIC + no LLM. Pool-first (keyless) → REST (optional,
+// key-gated) → dark only when NEITHER source is available.
 // ---------------------------------------------------------------------
 
 const leadSourcingHandler: TaskHandler = async (ctx) => {
   const result = baseResult(leadSourcingWeekOf(new Date()));
+  const actor = { id: null, email: ctx.task.created_by ?? null };
 
-  // THE dark gate — the adapter's own credential, refused BEFORE any fetch
-  // (mirrors research-fetch.ts lookupCompaniesHouse). Dark is a COMPLETION,
-  // never a failure: the honest outcome is "zero sourced, and here is why".
-  const apiKey = process.env.COMPANIES_HOUSE_API_KEY?.trim();
-  if (!apiKey) {
-    result.dark = true;
-    result.reason = "companies-house key not configured";
+  // ---- DEFAULT: the free bulk-dataset pool (NO key required) ---------
+  // Read headroom (×3) so already-known skips don't starve the weekly batch.
+  const pool = await readEligiblePool(SOURCING_BATCH_LIMIT * 3);
+  if (pool.length > 0) {
+    result.mode = "bulk_pool";
+    result.candidates = pool.length;
+    const known = await knownCompanyNumbers(pool.map((c) => c.companyNumber));
+    for (const cand of pool) {
+      if (result.sourced >= SOURCING_BATCH_LIMIT) break;
+      if (known.has(cand.companyNumber)) {
+        result.skippedExisting += 1;
+        continue;
+      }
+      const created = await createCompany(poolRowToCompanyInput(cand), actor);
+      if (!created.ok) {
+        console.error("[hq-lead-sourcing] createCompany (pool) failed", {
+          companyNumber: cand.companyNumber,
+          error: created.error,
+        });
+        result.insertFailures += 1;
+        continue;
+      }
+      known.add(cand.companyNumber);
+      await markPoolPromoted(cand.id, created.id);
+      result.sourced += 1;
+      result.companies.push({ id: created.id, name: cand.name, companyNumber: cand.companyNumber });
+    }
+    if (result.sourced === 0 && result.insertFailures > 0) {
+      throw new Error(`lead sourcing: all ${result.insertFailures} pool insert(s) failed`);
+    }
     return result;
   }
 
-  // ---- ARMED (not today's state) ------------------------------------
+  // ---- OPTIONAL fallback: the live REST advanced-search (key-gated) --
+  // The REST path is now OPTIONAL enrichment for when the pool is empty AND a
+  // key is present; it is no longer required for basic sourcing.
+  const apiKey = process.env.COMPANIES_HOUSE_API_KEY?.trim();
+  if (!apiKey) {
+    // Dark only when there is NEITHER a pool NOR a key — the honest completion.
+    result.dark = true;
+    result.mode = "dark";
+    result.reason = "no bulk pool available and companies-house key not configured";
+    return result;
+  }
+
+  result.mode = "companies_house_advanced_search";
   const candidates = await searchConstructionCompanies(apiKey);
   result.candidates = candidates.length;
 
   // LOUD dedupe read — throw (retryable) rather than risk duplicates.
   const known = await knownCompanyNumbers(candidates.map((c) => c.companyNumber));
 
-  const actor = { id: null, email: ctx.task.created_by ?? null };
   for (const candidate of candidates) {
     if (result.sourced >= SOURCING_BATCH_LIMIT) break;
     if (known.has(candidate.companyNumber)) {
