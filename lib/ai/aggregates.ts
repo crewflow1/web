@@ -289,29 +289,29 @@ export async function computeActivitySummary(
   };
 }
 
-export async function computeLeadInsights(
-  orgId: string,
-  windowDays = 30,
-): Promise<LeadInsightsResponse> {
-  const supabase = await createClient();
-  const since = new Date(Date.now() - windowDays * DAY_MS).toISOString();
+type LeadInsightRow = {
+  status: string | null;
+  source: string | null;
+  estimated_value: number | null;
+  created_at: string;
+};
 
-  const { data: leads, error: leadsError } = await fetchAllRows<{
-    id: string;
-    status: string | null;
-    source: string | null;
-    estimated_value: number | null;
-    created_at: string;
-  }>((from, to) =>
-    supabase
-      .from("leads")
-      .select("id, status, source, estimated_value, created_at")
-      .eq("org_id", orgId)
-      .gte("created_at", since)
-      .order("id", { ascending: true })
-      .range(from, to),
-  );
-  if (leadsError) throw readFailure("ai aggregates: leads", leadsError);
+/**
+ * PURE lead-insights computation over already-fetched lead rows.
+ *
+ * Perf (Workstream A — PR A1): extracted so a caller that has ALREADY loaded
+ * the org's leads (the dashboard's coreWave fetches the full lead set with the
+ * SAME columns) can derive insights WITHOUT a second identical `leads`
+ * round-trip. It applies the window filter itself, so the result is identical
+ * whether handed the full lead set or a DB-pre-windowed set (idempotent filter)
+ * — no behaviour change for either caller.
+ */
+export function leadInsightsFromRows(
+  orgId: string,
+  leads: ReadonlyArray<LeadInsightRow>,
+  windowDays = 30,
+): LeadInsightsResponse {
+  const since = new Date(Date.now() - windowDays * DAY_MS).toISOString();
 
   const funnel = {
     new: 0,
@@ -325,7 +325,8 @@ export async function computeLeadInsights(
   let pipelineForecast = 0;
   const bySource = new Map<string, { total: number; won: number; lost: number }>();
 
-  for (const l of leads ?? []) {
+  for (const l of leads) {
+    if ((l.created_at ?? "") < since) continue;
     const status = (l.status ?? "new") as keyof typeof funnel;
     if (status in funnel) funnel[status]++;
     if (
@@ -372,4 +373,32 @@ export async function computeLeadInsights(
     source_close_rates,
     pipeline_forecast: pipelineForecast,
   };
+}
+
+/**
+ * Lead insights for an org over a rolling window. DB entry point (used by
+ * /insights). The dashboard instead calls leadInsightsFromRows() on its
+ * already-fetched lead set to avoid a duplicate `leads` read.
+ */
+export async function computeLeadInsights(
+  orgId: string,
+  windowDays = 30,
+): Promise<LeadInsightsResponse> {
+  const supabase = await createClient();
+  const since = new Date(Date.now() - windowDays * DAY_MS).toISOString();
+
+  const { data: leads, error: leadsError } = await fetchAllRows<
+    LeadInsightRow & { id: string }
+  >((from, to) =>
+    supabase
+      .from("leads")
+      .select("id, status, source, estimated_value, created_at")
+      .eq("org_id", orgId)
+      .gte("created_at", since)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (leadsError) throw readFailure("ai aggregates: leads", leadsError);
+
+  return leadInsightsFromRows(orgId, leads ?? [], windowDays);
 }
