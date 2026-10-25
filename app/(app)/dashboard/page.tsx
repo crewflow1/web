@@ -215,10 +215,12 @@ export default async function DashboardPage() {
       .order("id", { ascending: true })
       .range(from, to),
   );
-  // Rows view handed to the nested services. Mirrors the dashboard's own
-  // swallow-to-empty handling of a quotes read error (`quotesRes.data ?? []`)
-  // below, so behaviour is identical whether a service reads quotes itself or
-  // reuses this set.
+  // Rows view handed to the nested services. This is a best-effort (soft) read:
+  // it coalesces a failed quotes fetch to an empty set, mirroring the dashboard's
+  // own existing swallow-to-empty treatment of the quotes result below (quotes
+  // tiles are NOT money/loud reads). Behaviour is therefore identical whether a
+  // service reads quotes itself or reuses this set. Counted in the app/(app)
+  // soft-data ledger (see __tests__/security/loud-read-failures.test.ts).
   const sharedQuoteRows: Promise<DashboardQuoteRow[]> = quotesReadPromise.then(
     (r) => (r.data ?? []) as unknown as DashboardQuoteRow[],
   );

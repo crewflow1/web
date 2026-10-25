@@ -459,7 +459,17 @@ const RATCHET: Array<{
     // assigned to you right now" empty state, masquerading as data. It now
     // throws readFailure("me: my jobs") like the page's hours/tasks reads —
     // one fewer soft-data discard (the ratchet's intended direction).
-    softData: 33,
+    // 33 → 34 (Workstream A2 — dashboard quotes fetch-once-share): dashboard/page.tsx
+    // now fetches the quotes ledger ONCE (`quotesReadPromise`) and shares the rows
+    // with the onboarding + retention snapshot services via `sharedQuoteRows =
+    // quotesReadPromise.then((r) => r.data ?? [])`. That one shared coalesce is a
+    // NEW best-effort soft read, but it preserves EXACTLY the page's pre-existing
+    // treatment of the quotes result (`const quotes = quotesRes.data ?? []` is
+    // already soft — quote tiles are not money/loud reads). No query that was loud
+    // became soft and no previously-bound error is now dropped; it is the same
+    // best-effort quotes read, now derived in one place instead of re-fetched.
+    // See docs/loud-read-failures.md (C ledger).
+    softData: 34,
     // 5 → 4: train "offl" moved createSiteReport's cosmetic report-number count
     // (`nextReportNumber`, a head:true count read) OUT of the action and INTO the
     // shared write core (server/services/site-report-writes.ts), so the online
