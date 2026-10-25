@@ -29,7 +29,7 @@ interface Sel extends PromiseLike<Res<Row[]>> {
   in(column: string, values: ReadonlyArray<unknown>): Sel;
   limit(n: number): Sel;
 }
-interface Thenable extends PromiseLike<{ error: { message: string } | null }> {}
+type Thenable = PromiseLike<{ error: { message: string } | null }>;
 interface DelChain extends Thenable {
   in(column: string, values: ReadonlyArray<unknown>): DelChain;
 }
