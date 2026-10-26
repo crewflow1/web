@@ -24,7 +24,7 @@ import { RetentionPanel } from "./_retention";
 import { DailyBriefing } from "./_daily-briefing";
 import {
   computeActivitySummary,
-  computeLeadInsights,
+  leadInsightsFromRows,
 } from "@/lib/ai/aggregates";
 import {
   computeAllJobsProfitability,
@@ -349,7 +349,6 @@ export default async function DashboardPage() {
   const onboardingSnapshotPromise = buildOnboardingSnapshot(ctx.org.id);
   const insightsWave = Promise.all([
     computeActivitySummary(ctx.org.id, 7),
-    computeLeadInsights(ctx.org.id, 30),
     onboardingSnapshotPromise,
     buildRetentionSnapshot(ctx.org.id, { onboarding: onboardingSnapshotPromise }),
   ]);
@@ -361,7 +360,7 @@ export default async function DashboardPage() {
     [paymentsRes, unmatchedRes, allPaymentsRes],
     [{ data: timeEntriesRaw }, payHourlyByUser],
     [retentionJobsRes, retentionReleasesRes],
-    [activityInsights, leadInsights, onboardingSnapshot, retentionSnapshot],
+    [activityInsights, onboardingSnapshot, retentionSnapshot],
   ] = await Promise.all([coreWave, paymentsWave, timeWave, retentionWave, insightsWave]);
 
   // Money reads are LOUD: an errored payment/reconciliation read must never
@@ -414,6 +413,19 @@ export default async function DashboardPage() {
   const members = membersRes.data ?? [];
   const quotes = quotesRes.data ?? [];
   const allLeads = leadsAllRes.data ?? [];
+  // Perf (Workstream A — A1): derive lead insights from the full lead set the
+  // coreWave already fetched (identical columns), instead of a duplicate
+  // `leads` read via computeLeadInsights(). Pure, window-filtered — same result.
+  const leadInsights = leadInsightsFromRows(
+    ctx.org.id,
+    allLeads as ReadonlyArray<{
+      status: string | null;
+      source: string | null;
+      estimated_value: number | null;
+      created_at: string;
+    }>,
+    30,
+  );
 
   // Retention rollup reuses the same per-job derivation as the job page so the
   // numbers agree; it needs `invoices` (above), hence it's computed here rather

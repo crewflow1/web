@@ -377,16 +377,33 @@ describe("lib/ai/aggregates — every read is pinned to the orgId the payload cl
     // only remaining callers.
     const CALLERS: Array<[string, string[]]> = [
       ["app/(app)/insights/page.tsx", ["computeActivitySummary", "computeLeadInsights"]],
-      ["app/(app)/dashboard/page.tsx", ["computeActivitySummary", "computeLeadInsights"]],
+      // The dashboard no longer calls computeLeadInsights: it derives lead
+      // insights from the `leads` rows the coreWave already fetched (A1 perf,
+      // PR #907) via leadInsightsFromRows(ctx.org.id, rows). The active-org pin
+      // moves to that call; the rows' own pin is asserted immediately below.
+      ["app/(app)/dashboard/page.tsx", ["computeActivitySummary", "leadInsightsFromRows"]],
     ];
     for (const [path, calls] of CALLERS) {
       const s = src(path);
       for (const call of calls) {
+        // `\s*` tolerates a multi-line call; the required arg, ctx.org.id, is unchanged.
         expect(s, `${path}: ${call} must receive the active org`).toMatch(
-          new RegExp(`${call}\\(ctx\\.org\\.id`),
+          new RegExp(`${call}\\(\\s*ctx\\.org\\.id`),
         );
       }
     }
+    // A1 moved the dashboard's lead read into the coreWave. leadInsightsFromRows
+    // stamps its output with the active org, so the rows it is handed must
+    // themselves be pinned — otherwise a dual-org member's other-org leads would
+    // be summed into this org's insights. Pin the source read so the refactor
+    // cannot silently drop the predicate.
+    const dash = src("app/(app)/dashboard/page.tsx");
+    expect(
+      dash,
+      "dashboard coreWave leads read feeding leadInsightsFromRows must pin ctx.org.id",
+    ).toMatch(
+      /\.from\(\s*["']leads["']\s*\)[\s\S]*?\.eq\(\s*["']org_id["'],\s*ctx\.org\.id\s*\)/,
+    );
   });
 
   it("the aggregates never touch the active-org cookie (a scope fix, not a context switch)", () => {
