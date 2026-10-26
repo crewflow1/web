@@ -137,7 +137,7 @@ export default async function EditJobPage({
   // truncate and under-state cost / over-state profit. Page every one through
   // fetchAllRows on a unique `id` tiebreak (mirrors the time_entries read below),
   // and surface a failed read LOUDLY rather than aggregating a partial set.
-  const [customers, staff, invoicesForJob, financesForJob, variationsForJob, baseQuotesForJob] = await Promise.all([
+  const [customers, staff, invoicesForJob, financesForJob, quotesForJob] = await Promise.all([
     listCustomersForOrg(ctx.org.id),
     listStaffForOrg(ctx.org.id),
     fetchAllRows((from, to) =>
@@ -166,9 +166,20 @@ export default async function EditJobPage({
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    // Variations on this job (any status). variation_number orders the display;
-    // `id` is the unique tiebreak paging requires (two variations can share a
-    // sort key at a page edge only with a unique second key).
+    // PERF (J2 job-detail dedup): the job's VARIATIONS (variation_number NOT
+    // null) and its BASE contract quote(s) (variation_number IS null) are a
+    // complementary partition of the SAME dataset — this job's `quotes`, read
+    // through the SAME tenant client with the SAME `.eq("job_id")` scope. They
+    // were two separate network round-trips (variations NOT-null + base
+    // IS-null); read the whole job-quotes set ONCE here and split it in TS
+    // below. Columns are the variations superset — base needed only
+    // {id, status, total, variation_number}, a strict subset — so neither
+    // consumer loses a field. Ordered variation_number asc (PostgREST sorts
+    // NULLS LAST on asc) then id asc: the non-null variation rows keep their
+    // exact prior display order, the null base rows fall at the tail in id asc
+    // (the base read's prior order), and `id` stays the unique paging tiebreak
+    // F-1 requires. No org pin added/removed — job.id is already the org-pinned
+    // subject from loadJobForOrg, exactly as before.
     fetchAllRows((from, to) =>
       supabase
         .from("quotes")
@@ -176,27 +187,14 @@ export default async function EditJobPage({
           "id, number, variation_number, status, subtotal, vat_total, total, accepted_at, declined_at, created_at, notes, public_token",
         )
         .eq("job_id", job.id)
-        .not("variation_number", "is", null)
         .order("variation_number", { ascending: true })
-        .order("id", { ascending: true })
-        .range(from, to),
-    ),
-    // Base contract quote(s) for this job — the accepted quote with no
-    // variation_number is the original agreed value (Programme B: revised value).
-    fetchAllRows((from, to) =>
-      supabase
-        .from("quotes")
-        .select("id, status, total, variation_number")
-        .eq("job_id", job.id)
-        .is("variation_number", null)
         .order("id", { ascending: true })
         .range(from, to),
     ),
   ]);
   if (invoicesForJob.error) throw readFailure("job summary: invoices", invoicesForJob.error);
   if (financesForJob.error) throw readFailure("job summary: finances", financesForJob.error);
-  if (variationsForJob.error) throw readFailure("job summary: variations", variationsForJob.error);
-  if (baseQuotesForJob.error) throw readFailure("job summary: base quotes", baseQuotesForJob.error);
+  if (quotesForJob.error) throw readFailure("job summary: quotes", quotesForJob.error);
 
   // Cast: job_id is in the 20260520150000 migration but not yet in
   // the generated Supabase types.
@@ -232,12 +230,24 @@ export default async function EditJobPage({
   };
   const invRows = (invoicesForJob.data ?? []) as unknown as InvRow[];
   const finRows = (financesForJob.data ?? []) as unknown as FinRow[];
-  const varRows = (variationsForJob.data ?? []) as unknown as VarRow[];
-  const baseQuoteRows = (baseQuotesForJob.data ?? []) as unknown as Array<{
-    status: string;
-    total: number | string | null;
-    variation_number: number | null;
-  }>;
+  // J2: partition the single job-quotes read into the two sets the page used to
+  // read separately. `varRows` = rows with a variation_number (the variations
+  // list + cost basis); `baseQuoteRows` = the null-variation base contract
+  // quote(s). Filtering preserves the DB order within each set (variations:
+  // variation_number asc, id asc; base: id asc), so behaviour is identical.
+  const allQuoteRows = (quotesForJob.data ?? []) as unknown as Array<
+    VarRow & { variation_number: number | null }
+  >;
+  const varRows = allQuoteRows.filter(
+    (q) => q.variation_number !== null,
+  ) as unknown as VarRow[];
+  const baseQuoteRows = allQuoteRows
+    .filter((q) => q.variation_number === null)
+    .map((q) => ({
+      status: q.status,
+      total: q.total,
+      variation_number: q.variation_number,
+    }));
 
   // A job's ACTUAL cost is its `finances` rows PLUS time-tracked labour (gross) PLUS
   // employer NI + pension on-costs on those hours — the same composition the

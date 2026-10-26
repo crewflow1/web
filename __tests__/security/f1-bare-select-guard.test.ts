@@ -320,8 +320,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE job's retention releases (.eq('job_id').eq('org_id')) — feeds the committed/forecast retention figure for a single job; retention is released in 1-2 tranches per job, never near 1000. (Org-pinned per C66-A's cross-org money-injection fix. Moved to 186 in the security closeout when the staff-redirect guard was added to the top of the page.)",
   "app/(app)/jobs/[id]/commercial/page.tsx:191":
     "bounded: ONE job's purchase orders (.eq('job_id')) — feeds the committed-costs tile for a single job; a job has a handful to dozens of POs, never near 1000. (Moved to 191 in the security closeout when the staff-redirect guard was added above.)",
-  "app/(app)/jobs/[id]/page.tsx:337":
-    "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap. (Moved 315→317 when the P3 span column + checklist import were added above it; then 317→330 when the stock-COGS wave added an import line + the loadStockCogsCostRows composition block above it; then 330→337 when the G2 variation-request panel import was added above it.)",
+  "app/(app)/jobs/[id]/page.tsx:347":
+    "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap. (Moved 315→317 when the P3 span column + checklist import were added above it; then 317→330 when the stock-COGS wave added an import line + the loadStockCogsCostRows composition block above it; then 330→337 when the G2 variation-request panel import was added above it; then 337→347 when the J2 job-quotes dedup replaced the two separate variations/base reads above it with one superset read + its partition comments — same read, unchanged bound.)",
   "app/(app)/jobs/retention-actions.ts:163":
     "bounded: ONE job's invoices (.eq('job_id')) — folded into the retention position for a single job; a job's invoices are a handful",
   "app/(app)/purchase-orders/[id]/page.tsx:161":
