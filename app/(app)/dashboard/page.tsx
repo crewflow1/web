@@ -12,7 +12,10 @@ import { RevenueTrend } from "./_revenue-trend";
 import type { ActivityRow } from "@/lib/activity/render";
 import { InsightsSection } from "./_insights";
 import { SetupChecklist } from "./_setup-checklist";
-import { buildOnboardingSnapshot } from "@/server/services/onboarding-snapshot";
+import {
+  buildOnboardingSnapshot,
+  type DashboardQuoteRow,
+} from "@/server/services/onboarding-snapshot";
 import { buildRetentionSnapshot } from "@/server/services/retention-snapshot";
 import {
   gatherVatQuarterInputs,
@@ -194,6 +197,34 @@ export default async function DashboardPage() {
   // receivables, VAT inputs, retention — is computed from the SAME rows as
   // before, just fetched in parallel: no value changes, nothing cached, money/VAT
   // stay live. PAGED + LOUD (F-1) money reads still THROW on error (checked below).
+  // Perf (Workstream A — A2): fetch the quotes ledger ONCE and share it with the
+  // onboarding + retention snapshot services. Both otherwise re-read `quotes`
+  // during the SAME render under the SAME user JWT — 4 duplicate round-trips
+  // (onboarding's all-quotes count; retention's 7-day created, 7-day accepted,
+  // and newest-quote reads). coreWave's read is the strict superset (all org
+  // quotes, every column those services need: status · accepted_at · created_at),
+  // so each service derives its figures in-memory from this set instead. No
+  // behaviour change: the services apply their own date/status filters to the
+  // superset, yielding identical values.
+  const quotesReadPromise = fetchAllRows((from, to) =>
+    supabase
+      .from("quotes")
+      .select("id, status, total, accepted_at, created_at, approved_at")
+      .eq("org_id", ctx.org.id)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  // Rows view handed to the nested services. This is a best-effort (soft) read:
+  // it coalesces a failed quotes fetch to an empty set, mirroring the dashboard's
+  // own existing swallow-to-empty treatment of the quotes result below (quotes
+  // tiles are NOT money/loud reads). Behaviour is therefore identical whether a
+  // service reads quotes itself or reuses this set. Counted in the app/(app)
+  // soft-data ledger (see __tests__/security/loud-read-failures.test.ts).
+  const sharedQuoteRows: Promise<DashboardQuoteRow[]> = quotesReadPromise.then(
+    (r) => (r.data ?? []) as unknown as DashboardQuoteRow[],
+  );
+
   const coreWave = Promise.all([
     fetchAllRows((from, to) =>
       supabase
@@ -239,15 +270,7 @@ export default async function DashboardPage() {
       .from("memberships")
       .select("user_id, role, user:users ( id, full_name, email )")
       .eq("org_id", ctx.org.id),
-    fetchAllRows((from, to) =>
-      supabase
-        .from("quotes")
-        .select("id, status, total, accepted_at, created_at, approved_at")
-        .eq("org_id", ctx.org.id)
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: true })
-        .range(from, to),
-    ),
+    quotesReadPromise,
     fetchAllRows((from, to) =>
       supabase
         .from("leads")
@@ -346,11 +369,16 @@ export default async function DashboardPage() {
   // Deterministic insight payloads + the onboarding snapshot (built ONCE and
   // shared with the retention snapshot, de-duping an org-row fetch + 5 counts).
   // LLM prose lands later when a model key is added to Vercel.
-  const onboardingSnapshotPromise = buildOnboardingSnapshot(ctx.org.id);
+  const onboardingSnapshotPromise = buildOnboardingSnapshot(ctx.org.id, {
+    quotes: sharedQuoteRows,
+  });
   const insightsWave = Promise.all([
     computeActivitySummary(ctx.org.id, 7),
     onboardingSnapshotPromise,
-    buildRetentionSnapshot(ctx.org.id, { onboarding: onboardingSnapshotPromise }),
+    buildRetentionSnapshot(ctx.org.id, {
+      onboarding: onboardingSnapshotPromise,
+      quotes: sharedQuoteRows,
+    }),
   ]);
 
   // ONE overlapped await — every wave is already in flight; Promise.all here just

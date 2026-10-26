@@ -365,6 +365,16 @@ best-effort shape as the pre-existing `getPaymentProofSignedUrl`.
     binds + throws `readFailure`; the per-file storage `createSignedUrl` is the
     one soft read (→ null URL → that file's "Open" link is hidden on the inbox).
 Per the UP rule, baseline raised in the same commit with this reason.
+- **app/(app) soft-data 33 → 34** (UP — best-effort, ledgered; Workstream A2 — dashboard quotes fetch-once-share):
+  - `app/(app)/dashboard/page.tsx` — the dashboard now fetches the quotes ledger
+    ONCE (`quotesReadPromise`) and shares the rows with the onboarding + retention
+    snapshot services via `sharedQuoteRows = quotesReadPromise.then((r) => r.data ?? [])`.
+    That one shared coalesce is a NEW best-effort soft read, but it preserves the
+    page's pre-existing treatment of the quotes result exactly (`const quotes =
+    quotesRes.data ?? []` is already soft — quote tiles are not money/loud reads).
+    No query that was loud became soft and no previously-bound error is now dropped;
+    it is the same best-effort quotes read, derived once instead of re-fetched 4×.
+Per the UP rule, baseline raised in the same commit with this reason.
 - **app/(app) discard 56 → 58** (UP — best-effort, ledgered; first-customer fix 4):
   - `app/(app)/quotes/actions.ts` `buildJobCarryFromQuote` — TWO deliberate
     soft reads (`properties` address, `quote_line_items` descriptions) that
