@@ -32,6 +32,22 @@ export type DashboardQuoteRow = {
   created_at: string;
 };
 
+/**
+ * Minimal invoice-row shape the dashboard can hand in so this service derives
+ * its all-invoices count in-memory instead of issuing its own `invoices` read.
+ * The dashboard's coreWave already fetches every org invoice (a strict superset
+ * of these columns) under the same user JWT — see the A3 reuse in the dashboard
+ * page. `status`/`total`/`due_date` are unused here (the count is unfiltered)
+ * but are carried so the one row type also serves the retention snapshot, whose
+ * invoice signals filter on status · total · due_date · created_at.
+ */
+export type DashboardInvoiceRow = {
+  status: string | null;
+  total: number | string | null;
+  due_date: string | null;
+  created_at: string;
+};
+
 export type DismissedStepsJson = {
   dismissed_steps?: string[];
   /** Best-effort stamp of when the operator first opened /onboarding/setup. */
@@ -54,6 +70,15 @@ export async function buildOnboardingSnapshot(
      * before. Same user-JWT security context either way.
      */
     quotes?: DashboardQuoteRow[] | Promise<DashboardQuoteRow[]>;
+    /**
+     * Pre-fetched org invoice rows (or their in-flight promise) to derive the
+     * all-invoices count from, instead of issuing a dedicated `invoices` count
+     * read. The dashboard already fetches the full invoice ledger in its
+     * coreWave; passing it in avoids a duplicate `invoices` round-trip per load.
+     * When omitted (e.g. the /onboarding/setup pages) the count is read as
+     * before. Same user-JWT security context either way.
+     */
+    invoices?: DashboardInvoiceRow[] | Promise<DashboardInvoiceRow[]>;
   },
 ): Promise<OnboardingSnapshot> {
   const supabase = await createClient();
@@ -86,10 +111,15 @@ export async function buildOnboardingSnapshot(
       .from("customers")
       .select("id", { count: "exact", head: true })
       .eq("org_id", orgId),
-    supabase
-      .from("invoices")
-      .select("id", { count: "exact", head: true })
-      .eq("org_id", orgId),
+    // Invoices: derive the all-invoices count from the shared row set when the
+    // caller hands one in (same org, unfiltered — count === rows.length);
+    // otherwise read it. `.then` keeps this concurrent with the sibling counts.
+    opts?.invoices
+      ? Promise.resolve(opts.invoices).then((rows) => ({ count: rows.length }))
+      : supabase
+          .from("invoices")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId),
     // Quotes: derive the all-quotes count from the shared row set when the
     // caller hands one in (same org, unfiltered — count === rows.length);
     // otherwise read it. `.then` keeps this concurrent with the sibling counts.

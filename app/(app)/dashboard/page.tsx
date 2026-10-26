@@ -15,6 +15,7 @@ import { SetupChecklist } from "./_setup-checklist";
 import {
   buildOnboardingSnapshot,
   type DashboardQuoteRow,
+  type DashboardInvoiceRow,
 } from "@/server/services/onboarding-snapshot";
 import { buildRetentionSnapshot } from "@/server/services/retention-snapshot";
 import {
@@ -225,6 +226,41 @@ export default async function DashboardPage() {
     (r) => (r.data ?? []) as unknown as DashboardQuoteRow[],
   );
 
+  // Perf (Workstream A — A3): fetch the invoices ledger ONCE and share it with
+  // the onboarding + retention snapshot services. Both otherwise re-read
+  // `invoices` during the SAME render under the SAME user JWT — 5 duplicate
+  // round-trips (onboarding's all-invoices count; retention's 7-day created set,
+  // all-time invoiced set, derived overdue count, and newest-invoice probe).
+  // coreWave's read is the strict superset (all org invoices, every column those
+  // services need: status · total · due_date · created_at), so each service
+  // derives its figures in-memory from this set instead. No behaviour change:
+  // the services apply their own date/status filters to the superset, yielding
+  // identical values. (The existing money tiles — receivables, invoiced-this-
+  // month, profitability — already derive from this same soft-coalesced set.)
+  const invoicesReadPromise = fetchAllRows((from, to) =>
+    supabase
+      .from("invoices")
+      .select(
+        "id, number, status, amount, vat_total, total, due_date, paid_at, created_at, job_id",
+      )
+      .eq("org_id", ctx.org.id)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  // Rows view handed to the nested services. Best-effort (soft) read: it
+  // coalesces a failed invoices fetch to an empty set, mirroring the dashboard's
+  // own existing swallow-to-empty treatment of the invoices result below (the
+  // page already coalesces the coreWave invoices result to an empty array; the
+  // invoice tiles here are not loud-throwing reads). Behaviour is therefore
+  // identical whether a service reads invoices itself or reuses this set; the
+  // retention snapshot's invoice signals were already best-effort. Counted in
+  // the app/(app) soft-data ledger (see loud-read-failures.test.ts).
+  const sharedInvoiceRows: Promise<DashboardInvoiceRow[]> =
+    invoicesReadPromise.then(
+      (r) => (r.data ?? []) as unknown as DashboardInvoiceRow[],
+    );
+
   const coreWave = Promise.all([
     fetchAllRows((from, to) =>
       supabase
@@ -237,17 +273,7 @@ export default async function DashboardPage() {
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    fetchAllRows((from, to) =>
-      supabase
-        .from("invoices")
-        .select(
-          "id, number, status, amount, vat_total, total, due_date, paid_at, created_at, job_id",
-        )
-        .eq("org_id", ctx.org.id)
-        .order("created_at", { ascending: false })
-        .order("id", { ascending: true })
-        .range(from, to),
-    ),
+    invoicesReadPromise,
     fetchAllRows((from, to) =>
       supabase
         .from("finances")
@@ -371,6 +397,7 @@ export default async function DashboardPage() {
   // LLM prose lands later when a model key is added to Vercel.
   const onboardingSnapshotPromise = buildOnboardingSnapshot(ctx.org.id, {
     quotes: sharedQuoteRows,
+    invoices: sharedInvoiceRows,
   });
   const insightsWave = Promise.all([
     computeActivitySummary(ctx.org.id, 7),
@@ -378,6 +405,7 @@ export default async function DashboardPage() {
     buildRetentionSnapshot(ctx.org.id, {
       onboarding: onboardingSnapshotPromise,
       quotes: sharedQuoteRows,
+      invoices: sharedInvoiceRows,
     }),
   ]);
 

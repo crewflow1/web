@@ -375,6 +375,19 @@ Per the UP rule, baseline raised in the same commit with this reason.
     No query that was loud became soft and no previously-bound error is now dropped;
     it is the same best-effort quotes read, derived once instead of re-fetched 4×.
 Per the UP rule, baseline raised in the same commit with this reason.
+- **app/(app) soft-data 34 → 35** (UP — best-effort, ledgered; Workstream A3 — dashboard invoices fetch-once-share):
+  - `app/(app)/dashboard/page.tsx` — the dashboard now fetches the invoices ledger
+    ONCE (`invoicesReadPromise`) and shares the rows with the onboarding + retention
+    snapshot services via `sharedInvoiceRows = invoicesReadPromise.then((r) => r.data ?? [])`.
+    That one shared coalesce is a NEW best-effort soft read, but it preserves the
+    page's pre-existing treatment of the invoices result exactly (the coreWave invoices
+    result is already soft-coalesced — the invoice tiles are not loud-throwing reads,
+    and the retention snapshot's invoice signals were already best-effort). No query
+    that was loud became soft and no previously-bound error is now dropped; it is the
+    same best-effort invoices read, derived once instead of re-fetched 5× (onboarding
+    all-invoices count + retention's 7-day created set, all-time invoiced set, derived
+    overdue count, and newest-invoice probe).
+Per the UP rule, baseline raised in the same commit with this reason.
 - **app/(app) discard 56 → 58** (UP — best-effort, ledgered; first-customer fix 4):
   - `app/(app)/quotes/actions.ts` `buildJobCarryFromQuote` — TWO deliberate
     soft reads (`properties` address, `quote_line_items` descriptions) that

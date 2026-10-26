@@ -9,6 +9,7 @@ import {
 import {
   buildOnboardingSnapshot,
   type DashboardQuoteRow,
+  type DashboardInvoiceRow,
 } from "@/server/services/onboarding-snapshot";
 import type { OnboardingSnapshot } from "@/lib/onboarding/checklist";
 import type {
@@ -58,6 +59,22 @@ export async function buildRetentionSnapshot(
      * three reads run as before. Same user-JWT security context either way.
      */
     quotes?: DashboardQuoteRow[] | Promise<DashboardQuoteRow[]>;
+    /**
+     * Pre-fetched org invoice rows (or their in-flight promise) to derive the
+     * four invoice signals from (7-day created count + invoiced £, all-time
+     * invoiced £ over the non-draft statuses, derived overdue count, and the
+     * newest-invoice timestamp for the last-activity probe) instead of issuing
+     * four dedicated `invoices` reads. The dashboard already fetches the full
+     * invoice ledger in its coreWave; this set is its strict superset (all org
+     * invoices, every column these signals need: status · total · due_date ·
+     * created_at), so the in-memory filters yield identical values. When omitted
+     * (e.g. the AI-question path) the four reads run as before. Same user-JWT
+     * security context either way. These reads were already best-effort (soft):
+     * the dashboard's coreWave invoice result is `?? []`-coalesced, so reusing
+     * it preserves the retention snapshot's existing soft posture — no loud
+     * money read is turned soft.
+     */
+    invoices?: DashboardInvoiceRow[] | Promise<DashboardInvoiceRow[]>;
   },
 ): Promise<RetentionSignals> {
   const supabase = await createClient();
@@ -68,12 +85,25 @@ export async function buildRetentionSnapshot(
   // Reuse the onboarding snapshot wholesale — gives us org + counts +
   // dismissed + timestamps in one call. Awaiting a passed-in promise is
   // safe: promises memoise, so a shared promise runs the work only once.
-  // The shared quote rows (when provided) are awaited alongside it — same
-  // single await-gate as before, no added serialisation.
-  const [onboarding, sharedQuotes] = await Promise.all([
+  // The shared quote + invoice rows (when provided) are awaited alongside it —
+  // same single await-gate as before, no added serialisation.
+  const [onboarding, sharedQuotes, sharedInvoices] = await Promise.all([
     opts?.onboarding ?? buildOnboardingSnapshot(orgId),
     opts?.quotes ? Promise.resolve(opts.quotes) : Promise.resolve(null),
+    opts?.invoices ? Promise.resolve(opts.invoices) : Promise.resolve(null),
   ]);
+  // Business "today" for the derived overdue predicate — computed once so the
+  // in-memory filter and the DB fallback below judge against the same instant.
+  const overdueToday = invoiceBusinessToday();
+  // All-time invoiced statuses (sent + paid, not draft / void) — the same set
+  // the DB `.in(...)` fallback uses; shared so the two paths stay in lockstep.
+  const INVOICED_STATUSES = [
+    "sent",
+    "paid",
+    "awaiting_payment",
+    "partially_paid",
+    "overdue",
+  ] as const;
 
   // ------------------------------------------------------------------
   // Parallel batched reads. All RLS-scoped via user JWT.
@@ -124,19 +154,26 @@ export async function buildRetentionSnapshot(
           .eq("org_id", orgId)
           .eq("status", "accepted")
           .gte("accepted_at", sevenDaysAgo),
-    // PAGED (F-1): this set feeds BOTH `invoices_sent` and the `invoiced_gbp_7d`
-    // SUM below, so a bare `.select()` clamped at max_rows (1000) would under-
-    // state a busy org's 7-day invoiced revenue AND its sent-count. The count is
-    // now derived from the fully-paged row set (length), not a truncatable page.
-    fetchAllRows<{ total: number | string | null }>((from, to) =>
-      supabase
-        .from("invoices")
-        .select("id, total")
-        .eq("org_id", orgId)
-        .gte("created_at", sevenDaysAgo)
-        .order("id", { ascending: true })
-        .range(from, to),
-    ),
+    // Invoices created in the last 7 days — feeds BOTH `invoices_sent` (count)
+    // and the `invoiced_gbp_7d` SUM. Derived from the shared superset when
+    // present (same org; created_at >= sevenDaysAgo), yielding an identical row
+    // set to the paged read. When no shared set is handed in this stays PAGED
+    // (F-1): a bare `.select()` clamped at max_rows (1000) would under-state a
+    // busy org's 7-day invoiced revenue AND its sent-count, so the fallback
+    // pages and derives the count from the full row set's length.
+    sharedInvoices
+      ? {
+          data: sharedInvoices.filter((i) => i.created_at >= sevenDaysAgo),
+        }
+      : fetchAllRows<{ total: number | string | null }>((from, to) =>
+          supabase
+            .from("invoices")
+            .select("id, total")
+            .eq("org_id", orgId)
+            .gte("created_at", sevenDaysAgo)
+            .order("id", { ascending: true })
+            .range(from, to),
+        ),
     // PAGED (F-1): feeds the `payments_received_gbp_7d` SUM — same truncation
     // class as the invoices set above.
     fetchAllRows<{ amount: number | string | null }>((from, to) =>
@@ -148,19 +185,27 @@ export async function buildRetentionSnapshot(
         .order("id", { ascending: true })
         .range(from, to),
     ),
-    // All-time invoiced (sent + paid, not draft / void). PAGED (F-1): this feeds
-    // the `invoiced_total_gbp` SUM below, so a bare `.select()` truncated at the
-    // 1000-row cap would silently under-state lifetime invoiced revenue once an
-    // org crosses 1000 non-draft invoices.
-    fetchAllRows((from, to) =>
-      supabase
-        .from("invoices")
-        .select("id, total, status")
-        .eq("org_id", orgId)
-        .in("status", ["sent", "paid", "awaiting_payment", "partially_paid", "overdue"])
-        .order("id", { ascending: true })
-        .range(from, to),
-    ),
+    // All-time invoiced (sent + paid, not draft / void) — feeds the
+    // `invoiced_total_gbp` SUM. Derived from the shared superset when present
+    // (same org; status ∈ INVOICED_STATUSES — identical population to the DB
+    // `.in(...)`). When no shared set is handed in this stays PAGED (F-1): a bare
+    // `.select()` truncated at the 1000-row cap would silently under-state
+    // lifetime invoiced revenue once an org crosses 1000 non-draft invoices.
+    sharedInvoices
+      ? {
+          data: sharedInvoices.filter((i) =>
+            (INVOICED_STATUSES as readonly string[]).includes(i.status ?? ""),
+          ),
+        }
+      : fetchAllRows((from, to) =>
+          supabase
+            .from("invoices")
+            .select("id, total, status")
+            .eq("org_id", orgId)
+            .in("status", [...INVOICED_STATUSES])
+            .order("id", { ascending: true })
+            .range(from, to),
+        ),
     // Overdue count — DERIVED, matching lib/invoices/overdue.ts exactly.
     //
     // This previously filtered `.eq("status", "overdue")`, which counted only
@@ -177,12 +222,27 @@ export async function buildRetentionSnapshot(
     //
     // The predicate is expressed at the DB (status ∈ collectable AND due_date <
     // today) so it selects exactly the population isInvoiceOverdue() accepts.
-    supabase
-      .from("invoices")
-      .select("id", { count: "exact", head: true })
-      .eq("org_id", orgId)
-      .in("status", [...OVERDUE_COLLECTABLE_STATUSES])
-      .lt("due_date", invoiceBusinessToday()),
+    // Derived from the shared superset when present: status ∈ collectable AND a
+    // NON-NULL due_date strictly before business-today. The null guard mirrors
+    // SQL — `due_date < today` is NULL (excluded) for a null due_date — so the
+    // in-memory population is identical to the DB count.
+    sharedInvoices
+      ? {
+          count: sharedInvoices.filter(
+            (i) =>
+              (OVERDUE_COLLECTABLE_STATUSES as readonly string[]).includes(
+                i.status ?? "",
+              ) &&
+              i.due_date != null &&
+              i.due_date < overdueToday,
+          ).length,
+        }
+      : supabase
+          .from("invoices")
+          .select("id", { count: "exact", head: true })
+          .eq("org_id", orgId)
+          .in("status", [...OVERDUE_COLLECTABLE_STATUSES])
+          .lt("due_date", invoiceBusinessToday()),
     // Phase 2 — open support tickets count toward health drag.
     // "open" = anything not 'resolved' / 'closed'. Cast past the
     // generated supabase types since `support_tickets` is not yet
@@ -255,13 +315,27 @@ export async function buildRetentionSnapshot(
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
-    supabase
-      .from("invoices")
-      .select("created_at")
-      .eq("org_id", orgId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+    // Newest invoice created_at — derived from the shared superset when present
+    // (max created_at === the newest-first single-row read the DB would return),
+    // else read as a single row. Same org, same column.
+    sharedInvoices
+      ? Promise.resolve({
+          data: sharedInvoices.length
+            ? {
+                created_at: sharedInvoices.reduce(
+                  (max, i) => (i.created_at > max ? i.created_at : max),
+                  sharedInvoices[0]!.created_at,
+                ),
+              }
+            : null,
+        })
+      : supabase
+          .from("invoices")
+          .select("created_at")
+          .eq("org_id", orgId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
   ]);
 
   const lastActivityCandidates = [
