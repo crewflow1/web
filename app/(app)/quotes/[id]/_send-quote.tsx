@@ -66,13 +66,13 @@ export function SendQuote({
             setInfo(null);
           }}
           disabled={busy}
-          className="mt-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          className="mt-2 rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 disabled:opacity-50"
         >
           Email quote PDF
           {customerEmail ? (
-            <span className="ml-1 text-slate-500">→ {customerEmail}</span>
+            <span className="ml-1 text-slate-300">→ {customerEmail}</span>
           ) : (
-            <span className="ml-1 text-amber-700">(no customer email)</span>
+            <span className="ml-1 text-amber-300">(no customer email)</span>
           )}
         </button>
       ) : (
