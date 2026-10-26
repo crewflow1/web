@@ -26,6 +26,15 @@ export default defineConfig({
     include: ["__tests__/integration/**/*.test.ts"],
     globals: false,
     pool: "forks",
+    /**
+     * Readiness gate (F-I1). Runs ONCE before any file is collected and blocks
+     * until the Supabase Data API has finished loading its schema cache, so no
+     * suite can issue the first query into the cold-start window where Kong has
+     * no healthy PostgREST upstream and returns a 502/503 ("invalid response
+     * from upstream"). A deterministic settle gate, not a per-call retry — see
+     * the file header. No-op against a warm/absent stack.
+     */
+    globalSetup: ["__tests__/integration/global-readiness.ts"],
     // One shared Postgres → run files serially so fixtures can't race.
     fileParallelism: false,
     setupFiles: ["__tests__/integration/setup.ts"],
