@@ -358,25 +358,3 @@ function Field({
     </label>
   );
 }
-
-/**
- * A button that opens the modal. Render anywhere on the site. Callers pass the
- * full (dark) button styling via `className`; the default is a minimal fallback.
- */
-export function BookDemoButton({
-  children = "Book a demo",
-  className = "inline-flex h-11 items-center rounded-lg bg-gold-500 px-5 text-sm font-semibold text-navy-950 shadow-cf-gold transition-colors hover:bg-gold-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100",
-}: {
-  children?: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => window.dispatchEvent(new Event("crewflow:open-book-demo"))}
-      className={className}
-    >
-      {children}
-    </button>
-  );
-}

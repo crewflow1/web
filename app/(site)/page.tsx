@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
 import { buildMetadata } from "@/lib/seo/metadata";
-import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
+import { BookDemoButton } from "@/app/(public)/_book-demo-button";
 import { JobJourney } from "@/components/marketing/home/job-journey";
 import { Differentiation } from "@/components/marketing/home/differentiation";
 import { SwitchTrust } from "@/components/marketing/home/switch-trust";

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
+import { BookDemoButton } from "@/app/(public)/_book-demo-button";
 
 /** Pricing / value. One transparent price; the price card is the one place a
  *  container genuinely earns its keep. No eyebrow, no monospace. */

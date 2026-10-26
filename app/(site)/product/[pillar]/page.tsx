@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { PILLARS, pillarBySlug } from "@/lib/marketing/pillars";
-import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
+import { BookDemoButton } from "@/app/(public)/_book-demo-button";
 import { ProductFrame } from "@/components/marketing/product-frame";
 import { buildMetadata } from "@/lib/seo/metadata";
 

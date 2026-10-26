@@ -2,7 +2,7 @@ import { clashDisplay, satoshi } from "@/app/_marketing/fonts";
 import { SiteNav } from "@/components/marketing/nav";
 import { SiteFooterDark } from "@/components/marketing/footer";
 import { isPublicApiJobsEnabled } from "@/lib/public-api/flag";
-import { BookDemoModal } from "@/app/(public)/_book-demo-modal";
+import { BookDemoModalMount } from "@/app/(public)/_book-demo-mount";
 import { JsonLd } from "@/components/seo/json-ld";
 import {
   organizationSchema,
@@ -44,7 +44,7 @@ export default function MarketingLayout({
         {children}
       </main>
       <SiteFooterDark showDevelopers={isPublicApiJobsEnabled()} />
-      <BookDemoModal />
+      <BookDemoModalMount />
     </div>
   );
 }
