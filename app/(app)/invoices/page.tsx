@@ -4,6 +4,7 @@ import { getRequestI18n } from "@/server/i18n/request";
 import { requireManagementRole } from "@/server/auth/session";
 import {
   INVOICE_STATUSES,
+  INVOICE_STATUS_LABEL,
   OUTSTANDING_STATUSES,
   type InvoiceStatus,
 } from "@/lib/invoices/schema";
@@ -254,10 +255,10 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
             className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           >
             <option value="">All</option>
-            <option value="outstanding">outstanding (unpaid)</option>
+            <option value="outstanding">Outstanding (unpaid)</option>
             {INVOICE_STATUSES.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {INVOICE_STATUS_LABEL[s]}
               </option>
             ))}
           </select>
@@ -309,7 +310,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
               <span
                 className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[displayStatus]}`}
               >
-                {displayStatus}
+                {INVOICE_STATUS_LABEL[displayStatus] ?? displayStatus}
               </span>
             );
             return {
@@ -370,7 +371,7 @@ export default async function InvoicesPage({ searchParams }: { searchParams: SP 
                       <span
                         className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[displayStatus]}`}
                       >
-                        {displayStatus}
+                        {INVOICE_STATUS_LABEL[displayStatus] ?? displayStatus}
                       </span>
                     </div>
                   </div>

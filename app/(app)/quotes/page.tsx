@@ -5,7 +5,11 @@ import { getRequestI18n } from "@/server/i18n/request";
 import { requireManagementRole } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { HelpLink } from "../_components/help-link";
-import { QUOTE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
+import {
+  QUOTE_STATUSES,
+  QUOTE_STATUS_LABEL,
+  type QuoteStatus,
+} from "@/lib/quotes/schema";
 
 /**
  * Quotes list page.
@@ -148,7 +152,7 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
             <option value="">All</option>
             {QUOTE_STATUSES.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {QUOTE_STATUS_LABEL[s]}
               </option>
             ))}
           </select>
@@ -206,7 +210,7 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
                       <span
                         className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[q.status as QuoteStatus] ?? "bg-slate-100 text-slate-700"}`}
                       >
-                        {q.status}
+                        {QUOTE_STATUS_LABEL[q.status as QuoteStatus] ?? q.status}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-slate-600">{q.valid_until ?? "—"}</td>
@@ -250,7 +254,7 @@ export default async function QuotesPage({ searchParams }: { searchParams: SP })
                       <span
                         className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_STYLES[q.status as QuoteStatus] ?? "bg-slate-100 text-slate-700"}`}
                       >
-                        {q.status}
+                        {QUOTE_STATUS_LABEL[q.status as QuoteStatus] ?? q.status}
                       </span>
                     </div>
                   </div>

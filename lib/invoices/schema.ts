@@ -30,6 +30,29 @@ export const INVOICE_STATUSES = [
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 
 /**
+ * Human-readable labels for the stored enum — the DISPLAY vocabulary.
+ *
+ * Mirrors the `*_STATUS_LABEL` idiom used across the app so list filters and
+ * status pills read like English instead of leaking raw enum values
+ * ("awaiting_payment"). The stored enum and every filter/query value stay the
+ * raw member; only the visible text changes. Covers the full read vocabulary,
+ * `overdue` and `void` included, so derived display statuses map too.
+ */
+export const INVOICE_STATUS_LABEL: Record<InvoiceStatus, string> = {
+  draft: "Draft",
+  sent: "Sent",
+  awaiting_payment: "Awaiting payment",
+  partially_paid: "Partially paid",
+  paid: "Paid",
+  overdue: "Overdue",
+  void: "Void",
+};
+
+export function invoiceStatusLabel(status: string): string {
+  return INVOICE_STATUS_LABEL[status as InvoiceStatus] ?? status;
+}
+
+/**
  * Statuses an operator or import may PERSIST.
  *
  * `overdue` is deliberately absent. It is derived from `due_date` + the
