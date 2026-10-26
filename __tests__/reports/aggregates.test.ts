@@ -389,104 +389,71 @@ describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
     expect(output).toBeCloseTo(15, 5); // → box 1
     expect(input).toBeCloseTo(15, 5); // → box 4 (net-neutral)
   });
+  // ── topCustomersByRevenue (R2) ──────────────────────────────────────────────
+  // The aggregation moved into the SECURITY DEFINER RPC
+  // reports_top_customers_by_revenue: the former all-time whole-invoices +
+  // whole-customers fetch + TypeScript group/sum/slice is gone, so the F-1
+  // 1000-row cap no longer applies to this function and there is nothing to page
+  // here. The resolution rule (customer_id → quote fallback → Unattributed), the
+  // ex-VAT sum and the Σ(revenue)=paid-total reconciliation are now proven
+  // against REAL Postgres in
+  // __tests__/integration/rls/reports-top-customers-rpc.test.ts (the correct
+  // tier for SQL). These unit cases pin the thin TS wrapper: it must call the RPC
+  // with the active org + limit and map every returned row — including the null →
+  // Unattributed bucket — faithfully, and fail loud on error.
+  function rpcStub(rows: Array<Record<string, unknown>> | null, error: unknown = null) {
+    const calls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+    const db = {
+      rpc(fn: string, args: Record<string, unknown>) {
+        calls.push({ fn, args });
+        return Promise.resolve({ data: rows, error });
+      },
+    } as unknown as Parameters<typeof topCustomersByRevenue>[2];
+    return { db, calls };
+  }
 
-  it("topCustomersByRevenue attributes revenue from every invoice past the cap", async () => {
-    // 1500 paid invoices split across two customers; the SECOND customer's
-    // invoices are sorted LAST by id, so a single-page read would miss them
-    // entirely and drop the customer from the ranking.
-    const N = 1500;
-    // Revenue is EX-VAT: `amount` is the net contribution; `total` is gross and
-    // must NOT be summed. Setting total ≠ amount catches a regression to gross.
-    h.tables.invoices = Array.from({ length: N }, (_, i) => {
-      const second = i >= N / 2;
-      return {
-        id: `inv-${String(i).padStart(6, "0")}`,
-        org_id: ORG,
-        status: "paid",
-        amount: second ? 20 : 10,
-        total: second ? 24 : 12,
-        quote: {
-          customer: { id: second ? "cust-B" : "cust-A", name: second ? "Beta" : "Alpha" },
-        },
-      };
+  it("topCustomersByRevenue delegates to the org-guarded RPC with the org + limit", async () => {
+    const { db, calls } = rpcStub([]);
+    const out = await topCustomersByRevenue(ORG, 7, db);
+    expect(out).toEqual([]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.fn).toBe("reports_top_customers_by_revenue");
+    expect(calls[0]!.args).toEqual({ p_org_id: ORG, p_limit: 7 });
+  });
+
+  it("topCustomersByRevenue maps RPC rows to the TopCustomer shape (Number-coerced)", async () => {
+    // PostgREST can hand back a bigint count / numeric revenue as a string; the
+    // wrapper must coerce so the renderer always sees numbers.
+    const { db } = rpcStub([
+      { customer_id: "cust-A", name: "Alpha", revenue: 150, invoice_count: 2 },
+      { customer_id: "cust-B", name: "Beta", revenue: "30", invoice_count: "1" },
+    ]);
+    const rows = await topCustomersByRevenue(ORG, 10, db);
+    expect(rows).toEqual([
+      { id: "cust-A", name: "Alpha", revenue: 150, invoice_count: 2 },
+      { id: "cust-B", name: "Beta", revenue: 30, invoice_count: 1 },
+    ]);
+  });
+
+  it("topCustomersByRevenue maps a null customer_id to the Unattributed sentinel + label", async () => {
+    // The RPC returns the Unattributed bucket as customer_id = null; the wrapper
+    // owns the sentinel id + the human label (unchanged from before the move).
+    const { db } = rpcStub([
+      { customer_id: null, name: "—", revenue: 10, invoice_count: 2 },
+    ]);
+    const [row] = await topCustomersByRevenue(ORG, 10, db);
+    expect(row).toEqual({
+      id: "__unattributed__",
+      name: "Unattributed",
+      revenue: 10,
+      invoice_count: 2,
     });
-
-    const rows = await topCustomersByRevenue(ORG, 10);
-    const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
-    // Both customers present; each got all 750 of its invoices.
-    expect(byId["cust-A"]?.invoice_count).toBe(N / 2);
-    expect(byId["cust-B"]?.invoice_count).toBe(N / 2);
-    expect(byId["cust-A"]?.revenue).toBe((N / 2) * 10);
-    expect(byId["cust-B"]?.revenue).toBe((N / 2) * 20);
   });
 
-  it("topCustomersByRevenue resolves via customer_id when the quote is gone, and never drops paid revenue", async () => {
-    // The C35 gap: `invoices_quote_id_fkey` is ON DELETE SET NULL, so deleting a
-    // quote nulls quote/quote.customer while the denormalised `customer_id`
-    // survives. Resolving via the embed ALONE silently dropped that invoice's
-    // paid revenue. Three populations, all paid:
-    //   A — customer_id set, quote DELETED (quote is null): must attribute to A.
-    //   B — legacy row: no customer_id, resolves via the quote embed (unchanged).
-    //   ∅ — neither customer_id nor quote.customer: must land in Unattributed,
-    //       NOT be dropped, so the ranking's total reconciles with paid revenue.
-    h.tables.customers = [
-      { id: "cust-A", org_id: ORG, name: "Alpha" },
-      { id: "cust-B", org_id: ORG, name: "Beta" },
-      // A customer that belongs to ANOTHER org must never leak in as a name.
-      { id: "cust-X", org_id: OTHER_ORG, name: "Xenon" },
-    ];
-    // Revenue is EX-VAT: `amount` is what the ranking sums; `total` (gross) is set
-    // higher so a regression to summing `total` would break the reconciliation.
-    h.tables.invoices = [
-      // A: customer_id set, quote deleted (SET NULL) → still counts for Alpha.
-      { id: "inv-a1", org_id: ORG, status: "paid", amount: 100, total: 120, customer_id: "cust-A", quote: null },
-      { id: "inv-a2", org_id: ORG, status: "paid", amount: 50, total: 60, customer_id: "cust-A", quote: null },
-      // B: legacy row, no customer_id → resolves via the quote embed fallback.
-      {
-        id: "inv-b1",
-        org_id: ORG,
-        status: "paid",
-        amount: 30,
-        total: 36,
-        customer_id: null,
-        quote: { customer: { id: "cust-B", name: "Beta" } },
-      },
-      // ∅: neither resolvable → Unattributed bucket, not dropped.
-      { id: "inv-z1", org_id: ORG, status: "paid", amount: 7, total: 8.4, customer_id: null, quote: null },
-      {
-        id: "inv-z2",
-        org_id: ORG,
-        status: "paid",
-        amount: 3,
-        total: 3.6,
-        customer_id: null,
-        quote: { customer: null },
-      },
-    ];
-
-    const rows = await topCustomersByRevenue(ORG, 10);
-    const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
-
-    // (a) customer_id wins even with the quote gone.
-    expect(byId["cust-A"]?.name).toBe("Alpha");
-    expect(byId["cust-A"]?.revenue).toBe(150);
-    expect(byId["cust-A"]?.invoice_count).toBe(2);
-
-    // (c) the quote.customer fallback path still works.
-    expect(byId["cust-B"]?.name).toBe("Beta");
-    expect(byId["cust-B"]?.revenue).toBe(30);
-    expect(byId["cust-B"]?.invoice_count).toBe(1);
-
-    // (b) unresolvable revenue is bucketed, not dropped.
-    const unattributed = rows.find((r) => r.name === "Unattributed");
-    expect(unattributed?.revenue).toBe(10);
-    expect(unattributed?.invoice_count).toBe(2);
-
-    // Reconciliation: the ranking's total equals ALL paid revenue.
-    const rankedTotal = rows.reduce((s, r) => s + r.revenue, 0);
-    expect(rankedTotal).toBe(150 + 30 + 10);
+  it("topCustomersByRevenue fails LOUD when the RPC errors — never a silent empty ranking", async () => {
+    const { db } = rpcStub(null, { message: "boom" });
+    await expect(topCustomersByRevenue(ORG, 10, db)).rejects.toThrow();
   });
-
   it("jobsPerWeek counts every job in the window, not a truncated first page", async () => {
     const N = 2000;
     // All within the last 28 days — comfortably inside the 8 pre-filled weekly
@@ -665,28 +632,13 @@ describe("reports revenue is EX-VAT (amount), not gross (total)", () => {
     expect(total).toBe(10); // ex-VAT — NOT 12
   });
 
-  it("a VAT-bearing paid invoice contributes its NET amount to topCustomersByRevenue", async () => {
-    h.tables.customers = [{ id: "cust-A", org_id: ORG, name: "Alpha" }];
-    h.tables.invoices = [
-      {
-        id: "inv-vat",
-        org_id: ORG,
-        status: "paid",
-        amount: 10,
-        vat_total: 2,
-        total: 12,
-        customer_id: "cust-A",
-        quote: null,
-      },
-    ];
+  // topCustomersByRevenue's ex-VAT behaviour (sum `amount`, never gross `total`)
+  // is now a property of the SQL in the RPC, proven against real Postgres in
+  // __tests__/integration/rls/reports-top-customers-rpc.test.ts (a paid invoice
+  // whose `total` ≠ `amount` must contribute `amount`). The source guard below
+  // keeps the invariant honest at the source level for both functions.
 
-    const rows = await topCustomersByRevenue(ORG, 10);
-    const alpha = rows.find((r) => r.id === "cust-A");
-    expect(alpha?.revenue).toBe(10); // ex-VAT — NOT 12
-    expect(alpha?.invoice_count).toBe(1);
-  });
-
-  it("SOURCE GUARD: both reads select `amount` and never sum gross `total`", () => {
+  it("SOURCE GUARD: revenuePerMonth sums ex-VAT `amount`; top-customers delegates to the RPC, never TS gross", () => {
     const src = readFileSync(
       resolve(process.cwd(), "lib/reports/aggregates.ts"),
       "utf8",
@@ -703,12 +655,14 @@ describe("reports revenue is EX-VAT (amount), not gross (total)", () => {
     expect(rpm).toMatch(/\.revenue\s*\+=\s*Number\(\s*inv\.amount\b/);
     expect(rpm).not.toMatch(/\.revenue\s*\+=\s*Number\(\s*inv\.total\b/);
 
-    // Isolate topCustomersByRevenue() to end-of-file.
+    // topCustomersByRevenue now delegates to the grouped SQL aggregate (R2): it
+    // calls the org-guarded RPC and does NOT sum anything in TypeScript — so it
+    // must reference the RPC by name and must NOT accumulate the gross `total`.
     const tcStart = src.indexOf("export async function topCustomersByRevenue");
     expect(tcStart).toBeGreaterThan(-1);
     const tc = src.slice(tcStart);
-    expect(tc).toMatch(/\bamount\b/);
-    expect(tc).toMatch(/\.revenue\s*\+=\s*Number\(\s*inv\.amount\b/);
+    expect(tc).toMatch(/\.rpc\(\s*["']reports_top_customers_by_revenue["']/);
+    expect(tc).not.toMatch(/Number\(\s*inv\.total\b/);
     expect(tc).not.toMatch(/\.revenue\s*\+=\s*Number\(\s*inv\.total\b/);
   });
 });

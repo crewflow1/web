@@ -324,84 +324,41 @@ export async function topCustomersByRevenue(
 ): Promise<TopCustomer[]> {
   const supabase = db ?? (await createClient());
 
-  // Two paged, org-pinned, loud reads (the vatPerQuarter shape):
-  //  1. paid invoices — with the DENORMALISED `customer_id` (20260915) read
-  //     FIRST, and the quote->customer embed kept only as the pre-backfill
-  //     fallback. `invoices_quote_id_fkey` is ON DELETE SET NULL, so a deleted
-  //     quote nulls `quote_id`/`quote.customer` while `customer_id` survives —
-  //     resolving via the embed ALONE silently dropped that invoice's paid
-  //     revenue from the ranking. The migration itself mandates preferring
-  //     `customer_id` over walking quote->customer.
-  //  2. the org's customers — a separate id->name lookup (the concentration.ts
-  //     idiom), so `customer_id` resolves to a display name WITHOUT adding an
-  //     invoices->customers embed. `invoices` carries a composite FK to
-  //     customers (customer_id, org_id); a bare embed is avoidable noise, and
-  //     the separate lookup keeps the resolution rule identical to the sibling
-  //     concentration surface.
-  const [invRes, custRes] = await Promise.all([
-    fetchAllRows<{
-      amount: number | null;
-      status: string | null;
-      customer_id: string | null;
-      quote: { customer: { id: string; name: string | null } | null } | null;
-    }>((from, to) =>
-      supabase
-        .from("invoices")
-        // Revenue is EX-VAT: select `amount` (net subtotal), never the generated
-        // GROSS `total` (= amount + vat_total). Summing `total` overstated every
-        // customer's revenue by the VAT rate and disagreed with /insights.
-        .select(
-          `
-          id, amount, status, customer_id,
-          quote:quotes (
-            customer:customers ( id, name )
-          )
-        `,
-        )
-        .eq("org_id", orgId)
-        .eq("status", "paid")
-        .order("id", { ascending: true })
-        .range(from, to),
-    ),
-    fetchAllRows<{ id: string; name: string | null }>((from, to) =>
-      supabase
-        .from("customers")
-        .select("id, name")
-        .eq("org_id", orgId)
-        .order("id", { ascending: true })
-        .range(from, to),
-    ),
-  ]);
-  if (invRes.error) throw readFailure("reports: top customers", invRes.error);
-  if (custRes.error) throw readFailure("reports: top customers (names)", custRes.error);
+  // DB-side grouped aggregate (R2). This used to fetch EVERY paid invoice (no
+  // date bound — all-time) AND EVERY customer for the org, then group/sum/sort
+  // in TypeScript — both reads scaling with the lifetime ledger for a 10-row
+  // ranking. `reports_top_customers_by_revenue` does the `sum, count group by
+  // resolved customer … order by revenue desc limit N` in SQL and returns only
+  // the N rows rendered. The resolution rule is PRESERVED EXACTLY by the RPC:
+  //   - invoices.customer_id FIRST (denormalised anchor, 20260915);
+  //   - the quote->customer link (quotes.customer_id) as the pre-backfill
+  //     fallback when customer_id is null;
+  //   - paid revenue that resolves to NEITHER is grouped into one Unattributed
+  //     bucket (RPC returns customer_id = null), NEVER dropped — so Σ(revenue
+  //     over all buckets) still equals the paid-invoice total and the ranking
+  //     reconciles with revenuePerMonth (same ex-VAT `amount`, same status).
+  // Revenue is EX-VAT (`amount`), never the gross generated `total`.
+  //
+  // The RPC is SECURITY DEFINER and org-guarded (current_org_ids()/42501, see
+  // supabase/migrations/20261237000000_reports_top_customers_rpc.sql) and
+  // org-filtered by orgId; the page/export routes call it on the user-JWT
+  // client, the delivery cron on the service-role client (guard skips
+  // service_role, p_org_id still scopes it).
+  const { data, error } = await supabase.rpc("reports_top_customers_by_revenue", {
+    p_org_id: orgId,
+    p_limit: limit,
+  });
+  if (error) throw readFailure("reports: top customers", error);
 
-  const customerName = new Map(
-    (custRes.data ?? []).map((c) => [c.id, c.name ?? "—"]),
-  );
-
-  const byCustomer = new Map<string, TopCustomer>();
-  for (const inv of invRes.data ?? []) {
-    // customer_id FIRST (denormalised anchor); quote.customer only as fallback;
-    // anything that resolves to neither lands in the Unattributed bucket rather
-    // than being dropped, so the ranking's total reconciles with paid revenue.
-    let id: string;
-    let name: string;
-    if (inv.customer_id) {
-      id = inv.customer_id;
-      name = customerName.get(inv.customer_id) ?? "—";
-    } else if (inv.quote?.customer?.id) {
-      id = inv.quote.customer.id;
-      name = inv.quote.customer.name ?? "—";
-    } else {
-      id = UNATTRIBUTED_CUSTOMER_ID;
-      name = UNATTRIBUTED_CUSTOMER_LABEL;
-    }
-    const prev = byCustomer.get(id) ?? { id, name, revenue: 0, invoice_count: 0 };
-    prev.revenue += Number(inv.amount ?? 0); // ex-VAT, never gross `total`
-    prev.invoice_count++;
-    byCustomer.set(id, prev);
-  }
-  return Array.from(byCustomer.values())
-    .sort((a, b) => b.revenue - a.revenue)
-    .slice(0, limit);
+  return (data ?? []).map((row) => {
+    // The Unattributed bucket comes back as a null customer id; map it to the
+    // sentinel id + label this module owns (identical to the prior behaviour).
+    const attributed = row.customer_id != null;
+    return {
+      id: attributed ? row.customer_id! : UNATTRIBUTED_CUSTOMER_ID,
+      name: attributed ? (row.name ?? "—") : UNATTRIBUTED_CUSTOMER_LABEL,
+      revenue: Number(row.revenue ?? 0),
+      invoice_count: Number(row.invoice_count ?? 0),
+    } satisfies TopCustomer;
+  });
 }
