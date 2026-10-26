@@ -246,13 +246,40 @@ describeIntegration("Train A outbound webhooks (real Postgres)", () => {
     const before = await svc().from("webhook_dispatch_state").select("last_event_id").eq("id", "singleton").maybeSingle();
     expect(before.error).toBeNull();
 
-    // Drain twice.
-    const d1 = await svc().rpc("webhook_dispatch_drain", { p_max_events: 1000 });
-    expect(d1.error).toBeNull();
-    const d2 = await svc().rpc("webhook_dispatch_drain", { p_max_events: 1000 });
-    expect(d2.error).toBeNull();
+    // Drain to completion, THEN once more — the idempotency proof.
+    //
+    // The consumer offset (webhook_dispatch_state, a singleton) is PERSISTENT
+    // and advanced ONLY by this file's drains. In a full-suite run every
+    // preceding file appends to hq_events while the offset sits at the migration
+    // seed, so the backlog between the offset and the event we just emitted can
+    // exceed any single bounded batch (p_max_events). A FIXED number of drains
+    // would then stop short of this event and fan out zero deliveries
+    // ("expected 0 to be 1") — a load-/order-dependent flake, not a product bug:
+    // the drain is bounded BY DESIGN and returns `lag` precisely so its cron
+    // caller keeps draining until caught up. So we do the same here — drain
+    // until the function reports it has caught up (lag 0). This is the real
+    // eventually-drained contract, a deterministic wait on the function's own
+    // completion signal (NOT a timed retry and NOT a blanket retry wrapper): a
+    // serial tier emits nothing concurrently, so lag only falls.
+    const drainOnce = async () => {
+      const r = await svc().rpc("webhook_dispatch_drain", { p_max_events: 1000 });
+      expect(r.error).toBeNull();
+      return r.data as { processed?: number; lag?: number; skipped?: string } | null;
+    };
+    let caughtUp = false;
+    for (let i = 0; i < 100; i++) {
+      const res = await drainOnce();
+      if (res && res.skipped === undefined && Number(res.lag) === 0) {
+        caughtUp = true;
+        break;
+      }
+    }
+    expect(caughtUp, "dispatch drain never caught up to the emitted event").toBe(true);
+    // Idempotency: draining AGAIN after catch-up must not create a second
+    // delivery for (endpoint, event) — the conflict-safe fan-out holds at one.
+    await drainOnce();
 
-    // Exactly one delivery for (endpoint, event) despite two drains.
+    // Exactly one delivery for (endpoint, event) despite the extra drain.
     const dels = await svc().from("webhook_deliveries").select("id, state, verb").eq("endpoint_id", endpoint).eq("event_id", eventId);
     expect(dels.error).toBeNull();
     expect((dels.data ?? []).length).toBe(1);
