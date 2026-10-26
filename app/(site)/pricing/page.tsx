@@ -4,7 +4,7 @@ import { SITE } from "@/lib/seo/site";
 import { buildMetadata } from "@/lib/seo/metadata";
 import { JsonLd } from "@/components/seo/json-ld";
 import { webPageSchema, breadcrumbSchema } from "@/lib/seo/schema";
-import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
+import { BookDemoButton } from "@/app/(public)/_book-demo-button";
 import { PILLARS } from "@/lib/marketing/pillars";
 
 const PATH = "/pricing";

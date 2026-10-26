@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PILLARS } from "@/lib/marketing/pillars";
-import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
+import { BookDemoButton } from "@/app/(public)/_book-demo-button";
 import { buildMetadata } from "@/lib/seo/metadata";
 
 export const metadata: Metadata = buildMetadata({

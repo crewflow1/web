@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
+import { BookDemoButton } from "@/app/(public)/_book-demo-button";
 import { JsonLd } from "@/components/seo/json-ld";
 import { faqSchema } from "@/lib/seo/schema";
 import type { Faq } from "@/lib/seo/content";

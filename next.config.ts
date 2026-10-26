@@ -22,6 +22,16 @@ const config: NextConfig = {
    */
   experimental: {
     staleTimes: { dynamic: 30, static: 180 },
+    /**
+     * PERF (bundle first-load): barrel-optimize framer-motion imports. It is
+     * NOT in Next's default optimizePackageImports list (lucide-react is), so
+     * the internal HQ routes that use it statically — /admin/ceo,
+     * /admin/command-centre (_counter.tsx) and /admin/pulse — ship more of the
+     * package than they import. This rewrites `import { animate } from
+     * "framer-motion"` to the specific submodule path at build time: pure
+     * import-optimisation, behaviour-identical (same runtime, same animations).
+     */
+    optimizePackageImports: ["framer-motion"],
   },
   images: {
     remotePatterns: [

@@ -6,7 +6,7 @@ import { ogImageUrl } from "@/lib/seo/metadata";
 import { JsonLd } from "@/components/seo/json-ld";
 import { articleSchema, breadcrumbSchema } from "@/lib/seo/schema";
 import { Breadcrumbs, FaqSection, RelatedLinks, CtaSection } from "@/components/marketing/sections";
-import { BookDemoButton } from "@/app/(public)/_book-demo-modal";
+import { BookDemoButton } from "@/app/(public)/_book-demo-button";
 
 export const dynamicParams = false;
 
