@@ -20,6 +20,30 @@ export const QUOTE_STATUSES = [
 
 export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
 
+/**
+ * Human-readable labels for the stored enum — the DISPLAY vocabulary.
+ *
+ * Mirrors the `*_STATUS_LABEL` idiom used across the app (material requests,
+ * POs, bill settlement, …) so list filters and status pills read like English
+ * instead of leaking raw enum values ("pending_approval"). The stored enum and
+ * every filter/query value stay the raw member; only the visible text changes.
+ */
+export const QUOTE_STATUS_LABEL: Record<QuoteStatus, string> = {
+  draft: "Draft",
+  pending_approval: "Awaiting approval",
+  approved: "Approved",
+  rejected: "Rejected",
+  sent: "Sent",
+  viewed: "Viewed",
+  accepted: "Accepted",
+  declined: "Declined",
+  expired: "Expired",
+};
+
+export function quoteStatusLabel(status: string): string {
+  return QUOTE_STATUS_LABEL[status as QuoteStatus] ?? status;
+}
+
 /** Statuses safe to expose on the public /q/<token> portal. */
 export const PUBLIC_VISIBLE_STATUSES: ReadonlyArray<QuoteStatus> = [
   "approved",
