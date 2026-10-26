@@ -13,12 +13,9 @@ import {
   computeAllJobsProfitability,
   profitByMonth,
   type JobProfitability,
+  type LabourEntry,
 } from "@/lib/profitability/compute";
-import {
-  buildJobCostInput,
-  lifetimeHoursSource,
-} from "@/lib/profitability/job-cost-input";
-import type { TimeEntry } from "@/lib/time/compute";
+import { buildJobCostInput } from "@/lib/profitability/job-cost-input";
 import {
   gatherCashTimeline,
   type ForecastingClient,
@@ -28,7 +25,7 @@ import {
   type IntelligenceClient,
 } from "@/server/services/intelligence";
 import { UTILISATION_WINDOW_DAYS } from "@/server/services/intelligence";
-import { loadStockCogsCostRows, type StockClient } from "@/server/services/stock";
+import { loadStockCogsRollup, type StockRpcClient } from "@/server/services/stock";
 import { trailingDayWindow } from "@/lib/intelligence/window";
 import { LEAD_STAGES, LEAD_STAGE_LABELS, type LeadStage } from "@/lib/leads/schema";
 import type { ReportKey } from "./registry";
@@ -76,7 +73,7 @@ async function buildProfitDocument(
   orgId: string,
   now: Date,
 ): Promise<ReportDocument> {
-  const [jobsRes, invRes, finRes, custRes, teRes, memRes] = await Promise.all([
+  const [jobsRes, invRes, finRes, custRes, labRes, memRes] = await Promise.all([
     fetchAllRows<{
       id: string;
       customer_id: string | null;
@@ -131,21 +128,27 @@ async function buildProfitDocument(
     // Time-tracked labour, so the per-job cost matches the dashboard and
     // company-health: finances ALONE omit labour + employer on-costs, which
     // overstated gross profit / margin on every job with clocked hours.
-    fetchAllRows<{
-      id: string;
-      user_id: string;
-      job_id: string | null;
-      started_at: string;
-      ended_at: string | null;
-      breaks: unknown;
-    }>((from, to) =>
-      client
-        .from("time_entries")
-        .select("id, user_id, job_id, started_at, ended_at, breaks")
-        .eq("org_id", orgId)
-        .order("id", { ascending: true })
-        .range(from, to),
-    ),
+    //
+    // R8: lifetime hours per (job,user) are PRE-ROLLED UP in SQL by the
+    // org-guarded `report_profit_labour_hours` RPC (migration 20261239000000)
+    // instead of reading the WHOLE `time_entries` history and folding it here —
+    // the RPC reproduces lifetimeHoursSource/buildLabourSlices exactly (per-entry
+    // 2dp hours in IEEE-754 double, summed per group). `now` is passed so open
+    // entries count to the report instant deterministically.
+    (
+      client as unknown as {
+        rpc: (
+          fn: string,
+          args: Record<string, unknown>,
+        ) => PromiseLike<{
+          data: Array<{ job_id: string; user_id: string; hours: number | string }> | null;
+          error: { message?: string | null; code?: string | null } | null;
+        }>;
+      }
+    ).rpc("report_profit_labour_hours", {
+      p_org: orgId,
+      p_now: now.toISOString(),
+    }),
     // Org members, for their hourly pay. `user_id` only — no user embed (a bare
     // cross-FK embed PGRST201s the whole query).
     fetchAllRows<{ user_id: string | null }>((from, to) =>
@@ -161,13 +164,21 @@ async function buildProfitDocument(
   if (invRes.error) throw readFailure("reports: profit invoices", invRes.error);
   if (finRes.error) throw readFailure("reports: profit finances", finRes.error);
   if (custRes.error) throw readFailure("reports: profit customers", custRes.error);
-  if (teRes.error) throw readFailure("reports: profit time entries", teRes.error);
+  // Loud: a failed labour-hours RPC must never silently zero labour cost and
+  // re-inflate every margin.
+  if (labRes.error) throw readFailure("reports: profit labour hours rollup", labRes.error);
   if (memRes.error) throw readFailure("reports: profit memberships", memRes.error);
 
   const jobs = jobsRes.data ?? [];
   const invoices = invRes.data ?? [];
   const finances = finRes.data ?? [];
-  const timeEntries = (teRes.data ?? []) as unknown as TimeEntry[];
+  // Pre-measured lifetime labour slices from the SQL rollup — fed verbatim to
+  // buildJobCostInput, bypassing the whole-history fold.
+  const labourSlices: LabourEntry[] = (labRes.data ?? []).map((r) => ({
+    job_id: String(r.job_id),
+    user_id: String(r.user_id),
+    hours: Number(r.hours ?? 0),
+  }));
   const customerName = new Map((custRes.data ?? []).map((c) => [c.id, c.name ?? "—"]));
 
   // Rates come from members → `users`, the SAME source the dashboard and
@@ -212,12 +223,15 @@ async function buildProfitDocument(
   // company-health's monthly cycle. Stock COGS is folded over the whole org ledger
   // (net of corrections) and is disjoint from `finances` — stock issues post no
   // `finances` row — so material cost enters each job's margin exactly once.
-  const stockCogs = await loadStockCogsCostRows(client as unknown as StockClient, orgId);
+  // R8: COGS per job is PRE-ROLLED UP in SQL by the org-guarded
+  // `report_profit_stock_cogs` RPC (migration 20261239000000) — the net-of-
+  // corrections image of stockCogsByJob/buildStockCogsCostRows — instead of
+  // reading the whole stock_movements ledger and folding it here.
+  const stockCogs = await loadStockCogsRollup(client as unknown as StockRpcClient, orgId);
   const costInput = buildJobCostInput({
     finances,
-    timeEntries,
+    labourSlices,
     hourlyByUser,
-    hoursForEntries: lifetimeHoursSource(),
     cycle: "monthly",
     stockCogs,
   });

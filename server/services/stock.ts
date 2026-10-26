@@ -72,6 +72,18 @@ type Err = { message?: string | null; code?: string | null } | null;
 
 export type StockClient = { from: (t: string) => StockBuilder };
 
+/**
+ * A Supabase client reachable for RPCs — the shape `loadStockCogsRollup` needs.
+ * Every real caller passes a full createClient()/createAdminClient() (both have
+ * `.rpc`); the narrow type keeps the service honest about what it uses.
+ */
+export type StockRpcClient = {
+  rpc: (
+    fn: string,
+    args: Record<string, unknown>,
+  ) => PromiseLike<{ data: unknown; error: Err }>;
+};
+
 type StockBuilder = PromiseLike<{ data: Row[] | null; error: Err }> & {
   select: (c: string) => StockBuilder;
   eq: (k: string, v: unknown) => StockBuilder;
@@ -281,6 +293,46 @@ export async function loadStockCogsCostRows(
 ): Promise<StockCogsCostRow[]> {
   const movements = await listStockMovements(db, orgId);
   const rows = buildStockCogsCostRows(movements);
+  return opts.jobId ? rows.filter((r) => r.job_id === opts.jobId) : rows;
+}
+
+/**
+ * The SAME per-job stock COGS as {@link loadStockCogsCostRows}, but PRE-ROLLED UP
+ * IN SQL by the org-guarded `report_profit_stock_cogs` RPC (migration
+ * 20261239000000) instead of reading the WHOLE movement ledger and folding it in
+ * TypeScript.
+ *
+ * WHY A SEPARATE PATH (R8). The profit report is the heaviest report; reading the
+ * whole `stock_movements` ledger to fold COGS grows without bound with tenant age.
+ * The RPC computes the identical net-of-corrections COGS per job server-side (it
+ * reproduces `stockCogsByJob` exactly — issue magnitudes minus corrections of
+ * job-issues, zero-net jobs dropped), so the report fetches only the per-job
+ * result. Other COGS surfaces (dashboard, per-job pages, CVR, company-health)
+ * deliberately keep the TS fold above; an integration test pins RPC == TS fold.
+ *
+ * The RPC is org-guarded (current_org_ids + 42501; service_role — the delivery
+ * cron — bypasses), and returns ONLY the org's rows. Loud by contract: a failed
+ * RPC throws, never a silent empty COGS set (which would re-inflate every margin).
+ * Output is sorted by job_id with the SAME ordering `buildStockCogsCostRows` uses,
+ * so the two paths return byte-identical arrays.
+ */
+export async function loadStockCogsRollup(
+  db: StockRpcClient,
+  orgId: string,
+  opts: { jobId?: string } = {},
+): Promise<StockCogsCostRow[]> {
+  const { data, error } = await db.rpc("report_profit_stock_cogs", {
+    p_org: orgId,
+  });
+  if (error) throw readFailure("stock: cogs rollup rpc", error);
+  const rows: StockCogsCostRow[] = ((data as Row[] | null) ?? [])
+    .map((r) => ({
+      job_id: String(r.job_id),
+      amount: Number(r.amount ?? 0),
+      category: "materials" as const,
+    }))
+    .filter((r) => r.amount !== 0);
+  rows.sort((a, b) => a.job_id.localeCompare(b.job_id));
   return opts.jobId ? rows.filter((r) => r.job_id === opts.jobId) : rows;
 }
 

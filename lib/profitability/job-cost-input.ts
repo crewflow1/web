@@ -127,12 +127,27 @@ export function buildLabourSlices(
 export type JobCostInputParams = {
   /** The job's (or org's) `finances` rows — the non-labour cost. */
   finances: CostInputRow[];
-  /** Raw `time_entries` — the labour spine. */
-  timeEntries: TimeEntry[];
+  /**
+   * Raw `time_entries` — the labour spine. Measured into per-(job,user) hour
+   * slices by `hoursForEntries`. OPTIONAL: omit it (and `hoursForEntries`) when
+   * passing `labourSlices` already measured elsewhere (e.g. the R8 profit-report
+   * SQL rollup `report_profit_labour_hours`). Absent both ⇒ no labour.
+   */
+  timeEntries?: TimeEntry[];
   /** Per-user hourly pay (from `memberships` → `users.hourly_pay`). */
   hourlyByUser: Map<string, number>;
   /** How to measure hours per (job, user) group — window vs job-lifetime. */
-  hoursForEntries: HoursSource;
+  hoursForEntries?: HoursSource;
+  /**
+   * Pre-measured labour slices, bypassing `buildLabourSlices(timeEntries, …)`.
+   * Supplied when the hours were already rolled up — notably the R8 profit report,
+   * which fetches lifetime hours per (job,user) from the org-guarded
+   * `report_profit_labour_hours` RPC rather than folding the whole `time_entries`
+   * history in TypeScript. When present it is used VERBATIM and `timeEntries` /
+   * `hoursForEntries` are ignored, so the resulting labour + employer-on-cost rows
+   * are identical to feeding the equivalent raw entries through the fold.
+   */
+  labourSlices?: LabourEntry[];
   /** Payroll cycle that bands employer NI on the measured hours. */
   cycle: "weekly" | "monthly";
   /** Period start, selecting the dated NI/pension rate table. Undefined = latest. */
@@ -165,7 +180,11 @@ export type JobCostInputParams = {
  * cost reaches a job's margin exactly once.
  */
 export function buildJobCostInput(params: JobCostInputParams): CostInputRow[] {
-  const slices = buildLabourSlices(params.timeEntries, params.hoursForEntries);
+  const slices =
+    params.labourSlices ??
+    (params.timeEntries && params.hoursForEntries
+      ? buildLabourSlices(params.timeEntries, params.hoursForEntries)
+      : []);
   const labourRows = labourCostsFromTimeEntries(slices, params.hourlyByUser);
   const employerOnCostRows = employerOnCostsFromTimeEntries(
     slices,
