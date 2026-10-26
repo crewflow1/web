@@ -134,7 +134,10 @@ begin
   base as (
     select i.id as inv_id,
            i.number as ref,
-           i.status as status,
+           -- invoices.status is the `invoice_status` enum; the RETURNS TABLE
+           -- column is text, so cast explicitly or PostgREST/plpgsql raises
+           -- 42804 "structure of query does not match function result type".
+           i.status::text as status,
            i.due_date as due_date,
            coalesce(i.customer_id, j.customer_id) as party_id,
            c.name as party_name,

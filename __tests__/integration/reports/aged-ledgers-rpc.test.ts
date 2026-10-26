@@ -251,7 +251,11 @@ describeIntegration("R7 aged-ledgers RPC · real Postgres", () => {
     void [billCur, billD31_60, billD91, billFallbackDate, billNoSupplier, billVoided];
 
     admin = await mkUser("admin", orgA, "admin");
-    member = await mkUser("member", orgA, "member");
+    // A non-admin MEMBER of org A. The memberships role CHECK admits only
+    // owner / admin / staff, so the non-admin member is seeded as `staff`: a
+    // real member (can read receivables) who is NOT an org admin (is_org_admin
+    // is false for staff, so the payables RPC must refuse them).
+    member = await mkUser("member", orgA, "staff");
     outsider = await mkUser("outsider", orgB, "owner");
   });
 
