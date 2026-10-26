@@ -395,20 +395,20 @@ describe("supplier payments service — tenant client only, never service_role",
     // admin-only RLS still applies. Asserted in its own tier,
     // __tests__/security/cis-statements.test.ts.
     //
-    // `aged-ledgers.ts` (the aged-creditors half of /reports/ageing) is another
-    // READ-ONLY consumer, admitted on the same terms:
-    //   - tenant client only (`createClient` from lib/supabase/server), so the
-    //     admin-only RLS on both tables remains the real boundary;
-    //   - no insert/update/delete/upsert/rpc anywhere in the file — pinned by
-    //     __tests__/security/aged-ledgers-org-scope.test.ts, which also proves
-    //     it never even ISSUES these reads for a non-admin role, because an
-    //     empty-without-error ledger read would overstate payables by
-    //     everything already paid;
-    //   - it reads `id, voided_at` and the allocation triple ONLY. It does not
-    //     read `gross_amount`, `cis_withheld` or `net_paid`: an aged listing has
-    //     no business carrying withholding figures it never displays;
-    //   - settlement is computed by `computeBillSettlements`, this domain's own
-    //     authority, so no second copy of the payable rule exists.
+    // `aged-ledgers.ts` (the aged-creditors half of /reports/ageing) is NO
+    // LONGER on this list: as of Workstream R7 (migration 20261238000000) it
+    // reads the money-out ledger ONLY through the org-guarded, ADMIN-GATED
+    // SECURITY DEFINER RPC `report_aged_payables`, so it no longer names
+    // supplier_payments / supplier_payment_allocations in source at all. The
+    // "only the service and its own actions name the ledger tables" property is
+    // therefore STRONGER (one fewer direct namer). The RPC is itself read-only
+    // (no insert/update/delete), membership-guarded (current_org_ids + 42501),
+    // admin-gated (is_org_admin), and reads supplier_payments only for
+    // `voided_at` — never gross_amount / cis_withheld / net_paid. All of that is
+    // pinned by __tests__/security/aged-ledgers-org-scope.test.ts and proven
+    // against real Postgres by
+    // __tests__/integration/reports/aged-ledgers-rpc.test.ts and
+    // __tests__/integration/rls/secdef-org-rpc-guard.test.ts.
     //
     // `org-cash-out.ts` (H2-CASH M4) is the third, and is read-only by
     // CONSTRUCTION rather than by convention: its `CashOutClient` type exposes
@@ -440,7 +440,6 @@ describe("supplier payments service — tenant client only, never service_role",
     // restated in the sibling `it` below so the allowlist growth stays honest.
     expect(readers).toEqual([
       "app/(app)/suppliers/[id]/payments/actions.ts",
-      "server/services/aged-ledgers.ts",
       "server/services/cis-statements.ts",
       "server/services/org-cash-out.ts",
       "server/services/supplier-payments.ts",

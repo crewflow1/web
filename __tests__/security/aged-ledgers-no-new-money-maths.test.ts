@@ -168,27 +168,33 @@ describe("retention comes from the retention authorities", () => {
   });
 });
 
-describe("the service does reads, not maths", () => {
-  it("composes the pure bridges rather than bucketing inline", () => {
-    expect(SERVICE).toMatch(/composeAgedDebtors\(/);
-    // The creditors side now ages by TRUE due date via composeOverduePayables,
-    // which itself composes composeAgedCreditors — one settlement path, two lenses.
-    expect(SERVICE).toMatch(/composeOverduePayables\(/);
+describe("the service does reads, not maths (R7: derivations moved to SQL)", () => {
+  it("composes the single bucketer rather than deriving or bucketing inline", () => {
+    // As of Workstream R7 (migration 20261238000000) the per-invoice netting and
+    // the ageing derivation live in the org-guarded SECURITY DEFINER RPCs
+    // report_aged_receivables / report_aged_payables. The service maps their
+    // already-settled rows into the ONE bucketer, buildAgeingLedger — it derives
+    // no balance itself. That the SQL derivations equal invoiceRemaining /
+    // invoiceDaysOverdue / (billGross − live allocations) / daysBetween is proven
+    // against real Postgres by __tests__/integration/reports/aged-ledgers-rpc.test.ts
+    // (snapshot-equality vs the legacy whole-fetch path).
+    expect(SERVICE).toMatch(/buildAgeingLedger\(/);
+    expect(SERVICE).toMatch(/report_aged_receivables/);
+    expect(SERVICE).toMatch(/report_aged_payables/);
   });
 
-  it("its ONLY money operation is the round2-wrapped per-invoice payment fold", () => {
-    // The same fold server/services/org-cash.ts performs, for the same purpose:
-    // turning payment rows into the `paid` figure the authority expects.
-    expect(SERVICE).toMatch(
-      /paidByInvoice\.set\(id, round2\(\(paidByInvoice\.get\(id\) \?\? 0\) \+ toPounds\(mv\(p\.amount\)\)\)\)/,
-    );
-    // No subtraction, multiplication or division of money anywhere.
+  it("performs NO money arithmetic in TypeScript", () => {
+    // The only money touch is coercing the RPC's already-netted numeric (which
+    // supabase-js returns as a string) to pounds via round2(toPounds(...)) — a
+    // read coercion, never a derivation.
     expect(SERVICE).not.toMatch(/toPounds\([^)]*\)\s*[-*/]/);
     expect(SERVICE).not.toMatch(/[-*/]\s*toPounds\(/);
     expect(SERVICE).not.toMatch(/Math\.max\(\s*0\s*,/);
+    expect(SERVICE).not.toMatch(/\bvat_total\b/);
+    expect(SERVICE).not.toMatch(/gross\s*-\s*settled/);
   });
 
-  it("never re-derives the collectable set or the overdue predicate", () => {
+  it("never re-derives the collectable set or the overdue predicate in TS", () => {
     expect(SERVICE).not.toMatch(/new Set\(\s*\[\s*"sent"/);
     expect(SERVICE).not.toMatch(/due_date\s*<\s*/);
   });
