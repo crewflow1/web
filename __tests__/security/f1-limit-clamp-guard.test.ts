@@ -325,8 +325,8 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // Per-request id-set lookup. (Line shifted +1 by the additive `barcode` column
   // on StockItemRow / STOCK_ITEM_COLUMNS, 20261144000000; shifted again by the
   // additive loadStockValuationReport + cost columns, W1 stock COGS, 20261180000000.)
-  "server/services/stock.ts:303":
-    "bounded: receipt movements for a specific GRN's line-id set (.in('grn_line_id', grnLineIds)) — request-sized lookup; the balance-fold read (listStockMovements) is separately paged via fetchAllRows. (Moved 272→303 when the stock-COGS wave added the loadStockCogsCostRows helper + import above this read.)",
+  "server/services/stock.ts:355":
+    "bounded: receipt movements for a specific GRN's line-id set (.in('grn_line_id', grnLineIds)) — request-sized lookup; the balance-fold read (listStockMovements) is separately paged via fetchAllRows. (Moved 272→303 when the stock-COGS wave added the loadStockCogsCostRows helper + import above this read; then 303→355 when the R8 profit-rollup wave added the StockRpcClient type + the loadStockCogsRollup helper above this read — a pure line shift, the cap is unchanged.)",
 
   // ── .from(as never) CAST-FORM WAVE — genuinely-bounded recency / per-scope
   //    reads surfaced once notifications / health_score_events joined

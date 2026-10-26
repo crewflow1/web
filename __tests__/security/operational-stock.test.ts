@@ -797,9 +797,15 @@ describe("stock reads fail loudly", () => {
     // Comment-stripped: the file header talks ABOUT `.select(` and would
     // otherwise inflate the denominator.
     const selects = (serviceCode.match(/\.select\(/g) ?? []).length;
+    // R8: loadStockCogsRollup reads per-job COGS via the report_profit_stock_cogs
+    // RPC — a READ that is NOT a `.select(`. Count `.rpc(` reads into the
+    // denominator so the "every read is loud" parity covers it too (the rollup
+    // binds `error` and throws readFailure like every other read here). Reads went
+    // 5 (`.select(` only) → 6 (5 `.select(` + 1 `.rpc(`), all loud.
+    const rpcReads = (serviceCode.match(/\.rpc\(/g) ?? []).length;
     const throws = (serviceCode.match(/throw readFailure\(/g) ?? []).length;
     expect(selects).toBeGreaterThan(0);
-    expect(throws).toBe(selects);
+    expect(throws).toBe(selects + rpcReads);
   });
 
   it("uses none of the three error-discarding shapes", () => {
