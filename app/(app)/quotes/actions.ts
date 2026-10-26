@@ -1101,9 +1101,11 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
   // Funnel: quote accepted via the owner-on-behalf path (the pre-existing
   // 'accepted' short-circuit above means this fires only on the real
   // transition, before the downstream redirects). No-op until analytics are
-  // configured + consent-granted. org_id + channel enum; no PII, no money.
+  // configured + consent-granted. Active org comes from the authenticated
+  // context (ctx.org.id) — the same source every write in this function pins
+  // to — never the fetched row. org_id + channel enum; no PII, no money.
   trackEvent(ANALYTICS_EVENTS.QUOTE_ACCEPTED, {
-    org_id: quote.org_id,
+    org_id: ctx.org.id,
     channel: "owner",
   });
 
