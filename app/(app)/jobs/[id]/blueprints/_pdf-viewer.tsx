@@ -77,6 +77,11 @@ export default function BlueprintViewer(props: Props) {
   const pdfRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const renderTaskRef = useRef<any>(null);
+  // Monotonic render id, bumped SYNCHRONOUSLY at the top of every renderPdfPage
+  // call (before its first await) so a newer render can supersede an older one
+  // even while the older is still between "cancel the previous task" and
+  // "store its own task" — see renderPdfPage.
+  const renderEpochRef = useRef(0);
   const intrinsicRef = useRef<{ w: number; h: number }>({ w: 1, h: 1 });
   const pageBoxRef = useRef<HTMLDivElement>(null);
 
@@ -216,9 +221,22 @@ export default function BlueprintViewer(props: Props) {
     const doc = pdfRef.current;
     const canvas = canvasRef.current;
     if (!doc || !canvas) return;
+    // Serialize renders against themselves. renderPdfPage fires from BOTH the
+    // phase→ready layout effect and the ResizeObserver, and it must `await
+    // doc.getPage()` before it can store (and therefore cancel) its RenderTask.
+    // Two overlapping invocations would otherwise each pass the cancel step
+    // seeing no task yet, each reach `pg.render()` on the SAME canvas, and
+    // pdf.js throws "Cannot use the same canvas during multiple render()
+    // operations" — a plain Error, NOT a RenderingCancelledException, so the
+    // catch below treats it as fatal and flips phase to "error", hiding a canvas
+    // a prior render already painted and stamped data-rendered-page (F-E1). Take
+    // a synchronous epoch before the first await; a later call bumps it, and any
+    // superseded call bails before it can start a second concurrent render.
+    const epoch = ++renderEpochRef.current;
     renderTaskRef.current?.cancel?.();
     try {
       const pg = await doc.getPage(page + 1);
+      if (epoch !== renderEpochRef.current) return; // a newer render superseded us
       const unit = pg.getViewport({ scale: 1 });
       intrinsicRef.current = { w: unit.width, h: unit.height };
       const layoutScale = computeLayoutScale();
@@ -237,6 +255,7 @@ export default function BlueprintViewer(props: Props) {
       const task = pg.render({ canvasContext: ctx, viewport: vp });
       renderTaskRef.current = task;
       await task.promise;
+      if (epoch !== renderEpochRef.current) return; // superseded during the paint
       canvas.setAttribute("data-rendered-page", String(page + 1));
     } catch (e) {
       // RenderingCancelledException is expected on rapid re-render; ignore it.

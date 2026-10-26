@@ -62,6 +62,10 @@ export default function DrawingRenderSurface(props: DrawingRenderSurfaceProps) {
   const pdfRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const renderTaskRef = useRef<any>(null);
+  // Monotonic render id, bumped synchronously at the top of renderPdfPage before
+  // its first await, so a newer render supersedes an older one even inside the
+  // cancel→store gap — see renderPdfPage.
+  const renderEpochRef = useRef(0);
   const intrinsicRef = useRef<{ w: number; h: number }>({ w: 1, h: 1 });
   const objUrlRef = useRef<string | null>(null);
 
@@ -130,9 +134,17 @@ export default function DrawingRenderSurface(props: DrawingRenderSurfaceProps) {
     const doc = pdfRef.current;
     const canvas = canvasRef.current;
     if (!doc || !canvas) return;
+    // Serialize renders against themselves (see _pdf-viewer.tsx for the full
+    // rationale): two overlapping invocations would otherwise both reach
+    // pg.render() on the same canvas and pdf.js throws "Cannot use the same
+    // canvas during multiple render() operations" (a non-cancellation Error),
+    // which this catch would treat as fatal and flip phase to "error", hiding an
+    // already-painted canvas. A synchronous epoch lets a newer render supersede.
+    const epoch = ++renderEpochRef.current;
     renderTaskRef.current?.cancel?.();
     try {
       const pg = await doc.getPage(page + 1);
+      if (epoch !== renderEpochRef.current) return; // a newer render superseded us
       const unit = pg.getViewport({ scale: 1 });
       intrinsicRef.current = { w: unit.width, h: unit.height };
       const layoutScale = computeLayoutScale();
@@ -149,6 +161,7 @@ export default function DrawingRenderSurface(props: DrawingRenderSurfaceProps) {
       const task = pg.render({ canvasContext: ctx, viewport: vp });
       renderTaskRef.current = task;
       await task.promise;
+      if (epoch !== renderEpochRef.current) return; // superseded during the paint
       canvas.setAttribute("data-rendered-page", String(page + 1));
       onState?.({ phase: "ready", pageCount, intrinsic: intrinsicRef.current });
     } catch (e) {
