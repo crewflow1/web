@@ -3,7 +3,7 @@ const POINTS = [
   { t: "Runs alongside Xero", d: "Clean CSV export to Xero & Sage. No live sync to set up or break." },
   { t: "No card fees", d: "Bank transfer only. You keep 100% of every invoice." },
   { t: "No lock-in", d: "Full CSV export any time. No early-termination fees." },
-  { t: "Built in the UK", d: "Daily backups, point-in-time recovery, UK GDPR." },
+  { t: "Built in the UK", d: "Daily backups, off-site copies, UK GDPR." },
 ];
 
 export function SwitchTrust() {
