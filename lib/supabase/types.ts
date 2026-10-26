@@ -23446,6 +23446,21 @@ export type Database = {
         Args: { photo_path: string; target_job_id: string }
         Returns: undefined
       }
+      reports_jobs_per_week: {
+        Args: { p_org_id: string; p_weeks?: number }
+        Returns: {
+          completed: number
+          total: number
+          week_start: string
+        }[]
+      }
+      reports_revenue_per_month: {
+        Args: { p_months?: number; p_org_id: string }
+        Returns: {
+          month: string
+          revenue: number
+        }[]
+      }
       reports_top_customers_by_revenue: {
         Args: { p_limit?: number; p_org_id: string }
         Returns: {
