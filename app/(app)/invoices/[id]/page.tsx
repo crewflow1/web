@@ -91,7 +91,7 @@ export default async function InvoiceDetailPage({
     // Direct customer anchor (Issue #349 Phase 1) — preferred over the quote
     // path, which is NULL for every stage-billing invoice.
     customer: { email: string | null } | null;
-    quote: { customer: { email: string | null } | null } | null;
+    quote: { number: string | null; customer: { email: string | null } | null } | null;
   };
   const { data: invoiceRaw, error: invoiceError } = await supabase
     .from("invoices")
@@ -100,7 +100,7 @@ export default async function InvoiceDetailPage({
         id, number, status, amount, vat_total, total, due_date, sent_at,
         paid_at, notes, created_at, quote_id, job_id, voided_at, void_reason,
         customer:customers!invoices_customer_org_fkey ( email ),
-        quote:quotes ( customer:customers ( email ) )
+        quote:quotes ( number, customer:customers ( email ) )
       `,
     )
     .eq("id", id)
@@ -220,6 +220,16 @@ export default async function InvoiceDetailPage({
             Created {invoice.created_at.slice(0, 10)}
             {invoice.due_date ? ` · Due ${invoice.due_date}` : ""}
           </p>
+          {linkedJobId ? (
+            <p className="mt-1 text-sm">
+              <Link
+                href={`/jobs/${linkedJobId}`}
+                className="font-medium text-slate-600 underline-offset-2 hover:text-slate-900 hover:underline"
+              >
+                View job →
+              </Link>
+            </p>
+          ) : null}
         </div>
         <div className="flex items-center gap-3">
           <a
@@ -269,7 +279,17 @@ export default async function InvoiceDetailPage({
         <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <header className="border-b border-slate-200 px-6 py-3">
             <h2 className="text-base font-semibold text-slate-900">Line items</h2>
-            <p className="text-xs text-slate-500">From quote {invoice.quote_id?.slice(0, 8)}</p>
+            {invoice.quote_id ? (
+              <p className="text-xs text-slate-500">
+                From{" "}
+                <Link
+                  href={`/quotes/${invoice.quote_id}`}
+                  className="font-medium text-slate-700 underline-offset-2 hover:text-slate-900 hover:underline"
+                >
+                  quote {invoice.quote?.number ?? invoice.quote_id.slice(0, 8)}
+                </Link>
+              </p>
+            ) : null}
           </header>
           <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
