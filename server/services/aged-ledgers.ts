@@ -1,99 +1,104 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
-import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { round2, toPounds } from "@/lib/money";
 import { invoiceBusinessToday } from "@/lib/invoices/overdue";
-import {
-  composeAgedDebtors,
-  type DebtorInvoice,
-} from "@/lib/commercial/aged-debtors";
-import { type CreditorBill } from "@/lib/commercial/aged-creditors";
-import { composeOverduePayables } from "@/lib/commercial/overdue-payables";
-import type { SupplierAllocationRow, SupplierPaymentRow } from "@/lib/suppliers/payments";
-import type { AgeingLedger } from "@/lib/commercial/ageing";
+import { UNATTRIBUTED_CUSTOMER_LABEL } from "@/lib/commercial/aged-debtors";
+import { UNATTRIBUTED_SUPPLIER_LABEL } from "@/lib/commercial/aged-creditors";
+import { buildAgeingLedger, type AgeingItem, type AgeingLedger } from "@/lib/commercial/ageing";
 
 /**
  * AGED DEBTORS + AGED CREDITORS — the read layer. READ-ONLY by construction.
  *
- * The invoice, payment-allocation and supplier-bill data have all been live for
- * some time; what did not exist is an AGED view of either side. This module does
- * the READS and nothing else: every figure is composed by the pure bridges
- * (`lib/commercial/aged-debtors`, `lib/commercial/aged-creditors`), which in turn
- * take settlement from the authorities that own it — `invoiceRemaining` for
- * receivables, `computeBillSettlements` for payables. There is no money
- * arithmetic in this file beyond `round2`-summing an invoice's payment rows into
- * the `paid` figure those authorities expect.
+ * Both listings are now sourced from two org-guarded SECURITY DEFINER RPCs
+ * (migration 20261238000000, Workstream R7):
  *
- * No `insert`/`update`/`delete`/`upsert`/`rpc` appears here and none may be
- * added; nothing writes `finances`. Pinned by
- * __tests__/security/aged-ledgers-org-scope.test.ts.
+ *     public.report_aged_receivables(org_id, as_at)  — one row per UNSETTLED,
+ *         collectable sales invoice, outstanding balance + age bucket already
+ *         computed in SQL.
+ *     public.report_aged_payables(org_id, as_at)     — one row per UNSETTLED
+ *         supplier bill, outstanding + age bucket computed in SQL. ADMIN-ONLY.
  *
- * ── WHICH DATE AGEING IS MEASURED FROM ───────────────────────────────────────
- * Debtors age from the invoice DUE DATE; creditors ALSO age from a due date now —
- * `bill_date + suppliers.payment_terms_days` (migration 20261088), via
- * `composeOverduePayables`, which SUPERSEDES the old bill-date basis on this
- * surface. Where a supplier has no recorded terms, the default (30 days) is
- * applied as a DISCLOSED assumption, not a stored term. The bill-date lens
- * remains available in `lib/commercial/aged-creditors` for callers that want
- * "days since raised" independent of any agreed term. Both decisions are set out
- * in the bridge modules' headers.
+ * ── WHY RPCs REPLACED THE WHOLE-LEDGER FETCH ─────────────────────────────────
+ * This module used to read EVERY invoice (draft / paid / void included) and the
+ * ENTIRE invoice_payments table, fold payments per invoice, net, and then
+ * discard the settled majority in TypeScript — and the same on the payables
+ * side. The RPCs push the invoice⋈payments (and bill⋈allocations) join, the
+ * per-document netting and the settled-exclusion into SQL, so only the unsettled
+ * tail crosses the wire. Row volume no longer grows with the tenant's whole
+ * trading history.
  *
- * ── THE AS-AT DAY, AND WHY IT IS THE CASH SERVICE'S DAY ──────────────────────
- * `invoiceBusinessToday` — the SAME day authority `isInvoiceOverdue`, /cash and
- * the invoice list evaluate against. That is what makes
+ * ── THE SINGLE BUCKETER STILL OWNS GROUPING + TOTALS ─────────────────────────
+ * `buildAgeingLedger` (lib/commercial/ageing) remains the ONE authority for
+ * party grouping, the deterministic sort, and the bucket/pastDue/undated totals.
+ * It is designed to receive an ALREADY-SETTLED `amount` and an `ageDays` from
+ * the caller and bucket them — so handing it the RPC's pre-computed `remaining`
+ * and `age_days` introduces no second copy of the grouping or totalling rule.
+ * The per-document derivations the RPCs now perform in SQL (collectable filter,
+ * `invoiceRemaining`, `invoiceDaysOverdue`; and billGross − live allocations,
+ * `billDueDate`, `daysBetween` for payables) MIRROR the pure TypeScript
+ * authorities exactly, and that equality — plus the /cash reconciliation
+ * identities below — is pinned to real Postgres by
+ * __tests__/integration/reports/aged-ledgers-rpc.test.ts (snapshot-equality
+ * against the legacy whole-fetch path over status × settlement × age band).
+ *
+ * ── THE RECONCILIATION IDENTITIES (unchanged) ────────────────────────────────
+ * For the same invoices, payments and as-at day:
  *
  *     debtors.totals.total   === computeOrgCashSummary(...).owedNow
  *     debtors.totals.pastDue === computeOrgCashSummary(...).overdue
  *
- * hold as stated rather than approximately: a London-pinned day key would be a
- * marginally better calendar answer that only this report used, and for the hour
- * after London midnight in summer this page and /cash would disagree about which
- * invoices are late. Reconciliation with the number the business already trusts
- * beats a private improvement. Rendered dates ARE London-pinned
- * (`lib/time/format`), which is where a reader actually notices. The identities
- * are proved in __tests__/commercial/aged-debtors-reconciliation.test.ts.
+ * They still hold because the RPC's `remaining` IS `invoiceRemaining` and its
+ * `age_days` IS `invoiceDaysOverdue`, over the same collectable population, and
+ * `buildAgeingLedger` sums exactly those amounts. The payables mirror
+ * (creditors.totals.total === the cash-out `unpaidBills`) holds for the same
+ * reason. The as-at day is `invoiceBusinessToday` — the SAME day /cash and the
+ * invoice list evaluate against — passed to the RPC so SQL and /cash agree about
+ * which invoices are late.
  *
- * ── ACTIVE-ORG PINNING + PAGING ──────────────────────────────────────────────
- * Every read is `.eq("org_id", orgId)`: RLS's `current_org_ids()` admits every
- * org the viewer belongs to, so a customer or supplier trading with BOTH the
- * viewer's companies would otherwise be aged as ONE account with the two
- * companies' debts added together — a single row that is wrong in a way an
- * operator cannot see. Reads page through `fetchAllRows` with `id` appended to
- * every ordering, so no page boundary can drop a row and understate the ledger
- * (the F-1 class).
+ * ── ACTIVE-ORG PINNING ───────────────────────────────────────────────────────
+ * `current_org_ids()` admits every org the viewer belongs to, so an unpinned
+ * read would merge a dual-trading party's two companies' debts into one wrong
+ * row. The RPCs take the ACTIVE org id as an argument and filter strictly by it
+ * (and FIRST raise 42501 for a non-member), so only the active org's data is
+ * ever returned. There is no page-boundary (F-1) exposure: the RPC returns the
+ * unsettled set in one result, not a client-paged scan.
  *
  * ── LOUD READS ───────────────────────────────────────────────────────────────
- * A failed read must never render as "nothing outstanding". Any failure sets
- * `loadError` and the page shows an explicit banner.
+ * An RPC error (or a thrown client) sets `loadError` and yields an EMPTY ledger,
+ * never a reassuring "nothing outstanding". The page shows an explicit banner.
  *
  * ── THE ADMIN GATE ON PAYABLES ───────────────────────────────────────────────
- * `supplier_payments` and `supplier_payment_allocations` are admin-only at the
- * RLS layer, and a non-admin's read of them returns EMPTY WITHOUT AN ERROR. So
- * composing creditors for a non-admin would show every bill as entirely unpaid
- * and OVERSTATE payables by everything already paid — not a permission problem,
- * a wrong number. Creditors are therefore gated on the role BEFORE the read and
- * the caller is told (`creditorsVisible: false`) instead of being handed a
- * plausible fiction.
+ * The money-out ledger is owner/admin-only. `report_aged_payables` is SECURITY
+ * DEFINER (it bypasses RLS), so it enforces `is_org_admin` itself and refuses a
+ * non-admin with 42501. This module ALSO refuses to call it for a non-admin role
+ * (`canReadPayables`), returning `creditorsVisible: false` and an empty ledger —
+ * the gate is kept in both places: the TS gate drives the UX, the RPC gate is
+ * the real boundary for any direct caller.
+ *
+ * No `insert`/`update`/`delete`/`upsert` appears here and none may be added;
+ * the only RPCs called are the two read-only ageing functions above. Pinned by
+ * __tests__/security/aged-ledgers-org-scope.test.ts.
  */
 
 type Row = Record<string, unknown>;
 
 /**
- * `supplier_payments` / `supplier_payment_allocations` post-date the generated
- * types in lib/supabase/types.ts, so the client is reached through a precise
- * structural shim — the same seam server/services/org-cash.ts uses.
+ * The new ageing RPCs post-date the generated types in lib/supabase/types.ts, so
+ * the client's `rpc` is reached through a precise structural shim — the same
+ * seam other services use for post-types RPCs.
  */
-type AnyB = PromiseLike<{ data: Row[] | null }> & {
-  select: (c: string) => AnyB;
-  order: (k: string, o: { ascending: boolean }) => AnyB;
-  range: (f: number, t: number) => PromiseLike<PageResult<Row>>;
-  eq: (k: string, v: unknown) => AnyB;
-  not: (k: string, op: string, v: unknown) => AnyB;
+type RpcClient = {
+  rpc: (
+    fn: string,
+    args: Record<string, unknown>,
+  ) => PromiseLike<{ data: Row[] | null; error: { message: string } | null }>;
 };
-type LooseClient = { from: (t: string) => AnyB };
 
-const mv = (v: unknown) => v as number | string | null;
 const sv = (v: unknown) => (v == null ? null : String(v));
+/** numeric (returned by supabase-js as a string to preserve precision) → pounds. */
+const num = (v: unknown) => round2(toPounds(v as number | string | null));
+/** integer / null day count. */
+const ageOf = (v: unknown): number | null => (v == null ? null : Number(v));
 
 export interface AgedLedgersView {
   debtors: AgeingLedger;
@@ -117,27 +122,52 @@ const EMPTY_LEDGER: AgeingLedger = {
   },
 };
 
-/** One table, every row, org-pinned, paged, uniquely ordered. */
-async function paged(
-  db: LooseClient,
-  table: string,
-  cols: string,
-  orderKey: string,
-  orgId: string,
-  refine?: (b: AnyB) => AnyB,
-): Promise<{ rows: Row[]; failed: boolean }> {
-  const { data, error } = await fetchAllRows<Row>((from, to) => {
-    let base = db.from(table).select(cols).eq("org_id", orgId);
-    if (refine) base = refine(base);
-    base = base.order(orderKey, { ascending: true });
-    return (orderKey === "id" ? base : base.order("id", { ascending: true })).range(from, to);
-  });
-  return { rows: data, failed: error != null };
-}
-
 /** Owners and admins only — the money-out ledger's own RLS boundary. */
 export function canReadPayables(role: string): boolean {
   return role === "owner" || role === "admin";
+}
+
+/**
+ * An aged-receivables RPC row → an `AgeingItem`. Party naming mirrors
+ * `composeDebtorItems` (lib/commercial/aged-debtors): a resolved customer with no
+ * name reads "Unnamed customer"; a wholly-unresolved invoice is `UNATTRIBUTED`.
+ */
+function debtorItem(r: Row): AgeingItem {
+  const partyId = sv(r.party_id);
+  return {
+    id: String(r.invoice_id),
+    partyId: partyId ?? "",
+    partyName: partyId
+      ? (sv(r.party_name) || "Unnamed customer")
+      : UNATTRIBUTED_CUSTOMER_LABEL,
+    amount: num(r.remaining),
+    ageDays: ageOf(r.age_days),
+    reference: sv(r.reference),
+    dateIso: sv(r.due_date),
+    href: `/invoices/${String(r.invoice_id)}`,
+  };
+}
+
+/**
+ * An aged-payables RPC row → an `AgeingItem`. Party naming + href mirror
+ * `composeCreditorItems` (lib/commercial/aged-creditors): a supplier with no name
+ * reads "Unnamed supplier"; a supplier-less bill is `UNATTRIBUTED` and links to
+ * /expenses rather than a supplier account.
+ */
+function creditorItem(r: Row): AgeingItem {
+  const partyId = sv(r.party_id);
+  return {
+    id: String(r.bill_id),
+    partyId: partyId ?? "",
+    partyName: partyId
+      ? (sv(r.party_name) || "Unnamed supplier")
+      : UNATTRIBUTED_SUPPLIER_LABEL,
+    amount: num(r.outstanding),
+    ageDays: ageOf(r.age_days),
+    reference: sv(r.reference),
+    dateIso: sv(r.date_iso),
+    href: partyId ? `/suppliers/${partyId}` : "/expenses",
+  };
 }
 
 /**
@@ -156,135 +186,19 @@ export async function buildAgedLedgers(
 
   try {
     const supabase = await createClient();
-    const db = supabase as unknown as LooseClient;
+    const db = supabase as unknown as RpcClient;
 
     // ── receivables ──────────────────────────────────────────────────────────
-    const arResults = await Promise.all([
-      paged(db, "invoices", "id, number, status, total, due_date, customer_id, job_id", "id", orgId),
-      paged(db, "invoice_payments", "invoice_id, amount", "invoice_id", orgId),
-      paged(db, "customers", "id, name", "id", orgId),
-      // A pre-denormalisation invoice can have a null `customer_id`
-      // (20260915000000); its job still knows the customer, so the job is the
-      // fallback rather than dumping real debt into "Unattributed".
-      paged(db, "jobs", "id, customer_id", "id", orgId),
-    ]);
-    let loadError = arResults.some((r) => r.failed);
-    const [invoiceRows = [], paymentRows = [], customerRows = [], jobRows = []] = arResults.map(
-      (r) => r.rows,
-    );
+    const ar = await db.rpc("report_aged_receivables", { p_org_id: orgId, p_as_at: asAtIso });
+    let loadError = ar.error != null;
+    const debtors = buildAgeingLedger((ar.data ?? []).map(debtorItem));
 
-    // Per-invoice paid, from the ledger. Bucketed once by invoice_id so the scan
-    // stays linear rather than O(invoices × payments). This is the ONLY money
-    // operation in this file, and it is the same round2-wrapped fold
-    // server/services/org-cash.ts performs for the same purpose.
-    const paidByInvoice = new Map<string, number>();
-    for (const p of paymentRows) {
-      const id = String(p.invoice_id);
-      paidByInvoice.set(id, round2((paidByInvoice.get(id) ?? 0) + toPounds(mv(p.amount))));
-    }
-
-    const invoices: DebtorInvoice[] = invoiceRows.map((i) => ({
-      id: String(i.id),
-      number: sv(i.number),
-      status: String(i.status ?? ""),
-      total: mv(i.total),
-      due_date: sv(i.due_date),
-      customer_id: sv(i.customer_id),
-      job_id: sv(i.job_id),
-      paid: paidByInvoice.get(String(i.id)) ?? 0,
-    }));
-
-    const debtors = composeAgedDebtors(
-      invoices,
-      {
-        customerName: new Map(customerRows.map((c) => [String(c.id), sv(c.name) ?? ""])),
-        jobCustomer: new Map(jobRows.map((j) => [String(j.id), sv(j.customer_id)])),
-      },
-      asAtIso,
-    );
-
-    // ── payables ─────────────────────────────────────────────────────────────
+    // ── payables (admin-gated) ─────────────────────────────────────────────────
     let creditors = EMPTY_LEDGER;
     if (creditorsVisible) {
-      const apResults = await Promise.all([
-        // Only bills attributable to a supplier can be aged against an account.
-        paged(
-          db,
-          "finances",
-          "id, amount, vat_total, reference, bill_date, created_at, supplier_id",
-          "id",
-          orgId,
-          (b) => b.not("supplier_id", "is", null),
-        ),
-        // `id` + `voided_at` are all the settlement authority needs. The cash and
-        // CIS-withholding columns are deliberately NOT read: an aged listing has
-        // no business carrying tax figures it does not display.
-        paged(db, "supplier_payments", "id, voided_at", "id", orgId),
-        paged(
-          db,
-          "supplier_payment_allocations",
-          "payment_id, finance_id, amount",
-          "payment_id",
-          orgId,
-        ),
-        // `payment_terms_days` (20261088) is read so bills age from their DUE
-        // date, not the raw bill date. A null term is a null in this map; the
-        // pure lib applies the disclosed 30-day default. The name map is built
-        // from the same read, so there is no extra hop.
-        paged(db, "suppliers", "id, name, payment_terms_days", "id", orgId),
-      ]);
-      if (apResults.some((r) => r.failed)) loadError = true;
-      const [billRows = [], apPaymentRows = [], allocationRows = [], supplierRows = []] =
-        apResults.map((r) => r.rows);
-
-      const bills: CreditorBill[] = billRows.map((b) => ({
-        id: String(b.id),
-        amount: mv(b.amount),
-        vat_total: mv(b.vat_total),
-        reference: sv(b.reference),
-        bill_date: sv(b.bill_date),
-        created_at: sv(b.created_at),
-        supplier_id: sv(b.supplier_id),
-      }));
-      const payments: SupplierPaymentRow[] = apPaymentRows.map((p) => ({
-        id: String(p.id),
-        // Placeholders: `computeBillSettlements` reads only `id` and `voided_at`
-        // (via `isLivePayment`). Nothing below is rendered or summed.
-        paid_at: "",
-        method: "",
-        reference: null,
-        gross_amount: null,
-        cis_withheld: null,
-        net_paid: null,
-        voided_at: sv(p.voided_at),
-      }));
-      const allocations: SupplierAllocationRow[] = allocationRows.map((a) => ({
-        payment_id: String(a.payment_id),
-        finance_id: String(a.finance_id),
-        amount: mv(a.amount),
-      }));
-
-      creditors = composeOverduePayables(
-        {
-          bills,
-          payments,
-          allocations,
-          supplierName: new Map(supplierRows.map((s) => [String(s.id), sv(s.name) ?? ""])),
-          // supplier id → recorded terms (null when unrecorded). Coerced to a
-          // finite number or null; the lib turns null into the disclosed default.
-          termsBySupplier: new Map(
-            supplierRows.map((s) => {
-              const raw = s.payment_terms_days;
-              const n = raw == null ? null : Number(raw);
-              return [String(s.id), n != null && Number.isFinite(n) ? n : null] as [
-                string,
-                number | null,
-              ];
-            }),
-          ),
-        },
-        asAtIso,
-      );
+      const ap = await db.rpc("report_aged_payables", { p_org_id: orgId, p_as_at: asAtIso });
+      if (ap.error != null) loadError = true;
+      creditors = buildAgeingLedger((ap.data ?? []).map(creditorItem));
     }
 
     return { debtors, creditors, creditorsVisible, asAtIso, loadError };

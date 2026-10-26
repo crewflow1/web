@@ -8,75 +8,55 @@ import { resolve } from "node:path";
  * ── THE DEFECT CLASS ─────────────────────────────────────────────────────────
  * RLS is not scoping. `current_org_ids()` returns EVERY org the viewer belongs
  * to, so an unpinned read on a dual-org account returns both companies' rows and
- * the aged listing merges them. On this report the damage is specific and
- * invisible: a customer (or a supplier) trading with BOTH of the operator's
- * companies becomes ONE row with the two companies' debts added together. The
- * operator then chases — or pays — a figure that belongs to no set of books. This
- * is the exact class the repo spent six read-side slices closing.
+ * the aged listing merges them: a customer (or supplier) trading with BOTH of
+ * the operator's companies becomes ONE row with the two companies' debts added
+ * together, and the operator chases — or pays — a figure that belongs to no set
+ * of books.
  *
- * ── WHY THE BEHAVIOURAL HALF IS THE REAL PROOF ───────────────────────────────
- * A source grep for `.eq("org_id", ...)` can be satisfied by a filter on the
- * wrong table, or on one read out of eight. So the service is EXECUTED against a
- * chainable Supabase mock that HONOURS the filters it is given and is seeded with
- * two orgs whose books deliberately share a customer and a supplier. If the pin
- * were dropped from any read, the org-B rows would appear in the org-A ledger and
- * these assertions fail. The source pins below are the tripwire on top of that.
+ * ── HOW SCOPING IS ENFORCED NOW (R7) ─────────────────────────────────────────
+ * The listings are sourced from two org-guarded SECURITY DEFINER RPCs
+ * (report_aged_receivables / report_aged_payables, migration 20261238000000).
+ * Each takes the ACTIVE org id, FIRST raises 42501 for a non-member, and filters
+ * strictly by that org — so only the active org's data is ever returned. The
+ * dual-org / tenant-isolation PROOF therefore lives against REAL Postgres in
+ * __tests__/integration/reports/aged-ledgers-rpc.test.ts (and the systemic guard
+ * in __tests__/integration/rls/secdef-org-rpc-guard.test.ts). THIS tier proves
+ * the service layer: it passes the active org + as-at to the RPCs, composes their
+ * rows faithfully, keeps the payables ADMIN gate, fails loud, and never writes.
  */
 
-const ROOT = resolve(__dirname, "..", "..");
-const src = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
-
-// ---------------------------------------------------------------------------
-// The chainable mock
-// ---------------------------------------------------------------------------
-
 const h = vi.hoisted(() => {
-  const reads: Array<{ table: string; eqs: Array<[string, unknown]>; nots: Array<[string, string, unknown]> }> = [];
-  /** Table → every row across BOTH orgs. The mock filters, as Postgres would. */
-  const tables: Record<string, Array<Record<string, unknown>>> = {};
+  const calls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+  /** fn → org_id → rows the RPC returns (as supabase-js would, numeric as string). */
+  const data: Record<string, Record<string, Array<Record<string, unknown>>>> = {};
   const failing = new Set<string>();
+  let throwOnRpc = false;
 
-  function makeBuilder(table: string) {
-    const rec = { table, eqs: [] as Array<[string, unknown]>, nots: [] as Array<[string, string, unknown]> };
-    reads.push(rec);
-
-    const builder = {
-      select: () => builder,
-      eq(col: string, val: unknown) {
-        rec.eqs.push([col, val]);
-        return builder;
-      },
-      not(col: string, op: string, val: unknown) {
-        rec.nots.push([col, op, val]);
-        return builder;
-      },
-      order: () => builder,
-      range: () => {
-        if (failing.has(table)) {
-          return Promise.resolve({ data: null, error: { message: `${table} exploded` } });
-        }
-        const rows = (tables[table] ?? []).filter((row) => {
-          for (const [col, val] of rec.eqs) if (row[col] !== val) return false;
-          for (const [col, op] of rec.nots) {
-            if (op === "is" && row[col] == null) return false;
-          }
-          return true;
-        });
-        return Promise.resolve({ data: rows, error: null });
-      },
-    };
-    return builder;
-  }
+  const client = {
+    rpc(fn: string, args: Record<string, unknown>) {
+      if (throwOnRpc) throw new Error("connection reset");
+      calls.push({ fn, args });
+      if (failing.has(fn)) {
+        return Promise.resolve({ data: null, error: { message: `${fn} exploded` } });
+      }
+      const org = String(args.p_org_id);
+      return Promise.resolve({ data: data[fn]?.[org] ?? [], error: null });
+    },
+  };
 
   return {
-    reads,
-    tables,
+    calls,
+    data,
     failing,
-    client: { from: (t: string) => makeBuilder(t) },
+    client,
+    setThrow(v: boolean) {
+      throwOnRpc = v;
+    },
     reset() {
-      reads.length = 0;
-      for (const k of Object.keys(tables)) delete tables[k];
+      calls.length = 0;
+      for (const k of Object.keys(data)) delete data[k];
       failing.clear();
+      throwOnRpc = false;
     },
   };
 });
@@ -92,50 +72,66 @@ const ORG_B = "org-bbbb";
 const NOW = new Date("2026-07-30T09:00:00Z");
 
 /**
- * Two companies whose books deliberately OVERLAP: `Shared Developments` is a
- * customer of both, and `Shared Merchants` a supplier to both. That overlap is
- * the whole test — without it, a missing org filter would still produce
- * separate-looking rows and pass.
+ * Two companies whose books deliberately OVERLAP: the SAME customer id and the
+ * SAME supplier id trade with both. Because the RPC scopes server-side, each org
+ * gets back ONLY its own rows — the service must pass the right org id and never
+ * blend the two seeded sets.
  */
 function seedTwoOrgs() {
-  h.tables.invoices = [
-    // Org A — £1,000 owed by the shared customer, 200 days late.
-    { id: "inv-a1", org_id: ORG_A, number: "A-1", status: "sent", total: 1000, due_date: "2026-01-11", customer_id: "cust-shared", job_id: null },
-    // Org B — £9,000 owed by the SAME customer id.
-    { id: "inv-b1", org_id: ORG_B, number: "B-1", status: "sent", total: 9000, due_date: "2026-01-11", customer_id: "cust-shared", job_id: null },
-  ];
-  h.tables.invoice_payments = [
-    { org_id: ORG_A, invoice_id: "inv-a1", amount: 250 },
-    // A payment in org B that must NEVER reduce org A's invoice.
-    { org_id: ORG_B, invoice_id: "inv-b1", amount: 4000 },
-  ];
-  h.tables.customers = [
-    { id: "cust-shared", org_id: ORG_A, name: "Shared Developments (A)" },
-    { id: "cust-shared", org_id: ORG_B, name: "Shared Developments (B)" },
-  ];
-  h.tables.jobs = [
-    { id: "job-a", org_id: ORG_A, customer_id: "cust-shared" },
-    { id: "job-b", org_id: ORG_B, customer_id: "cust-shared" },
-  ];
-  h.tables.finances = [
-    { id: "bill-a1", org_id: ORG_A, amount: 500, vat_total: 100, reference: "A-BILL", bill_date: "2026-07-01", created_at: "2026-07-01T00:00:00Z", supplier_id: "sup-shared" },
-    { id: "bill-b1", org_id: ORG_B, amount: 5000, vat_total: 1000, reference: "B-BILL", bill_date: "2026-07-01", created_at: "2026-07-01T00:00:00Z", supplier_id: "sup-shared" },
-    // A plain cost with no supplier — cannot be aged against an account.
-    { id: "cost-a1", org_id: ORG_A, amount: 90, vat_total: 18, reference: null, bill_date: "2026-07-01", created_at: "2026-07-01T00:00:00Z", supplier_id: null },
-  ];
-  h.tables.supplier_payments = [
-    { id: "pay-a1", org_id: ORG_A, voided_at: null },
-    { id: "pay-b1", org_id: ORG_B, voided_at: null },
-  ];
-  h.tables.supplier_payment_allocations = [
-    { org_id: ORG_A, payment_id: "pay-a1", finance_id: "bill-a1", amount: 100 },
-    // Org B settling its own bill must not settle org A's.
-    { org_id: ORG_B, payment_id: "pay-b1", finance_id: "bill-b1", amount: 6000 },
-  ];
-  h.tables.suppliers = [
-    { id: "sup-shared", org_id: ORG_A, name: "Shared Merchants (A)" },
-    { id: "sup-shared", org_id: ORG_B, name: "Shared Merchants (B)" },
-  ];
+  h.data.report_aged_receivables = {
+    [ORG_A]: [
+      {
+        invoice_id: "inv-a1",
+        reference: "A-1",
+        status: "sent",
+        due_date: "2026-01-11",
+        party_id: "cust-shared",
+        party_name: "Shared Developments (A)",
+        remaining: "750.00",
+        age_days: 200,
+        bucket: "d91_plus",
+      },
+    ],
+    [ORG_B]: [
+      {
+        invoice_id: "inv-b1",
+        reference: "B-1",
+        status: "sent",
+        due_date: "2026-01-11",
+        party_id: "cust-shared",
+        party_name: "Shared Developments (B)",
+        remaining: "5000.00",
+        age_days: 200,
+        bucket: "d91_plus",
+      },
+    ],
+  };
+  h.data.report_aged_payables = {
+    [ORG_A]: [
+      {
+        bill_id: "bill-a1",
+        reference: "A-BILL",
+        party_id: "sup-shared",
+        party_name: "Shared Merchants (A)",
+        outstanding: "500.00",
+        age_days: 29,
+        bucket: "d1_30",
+        date_iso: "2026-07-01",
+      },
+    ],
+    [ORG_B]: [
+      {
+        bill_id: "bill-b1",
+        reference: "B-BILL",
+        party_id: "sup-shared",
+        party_name: "Shared Merchants (B)",
+        outstanding: "5000.00",
+        age_days: 29,
+        bucket: "d1_30",
+        date_iso: "2026-07-01",
+      },
+    ],
+  };
 }
 
 beforeEach(() => {
@@ -144,19 +140,19 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// 1. behavioural — the dual-org proof
+// 1. the active org is the ONE the RPC is asked for
 // ---------------------------------------------------------------------------
 
-describe("dual-org: a party trading with both companies ages only in the active org", () => {
-  it("aged debtors show ONLY the active org's invoice and its own payments", async () => {
+describe("active-org scoping: the service asks the RPC for exactly one org", () => {
+  it("aged debtors show ONLY the active org's rows, composed faithfully", async () => {
     const view = await buildAgedLedgers(ORG_A, "owner", NOW);
     expect(view.loadError).toBe(false);
-    // £1,000 billed less the £250 paid IN ORG A. Org B's £9,000 and its £4,000
-    // payment are both absent — either leaking would change this number.
     expect(view.debtors.totals.total).toBe(750);
     expect(view.debtors.rows).toHaveLength(1);
     expect(view.debtors.rows[0]!.partyName).toBe("Shared Developments (A)");
     expect(view.debtors.rows[0]!.items.map((i) => i.id)).toEqual(["inv-a1"]);
+    // 200 days late → past-due bucket, so pastDue carries the whole balance.
+    expect(view.debtors.totals.pastDue).toBe(750);
   });
 
   it("the other org sees its own figure, from the same seeded data", async () => {
@@ -165,48 +161,73 @@ describe("dual-org: a party trading with both companies ages only in the active 
     expect(view.debtors.rows[0]!.partyName).toBe("Shared Developments (B)");
   });
 
-  it("aged creditors show ONLY the active org's bills and allocations", async () => {
+  it("aged creditors show ONLY the active org's bills", async () => {
     const view = await buildAgedLedgers(ORG_A, "owner", NOW);
-    // £600 gross less the £100 allocated in org A. Org B's £6,000 allocation
-    // must not settle org A's bill.
     expect(view.creditors.totals.total).toBe(500);
     expect(view.creditors.rows).toHaveLength(1);
     expect(view.creditors.rows[0]!.partyName).toBe("Shared Merchants (A)");
   });
 
-  it("a bill with no supplier is excluded from creditors, not silently attributed", async () => {
-    const view = await buildAgedLedgers(ORG_A, "owner", NOW);
-    const ids = view.creditors.rows.flatMap((r) => r.items.map((i) => i.id));
-    expect(ids).not.toContain("cost-a1");
-  });
-
-  it("EVERY read carries an org_id filter equal to the active org", async () => {
+  it("passes the ACTIVE org id and the as-at business day to every RPC", async () => {
     await buildAgedLedgers(ORG_A, "owner", NOW);
-    expect(h.reads.length).toBeGreaterThanOrEqual(8);
-    for (const r of h.reads) {
-      const orgEq = r.eqs.find(([c]) => c === "org_id");
-      expect(orgEq, `${r.table} read is not org-pinned`).toBeDefined();
-      expect(orgEq?.[1], `${r.table} read is pinned to the wrong org`).toBe(ORG_A);
+    expect(h.calls.length).toBe(2);
+    for (const c of h.calls) {
+      expect(c.args.p_org_id, `${c.fn} not pinned to the active org`).toBe(ORG_A);
+      expect(c.args.p_as_at, `${c.fn} not given the as-at day`).toBe("2026-07-30");
     }
   });
 
-  it("reads exactly the eight tables the two ledgers need, and no others", async () => {
+  it("calls exactly the two ageing RPCs, and no others", async () => {
     await buildAgedLedgers(ORG_A, "owner", NOW);
-    expect([...new Set(h.reads.map((r) => r.table))].sort()).toEqual([
-      "customers",
-      "finances",
-      "invoice_payments",
-      "invoices",
-      "jobs",
-      "supplier_payment_allocations",
-      "supplier_payments",
-      "suppliers",
+    expect(h.calls.map((c) => c.fn).sort()).toEqual([
+      "report_aged_payables",
+      "report_aged_receivables",
     ]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 2. behavioural — the payables role gate
+// 2. party naming / href fallbacks mirror the pure bridges
+// ---------------------------------------------------------------------------
+
+describe("party naming + href fallbacks match composeDebtorItems / composeCreditorItems", () => {
+  it("a resolved customer with no name reads 'Unnamed customer'", async () => {
+    h.data.report_aged_receivables = {
+      [ORG_A]: [
+        { invoice_id: "x", reference: "X", status: "sent", due_date: null, party_id: "c1", party_name: null, remaining: "10.00", age_days: null, bucket: "current" },
+      ],
+    };
+    const view = await buildAgedLedgers(ORG_A, "owner", NOW);
+    expect(view.debtors.rows[0]!.partyName).toBe("Unnamed customer");
+    // No ageing date → current bucket AND disclosed as undated.
+    expect(view.debtors.totals.undated).toBe(10);
+  });
+
+  it("a wholly-unresolved invoice is 'Unattributed'", async () => {
+    h.data.report_aged_receivables = {
+      [ORG_A]: [
+        { invoice_id: "x", reference: "X", status: "sent", due_date: "2026-01-01", party_id: null, party_name: null, remaining: "10.00", age_days: 100, bucket: "d91_plus" },
+      ],
+    };
+    const view = await buildAgedLedgers(ORG_A, "owner", NOW);
+    expect(view.debtors.rows[0]!.partyName).toBe("Unattributed");
+    expect(view.debtors.rows[0]!.items[0]!.href).toBe("/invoices/x");
+  });
+
+  it("a supplier-less bill is 'Unattributed' and links to /expenses", async () => {
+    h.data.report_aged_payables = {
+      [ORG_A]: [
+        { bill_id: "b", reference: null, party_id: null, party_name: null, outstanding: "12.00", age_days: 5, bucket: "d1_30", date_iso: "2026-07-20" },
+      ],
+    };
+    const view = await buildAgedLedgers(ORG_A, "owner", NOW);
+    expect(view.creditors.rows[0]!.partyName).toBe("Unattributed");
+    expect(view.creditors.rows[0]!.items[0]!.href).toBe("/expenses");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. the payables role gate
 // ---------------------------------------------------------------------------
 
 describe("the payables gate — a wrong number is worse than a withheld one", () => {
@@ -219,21 +240,17 @@ describe("the payables gate — a wrong number is worse than a withheld one", ()
   });
 
   it("a non-admin gets creditorsVisible: false and an EMPTY ledger", async () => {
-    // The money-out ledger is admin-only at the RLS layer and returns empty
-    // WITHOUT an error, so composing it for a member would show every bill as
-    // entirely unpaid — overstating payables by everything already paid.
     const view = await buildAgedLedgers(ORG_A, "member", NOW);
     expect(view.creditorsVisible).toBe(false);
     expect(view.creditors.totals.total).toBe(0);
     expect(view.creditors.rows).toHaveLength(0);
   });
 
-  it("a non-admin does not even ISSUE the money-out reads", async () => {
+  it("a non-admin does not even ISSUE the money-out RPC", async () => {
     await buildAgedLedgers(ORG_A, "member", NOW);
-    const tables = new Set(h.reads.map((r) => r.table));
-    expect(tables.has("supplier_payments")).toBe(false);
-    expect(tables.has("supplier_payment_allocations")).toBe(false);
-    expect(tables.has("finances")).toBe(false);
+    expect(h.calls.map((c) => c.fn)).not.toContain("report_aged_payables");
+    // The debtor book is still served.
+    expect(h.calls.map((c) => c.fn)).toContain("report_aged_receivables");
   });
 
   it("a non-admin still gets the full aged DEBTORS ledger", async () => {
@@ -243,34 +260,26 @@ describe("the payables gate — a wrong number is worse than a withheld one", ()
 });
 
 // ---------------------------------------------------------------------------
-// 3. behavioural — loud reads
+// 4. loud reads
 // ---------------------------------------------------------------------------
 
 describe("loud reads — a failed query must never render as a settled ledger", () => {
-  it("a failed invoices read sets loadError", async () => {
-    h.failing.add("invoices");
+  it("a failed receivables RPC sets loadError", async () => {
+    h.failing.add("report_aged_receivables");
     const view = await buildAgedLedgers(ORG_A, "owner", NOW);
     expect(view.loadError).toBe(true);
+    expect(view.debtors.totals.total).toBe(0);
   });
 
-  it("a failed PAYMENTS read sets loadError even though invoices succeeded", async () => {
-    // This is the dangerous one: without the payment rows every invoice looks
-    // unpaid, so the total goes UP and nothing looks broken.
-    h.failing.add("invoice_payments");
+  it("a failed payables RPC sets loadError even though receivables succeeded", async () => {
+    h.failing.add("report_aged_payables");
     const view = await buildAgedLedgers(ORG_A, "owner", NOW);
     expect(view.loadError).toBe(true);
-  });
-
-  it("a failed supplier-allocations read sets loadError", async () => {
-    h.failing.add("supplier_payment_allocations");
-    const view = await buildAgedLedgers(ORG_A, "owner", NOW);
-    expect(view.loadError).toBe(true);
+    expect(view.debtors.totals.total).toBe(750);
   });
 
   it("a thrown client returns loadError, never a reassuring empty ledger", async () => {
-    const boom = vi.spyOn(h.client, "from").mockImplementation(() => {
-      throw new Error("connection reset");
-    });
+    h.setThrow(true);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const view = await buildAgedLedgers(ORG_A, "owner", NOW);
@@ -279,24 +288,31 @@ describe("loud reads — a failed query must never render as a settled ledger", 
       // An as-at date is still returned so the page can render its banner.
       expect(view.asAtIso).toBe("2026-07-30");
     } finally {
-      boom.mockRestore();
       warn.mockRestore();
     }
   });
 });
 
 // ---------------------------------------------------------------------------
-// 4. source pins
+// 5. source pins
 // ---------------------------------------------------------------------------
 
+const ROOT = resolve(__dirname, "..", "..");
+const src = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 const SERVICE = src("server/services/aged-ledgers.ts");
 const PAGE = src("app/(app)/reports/ageing/page.tsx");
+const MIGRATION = src("supabase/migrations/20261238000000_reports_aged_ledgers_rpc.sql");
 
 describe("source pins — the report is READ-ONLY", () => {
   it("the service never mutates anything", () => {
-    for (const op of [".insert(", ".update(", ".delete(", ".upsert(", ".rpc("]) {
+    for (const op of [".insert(", ".update(", ".delete(", ".upsert("]) {
       expect(SERVICE, `aged-ledgers must not ${op}`).not.toContain(op);
     }
+  });
+
+  it("the service's ONLY rpc calls are the two read-only ageing functions", () => {
+    const rpcNames = [...SERVICE.matchAll(/\.rpc\(\s*"([a-z_]+)"/g)].map((m) => m[1]);
+    expect(rpcNames.sort()).toEqual(["report_aged_payables", "report_aged_receivables"]);
   });
 
   it("the page never mutates anything and declares no server action", () => {
@@ -306,39 +322,46 @@ describe("source pins — the report is READ-ONLY", () => {
     expect(PAGE).not.toMatch(/"use server"/);
   });
 
-  it("reads the money-out ledger MINIMALLY — no CIS or cash columns", () => {
-    // This is the promise on which __tests__/security/supplier-payments.test.ts
-    // admits this file to the ledger-table allowlist: `id, voided_at` is all the
-    // settlement authority needs, and an aged listing has no business carrying
-    // withholding figures it never displays.
-    expect(SERVICE).toMatch(/paged\(db, "supplier_payments", "id, voided_at", "id", orgId\)/);
-    // Check the SELECTED COLUMNS, not the whole file: the row shape the
-    // settlement authority requires is built with `net_paid: null` placeholders,
-    // which are not reads.
-    const selected = [...SERVICE.matchAll(/paged\(\s*\n?\s*db,\s*\n?\s*"[a-z_]+",\s*\n?\s*((?:"[^"]*"(?:\s*\+\s*)?)+)/g)]
-      .map((m) => m[1]!.replace(/"|\s|\+/g, ""))
-      .join(",");
-    expect(selected.length, "sanity: column lists were found to check").toBeGreaterThan(50);
+  it("never names a CIS or cash money-out column — an aged listing carries none", () => {
+    // The payables RPC reads supplier_payments only for `voided_at`; it never
+    // selects gross_amount / cis_withheld / net_paid. Neither the service nor
+    // the migration may name those columns.
     for (const col of ["gross_amount", "cis_withheld", "net_paid", "cis_deduction"]) {
-      expect(selected, `must not SELECT ${col}`).not.toContain(col);
+      expect(SERVICE, `service must not name ${col}`).not.toContain(col);
+      expect(MIGRATION, `migration must not name ${col}`).not.toContain(col);
     }
-  });
-
-  it("reporting on money never POSTS money — no finances write path exists", () => {
-    // `finances` is READ for aged creditors; it must never be written here.
-    expect(SERVICE).toMatch(/paged\(\s*\n?\s*db,\s*\n?\s*"finances"/);
-    expect(SERVICE).not.toMatch(/from\("finances"\)[\s\S]{0,80}(insert|update|delete)/);
   });
 });
 
-describe("source pins — org pinning cannot be dropped silently", () => {
-  it("every `paged(` call passes orgId and the helper applies it", () => {
-    expect(SERVICE).toMatch(/\.eq\("org_id", orgId\)/);
-    const pagedCalls = (SERVICE.match(/\bpaged\(/g) ?? []).length;
-    // 8 call sites + the helper's own definition + one internal reference.
-    expect(pagedCalls).toBeGreaterThanOrEqual(9);
+describe("source pins — the migration carries the mandated guards", () => {
+  it("both RPCs are org-membership guarded (current_org_ids + 42501)", () => {
+    expect(MIGRATION).toContain("current_org_ids()");
+    expect(MIGRATION).toContain("42501");
+    // One guard clause per function.
+    expect((MIGRATION.match(/current_org_ids\(\)\)/g) ?? []).length).toBeGreaterThanOrEqual(2);
   });
 
+  it("the payables RPC additionally enforces the admin gate", () => {
+    expect(MIGRATION).toContain("is_org_admin(p_org_id)");
+  });
+
+  it("both RPCs are SECURITY DEFINER with a pinned search_path and explicit grants", () => {
+    expect((MIGRATION.match(/security definer/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect((MIGRATION.match(/set search_path = public/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(MIGRATION).toContain(
+      "grant execute on function public.report_aged_receivables(uuid, date) to authenticated;",
+    );
+    expect(MIGRATION).toContain(
+      "grant execute on function public.report_aged_payables(uuid, date) to authenticated;",
+    );
+  });
+
+  it("neither RPC writes a row", () => {
+    expect(MIGRATION).not.toMatch(/\b(insert into|update\s+public\.|delete from)\b/i);
+  });
+});
+
+describe("source pins — the page passes the active org and role", () => {
   it("the page passes the ACTIVE org and role, never a raw membership list", () => {
     expect(PAGE).toMatch(/const \{ ctx \} = await requireOrgContext\(\)/);
     expect(PAGE).toMatch(/buildAgedLedgers\(\s*\n?\s*ctx\.org\.id,\s*\n?\s*ctx\.membership\.role,?\s*\n?\s*\)/);
@@ -346,20 +369,5 @@ describe("source pins — org pinning cannot be dropped silently", () => {
 
   it("staff are redirected off the whole debtor and creditor book", () => {
     expect(PAGE).toMatch(/ctx\.membership\.role === "staff"\) redirect\("\/me"\)/);
-  });
-});
-
-describe("source pins — paged reads keep a unique total order", () => {
-  it("a non-`id` ordering always appends `id` as the tiebreaker", () => {
-    // Without it, rows sharing the sort key can be dropped or duplicated at a
-    // 500-row page boundary — the F-1 silent-truncation class, which on this
-    // report would UNDERSTATE what the business is owed.
-    expect(SERVICE).toMatch(
-      /orderKey === "id" \? base : base\.order\("id", \{ ascending: true \}\)/,
-    );
-  });
-
-  it("reads go through fetchAllRows, never a bare select", () => {
-    expect(SERVICE).toMatch(/fetchAllRows<Row>/);
   });
 });
