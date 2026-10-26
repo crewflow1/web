@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { buildCommands, matchCommand, type Command } from "../_nav/commands";
 import type { NavRole } from "../_nav/nav-model";
@@ -120,6 +120,77 @@ function coerceRole(role: string): NavRole {
   return role === "staff" || role === "admin" || role === "owner" ? role : "owner";
 }
 
+/**
+ * One result row. Extracted and `memo`-wrapped so the full list stops
+ * reconciling on every palette commit (spinner toggles, unrelated state
+ * changes) and a hover only re-renders the two rows whose `isActive` flips.
+ * `onHover`/`onChoose` are passed as identity-stable callbacks from the parent
+ * (the `setActive` setter and a `useCallback` `choose`), so the only props that
+ * vary per render are `isActive` (two rows on move) and, rarely, `showHeader`.
+ */
+const PaletteRow = memo(function PaletteRow({
+  item,
+  index,
+  isActive,
+  showHeader,
+  onHover,
+  onChoose,
+}: {
+  item: Item;
+  index: number;
+  isActive: boolean;
+  showHeader: boolean;
+  onHover: (i: number) => void;
+  onChoose: (item: Item) => void;
+}) {
+  return (
+    <li>
+      {showHeader ? (
+        <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+          {item.group}
+        </div>
+      ) : null}
+      <button
+        type="button"
+        onMouseEnter={() => onHover(index)}
+        onClick={() => onChoose(item)}
+        className={
+          isActive
+            ? "flex w-full items-center gap-3 bg-slate-100 px-3 py-2 text-left"
+            : "flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-slate-50"
+        }
+      >
+        <span aria-hidden className="w-4 text-center text-sm">
+          {item.kind === "hit"
+            ? TYPE_ICONS[item.hit.type]
+            : item.kind === "recent"
+              ? "🕘"
+              : item.cmd.kind === "action"
+                ? "＋"
+                : item.cmd.kind === "context"
+                  ? "◧"
+                  : "→"}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium text-slate-900">
+            {item.label}
+          </span>
+          {item.kind === "hit" && item.hit.subtitle ? (
+            <span className="block truncate text-xs text-slate-500">
+              {item.hit.subtitle}
+            </span>
+          ) : null}
+        </span>
+        {item.kind === "hit" ? (
+          <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+            {TYPE_LABELS[item.hit.type]}
+          </span>
+        ) : null}
+      </button>
+    </li>
+  );
+});
+
 export function SearchPalette({
   role = "owner",
   flags = [],
@@ -212,19 +283,23 @@ export function SearchPalette({
       setTimeout(() => inputRef.current?.focus(), 10);
     } else {
       setQ("");
-      setHits([]);
+      setHits((h) => (h.length ? [] : h));
       setActive(0);
+      setLoading(false);
     }
   }, [open]);
 
-  // Debounced entity fetch (2+ chars).
+  // Debounced entity fetch (2+ chars). `loading` is set in the same commit as
+  // the keystroke (in `onChange` below), so this effect no longer fires a
+  // separate `setLoading(true)` commit that would re-render the whole list just
+  // to toggle the spinner; it only clears the flag when the fetch settles.
   useEffect(() => {
     if (q.trim().length < 2) {
-      setHits([]);
+      // Guard the write so an already-empty list doesn't commit a fresh array.
+      setHits((h) => (h.length ? [] : h));
       return;
     }
     const ctrl = new AbortController();
-    setLoading(true);
     const timer = setTimeout(async () => {
       try {
         const r = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal: ctrl.signal });
@@ -353,8 +428,15 @@ export function SearchPalette({
                 type="text"
                 value={q}
                 onChange={(e) => {
-                  setQ(e.target.value);
+                  const v = e.target.value;
+                  setQ(v);
                   setActive(0);
+                  // Fold the spinner flag into this same (batched) commit so a
+                  // fetch doesn't need a second, list-reconciling commit to turn
+                  // it on. React bails out when the value is unchanged, so this
+                  // is free once already searching. The debounced effect clears
+                  // it when the request settles.
+                  setLoading(v.trim().length >= 2);
                 }}
                 onKeyDown={onKeyDown}
                 placeholder="Search jobs, customers, invoices… or jump to a page"
@@ -383,52 +465,16 @@ export function SearchPalette({
                   {items.map((item, i) => {
                     const prev = items[i - 1];
                     const showHeader = !prev || prev.group !== item.group;
-                    const isActive = i === active;
                     return (
-                      <li key={item.key}>
-                        {showHeader ? (
-                          <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                            {item.group}
-                          </div>
-                        ) : null}
-                        <button
-                          type="button"
-                          onMouseEnter={() => setActive(i)}
-                          onClick={() => choose(item)}
-                          className={
-                            isActive
-                              ? "flex w-full items-center gap-3 bg-slate-100 px-3 py-2 text-left"
-                              : "flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-slate-50"
-                          }
-                        >
-                          <span aria-hidden className="w-4 text-center text-sm">
-                            {item.kind === "hit"
-                              ? TYPE_ICONS[item.hit.type]
-                              : item.kind === "recent"
-                                ? "🕘"
-                                : item.cmd.kind === "action"
-                                  ? "＋"
-                                  : item.cmd.kind === "context"
-                                    ? "◧"
-                                    : "→"}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium text-slate-900">
-                              {item.label}
-                            </span>
-                            {item.kind === "hit" && item.hit.subtitle ? (
-                              <span className="block truncate text-xs text-slate-500">
-                                {item.hit.subtitle}
-                              </span>
-                            ) : null}
-                          </span>
-                          {item.kind === "hit" ? (
-                            <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-slate-500">
-                              {TYPE_LABELS[item.hit.type]}
-                            </span>
-                          ) : null}
-                        </button>
-                      </li>
+                      <PaletteRow
+                        key={item.key}
+                        item={item}
+                        index={i}
+                        isActive={i === active}
+                        showHeader={showHeader}
+                        onHover={setActive}
+                        onChoose={choose}
+                      />
                     );
                   })}
                 </ul>
