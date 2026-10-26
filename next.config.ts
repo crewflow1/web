@@ -92,9 +92,32 @@ const config: NextConfig = {
    * copied to /public/pdf.worker.min.mjs by the `prebuild`/`predev` script and
    * loaded same-origin (satisfies the existing `worker-src 'self'` CSP).
    */
-  webpack: (webpackConfig) => {
+  webpack: (webpackConfig, { webpack }) => {
     webpackConfig.resolve = webpackConfig.resolve ?? {};
     webpackConfig.resolve.alias = { ...(webpackConfig.resolve.alias ?? {}), canvas: false };
+    /**
+     * Sentry tree-shaking (official build-time flags).
+     *
+     * The @sentry/nextjs browser SDK is auto-injected on every route by
+     * `withSentryConfig`, yet monitoring is DARK in every environment today
+     * (no NEXT_PUBLIC_SENTRY_DSN set, so `Sentry.init()` never runs — see
+     * sentry.client.config.ts + lib/monitoring/readiness.ts). Defining these
+     * two magic constants lets the bundler dead-code-eliminate Sentry's
+     * debug-logging and performance-tracing code paths, neither of which is
+     * consumed (tracing is never read while dark; replay is off at sample
+     * rate 0). This does NOT remove the SDK itself — error reporting returns
+     * automatically the moment a DSN is set. Session replay is not bundled
+     * here, so the __RRWEB_*__ / __SENTRY_EXCLUDE_REPLAY_WORKER__ flags are
+     * intentionally omitted.
+     * Ref: Sentry "Tree Shaking" guide for Next.js.
+     */
+    webpackConfig.plugins = webpackConfig.plugins ?? [];
+    webpackConfig.plugins.push(
+      new webpack.DefinePlugin({
+        __SENTRY_DEBUG__: false,
+        __SENTRY_TRACING__: false,
+      }),
+    );
     return webpackConfig;
   },
 };
