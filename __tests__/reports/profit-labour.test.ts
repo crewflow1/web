@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { buildReportDocument } from "@/lib/reports/report-data";
 import { computeAllJobsProfitability } from "@/lib/profitability/compute";
+import { buildLabourSlices, lifetimeHoursSource } from "@/lib/profitability/job-cost-input";
+import { buildStockCogsCostRows, type CostedMovementRow } from "@/lib/stock/valuation";
+import type { TimeEntry } from "@/lib/time/compute";
 import type { ReportsDb } from "@/lib/reports/aggregates";
 
 /**
@@ -23,6 +26,14 @@ import type { ReportsDb } from "@/lib/reports/aggregates";
 //   from(table).select().eq().order().range()   (+ .in() for the users pay read)
 // `range` resolves to a single full page ({ data, error }); rows are routed by
 // table name. A per-table `org_id` capture lets us assert the org pin holds.
+//
+// R8: labour hours + stock COGS are now rollup RPCs, so the fake also provides
+// `.rpc(fn, args)`. It emulates each RPC by running the SAME TypeScript fold the
+// SQL function mirrors over the seeded `time_entries` / `stock_movements` — so the
+// report composes exactly as it will against the real RPC (whose equality to this
+// fold is proven on real Postgres in
+// __tests__/integration/rls/report-profit-rollups.test.ts). The `p_org` the report
+// passes is captured so the org-pin assertion still bites.
 function makeClient(
   tables: Record<string, unknown[]>,
   seenOrgIds: Record<string, string> = {},
@@ -41,7 +52,24 @@ function makeClient(
     };
     return chain;
   };
-  return { from: (table: string) => build(table) } as unknown as ReportsDb;
+  const rpc = async (fn: string, args: Record<string, unknown>) => {
+    if (fn === "report_profit_labour_hours") {
+      seenOrgIds["rpc:labour"] = String(args.p_org);
+      const now = args.p_now ? new Date(String(args.p_now)) : undefined;
+      const slices = buildLabourSlices(
+        (tables["time_entries"] ?? []) as unknown as TimeEntry[],
+        lifetimeHoursSource(now),
+      );
+      return { data: slices.map((s) => ({ job_id: s.job_id, user_id: s.user_id, hours: s.hours })), error: null };
+    }
+    if (fn === "report_profit_stock_cogs") {
+      seenOrgIds["rpc:cogs"] = String(args.p_org);
+      const rows = buildStockCogsCostRows((tables["stock_movements"] ?? []) as CostedMovementRow[]);
+      return { data: rows.map((r) => ({ job_id: r.job_id, amount: r.amount })), error: null };
+    }
+    return { data: [], error: null };
+  };
+  return { from: (table: string) => build(table), rpc } as unknown as ReportsDb;
 }
 
 const now = new Date("2026-06-15T12:00:00Z");
@@ -112,8 +140,12 @@ describe("buildProfitDocument — per-job cost includes labour", () => {
   it("org-pins every ledger read (never blends a dual-org member's companies)", async () => {
     const seen: Record<string, string> = {};
     await buildReportDocument(makeClient(fixtures(), seen), ORG, "profit", { now });
-    for (const table of ["jobs", "invoices", "finances", "customers", "time_entries", "memberships"]) {
+    for (const table of ["jobs", "invoices", "finances", "customers", "memberships"]) {
       expect(seen[table]).toBe(ORG);
     }
+    // Labour hours + stock COGS are now org-scoped ROLLUP RPCs (R8) — the org id
+    // the report passes as `p_org` is the same pin.
+    expect(seen["rpc:labour"]).toBe(ORG);
+    expect(seen["rpc:cogs"]).toBe(ORG);
   });
 });
