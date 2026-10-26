@@ -397,6 +397,27 @@ const envSchema = z.object({
   SENTRY_AUTH_TOKEN: z.string().optional(),
   NEXT_PUBLIC_POSTHOG_KEY: z.string().optional(),
   NEXT_PUBLIC_POSTHOG_HOST: z.string().default("https://eu.i.posthog.com"),
+  // -- Server-side analytics capture sink (DARK, two-switch gated) --------
+  // The SERVER counterpart of the browser PostHog sink: it lets #917's
+  // server-action `trackEvent` emits reach a provider. Read ONLY by
+  // lib/analytics/server.ts (registered once from instrumentation.register()
+  // in the Node runtime). Deliberately NOT NEXT_PUBLIC — the server ingestion
+  // key must never be inlined into a client bundle, and posthog-node is loaded
+  // via dynamic import so it is tree-shaken out of every client bundle.
+  //
+  // DARK by default: ensureServerAnalyticsSink() registers NOTHING unless BOTH
+  // switches are set, so every server-side trackEvent stays an inert no-op.
+  //   - ANALYTICS_SERVER_ENABLED: the opt-in flag; only "1"/"true" enables it.
+  //     Free string (not an enum) so a stray value is inert, never a boot brick.
+  //   - POSTHOG_SERVER_KEY: the server ingestion key. Absent/blank ⇒ no-op even
+  //     when the flag is on. Separate from NEXT_PUBLIC_POSTHOG_KEY so the browser
+  //     sink being configured does NOT silently also enable server capture.
+  //   - POSTHOG_SERVER_HOST: optional host override; defaults to the EU host.
+  // Unset in every environment today (prod, CI, dev). Activation is a founder
+  // env-only decision (MOE approval; providers dark by default per CLAUDE.md).
+  ANALYTICS_SERVER_ENABLED: z.string().optional(),
+  POSTHOG_SERVER_KEY: z.string().optional(),
+  POSTHOG_SERVER_HOST: z.string().optional(),
   // Plain URL to the Sentry project dashboard, rendered as a link on /admin/ops
   // (server/services/ops-snapshot.ts). Not a secret, gates nothing; unset ⇒ no
   // link. Was consumed-but-undeclared until the 2026-10 env census.
