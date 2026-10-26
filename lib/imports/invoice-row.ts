@@ -31,6 +31,16 @@ import { resolveCostVatRate } from "@/lib/imports/vat";
  */
 export type InvoiceImportRow<S extends string = string> = {
   org_id: string;
+  /**
+   * The same-org customer this invoice belongs to, when the source file named
+   * one we could resolve. Optional and OMITTED when absent rather than set to
+   * null only to keep the payload tight — the column itself is nullable
+   * ("legacy orphan, customer unknown", migration 20260915000000). Its presence
+   * is DB-safe for any writer: the composite FK `invoices_customer_org_fkey
+   * (customer_id, org_id) -> customers(id, org_id)` makes "the customer must
+   * live in this invoice's org" a database invariant, service-role included.
+   */
+  customer_id?: string | null;
   number: string;
   amount: number;
   vat_total: number;
@@ -65,6 +75,14 @@ export function buildInvoiceImportPlan<S extends string>(
   mapped: Record<string, unknown>,
   orgId: string,
   normalisedStatus: S,
+  /**
+   * The resolved same-org customer id, or null when the file named no customer
+   * or named one we couldn't match. Null (or omitted) leaves the invoice
+   * unlinked — a valid state (historical AR) — so an unmatched name never fails
+   * or skips the row. The resolver that produces this is org-scoped; see
+   * resolveCustomerByName in app/(app)/imports/actions.ts.
+   */
+  customerId: string | null = null,
 ): InvoiceImportPlan<S> {
   const number = String(mapped.number ?? "").trim();
   const total = Number(mapped.total ?? 0);
@@ -98,6 +116,7 @@ export function buildInvoiceImportPlan<S extends string>(
     status: "ok",
     row: {
       org_id: orgId,
+      ...(customerId ? { customer_id: customerId } : {}),
       number,
       amount,
       vat_total: vat,

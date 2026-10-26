@@ -699,9 +699,10 @@ export async function commitImport(importId: string) {
 
   let imported = 0;
   let skipped = 0;
-  // We do customers first so invoices/leads/etc. can reference them. v1
-  // imports don't link invoices to customers automatically — that's a
-  // v2 polish — so order is just nice-to-have here.
+  // We do customers first so invoices/leads/etc. can reference them. Invoices
+  // now link to their customer by name (same-org resolver), exactly as jobs and
+  // quotes do, so this ordering is load-bearing — a same-session customer must
+  // commit before the invoice that names it can resolve to it.
   const byEntity: Record<string, typeof rows> = {};
   for (const r of rows ?? []) {
     const k = r.entity_type ?? "unknown";
@@ -1312,6 +1313,15 @@ async function insertOne(
       return data?.id ?? null;
     }
     case "invoice": {
+      // Link the invoice to its customer when the file named one we can resolve
+      // in THIS org. Mirrors the jobs/quotes path (same org-scoped resolver),
+      // but — unlike those — an unresolved name does NOT skip the row: an
+      // unlinked invoice is valid (historical AR, customer_name is not a
+      // required field), so it imports with customer_id left NULL.
+      const customerName = String(mapped.customer_name ?? "").trim();
+      const customerId = customerName
+        ? await resolveCustomerByName(admin, orgId, customerName)
+        : null;
       // `invoices.total` is a STORED GENERATED column (amount + vat_total), so
       // it must NOT be written — Postgres rejects the whole INSERT with
       // SQLSTATE 428C9. buildInvoiceImportPlan owns the payload shape (and the
@@ -1320,6 +1330,7 @@ async function insertOne(
         mapped,
         orgId,
         normaliseInvoiceStatus(mapped.status),
+        customerId,
       );
       if (plan.status === "skip") return null;
       // A date the file gave but we can't read is the operator's to fix, not
