@@ -14,6 +14,7 @@ import {
   formSuccess,
   validateFormData,
 } from "@/lib/forms/state";
+import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
 
 const uuid = z.string().uuid();
 
@@ -159,6 +160,15 @@ export async function addInvoicePayment(
       console.error("[invoice-payment] automation dispatch failed", e);
     });
   }
+
+  // Funnel: payment recorded (fires only on a real, confirmed insert — the
+  // duplicate-submit guard above returns before reaching here, so a suppressed
+  // double-submit is never counted). No-op until analytics are configured +
+  // consent-granted. org_id + the source enum; no PII, no money.
+  trackEvent(ANALYTICS_EVENTS.PAYMENT_RECORDED, {
+    org_id: inv.org_id,
+    source: "manual",
+  });
 
   revalidatePath(`/invoices/${invoiceId}`);
   revalidatePath("/invoices");

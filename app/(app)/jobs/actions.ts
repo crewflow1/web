@@ -17,6 +17,7 @@ import {
 } from "@/server/services/calendar-connections";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { verifyCrmReferences } from "@/lib/crm/reference-integrity";
+import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
 
 /**
  * Job CRUD server actions.
@@ -122,6 +123,14 @@ export async function createJob(
     console.error("[jobs] create failed", error);
     return formError("Couldn't save the job. Try again.", result.data as JobValues);
   }
+
+  // Funnel: job created (fires after a confirmed insert; this is the manual
+  // create path). No-op until analytics are configured + consent-granted.
+  // org_id + an origin enum; no PII.
+  trackEvent(ANALYTICS_EVENTS.JOB_CREATED, {
+    org_id: ctx.org.id,
+    origin: "manual",
+  });
 
   // Clone a job template's checklist (and, for admins with a scheduled date, its
   // programme baseline) onto the new job. Best-effort: the job is already saved,

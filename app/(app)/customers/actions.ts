@@ -16,6 +16,7 @@ import {
   formSuccess,
   validateFormData,
 } from "@/lib/forms/state";
+import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
 
 /** Trim + validate a YYYY-MM-DD statement bound; anything else is open-ended. */
 function statementBound(v: FormDataEntryValue | null): string | null {
@@ -131,6 +132,10 @@ export async function createCustomer(
       result.data,
     );
   }
+
+  // Funnel: customer created (fires after a confirmed insert). No-op until
+  // analytics are configured + consent-granted. org_id only; no PII.
+  trackEvent(ANALYTICS_EVENTS.CUSTOMER_CREATED, { org_id: ctx.org.id });
 
   revalidatePath("/customers");
   return formSuccess({

@@ -244,7 +244,10 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // (Line key re-pointed 118→119: the G-7 duplicate action added the fetchAllRows
   // import above it. The duplicate's own line-item read is PAGED — only this
   // deliberate notes-sample cap remains.)
-  "app/(app)/quotes/actions.ts:119":
+  // (Line key re-pointed 119→120: pure shift — the analytics-event-wiring PR
+  // added one `@/lib/analytics/events` import above this read. The read itself
+  // is unchanged from origin/main.)
+  "app/(app)/quotes/actions.ts:120":
     "bounded: quote→job carry (fix 4) copies the first 50 line-item DESCRIPTIONS into the job's notes as a human scope summary — a display sample, never financial truth (amounts/items stay on the quote, linked via quotes.job_id + the auto-invoice). A 50-line cap on a notes blurb is deliberate; paging would only grow an unreadable note.",
 
   // Global-search result caps — the command-palette (/api/search). Each is an

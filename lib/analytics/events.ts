@@ -30,6 +30,7 @@ export const ANALYTICS_EVENTS = {
   SIGNUP_COMPLETED: "signup_completed",
   ORGANISATION_CREATED: "organisation_created",
   // Activation (first-value milestones)
+  ONBOARDING_STARTED: "onboarding_started",
   ONBOARDING_COMPLETED: "onboarding_completed",
   FIRST_CUSTOMER_CREATED: "first_customer_created",
   FIRST_JOB_CREATED: "first_job_created",
@@ -38,10 +39,12 @@ export const ANALYTICS_EVENTS = {
   FIRST_STAFF_ADDED: "first_staff_added",
   // Engagement
   CUSTOMER_CREATED: "customer_created",
+  LEAD_CREATED: "lead_created",
   JOB_CREATED: "job_created",
   JOB_UPDATED: "job_updated",
   QUOTE_CREATED: "quote_created",
   QUOTE_SENT: "quote_sent",
+  QUOTE_ACCEPTED: "quote_accepted",
   INVOICE_CREATED: "invoice_created",
   INVOICE_SENT: "invoice_sent",
   PAYMENT_RECORDED: "payment_recorded",
