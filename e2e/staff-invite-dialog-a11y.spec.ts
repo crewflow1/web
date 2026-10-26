@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { settleForAxe } from "./_settle";
+import { waitForHydrated } from "./_hydration";
 
 /**
  * The /staff add-staff dialog — components/ui/modal.tsx's adoption surface.
@@ -53,7 +54,13 @@ function focusIsInsidePanel(page: Page): Promise<boolean> {
 }
 
 async function openDialog(page: Page): Promise<void> {
-  await page.getByTestId("add-staff-button").click();
+  // The button's onClick dispatches a one-shot `crewflow:open-add-staff` event
+  // that the modal listens for; a click before this client island has hydrated
+  // is lost and the dialog never opens (F-E2). Wait for the trigger to be wired
+  // before clicking — a real readiness condition, not a sleep or a retry.
+  const trigger = page.getByTestId("add-staff-button");
+  await waitForHydrated(trigger);
+  await trigger.click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Add a staff member" })).toBeVisible();
 }

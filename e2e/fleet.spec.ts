@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { waitForHydrated } from "./_hydration";
 
 /**
  * Fleet E2E — the anonymous boundary, and the core authenticated journey:
@@ -35,13 +36,17 @@ import { test, expect } from "@playwright/test";
  * maths behind them in the unit tier.
  */
 
-/** React has attached a fiber to the form — the client dispatch is live. */
-async function waitForHydratedForm(page: import("@playwright/test").Page): Promise<void> {
-  await page.waitForFunction(() => {
-    const el = document.querySelector("form");
-    return !!el && Object.keys(el).some((k) => k.startsWith("__reactFiber$"));
-  });
-}
+/**
+ * Readiness note. These steps used `waitForHydratedForm(page)`, which polled the
+ * FIRST <form> on the page for a React fiber. The create/edit pages are simple
+ * today, but that generic signal shares the latent F-E3 weakness: "some form is
+ * wired" is not "the form this step submits is wired", and a submit into that
+ * gap falls back to a native POST that fleet's client-dispatch forms re-render
+ * in place rather than navigating, so the URL never changes and the `toHaveURL`
+ * after it times out. Each step now waits for the EXACT control it drives via
+ * `waitForHydrated` — the same fiber signal, aimed at the right node. Still a
+ * readiness wait, not a retry; no action, assertion or timeout changed.
+ */
 
 test.describe("fleet — anonymous boundary", () => {
   const guarded = [
@@ -77,9 +82,10 @@ test.describe("fleet — authenticated vehicle create & edit", () => {
 
     await page.goto("/fleet/vehicles/new");
     await expect(page.getByRole("heading", { name: /add a vehicle/i })).toBeVisible();
-    // Submit only once the client dispatch is live — a pre-hydration click
-    // would fall back to a native POST and prove nothing about navigation.
-    await waitForHydratedForm(page);
+    // Submit only once THIS button's client dispatch is live — a pre-hydration
+    // click would fall back to a native POST and prove nothing about navigation.
+    const addVehicleBtn = page.getByRole("button", { name: /add vehicle/i });
+    await waitForHydrated(addVehicleBtn);
 
     await page.locator("#name").fill(name);
     await page.locator("#registration").fill(plate);
@@ -93,7 +99,7 @@ test.describe("fleet — authenticated vehicle create & edit", () => {
     // THE assertion this spec exists for: the click must MOVE THE BROWSER to
     // the new vehicle's own page. The RPC returning an id (both rows written,
     // one transaction, caller's own JWT) is implied by the id in the URL.
-    await page.getByRole("button", { name: /add vehicle/i }).click();
+    await addVehicleBtn.click();
     await expect(page).toHaveURL(/\/fleet\/vehicles\/[0-9a-f-]{36}\?saved=created/, {
       timeout: 20_000,
     });
@@ -119,9 +125,10 @@ test.describe("fleet — authenticated vehicle create & edit", () => {
     // by the same race — pin it too.
     const editedName = `${name} (edited)`;
     await page.goto(`/fleet/vehicles/${vehicleId}/edit`);
-    await waitForHydratedForm(page);
+    const saveChangesBtn = page.getByRole("button", { name: /save changes/i });
+    await waitForHydrated(saveChangesBtn);
     await page.locator("#name").fill(editedName);
-    await page.getByRole("button", { name: /save changes/i }).click();
+    await saveChangesBtn.click();
     await expect(page).toHaveURL(new RegExp(`/fleet/vehicles/${vehicleId}\\?saved=updated`), {
       timeout: 20_000,
     });
