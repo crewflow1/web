@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { listStaffForOrg } from "../_form-helpers";
-import { CalendarClient } from "./_calendar";
+import { CalendarClient } from "./_calendar-loader";
 import { MonthView } from "./_month-view";
 import { GanttView } from "./_gantt-view";
 import { fetchCalendarJobs } from "@/lib/schedule/calendar-data";
