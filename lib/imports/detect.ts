@@ -484,6 +484,90 @@ export function remapRawToEntity(
   return mapRow(detected, cells);
 }
 
+/**
+ * The canonical field names for an entity, in catalog order. The server-side
+ * allow-list the column-remap action parses the operator's form against — so a
+ * crafted form can never name a field that isn't a real target of this entity.
+ */
+export function entityFieldNames(entity: EntityType): string[] {
+  return Object.keys(ENTITY_FIELDS[entity]);
+}
+
+/**
+ * Re-map a raw row with an operator-chosen column-map OVERRIDE layered on top
+ * of the automatic header detection (Migration OS G11 engine).
+ *
+ * Same single normalisation path as remapRawToEntity — rebuild a one-row
+ * ParsedSheet from the stored `raw` record, compute the automatic mapColumns
+ * result, run mapRow — so no bespoke mapping logic drifts out of sync with the
+ * detector. The ONLY difference is that the caller's `overrides`
+ * ({ canonicalField -> sourceHeader }) are applied on top of the auto map:
+ * the operator's binding wins. Overrides are validated, never trusted blind:
+ *   - a `field` that is not a real canonical field of `entity` is ignored;
+ *   - a `source` header that is not an actual key of this row's `raw` is
+ *     ignored.
+ * An operator-chosen binding is treated as fully confident for that field
+ * (field_confidence = 100), so the re-derived confidence reflects the
+ * correction; mapRow still knocks the row down / warns when the chosen
+ * column's VALUE is empty or won't normalise, so "uncertain is not silently
+ * imported" still holds for the caller to act on.
+ */
+export function remapRawWithColumnMap(
+  raw: Record<string, unknown>,
+  entity: EntityType,
+  overrides: Record<string, string>,
+): MappedRow {
+  const header = Object.keys(raw);
+  const cells: Cell[] = header.map((h) => {
+    const v = raw[h];
+    if (v === null || v === undefined) return null;
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+      return v;
+    }
+    return String(v);
+  });
+  const sheet: ParsedSheet = { name: "review", header, rows: [cells] };
+  const fields = ENTITY_FIELDS[entity];
+  const { map, perField } = mapColumns(header, fields);
+
+  // Layer the operator overrides on top of the auto map. Validate BOTH sides:
+  // the field must be a real canonical field of this entity, and the chosen
+  // header must be an actual column of this row's raw record. Anything else is
+  // ignored — a crafted override can never bind an arbitrary field to an
+  // arbitrary column.
+  const mergedMap: ColumnMap = { ...map };
+  const mergedPerField: Record<string, number> = { ...perField };
+  for (const [field, source] of Object.entries(overrides)) {
+    if (!Object.prototype.hasOwnProperty.call(fields, field)) continue;
+    if (typeof source !== "string") continue;
+    if (!Object.prototype.hasOwnProperty.call(raw, source)) continue;
+    mergedMap[field] = source;
+    mergedPerField[field] = 100; // operator-chosen binding is fully confident
+  }
+
+  // Re-derive confidence with the same formula detectEntityType / mapRow use,
+  // so a column-remapped row carries a comparable score — NOT a forced 100.
+  const allFields = Object.keys(fields);
+  const required = REQUIRED_FIELDS[entity];
+  const avg =
+    allFields.length > 0
+      ? allFields.reduce((s, f) => s + (mergedPerField[f] ?? 0), 0) / allFields.length
+      : 0;
+  const requiredAvg =
+    required.length > 0
+      ? required.reduce((s, f) => s + (mergedPerField[f] ?? 0), 0) / required.length
+      : 0;
+  const confidence = Math.min(100, Math.round(avg * 0.6 + requiredAvg * 0.4));
+  const detected: DetectedSheet = {
+    sheet,
+    entity_type: entity,
+    confidence,
+    column_map: mergedMap,
+    field_confidence: mergedPerField,
+  };
+  return mapRow(detected, cells);
+}
+
 function normaliseValue(
   field: string,
   raw: Cell,
