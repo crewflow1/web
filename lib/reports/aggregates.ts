@@ -74,21 +74,8 @@ export type TopCustomer = {
   invoice_count: number;
 };
 
-const DAY_MS = 86_400_000;
-
 function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
-}
-
-/** Monday of the ISO-week containing `d` (UTC). */
-function startOfWeek(d: Date): Date {
-  const dow = d.getUTCDay();
-  const daysFromMon = (dow + 6) % 7;
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - daysFromMon));
-}
-
-function startOfMonth(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
 }
 
 function startOfQuarter(d: Date): Date {
@@ -102,44 +89,35 @@ export async function jobsPerWeek(
   db?: ReportsDb,
 ): Promise<JobsPerWeek[]> {
   const supabase = db ?? (await createClient());
-  const since = new Date(Date.now() - weeks * 7 * DAY_MS).toISOString().slice(0, 10);
 
-  const { data, error } = await fetchAllRows<{
-    status: string | null;
-    scheduled_date: string | null;
-  }>((from, to) =>
-    supabase
-      .from("jobs")
-      .select("id, status, scheduled_date")
-      .eq("org_id", orgId)
-      .gte("scheduled_date", since)
-      .order("scheduled_date", { ascending: true })
-      .order("id", { ascending: true })
-      .range(from, to),
-  );
+  // DB-side grouped aggregate (A6). This used to fetch EVERY job scheduled in the
+  // window (paged under the 1000-row cap) and group/count in TypeScript into ~8
+  // weekly buckets — the read scaled with the org's job volume for a fixed-size
+  // chart. `reports_jobs_per_week` does the `count … group by week` in SQL and
+  // returns only the pre-filled, oldest-first bucket rows the chart renders. The
+  // semantics are PRESERVED EXACTLY (all UTC): week_start = ISO-Monday of
+  // scheduled_date, window = scheduled_date >= today_utc - weeks*7 days, every week
+  // pre-filled to 0, rows outside the window dropped — identical to the loop below
+  // it replaces. The window is day-1-safe (never overflows on a 29/30/31).
+  //
+  // The RPC is SECURITY DEFINER and org-guarded (current_org_ids()/42501, see
+  // supabase/migrations/20261240000000_reports_windowed_aggregates_rpc.sql) and
+  // org-filtered by orgId; the page/export routes call it on the user-JWT client,
+  // the delivery cron on the service-role client (guard skips service_role,
+  // p_org_id still scopes it).
+  const { data, error } = await supabase.rpc("reports_jobs_per_week", {
+    p_org_id: orgId,
+    p_weeks: weeks,
+  });
   // Loud fail: pre-filled buckets make an errored read indistinguishable from
   // a genuinely quiet period — an all-zero chart must mean zero, not "failed".
   if (error) throw readFailure("reports: jobs per week", error);
 
-  // Pre-fill empty buckets so flat-line weeks show as 0 rather than gaps.
-  const buckets = new Map<string, JobsPerWeek>();
-  const todayWeekStart = startOfWeek(new Date());
-  for (let i = weeks - 1; i >= 0; i--) {
-    const d = new Date(todayWeekStart);
-    d.setUTCDate(d.getUTCDate() - i * 7);
-    const key = isoDate(d);
-    buckets.set(key, { week_start: key, total: 0, completed: 0 });
-  }
-
-  for (const j of data ?? []) {
-    if (!j.scheduled_date) continue;
-    const key = isoDate(startOfWeek(new Date(`${j.scheduled_date}T00:00:00Z`)));
-    const slot = buckets.get(key);
-    if (!slot) continue;
-    slot.total++;
-    if (j.status === "completed") slot.completed++;
-  }
-  return Array.from(buckets.values());
+  return (data ?? []).map((row) => ({
+    week_start: row.week_start,
+    total: Number(row.total ?? 0),
+    completed: Number(row.completed ?? 0),
+  }));
 }
 
 export async function revenuePerMonth(
@@ -148,57 +126,39 @@ export async function revenuePerMonth(
   db?: ReportsDb,
 ): Promise<RevenuePerMonth[]> {
   const supabase = db ?? (await createClient());
-  // Build the window from a DAY-1-NORMALISED UTC base. Mutating a live Date with
-  // setUTCMonth WHILE it still holds day 29/30/31 overflows into the next month
-  // for shorter target months (setUTCMonth clamps day-of-month AFTER the shift,
-  // and the setUTCDate(1) floor happened too late) — so on a 31st the window
-  // silently lost/duplicated buckets. Date.UTC() takes the target month with
-  // day=1 up front, so the month can never overflow and negative months roll the
-  // year back correctly. Same day-safe construction as lib/profitability/compute.ts:261.
-  const now = new Date();
-  const since = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (months - 1), 1),
-  );
 
-  // Revenue is EX-VAT. `invoices.amount` is the net subtotal; `invoices.total` is
-  // a stored generated column = amount + vat_total (GROSS — it includes the VAT
-  // collected on HMRC's behalf, which is never the business's turnover). Summing
-  // `total` overstated revenue by the VAT rate (~20%) and disagreed with
-  // /insights and /dashboard, which both report ex-VAT `amount`
-  // (lib/intelligence/concentration.ts documents the rule). Select and sum
-  // `amount`, never `total`.
-  const { data, error } = await fetchAllRows<{
-    paid_at: string | null;
-    amount: number | null;
-    status: string | null;
-  }>((from, to) =>
-    supabase
-      .from("invoices")
-      .select("id, paid_at, amount, status")
-      .eq("org_id", orgId)
-      .eq("status", "paid")
-      .gte("paid_at", since.toISOString())
-      .order("paid_at", { ascending: true })
-      .order("id", { ascending: true })
-      .range(from, to),
-  );
+  // DB-side grouped aggregate (A6). This used to fetch EVERY paid invoice in the
+  // window (paged under the 1000-row cap) and sum in TypeScript into ~12 monthly
+  // buckets — the read scaled with the org's paid-invoice volume for a fixed-size
+  // chart. `reports_revenue_per_month` does the `sum(amount) … group by month` in
+  // SQL and returns only the pre-filled, oldest-first bucket rows the chart renders.
+  // The semantics are PRESERVED EXACTLY (all UTC):
+  //   - Revenue is EX-VAT. `invoices.amount` is the net subtotal; `invoices.total`
+  //     is a stored generated column = amount + vat_total (GROSS — it includes the
+  //     VAT collected on HMRC's behalf, never the business's turnover). The RPC
+  //     sums `amount`, never `total` (summing `total` overstated revenue ~20% and
+  //     disagreed with /insights + /dashboard — lib/intelligence/concentration.ts
+  //     owns the rule).
+  //   - month = first-of-month (UTC) of paid_at; window = paid_at >=
+  //     first-of-(current_month - (months-1)); every month pre-filled to 0.
+  //   - The window is day-1-normalised, so it can never overflow on a 29/30/31
+  //     `now` (the C48 class) and always yields exactly `months` distinct buckets.
+  //
+  // The RPC is SECURITY DEFINER and org-guarded (current_org_ids()/42501, see
+  // supabase/migrations/20261240000000_reports_windowed_aggregates_rpc.sql) and
+  // org-filtered by orgId; the page/export routes call it on the user-JWT client,
+  // the delivery cron on the service-role client (guard skips service_role,
+  // p_org_id still scopes it).
+  const { data, error } = await supabase.rpc("reports_revenue_per_month", {
+    p_org_id: orgId,
+    p_months: months,
+  });
   if (error) throw readFailure("reports: revenue per month", error);
 
-  const buckets = new Map<string, RevenuePerMonth>();
-  for (let i = months - 1; i >= 0; i--) {
-    // Day-1-normalised UTC construction (see `since` above): never overflow.
-    const m = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
-    buckets.set(isoDate(m), { month: isoDate(m), revenue: 0 });
-  }
-
-  for (const inv of data ?? []) {
-    if (!inv.paid_at) continue;
-    const key = isoDate(startOfMonth(new Date(inv.paid_at)));
-    const slot = buckets.get(key);
-    if (!slot) continue;
-    slot.revenue += Number(inv.amount ?? 0); // ex-VAT, never gross `total`
-  }
-  return Array.from(buckets.values());
+  return (data ?? []).map((row) => ({
+    month: row.month,
+    revenue: Number(row.revenue ?? 0), // ex-VAT, never gross `total`
+  }));
 }
 
 export async function vatPerQuarter(

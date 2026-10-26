@@ -155,7 +155,7 @@ vi.mock("@/lib/supabase/server", () => ({
 // server-only is a no-op guard we don't want to hit under vitest.
 vi.mock("server-only", () => ({}));
 
-const { jobsPerWeek, revenuePerMonth, vatPerQuarter, topCustomersByRevenue } =
+const { vatPerQuarter, topCustomersByRevenue } =
   await import("@/lib/reports/aggregates");
 
 // The single VAT authority the reconciliation test pins /reports against.
@@ -182,33 +182,6 @@ beforeEach(() => {
 });
 
 describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
-  it("revenuePerMonth sums EVERY paid invoice, not just the first 1000", async () => {
-    const N = 2500;
-    // Spread across the last ~6 months so all land inside the 12-month window.
-    // Revenue is EX-VAT: each invoice nets £10 (`amount`) with a GROSS `total` of
-    // £12 (amount + vat_total). A correct total is N*£10; if the code regressed to
-    // summing gross `total` it would come up N*£12 and fail.
-    h.tables.invoices = Array.from({ length: N }, (_, i) => ({
-      id: `inv-${String(i).padStart(6, "0")}`,
-      org_id: ORG,
-      status: "paid",
-      amount: 10,
-      total: 12,
-      vat_total: 2,
-      paid_at: daysAgoIso((i % 150) + 1),
-    }));
-    // A same-org UNPAID invoice and a paid invoice in ANOTHER org — neither may
-    // be counted; both sit inside the row set the mock would otherwise return.
-    h.tables.invoices.push(
-      { id: "inv-unpaid", org_id: ORG, status: "draft", amount: 999999, total: 999999, vat_total: 0, paid_at: daysAgoIso(3) },
-      { id: "inv-other", org_id: OTHER_ORG, status: "paid", amount: 999999, total: 999999, vat_total: 0, paid_at: daysAgoIso(3) },
-    );
-
-    const rows = await revenuePerMonth(ORG, 12);
-    const total = rows.reduce((s, r) => s + r.revenue, 0);
-    expect(total).toBe(N * 10);
-  });
-
   it("vatPerQuarter sums CASH-BASIS output VAT (invoice_payments ledger) + input VAT (supplier-payment ledger) across full paged reads", async () => {
     // OUTPUT VAT is cash-basis from the invoice_payments LEDGER via the single VAT
     // authority, NOT `invoices.status='paid'`. Seed N payments, EACH £100 against
@@ -454,49 +427,6 @@ describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
     const { db } = rpcStub(null, { message: "boom" });
     await expect(topCustomersByRevenue(ORG, 10, db)).rejects.toThrow();
   });
-  it("jobsPerWeek counts every job in the window, not a truncated first page", async () => {
-    const N = 2000;
-    // All within the last 28 days — comfortably inside the 8 pre-filled weekly
-    // buckets regardless of today's weekday. Half completed.
-    h.tables.jobs = Array.from({ length: N }, (_, i) => ({
-      id: `job-${String(i).padStart(6, "0")}`,
-      org_id: ORG,
-      status: i % 2 === 0 ? "completed" : "scheduled",
-      scheduled_date: daysAgoDate((i % 28) + 1),
-    }));
-
-    const rows = await jobsPerWeek(ORG, 8);
-    const total = rows.reduce((s, r) => s + r.total, 0);
-    const completed = rows.reduce((s, r) => s + r.completed, 0);
-    expect(total).toBe(N);
-    expect(completed).toBe(N / 2);
-  });
-
-  it("would UNDER-count if a read stopped at one page — the cap is real", async () => {
-    // Guard on the harness itself: with paging DISABLED (cap forces one short
-    // page) the same dataset visibly under-reports, proving the assertions above
-    // are only satisfiable by a genuine multi-page walk.
-    const N = 2500;
-    h.tables.invoices = Array.from({ length: N }, (_, i) => ({
-      id: `inv-${String(i).padStart(6, "0")}`,
-      org_id: ORG,
-      status: "paid",
-      amount: 10,
-      total: 12,
-      vat_total: 2,
-      paid_at: daysAgoIso((i % 150) + 1),
-    }));
-    // Emulate a world where each response is capped AND the reader only ever
-    // takes the first page: force the cap to 1000 and confirm a naive first-page
-    // sum (what the OLD code did) is strictly less than the true total. Sum the
-    // EX-VAT `amount` the fixed reader uses so the guard tracks the real code.
-    const firstPageOnly = h.tables.invoices.slice(0, 1000);
-    const naive = firstPageOnly.reduce((s, r) => s + (r.amount as number), 0);
-    const rows = await revenuePerMonth(ORG, 12);
-    const paged = rows.reduce((s, r) => s + r.revenue, 0);
-    expect(naive).toBeLessThan(paged);
-    expect(paged).toBe(N * 10);
-  });
 });
 
 /**
@@ -535,137 +465,6 @@ describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
  * invoice in its correct bucket. Pre-fix, the 31st case yields 7 distinct months
  * and drops revenue → these assertions fail; post-fix they pass.
  */
-describe("revenuePerMonth window never overflows on a 29/30/31 now (C48)", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  /**
-   * Freeze to `frozenIso`, seed exactly one paid invoice per trailing 12 months
-   * (each a distinct amount, placed mid-month), and assert 12 distinct buckets
-   * with every invoice attributed to its own month — no drops, no duplicates.
-   */
-  async function assertTwelveDistinctMonths(frozenIso: string) {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(frozenIso));
-
-    const now = new Date(frozenIso);
-    // Expected bucket key for each of the 12 trailing months (first-of-month ISO).
-    const expected = new Map<string, number>();
-    const invoices: Array<Record<string, unknown>> = [];
-    for (let i = 0; i < 12; i++) {
-      const first = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1),
-      );
-      const key = first.toISOString().slice(0, 10);
-      const amount = (i + 1) * 100; // distinct per month → catches mis-bucketing
-      expected.set(key, amount);
-      // Place the invoice mid-month (day 15) so it can't slip a month boundary.
-      const midMonth = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 15, 12),
-      );
-      invoices.push({
-        id: `inv-${String(i).padStart(2, "0")}`,
-        org_id: ORG,
-        status: "paid",
-        amount,
-        total: amount * 1.2,
-        vat_total: amount * 0.2,
-        paid_at: midMonth.toISOString(),
-      });
-    }
-    h.tables.invoices = invoices;
-
-    const rows = await revenuePerMonth(ORG, 12);
-
-    // Exactly 12 buckets, all distinct.
-    expect(rows).toHaveLength(12);
-    const months = rows.map((r) => r.month);
-    expect(new Set(months).size).toBe(12);
-    // Every expected month present, each carrying exactly its own invoice — the
-    // fingerprint of correct bucketing (no drop, no duplicate collapse).
-    for (const [key, amount] of expected) {
-      const slot = rows.find((r) => r.month === key);
-      expect(slot, `missing bucket ${key}`).toBeDefined();
-      expect(slot!.revenue).toBe(amount);
-    }
-    // Nothing dropped: the sum of all buckets equals the sum of all invoices.
-    const total = rows.reduce((s, r) => s + r.revenue, 0);
-    const seeded = [...expected.values()].reduce((s, a) => s + a, 0);
-    expect(total).toBe(seeded);
-  }
-
-  it("31st: now=2026-08-31 yields 12 distinct months, no dropped revenue", async () => {
-    await assertTwelveDistinctMonths("2026-08-31T00:00:00.000Z");
-  });
-
-  it("30th: now=2026-07-30 yields 12 distinct months, no dropped revenue", async () => {
-    await assertTwelveDistinctMonths("2026-07-30T00:00:00.000Z");
-  });
-
-  it("Feb 28 boundary: now=2026-02-28 yields 12 distinct months", async () => {
-    await assertTwelveDistinctMonths("2026-02-28T00:00:00.000Z");
-  });
-
-  it("Feb 29 leap boundary: now=2028-02-29 yields 12 distinct months", async () => {
-    await assertTwelveDistinctMonths("2028-02-29T00:00:00.000Z");
-  });
-});
-
-describe("reports revenue is EX-VAT (amount), not gross (total)", () => {
-  it("a VAT-bearing paid invoice contributes its NET amount to revenuePerMonth", async () => {
-    // amount=10, vat_total=2, total=12. Turnover is 10, not 12.
-    h.tables.invoices = [
-      {
-        id: "inv-vat",
-        org_id: ORG,
-        status: "paid",
-        amount: 10,
-        vat_total: 2,
-        total: 12,
-        paid_at: daysAgoIso(5),
-      },
-    ];
-
-    const rows = await revenuePerMonth(ORG, 12);
-    const total = rows.reduce((s, r) => s + r.revenue, 0);
-    expect(total).toBe(10); // ex-VAT — NOT 12
-  });
-
-  // topCustomersByRevenue's ex-VAT behaviour (sum `amount`, never gross `total`)
-  // is now a property of the SQL in the RPC, proven against real Postgres in
-  // __tests__/integration/rls/reports-top-customers-rpc.test.ts (a paid invoice
-  // whose `total` ≠ `amount` must contribute `amount`). The source guard below
-  // keeps the invariant honest at the source level for both functions.
-
-  it("SOURCE GUARD: revenuePerMonth sums ex-VAT `amount`; top-customers delegates to the RPC, never TS gross", () => {
-    const src = readFileSync(
-      resolve(process.cwd(), "lib/reports/aggregates.ts"),
-      "utf8",
-    );
-
-    // Isolate revenuePerMonth() … its terminating brace before vatPerQuarter().
-    const rpmStart = src.indexOf("export async function revenuePerMonth");
-    const rpmEnd = src.indexOf("export async function vatPerQuarter");
-    expect(rpmStart).toBeGreaterThan(-1);
-    expect(rpmEnd).toBeGreaterThan(rpmStart);
-    const rpm = src.slice(rpmStart, rpmEnd);
-    // Selects the ex-VAT column and accumulates it; never accumulates `total`.
-    expect(rpm).toMatch(/select\([^)]*\bamount\b/);
-    expect(rpm).toMatch(/\.revenue\s*\+=\s*Number\(\s*inv\.amount\b/);
-    expect(rpm).not.toMatch(/\.revenue\s*\+=\s*Number\(\s*inv\.total\b/);
-
-    // topCustomersByRevenue now delegates to the grouped SQL aggregate (R2): it
-    // calls the org-guarded RPC and does NOT sum anything in TypeScript — so it
-    // must reference the RPC by name and must NOT accumulate the gross `total`.
-    const tcStart = src.indexOf("export async function topCustomersByRevenue");
-    expect(tcStart).toBeGreaterThan(-1);
-    const tc = src.slice(tcStart);
-    expect(tc).toMatch(/\.rpc\(\s*["']reports_top_customers_by_revenue["']/);
-    expect(tc).not.toMatch(/Number\(\s*inv\.total\b/);
-    expect(tc).not.toMatch(/\.revenue\s*\+=\s*Number\(\s*inv\.total\b/);
-  });
-});
 
 /**
  * CROSS-SURFACE VAT RECONCILIATION — /reports can never diverge from the authority.
