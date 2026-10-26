@@ -260,13 +260,14 @@ describeIntegration("reports · windowed aggregate RPCs (A6)", () => {
     // ── jobs (org A), day-level margins off every boundary ──
     //  within the 8-week window, this week:
     await seedJob(orgA, "completed", dOffsetDate(2));
-    await seedJob(orgA, "scheduled", dOffsetDate(2));
+    await seedJob(orgA, "new", dOffsetDate(2));
     //  within the window, ~3 weeks back (a different, non-empty bucket):
     await seedJob(orgA, "completed", dOffsetDate(20));
     //  OUTSIDE the window (older than 8 weeks): must be dropped:
     await seedJob(orgA, "completed", dOffsetDate(80));
-    //  FUTURE-dated (later than this week's bucket): must be dropped:
-    await seedJob(orgA, "scheduled", dOffsetDate(-5));
+    //  FUTURE-dated in a LATER ISO week (>=7d ahead lands past this week's
+    //  Sunday on any weekday): bucket is after the current-week bucket → dropped.
+    await seedJob(orgA, "new", dOffsetDate(-10));
     //  a null scheduled_date: must be ignored:
     await seedJob(orgA, "completed", null as unknown as string);
     //  org B job — must never reach org A's buckets:

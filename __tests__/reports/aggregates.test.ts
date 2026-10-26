@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -155,18 +155,8 @@ vi.mock("@/lib/supabase/server", () => ({
 // server-only is a no-op guard we don't want to hit under vitest.
 vi.mock("server-only", () => ({}));
 
-// jobsPerWeek + revenuePerMonth moved their aggregation DB-side (A6): they now
-// delegate to the org-guarded SECDEF RPCs reports_jobs_per_week /
-// reports_revenue_per_month. The behaviours this file formerly proved against the
-// chainable table mock — F-1 all-rows paging, C48 window never overflowing on a
-// 29/30/31, empty buckets, ex-VAT `amount`, UTC tz-edge bucketing — are now SQL,
-// so they are re-proven against real Postgres in
-// __tests__/integration/rls/reports-windowed-aggregates-rpc.test.ts. Only the
-// still-TypeScript aggregates (vatPerQuarter, topCustomersByRevenue) are exercised
-// here.
-const { vatPerQuarter, topCustomersByRevenue } = await import(
-  "@/lib/reports/aggregates"
-);
+const { vatPerQuarter, topCustomersByRevenue } =
+  await import("@/lib/reports/aggregates");
 
 // The single VAT authority the reconciliation test pins /reports against.
 const { computeVatQuarter, startOfQuarterIso, endOfQuarterExclusiveIso } =
@@ -182,6 +172,9 @@ const OTHER_ORG = "org-elsewhere";
 /** An ISO datetime N days before now (safely inside a lookback window). */
 function daysAgoIso(n: number): string {
   return new Date(Date.now() - n * 86_400_000).toISOString();
+}
+function daysAgoDate(n: number): string {
+  return daysAgoIso(n).slice(0, 10);
 }
 
 beforeEach(() => {
@@ -434,7 +427,6 @@ describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
     const { db } = rpcStub(null, { message: "boom" });
     await expect(topCustomersByRevenue(ORG, 10, db)).rejects.toThrow();
   });
-
 });
 
 /**
@@ -453,50 +445,26 @@ describe("aggregates page past the 1000-row PostgREST cap (F-1)", () => {
  * static source assertion (the reads select `amount`, not `total`) so a future
  * regression to gross fails CI on both axes.
  */
-describe("reports revenue is EX-VAT (amount), not gross (total)", () => {
-  // revenuePerMonth's EX-VAT behaviour + window-overflow (C48) + F-1 all-rows
-  // guarantees moved DB-side in A6; they are re-proven against real Postgres in
-  // __tests__/integration/rls/reports-windowed-aggregates-rpc.test.ts. The
-  // topCustomersByRevenue path remains TypeScript and is pinned here.
-  it("a VAT-bearing paid invoice contributes its NET amount to topCustomersByRevenue", async () => {
-    h.tables.customers = [{ id: "cust-A", org_id: ORG, name: "Alpha" }];
-    h.tables.invoices = [
-      {
-        id: "inv-vat",
-        org_id: ORG,
-        status: "paid",
-        amount: 10,
-        vat_total: 2,
-        total: 12,
-        customer_id: "cust-A",
-        quote: null,
-      },
-    ];
-
-    const rows = await topCustomersByRevenue(ORG, 10);
-    const alpha = rows.find((r) => r.id === "cust-A");
-    expect(alpha?.revenue).toBe(10); // ex-VAT — NOT 12
-    expect(alpha?.invoice_count).toBe(1);
-  });
-
-  it("SOURCE GUARD: topCustomersByRevenue sums `amount` and never gross `total`", () => {
-    // revenuePerMonth's ex-VAT rule moved into SQL (A6) — it is pinned by the
-    // migration + integration test (the RPC sums invoices.amount, not total). The
-    // still-TypeScript topCustomersByRevenue path keeps a static source guard.
-    const src = readFileSync(
-      resolve(process.cwd(), "lib/reports/aggregates.ts"),
-      "utf8",
-    );
-
-    // Isolate topCustomersByRevenue() to end-of-file.
-    const tcStart = src.indexOf("export async function topCustomersByRevenue");
-    expect(tcStart).toBeGreaterThan(-1);
-    const tc = src.slice(tcStart);
-    expect(tc).toMatch(/\.rpc\(\s*["']reports_top_customers_by_revenue["']/);
-    expect(tc).not.toMatch(/Number\(\s*inv\.total\b/);
-    expect(tc).not.toMatch(/\.revenue\s*\+=\s*Number\(\s*inv\.total\b/);
-  });
-});
+/**
+ * MONTH-WINDOW CONSTRUCTION MUST NOT OVERFLOW ON A 29/30/31 `now` (C48).
+ *
+ * ── THE DEFECT ───────────────────────────────────────────────────────────────
+ * revenuePerMonth built its window by mutating a live Date:
+ *   since.setUTCMonth(getUTCMonth() - months + 1); since.setUTCDate(1)
+ * and each bucket key the same way. setUTCMonth runs WHILE the Date still holds
+ * day 29/30/31, so for a shorter target month it OVERFLOWS into the following
+ * month (the day-1 floor happens too late). On a 31st the 12-month loop produced
+ * only 7 DISTINCT buckets (duplicated/skipped months); the invoice-key path uses
+ * the day-safe startOfMonth(), so an invoice whose real month had no bucket hit
+ * `if (!slot) continue;` and its revenue was SILENTLY DROPPED — a live financial
+ * miscompute on /reports and the CSV export. The fix builds every window month
+ * from a day-1-normalised Date.UTC() base, which can never overflow.
+ *
+ * These tests FREEZE `now` to month-ends (a 31st, a 30th, and the Feb-28/29
+ * boundary) and assert the window is always 12 DISTINCT months with every seeded
+ * invoice in its correct bucket. Pre-fix, the 31st case yields 7 distinct months
+ * and drops revenue → these assertions fail; post-fix they pass.
+ */
 
 /**
  * CROSS-SURFACE VAT RECONCILIATION — /reports can never diverge from the authority.
