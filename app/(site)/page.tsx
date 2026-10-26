@@ -9,6 +9,7 @@ import { SwitchTrust } from "@/components/marketing/home/switch-trust";
 import { PricingBlock } from "@/components/marketing/home/pricing-block";
 import { Faq } from "@/components/marketing/home/faq";
 import { PillarsIndex } from "@/components/marketing/home/pillars-index";
+import { HeroShowcase } from "@/components/marketing/home/hero-showcase";
 
 export const metadata: Metadata = buildMetadata({
   title: "CrewFlow, the operating system for UK construction companies",
@@ -57,9 +58,12 @@ export default function HomePage() {
         </p>
       </section>
 
-      {/* The product, full-width and large, the first real proof. */}
+      {/* The product, full-width and large, the first real proof. The static
+          screenshot is the server-rendered LCP and the universal fallback; on
+          desktop (motion allowed) HeroShowcase enhances it with a self-running
+          demo of the real lifecycle, in the same fixed box (zero CLS). */}
       <section className="mx-auto max-w-cf px-5 pb-6 pt-16 sm:px-7 sm:pt-24">
-        <div data-cf-enter className="overflow-hidden rounded-2xl bg-[#F7F9FC] shadow-[0_40px_120px_-30px_rgba(0,0,0,0.7)] ring-1 ring-white/10">
+        <div data-cf-enter className="relative aspect-[1440/620] overflow-hidden rounded-2xl bg-[#F7F9FC] shadow-[0_40px_120px_-30px_rgba(0,0,0,0.7)] ring-1 ring-white/10">
           <Image
             src="/product-shots/dashboard.png"
             alt="The CrewFlow dashboard for Brightwork Construction: a morning brief flagging 3 active jobs without a current RAMS, £11,520 overdue across one invoice, and £55,440 due from customers this week."
@@ -67,8 +71,9 @@ export default function HomePage() {
             height={620}
             priority
             sizes="(max-width: 1400px) 100vw, 1360px"
-            className="h-auto w-full"
+            className="absolute inset-0 h-full w-full object-cover object-top"
           />
+          <HeroShowcase />
         </div>
         <p className="mt-6 max-w-lg text-[15px] leading-relaxed text-ink-dim">
           One screen for what&apos;s on, what&apos;s late and what needs a look.
