@@ -81,6 +81,14 @@ type JobDetail = {
   // PostgREST returns a to-one embed as a single object; the page also guards
   // defensively with Array.isArray, which this type still permits.
   customer: JobCustomer | null;
+  // Retention (Programme C) — the contract rate + schedule terms live ON the
+  // job row. Folded into this single org-pinned job load (J3 dedup) so the page
+  // no longer issues a second `jobs` read for them. Not in the generated
+  // Supabase types yet, so declared here; loadJobForOrg selects them by name.
+  retention_percent: number | string | null;
+  practical_completion_date: string | null;
+  defects_liability_months: number | string | null;
+  retention_first_release_pct: number | string | null;
 };
 
 const GBP = new Intl.NumberFormat("en-GB", {
@@ -126,6 +134,7 @@ export default async function EditJobPage({
     `
         id, status, scheduled_date, scheduled_end_date, notes, customer_id, assigned_to, recurring,
         site_address_line1, site_address_line2, site_city, site_county, site_postcode, site_country,
+        retention_percent, practical_completion_date, defects_liability_months, retention_first_release_pct,
         customer:customers ( id, name, address_line1, address_line2, city, county, postcode, country )
       `,
   );
@@ -298,32 +307,12 @@ export default async function EditJobPage({
   });
   const profit = computeJobProfitability(job.id, invRows, costInput);
 
-  // Retention (Programme C) — the rate lives on the job, releases in the ledger.
-  // Neither is in the generated Supabase types yet; the held figure is DERIVED.
-  const [retentionMeta, retentionReleases, jobPurchaseOrders] = await Promise.all([
-    (
-      supabase.from("jobs" as never) as unknown as {
-        select: (c: string) => {
-          eq: (k: string, v: unknown) => {
-            eq: (k: string, v: unknown) => {
-              maybeSingle: () => Promise<{ data: {
-                retention_percent: number | string | null;
-                practical_completion_date: string | null;
-                defects_liability_months: number | string | null;
-                retention_first_release_pct: number | string | null;
-              } | null }>;
-            };
-          };
-        };
-      }
-    )
-      .select("retention_percent, practical_completion_date, defects_liability_months, retention_first_release_pct")
-      .eq("id", job.id)
-      // ACTIVE-org pin (#456 read-side class): job.id is already the org-pinned
-      // subject from loadJobForOrg, so this is a no-op behaviourally — it makes
-      // the secondary read self-scoping and satisfies the read-pin guard.
-      .eq("org_id", ctx.org.id)
-      .maybeSingle(),
+  // Retention (Programme C) — the rate + schedule terms live ON the job row and
+  // are now carried by the single org-pinned `loadJobForOrg` load above (J3
+  // dedup); the releases live in the ledger below. The held figure is DERIVED.
+  // This previously issued a SECOND `jobs` read (same id+org, retention cols
+  // only) in this wave — a pure re-fetch of a row already in hand, removed.
+  const [retentionReleases, jobPurchaseOrders] = await Promise.all([
     (
       supabase.from("retention_releases" as never) as unknown as {
         select: (c: string) => {
@@ -408,7 +397,7 @@ export default async function EditJobPage({
     ) / 100;
   const retentionReleaseRows = retentionReleases.data ?? [];
   const retention = computeRetentionPosition({
-    ratePercent: retentionMeta.data?.retention_percent ?? 0,
+    ratePercent: job.retention_percent ?? 0,
     invoices: invRows.map((i) => ({ status: i.status, amount: i.amount })),
     releases: retentionReleaseRows,
   });
@@ -421,9 +410,9 @@ export default async function EditJobPage({
   // Retention release schedule (Programme C extension) — DERIVED forecast of
   // when held retention is due back. Terms live on the job.
   const retentionScheduleTerms = {
-    practicalCompletionDate: retentionMeta.data?.practical_completion_date ?? null,
-    defectsLiabilityMonths: Number(retentionMeta.data?.defects_liability_months ?? 12),
-    firstReleasePct: Number(retentionMeta.data?.retention_first_release_pct ?? 50),
+    practicalCompletionDate: job.practical_completion_date ?? null,
+    defectsLiabilityMonths: Number(job.defects_liability_months ?? 12),
+    firstReleasePct: Number(job.retention_first_release_pct ?? 50),
   };
   const retentionSchedule = computeRetentionSchedule({
     position: retention,
