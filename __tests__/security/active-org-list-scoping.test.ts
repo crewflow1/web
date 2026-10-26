@@ -60,6 +60,16 @@ const countPins = (source: string) => (source.match(CTX_PIN_G()) ?? []).length;
  */
 const ARG_PIN = /\.eq\(\s*["']org_id["'](?:\s+as\s+never)?,\s*orgId(?:\s+as\s+never)?\s*\)/;
 
+/**
+ * The equivalent pin for a helper that has moved its aggregation DB-side: it
+ * hands the active org to an org-guarded SECURITY DEFINER RPC as `p_org_id`, and
+ * the RPC filters on that org internally (and refuses a non-member with 42501).
+ * That is a stronger pin than an in-statement predicate, not a weaker one — the
+ * active org is still an explicit argument, never trusted from RLS. Introduced
+ * for topCustomersByRevenue in R2 (reports_top_customers_by_revenue).
+ */
+const RPC_ARG_PIN = /\.rpc\(\s*["'][a-z_]+["'],\s*\{\s*p_org_id:\s*orgId\b/;
+
 /** A page that captures ctx must actually destructure it, not just await. */
 // A page must CAPTURE ctx (to scope reads by ctx.org.id), not bare-await the auth
 // gate. Either the direct requireOrgContext() or the i18n-wave request helper
@@ -279,7 +289,13 @@ describe("list helpers — the caller passes the ACTIVE org explicitly", () => {
         expect(F, `${name} must demand the active org rather than trusting RLS`).toMatch(
           /orgId: string/,
         );
-        expect(F, `${name} lost its active-org predicate`).toMatch(ARG_PIN);
+        // The active org must be pinned by ARGUMENT — either as an in-statement
+        // org_id predicate, or (R2: topCustomersByRevenue) handed to an
+        // org-guarded SECDEF RPC as p_org_id, which filters on it internally.
+        expect(
+          ARG_PIN.test(F) || RPC_ARG_PIN.test(F),
+          `${name} lost its active-org predicate`,
+        ).toBe(true);
       });
     }
   }

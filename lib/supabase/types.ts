@@ -23446,6 +23446,15 @@ export type Database = {
         Args: { photo_path: string; target_job_id: string }
         Returns: undefined
       }
+      reports_top_customers_by_revenue: {
+        Args: { p_limit?: number; p_org_id: string }
+        Returns: {
+          customer_id: string | null
+          invoice_count: number
+          name: string
+          revenue: number
+        }[]
+      }
       resolve_receptionist_conversation: {
         Args: {
           p_channel: string
