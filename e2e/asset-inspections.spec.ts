@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalE2eTarget } from "./_guard";
+import { waitForHydrated } from "./_hydration";
 
 /**
  * Asset inspections/templates E2E — gate 6 for the M4 platform (templates →
@@ -65,15 +66,18 @@ test.describe("asset inspections — the M4 surfaces sit behind the auth wall", 
   });
 });
 
-/** React has attached a fiber to a form — the client dispatch is live. A
- *  pre-hydration click would fall back to a native document POST and prove
- *  nothing about the client-dispatch navigation under test. */
-async function waitForHydratedForm(page: import("@playwright/test").Page): Promise<void> {
-  await page.waitForFunction(() => {
-    const el = document.querySelector("form");
-    return !!el && Object.keys(el).some((k) => k.startsWith("__reactFiber$"));
-  });
-}
+/**
+ * Readiness note. These steps used `waitForHydratedForm(page)`, which polled the
+ * FIRST <form> on the page for a React fiber. On the single-form create page that
+ * was enough, but the template editor and the asset [id] page each render many
+ * <StateForm>s, which hydrate progressively — so "the first form is wired" did
+ * NOT imply "the form this step submits is wired". A submit into that gap falls
+ * back to a native POST that StateForm deliberately re-renders in place rather
+ * than navigating, so the URL never changed and the `toHaveURL` after it timed
+ * out (F-E3, captured at the start-inspection step). Each step now waits for the
+ * EXACT control it drives via `waitForHydrated` — the same fiber signal, aimed at
+ * the right node. Still a readiness wait, not a retry; no assertion changed.
+ */
 
 test.describe("asset inspections — authenticated M4 journey lands every navigation", () => {
   test.use({ storageState: "e2e/.auth/owner.json" });
@@ -109,9 +113,10 @@ test.describe("asset inspections — authenticated M4 journey lands every naviga
 
     // CREATE the template through the real form.
     await page.goto("/assets/templates/new");
-    await waitForHydratedForm(page);
+    const createBtn = page.getByRole("button", { name: /create/i });
+    await waitForHydrated(createBtn);
     await page.locator('input[name="name"]').fill(tplName);
-    await page.getByRole("button", { name: /create/i }).click();
+    await createBtn.click();
     await expect(page).toHaveURL(/\/assets\/templates\/[0-9a-f-]{36}\?saved=created/, {
       timeout: 20_000,
     });
@@ -119,25 +124,30 @@ test.describe("asset inspections — authenticated M4 journey lands every naviga
 
     // ADD SECTION — the same-page save that silently stranded 100% of clicks
     // before the FormState conversion.
-    await waitForHydratedForm(page);
+    const addSectionBtn = page.getByRole("button", { name: /^add$|add section/i });
+    await waitForHydrated(addSectionBtn);
     await page.locator('input[name="title"]').fill("Walkaround");
-    await page.getByRole("button", { name: /^add$|add section/i }).click();
+    await addSectionBtn.click();
     await expect(page).toHaveURL(new RegExp(`/assets/templates/${templateId}\\?saved=section`), {
       timeout: 20_000,
     });
 
-    // ADD ITEM to the new section (the form sits inside a collapsed <details>).
-    await waitForHydratedForm(page);
+    // ADD ITEM to the new section (the form sits inside a collapsed <details>;
+    // the summary toggle is native, but the StateForm submit inside it must be
+    // hydrated or it re-renders in place instead of navigating).
     await page.getByText("+ Add item").first().click();
     await page.locator('input[name="prompt"]').first().fill("Tyres OK");
-    await page.getByRole("button", { name: /^add item$/i }).first().click();
+    const addItemBtn = page.getByRole("button", { name: /^add item$/i }).first();
+    await waitForHydrated(addItemBtn);
+    await addItemBtn.click();
     await expect(page).toHaveURL(new RegExp(`/assets/templates/${templateId}\\?saved=item`), {
       timeout: 20_000,
     });
 
     // PUBLISH — freezes v1 and makes it startable.
-    await waitForHydratedForm(page);
-    await page.getByRole("button", { name: /publish/i }).first().click();
+    const publishBtn = page.getByRole("button", { name: /publish/i }).first();
+    await waitForHydrated(publishBtn);
+    await publishBtn.click();
     await expect(page).toHaveURL(new RegExp(`/assets/templates/${templateId}\\?saved=published`), {
       timeout: 20_000,
     });
@@ -145,19 +155,19 @@ test.describe("asset inspections — authenticated M4 journey lands every naviga
     // ASSET STATUS FLIP — the worst measured flow (10/10 silent losses on
     // main): the same-route ?saved= swap on the heavy asset [id] page.
     await page.goto(`/assets/${asset.id}`);
-    await waitForHydratedForm(page);
-    await page
+    const retireBtn = page
       .locator("form", { has: page.locator('input[name="status"][value="retired"]') })
-      .getByRole("button")
-      .click();
+      .getByRole("button");
+    await waitForHydrated(retireBtn);
+    await retireBtn.click();
     await expect(page).toHaveURL(new RegExp(`/assets/${asset.id}\\?saved=status`), {
       timeout: 20_000,
     });
-    await waitForHydratedForm(page);
-    await page
+    const activateBtn = page
       .locator("form", { has: page.locator('input[name="status"][value="active"]') })
-      .getByRole("button")
-      .click();
+      .getByRole("button");
+    await waitForHydrated(activateBtn);
+    await activateBtn.click();
     await expect(page).toHaveURL(new RegExp(`/assets/${asset.id}\\?saved=status`), {
       timeout: 20_000,
     });
@@ -165,12 +175,13 @@ test.describe("asset inspections — authenticated M4 journey lands every naviga
     // START an inspection from the asset page (mounts the deep subtree). Two
     // template selects exist (start-inspection + schedule creation) — scope to
     // the form that owns the Start button.
-    await waitForHydratedForm(page);
     const startForm = page.locator("form", {
       has: page.getByRole("button", { name: /start inspection/i }),
     });
+    const startBtn = startForm.getByRole("button", { name: /start inspection/i });
+    await waitForHydrated(startBtn);
     await startForm.locator('select[name="template_id"]').selectOption(templateId);
-    await startForm.getByRole("button", { name: /start inspection/i }).click();
+    await startBtn.click();
     await expect(page).toHaveURL(
       new RegExp(`/assets/${asset.id}/inspections/[0-9a-f-]{36}$`),
       { timeout: 20_000 },
@@ -178,15 +189,17 @@ test.describe("asset inspections — authenticated M4 journey lands every naviga
     const runUrl = new URL(page.url()).pathname;
 
     // SAVE PROGRESS — the deepest same-route swap in the app (depth 6).
-    await waitForHydratedForm(page);
+    const saveProgressBtn = page.getByRole("button", { name: /save progress/i });
+    await waitForHydrated(saveProgressBtn);
     await page.getByText("Pass", { exact: true }).first().click();
-    await page.getByRole("button", { name: /save progress/i }).click();
+    await saveProgressBtn.click();
     await expect(page).toHaveURL(new RegExp(`${runUrl}\\?saved=progress`), { timeout: 20_000 });
     await expect(page.getByText(/Progress saved/i)).toBeVisible();
 
     // COMPLETE — derives the outcome and locks the record.
-    await waitForHydratedForm(page);
-    await page.getByRole("button", { name: /complete inspection/i }).click();
+    const completeBtn = page.getByRole("button", { name: /complete inspection/i });
+    await waitForHydrated(completeBtn);
+    await completeBtn.click();
     await expect(page).toHaveURL(new RegExp(`${runUrl}\\?saved=issued`), { timeout: 20_000 });
     await expect(page.getByText(/Passed|No defects recorded/i).first()).toBeVisible();
   });
