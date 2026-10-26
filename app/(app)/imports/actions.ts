@@ -25,6 +25,8 @@ import {
   detectEntityType,
   mapRow,
   remapRawToEntity,
+  remapRawWithColumnMap,
+  entityFieldNames,
   type EntityType,
 } from "@/lib/imports/detect";
 import { buildInvoiceImportPlan } from "@/lib/imports/invoice-row";
@@ -1139,6 +1141,125 @@ export async function overrideSheetEntity(
   revalidatePath(`/imports/${importId}`);
   redirect(
     `/imports/${importId}?saved=reclassified&count=${changed}${recheck ? "" : "&warn=duplicates_unchecked"}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Column-level remap override from the detection screen (Migration OS G11).
+ *
+ * The detector binds each canonical field to a source header automatically
+ * (mapColumns). When it binds the WRONG column — e.g. it reads `Acct Gross` as
+ * the invoice total when the real total is in `Amount Inc VAT` — there is
+ * otherwise no in-app fix but edit-the-file-and-re-upload. This action lets an
+ * operator pin `field -> sourceHeader` explicitly and re-materialises every
+ * still-open row of that entity's `mapped` jsonb through the SAME normalisation
+ * path the upload used (remapRawWithColumnMap → mapColumns + mapRow), so no
+ * mapping logic drifts. Nothing touches live business tables until
+ * commitImport, which is unchanged; rollback is unaffected.
+ *
+ * EXPOSURE (deliberate): this is the engine+action half of G11. It carries the
+ * SAME guard + active-org-pin shape as overrideSheetEntity (admin-only,
+ * pre-commit `detected`-only, org-pinned read AND write on every statement) and
+ * is deliberately NOT wired into the customer-visible wizard — surfacing the
+ * control is the open product/exposure decision recorded in the G11 plan
+ * (§G11.5). It is callable (operator / future flag) but unsurfaced until that
+ * decision is made, so current exposure is unchanged.
+ *
+ * CONFIDENCE: unlike overrideSheetEntity (which forces 100 because a
+ * whole-sheet re-classification is treated as human-verified), a column remap
+ * does NOT verify each row's VALUES, so we re-derive per-row confidence from
+ * mapRow and leave a sub-threshold row in `needs_review` — keeping the
+ * "uncertain is not silently imported" contract.
+ */
+export async function overrideColumnMapping(
+  importId: string,
+  entityArg: string,
+  formData: FormData,
+) {
+  const { ctx } = await requireOrgContext();
+  if (!isAdmin(ctx.membership.role)) redirect(`/imports/${importId}?error=forbidden`);
+  if (!uuid.safeParse(importId).success) redirect("/imports?error=bad_id");
+
+  const entity = SHEET_OVERRIDE_ENTITIES.find((e) => e === entityArg) ?? null;
+  if (!entity) redirect(`/imports/${importId}?error=pick_entity_type`);
+
+  // Parse the operator's column overrides from the form against a SERVER-SIDE
+  // allow-list of this entity's canonical fields (entityFieldNames) — never
+  // trust the form to name an arbitrary field. Each value is the chosen SOURCE
+  // header; empty = leave the automatic binding. remapRawWithColumnMap
+  // re-validates the header side (it must be a real column of each row's raw).
+  const overrides: Record<string, string> = {};
+  for (const field of entityFieldNames(entity)) {
+    const v = formData.get(`map.${field}`);
+    if (typeof v === "string" && v.trim().length > 0) {
+      overrides[field] = v.trim();
+    }
+  }
+  if (Object.keys(overrides).length === 0) {
+    redirect(`/imports/${importId}?error=pick_column`);
+  }
+
+  const supabase = await createClient();
+  // ACTIVE-org pin — same blast radius as overrideSheetEntity (it rewrites
+  // `mapped` for every matching row), so it must never reach another org's
+  // import session.
+  const { data: importRow, error: importRowError } = await supabase
+    .from("imports")
+    .select("id, status")
+    .eq("id", importId)
+    .eq("org_id", ctx.org.id)
+    .maybeSingle();
+  // A failed guard read must not masquerade as "not found" — throw instead.
+  if (importRowError) throw readFailure("imports: column-remap guard", importRowError);
+  if (!importRow) redirect("/imports?error=not_found");
+  if (importRow.status !== "detected") {
+    redirect(`/imports/${importId}?error=not_reviewable`);
+  }
+
+  // Re-materialise every still-open row of the chosen entity. Rows that already
+  // committed/skipped/duplicated are left alone.
+  const { data: rows, error: rowsError } = await supabase
+    .from("import_rows")
+    .select("id, raw")
+    .eq("import_id", importId)
+    .eq("org_id", ctx.org.id)
+    .eq("entity_type", entity)
+    .in("status", ["pending", "needs_review"]);
+  // Throw before redirecting: a failed read would report "remapped 0 rows" as a
+  // success while changing nothing.
+  if (rowsError) throw readFailure("imports: column-remap rows", rowsError);
+
+  let changed = 0;
+  for (const r of rows ?? []) {
+    const raw = (r.raw ?? {}) as Record<string, unknown>;
+    const remapped = remapRawWithColumnMap(raw, entity, overrides);
+    await supabase
+      .from("import_rows")
+      .update({
+        mapped: remapped.mapped as unknown as Json,
+        // A column remap does NOT verify VALUES — re-derive confidence from
+        // mapRow and keep sub-threshold rows in needs_review so nothing
+        // uncertain is silently imported (contrast overrideSheetEntity, which
+        // trusts a human sheet re-classification to 100).
+        confidence: remapped.confidence,
+        status: remapped.confidence < REVIEW_THRESHOLD ? "needs_review" : "pending",
+        error_message:
+          remapped.warnings.length > 0 ? remapped.warnings.join("; ") : null,
+      })
+      .eq("id", r.id)
+      .eq("org_id", ctx.org.id);
+    changed++;
+  }
+
+  // Re-evaluate duplicates for the rows we just re-mapped — their key fields may
+  // have moved columns.
+  const recheck = await annotateDuplicates(importId, ctx.org.id);
+
+  revalidatePath(`/imports/${importId}`);
+  redirect(
+    `/imports/${importId}?saved=remapped&count=${changed}${recheck ? "" : "&warn=duplicates_unchecked"}`,
   );
 }
 
