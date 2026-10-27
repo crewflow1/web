@@ -3,6 +3,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { requireHqPage } from "@/server/auth/hq";
+import {
+  entityFieldNames,
+  remapRawWithColumnMap,
+  type EntityType,
+} from "@/lib/imports/detect";
+import type { Json } from "@/lib/supabase/types";
 
 /**
  * Operator (super-admin) Migration OS — READ surface data layer.
@@ -101,4 +107,159 @@ export async function getOperatorImport(
     .maybeSingle();
   if (error) throw readFailure("operator-imports: detail", error);
   return (data ?? null) as OperatorImport | null;
+}
+
+// ---------------------------------------------------------------------------
+// WRITE — operator column remap (staging-only, reversible).
+//
+// This is the first operator WRITE op and is deliberately STAGING-ONLY: it
+// rewrites `import_rows.mapped` for still-open rows of one entity in one target
+// org's import. It NEVER touches live business tables — commit (bulk insert) and
+// rollback (bulk delete across 8 business tables) are far higher-consequence and
+// are a separate, separately-reviewed slice (see MIGRATION-OS-OPERATOR-RUNBOOK).
+// A remap is reversible (remap again), so the blast radius is one import's
+// staging rows. Same two invariants as the read layer: requireHqPage() first,
+// every query pinned to the caller-supplied targetOrgId.
+// ---------------------------------------------------------------------------
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Per-row confidence floor — mirrors the customer path's REVIEW_THRESHOLD. */
+const REVIEW_THRESHOLD = 50;
+
+/** Entities whose column mapping an operator may override (mirrors the wizard's SHEET_OVERRIDE_ENTITIES). */
+const REMAPPABLE_ENTITIES: readonly EntityType[] = [
+  "customer",
+  "staff",
+  "job",
+  "quote",
+  "invoice",
+  "supplier",
+  "cost",
+  "payment",
+];
+
+export type OperatorImportEntity = { entity: string; openRows: number; headers: string[] };
+
+/**
+ * Per-entity introspection for the remap form: the still-open row count and the
+ * union of raw source headers (so the operator picks a real column, not free
+ * text). Super-admin only; pinned to targetOrgId; paged in full.
+ */
+export async function getOperatorImportEntities(
+  targetOrgId: string,
+  importId: string,
+): Promise<OperatorImportEntity[]> {
+  await requireHqPage();
+  const orgId = targetOrgId?.trim();
+  const id = importId?.trim();
+  if (!orgId || !id) return [];
+  const admin = createAdminClient();
+  const { data, error } = await fetchAllRows<{ entity_type: string | null; raw: unknown; status: string }>(
+    (from, to) =>
+      admin
+        .from("import_rows")
+        .select("entity_type, raw, status")
+        .eq("import_id", id)
+        .eq("org_id", orgId) // EXPLICIT org pin.
+        .in("status", ["pending", "needs_review"])
+        .range(from, to),
+  );
+  if (error) throw readFailure("operator-imports: entities", error);
+  const byEntity = new Map<string, { openRows: number; headers: Set<string> }>();
+  for (const r of data ?? []) {
+    const e = r.entity_type ?? "unknown";
+    const slot = byEntity.get(e) ?? { openRows: 0, headers: new Set<string>() };
+    slot.openRows++;
+    if (r.raw && typeof r.raw === "object") {
+      for (const k of Object.keys(r.raw as Record<string, unknown>)) slot.headers.add(k);
+    }
+    byEntity.set(e, slot);
+  }
+  return [...byEntity.entries()].map(([entity, v]) => ({
+    entity,
+    openRows: v.openRows,
+    headers: [...v.headers].sort(),
+  }));
+}
+
+export type OperatorRemapResult = { ok: true; changed: number } | { ok: false; error: string };
+
+/**
+ * Operator column remap: re-materialise `import_rows.mapped` for still-open rows
+ * of one entity using operator-chosen field→source-header overrides. The engine
+ * (`remapRawWithColumnMap`) re-validates BOTH sides (field must be canonical for
+ * the entity; header must be a real column of the row's raw), so a crafted
+ * override can never bind an arbitrary field to an arbitrary column. Sub-threshold
+ * rows stay `needs_review` — a remap does not verify VALUES. Does not re-check
+ * duplicates (advisory; re-run to refresh). Returns a discriminated result; never
+ * redirects (the server action owns navigation).
+ */
+export async function operatorRemapColumns(input: {
+  targetOrgId: string;
+  importId: string;
+  entity: string;
+  overrides: Record<string, string>;
+}): Promise<OperatorRemapResult> {
+  await requireHqPage();
+  const orgId = input.targetOrgId?.trim();
+  const importId = input.importId?.trim();
+  if (!orgId || !importId) return { ok: false, error: "invalid_input" };
+  if (!UUID_RE.test(importId)) return { ok: false, error: "bad_id" };
+
+  const entity = REMAPPABLE_ENTITIES.find((e) => e === input.entity);
+  if (!entity) return { ok: false, error: "pick_entity_type" };
+
+  // Keep only overrides naming a canonical field of this entity with a non-empty
+  // source header — the server-side allow-list (never trust the form shape).
+  const allowed = new Set(entityFieldNames(entity));
+  const overrides: Record<string, string> = {};
+  for (const [field, source] of Object.entries(input.overrides ?? {})) {
+    if (allowed.has(field) && typeof source === "string" && source.trim().length > 0) {
+      overrides[field] = source.trim();
+    }
+  }
+  if (Object.keys(overrides).length === 0) return { ok: false, error: "pick_column" };
+
+  const admin = createAdminClient();
+  const { data: imp, error: impErr } = await admin
+    .from("imports")
+    .select("id, status")
+    .eq("id", importId)
+    .eq("org_id", orgId) // org pin FIRST.
+    .maybeSingle();
+  if (impErr) throw readFailure("operator-imports: remap guard", impErr);
+  if (!imp) return { ok: false, error: "not_found" };
+  if (imp.status !== "detected") return { ok: false, error: "not_reviewable" };
+
+  const { data: rows, error: rowsErr } = await fetchAllRows<{ id: string; raw: unknown }>((from, to) =>
+    admin
+      .from("import_rows")
+      .select("id, raw")
+      .eq("import_id", importId)
+      .eq("org_id", orgId) // EXPLICIT org pin on the rows too.
+      .eq("entity_type", entity)
+      .in("status", ["pending", "needs_review"])
+      .range(from, to),
+  );
+  if (rowsErr) throw readFailure("operator-imports: remap rows", rowsErr);
+
+  let changed = 0;
+  for (const r of rows ?? []) {
+    const raw = (r.raw ?? {}) as Record<string, unknown>;
+    const remapped = remapRawWithColumnMap(raw, entity, overrides);
+    const { error: upErr } = await admin
+      .from("import_rows")
+      .update({
+        mapped: remapped.mapped as unknown as Json,
+        confidence: remapped.confidence,
+        status: remapped.confidence < REVIEW_THRESHOLD ? "needs_review" : "pending",
+        error_message: remapped.warnings.length > 0 ? remapped.warnings.join("; ") : null,
+      })
+      .eq("id", r.id)
+      .eq("org_id", orgId); // last-line org pin on the write.
+    if (upErr) throw readFailure("operator-imports: remap update", upErr);
+    changed++;
+  }
+  return { ok: true, changed };
 }
