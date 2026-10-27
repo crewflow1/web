@@ -11,8 +11,8 @@ import {
   operatorRemapColumnsAction,
   operatorCommitAction,
   operatorRollbackAction,
-} from "../../actions";
-import { ConfirmButton } from "../../_confirm-button";
+} from "../actions";
+import { ConfirmButton } from "../_confirm-button";
 
 /**
  * Operator Migration OS — read-only detail + the one operator WRITE op:
@@ -34,8 +34,8 @@ const REMAPPABLE: readonly EntityType[] = [
   "payment",
 ];
 
-type Params = Promise<{ orgId: string; id: string }>;
-type SP = Promise<{ saved?: string; count?: string; imported?: string; skipped?: string; error?: string }>;
+type Params = Promise<{ id: string }>;
+type SP = Promise<{ org?: string; saved?: string; count?: string; imported?: string; skipped?: string; error?: string }>;
 
 export default async function OperatorImportDetailPage({
   params,
@@ -45,13 +45,16 @@ export default async function OperatorImportDetailPage({
   searchParams: SP;
 }) {
   await requireHqPage();
-  const { orgId: rawOrg, id: rawId } = await params;
-  const orgId = decodeURIComponent(rawOrg);
+  const { id: rawId } = await params;
   const id = decodeURIComponent(rawId);
+  const sp = await searchParams;
+  // Target org comes from the query (the operator selected it on the list page);
+  // every data-layer call is pinned to it, and a wrong org → not_found.
+  const orgId = typeof sp.org === "string" ? sp.org.trim() : "";
+  if (!orgId) notFound();
   const im = await getOperatorImport(orgId, id);
   if (!im) notFound();
 
-  const sp = await searchParams;
   const entities = im.status === "detected" ? await getOperatorImportEntities(orgId, id) : [];
 
   const rows: Array<[string, string]> = [

@@ -16,6 +16,9 @@ Operator = **super-admin**, an env allowlist `CREWFLOW_SUPERADMIN_EMAILS` (not a
   2. Every query is pinned `.eq("org_id", targetOrgId)`; the detail read requires **both** the org id and the row id, so another org's row can never be reached by guessing its id.
 - Tests: `__tests__/security/operator-imports.test.ts` — non-operator reads nothing / never touches the admin client; reads are always org-pinned; a row outside the target org returns null; an empty org id runs no query.
 
+## Navigation (post-merge fix)
+The operator detail route is `/admin/imports/[id]?org=<targetOrgId>` (depth 3, matching the working customer wizard). An earlier `[orgId]/[id]` layout (depth 4) hit the documented Next 15.5 deep-route redirect drop — the commit/remap/rollback server work landed but the `?saved=` banner/navigation was unreliable — found by the local super-admin browser e2e. Collapsing the route to depth 3 restored reliable `redirect()`. Isolation is unchanged: `org` comes from the query and every data-layer call is pinned to it (wrong org → `not_found`). Guarded by `e2e/operator-imports.spec.ts` (read→remap→commit→rollback + non-super-admin 404).
+
 ## SHIPPED: operator column remap (staging-only) — PR #940
 `operatorRemapColumns` + `getOperatorImportEntities` (`lib/admin/operator-imports.ts`) + the per-entity remap form on the detail page. Rewrites `import_rows.mapped` for still-open rows of one entity in the explicit target org; `requireHqPage()` first; every read + the update pinned `.eq("org_id", targetOrgId)`; status-gated to `detected`; overrides re-validated against the entity's canonical field allow-list. STAGING-ONLY (never live business tables) and reversible. Customer `"use server"` pipeline unchanged.
 

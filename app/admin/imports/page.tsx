@@ -82,7 +82,7 @@ export default async function OperatorImportsPage({ searchParams }: { searchPara
                 <li key={im.id} className="flex items-center justify-between px-6 py-3 text-sm">
                   <div className="min-w-0">
                     <Link
-                      href={`/admin/imports/${encodeURIComponent(selected.id)}/${encodeURIComponent(im.id)}`}
+                      href={`/admin/imports/${encodeURIComponent(im.id)}?org=${encodeURIComponent(selected.id)}`}
                       className="font-medium text-slate-900 hover:underline"
                     >
                       {im.name}

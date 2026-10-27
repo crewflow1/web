@@ -31,11 +31,11 @@ export async function operatorRemapColumnsAction(formData: FormData): Promise<vo
     }
   }
 
-  const base = `/admin/imports/${encodeURIComponent(orgId)}/${encodeURIComponent(importId)}`;
+  const base = `/admin/imports/${encodeURIComponent(importId)}?org=${encodeURIComponent(orgId)}`;
   const res = await operatorRemapColumns({ targetOrgId: orgId, importId, entity, overrides });
   revalidatePath(base);
-  if (!res.ok) redirect(`${base}?error=${res.error}`);
-  redirect(`${base}?saved=remapped&count=${res.changed}`);
+  if (!res.ok) redirect(`${base}&error=${res.error}`);
+  redirect(`${base}&saved=remapped&count=${res.changed}`);
 }
 
 /**
@@ -47,11 +47,11 @@ export async function operatorCommitAction(formData: FormData): Promise<void> {
   await requireHqPage();
   const orgId = String(formData.get("orgId") ?? "");
   const importId = String(formData.get("importId") ?? "");
-  const base = `/admin/imports/${encodeURIComponent(orgId)}/${encodeURIComponent(importId)}`;
+  const base = `/admin/imports/${encodeURIComponent(importId)}?org=${encodeURIComponent(orgId)}`;
   const res = await operatorCommitImport(orgId, importId);
   revalidatePath(base);
-  if (!res.ok) redirect(`${base}?error=${res.error}`);
-  redirect(`${base}?saved=committed&imported=${res.imported}&skipped=${res.skipped}`);
+  if (!res.ok) redirect(`${base}&error=${res.error}`);
+  redirect(`${base}&saved=committed&imported=${res.imported}&skipped=${res.skipped}`);
 }
 
 /**
@@ -63,9 +63,9 @@ export async function operatorRollbackAction(formData: FormData): Promise<void> 
   await requireHqPage();
   const orgId = String(formData.get("orgId") ?? "");
   const importId = String(formData.get("importId") ?? "");
-  const base = `/admin/imports/${encodeURIComponent(orgId)}/${encodeURIComponent(importId)}`;
+  const base = `/admin/imports/${encodeURIComponent(importId)}?org=${encodeURIComponent(orgId)}`;
   const res = await operatorRollbackImport(orgId, importId);
   revalidatePath(base);
-  if (!res.ok) redirect(`${base}?error=${res.error}`);
-  redirect(`${base}?saved=rolled_back`);
+  if (!res.ok) redirect(`${base}&error=${res.error}`);
+  redirect(`${base}&saved=rolled_back`);
 }
