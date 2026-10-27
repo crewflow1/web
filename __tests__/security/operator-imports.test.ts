@@ -34,7 +34,8 @@ function fakeClient() {
       const chain = {
         select: () => chain,
         order: () => chain,
-        limit: async () => ({
+        // fetchAllRows paginates via .range(); one short page ends the loop.
+        range: async () => ({
           data: table === "organizations" ? orgRows : importRows,
           error: null,
         }),

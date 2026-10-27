@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { requireHqPage } from "@/server/auth/hq";
 
@@ -42,31 +43,38 @@ export type OperatorImport = {
 
 const IMPORT_COLUMNS = "id, name, status, created_at, committed_at, rolled_back_at, created_by";
 
-/** Orgs the operator can target. Super-admin only; read-only. */
+/**
+ * Orgs the operator can target. Super-admin only; read-only. Paged in full via
+ * fetchAllRows so the operator picker is COMPLETE — never silently drops an org
+ * past a flat cap (F-1).
+ */
 export async function listOperatorOrgs(): Promise<OperatorOrg[]> {
   await requireHqPage();
   const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("organizations")
-    .select("id, name")
-    .order("name", { ascending: true })
-    .limit(200);
+  const { data, error } = await fetchAllRows<{ id: string; name: string | null }>((from, to) =>
+    admin.from("organizations").select("id, name").order("name", { ascending: true }).range(from, to),
+  );
   if (error) throw readFailure("operator-imports: organizations", error);
-  return (data ?? []).map((o) => ({ id: o.id as string, org_name: (o.name as string) ?? "—" }));
+  return (data ?? []).map((o) => ({ id: o.id, org_name: o.name ?? "—" }));
 }
 
-/** List one target org's imports. Super-admin only; pinned to targetOrgId. */
+/**
+ * List one target org's imports. Super-admin only; pinned to targetOrgId and
+ * paged in full (fetchAllRows) so an operator sees the COMPLETE set for that org.
+ */
 export async function listOperatorImports(targetOrgId: string): Promise<OperatorImport[]> {
   await requireHqPage();
   const orgId = targetOrgId?.trim();
   if (!orgId) return [];
   const admin = createAdminClient();
-  const { data, error } = await admin
-    .from("imports")
-    .select(IMPORT_COLUMNS)
-    .eq("org_id", orgId) // EXPLICIT org pin — the only isolation barrier (RLS bypassed).
-    .order("created_at", { ascending: false })
-    .limit(50);
+  const { data, error } = await fetchAllRows<OperatorImport>((from, to) =>
+    admin
+      .from("imports")
+      .select(IMPORT_COLUMNS)
+      .eq("org_id", orgId) // EXPLICIT org pin — the only isolation barrier (RLS bypassed).
+      .order("created_at", { ascending: false })
+      .range(from, to),
+  );
   if (error) throw readFailure("operator-imports: list", error);
   return (data ?? []) as OperatorImport[];
 }
