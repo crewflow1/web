@@ -3,6 +3,9 @@ import { getCommsReadiness } from "@/lib/comms/readiness";
 import { getIntegrationsReadiness } from "@/lib/integrations/readiness";
 import { getWeatherReadiness } from "@/lib/weather/readiness";
 import { getMonitoringReadiness } from "@/lib/monitoring/readiness";
+import { getBillingReadiness } from "@/lib/billing/readiness";
+import { getAnalyticsReadiness } from "@/lib/analytics/readiness";
+import { getMigrationReadiness } from "@/lib/migration/readiness";
 import { probeDatabase } from "@/lib/health/db-probe";
 import { probeCronFreshness } from "@/lib/health/cron-freshness";
 
@@ -61,6 +64,17 @@ export async function GET() {
   // launch-readiness note, not an outage.
   const monitoring = getMonitoringReadiness();
 
+  // Billing (Stripe), product analytics (PostHog) and the Migration OS operator
+  // surface — the remaining dark-by-default providers. Reported for the same
+  // reason comms/weather/monitoring are: so a deploy's true state (configured /
+  // dark / degraded) is visible to the smoke test rather than assumed. Booleans
+  // only — this endpoint is public and must never name env vars nor leak a
+  // key/secret. NONE of these gate `ok`: a dark-but-healthy provider is a
+  // launch-readiness note, not an outage.
+  const billing = getBillingReadiness();
+  const analytics = getAnalyticsReadiness();
+  const migration = getMigrationReadiness();
+
   // Live database reachability. This is the ONLY signal that gates `ok`/`status`: an unreachable
   // Postgres means the app cannot serve requests, so the endpoint must go non-green. The comms,
   // weather and integrations booleans above are READINESS signals (can-this-channel-send, etc.)
@@ -113,6 +127,27 @@ export async function GET() {
         // The build-time half, so a false `enabled` is diagnosable without
         // shell access: "SDK missing" and "no DSN" need different actions.
         sdkIntegrated: monitoring.sdkIntegrated,
+      },
+      billing: {
+        // Can the server reach Stripe at all (secret key present)?
+        configured: billing.secretConfigured,
+        // Can the webhook verify signatures + sync subscription state? A false
+        // here with `configured` true is DEGRADED (checkout could run, state
+        // would never sync back).
+        webhookConfigured: billing.webhookConfigured,
+        // Is the self-serve surface on? (The sales-led admin flow needs no flag.)
+        selfServe: billing.selfServeFlag,
+      },
+      analytics: {
+        // Browser sink can init (still consent-gated at runtime).
+        clientConfigured: analytics.clientConfigured,
+        // Server sink will actually capture (opt-in flag + server key).
+        serverEnabled: analytics.serverEnabled,
+      },
+      migrationOperator: {
+        // Operators are provisioned (super-admin allowlist non-empty); empty ⇒
+        // the operator surface authorises nobody.
+        operatorConfigured: migration.operatorAllowlistConfigured,
       },
       timestamp: new Date().toISOString(),
     },
