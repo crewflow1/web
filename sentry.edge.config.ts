@@ -19,8 +19,12 @@ if (enabled) {
     environment: env,
     release: process.env.VERCEL_GIT_COMMIT_SHA,
     tracesSampleRate: env === "production" ? 0.1 : 0.5,
+    // Never attach default PII on the SDK's own initiative.
+    sendDefaultPii: false,
     // Redact secrets/PII before any event leaves the process (edge-safe;
     // see lib/monitoring/scrub.ts).
     beforeSend: scrubEvent,
+    // Same redaction for performance (transaction) events, incl. span URL fields.
+    beforeSendTransaction: scrubEvent,
   });
 }

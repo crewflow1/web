@@ -27,8 +27,13 @@ if (enabled) {
     // Replays are deliberately off until we cost-model the quota.
     replaysSessionSampleRate: 0,
     replaysOnErrorSampleRate: 0,
+    // Never attach default PII on the SDK's own initiative.
+    sendDefaultPii: false,
     // Redact secrets/PII before any event leaves the browser (see
     // lib/monitoring/scrub.ts).
     beforeSend: scrubEvent,
+    // Same redaction for performance (transaction) events, incl. span URL
+    // fields (client pageload/navigation traces carry raw URLs).
+    beforeSendTransaction: scrubEvent,
   });
 }
