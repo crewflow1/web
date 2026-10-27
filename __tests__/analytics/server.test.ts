@@ -12,6 +12,7 @@ import {
   ensureServerAnalyticsSink,
   __resetServerAnalyticsForTest,
 } from "@/lib/analytics/server";
+import { hashOrgId } from "@/lib/analytics/identity";
 
 /**
  * Record every `posthog-node` construction + capture so the ENABLED path can be
@@ -104,11 +105,13 @@ describe("ensureServerAnalyticsSink — no-op while dark", () => {
     trackEvent(ANALYTICS_EVENTS.PAYMENT_RECORDED, { org_id: "org_42", method: "card" });
     expect(posthogCaptures).toEqual([
       {
-        distinctId: "org_42",
+        // De-identified: a stable one-way hash, never the raw org id.
+        distinctId: hashOrgId("org_42"),
         event: "payment_recorded",
         properties: { org_id: "org_42", method: "card" },
       },
     ]);
+    expect(posthogCaptures[0]!.distinctId).not.toBe("org_42");
   });
 
   it("is idempotent — a second call does not re-register", async () => {
@@ -138,10 +141,13 @@ describe("createServerSink", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]).toEqual({
-      distinctId: "org_9",
+      distinctId: hashOrgId("org_9"),
       event: "invoice_sent",
       properties: { org_id: "org_9", sent_via: "portal" },
     });
+    // The person distinct id must be de-identified, not the raw org UUID.
+    expect(calls[0]!.distinctId).not.toBe("org_9");
+    expect(calls[0]!.distinctId.startsWith("org_")).toBe(true);
   });
 
   it("uses a non-identifying fallback distinct id when org_id is absent", () => {
