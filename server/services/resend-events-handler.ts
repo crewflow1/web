@@ -5,6 +5,7 @@ import {
   normalizeResendEvent,
   type NormalizedResendEvent,
 } from "@/lib/comms/providers/resend-events";
+import { recordDeliveryEvent, type DeliveryOutcome } from "@/server/services/hq-comms";
 
 /**
  * Resend delivery-EVENTS webhook handler — attribute -> record (MP Wave R4).
@@ -35,6 +36,8 @@ export type ProcessResendEventResult = {
   duplicate: boolean;
   attributed: boolean;
   rejected: boolean;
+  /** The HQ-comms outcome applied for a bounce/complaint, else null. */
+  hq_outcome: DeliveryOutcome | null;
 };
 
 type AdminChain = {
@@ -109,6 +112,32 @@ async function recordEvent(
 }
 
 /**
+ * HQ AI-employee communications keep their own delivery ledger + do-not-contact
+ * list (`hq_communications` / `hq_comms_suppressions`). A Resend bounce/complaint
+ * may concern an HQ-sent email, so the same provider message id is applied to the
+ * HQ path too: recordDeliveryEvent() marks the HQ row bounced/complained AND
+ * suppresses the address (the do-not-contact rule). A tenant-only message has no
+ * `hq_communications` row → `not_found`, a harmless no-op. Best-effort: a failure
+ * here must NEVER fail the already-verified event ack — the `comm_events` ledger
+ * row written above is the primary, authoritative record.
+ */
+const HQ_SUPPRESSION_OUTCOME: Record<string, DeliveryOutcome> = {
+  bounced: "bounced",
+  complained: "complained",
+};
+
+async function applyHqSuppression(
+  providerMessageId: string,
+  outcome: DeliveryOutcome,
+): Promise<void> {
+  try {
+    await recordDeliveryEvent(providerMessageId, outcome);
+  } catch (err) {
+    console.error("[resend-events] HQ suppression wiring failed (non-fatal)", err);
+  }
+}
+
+/**
  * Process one verified Resend delivery event. `providerEventId` is the Svix
  * message id from the `svix-id` header — the idempotency key. Returns null when
  * the body is unparseable so the route can log it; otherwise a result summary.
@@ -131,11 +160,19 @@ export async function processResendEvent(input: {
       duplicate: false,
       attributed: false,
       rejected: true,
+      hq_outcome: null,
     };
   }
 
   const match = await resolveMessage(event.provider_message_id);
   const { recorded, duplicate } = await recordEvent(input.providerEventId, event, match);
+
+  // Feed the HQ-comms do-not-contact list from real bounces/complaints. No-op for
+  // tenant-only messages (see applyHqSuppression); never fails the verified ack.
+  const hqOutcome = HQ_SUPPRESSION_OUTCOME[event.event_type] ?? null;
+  if (hqOutcome) {
+    await applyHqSuppression(event.provider_message_id, hqOutcome);
+  }
 
   return {
     event_type: event.event_type,
@@ -143,6 +180,7 @@ export async function processResendEvent(input: {
     duplicate,
     attributed: match !== null,
     rejected: false,
+    hq_outcome: hqOutcome,
   };
 }
 

@@ -46,6 +46,15 @@ vi.mock("@/lib/supabase/admin", () => ({
   }),
 }));
 
+// HQ-comms suppression wiring: the handler applies real bounces/complaints to the
+// HQ do-not-contact list via recordDeliveryEvent(). Mock it so this stays a unit test.
+const { recordDeliveryEventMock } = vi.hoisted(() => ({
+  recordDeliveryEventMock: vi.fn(async () => ({ ok: true })),
+}));
+vi.mock("@/server/services/hq-comms", () => ({
+  recordDeliveryEvent: recordDeliveryEventMock,
+}));
+
 import { processResendEvent } from "@/server/services/resend-events-handler";
 
 const body = (o: Record<string, unknown>) => JSON.stringify(o);
@@ -54,6 +63,8 @@ beforeEach(() => {
   messageMatch = { id: "msg-1", org_id: "org-1" };
   insertResult = { error: null };
   inserts.length = 0;
+  recordDeliveryEventMock.mockClear();
+  recordDeliveryEventMock.mockResolvedValue({ ok: true });
 });
 
 describe("processResendEvent", () => {
@@ -68,6 +79,7 @@ describe("processResendEvent", () => {
       duplicate: false,
       attributed: true,
       rejected: false,
+      hq_outcome: null,
     });
     expect(inserts).toHaveLength(1);
     expect(inserts[0]).toMatchObject({
@@ -112,5 +124,40 @@ describe("processResendEvent", () => {
   it("returns null for an unparseable body", async () => {
     const res = await processResendEvent({ providerEventId: "svix-4", rawBody: "{bad" });
     expect(res).toBeNull();
+  });
+
+  it("feeds the HQ do-not-contact list on a bounce", async () => {
+    const res = await processResendEvent({
+      providerEventId: "svix-b",
+      rawBody: body({ type: "email.bounced", data: { email_id: "re_b", to: ["x@e.com"] } }),
+    });
+    expect(res).toMatchObject({ event_type: "bounced", recorded: true, hq_outcome: "bounced" });
+    expect(recordDeliveryEventMock).toHaveBeenCalledWith("re_b", "bounced");
+  });
+
+  it("feeds the HQ do-not-contact list on a complaint", async () => {
+    const res = await processResendEvent({
+      providerEventId: "svix-c",
+      rawBody: body({ type: "email.complained", data: { email_id: "re_c" } }),
+    });
+    expect(res).toMatchObject({ hq_outcome: "complained" });
+    expect(recordDeliveryEventMock).toHaveBeenCalledWith("re_c", "complained");
+  });
+
+  it("does not touch the HQ path for a non-bounce/complaint event", async () => {
+    await processResendEvent({
+      providerEventId: "svix-o",
+      rawBody: body({ type: "email.opened", data: { email_id: "re_o" } }),
+    });
+    expect(recordDeliveryEventMock).not.toHaveBeenCalled();
+  });
+
+  it("swallows an HQ suppression failure (never fails the verified ack)", async () => {
+    recordDeliveryEventMock.mockRejectedValueOnce(new Error("boom"));
+    const res = await processResendEvent({
+      providerEventId: "svix-b2",
+      rawBody: body({ type: "email.bounced", data: { email_id: "re_b2" } }),
+    });
+    expect(res).toMatchObject({ recorded: true, hq_outcome: "bounced" });
   });
 });
