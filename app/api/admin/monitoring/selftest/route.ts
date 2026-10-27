@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import { requireHqApi } from "@/server/auth/hq";
-import { check } from "@/lib/security/rate-limit";
+import { consume } from "@/lib/security/rate-limit";
 import { getMonitoringReadiness } from "@/lib/monitoring/readiness";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 
@@ -53,7 +53,9 @@ export async function POST(req: Request): Promise<NextResponse> {
   }
 
   // 3. Rate-limit per operator so the endpoint can't spam the Sentry quota.
-  const rl = check("monitoring_selftest", user.id, { limit: 5, windowSeconds: 60 });
+  //    `consume` uses the durable (cross-instance) store in production, so the
+  //    5/min cap holds across serverless cold starts — not just per-instance.
+  const rl = await consume("monitoring_selftest", user.id, { limit: 5, windowSeconds: 60 });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: "rate_limited", reset_at_epoch_sec: rl.reset_at_epoch_sec },

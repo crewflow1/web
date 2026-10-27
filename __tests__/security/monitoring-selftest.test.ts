@@ -75,18 +75,25 @@ describe("monitoring self-test — capture", () => {
     const [message, opts] = captureMessageMock.mock.calls[0]!;
     expect(message).toBe(MONITORING_SELFTEST_MARKER);
     // Only a level + two static tags — no body, cookies, tokens, headers, user.
+    // NB: this asserts the ARGUMENTS the route passes carry no PII. The SDK is
+    // fully mocked here, so the pipeline-level scrub (beforeSend: scrubEvent +
+    // sendDefaultPii:false) is proven by the dedicated scrub suite, not this test.
     expect(opts).toEqual({ level: "info", tags: { kind: MONITORING_SELFTEST_MARKER, surface: "admin-selftest" } });
     // The response carries no DSN/secret.
     expect(JSON.stringify(body)).not.toMatch(/sentry\.io|ingest|https?:\/\/[^/]*@/i);
   });
 
-  it("is safe when monitoring is DARK (no DSN) — still 200, no throw", async () => {
+  it("is safe when monitoring is DARK (no DSN) — still 200, captured:false, no throw", async () => {
     asSuperAdmin();
     readinessMock.mockReturnValue({ sdkIntegrated: true, dsnConfigured: false, enabled: false, environment: "production" });
+    // Model the real dark no-op: with no DSN the SDK's captureMessage returns undefined.
+    captureMessageMock.mockReturnValue(undefined as unknown as string);
     const res = await post({ origin: "https://crewflow.uk" });
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.monitoringEnabled).toBe(false);
+    expect(body.captured).toBe(false);
+    expect(body.eventId).toBeNull();
   });
 
   it("returns captured:false (never throws) when the SDK capture fails", async () => {
