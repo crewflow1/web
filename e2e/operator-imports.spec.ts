@@ -1,15 +1,21 @@
 import { test, expect } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
+import { assertLocalE2eTarget } from "./_guard";
 
 /**
- * THROWAWAY operator Migration OS verification (not committed). Drives the real
- * super-admin browser flow: read → remap → commit → verify inserted business
- * records → rollback → verify reversal, plus a non-super-admin denial. Seeds its
- * own `detected` import via service-role in beforeAll (independent of globalSetup).
+ * Operator Migration OS regression guard. Drives the real super-admin browser
+ * flow: read → remap → commit → verify inserted business records → rollback →
+ * verify reversal, plus a non-super-admin 404 denial. Seeds its own `detected`
+ * import via service-role in beforeAll (independent of globalSetup).
+ *
+ * The service-role client resolves its URL through `assertLocalE2eTarget`, which
+ * refuses unless NEXT_PUBLIC_SUPABASE_URL names a LOCAL database — so this
+ * destructive (commit/rollback) spec can never touch a non-local target. Enforced
+ * by __tests__/security/destructive-target-guard-wiring.test.ts.
  */
 
 const svc = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  assertLocalE2eTarget("operator-imports.spec.ts"),
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
   { auth: { autoRefreshToken: false, persistSession: false } },
 );
