@@ -25,7 +25,8 @@
  *   - No PII: the sink forwards only the already-sanitised `SafeEventProperties`
  *     (primitives, PII/money/free-text keys dropped by `sanitizeEventProperties`
  *     upstream — same #917 contract). It adds nothing of its own except a
- *     pseudonymous `org_id`-derived distinct id.
+ *     one-way hashed, org-derived distinct id (never the raw org UUID — see
+ *     `lib/analytics/identity.ts`).
  *   - No secret leakage: the key is read from env only and is NEVER logged.
  *   - Failure isolation: capture is wrapped so a provider/network error can
  *     never propagate into the product action (`trackEvent` also wraps the sink,
@@ -40,6 +41,7 @@ import {
   type AnalyticsSink,
   type SafeEventProperties,
 } from "@/lib/analytics/events";
+import { hashOrgId } from "@/lib/analytics/identity";
 
 /**
  * Minimal structural type for the capture client the sink drives. Kept tiny and
@@ -88,16 +90,19 @@ export function serverAnalyticsEnabled(env: ServerAnalyticsEnv): boolean {
 /**
  * Build an {@link AnalyticsSink} over a capture client. The properties arriving
  * here are ALREADY sanitised by `trackEvent` → `sanitizeEventProperties`, so no
- * PII/money/free-text can reach the client. Org-first: the distinct id is the
- * pseudonymous `org_id` when present, else a fixed non-identifying fallback — we
- * never mint a per-person identity server-side. Never throws.
+ * PII/money/free-text can reach the client. Org-first: the distinct id is a
+ * stable ONE-WAY HASH of `org_id` when present (never the raw UUID), else a
+ * fixed non-identifying fallback — we never mint a per-person identity
+ * server-side. Never throws.
  */
 export function createServerSink(client: ServerCaptureClient): AnalyticsSink {
   return (event: AnalyticsEventName, properties: SafeEventProperties): void => {
     try {
       const org = properties.org_id;
-      const distinctId =
-        typeof org === "string" && org.length > 0 ? org : "server";
+      // De-identify: the distinct id is a stable one-way hash of the org, never
+      // the raw org UUID (which would become the canonical PostHog person id).
+      // See lib/analytics/identity.ts.
+      const distinctId = hashOrgId(typeof org === "string" ? org : null);
       client.capture({ distinctId, event, properties });
     } catch {
       // Swallow — a telemetry/provider failure must never surface to the caller.

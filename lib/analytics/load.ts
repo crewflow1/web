@@ -20,6 +20,7 @@ import {
   readConsentFromCookieString,
 } from "@/lib/analytics/consent";
 import { setAnalyticsSink } from "@/lib/analytics/events";
+import { sanitizeAnalyticsProperties } from "@/lib/analytics/sanitize-url";
 
 let started = false;
 
@@ -47,6 +48,9 @@ export async function loadAnalyticsIfAllowed(): Promise<void> {
       api_host:
         process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://eu.i.posthog.com",
       capture_pageview: true,
+      // Mask resource UUIDs out of captured URLs ($current_url/$pathname/…) so a
+      // pageview for /jobs/<uuid> never ships the id. See lib/analytics/sanitize-url.ts.
+      sanitize_properties: (properties) => sanitizeAnalyticsProperties(properties),
       // Don't hoover arbitrary form inputs / clicks — privacy-preserving and
       // avoids accidentally capturing customer business data.
       autocapture: false,
