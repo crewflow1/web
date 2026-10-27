@@ -8,6 +8,7 @@ import {
   remapRawWithColumnMap,
   type EntityType,
 } from "@/lib/imports/detect";
+import { insertOne, skipReason, tableFor } from "@/lib/imports/commit";
 import type { Json } from "@/lib/supabase/types";
 
 /**
@@ -262,4 +263,219 @@ export async function operatorRemapColumns(input: {
     changed++;
   }
   return { ok: true, changed };
+}
+
+// ---------------------------------------------------------------------------
+// WRITE — operator commit + rollback (HIGH CONSEQUENCE).
+//
+// commit bulk-INSERTs staged rows into LIVE business tables; rollback bulk-
+// DELETEs across 8 live tables. Both run via the service-role admin client
+// (RLS bypassed), so the EXPLICIT targetOrgId pin on every read, insert, audit
+// write and delete is the ONLY tenant barrier. Same insert implementation as
+// the customer wizard (lib/imports/commit.ts) so the two paths cannot drift;
+// the operator path differs only in that it authorises an EXPLICIT target org
+// (never an active org) and does not fire the org's import.completed automation.
+// ---------------------------------------------------------------------------
+
+// Insert parents before children (customer before the job/quote/invoice that
+// names it); mirrors the customer commit's ORDER.
+const COMMIT_ORDER: readonly EntityType[] = [
+  "customer",
+  "supplier",
+  "staff",
+  "lead",
+  "invoice",
+  "cost",
+  "quote",
+  "job",
+  "payment",
+];
+
+// Delete children before parents; mirrors the customer rollback's REVERSE_ORDER.
+const ROLLBACK_ORDER: readonly string[] = [
+  "invoice_payments",
+  "jobs",
+  "quotes",
+  "invoices",
+  "finances",
+  "leads",
+  "memberships",
+  "customers",
+];
+
+export type OperatorCommitResult =
+  | { ok: true; imported: number; skipped: number }
+  | { ok: false; error: string };
+
+/**
+ * Commit a target org's import: insert its `pending`, confident rows into the
+ * live business tables AS THAT ORG'S DATA. Every read, insert, audit row, and
+ * status flip is pinned to `targetOrgId`; insertOne stamps `targetOrgId` on each
+ * insert. A per-row failure marks that row and continues (partial success),
+ * exactly as the customer path. Status-gated to "detected".
+ */
+export async function operatorCommitImport(
+  targetOrgId: string,
+  importId: string,
+): Promise<OperatorCommitResult> {
+  await requireHqPage();
+  const orgId = targetOrgId?.trim();
+  const id = importId?.trim();
+  if (!orgId || !id) return { ok: false, error: "invalid_input" };
+  if (!UUID_RE.test(id)) return { ok: false, error: "bad_id" };
+
+  const admin = createAdminClient();
+  const { data: imp, error: impErr } = await admin
+    .from("imports")
+    .select("id, status")
+    .eq("id", id)
+    .eq("org_id", orgId) // org pin FIRST.
+    .maybeSingle();
+  if (impErr) throw readFailure("operator-imports: commit guard", impErr);
+  if (!imp) return { ok: false, error: "not_found" };
+  if (imp.status !== "detected") return { ok: false, error: "not_ready" };
+
+  const { data: rows, error: rowsErr } = await fetchAllRows<{
+    id: string;
+    entity_type: string | null;
+    mapped: Json;
+  }>((from, to) =>
+    admin
+      .from("import_rows")
+      .select("id, entity_type, mapped, confidence, status")
+      .eq("import_id", id)
+      .eq("org_id", orgId) // EXPLICIT org pin — stops another org's row reaching insertOne.
+      .in("status", ["pending"])
+      .gte("confidence", 50)
+      .range(from, to),
+  );
+  if (rowsErr) throw readFailure("operator-imports: commit rows", rowsErr);
+
+  const byEntity = new Map<string, Array<{ id: string; mapped: Record<string, unknown> }>>();
+  for (const r of rows ?? []) {
+    const k = r.entity_type ?? "unknown";
+    const arr = byEntity.get(k) ?? [];
+    arr.push({ id: r.id, mapped: (r.mapped ?? {}) as Record<string, unknown> });
+    byEntity.set(k, arr);
+  }
+
+  let imported = 0;
+  let skipped = 0;
+  for (const entity of COMMIT_ORDER) {
+    for (const r of byEntity.get(entity) ?? []) {
+      try {
+        const targetId = await insertOne(entity, r.mapped, orgId, admin);
+        if (!targetId) {
+          skipped++;
+          await admin
+            .from("import_rows")
+            .update({ status: "skipped", error_message: skipReason(entity) })
+            .eq("id", r.id)
+            .eq("org_id", orgId);
+          continue;
+        }
+        await admin.from("import_audit").insert({
+          org_id: orgId,
+          import_id: id,
+          import_row_id: r.id,
+          target_table: tableFor(entity),
+          target_id: targetId,
+        });
+        await admin
+          .from("import_rows")
+          .update({ status: "imported", target_table: tableFor(entity), target_id: targetId })
+          .eq("id", r.id)
+          .eq("org_id", orgId);
+        imported++;
+      } catch (e) {
+        skipped++;
+        await admin
+          .from("import_rows")
+          .update({ status: "error", error_message: (e as Error).message ?? "unknown" })
+          .eq("id", r.id)
+          .eq("org_id", orgId);
+      }
+    }
+  }
+
+  await admin
+    .from("imports")
+    .update({ status: "committed", committed_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("org_id", orgId);
+
+  return { ok: true, imported, skipped };
+}
+
+export type OperatorRollbackResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Roll a target org's committed import back: delete every audited target row and
+ * mark the session rolled_back. Children before parents. Every DELETE carries
+ * `.eq("org_id", targetOrgId)` as the last barrier on a service-role delete
+ * across 8 live tables. Status-gated to "committed".
+ */
+export async function operatorRollbackImport(
+  targetOrgId: string,
+  importId: string,
+): Promise<OperatorRollbackResult> {
+  await requireHqPage();
+  const orgId = targetOrgId?.trim();
+  const id = importId?.trim();
+  if (!orgId || !id) return { ok: false, error: "invalid_input" };
+  if (!UUID_RE.test(id)) return { ok: false, error: "bad_id" };
+
+  const admin = createAdminClient();
+  const { data: imp, error: impErr } = await admin
+    .from("imports")
+    .select("id, status")
+    .eq("id", id)
+    .eq("org_id", orgId) // org pin FIRST.
+    .maybeSingle();
+  if (impErr) throw readFailure("operator-imports: rollback guard", impErr);
+  if (!imp) return { ok: false, error: "not_found" };
+  if (imp.status !== "committed") return { ok: false, error: "not_committed" };
+
+  const { data: audit, error: auditErr } = await fetchAllRows<{ target_table: string; target_id: string }>(
+    (from, to) =>
+      admin
+        .from("import_audit")
+        .select("target_table, target_id")
+        .eq("import_id", id)
+        .eq("org_id", orgId) // pinned — the id list fed to the DELETEs can only be this org's.
+        .range(from, to),
+  );
+  if (auditErr) throw readFailure("operator-imports: rollback audit", auditErr);
+
+  const grouped = new Map<string, string[]>();
+  for (const a of audit ?? []) {
+    const arr = grouped.get(a.target_table) ?? [];
+    arr.push(a.target_id);
+    grouped.set(a.target_table, arr);
+  }
+  for (const table of ROLLBACK_ORDER) {
+    const ids = grouped.get(table);
+    if (!ids || ids.length === 0) continue;
+    // Last line of defence on a service-role DELETE: every table carries org_id.
+    const { error: delErr } = await admin
+      .from(table as never)
+      .delete()
+      .in("id", ids)
+      .eq("org_id" as never, orgId as never);
+    if (delErr) throw readFailure(`operator-imports: rollback delete ${table}`, delErr);
+  }
+  await admin.from("import_audit").delete().eq("import_id", id).eq("org_id", orgId);
+  await admin
+    .from("import_rows")
+    .update({ status: "skipped", target_id: null, target_table: null })
+    .eq("import_id", id)
+    .eq("org_id", orgId)
+    .eq("status", "imported");
+  await admin
+    .from("imports")
+    .update({ status: "rolled_back", rolled_back_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("org_id", orgId);
+
+  return { ok: true };
 }

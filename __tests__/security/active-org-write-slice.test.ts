@@ -358,6 +358,9 @@ describe("payments — the bank matcher must score one company's ledger", () => 
 
 describe("imports — service-role writes have NO RLS behind them", () => {
   const SRC = () => src("app/(app)/imports/actions.ts");
+  // insertOne + the parent resolvers were extracted to the shared commit module
+  // (reused by the operator surface); their org-pins are asserted there now.
+  const COMMIT_SRC = () => src("lib/imports/commit.ts");
 
   const ENTRY_POINTS: Array<[string, string]> = [
     ["uploadImportFiles", "importId"],
@@ -465,7 +468,7 @@ describe("imports — service-role writes have NO RLS behind them", () => {
   });
 
   it("the parent resolvers stay org-scoped (already safe → pinned)", () => {
-    const s = SRC();
+    const s = COMMIT_SRC();
     expect(localFn(s, "resolveCustomerByName")).toMatch(ARG_PIN_G());
     expect(localFn(s, "resolveInvoiceByNumber")).toMatch(ARG_PIN_G());
   });

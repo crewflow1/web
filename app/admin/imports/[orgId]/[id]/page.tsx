@@ -7,7 +7,12 @@ import {
   type OperatorImportEntity,
 } from "@/lib/admin/operator-imports";
 import { entityFieldNames, type EntityType } from "@/lib/imports/detect";
-import { operatorRemapColumnsAction } from "../../actions";
+import {
+  operatorRemapColumnsAction,
+  operatorCommitAction,
+  operatorRollbackAction,
+} from "../../actions";
+import { ConfirmButton } from "../../_confirm-button";
 
 /**
  * Operator Migration OS — read-only detail + the one operator WRITE op:
@@ -30,7 +35,7 @@ const REMAPPABLE: readonly EntityType[] = [
 ];
 
 type Params = Promise<{ orgId: string; id: string }>;
-type SP = Promise<{ saved?: string; count?: string; error?: string }>;
+type SP = Promise<{ saved?: string; count?: string; imported?: string; skipped?: string; error?: string }>;
 
 export default async function OperatorImportDetailPage({
   params,
@@ -77,6 +82,17 @@ export default async function OperatorImportDetailPage({
           Re-mapped {sp.count ?? "0"} row(s).
         </div>
       ) : null}
+      {sp.saved === "committed" ? (
+        <div role="status" className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+          Committed {sp.imported ?? "0"} row(s)
+          {sp.skipped && sp.skipped !== "0" ? `, skipped ${sp.skipped}` : ""}.
+        </div>
+      ) : null}
+      {sp.saved === "rolled_back" ? (
+        <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Rolled back — every record this import created was deleted.
+        </div>
+      ) : null}
       {sp.error ? (
         <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {remapErrorMessage(sp.error)}
@@ -113,6 +129,45 @@ export default async function OperatorImportDetailPage({
                 .map((e) => <RemapForm key={e.entity} orgId={orgId} importId={im.id} entity={e} />)
             )}
           </div>
+        </section>
+      ) : null}
+
+      {im.status === "detected" ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">Commit</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Insert this import&apos;s confirmed rows into the organisation&apos;s live records.
+            Uncertain rows stay for review. Reversible via rollback once committed.
+          </p>
+          <form action={operatorCommitAction} className="mt-3">
+            <input type="hidden" name="orgId" value={orgId} />
+            <input type="hidden" name="importId" value={im.id} />
+            <ConfirmButton
+              confirmText="Commit this import into the organisation's LIVE records? This writes real customers / invoices / jobs for that org."
+              className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+            >
+              Commit import
+            </ConfirmButton>
+          </form>
+        </section>
+      ) : null}
+
+      {im.status === "committed" ? (
+        <section className="rounded-xl border border-red-200 bg-white p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-red-700">Roll back</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Delete every record this import created and return the session to a clean state.
+          </p>
+          <form action={operatorRollbackAction} className="mt-3">
+            <input type="hidden" name="orgId" value={orgId} />
+            <input type="hidden" name="importId" value={im.id} />
+            <ConfirmButton
+              confirmText="Roll back this import? Every record it created will be PERMANENTLY DELETED."
+              className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
+            >
+              Roll back import
+            </ConfirmButton>
+          </form>
         </section>
       ) : null}
     </div>
@@ -172,9 +227,11 @@ function remapErrorMessage(code: string): string {
     pick_entity_type: "Choose an entity type to remap.",
     pick_column: "Choose at least one column to remap.",
     not_reviewable: "This import is no longer in the reviewable (detected) state.",
+    not_ready: "This import is not ready to commit (it must be in the detected state).",
+    not_committed: "This import is not committed, so there is nothing to roll back.",
     not_found: "Import not found for this organisation.",
     bad_id: "Invalid import id.",
     invalid_input: "Invalid request.",
   };
-  return map[code] ?? "Remap failed.";
+  return map[code] ?? "Action failed.";
 }

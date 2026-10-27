@@ -24,41 +24,64 @@ import {
   getOperatorImport,
   getOperatorImportEntities,
   operatorRemapColumns,
+  operatorCommitImport,
+  operatorRollbackImport,
 } from "@/lib/admin/operator-imports";
 
 const VALID_IMPORT_ID = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
 
 // Recorder + fixtures.
 let eqCalls: Array<[string, unknown]> = [];
+let inserts: Array<{ table: string; payload: Record<string, unknown> }> = [];
+let deletes: string[] = [];
 let rangeData: unknown[] = []; // fetchAllRows terminal (.range)
 let singleData: unknown = null; // .maybeSingle terminal
+let insertedId = "new-id"; // .single() terminal (insertOne)
 
 type Chain = {
   select: () => Chain;
   update: () => Chain;
+  insert: (payload: Record<string, unknown>) => Chain;
+  delete: () => Chain;
   order: () => Chain;
   in: () => Chain;
+  gte: () => Chain;
+  ilike: () => Chain;
+  limit: () => Chain;
   eq: (k: string, v: unknown) => Chain;
   range: () => Promise<{ data: unknown; error: null }>;
   maybeSingle: () => Promise<{ data: unknown; error: null }>;
+  single: () => Promise<{ data: { id: string }; error: null }>;
   then: (resolve: (r: { data: unknown; error: null }) => unknown) => unknown;
 };
 
 function fakeClient() {
   return {
-    from(_table: string): Chain {
+    from(table: string): Chain {
       const chain: Chain = {
         select: () => chain,
         update: () => chain,
+        insert: (payload) => {
+          inserts.push({ table, payload });
+          return chain;
+        },
+        delete: () => {
+          deletes.push(table);
+          return chain;
+        },
         order: () => chain,
         in: () => chain,
+        gte: () => chain,
+        ilike: () => chain,
+        limit: () => chain,
         eq: (k, v) => {
           eqCalls.push([k, v]);
           return chain;
         },
         range: async () => ({ data: rangeData, error: null }),
         maybeSingle: async () => ({ data: singleData, error: null }),
-        // Awaiting the builder directly (the update write path) resolves here.
+        single: async () => ({ data: { id: insertedId }, error: null }),
+        // Awaiting the builder directly (insert/update/delete write paths) resolves here.
         then: (resolve) => resolve({ data: null, error: null }),
       };
       return chain;
@@ -68,8 +91,11 @@ function fakeClient() {
 
 beforeEach(() => {
   eqCalls = [];
+  inserts = [];
+  deletes = [];
   rangeData = [];
   singleData = null;
+  insertedId = "new-id";
   requireHqPageMock.mockReset().mockResolvedValue({ email: "op@crewflow.uk" });
   createAdminClientMock.mockReset().mockImplementation(fakeClient);
 });
@@ -84,6 +110,8 @@ describe("operator read layer — authorisation", () => {
     await expect(
       operatorRemapColumns({ targetOrgId: "org-A", importId: VALID_IMPORT_ID, entity: "customer", overrides: { name: "Name" } }),
     ).rejects.toThrow();
+    await expect(operatorCommitImport("org-A", VALID_IMPORT_ID)).rejects.toThrow();
+    await expect(operatorRollbackImport("org-A", VALID_IMPORT_ID)).rejects.toThrow();
     expect(createAdminClientMock).not.toHaveBeenCalled();
   });
 });
@@ -181,5 +209,69 @@ describe("operator WRITE — column remap (staging-only, org-isolated)", () => {
       await operatorRemapColumns({ targetOrgId: "org-A", importId: "not-a-uuid", entity: "customer", overrides: { [field]: "Hdr" } }),
     ).toEqual({ ok: false, error: "bad_id" });
     expect(createAdminClientMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("operator WRITE — commit (bulk insert into live tables, org-isolated)", () => {
+  it("inserts staged rows as the TARGET org — every read, insert + audit pinned to it", async () => {
+    singleData = { id: VALID_IMPORT_ID, status: "detected" };
+    rangeData = [{ id: "row-1", entity_type: "customer", mapped: { name: "Acme Ltd" }, confidence: 100, status: "pending" }];
+    insertedId = "cust-1";
+    const res = await operatorCommitImport("org-A", VALID_IMPORT_ID);
+    expect(res).toEqual({ ok: true, imported: 1, skipped: 0 });
+    // The business insert is stamped with the TARGET org, not some other org.
+    const customerInsert = inserts.find((i) => i.table === "customers");
+    expect(customerInsert?.payload.org_id).toBe("org-A");
+    const auditInsert = inserts.find((i) => i.table === "import_audit");
+    expect(auditInsert?.payload.org_id).toBe("org-A");
+    // No org pin anywhere names a different org.
+    const orgPins = eqCalls.filter(([k]) => k === "org_id");
+    expect(orgPins.length).toBeGreaterThanOrEqual(2);
+    expect(orgPins.every(([, v]) => v === "org-A")).toBe(true);
+  });
+
+  it("refuses to commit an import that is not in the detected state", async () => {
+    singleData = { id: VALID_IMPORT_ID, status: "committed" };
+    expect(await operatorCommitImport("org-A", VALID_IMPORT_ID)).toEqual({ ok: false, error: "not_ready" });
+    expect(inserts).toHaveLength(0);
+  });
+
+  it("refuses to commit an import not owned by the target org (not_found)", async () => {
+    singleData = null;
+    expect(await operatorCommitImport("org-A", VALID_IMPORT_ID)).toEqual({ ok: false, error: "not_found" });
+    expect(eqCalls).toContainEqual(["org_id", "org-A"]);
+    expect(inserts).toHaveLength(0);
+  });
+
+  it("rejects a malformed import id before any query", async () => {
+    expect(await operatorCommitImport("org-A", "not-a-uuid")).toEqual({ ok: false, error: "bad_id" });
+    expect(createAdminClientMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("operator WRITE — rollback (bulk delete across live tables, org-isolated)", () => {
+  it("deletes this import's audited rows, every DELETE pinned to the target org", async () => {
+    singleData = { id: VALID_IMPORT_ID, status: "committed" };
+    rangeData = [{ target_table: "customers", target_id: "cust-1" }];
+    const res = await operatorRollbackImport("org-A", VALID_IMPORT_ID);
+    expect(res).toEqual({ ok: true });
+    expect(deletes).toContain("customers");
+    expect(deletes).toContain("import_audit");
+    const orgPins = eqCalls.filter(([k]) => k === "org_id");
+    expect(orgPins.length).toBeGreaterThanOrEqual(2);
+    expect(orgPins.every(([, v]) => v === "org-A")).toBe(true);
+  });
+
+  it("refuses to roll back an import that is not committed", async () => {
+    singleData = { id: VALID_IMPORT_ID, status: "detected" };
+    expect(await operatorRollbackImport("org-A", VALID_IMPORT_ID)).toEqual({ ok: false, error: "not_committed" });
+    expect(deletes).toHaveLength(0);
+  });
+
+  it("refuses to roll back an import not owned by the target org (not_found)", async () => {
+    singleData = null;
+    expect(await operatorRollbackImport("org-A", VALID_IMPORT_ID)).toEqual({ ok: false, error: "not_found" });
+    expect(eqCalls).toContainEqual(["org_id", "org-A"]);
+    expect(deletes).toHaveLength(0);
   });
 });

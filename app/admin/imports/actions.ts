@@ -3,7 +3,11 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireHqPage } from "@/server/auth/hq";
-import { operatorRemapColumns } from "@/lib/admin/operator-imports";
+import {
+  operatorRemapColumns,
+  operatorCommitImport,
+  operatorRollbackImport,
+} from "@/lib/admin/operator-imports";
 
 /**
  * Operator column-remap action (super-admin). Re-gates via requireHqPage()
@@ -32,4 +36,36 @@ export async function operatorRemapColumnsAction(formData: FormData): Promise<vo
   revalidatePath(base);
   if (!res.ok) redirect(`${base}?error=${res.error}`);
   redirect(`${base}?saved=remapped&count=${res.changed}`);
+}
+
+/**
+ * Operator COMMIT — insert the target org's staged rows into live business
+ * tables as that org's data. Re-gates; the data layer pins every write to the
+ * explicit target org. High consequence — the UI gates this behind a confirm.
+ */
+export async function operatorCommitAction(formData: FormData): Promise<void> {
+  await requireHqPage();
+  const orgId = String(formData.get("orgId") ?? "");
+  const importId = String(formData.get("importId") ?? "");
+  const base = `/admin/imports/${encodeURIComponent(orgId)}/${encodeURIComponent(importId)}`;
+  const res = await operatorCommitImport(orgId, importId);
+  revalidatePath(base);
+  if (!res.ok) redirect(`${base}?error=${res.error}`);
+  redirect(`${base}?saved=committed&imported=${res.imported}&skipped=${res.skipped}`);
+}
+
+/**
+ * Operator ROLLBACK — delete every record the target org's committed import
+ * created. Re-gates; the data layer pins every delete to the explicit target
+ * org. Destructive — the UI gates this behind a confirm.
+ */
+export async function operatorRollbackAction(formData: FormData): Promise<void> {
+  await requireHqPage();
+  const orgId = String(formData.get("orgId") ?? "");
+  const importId = String(formData.get("importId") ?? "");
+  const base = `/admin/imports/${encodeURIComponent(orgId)}/${encodeURIComponent(importId)}`;
+  const res = await operatorRollbackImport(orgId, importId);
+  revalidatePath(base);
+  if (!res.ok) redirect(`${base}?error=${res.error}`);
+  redirect(`${base}?saved=rolled_back`);
 }

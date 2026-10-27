@@ -396,3 +396,13 @@ Per the UP rule, baseline raised in the same commit with this reason.
     bare provenance note; financial truth is untouched (value stays on the
     quote + auto-invoice, linked via quotes.job_id).
 Per the UP rule, baseline raised in the same commit with this reason.
+
+## 2026-10-27 — operator Migration OS extraction (net-zero relocation)
+`insertOne` + the parent resolvers (`resolveCustomerByName`/`resolveInvoiceByNumber`)
+were extracted verbatim from `app/(app)/imports/actions.ts` to `lib/imports/commit.ts`
+so the operator surface (`lib/admin/operator-imports.ts`) reuses the one insert
+implementation. This RELOCATED 3 pre-existing discard-shaped reads (the two resolvers
++ the lead-branch inline customer insert) from the `app/(app)` bucket to the
+`server+lib+components` bucket: app/(app) discard 58 → 55, server+lib 38 → 41. No new
+debt — same reads, new file; the resolvers remain org-pinned (`.eq("org_id", orgId)`),
+asserted in `active-org-write-slice.test.ts` against `commit.ts`.
