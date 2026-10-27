@@ -87,4 +87,18 @@ describe("scrubEvent — secret/PII redaction on captured events", () => {
     const event: MinimalEvent = { message: "plain", request: { url: "https://crewflow.uk/jobs?page=1" } };
     expect(scrubEvent(event)).toEqual({ message: "plain", request: { url: "https://crewflow.uk/jobs?page=1" } });
   });
+
+  it("redacts secret-keyed values and URL query params inside transaction spans", () => {
+    const out = scrubEvent({
+      spans: [
+        { data: { "http.url": "https://crewflow.uk/api/x?token=SECRET&id=7", "http.method": "GET" } },
+        { data: { access_token: "T", "db.system": "postgresql" } },
+      ],
+    } as MinimalEvent)!;
+    const spans = (out as unknown as { spans: Array<{ data: Record<string, unknown> }> }).spans;
+    expect(spans[0]!.data["http.url"]).toBe("https://crewflow.uk/api/x?token=[redacted]&id=7");
+    expect(spans[0]!.data["http.method"]).toBe("GET");
+    expect(spans[1]!.data.access_token).toBe(REDACTED);
+    expect(spans[1]!.data["db.system"]).toBe("postgresql");
+  });
 });

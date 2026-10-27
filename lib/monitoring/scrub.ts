@@ -7,8 +7,8 @@
  * request carries secrets: `Authorization: Bearer …`, the Supabase anon/service
  * keys, session cookies, an `?api_key=` on a webhook, a customer's email in a
  * form body. Shipping any of that to a third party is a data-protection breach,
- * so this scrubber is wired into `beforeSend` on all three sentry.*.config.ts
- * files and redacts before the event is serialised.
+ * so this scrubber is wired into `beforeSend` AND `beforeSendTransaction` on all
+ * three sentry.*.config.ts files and redacts before the event is serialised.
  *
  * Pure and DETERMINISTIC: same event in ⇒ same event out, no clock, no
  * randomness, no I/O, no `server-only`. That makes it edge-safe (the edge
@@ -125,6 +125,18 @@ function splitOnce(s: string, sep: string): [string, string] {
 }
 
 /**
+ * Strip sensitive query params from any URL-valued field in a flat data bag —
+ * e.g. a transaction span's `http.url` / `url`. Keys are matched loosely (any
+ * key containing "url"); non-string values are left untouched.
+ */
+function redactUrlFields(obj: Record<string, unknown>): void {
+  for (const key of Object.keys(obj)) {
+    const v = obj[key];
+    if (typeof v === "string" && /url/i.test(key)) obj[key] = redactUrl(v);
+  }
+}
+
+/**
  * Sentry `beforeSend` hook — redact secrets/PII, then return the event.
  *
  * Never returns null: we scrub the event, we do not suppress the error report.
@@ -154,6 +166,21 @@ export function scrubEvent<T extends object>(event: T): T | null {
     if (e.extra) redactObject(e.extra, seen);
     if (e.contexts) redactObject(e.contexts, seen);
     if (e.tags) redactObject(e.tags, seen);
+
+    // Transaction (performance) events carry spans; each span's `data` can hold
+    // secret-keyed values and URL fields (e.g. `http.url`) with sensitive query
+    // params. Redact them too so `beforeSendTransaction` is meaningful. Errors
+    // have no spans, so this is a no-op for them.
+    const spans = (e as { spans?: unknown }).spans;
+    if (Array.isArray(spans)) {
+      for (const span of spans) {
+        const data = span && typeof span === "object" ? (span as { data?: unknown }).data : undefined;
+        if (data && typeof data === "object") {
+          redactObject(data, seen);
+          redactUrlFields(data as Record<string, unknown>);
+        }
+      }
+    }
 
     // Drop user PII we never need to triage an error: keep only a stable id.
     if (e.user && typeof e.user === "object") {
