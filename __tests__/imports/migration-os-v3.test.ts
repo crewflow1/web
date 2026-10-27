@@ -30,6 +30,9 @@ const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 
 const DETECT_SRC = read("lib/imports/detect.ts");
 const ACTIONS_SRC = read("app/(app)/imports/actions.ts");
+// insertOne / tableFor / the parent-record resolvers were extracted to the
+// shared commit module (reused by the operator surface); assert them there.
+const COMMIT_SRC = read("lib/imports/commit.ts");
 const PAGE_SRC = read("app/(app)/imports/[id]/page.tsx");
 
 function makeSheet(headers: string[], rows: (string | number | null)[][]) {
@@ -198,35 +201,35 @@ describe("mapRow v3 — value normalisation", () => {
 
 describe("actions.ts wiring v3", () => {
   it("tableFor() returns the right destination tables", () => {
-    expect(ACTIONS_SRC).toMatch(/case "job":\s*return "jobs"/);
-    expect(ACTIONS_SRC).toMatch(/case "quote":\s*return "quotes"/);
-    expect(ACTIONS_SRC).toMatch(
+    expect(COMMIT_SRC).toMatch(/case "job":\s*return "jobs"/);
+    expect(COMMIT_SRC).toMatch(/case "quote":\s*return "quotes"/);
+    expect(COMMIT_SRC).toMatch(
       /case "payment":\s*return "invoice_payments"/,
     );
   });
 
   it("insertOne handles each new entity", () => {
-    expect(ACTIONS_SRC).toMatch(/case "job": \{/);
-    expect(ACTIONS_SRC).toMatch(/case "quote": \{/);
-    expect(ACTIONS_SRC).toMatch(/case "payment": \{/);
+    expect(COMMIT_SRC).toMatch(/case "job": \{/);
+    expect(COMMIT_SRC).toMatch(/case "quote": \{/);
+    expect(COMMIT_SRC).toMatch(/case "payment": \{/);
   });
 
   it("jobs + quotes resolve customer_name → customer_id", () => {
-    expect(ACTIONS_SRC).toMatch(/resolveCustomerByName/);
+    expect(COMMIT_SRC).toMatch(/resolveCustomerByName/);
   });
 
   it("payments resolve invoice_number → invoice_id", () => {
-    expect(ACTIONS_SRC).toMatch(/resolveInvoiceByNumber/);
+    expect(COMMIT_SRC).toMatch(/resolveInvoiceByNumber/);
   });
 
   it("parent-resolution returns null on miss — never throws (partial success)", () => {
     // The directive's "AI flags issues but does not stop migration"
     // rule. A null return marks the row 'skipped'; throws would bail
     // the loop.
-    expect(ACTIONS_SRC).toMatch(
+    expect(COMMIT_SRC).toMatch(
       /async function resolveCustomerByName[\s\S]*\.maybeSingle\(\)/,
     );
-    expect(ACTIONS_SRC).toMatch(
+    expect(COMMIT_SRC).toMatch(
       /async function resolveInvoiceByNumber[\s\S]*\.maybeSingle\(\)/,
     );
   });

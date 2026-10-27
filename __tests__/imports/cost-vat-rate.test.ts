@@ -266,7 +266,7 @@ describe("source contract — the commit path never writes a generated column", 
     // Reverting to a hand-built payload with vat_total is exactly the
     // regression, and it fails here.
     const costBranch = branch(
-      read("app/(app)/imports/actions.ts"),
+      read("lib/imports/commit.ts"),
       'case "cost": {',
       'case "staff": {',
     );
@@ -277,7 +277,7 @@ describe("source contract — the commit path never writes a generated column", 
 
   it("insertOne's invoice branch builds its payload with buildInvoiceImportPlan", () => {
     const invoiceBranch = branch(
-      read("app/(app)/imports/actions.ts"),
+      read("lib/imports/commit.ts"),
       'case "invoice": {',
       'case "lead": {',
     );

@@ -113,19 +113,22 @@ describe("ZIP allowlist stays in sync with the direct-upload dispatch", () => {
 
 describe("commitImport reports an actionable skip reason (not blanket 'missing required fields')", () => {
   const src = read("app/(app)/imports/actions.ts");
+  // skipReason's BODY was extracted to the shared commit module; its call site
+  // stays in commitImport (actions.ts).
+  const skipSrc = read("lib/imports/commit.ts");
 
   it("uses skipReason(entity) when insertOne returns null", () => {
     expect(src).toMatch(/error_message:\s*skipReason\(entity\)/);
   });
 
   it("staff skip message points at the invite flow, not 'missing fields'", () => {
-    expect(src).toMatch(/case "staff":\s*\n\s*return ['"].*invite/i);
+    expect(skipSrc).toMatch(/case "staff":\s*\n\s*return ['"].*invite/i);
   });
 
   it("job/quote/payment skips name the unresolved reference", () => {
-    expect(src).toMatch(/couldn.t match a customer for this job/);
-    expect(src).toMatch(/couldn.t match a customer for this quote/);
-    expect(src).toMatch(/couldn.t match an invoice for this payment/);
+    expect(skipSrc).toMatch(/couldn.t match a customer for this job/);
+    expect(skipSrc).toMatch(/couldn.t match a customer for this quote/);
+    expect(skipSrc).toMatch(/couldn.t match an invoice for this payment/);
   });
 });
 

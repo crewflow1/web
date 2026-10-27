@@ -432,7 +432,7 @@ const RATCHET: Array<{
     // on a read error it degrades to "no rate" rather than throwing and 500-ing the
     // worker's home page (the sibling /me reads are best-effort too). It is NOT a
     // money-authority read (that path is payroll, which is LOUD). Deliberate +1.
-    discard: 58 /* +4 inherited from Trains 24-26; +2 first-customer fix 4: buildJobCarryFromQuote's two best-effort enrichment reads (properties + quote_line_items) — job creation must NEVER fail because the carry couldn't load; see docs/loud-read-failures.md */,
+    discard: 55 /* 58 → 55 (operator Migration OS): insertOne + the parent resolvers (resolveCustomerByName/resolveInvoiceByNumber) were extracted verbatim from imports/actions.ts to lib/imports/commit.ts so the operator path reuses them — 3 pre-existing discard-shaped reads (the two resolvers + the lead-branch inline customer insert) RELOCATED to the server+lib bucket (+3 there), net zero. +4 inherited from Trains 24-26; +2 first-customer fix 4: buildJobCarryFromQuote's two best-effort enrichment reads (properties + quote_line_items) — job creation must NEVER fail because the carry couldn't load; see docs/loud-read-failures.md */,
     // 52 → 49: the job hub's H&S panel (_job-safety.tsx) bound `error` on all
     // three of its reads (RAMS, permits, toolbox talks), so their `?? []` now
     // sits behind a real check and stops counting as debt. A SAFETY control
@@ -569,7 +569,7 @@ const RATCHET: Array<{
     // `error` — a transient storage hiccup hides ONE "Open" link, never blanks the
     // inbox. Same best-effort shape as getPaymentProofSignedUrl. See
     // docs/loud-read-failures.md (C ledger).
-    discard: 38,
+    discard: 41 /* 38 → 41 (operator Migration OS): the 3 discard-shaped reads in lib/imports/commit.ts (resolveCustomerByName/resolveInvoiceByNumber + the lead-branch inline customer insert) RELOCATED here from app/(app)/imports/actions.ts (−3 there) when insertOne + resolvers were extracted for reuse by the operator surface — same pre-existing debt, new bucket, net zero */,
     // 61 → 62: server/services/hq-support-snapshot.ts `listSupportTicketRowsForHq`
     // is the lean, message-free board reader (HQ Support AI) — it degrades to `[]`
     // exactly like its sibling `listSupportTicketsForHq` in the same file, and the
