@@ -22,4 +22,11 @@ description = "Known-safe Stripe live-key prefix checks and test fixtures"
 regexes = [
   '''sk_live_abc123''',
   '''startsWith\("sk_live_"\)''',
+  # isLiveMode key-kind fixtures (__tests__/stripe/is-live-mode.test.ts): prefix
+  # literals with a dummy `abc123` body proving live/test × standard/restricted
+  # detection — no real secret body.
+  '''rk_live_abc123''',
+  '''sk_test_abc123''',
+  '''rk_test_abc123''',
+  '''pk_live_abc123''',
 ]

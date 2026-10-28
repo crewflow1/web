@@ -48,12 +48,20 @@ export function _resetStripeCache(): void {
 }
 
 /**
- * True when the configured key is a live key (sk_live_...), false
- * for test keys or when no key is set. Used by the diagnostic
- * endpoint to print a LIVE / TEST badge so the CEO can never
- * accidentally bill from the wrong environment.
+ * True when the configured key is a LIVE key, false for test keys or when no
+ * key is set. Recognises BOTH standard secret keys (`sk_live_…`) and RESTRICTED
+ * keys (`rk_live_…`): a restricted live key transacts against live Stripe exactly
+ * like a standard one, so it must read as live.
+ *
+ * This is a DIAGNOSTIC LABEL only — it drives the LIVE / TEST badge in the verify
+ * endpoint and nothing else. No billing-security decision depends on it: the SDK
+ * is built from `STRIPE_SECRET_KEY` directly (see {@link getStripe}), so a live
+ * restricted key always transacts live regardless of this function. It was only
+ * ever mis-*labelled* by the old `sk_live_`-only check, never mis-*gated*.
  */
 export function isLiveMode(): boolean {
   const key = env.STRIPE_SECRET_KEY;
-  return !!key && key.startsWith("sk_live_");
+  // Live secret (sk_live_) OR live restricted (rk_live_). Test keys (sk_test_,
+  // rk_test_) and an unset key read as not-live.
+  return !!key && /^(sk|rk)_live_/.test(key);
 }
