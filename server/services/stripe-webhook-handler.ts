@@ -12,6 +12,7 @@ import {
 } from "@/lib/notifications/events";
 import {
   isProcessedEvent,
+  invoiceSubscriptionId,
   type CheckoutSessionMetadata,
 } from "@/lib/stripe/events";
 import { onDemoStripePaymentConfirmed } from "@/server/services/demo-lifecycle";
@@ -547,7 +548,7 @@ async function handleInvoicePaid(event: Stripe.Event): Promise<string[]> {
   // protected by the unique partial index — if it collides, ignore.
   const insertRes = await adminTable("billing_invoices").insert({
     org_id: orgId,
-    kind: inv.subscription ? "subscription" : "setup_fee",
+    kind: invoiceSubscriptionId(inv) ? "subscription" : "setup_fee",
     status: "paid",
     amount_gbp: amount.toFixed(2),
     currency: (inv.currency ?? "gbp").toUpperCase(),
@@ -602,7 +603,7 @@ async function handleInvoiceFailed(event: Stripe.Event): Promise<string[]> {
     .eq("stripe_invoice_id", inv.id);
   await adminTable("billing_invoices").insert({
     org_id: orgId,
-    kind: inv.subscription ? "subscription" : "setup_fee",
+    kind: invoiceSubscriptionId(inv) ? "subscription" : "setup_fee",
     status: "failed",
     amount_gbp: amount.toFixed(2),
     currency: (inv.currency ?? "gbp").toUpperCase(),
