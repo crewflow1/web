@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireUser } from "@/server/auth/session";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
-import { getStripe, isLiveMode } from "@/lib/stripe/client";
+import { getStripe, isLiveMode, isStripePermissionError } from "@/lib/stripe/client";
 import {
   resolveSetupFeePrice,
   resolveSubscriptionPrice,
@@ -97,11 +97,33 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         },
       });
     } catch (e) {
-      checks.push({
-        name: "Stripe SDK reachable",
-        ok: false,
-        detail: e instanceof Error ? e.message : String(e),
-      });
+      // A least-privilege RESTRICTED key may legitimately lack the Accounts-read
+      // scope (connected_account_read) that accounts.retrieve() needs. That is NOT
+      // a connection failure — the key authenticated (an invalid key fails
+      // differently) and the live account connection is independently proven by
+      // the live price-resolution checks below. Treat a PERMISSION error as a soft
+      // pass; only a genuine auth/transport error is a blocker.
+      if (isStripePermissionError(e)) {
+        checks.push({
+          name: "Stripe SDK reachable",
+          ok: true,
+          detail: {
+            authenticated: true,
+            account_details_read: false,
+            note:
+              "Key authenticates to the live Stripe account; the Accounts-read " +
+              "scope is not granted (expected for a least-privilege restricted " +
+              "key). Connection is confirmed by live price resolution; " +
+              "charges_enabled could not be read.",
+          },
+        });
+      } else {
+        checks.push({
+          name: "Stripe SDK reachable",
+          ok: false,
+          detail: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
   }
 

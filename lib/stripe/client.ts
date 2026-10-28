@@ -65,3 +65,33 @@ export function isLiveMode(): boolean {
   // rk_test_) and an unset key read as not-live.
   return !!key && /^(sk|rk)_live_/.test(key);
 }
+
+/**
+ * True when a Stripe SDK error is a PERMISSION (authorization-scope) error — the
+ * key reached Stripe and AUTHENTICATED but lacks the scope for that specific
+ * call — as opposed to an authentication error (invalid / expired key) or a
+ * transport error.
+ *
+ * Used by the diagnostic verify endpoint so a least-privilege RESTRICTED key
+ * (which legitimately may not hold, e.g., the Accounts-read scope) is not
+ * reported as a broken connection: a permission error proves the key is valid
+ * and connected, whereas an invalid key fails authentication. Never masks an
+ * authentication failure — a bad key must still surface as a hard error.
+ */
+export function isStripePermissionError(e: unknown): boolean {
+  if (!e || typeof e !== "object") return false;
+  const err = e as { type?: unknown; code?: unknown; message?: unknown };
+  const message = typeof err.message === "string" ? err.message : "";
+  // An authentication failure (bad/expired/missing key) is NEVER a soft pass.
+  if (
+    err.type === "StripeAuthenticationError" ||
+    /invalid api key|expired api key|no api key provided/i.test(message)
+  ) {
+    return false;
+  }
+  return (
+    err.type === "StripePermissionError" ||
+    err.code === "permission_error" ||
+    /does not have the required permissions|permission denied/i.test(message)
+  );
+}
