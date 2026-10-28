@@ -527,6 +527,45 @@ describe("every model call goes through the governor, as a registered drafting c
 });
 
 // =====================================================================
+// 4b. AUTHORIZATION — the writer is management-only, like its whole domain.
+// =====================================================================
+
+describe("the quote writer enforces the management boundary server-side", () => {
+  // The entire /quotes segment is owner/admin only: the segment layout calls
+  // requireManagementContext and every hand-written quote action calls
+  // requireManagementRole. The AI writer is just another way to produce a quote
+  // draft inside that domain, so each of its entrypoints must assert management
+  // on top of requireOrgContext — otherwise a `staff` member who POSTs the
+  // action directly (bypassing the nav + the layout, which never gate a server
+  // action) could spend governed AI budget and read lead/quote context.
+  const code = codeOf(read(SERVICE));
+
+  /** The body of one exported function, up to the next export. */
+  function bodyOf(name: string): string {
+    const start = code.indexOf(`export async function ${name}(`);
+    expect(start, `${name} must exist`).toBeGreaterThan(-1);
+    const after = code.indexOf("\nexport async function ", start + 1);
+    return code.slice(start, after === -1 ? undefined : after);
+  }
+
+  for (const fn of [
+    "generateQuoteDraft",
+    "applyQuoteDraft",
+    "discardQuoteDraft",
+    "latestOpenQuoteDraft",
+  ]) {
+    it(`${fn} requires management (owner/admin), not just a member`, () => {
+      const body = bodyOf(fn);
+      const org = body.indexOf("requireOrgContext()");
+      const mgmt = body.indexOf("requireManagementRole(ctx)");
+      expect(org, `${fn} must resolve org context`).toBeGreaterThan(-1);
+      expect(mgmt, `${fn} must assert management role`).toBeGreaterThan(-1);
+      expect(mgmt, `${fn} must assert management AFTER resolving ctx`).toBeGreaterThan(org);
+    });
+  }
+});
+
+// =====================================================================
 // 5. C. THE DISCLOSURE CONTRACT — code and documentation agree.
 // =====================================================================
 
