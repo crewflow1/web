@@ -168,7 +168,40 @@ describe("kanban + page wiring", () => {
 
   it("optimistic update on drag end, rollback on failure", () => {
     expect(KANBAN).toMatch(/setOverrides/);
-    expect(KANBAN).toMatch(/Roll back optimistic/);
+    // The failure path restores the card: runMove rolls back + surfaces the error.
+    expect(KANBAN).toMatch(/rollBack\(demoId\)/);
+    expect(KANBAN).toMatch(/setErrorMsg\(/);
+  });
+
+  describe("onboarding requires explicit confirmation (never on a bare drag/click)", () => {
+    // Moving a demo to active_onboarding provisions a real auth user + org +
+    // membership and emails a magic-link invite. It must be confirmed, and the
+    // SERVER is the real gate — the UI confirm is UX on top of it.
+    it("both server actions refuse active_onboarding without the confirm token", () => {
+      // Token plumbed through the schema and the JSON action signature.
+      expect(DEMO_ACTIONS).toMatch(/ONBOARD_CONFIRM_TOKEN\s*=\s*"ONBOARD"/);
+      expect(DEMO_ACTIONS).toMatch(/confirm:\s*z\.string\(\)\.optional\(\)/);
+      expect(DEMO_ACTIONS).toMatch(/confirm\?:\s*string/);
+      // Each action short-circuits BEFORE provisioning when the token is absent.
+      const formGate = DEMO_ACTIONS.indexOf("confirm_onboarding=");
+      const jsonGate = DEMO_ACTIONS.indexOf("needsConfirm: true");
+      expect(formGate, "formData action must bounce to a confirm prompt").toBeGreaterThan(-1);
+      expect(jsonGate, "JSON action must return needs_confirm").toBeGreaterThan(-1);
+      // The gates sit before promoteDemoToCustomer runs in each action.
+      const firstPromote = DEMO_ACTIONS.indexOf("promoteDemoToCustomer({");
+      expect(firstPromote).toBeGreaterThan(-1);
+      expect(formGate).toBeLessThan(DEMO_ACTIONS.indexOf("promoteDemoToCustomer({ demo: row!"));
+    });
+
+    it("the detail-panel onboarding button is a two-step confirm that submits the token", () => {
+      expect(DETAIL).toMatch(/function OnboardButton/);
+      expect(DETAIL).toMatch(/name="confirm"\s+value="ONBOARD"/);
+    });
+
+    it("the kanban defers an onboarding drop to a confirm instead of provisioning", () => {
+      expect(KANBAN).toMatch(/setConfirmOnboard\(/);
+      expect(KANBAN).toMatch(/runMove\(demoId,\s*"active_onboarding",\s*"ONBOARD"\)/);
+    });
   });
 
   it("page applies q + status + sort from URL before handing data to the board", () => {

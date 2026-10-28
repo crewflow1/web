@@ -62,9 +62,42 @@ export function DemosKanban({ demos, onOpen, openId }: KanbanProps) {
     {},
   );
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // A drag onto the onboarding column parks here awaiting explicit confirmation
+  // — onboarding provisions a real workspace + emails an invite, so it never
+  // fires on a bare drop.
+  const [confirmOnboard, setConfirmOnboard] = useState<{
+    demoId: string;
+    company: string;
+  } | null>(null);
 
   const effectiveStatus = (d: DemoRow): DemoLifecycleStatus =>
     overrides[d.id] ?? toLifecycleStatus(d.status);
+
+  function rollBack(demoId: string) {
+    setOverrides((p) => {
+      const next = { ...p };
+      delete next[demoId];
+      return next;
+    });
+  }
+
+  function runMove(
+    demoId: string,
+    target: DemoLifecycleStatus,
+    confirm?: string,
+  ) {
+    startTransition(async () => {
+      const result = await moveDemoToStatusJson(demoId, target, confirm);
+      if (!result.ok) {
+        rollBack(demoId);
+        setErrorMsg(result.error || "Couldn't save — try again.");
+        return;
+      }
+      // Pull fresh server data so the rest of the panel (timeline, counts,
+      // sort order) updates.
+      router.refresh();
+    });
+  }
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -87,22 +120,15 @@ export function DemosKanban({ demos, onOpen, openId }: KanbanProps) {
     // Optimistic flip.
     setOverrides((p) => ({ ...p, [demoId]: target }));
 
-    startTransition(async () => {
-      const result = await moveDemoToStatusJson(demoId, target);
-      if (!result.ok) {
-        // Roll back optimistic + show banner.
-        setOverrides((p) => {
-          const next = { ...p };
-          delete next[demoId];
-          return next;
-        });
-        setErrorMsg(result.error || "Couldn't save — try again.");
-        return;
-      }
-      // Pull fresh server data so the rest of the panel (timeline,
-      // counts, sort order) updates.
-      router.refresh();
-    });
+    // Onboarding is the one provisioning transition — defer to an explicit
+    // confirm instead of firing on the drop. The server also refuses it
+    // without the token, so a dropped card can never provision by itself.
+    if (target === "active_onboarding") {
+      setConfirmOnboard({ demoId, company: demo.company });
+      return;
+    }
+
+    runMove(demoId, target);
   }
 
   return (
@@ -113,6 +139,43 @@ export function DemosKanban({ demos, onOpen, openId }: KanbanProps) {
           className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
         >
           {errorMsg}
+        </div>
+      ) : null}
+
+      {confirmOnboard ? (
+        <div
+          role="alertdialog"
+          aria-label="Confirm onboarding"
+          className="rounded-md border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm text-cyan-900"
+        >
+          <p>
+            Move <strong>{confirmOnboard.company}</strong> to onboarding? This
+            creates a real workspace and emails a sign-in invite.
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                const { demoId } = confirmOnboard;
+                setConfirmOnboard(null);
+                runMove(demoId, "active_onboarding", "ONBOARD");
+              }}
+              className="rounded-md border border-cyan-500 bg-cyan-600 px-3 py-1 text-xs font-medium text-white hover:bg-cyan-700 disabled:opacity-60"
+            >
+              Confirm onboarding
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                rollBack(confirmOnboard.demoId);
+                setConfirmOnboard(null);
+              }}
+              className="rounded-md border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       ) : null}
 
