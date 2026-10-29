@@ -11,8 +11,9 @@ import { isHmrcConnectable } from "@/lib/integrations/hmrc/oauth";
  * UNWIRED; this pins the wiring that connects it to the product WITHOUT widening
  * the dark surface:
  *
- *   - GATE ORDERING in the action: input validation → auth/admin → the HONEST
- *     dark refusal (isHmrcConnectable) → only then the orchestrator;
+ *   - GATE ORDERING in the action: input validation → auth + the tax:manage
+ *     capability → the HONEST dark refusal (isHmrcConnectable) → only then the
+ *     orchestrator;
  *   - the /tax page renders the submit affordance ONLY under `canSubmit`, which
  *     requires isHmrcConnectable() — false today, so the control does not exist
  *     dark;
@@ -53,8 +54,11 @@ describe("submitHmrcReturnAction — gate ordering + honest dark refusal", () =>
     expect(uuidIdx).toBeLessThan(authIdx);
   });
 
-  it("admin gate precedes the dark gate; the dark gate precedes the orchestrator", () => {
-    const adminIdx = body.indexOf('ctx.membership.role !== "owner"');
+  it("capability gate precedes the dark gate; the dark gate precedes the orchestrator", () => {
+    // R4: the coarse owner/admin check became the granular capability gate —
+    // submitting to HMRC requires tax:manage (owner always; admin only if
+    // granted). It still sits BEFORE the dark refusal and the orchestrator.
+    const adminIdx = body.indexOf('hasCapability(ctx, user, "tax", "manage")');
     const darkIdx = body.indexOf("if (!isHmrcConnectable())");
     const orchIdx = Math.min(
       ...["submitVatReturn(", "submitCis300Return(", "submitFpsReturn("]
@@ -81,8 +85,13 @@ describe("submitHmrcReturnAction — gate ordering + honest dark refusal", () =>
 describe("/tax page — the submit affordance does not exist dark", () => {
   const code = codeOf(read(PAGE));
 
-  it("canSubmit requires isHmrcConnectable()", () => {
-    expect(code).toMatch(/const canSubmit = canPrepare && isHmrcConnectable\(\)/);
+  it("canSubmit requires the tax:manage capability AND isHmrcConnectable()", () => {
+    // R4: the affordance is gated on the grant (tax:manage) rather than a raw
+    // owner/admin role, and STILL requires isHmrcConnectable() so it never
+    // renders dark — the `&& isHmrcConnectable()` is the dark-safety invariant.
+    expect(code).toMatch(
+      /const canSubmit =\s*canWith\([^)]*"tax",\s*"manage"\s*\)\s*&&\s*isHmrcConnectable\(\)/,
+    );
   });
 
   it("the submit form renders ONLY under canSubmit, for prepared|held rows", () => {

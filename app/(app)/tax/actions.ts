@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 
 import { requireOrgContext } from "@/server/auth/session";
+import { hasCapability } from "@/server/auth/capabilities";
 import { createClient } from "@/lib/supabase/server";
 import { startOfVatPeriodIso } from "@/lib/tax/compute";
 import { readOrgSettings } from "@/lib/org-config/service";
@@ -37,26 +38,25 @@ import {
  * until recognition, and the /tax page renders the submit affordance ONLY when
  * connectable, so the control does not exist dark.
  *
- * AUTHORISATION IS DOUBLED. The role check here refuses a non-admin loudly; the
- * admin-insert RLS on hmrc_submissions / hmrc_connections (20261099) is the real
- * boundary, enforced under the caller's JWT (the submit orchestrator runs
+ * AUTHORISATION IS DOUBLED (R4 — capability-gated). The check here refuses a
+ * denied caller loudly: OWNER always; an ADMIN only with the matching tax grant
+ * (preparing → tax:create; submitting to HMRC → tax:manage, the broadest, as
+ * filing a legal return is the highest-trust tax action); any other role never.
+ * The admin-insert RLS on hmrc_submissions / hmrc_connections (20261099) is the
+ * real boundary, enforced under the caller's JWT (the submit orchestrator runs
  * service-role but org-pins every query to ctx.org.id). Org-pinned via
  * ctx.org.id — never a client-supplied org — so a multi-org admin cannot prepare
  * or submit against another org.
  *
- * Plain form-actions (FormData → void) so the /tax page needs no client JS; on
- * success the page revalidates and the row's new state appears.
+ * Plain form-actions (FormData → void) so the /tax page needs no client JS; they
+ * THROW with a plain reason on denial; on success the page revalidates.
  */
-
-function isAdminRole(role: string): boolean {
-  return role === "owner" || role === "admin";
-}
 
 /** Prepare + hold this quarter's VAT return as an internal frozen record. */
 export async function prepareVatReturnAction(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
-  if (!isAdminRole(ctx.membership.role)) {
-    throw new Error("Only an owner or admin may prepare a VAT return.");
+  if (!(await hasCapability(ctx, user, "tax", "create"))) {
+    throw new Error("You do not have permission to prepare a VAT return.");
   }
 
   // The org's HMRC stagger fixes the VAT period; resolve it once and use it both
@@ -93,8 +93,8 @@ export async function prepareVatReturnAction(formData: FormData): Promise<void> 
 /** Prepare + hold a CIS300 monthly return as an internal frozen record. */
 export async function prepareCis300ReturnAction(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
-  if (!isAdminRole(ctx.membership.role)) {
-    throw new Error("Only an owner or admin may prepare a CIS300 return.");
+  if (!(await hasCapability(ctx, user, "tax", "create"))) {
+    throw new Error("You do not have permission to prepare a CIS300 return.");
   }
 
   // A caller may pass an explicit tax-month end (yyyy-mm-dd); default to the
@@ -153,7 +153,8 @@ async function requestFraudContext(userId: string): Promise<FraudHeaderContext> 
 /**
  * Submit a PREPARED return (VAT / CIS300 / FPS) to HMRC via the orchestrator.
  *
- * GATES, IN ORDER: (1) input validation; (2) auth + org + admin; (3) the HONEST
+ * GATES, IN ORDER: (1) input validation; (2) auth + org + the tax:manage
+ * capability (owner always; admin only if granted); (3) the HONEST
  * dark refusal — while HMRC is not connectable (recognition + creds + flag
  * absent, ALWAYS today) this throws the real reason BEFORE the orchestrator is
  * even invoked, and the orchestrator's own dark guard (+ the adapters') repeats
@@ -171,8 +172,9 @@ export async function submitHmrcReturnAction(formData: FormData): Promise<void> 
   }
 
   const { ctx, user } = await requireOrgContext();
-  if (ctx.membership.role !== "owner" && ctx.membership.role !== "admin") {
-    throw new Error("Only an owner or admin may submit a return to HMRC.");
+  // Submitting a legal return to HMRC is the highest-trust tax action → manage.
+  if (!(await hasCapability(ctx, user, "tax", "manage"))) {
+    throw new Error("You do not have permission to submit a return to HMRC.");
   }
 
   // HONEST DARK REFUSAL — before the orchestrator, before any DB claim.
