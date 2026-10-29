@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   DEMO_LIFECYCLE_STATUSES,
@@ -177,7 +177,7 @@ export function DemoDetailPanel({
           <StatusButton demoId={demo.id} status="lost" label="Mark lost" tone="red" />
           <StatusButton demoId={demo.id} status="payment_sent" label="Send setup payment" tone="amber" />
           <StatusButton demoId={demo.id} status="payment_received" label="Mark payment received" tone="emerald" />
-          <StatusButton demoId={demo.id} status="active_onboarding" label="Move to onboarding" tone="cyan" />
+          <OnboardButton demoId={demo.id} company={demo.company} email={demo.email} />
           <StatusButton demoId={demo.id} status="active" label="Mark active" tone="emerald" />
         </div>
         <p className="mt-2 text-[11px] text-slate-500">
@@ -384,6 +384,65 @@ function StatusButton({
         {label}
       </button>
     </form>
+  );
+}
+
+/**
+ * Onboarding is the one destructive/outbound status move: it provisions a real
+ * auth user + organisation + membership and emails a magic-link invite. So —
+ * unlike the other one-click StatusButtons — it requires an explicit two-step
+ * confirmation and submits the server's confirm token. The server refuses the
+ * transition without the token, so this is UX on top of a real gate, not the
+ * gate itself.
+ */
+function OnboardButton({
+  demoId,
+  company,
+  email,
+}: {
+  demoId: string;
+  company: string;
+  email: string;
+}) {
+  const [armed, setArmed] = useState(false);
+  if (!armed) {
+    return (
+      <button
+        type="button"
+        onClick={() => setArmed(true)}
+        className="rounded-md border border-cyan-300 bg-cyan-50 px-2.5 py-1 text-[11px] font-medium text-cyan-900 hover:bg-cyan-100"
+      >
+        Move to onboarding…
+      </button>
+    );
+  }
+  return (
+    <span className="inline-flex max-w-xs flex-col gap-1 rounded-md border border-cyan-300 bg-cyan-50 p-2">
+      <span className="text-[11px] leading-snug text-cyan-900">
+        This creates a real workspace for <strong>{company}</strong> and emails a
+        sign-in invite to <strong>{email}</strong>. Continue?
+      </span>
+      <span className="inline-flex gap-1.5">
+        <form action={moveDemoToStatus}>
+          <input type="hidden" name="demo_id" value={demoId} />
+          <input type="hidden" name="status" value="active_onboarding" />
+          <input type="hidden" name="confirm" value="ONBOARD" />
+          <button
+            type="submit"
+            className="rounded-md border border-cyan-500 bg-cyan-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-cyan-700"
+          >
+            Confirm onboarding
+          </button>
+        </form>
+        <button
+          type="button"
+          onClick={() => setArmed(false)}
+          className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Cancel
+        </button>
+      </span>
+    </span>
   );
 }
 

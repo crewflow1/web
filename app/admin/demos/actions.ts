@@ -52,7 +52,16 @@ const moveSchema = z.object({
   demo_id: z.string().uuid(),
   status: z.enum(DEMO_LIFECYCLE_STATUSES),
   reason: z.string().trim().max(2000).optional(),
+  // Explicit confirmation token for the one irreversible/outbound transition:
+  // moving to active_onboarding provisions a REAL auth user + org + membership
+  // and emails a magic-link invite. The UI must send confirm="ONBOARD"; without
+  // it we show a confirm interstitial and provision nothing. This makes a stray
+  // kanban drag or a direct POST unable to create a customer by accident.
+  confirm: z.string().optional(),
 });
+
+/** The typed token the onboarding confirm interstitial must submit. */
+const ONBOARD_CONFIRM_TOKEN = "ONBOARD";
 
 export async function moveDemoToStatus(formData: FormData): Promise<void> {
   const admin = await requireAdmin();
@@ -80,6 +89,18 @@ export async function moveDemoToStatus(formData: FormData): Promise<void> {
 
   const targetStatus = parsed.data.status;
   let result: LifecycleResult | null = null;
+
+  // Confirmation gate for the provisioning transition — BEFORE any side effect.
+  // A promotion that was not explicitly confirmed bounces back to a confirm
+  // prompt; nothing is created, no invite is sent.
+  if (
+    targetStatus === "active_onboarding" &&
+    parsed.data.confirm !== ONBOARD_CONFIRM_TOKEN
+  ) {
+    redirect(
+      `/admin/demos?confirm_onboarding=${encodeURIComponent(parsed.data.demo_id)}`,
+    );
+  }
 
   // ------------------------------------------------------------------
   // BLOCKER 2 — onboarding must be ATOMIC.
@@ -237,9 +258,10 @@ export async function moveDemoToStatus(formData: FormData): Promise<void> {
 export async function moveDemoToStatusJson(
   demoId: string,
   status: string,
+  confirm?: string,
 ): Promise<
   | { ok: true; status: string; done?: string[]; failed?: { step: string; reason: string }[] }
-  | { ok: false; error: string }
+  | { ok: false; error: string; needsConfirm?: boolean }
 > {
   const user = await requireUser();
   if (!isSuperAdminEmail(user.email)) {
@@ -247,6 +269,14 @@ export async function moveDemoToStatusJson(
   }
   if (!isValidLifecycleStatus(status)) {
     return { ok: false, error: "Unknown status" };
+  }
+
+  // Confirmation gate (drag-drop variant) — mirror of moveDemoToStatus. Moving
+  // to active_onboarding provisions a real workspace + sends an invite email, so
+  // it must be explicitly confirmed. Without the token we create nothing and ask
+  // the kanban to show a confirm; it re-calls with the token on confirm.
+  if (status === "active_onboarding" && confirm !== ONBOARD_CONFIRM_TOKEN) {
+    return { ok: false, error: "needs_confirm", needsConfirm: true };
   }
 
   const supabase = createAdminClient();
