@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { hasCapability } from "@/server/auth/capabilities";
 import { createClient } from "@/lib/supabase/server";
 import { buildReportDocument } from "@/lib/reports/report-data";
 import { documentToCsv } from "@/lib/reports/documents";
@@ -27,9 +28,12 @@ import {
  * the shared branded ReportPdf). So the download can never drift from what the
  * page shows, and a new report needs no new export code.
  *
- * Behind `requireOrgContext` and org-pinned, exactly like the page. A
- * management-only report (cashflow exposes VAT/CIS/payables) is refused for a
- * non-admin — the same gate the report page applies.
+ * Org-pinned behind `requireOrgContext`. A per-report sensitivity gate (R4):
+ * a NON-management report stays member-exportable (a legitimate operational
+ * export, e.g. a field worker downloading an operational report) — deliberately
+ * NOT newly gated. A MANAGEMENT-only report (cashflow exposes VAT/CIS/payables)
+ * now requires the `reports:export` capability (owner always; an admin only if
+ * granted — tighter than the old any-admin check).
  *
  * react-pdf renders on Node, not edge.
  */
@@ -48,9 +52,10 @@ export async function GET(request: NextRequest, { params }: Ctx) {
   const formatRaw = request.nextUrl.searchParams.get("format") ?? "pdf";
   const format: ReportFormat = isReportFormat(formatRaw) ? formatRaw : "pdf";
 
-  const { ctx } = await requireOrgContext();
-  const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
-  if (meta.managementOnly && !isAdmin) {
+  const { ctx, user } = await requireOrgContext();
+  // Management-only reports require the reports:export capability; non-management
+  // reports stay member-exportable by design (the operational exception).
+  if (meta.managementOnly && !(await hasCapability(ctx, user, "reports", "export"))) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 

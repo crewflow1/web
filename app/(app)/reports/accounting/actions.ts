@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { requireOrgContext } from "@/server/auth/session";
+import { hasCapability } from "@/server/auth/capabilities";
 import {
   disconnectAccountingProvider,
   syncToProvider,
@@ -24,10 +25,16 @@ import type { AccountingProvider } from "@/lib/integrations/accounting/adapters"
  * success and never a live API call. On activation (credentials + flag) the SAME
  * path performs the real push with no further code change.
  *
- * AUTHORISATION IS DOUBLED. The role check produces a sentence for the operator;
- * the admin-write RLS on accounting_export_log is the real boundary for the log
+ * AUTHORISATION (R4 — capability-gated). Pushing financials to an external
+ * accounting provider is a sensitive financial export → reports:export; the
+ * admin-write RLS on accounting_export_log is the real boundary for the log
  * insert. Org-pinned throughout. Route depth is 1 (`/reports`), so no server
  * navigation is performed — the action returns state the client renders inline.
+ *
+ * NOTE (flagged for founder): accounting push/disconnect could alternatively be
+ * governed by an `integrations:manage` capability. They are mapped under the
+ * reports module (export for push, manage for disconnect) because they live in
+ * the Reports area and move financial data; say the word to move them.
  */
 
 export type AccountingPushState = {
@@ -35,10 +42,6 @@ export type AccountingPushState = {
   message: string;
   provider?: AccountingProvider;
 };
-
-function isAdminRole(role: string): boolean {
-  return role === "owner" || role === "admin";
-}
 
 /** Human label per provider, for the honest-dark "not connected" sentence. */
 const PROVIDER_LABEL: Record<AccountingProvider, string> = {
@@ -63,11 +66,11 @@ export async function requestAccountingPush(
   const provider = providerRaw;
 
   const { ctx, user } = await requireOrgContext();
-  if (!isAdminRole(ctx.membership.role)) {
+  if (!(await hasCapability(ctx, user, "reports", "export"))) {
     return {
       ok: false,
       provider,
-      message: "Only an owner or admin may push to an accounting provider.",
+      message: "You do not have permission to push to an accounting provider.",
     };
   }
 
@@ -89,7 +92,7 @@ export async function requestAccountingPush(
  * "Disconnect" control to `disconnectAccountingProvider`. Clears the tokens +
  * account handle and returns the row to `disconnected`.
  *
- * AUTHORISATION IS DOUBLED. The role check here refuses a non-admin loudly; the
+ * AUTHORISATION (R4). Managing the accounting connection → reports:manage; the
  * admin-write RLS on accounting_connections (20261095) is the real boundary for
  * the UPDATE, which runs under the caller's JWT. Org-pinned via ctx.org.id.
  * LOUD: a failed disconnect throws rather than silently reporting success.
@@ -106,10 +109,10 @@ export async function disconnectAccountingConnection(
   }
   const provider = providerRaw;
 
-  const { ctx } = await requireOrgContext();
-  if (!isAdminRole(ctx.membership.role)) {
+  const { ctx, user } = await requireOrgContext();
+  if (!(await hasCapability(ctx, user, "reports", "manage"))) {
     throw new Error(
-      "Only an owner or admin may disconnect an accounting provider.",
+      "You do not have permission to disconnect an accounting provider.",
     );
   }
 

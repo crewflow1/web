@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireOrgContext } from "@/server/auth/session";
+import { hasCapability } from "@/server/auth/capabilities";
 import { createClient } from "@/lib/supabase/server";
 import {
   isReportKey,
@@ -17,19 +18,16 @@ import {
 /**
  * Report-subscription actions — the write path behind the /reports subscribe UI.
  *
- * ADMIN-GATED, AND THE RLS IS THE REAL BOUNDARY. The role check produces a
- * sentence for the operator; the admin-write RLS on `report_subscriptions`
- * (migration 20261134000000) is what actually stops a non-admin, even one
+ * CAPABILITY-GATED (R4), AND THE RLS IS THE REAL BOUNDARY. Scheduling/removing
+ * recurring report delivery is standing configuration that emails report data to
+ * recipients → reports:manage; the admin-write RLS on `report_subscriptions`
+ * (migration 20261134000000) is what actually stops a denied caller, even one
  * forging the request. Every write is org-pinned. Route depth is 1 (`/reports`),
  * so no server navigation happens — the action returns state the client renders
  * inline and revalidates the page.
  */
 
 export type SubscribeState = { ok: boolean; message: string };
-
-function isAdminRole(role: string): boolean {
-  return role === "owner" || role === "admin";
-}
 
 // Mirrors the report_subscriptions.recipients CHECK regex — a bad address is
 // rejected here with a friendly message before RLS/CHECK would reject the row.
@@ -72,8 +70,8 @@ export async function createReportSubscription(
   if (bad) return { ok: false, message: `"${bad}" is not a valid email address.` };
 
   const { ctx, user } = await requireOrgContext();
-  if (!isAdminRole(ctx.membership.role)) {
-    return { ok: false, message: "Only an owner or admin can schedule report delivery." };
+  if (!(await hasCapability(ctx, user, "reports", "manage"))) {
+    return { ok: false, message: "You do not have permission to schedule report delivery." };
   }
 
   const supabase = await createClient();
@@ -104,9 +102,9 @@ export async function deleteReportSubscription(
   const id = String(formData.get("id") ?? "");
   if (!id) return { ok: false, message: "Missing subscription." };
 
-  const { ctx } = await requireOrgContext();
-  if (!isAdminRole(ctx.membership.role)) {
-    return { ok: false, message: "Only an owner or admin can change report delivery." };
+  const { ctx, user } = await requireOrgContext();
+  if (!(await hasCapability(ctx, user, "reports", "manage"))) {
+    return { ok: false, message: "You do not have permission to change report delivery." };
   }
 
   const supabase = await createClient();

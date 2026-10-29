@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireManagementApi } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { csvEscape } from "@/lib/csv";
 import {
   jobsPerWeek,
@@ -36,9 +36,9 @@ import {
 type Cell = string | number;
 
 export async function GET() {
-  // Management-only: this CSV carries revenue / VAT / top-customers. A staff
-  // member must not be able to export it (nav marks Money ADMIN_ROLES).
-  const guard = await requireManagementApi();
+  // R4 — this CSV carries revenue / VAT / top-customers → reports:export (owner
+  // always; an admin only if granted). Was management-only; RLS still floors.
+  const guard = await requireCapabilityApi("reports", "export");
   if (guard instanceof Response) return guard;
   const { ctx } = guard;
 
