@@ -1129,6 +1129,15 @@ describe("F-1 bare-select guard — high-value table reads must page or be singl
  *   SINGLE     — only ever an existence / single-row probe (.limit(1)).
  */
 const COVERAGE_REVIEWED: Record<string, string> = {
+  // membership_permissions (20261241, R2) — per-admin capability grants. Its ONE
+  // set-read (loadCapabilities in server/auth/capabilities.ts) is per-membership
+  // (`.eq("membership_id", id)`), structurally bounded by |modules|×(|actions|+1)
+  // (~264 max) via the unique(membership_id, module, action) constraint, and
+  // explicitly `.limit(512)`-bounded. It is an authorization read for ONE member,
+  // never a cross-tenant/estate scan or aggregate — seeing the full (bounded) set
+  // is correct, and truncation is impossible at 512 >> 264.
+  membership_permissions:
+    "bounded authz read: loadCapabilities reads ONE membership's grants (.eq membership_id, .limit(512)); max ~264 by the unique constraint, never a completeness scan",
   // hq_sales_sourcing_pool (20261234) — the Companies House bulk eligible-company
   // catalogue. Its ONE set-read (hq-lead-sourcing-runner readEligiblePool) is a
   // DELIBERATELY-BOUNDED weekly promotion batch: .limit(min(SOURCING_BATCH_LIMIT*3,
