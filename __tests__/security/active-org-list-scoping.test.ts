@@ -77,11 +77,19 @@ const RPC_ARG_PIN = /\.rpc\(\s*["'][a-z_]+["'],\s*\{\s*p_org_id:\s*orgId\b/;
 // getRequestI18n() (which returns the same ctx and enforces requireOrgContext
 // internally) satisfies this — both destructure ctx from the resolved request.
 const CAPTURES_CTX =
-  // Either the classic org-context capture, or the gated API form
-  // (`const guard = await requireManagementApi()` / `requireCapabilityApi(...)`
-  // … `const { ctx } = guard;`) — both wrap requireOrgContext AND add the
-  // management / capability gate before any table read, so both yield ctx.
-  /const \{[^}]*\bctx\b[^}]*\} = await (requireOrgContext|getRequestI18n|requireManagementContext)\(\)|const guard = await require(ManagementApi|CapabilityApi)\([^)]*\);[\s\S]{0,300}?const \{[^}]*\bctx\b[^}]*\} = guard/;
+  // A page captures ctx from a TRUSTED auth resolution in one of these forms:
+  //   - the classic org-context capture: requireOrgContext() / getRequestI18n()
+  //     (returns the same ctx, enforces requireOrgContext internally) /
+  //     requireManagementContext() (adds the owner/admin gate);
+  //   - the R4 page capability gate: `const { ctx } = await requireCapability(
+  //     "module", "action")` — resolves the SAME ctx via resolveCapabilityContext
+  //     AND enforces the granular capability (strictly stronger than a bare
+  //     requireOrgContext), so it is a valid ctx source, not a bypass;
+  //   - the gated API form: `const guard = await requireManagementApi()` /
+  //     `requireCapabilityApi(...)` … `const { ctx } = guard`.
+  // Every form yields ctx before any table read; the per-table org_id pin
+  // assertions below remain the real safeguard.
+  /const \{[^}]*\bctx\b[^}]*\} = await (requireOrgContext|getRequestI18n|requireManagementContext)\(\)|const \{[^}]*\bctx\b[^}]*\} = await requireCapability\([^)]*\)|const guard = await require(ManagementApi|CapabilityApi)\([^)]*\);[\s\S]{0,300}?const \{[^}]*\bctx\b[^}]*\} = guard/;
 
 // ---------------------------------------------------------------------------
 // 1. List pages — one pin per collection read, keyed by the table it reads

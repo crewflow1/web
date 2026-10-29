@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireManagementApi } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { csvEscape } from "@/lib/csv";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 
@@ -18,8 +18,9 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
  */
 
 export async function GET(request: NextRequest) {
-  // Management-only (first-customer fix 1): this surface carries money.
-  const guard = await requireManagementApi();
+  // R4 — a cost-ledger CSV export requires costs:export (was management-only;
+  // this surface carries money). Owner full; admin only if granted. RLS floors.
+  const guard = await requireCapabilityApi("costs", "export");
   if (guard instanceof Response) return guard;
   const { ctx } = guard;
   const url = request.nextUrl;

@@ -2,7 +2,7 @@ import { type NextRequest } from "next/server";
 import * as respond from "@/lib/api/respond";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireManagementApi } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { updateFinanceSchema } from "@/lib/finances/schema";
 import { financeWriteRefusal } from "@/lib/finances/errors";
 import type { Database } from "@/lib/supabase/types";
@@ -12,8 +12,8 @@ type FinanceUpdate = Database["public"]["Tables"]["finances"]["Update"];
 /**
  * Single-finance operations.
  *
- *   PATCH  /api/finances/[id]   update amount / vat_rate / category / notes / job_id
- *   DELETE /api/finances/[id]   admins only (RLS-enforced)
+ *   PATCH  /api/finances/[id]   edit (costs:edit) — amount / vat_rate / category / notes / job_id
+ *   DELETE /api/finances/[id]   delete (costs:delete) — owner always; admin only if granted; RLS still floors
  *
  * org_id is intentionally NOT updatable.
  * receipt_url isn't updatable here either — re-uploading is a separate
@@ -23,8 +23,9 @@ type FinanceUpdate = Database["public"]["Tables"]["finances"]["Update"];
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: NextRequest, { params }: Ctx) {
-  // Management-only (first-customer fix 1): this surface carries money.
-  const guard = await requireManagementApi();
+  // R4 — editing a posted cost requires costs:edit (was management-only; this
+  // surface carries money). Owner full; admin only if granted. RLS still floors.
+  const guard = await requireCapabilityApi("costs", "edit");
   if (guard instanceof Response) return guard;
   const { ctx } = guard;
   const { id } = await params;
@@ -84,8 +85,9 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
 }
 
 export async function DELETE(_request: NextRequest, { params }: Ctx) {
-  // Management-only (first-customer fix 1): this surface carries money.
-  const guard = await requireManagementApi();
+  // R4 — deleting a posted cost requires costs:delete (was management-only; this
+  // surface carries money). Owner full; admin only if granted. RLS still floors.
+  const guard = await requireCapabilityApi("costs", "delete");
   if (guard instanceof Response) return guard;
   const { ctx } = guard;
   const { id } = await params;
@@ -119,9 +121,10 @@ export async function DELETE(_request: NextRequest, { params }: Ctx) {
     return respond.error(404, "Not found or not allowed");
   }
 
-  // Best-effort storage cleanup. RLS on the receipts bucket already grants
-  // admins delete rights; this runs only after the DB delete succeeded so
-  // RLS has already confirmed the caller is an admin.
+  // Best-effort storage cleanup, via the service-role client. It runs ONLY
+  // after the RLS-scoped DB delete above succeeded (count > 0), so the caller
+  // has already been confirmed able to delete this org's finance row (by the
+  // costs:delete gate at the top AND the finances RLS delete policy).
   if (row?.receipt_url) {
     const admin = createAdminClient();
     const { error: rmErr } = await admin.storage
