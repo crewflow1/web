@@ -1,7 +1,7 @@
 import { type NextRequest } from "next/server";
 import * as respond from "@/lib/api/respond";
 import { createClient } from "@/lib/supabase/server";
-import { requireManagementApi } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { createInvoiceSchema, INVOICE_STATUSES } from "@/lib/invoices/schema";
 import { invoiceDueDate } from "@/lib/invoices/due-date";
 import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
@@ -23,7 +23,7 @@ const MAX_LIMIT = 100;
 const DEFAULT_LIMIT = 50;
 
 export async function GET(request: NextRequest) {
-  const guard = await requireManagementApi();
+  const guard = await requireCapabilityApi("invoices", "view");
   if (guard instanceof Response) return guard;
   const { ctx } = guard;
   const supabase = await createClient();
@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const guard = await requireManagementApi();
+  const guard = await requireCapabilityApi("invoices", "create");
   if (guard instanceof Response) return guard;
   const { ctx } = guard;
 

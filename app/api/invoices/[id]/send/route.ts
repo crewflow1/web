@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireManagementApi } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { sendInvoiceEmail } from "@/lib/email/send-invoice";
 import * as Sentry from "@sentry/nextjs";
@@ -23,7 +23,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function POST(request: NextRequest, { params }: Ctx) {
   // Management-only (first-customer fix 1): this surface carries money.
-  const guard = await requireManagementApi();
+  const guard = await requireCapabilityApi("invoices", "edit");
   if (guard instanceof Response) return guard;
   const { ctx } = guard;
   const { id } = await params;

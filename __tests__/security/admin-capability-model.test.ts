@@ -135,6 +135,15 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       // R3 — owner-controlled admin appointment + staff:manage + grant editor.
       "app/(app)/staff/actions.ts",
       "app/(app)/staff/permission-actions.ts",
+      // R4 — capability enforcement, financial modules (invoices first).
+      "app/(app)/invoices/layout.tsx",
+      "app/(app)/invoices/page.tsx",
+      "app/api/invoices/route.ts",
+      "app/api/invoices/[id]/route.ts",
+      "app/api/invoices/export/route.ts",
+      "app/api/invoices/[id]/pdf/route.ts",
+      "app/api/invoices/[id]/remind/route.ts",
+      "app/api/invoices/[id]/send/route.ts",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;

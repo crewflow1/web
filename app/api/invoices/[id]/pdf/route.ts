@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { createClient } from "@/lib/supabase/server";
-import { requireManagementApi } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { InvoicePdf, type InvoicePdfInput } from "@/lib/pdf/invoice-pdf";
 import {
@@ -26,7 +26,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_request: NextRequest, { params }: Ctx) {
   // Management-only (first-customer fix 1): this surface carries money.
-  const guard = await requireManagementApi();
+  const guard = await requireCapabilityApi("invoices", "view");
   if (guard instanceof Response) return guard;
   const { ctx } = guard;
   const { id } = await params;
