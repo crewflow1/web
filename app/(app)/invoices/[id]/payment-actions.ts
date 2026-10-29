@@ -3,7 +3,8 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session";
+import { requireCapabilityFor } from "@/server/auth/capabilities";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { addPaymentSchema } from "@/lib/payments/schema";
 import { z } from "zod";
@@ -32,7 +33,7 @@ export async function addInvoicePayment(
   formData: FormData,
 ): Promise<FormState<PaymentValues>> {
   const { ctx, user } = await requireOrgContext();
-  requireManagementRole(ctx); // money mutation (fix 1)
+  await requireCapabilityFor(ctx, user, "payments", "create"); // record a payment (R4)
   if (!uuid.safeParse(invoiceId).success) return formError("Invalid invoice id.");
 
   const result = validateFormData(formData, addPaymentSchema);
@@ -177,8 +178,8 @@ export async function addInvoicePayment(
 }
 
 export async function removeInvoicePayment(paymentId: string) {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // money mutation (fix 1)
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "payments", "delete"); // remove a payment (R4)
   if (!uuid.safeParse(paymentId).success) redirect("/invoices");
 
   const supabase = await createClient();
@@ -224,7 +225,8 @@ export async function removeInvoicePayment(paymentId: string) {
  */
 export async function voidInvoice(invoiceId: string, formData: FormData) {
   const { ctx, user } = await requireOrgContext();
-  requireManagementRole(ctx);
+  // Voiding is an INVOICE operation (not a payment) → invoices:edit (R4).
+  await requireCapabilityFor(ctx, user, "invoices", "edit");
   const id = uuid.parse(invoiceId);
   const reason = String(formData.get("reason") ?? "").trim();
   if (reason.length < 3) {

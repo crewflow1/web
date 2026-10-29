@@ -5,7 +5,8 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
-import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session";
+import { requireCapabilityFor } from "@/server/auth/capabilities";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { parseBankCsv, scoreInvoiceMatch } from "@/lib/payments/schema";
 import { OUTSTANDING_STATUSES } from "@/lib/invoices/schema";
@@ -43,7 +44,7 @@ const uuid = z.string().uuid();
  */
 export async function uploadBankCsv(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
-  requireManagementRole(ctx); // money mutation (fix 1)
+  await requireCapabilityFor(ctx, user, "payments", "create"); // money mutation (R4)
   const supabase = await createClient();
 
   // Permission: admins-only — bank statements are sensitive. Role comes from
@@ -208,7 +209,7 @@ export async function confirmBankMatch(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
-  requireManagementRole(ctx); // money mutation (fix 1)
+  await requireCapabilityFor(ctx, user, "payments", "create"); // money mutation (R4)
   if (!uuid.safeParse(bankLineId).success) return formError("That line link looks wrong — reload and try again.");
 
   const targetInvoiceId = String(formData.get("invoice_id") ?? "");
@@ -331,8 +332,8 @@ export async function ignoreBankLine(
   _prev: FormState,
   _formData: FormData,
 ): Promise<FormState> {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // money mutation (fix 1)
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "payments", "edit"); // money mutation (R4)
   if (!uuid.safeParse(bankLineId).success) return formError("That line link looks wrong — reload and try again.");
 
   const supabase = await createClient();
