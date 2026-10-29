@@ -94,6 +94,19 @@ vi.mock("@/server/auth/session", () => {
   };
 });
 
+// R4: the send/remind routes now gate with requireCapabilityApi("invoices","edit")
+// (capability replaces the binary management gate). Mock it to the SAME base
+// context so these tests exercise their real subject — the active-org scoping
+// + send behaviour downstream of an authorized caller. (The capability gate
+// itself is proven in __tests__/security/r4-invoices-capability.test.ts.)
+vi.mock("@/server/auth/capabilities", () => ({
+  requireCapabilityApi: vi.fn(async () => ({
+    ctx: { org: { id: "org-active" }, user: { id: "user-1" } },
+    user: { id: "user-1", email: "u@example.test" },
+    grants: [],
+  })),
+}));
+
 const { POST: invoiceSend } = await import("@/app/api/invoices/[id]/send/route");
 const { POST: invoiceRemind } = await import("@/app/api/invoices/[id]/remind/route");
 const { POST: quoteSend } = await import("@/app/api/quotes/[id]/send/route");

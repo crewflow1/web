@@ -116,6 +116,18 @@ vi.mock("@/server/auth/session", () => {
   };
 });
 
+// R4: the remind route now gates with requireCapabilityApi("invoices","edit").
+// Mock it to the same base context so this test exercises the reminder behaviour
+// downstream of an authorized caller (the capability gate itself is covered by
+// __tests__/security/r4-invoices-capability.test.ts).
+vi.mock("@/server/auth/capabilities", () => ({
+  requireCapabilityApi: vi.fn(async () => ({
+    ctx: { org: { id: "org-1" }, user: { id: "user-1" } },
+    user: { id: "user-1" },
+    grants: [],
+  })),
+}));
+
 // Imports under test (after mocks)
 const { POST } = await import("@/app/api/invoices/[id]/remind/route");
 
