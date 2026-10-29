@@ -554,6 +554,47 @@ export type Database = {
           },
         ]
       }
+      ai_employee_kpis: {
+        Row: {
+          approvals_requested: number
+          computed_at: string
+          cost_pence: number
+          employee_slug: string
+          id: string
+          period_start: string
+          tasks_completed: number
+          tasks_failed: number
+        }
+        Insert: {
+          approvals_requested?: number
+          computed_at?: string
+          cost_pence?: number
+          employee_slug: string
+          id?: string
+          period_start: string
+          tasks_completed?: number
+          tasks_failed?: number
+        }
+        Update: {
+          approvals_requested?: number
+          computed_at?: string
+          cost_pence?: number
+          employee_slug?: string
+          id?: string
+          period_start?: string
+          tasks_completed?: number
+          tasks_failed?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_employee_kpis_employee_slug_fkey"
+            columns: ["employee_slug"]
+            isOneToOne: false
+            referencedRelation: "ai_employees"
+            referencedColumns: ["slug"]
+          },
+        ]
+      }
       ai_employee_memory: {
         Row: {
           ai_employee_id: string
@@ -659,10 +700,12 @@ export type Database = {
           icon: string
           id: string
           last_activity_at: string | null
+          manager_slug: string | null
           memory_scope: string
           model_name: string | null
           model_provider: string | null
           name: string
+          retired_at: string | null
           role: string
           slug: string
           sort_order: number
@@ -679,10 +722,12 @@ export type Database = {
           icon?: string
           id?: string
           last_activity_at?: string | null
+          manager_slug?: string | null
           memory_scope?: string
           model_name?: string | null
           model_provider?: string | null
           name: string
+          retired_at?: string | null
           role: string
           slug: string
           sort_order?: number
@@ -699,10 +744,12 @@ export type Database = {
           icon?: string
           id?: string
           last_activity_at?: string | null
+          manager_slug?: string | null
           memory_scope?: string
           model_name?: string | null
           model_provider?: string | null
           name?: string
+          retired_at?: string | null
           role?: string
           slug?: string
           sort_order?: number
@@ -710,17 +757,29 @@ export type Database = {
           system_prompt?: string
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "ai_employees_manager_slug_fkey"
+            columns: ["manager_slug"]
+            isOneToOne: false
+            referencedRelation: "ai_employees"
+            referencedColumns: ["slug"]
+          },
+        ]
       }
       ai_invocations: {
         Row: {
+          ai_employee_id: string | null
+          cached_input_tokens: number | null
           content_hash: string | null
           created_at: string
+          engine: string
           error_code: string | null
           estimated_cost_pence: number
           feature: string
           id: string
           input_tokens: number
+          is_fallback: boolean
           latency_ms: number
           model: string
           org_id: string
@@ -731,13 +790,17 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          ai_employee_id?: string | null
+          cached_input_tokens?: number | null
           content_hash?: string | null
           created_at?: string
+          engine?: string
           error_code?: string | null
           estimated_cost_pence?: number
           feature: string
           id?: string
           input_tokens?: number
+          is_fallback?: boolean
           latency_ms: number
           model: string
           org_id: string
@@ -748,13 +811,17 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          ai_employee_id?: string | null
+          cached_input_tokens?: number | null
           content_hash?: string | null
           created_at?: string
+          engine?: string
           error_code?: string | null
           estimated_cost_pence?: number
           feature?: string
           id?: string
           input_tokens?: number
+          is_fallback?: boolean
           latency_ms?: number
           model?: string
           org_id?: string
@@ -1145,6 +1212,32 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_reply_send_claims: {
+        Row: {
+          claimed_at: string
+          dedup_key: string
+          org_id: string
+        }
+        Insert: {
+          claimed_at?: string
+          dedup_key: string
+          org_id: string
+        }
+        Update: {
+          claimed_at?: string
+          dedup_key?: string
+          org_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_reply_send_claims_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_reply_transports: {
         Row: {
           attempt: number
@@ -1269,6 +1362,7 @@ export type Database = {
           key_id: string
           method: string
           org_id: string
+          request_id: string | null
           route: string
           status: number
         }
@@ -1278,6 +1372,7 @@ export type Database = {
           key_id: string
           method: string
           org_id: string
+          request_id?: string | null
           route: string
           status: number
         }
@@ -1287,6 +1382,7 @@ export type Database = {
           key_id?: string
           method?: string
           org_id?: string
+          request_id?: string | null
           route?: string
           status?: number
         }
@@ -4756,6 +4852,7 @@ export type Database = {
           vat_registered: boolean
           verification_expires_at: string | null
           verification_reference: string | null
+          verification_source: string
           verified_at: string | null
           verified_by: string | null
         }
@@ -4778,6 +4875,7 @@ export type Database = {
           vat_registered?: boolean
           verification_expires_at?: string | null
           verification_reference?: string | null
+          verification_source?: string
           verified_at?: string | null
           verified_by?: string | null
         }
@@ -4800,6 +4898,7 @@ export type Database = {
           vat_registered?: boolean
           verification_expires_at?: string | null
           verification_reference?: string | null
+          verification_source?: string
           verified_at?: string | null
           verified_by?: string | null
         }
@@ -10229,6 +10328,149 @@ export type Database = {
         }
         Relationships: []
       }
+      hq_sales_sourcing_imports: {
+        Row: {
+          active_matched: number
+          created_at: string
+          error: string | null
+          finished_at: string | null
+          id: string
+          inserted: number
+          ni_matched: number
+          normalized: number
+          rejected: number
+          scanned: number
+          sic_matched: number
+          snapshot_date: string
+          source_file: string | null
+          started_at: string
+          status: string
+          updated: number
+        }
+        Insert: {
+          active_matched?: number
+          created_at?: string
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          inserted?: number
+          ni_matched?: number
+          normalized?: number
+          rejected?: number
+          scanned?: number
+          sic_matched?: number
+          snapshot_date: string
+          source_file?: string | null
+          started_at?: string
+          status?: string
+          updated?: number
+        }
+        Update: {
+          active_matched?: number
+          created_at?: string
+          error?: string | null
+          finished_at?: string | null
+          id?: string
+          inserted?: number
+          ni_matched?: number
+          normalized?: number
+          rejected?: number
+          scanned?: number
+          sic_matched?: number
+          snapshot_date?: string
+          source_file?: string | null
+          started_at?: string
+          status?: string
+          updated?: number
+        }
+        Relationships: []
+      }
+      hq_sales_sourcing_pool: {
+        Row: {
+          active: boolean
+          company_category: string | null
+          company_number: string
+          country: string | null
+          created_at: string
+          first_seen_at: string
+          first_snapshot_date: string | null
+          geography: string
+          id: string
+          incorporation_date: string | null
+          last_seen_at: string
+          last_snapshot_date: string | null
+          matched_sic: string[]
+          name: string
+          postcode: string | null
+          promoted: boolean
+          promoted_at: string | null
+          promoted_company_id: string | null
+          provenance: Json | null
+          reason_codes: string[]
+          sic_codes: string[]
+          status: string | null
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          company_category?: string | null
+          company_number: string
+          country?: string | null
+          created_at?: string
+          first_seen_at?: string
+          first_snapshot_date?: string | null
+          geography?: string
+          id?: string
+          incorporation_date?: string | null
+          last_seen_at?: string
+          last_snapshot_date?: string | null
+          matched_sic?: string[]
+          name?: string
+          postcode?: string | null
+          promoted?: boolean
+          promoted_at?: string | null
+          promoted_company_id?: string | null
+          provenance?: Json | null
+          reason_codes?: string[]
+          sic_codes?: string[]
+          status?: string | null
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          company_category?: string | null
+          company_number?: string
+          country?: string | null
+          created_at?: string
+          first_seen_at?: string
+          first_snapshot_date?: string | null
+          geography?: string
+          id?: string
+          incorporation_date?: string | null
+          last_seen_at?: string
+          last_snapshot_date?: string | null
+          matched_sic?: string[]
+          name?: string
+          postcode?: string | null
+          promoted?: boolean
+          promoted_at?: string | null
+          promoted_company_id?: string | null
+          provenance?: Json | null
+          reason_codes?: string[]
+          sic_codes?: string[]
+          status?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "hq_sales_sourcing_pool_promoted_company_id_fkey"
+            columns: ["promoted_company_id"]
+            isOneToOne: false
+            referencedRelation: "hq_sales_companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       hq_sales_task_types: {
         Row: {
           category: string
@@ -13802,6 +14044,58 @@ export type Database = {
           },
         ]
       }
+      membership_permissions: {
+        Row: {
+          action: string
+          granted_at: string
+          granted_by: string | null
+          id: string
+          membership_id: string
+          module: string
+          org_id: string
+        }
+        Insert: {
+          action: string
+          granted_at?: string
+          granted_by?: string | null
+          id?: string
+          membership_id: string
+          module: string
+          org_id: string
+        }
+        Update: {
+          action?: string
+          granted_at?: string
+          granted_by?: string | null
+          id?: string
+          membership_id?: string
+          module?: string
+          org_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "membership_permissions_granted_by_fkey"
+            columns: ["granted_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "membership_permissions_membership_org_fkey"
+            columns: ["membership_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "memberships"
+            referencedColumns: ["id", "org_id"]
+          },
+          {
+            foreignKeyName: "membership_permissions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       memberships: {
         Row: {
           created_at: string
@@ -14637,6 +14931,54 @@ export type Database = {
           },
         ]
       }
+      ops_backup_runs: {
+        Row: {
+          backup_date: string | null
+          created_at: string
+          error: string | null
+          file_manifest: Json | null
+          finished_at: string | null
+          host: string | null
+          id: string
+          migration_tip: string | null
+          run_id: string
+          stage: string | null
+          started_at: string
+          status: string
+          upload_status: string | null
+        }
+        Insert: {
+          backup_date?: string | null
+          created_at?: string
+          error?: string | null
+          file_manifest?: Json | null
+          finished_at?: string | null
+          host?: string | null
+          id?: string
+          migration_tip?: string | null
+          run_id: string
+          stage?: string | null
+          started_at?: string
+          status?: string
+          upload_status?: string | null
+        }
+        Update: {
+          backup_date?: string | null
+          created_at?: string
+          error?: string | null
+          file_manifest?: Json | null
+          finished_at?: string | null
+          host?: string | null
+          id?: string
+          migration_tip?: string | null
+          run_id?: string
+          stage?: string | null
+          started_at?: string
+          status?: string
+          upload_status?: string | null
+        }
+        Relationships: []
+      }
       org_payment_connections: {
         Row: {
           account_name: string | null
@@ -14986,6 +15328,9 @@ export type Database = {
           suspended_at: string | null
           tax_jurisdiction: string
           timezone: string
+          tos_accepted_at: string | null
+          tos_accepted_by: string | null
+          tos_version: string | null
           trial_ends_at: string | null
           updated_at: string
           vat_number: string | null
@@ -15034,6 +15379,9 @@ export type Database = {
           suspended_at?: string | null
           tax_jurisdiction?: string
           timezone?: string
+          tos_accepted_at?: string | null
+          tos_accepted_by?: string | null
+          tos_version?: string | null
           trial_ends_at?: string | null
           updated_at?: string
           vat_number?: string | null
@@ -15082,6 +15430,9 @@ export type Database = {
           suspended_at?: string | null
           tax_jurisdiction?: string
           timezone?: string
+          tos_accepted_at?: string | null
+          tos_accepted_by?: string | null
+          tos_version?: string | null
           trial_ends_at?: string | null
           updated_at?: string
           vat_number?: string | null
@@ -15097,6 +15448,13 @@ export type Database = {
           {
             foreignKeyName: "organizations_onboarding_owner_id_fkey"
             columns: ["onboarding_owner_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organizations_tos_accepted_by_fkey"
+            columns: ["tos_accepted_by"]
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -15492,6 +15850,57 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      permission_audit: {
+        Row: {
+          action: string | null
+          actor_user_id: string | null
+          created_at: string
+          detail: Json
+          event: string
+          id: string
+          module: string | null
+          org_id: string
+          target_membership_id: string | null
+        }
+        Insert: {
+          action?: string | null
+          actor_user_id?: string | null
+          created_at?: string
+          detail?: Json
+          event: string
+          id?: string
+          module?: string | null
+          org_id: string
+          target_membership_id?: string | null
+        }
+        Update: {
+          action?: string | null
+          actor_user_id?: string | null
+          created_at?: string
+          detail?: Json
+          event?: string
+          id?: string
+          module?: string | null
+          org_id?: string
+          target_membership_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "permission_audit_actor_user_id_fkey"
+            columns: ["actor_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "permission_audit_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
         ]
@@ -20700,6 +21109,102 @@ export type Database = {
         }
         Relationships: []
       }
+      variation_requests: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          job_id: string
+          org_id: string
+          reason: string | null
+          requested_by: string | null
+          requester_name: string | null
+          requester_type: string
+          review_note: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string
+          title: string
+          updated_at: string
+          urgency: string
+          variation_quote_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          job_id: string
+          org_id: string
+          reason?: string | null
+          requested_by?: string | null
+          requester_name?: string | null
+          requester_type?: string
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+          urgency?: string
+          variation_quote_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          job_id?: string
+          org_id?: string
+          reason?: string | null
+          requested_by?: string | null
+          requester_name?: string | null
+          requester_type?: string
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+          urgency?: string
+          variation_quote_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "variation_requests_job_fkey"
+            columns: ["job_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "jobs"
+            referencedColumns: ["id", "org_id"]
+          },
+          {
+            foreignKeyName: "variation_requests_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "variation_requests_quote_fkey"
+            columns: ["variation_quote_id", "org_id"]
+            isOneToOne: false
+            referencedRelation: "quotes"
+            referencedColumns: ["id", "org_id"]
+          },
+          {
+            foreignKeyName: "variation_requests_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "variation_requests_reviewed_by_fkey"
+            columns: ["reviewed_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       voice_notes: {
         Row: {
           actioned_at: string | null
@@ -21279,10 +21784,41 @@ export type Database = {
           },
         ]
       }
+      whatsapp_optouts: {
+        Row: {
+          opted_out_at: string
+          org_id: string
+          source_wamid: string | null
+          wa_id: string
+        }
+        Insert: {
+          opted_out_at?: string
+          org_id: string
+          source_wamid?: string | null
+          wa_id: string
+        }
+        Update: {
+          opted_out_at?: string
+          org_id?: string
+          source_wamid?: string | null
+          wa_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_optouts_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       whatsapp_webhook_events: {
         Row: {
+          attempts: number
           claimed_at: string | null
           created_at: string
+          dead_lettered_at: string | null
           error_message: string | null
           event_key: string
           id: string
@@ -21295,8 +21831,10 @@ export type Database = {
           wamid: string
         }
         Insert: {
+          attempts?: number
           claimed_at?: string | null
           created_at?: string
+          dead_lettered_at?: string | null
           error_message?: string | null
           event_key: string
           id?: string
@@ -21309,8 +21847,10 @@ export type Database = {
           wamid: string
         }
         Update: {
+          attempts?: number
           claimed_at?: string | null
           created_at?: string
+          dead_lettered_at?: string | null
           error_message?: string | null
           event_key?: string
           id?: string
@@ -21873,6 +22413,14 @@ export type Database = {
           table_name: string
         }[]
       }
+      _introspect_object_acls: {
+        Args: { p_kind: string; p_names: string[] }
+        Returns: {
+          grantee: string
+          object_name: string
+          privilege_type: string
+        }[]
+      }
       _introspect_org_scoped_tables: {
         Args: never
         Returns: {
@@ -21921,6 +22469,7 @@ export type Database = {
           old_pence: number
         }[]
       }
+      ai_cost_window: { Args: { p_window: string }; Returns: Json }
       ai_employee_month_totals: {
         Args: { p_month?: string; p_org_id: string; p_user_id: string }
         Returns: {
@@ -22023,6 +22572,7 @@ export type Database = {
       }
       ai_settle_reservation: {
         Args: {
+          p_ai_employee_id?: string
           p_cost_pence: number
           p_error_code?: string
           p_input_tokens?: number
@@ -22663,6 +23213,10 @@ export type Database = {
       }
       hq_memory_golden_signals: { Args: never; Returns: Json }
       hq_memory_lifecycle_enabled: { Args: never; Returns: boolean }
+      hq_memory_purge: {
+        Args: { p_actor: string; p_memory_id: string; p_reason?: string }
+        Returns: Json
+      }
       hq_memory_recall: {
         Args: {
           p_class_filter?: string[]
@@ -23446,6 +24000,48 @@ export type Database = {
         Args: { photo_path: string; target_job_id: string }
         Returns: undefined
       }
+      report_aged_payables: {
+        Args: { p_as_at: string; p_org_id: string }
+        Returns: {
+          age_days: number
+          bill_id: string
+          bucket: string
+          date_iso: string
+          outstanding: number
+          party_id: string
+          party_name: string
+          reference: string
+        }[]
+      }
+      report_aged_receivables: {
+        Args: { p_as_at: string; p_org_id: string }
+        Returns: {
+          age_days: number
+          bucket: string
+          due_date: string
+          invoice_id: string
+          party_id: string
+          party_name: string
+          reference: string
+          remaining: number
+          status: string
+        }[]
+      }
+      report_profit_labour_hours: {
+        Args: { p_now?: string; p_org: string }
+        Returns: {
+          hours: number
+          job_id: string
+          user_id: string
+        }[]
+      }
+      report_profit_stock_cogs: {
+        Args: { p_org: string }
+        Returns: {
+          amount: number
+          job_id: string
+        }[]
+      }
       reports_jobs_per_week: {
         Args: { p_org_id: string; p_weeks?: number }
         Returns: {
@@ -23464,7 +24060,7 @@ export type Database = {
       reports_top_customers_by_revenue: {
         Args: { p_limit?: number; p_org_id: string }
         Returns: {
-          customer_id: string | null
+          customer_id: string
           invoice_count: number
           name: string
           revenue: number
@@ -23738,12 +24334,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -23767,11 +24363,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -23792,11 +24388,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -23817,11 +24413,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -23834,11 +24430,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
