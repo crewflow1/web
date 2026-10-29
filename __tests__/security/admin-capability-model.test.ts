@@ -150,6 +150,11 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       "app/(app)/payments/allocate-actions.ts",
       "app/(app)/invoices/[id]/payment-actions.ts",
       "app/(app)/invoices/[id]/proof-actions.ts",
+      // R4 — expenses module.
+      "app/(app)/expenses/layout.tsx",
+      "app/(app)/expenses/page.tsx",
+      "app/(app)/expenses/actions.ts",
+      "app/(app)/expenses/budgets/actions.ts",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;

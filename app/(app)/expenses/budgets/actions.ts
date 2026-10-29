@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapabilityFor } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { FINANCE_CATEGORIES } from "@/lib/finances/schema";
 
@@ -48,6 +49,7 @@ const deleteSchema = z.object({ category: z.enum(FINANCE_CATEGORIES) });
 
 export async function setExpenseBudget(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "expenses", "manage"); // R4 — tighten budget config from role-allowed to grant-required (the inline isManager check + RLS is_org_admin remain as defence-in-depth)
   if (!isManager(ctx.membership.role)) {
     redirect("/expenses/budgets?error=forbidden");
   }
@@ -101,6 +103,7 @@ export async function setExpenseBudget(formData: FormData): Promise<void> {
 
 export async function deleteExpenseBudget(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "expenses", "manage"); // R4 — tighten budget config from role-allowed to grant-required (the inline isManager check + RLS is_org_admin remain as defence-in-depth)
   if (!isManager(ctx.membership.role)) {
     redirect("/expenses/budgets?error=forbidden");
   }

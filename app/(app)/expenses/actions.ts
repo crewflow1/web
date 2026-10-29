@@ -7,7 +7,8 @@ import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
-import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session";
+import { requireCapabilityFor } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 
 /**
@@ -63,7 +64,7 @@ const idSchema = z.string().uuid();
 
 export async function uploadExpenseReceipt(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
-  requireManagementRole(ctx); // Expenses are owner/admin only (defense-in-depth vs direct action POST).
+  await requireCapabilityFor(ctx, user, "expenses", "create"); // R4 (defence-in-depth vs direct action POST)
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) {
     redirect("/expenses/new?error=no_file");
@@ -132,8 +133,8 @@ export async function uploadExpenseReceipt(formData: FormData): Promise<void> {
 }
 
 export async function approveExpenseDraftAction(formData: FormData): Promise<void> {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx);
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "expenses", "approve"); // R4 — approval authority
   const parsed = approveSchema.safeParse({
     draft_id: formData.get("draft_id") ?? "",
     amount: formData.get("amount") ?? "",
@@ -159,7 +160,7 @@ export async function approveExpenseDraftAction(formData: FormData): Promise<voi
 
 export async function rejectExpenseDraft(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
-  requireManagementRole(ctx);
+  await requireCapabilityFor(ctx, user, "expenses", "approve"); // R4 — approve/reject authority
   const parsed = rejectSchema.safeParse({
     draft_id: formData.get("draft_id") ?? "",
     reason: formData.get("reason") ?? "",

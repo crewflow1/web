@@ -37,10 +37,19 @@ vi.mock("next/cache", () => ({
 const requireOrgContextMock = vi.fn();
 vi.mock("@/server/auth/session", () => ({
   requireOrgContext: () => requireOrgContextMock(),
-  // Faithful mirror of the fix-1 management guard the action now ALSO calls
-  // (defense-in-depth over its own internal role gate): staff redirect exactly
-  // like production, owners/admins pass through.
-  requireManagementRole: (ctx?: { membership?: { role?: string } }) => {
+  // Production rejectExpenseDraft no longer calls requireManagementRole — it uses
+  // requireCapabilityFor (mocked below) + its own inline owner/admin check — so
+  // no requireManagementRole mock is needed here.
+}));
+
+// R4: rejectExpenseDraft now ALSO gates via requireCapabilityFor("expenses",
+// "approve") (before its own inline owner/admin check). Mirror the authorization
+// outcome by role — owner/admin pass, others redirect — so this suite keeps
+// testing the reject write+audit path and the denial path. The capability
+// granularity (admin needs the approve grant) is proven in
+// __tests__/security/r4-expenses-capability.test.ts.
+vi.mock("@/server/auth/capabilities", () => ({
+  requireCapabilityFor: async (ctx?: { membership?: { role?: string } }) => {
     const role = ctx?.membership?.role;
     if (role !== "owner" && role !== "admin") {
       redirectMock("/dashboard?error=forbidden");
