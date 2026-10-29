@@ -120,15 +120,21 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
     expect(read(SERVER)).toMatch(/from\("membership_permissions"\)/);
   });
 
-  it("R2 does NOT yet swap any gate — nothing outside the R2 modules adopts the capability API", () => {
-    // Enforcement adoption is R4. If this fails, a gate was swapped early; move it
-    // behind the R4 plan + its own tests. Dependency-free recursive source scan
-    // over app/, server/ and lib/, for every capability symbol, excluding the R2
-    // modules + tests themselves.
+  it("capability-API adoption is confined to the reviewed R2/R3 surface", () => {
+    // The capability API is adopted deliberately, phase by phase. This guard
+    // catches UNreviewed adoption: any new file using it must be added here with
+    // its PR. R2 = the modules themselves; R3 = owner-controlled admin/staff
+    // management (staff/actions.ts + permission-actions.ts). R4 will extend this
+    // list as each module's gates are swapped to can(), per PR. Dependency-free
+    // recursive scan over app/, server/, lib/ for every capability symbol.
     const SELF = new Set([
+      // R2 — the capability modules themselves.
       "server/auth/capabilities.ts",
       "lib/auth/capability-rules.ts",
       "server/services/permission-audit.ts",
+      // R3 — owner-controlled admin appointment + staff:manage + grant editor.
+      "app/(app)/staff/actions.ts",
+      "app/(app)/staff/permission-actions.ts",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;
