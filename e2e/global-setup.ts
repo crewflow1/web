@@ -197,6 +197,14 @@ export default async function globalSetup(): Promise<void> {
   await seedMember("e2e-second@crewflow.test", "E2E Second", "second.json");
   await seedMember("e2e-third@crewflow.test", "E2E Third", "third.json");
 
+  // A DEDICATED staff member for the role-access boundary spec
+  // (role-access-boundary.spec.ts). It must NOT be one of the sign-out members
+  // above: those revoke their own session mid-run, and in file order they run
+  // before this one, so sharing would hand the boundary spec a dead cookie and
+  // fail it at /login instead of proving the management redirect. This session
+  // is never signed out.
+  await seedMember("e2e-staff@crewflow.test", "E2E Staff", "staff.json");
+
   // --- 6. an HQ (superadmin) session for the /admin a11y specs. Deliberately NO
   // membership row: requireOrgContext (server/auth/session.ts) redirects any
   // superadmin email off every (app) route, so this account must stay out of
