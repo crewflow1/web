@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { getReturnById, listReturnLines } from "@/server/services/cis-statements";
 import {
   buildCisReturnCsv,
@@ -31,22 +31,17 @@ import {
  * were reviewed. A SUPERSEDED return (re-prepared since) is refused: prepare/
  * export the current one.
  *
- * Admin-only via RLS (cis_monthly_returns is admin-only), doubled by the role
- * check for a clear message. The masked-UTR-only boundary lives in the builder.
+ * Admin-only via RLS (cis_monthly_returns is admin-only); the R4 capability gate
+ * (cis:export) is the granular app-layer boundary on top — owner always, an
+ * admin only if granted. The masked-UTR-only boundary lives in the builder.
  */
-
-const isAdminRole = (role: string): boolean => role === "owner" || role === "admin";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: NextRequest, { params }: Ctx) {
-  const { ctx } = await requireOrgContext();
-  if (!isAdminRole(ctx.membership.role)) {
-    return NextResponse.json(
-      { error: "Only an owner or admin may export a CIS return." },
-      { status: 403 },
-    );
-  }
+  const guard = await requireCapabilityApi("cis", "export");
+  if (guard instanceof Response) return guard;
+  const { ctx } = guard;
 
   const { id } = await params;
   const ret = await getReturnById(ctx.org.id, id);

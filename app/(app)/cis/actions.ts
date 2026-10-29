@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { requireOrgContext } from "@/server/auth/session";
+import { hasCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
   issueStatement,
@@ -35,16 +36,17 @@ import {
  * "submit", "file" or "send", because a user reading an action name should not
  * be able to infer a filing that did not happen.
  *
- * OWNER/ADMIN ONLY. A server action is a POST endpoint, so a non-admin member
- * can replay it regardless of what the UI shows — the role is re-checked here.
- * That check exists to produce a good message; the REAL boundary is the
- * admin-only RLS on every M4 table plus the `is_org_admin` gate inside each RPC,
- * which refuse a direct PostgREST caller identically.
+ * CAPABILITY-GATED (R4). A server action is a POST endpoint, so a denied member
+ * can replay it regardless of what the UI shows — authorization is re-checked
+ * here via `hasCapability`: OWNER always; an ADMIN only with the matching CIS
+ * grant (or a broadening `cis:manage` / wildcard); any other role never. That
+ * check produces a good message (these are useActionState forms, so it returns a
+ * FormState rather than redirecting); the REAL boundary is the admin-only RLS on
+ * every M4 table plus the `is_org_admin` gate inside each RPC, which refuse a
+ * direct PostgREST caller identically.
  */
 
-const isManager = (role: string): boolean => role === "owner" || role === "admin";
-
-const FORBIDDEN = "Only an owner or admin can manage CIS statements and returns.";
+const FORBIDDEN = "You do not have permission to manage CIS statements and returns.";
 
 type Values = Record<string, unknown>;
 
@@ -66,7 +68,8 @@ export async function saveContractorProfile(
   formData: FormData,
 ): Promise<FormState<Values>> {
   const { ctx, user } = await requireOrgContext();
-  if (!isManager(ctx.membership.role)) return formError(FORBIDDEN);
+  // Saving the org's CIS identity (PAYE ref / UTR) is CIS configuration → manage.
+  if (!(await hasCapability(ctx, user, "cis", "manage"))) return formError(FORBIDDEN);
 
   const parsed = validateFormData(formData, cisContractorProfileSchema);
   if (!parsed.ok) return parsed.state as FormState<Values>;
@@ -104,7 +107,8 @@ export async function issueCisStatement(
   formData: FormData,
 ): Promise<FormState<Values>> {
   const { ctx, user } = await requireOrgContext();
-  if (!isManager(ctx.membership.role)) return formError(FORBIDDEN);
+  // Issuing (or reissuing) a statement creates a new statutory document → create.
+  if (!(await hasCapability(ctx, user, "cis", "create"))) return formError(FORBIDDEN);
 
   const parsed = validateFormData(formData, cisStatementIssueSchema);
   if (!parsed.ok) return parsed.state as FormState<Values>;
@@ -140,7 +144,8 @@ export async function withdrawCisStatement(
   formData: FormData,
 ): Promise<FormState<Values>> {
   const { ctx, user } = await requireOrgContext();
-  if (!isManager(ctx.membership.role)) return formError(FORBIDDEN);
+  // Withdrawing retires a statement that should no longer be relied on → delete.
+  if (!(await hasCapability(ctx, user, "cis", "delete"))) return formError(FORBIDDEN);
 
   const parsed = validateFormData(formData, cisStatementWithdrawSchema);
   if (!parsed.ok) return parsed.state as FormState<Values>;
@@ -184,7 +189,8 @@ export async function prepareCisReturn(
   formData: FormData,
 ): Promise<FormState<Values>> {
   const { ctx, user } = await requireOrgContext();
-  if (!isManager(ctx.membership.role)) return formError(FORBIDDEN);
+  // Preparing assembles + freezes the CIS300-shape return dataset → create.
+  if (!(await hasCapability(ctx, user, "cis", "create"))) return formError(FORBIDDEN);
 
   const parsed = validateFormData(formData, cisReturnPrepareSchema);
   if (!parsed.ok) return parsed.state as FormState<Values>;
@@ -219,7 +225,8 @@ export async function exportCisReturn(
   formData: FormData,
 ): Promise<FormState<Values>> {
   const { ctx, user } = await requireOrgContext();
-  if (!isManager(ctx.membership.role)) return formError(FORBIDDEN);
+  // Marking a return exported records taking the figures OUT of CrewFlow → export.
+  if (!(await hasCapability(ctx, user, "cis", "export"))) return formError(FORBIDDEN);
 
   const returnId = String(formData.get("return_id") ?? "");
   if (!returnId) return formError("Choose a prepared return.");
@@ -262,15 +269,20 @@ export async function exportCisReturn(
  * statutory) statements and subcontractors with no email on file are skipped and
  * reported, never sent silently.
  *
- * OWNER/ADMIN ONLY — re-checked here for a good message; the real boundary is
- * the admin-only RLS on cis_statements the service reads through.
+ * CAPABILITY-GATED (R4) at `cis:manage`. Emailing posts statutory documents OUT
+ * to third parties (subcontractors) on the org's behalf — a higher-trust action
+ * than a self-service export, so it takes the broadest CIS grant rather than
+ * cis:export. Owner always; an admin only if granted cis:manage. The real
+ * boundary is the admin-only RLS on cis_statements the service reads through.
  */
 export async function emailCisStatements(
   _prev: FormState<Values>,
   formData: FormData,
 ): Promise<FormState<Values>> {
   const { ctx, user } = await requireOrgContext();
-  if (!isManager(ctx.membership.role)) return formError(FORBIDDEN);
+  // Emailing distributes the statutory statements OUT to third-party
+  // subcontractors on the org's behalf → the broadest CIS grant, cis:manage.
+  if (!(await hasCapability(ctx, user, "cis", "manage"))) return formError(FORBIDDEN);
 
   const taxMonthEnd = String(formData.get("tax_month_end") ?? "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(taxMonthEnd)) {

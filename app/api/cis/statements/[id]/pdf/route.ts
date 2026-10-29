@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { getCisProfile } from "@/server/services/cis";
 import { getStatement, listStatementPayments } from "@/server/services/cis-statements";
 import { describeVerificationNumber } from "@/lib/cis/statements";
@@ -12,9 +12,10 @@ import { formatGbp, round2, toPounds } from "@/lib/money";
  * CIS payment and deduction statement PDF.
  *
  * RLS-scoped: `cis_statements` is admin-only, so a non-admin member of the same
- * org reads nothing here and gets a 404 — the same answer a stranger gets. The
- * role is not re-checked in app code because there is nothing this route can do
- * that RLS has not already decided.
+ * org reads nothing here and gets a 404 — the same answer a stranger gets. On
+ * top of that floor the R4 capability gate (cis:view) is the GRANULAR app-layer
+ * boundary: RLS `is_org_admin` admits ANY admin, but only an admin the owner
+ * granted `cis:view` (or the owner) should read a statement. Owner always passes.
  *
  * The document body is the FROZEN statement row. Nothing is recomputed from the
  * live ledger: that is the entire point of freezing it, and a statement whose
@@ -46,7 +47,9 @@ function snapshotUtrMask(utr: string): string {
 }
 
 export async function GET(_req: NextRequest, { params }: Ctx) {
-  const { ctx } = await requireOrgContext();
+  const guard = await requireCapabilityApi("cis", "view");
+  if (guard instanceof Response) return guard;
+  const { ctx } = guard;
   const { id } = await params;
 
   const statement = await getStatement(ctx.org.id, id);

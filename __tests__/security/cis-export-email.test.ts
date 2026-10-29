@@ -120,14 +120,23 @@ describe("CIS M5 emailing is org-scoped and dark-safe", () => {
     expect(svc).toMatch(/notification_id:\s*null/);
   });
 
-  it("both export routes are admin-gated with an explicit role check", () => {
+  it("both export routes are gated by the cis:export capability (403 on deny)", () => {
+    // R4: the coarse inline isAdminRole check became the granular capability
+    // gate. requireCapabilityApi("cis","export") passes the owner always and an
+    // admin only with the grant, and returns a 403 Response on deny — a strictly
+    // tighter boundary than the old owner/admin check. The per-role behaviour is
+    // proven in __tests__/security/r4-cis-capability.test.ts.
     for (const f of [
       "app/api/cis/returns/[id]/export.csv/route.ts",
       "app/api/cis/statements/export.csv/route.ts",
     ]) {
       const src = codeOf(read(f));
-      expect(src, `${f} must check the admin role`).toMatch(/isAdminRole|role === "owner"/);
-      expect(src, `${f} must return 403 for non-admins`).toMatch(/status:\s*403/);
+      expect(src, `${f} must gate on cis:export`).toMatch(
+        /requireCapabilityApi\(\s*"cis",\s*"export"\s*\)/,
+      );
+      expect(src, `${f} must bail on the guard Response (403)`).toMatch(
+        /instanceof Response\)\s*return guard/,
+      );
     }
   });
 });
