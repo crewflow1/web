@@ -162,9 +162,17 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       "app/api/finances/route.ts",
       "app/api/finances/[id]/route.ts",
       "app/api/finances/export/route.ts",
+      // R4 — CIS module. Layout gates the pages (cis:view); the 6 server actions
+      // use hasCapability (FormState forms); the 3 API routes use
+      // requireCapabilityApi (export for CSVs/return, view for the statement PDF).
+      "app/(app)/cis/layout.tsx",
+      "app/(app)/cis/actions.ts",
+      "app/api/cis/returns/[id]/export.csv/route.ts",
+      "app/api/cis/statements/[id]/pdf/route.ts",
+      "app/api/cis/statements/export.csv/route.ts",
     ]);
     const SYMBOLS =
-      /\b(requireCapability|requireCapabilityApi|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;
+      /\b(requireCapability|requireCapabilityApi|requireCapabilityFor|hasCapability|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;
     const offenders: string[] = [];
     const walk = (dir: string) => {
       for (const e of readdirSync(dir, { withFileTypes: true })) {

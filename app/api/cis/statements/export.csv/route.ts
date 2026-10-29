@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { listStatements } from "@/server/services/cis-statements";
 import { buildCisStatementsCsv, type CisStatementForCsv } from "@/lib/cis/export-csv";
 import { cisTaxMonthEnd } from "@/lib/cis/tax-month";
@@ -20,20 +20,17 @@ import { cisTaxMonthEnd } from "@/lib/cis/tax-month";
  * per-subcontractor document carrying the full UTR is the admin-gated statement
  * PDF.
  *
- * Admin-only via RLS (cis_statements is admin-only), doubled by the role check.
+ * Admin-only via RLS (cis_statements is admin-only); the R4 capability gate
+ * (cis:export) is the granular app-layer boundary on top — owner always, an
+ * admin only if granted.
  */
 
-const isAdminRole = (role: string): boolean => role === "owner" || role === "admin";
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function GET(request: NextRequest) {
-  const { ctx } = await requireOrgContext();
-  if (!isAdminRole(ctx.membership.role)) {
-    return NextResponse.json(
-      { error: "Only an owner or admin may export CIS statements." },
-      { status: 403 },
-    );
-  }
+  const guard = await requireCapabilityApi("cis", "export");
+  if (guard instanceof Response) return guard;
+  const { ctx } = guard;
 
   const raw = request.nextUrl.searchParams.get("month");
   // Normalise any date in the month to the tax-month END, from the ONE

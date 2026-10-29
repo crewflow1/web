@@ -158,6 +158,25 @@ export async function requireCapabilityFor(
   }
 }
 
+/**
+ * Boolean capability check for server actions that return a FormState (a
+ * graceful `formError` message) rather than redirecting — same authorization as
+ * requireCapabilityFor, without the redirect, so a `useActionState` form keeps
+ * rendering its own "not allowed" message. Owner → always true; an admin → only
+ * with the grant (or a broadening `manage` / wildcard); any other role → false.
+ * (R4.)
+ */
+export async function hasCapability(
+  ctx: OrgContext,
+  user: User,
+  module: string,
+  action: CapAction,
+): Promise<boolean> {
+  if (ctx.membership.role === "owner") return true;
+  const grants = await loadCapabilities(ctx.org.id, user.id);
+  return canWith(ctx.membership.role, grants, module, action);
+}
+
 // ── Owner authority (Role & Permissions R3) ──────────────────────────────────
 // Only the OWNER may appoint/remove admins, grant/revoke admin permissions, and
 // (dark) transfer ownership. These helpers are the single server-side authority
