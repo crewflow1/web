@@ -3,7 +3,8 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session";
+import { requireCapabilityFor } from "@/server/auth/capabilities";
 import {
   customerFormSchema,
   type CustomerFormInput,
@@ -85,12 +86,15 @@ async function resolveParentCustomer(
  * foreign id is indistinguishable from a missing one.
  */
 
+// R4 — customer surfaces are capability-gated. createCustomer→create;
+// updateCustomer + rotateCustomerPortalToken→edit; sendCustomerStatement→export
+// (emails a financial statement out to the customer); deleteCustomer→delete.
 export async function createCustomer(
   _prevState: FormState<CustomerFormInput>,
   formData: FormData,
 ): Promise<FormState<CustomerFormInput>> {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "customers", "create"); // R4
   const result = validateFormData(formData, customerFormSchema);
   if (!result.ok) return result.state;
 
@@ -149,8 +153,8 @@ export async function updateCustomer(
   _prevState: FormState<CustomerFormInput>,
   formData: FormData,
 ): Promise<FormState<CustomerFormInput>> {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "customers", "edit"); // R4
   const result = validateFormData(formData, customerFormSchema);
   if (!result.ok) return result.state;
 
@@ -216,8 +220,8 @@ export async function updateCustomer(
  * there's no user input to preserve.
  */
 export async function rotateCustomerPortalToken(id: string) {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "customers", "edit"); // R4 — reissues portal access
   const supabase = await createClient();
   // Token shape is owned by lib/customers/portal-token.ts so the
   // rotate action and any future code path stay in lockstep.
@@ -265,8 +269,8 @@ export async function rotateCustomerPortalToken(id: string) {
  * "succeeding".
  */
 export async function sendCustomerStatement(id: string, formData: FormData) {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "customers", "export"); // R4 — emails a financial statement out
   const supabase = await createClient();
 
   const from = statementBound(formData.get("from"));
@@ -299,8 +303,8 @@ export async function sendCustomerStatement(id: string, formData: FormData) {
 }
 
 export async function deleteCustomer(id: string) {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "customers", "delete"); // R4
   const supabase = await createClient();
   // RLS allows DELETE only for admins/owners. Non-admins get a no-op
   // (zero rows affected); the exact count lets us tell that apart from a
