@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session";
+import { requireCapabilityFor } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { recordPaymentSchema } from "@/lib/payments/schema";
@@ -30,7 +31,7 @@ export async function recordAllocatedPayment(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
-  requireManagementRole(ctx); // money mutation (fix 1)
+  await requireCapabilityFor(ctx, user, "payments", "create"); // money mutation (R4)
 
   let allocations: unknown = [];
   try {

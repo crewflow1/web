@@ -138,6 +138,26 @@ export async function requireCapabilityApi(
   return { user, ctx, grants };
 }
 
+/**
+ * Assert a capability for an ALREADY-resolved context — for server actions that
+ * have already called requireOrgContext and hold { ctx, user }. Owner passes
+ * unconditionally; a denied caller is redirected (same UX as requireManagementRole).
+ * Avoids a second context resolve while enforcing the same capability as the
+ * page/API guards. (R4.)
+ */
+export async function requireCapabilityFor(
+  ctx: OrgContext,
+  user: User,
+  module: string,
+  action: CapAction,
+): Promise<void> {
+  if (ctx.membership.role === "owner") return;
+  const grants = await loadCapabilities(ctx.org.id, user.id);
+  if (!canWith(ctx.membership.role, grants, module, action)) {
+    redirect("/dashboard?error=forbidden");
+  }
+}
+
 // ── Owner authority (Role & Permissions R3) ──────────────────────────────────
 // Only the OWNER may appoint/remove admins, grant/revoke admin permissions, and
 // (dark) transfer ownership. These helpers are the single server-side authority
