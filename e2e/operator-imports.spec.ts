@@ -79,17 +79,26 @@ test("operator read → remap → commit → verify → rollback", async ({ page
   await page.goto(`/admin/imports?org=${orgId}`);
   await expect(page.getByRole("heading", { name: "Migration OS — operator" })).toBeVisible();
   await page.getByRole("link", { name: "Operator E2E Verify" }).click();
+  // The link is a client navigation to /admin/imports/<id>. Wait for the swap to
+  // LAND before asserting — asserting mid-navigation is the historical flake
+  // ("element(s) not found" on the detail heading).
+  await page.waitForURL(/\/admin\/imports\/[^/?]+/);
   await expect(page.getByRole("heading", { name: "Operator E2E Verify" })).toBeVisible();
 
   // REMAP: rebind customer.name → the "Company" source column, submit.
   await page.locator('select[name="map.name"]').first().selectOption("Company");
   await page.getByRole("button", { name: /Re-map customer/i }).click();
+  // Each action server-action REDIRECTS to ...&saved=remapped; wait for the
+  // redirect to land so the banner assertion never races the navigation (the
+  // flake at this line).
+  await page.waitForURL(/saved=remapped/);
   await expect(page.getByText(/Re-mapped \d+ row/)).toBeVisible();
 
   expect(await customerCount()).toBe(0); // nothing committed yet
 
   // COMMIT: inserts the two customers into the target org's live table.
   await page.getByRole("button", { name: "Commit import" }).click();
+  await page.waitForURL(/saved=committed/);
   await expect(page.getByText(/Committed \d+ row/)).toBeVisible();
   await expect.poll(importStatus, { timeout: 10000 }).toBe("committed");
   await expect.poll(customerCount, { timeout: 10000 }).toBe(2);
@@ -98,6 +107,7 @@ test("operator read → remap → commit → verify → rollback", async ({ page
 
   // ROLLBACK: deletes exactly the import-created records.
   await page.getByRole("button", { name: "Roll back import" }).click();
+  await page.waitForURL(/saved=rolled_back/);
   await expect(page.getByText(/Rolled back — every record/)).toBeVisible();
   await expect.poll(importStatus, { timeout: 10000 }).toBe("rolled_back");
   await expect.poll(customerCount, { timeout: 10000 }).toBe(0);
