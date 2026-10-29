@@ -5,7 +5,8 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
-import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session";
+import { requireCapabilityFor } from "@/server/auth/capabilities";
 import {
   createLeadSchema,
   updateLeadSchema,
@@ -50,8 +51,8 @@ export async function createLead(
   _prevState: FormState<LeadValues>,
   formData: FormData,
 ): Promise<FormState<LeadValues>> {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "leads", "create"); // R4
   const result = validateFormData(formData, createLeadSchema);
   if (!result.ok) return result.state as FormState<LeadValues>;
 
@@ -121,8 +122,8 @@ export async function updateLead(
   _prevState: FormState<LeadValues>,
   formData: FormData,
 ): Promise<FormState<LeadValues>> {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "leads", "edit"); // R4
   if (!idSchema.safeParse(id).success) return formError("Invalid lead id.");
 
   const result = validateFormData(formData, updateLeadSchema);
@@ -185,8 +186,8 @@ export async function updateLead(
  * Button-only — keeps redirect+querystring pattern.
  */
 export async function moveLeadStage(id: string, formData: FormData) {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "leads", "edit"); // R4 — pipeline stage move
   if (!idSchema.safeParse(id).success) redirect("/leads");
 
   const parsed = moveStageSchema.safeParse({
@@ -228,7 +229,7 @@ const ACTED_KIND_SCHEMA = z.enum(["call", "message", "archive"]);
 
 export async function acknowledgeLead(id: string, formData: FormData) {
   const { ctx, user } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  await requireCapabilityFor(ctx, user, "leads", "edit"); // R4
   if (!idSchema.safeParse(id).success) redirect("/leads?error=bad_id");
 
   const parsed = ACTED_KIND_SCHEMA.safeParse(formData.get("kind") ?? "");
@@ -305,8 +306,8 @@ export async function acknowledgeLead(id: string, formData: FormData) {
  * field as a postfix (the leads table doesn't have a dedicated column).
  */
 export async function regenerateLeadSummary(id: string) {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "leads", "edit"); // R4 — regenerate derived summary
   if (!idSchema.safeParse(id).success) redirect("/leads?error=bad_id");
 
   // SECURITY (P2 audit H-1): summariseLead reads via the service-role admin
@@ -362,8 +363,11 @@ export async function regenerateLeadSummary(id: string) {
  * lifecycle actions in this file and sidesteps the deep-swap commit race.
  */
 export async function convertLeadToCustomer(id: string) {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  const { ctx, user } = await requireOrgContext();
+  // R4 — conversion mints a customer FROM the lead; gated on leads:create (a
+  // deliberate cross-module decision — leads:create, not customers:create — since
+  // conversion is a lead-lifecycle act on an already-org-scoped lead).
+  await requireCapabilityFor(ctx, user, "leads", "create");
   if (!idSchema.safeParse(id).success) redirect("/leads?error=bad_id");
 
   const supabase = await createClient();
@@ -444,8 +448,8 @@ export async function convertLeadToCustomer(id: string) {
 }
 
 export async function deleteLead(id: string) {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "leads", "delete"); // R4
   if (!idSchema.safeParse(id).success) redirect("/leads");
 
   const supabase = await createClient();

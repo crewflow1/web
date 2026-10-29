@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { getRequestI18n } from "@/server/i18n/request";
-import { requireManagementRole } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { EmptyState } from "../_components/empty-state";
 import {
   LEAD_STAGES,
@@ -51,8 +51,9 @@ type SP = Promise<{
 
 export default async function LeadsPage({ searchParams }: { searchParams: SP }) {
   const { ctx, t } = await getRequestI18n();
-  // Sales pipeline (value/forecast) is owner/admin only (nav ADMIN_ROLES).
-  requireManagementRole(ctx);
+  // R4 — the sales pipeline (value/forecast) requires leads:view (owner full;
+  // admin only if granted). Defence in depth behind the segment layout gate.
+  await requireCapability("leads", "view");
   const sp = await searchParams;
   const supabase = await createClient();
 

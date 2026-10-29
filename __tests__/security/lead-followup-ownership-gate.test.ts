@@ -36,12 +36,18 @@ vi.mock("next/cache", () => ({
 const requireOrgContextMock = vi.fn();
 vi.mock("@/server/auth/session", () => ({
   requireOrgContext: () => requireOrgContextMock(),
-  // Faithful fix-1 mirror: leads actions are management-only; the tests
-  // configure owner/admin contexts, which pass through unchanged.
-  requireManagementRole: (ctx?: { membership?: { role?: string } }) => {
+}));
+
+// R4: acknowledgeLead now gates via requireCapabilityFor("leads","edit") instead
+// of requireManagementRole. Mirror the authorization outcome by role — owner/
+// admin pass, others redirect — so this suite keeps testing the ownership/
+// not_found/bad_kind paths. Granular grant behaviour is proven in
+// __tests__/security/r4-leads-capability.test.ts.
+vi.mock("@/server/auth/capabilities", () => ({
+  requireCapabilityFor: async (ctx?: { membership?: { role?: string } }) => {
     const role = ctx?.membership?.role ?? "owner";
     if (role !== "owner" && role !== "admin") {
-      throw new Error("REDIRECT:/dashboard?error=forbidden");
+      redirectMock("/dashboard?error=forbidden");
     }
   },
 }));

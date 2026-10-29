@@ -80,8 +80,10 @@ describe("H-1 contract — every service-role read is org-scoped", () => {
 
 describe("H-1 contract — regenerateLeadSummary threads the caller's org", () => {
   it("captures ctx from requireOrgContext()", () => {
+    // R4 added `user` to the destructure (for the capability gate); match ctx
+    // tolerantly rather than pinning the exact destructure shape.
     expect(regenerateFn).toMatch(
-      /const\s*\{\s*ctx\s*\}\s*=\s*await\s+requireOrgContext\(\)/,
+      /const\s*\{[^}]*\bctx\b[^}]*\}\s*=\s*await\s+requireOrgContext\(\)/,
     );
   });
 
