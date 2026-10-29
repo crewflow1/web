@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementContext } from "@/server/auth/session";
 import { isSelfServeBillingConfigured } from "@/lib/billing/self-serve";
 import { listPlans, getPlan, FEATURE_KEYS, type FeatureKey } from "@/lib/billing/plans";
 import { planHasFeature } from "@/lib/billing/entitlements";
@@ -49,7 +49,12 @@ export default async function BillingSettingsPage({
 }: {
   searchParams: Promise<{ error?: string; change?: string; plan?: string }>;
 }) {
-  const { ctx } = await requireOrgContext();
+  // Management-only: redirect non-owner/admin BEFORE any subscription / Stripe
+  // invoice read. Previously the page resolved only the member floor and merely
+  // hid the admin buttons, so a `staff` member would see the org's subscription
+  // status and SaaS invoice list the moment self-serve billing is configured.
+  // Matches the api-keys / webhooks / imports settings pages.
+  const { ctx } = await requireManagementContext();
   const sp = await searchParams;
   const isAdmin =
     ctx.membership.role === "owner" || ctx.membership.role === "admin";

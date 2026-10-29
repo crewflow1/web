@@ -45,7 +45,11 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
-import { requireOrgContext, type OrgContext } from "@/server/auth/session";
+import {
+  requireOrgContext,
+  requireManagementRole,
+  type OrgContext,
+} from "@/server/auth/session";
 import { getTextProvider } from "@/lib/ai/text";
 import {
   invocationHash,
@@ -434,6 +438,12 @@ export async function generateQuoteDraft(
   }
 
   const { ctx, user } = await requireOrgContext();
+  // Quotes are a management-only domain (the whole /quotes segment layout and
+  // every hand-written quote action require owner/admin). The AI writer is just
+  // another way to produce a quote draft inside that domain, so it enforces the
+  // SAME boundary server-side — a `staff` member cannot spend governed AI budget
+  // or read lead/quote context by POSTing the action directly.
+  requireManagementRole(ctx);
 
   // 2 + 3.
   const { context, fields } = await buildQuoteContext(input);
@@ -615,6 +625,7 @@ export async function applyQuoteDraft(
   edited: unknown,
 ): Promise<ApplyQuoteDraftResult> {
   const { ctx, user } = await requireOrgContext();
+  requireManagementRole(ctx); // management-only domain (see generateQuoteDraft)
   const supabase = await createClient();
 
   const parsed = parseQuoteDraft(edited);
@@ -665,6 +676,7 @@ export async function discardQuoteDraft(
   draftId: string,
 ): Promise<{ ok: true } | { ok: false; error: "not_found" | "not_open" | "write_failed" }> {
   const { ctx, user } = await requireOrgContext();
+  requireManagementRole(ctx); // management-only domain (see generateQuoteDraft)
   const supabase = await createClient();
 
   const { data: existing, error: readErr } = await table(supabase, DRAFTS)
@@ -699,6 +711,7 @@ export async function latestOpenQuoteDraft(
 ): Promise<{ id: string; content: unknown; degraded: boolean } | null> {
   if (!anchor.quoteId && !anchor.leadId) return null;
   const { ctx } = await requireOrgContext();
+  requireManagementRole(ctx); // management-only domain (see generateQuoteDraft)
   const supabase = await createClient();
 
   let query = table(supabase, DRAFTS)
