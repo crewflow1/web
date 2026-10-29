@@ -42,6 +42,8 @@ import {
   notifyStaffOfLeaveDecision,
 } from "@/lib/email/send-leave";
 import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
+import { requireOwner, isOwner, canManageStaff } from "@/server/auth/capabilities";
+import { recordPermissionEvent } from "@/server/services/permission-audit";
 
 /**
  * Staff CRUD + rota + leave server actions.
@@ -121,6 +123,21 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
   }
   const data = parsed.data;
 
+  // Role & Permissions R3: only the OWNER may appoint an admin; a non-owner can
+  // only add normal staff, and only when granted `staff:manage`. (requireAdmin
+  // above is the floor; this is the refinement.)
+  if (data.role === "admin") {
+    if (!isOwner(ctx)) {
+      return {
+        ok: false,
+        error: "Only the owner can appoint an admin.",
+        fieldErrors: { role: "Only the owner can add an admin." },
+      };
+    }
+  } else if (!(await canManageStaff(ctx, user))) {
+    return { ok: false, error: "You don't have permission to add staff." };
+  }
+
   const supabase = await createClient();
   const { data: existing } = await supabase
     .from("users")
@@ -193,14 +210,32 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
     };
   }
 
-  const { error: memErr } = await supabase.from("memberships").insert({
-    org_id: ctx.org.id,
-    user_id: existing.id,
-    role: data.role,
-  });
+  const { data: inserted, error: memErr } = await supabase
+    .from("memberships")
+    .insert({
+      org_id: ctx.org.id,
+      user_id: existing.id,
+      role: data.role,
+    })
+    .select("id")
+    .single();
   if (memErr) {
     console.error("[staff] invite failed", memErr);
     return { ok: false, error: "Couldn't add the member. Try again." };
+  }
+
+  // R3: audit an admin APPOINTMENT the instant it lands (this path is owner-gated
+  // above). A staff add is not an admin/permission change; auditing membership
+  // adds/removes needs a new permission_audit event value → deferred to the
+  // migration PR.
+  if (data.role === "admin") {
+    await recordPermissionEvent({
+      orgId: ctx.org.id,
+      actorUserId: user.id,
+      targetMembershipId: (inserted as { id: string } | null)?.id ?? null,
+      event: "admin_appointed",
+      detail: { via: "inviteStaff", targetUserId: existing.id },
+    });
   }
 
   // Pre-fill profile fields ONLY where the user currently has nothing —
@@ -330,7 +365,7 @@ export async function resendStaffInvite(email: string): Promise<InviteStaffResul
 }
 
 export async function updateStaffRole(userId: string, formData: FormData) {
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   requireAdmin(ctx);
   if (!uuid.safeParse(userId).success) redirect("/staff");
 
@@ -354,13 +389,26 @@ export async function updateStaffRole(userId: string, formData: FormData) {
   if (ownerCountError) throw readFailure("staff: owner count guard", ownerCountError);
   const { data: target, error: targetError } = await supabase
     .from("memberships")
-    .select("role")
+    .select("id, role")
     .eq("org_id", ctx.org.id)
     .eq("user_id", userId)
     .maybeSingle();
   if (targetError) throw readFailure("staff: role-change target", targetError);
   if (target?.role === "owner" && (ownerCount ?? 0) <= 1) {
     redirect(`/staff/${userId}?error=last_owner_lock`);
+  }
+
+  // Role & Permissions R3: OWNER-ONLY when the change appoints an admin, changes
+  // an existing admin, OR touches an OWNER (an admin — even with staff:manage —
+  // may never demote a co-owner). Any other change needs `staff:manage`.
+  const requiresOwner =
+    parsed.data.role === "admin" ||
+    target?.role === "admin" ||
+    target?.role === "owner";
+  if (requiresOwner) {
+    requireOwner(ctx);
+  } else if (!(await canManageStaff(ctx, user))) {
+    redirect(`/staff/${userId}?error=forbidden`);
   }
 
   const { error, count } = await supabase
@@ -373,6 +421,20 @@ export async function updateStaffRole(userId: string, formData: FormData) {
     redirect(`/staff/${userId}?error=update_failed`);
   }
   if (count === 0) redirect(`/staff/${userId}?error=update_denied`);
+
+  // Audit the authorization-relevant change (admin appoint/remove or role move).
+  await recordPermissionEvent({
+    orgId: ctx.org.id,
+    actorUserId: user.id,
+    targetMembershipId: target?.id ?? null,
+    event:
+      parsed.data.role === "admin"
+        ? "admin_appointed"
+        : target?.role === "admin"
+          ? "admin_removed"
+          : "role_changed",
+    detail: { from: target?.role ?? null, to: parsed.data.role },
+  });
 
   revalidatePath("/staff");
   revalidatePath(`/staff/${userId}`);
@@ -460,14 +522,14 @@ export async function updateStaffProfile(
 }
 
 export async function removeStaff(userId: string) {
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   requireAdmin(ctx);
   if (!uuid.safeParse(userId).success) redirect("/staff");
 
   const supabase = await createClient();
   const { data: target, error: targetError } = await supabase
     .from("memberships")
-    .select("role")
+    .select("id, role")
     .eq("org_id", ctx.org.id)
     .eq("user_id", userId)
     .maybeSingle();
@@ -476,6 +538,14 @@ export async function removeStaff(userId: string) {
   if (targetError) throw readFailure("staff: remove-target role", targetError);
   if (target?.role === "owner") {
     redirect(`/staff/${userId}?error=cannot_remove_owner`);
+  }
+
+  // Role & Permissions R3: removing an ADMIN is OWNER-ONLY; removing normal
+  // staff needs `staff:manage`.
+  if (target?.role === "admin") {
+    requireOwner(ctx);
+  } else if (!(await canManageStaff(ctx, user))) {
+    redirect(`/staff/${userId}?error=forbidden`);
   }
 
   const { error, count } = await supabase
@@ -488,6 +558,16 @@ export async function removeStaff(userId: string) {
     redirect(`/staff/${userId}?error=remove_failed`);
   }
   if (count === 0) redirect(`/staff/${userId}?error=remove_denied`);
+
+  if (target?.role === "admin") {
+    await recordPermissionEvent({
+      orgId: ctx.org.id,
+      actorUserId: user.id,
+      targetMembershipId: target.id,
+      event: "admin_removed",
+      detail: { via: "removeStaff" },
+    });
+  }
 
   revalidatePath("/staff");
   redirect("/staff?saved=removed");

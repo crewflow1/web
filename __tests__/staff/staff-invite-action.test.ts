@@ -106,7 +106,10 @@ beforeEach(() => {
   revalidatePathMock.mockReset();
   redirectMock.mockClear();
   adminListUsersMock.mockClear();
-  membershipRole = "admin";
+  // R3: the OWNER is the universally-authorised caller (can invite admins AND
+  // staff); owner short-circuits the staff:manage capability check. Per-test
+  // cases below flip this to `admin` to prove the new owner-only rule.
+  membershipRole = "owner";
   existingUser = null;
   membershipDup = null;
   adminListUsersResult = { data: { users: [] }, error: null };
@@ -129,6 +132,15 @@ describe("inviteStaff — role cannot escalate", () => {
     const res = await inviteStaff(makeForm({ email: "x@x.test", role: "superuser" }));
     expect(res.ok).toBe(false);
     expect(sendStaffInviteMock).not.toHaveBeenCalled();
+  });
+
+  it("R3: an ADMIN caller cannot appoint another admin (owner-only), no invite sent", async () => {
+    membershipRole = "admin"; // not the owner
+    const res = await inviteStaff(makeForm({ email: "adm2@x.test", role: "admin" }));
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/only the owner can appoint an admin/i);
+    expect(sendStaffInviteMock).not.toHaveBeenCalled();
+    expect(revalidatePathMock).not.toHaveBeenCalled();
   });
 });
 

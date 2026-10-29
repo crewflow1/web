@@ -137,3 +137,31 @@ export async function requireCapabilityApi(
   }
   return { user, ctx, grants };
 }
+
+// ── Owner authority (Role & Permissions R3) ──────────────────────────────────
+// Only the OWNER may appoint/remove admins, grant/revoke admin permissions, and
+// (dark) transfer ownership. These helpers are the single server-side authority
+// for "owner-only"; nav-hiding is never the boundary.
+
+export function isOwner(ctx: OrgContext): boolean {
+  return ctx.membership.role === "owner";
+}
+
+/** PAGE / server-action owner gate — redirect a non-owner to their dashboard. */
+export function requireOwner(ctx: OrgContext): void {
+  if (!isOwner(ctx)) redirect("/dashboard?error=forbidden");
+}
+
+/**
+ * May this caller invite / manage NORMAL STAFF (not admins)? Owner always; an
+ * admin only when the owner granted them `staff:manage`. (Founder policy.)
+ */
+export async function canManageStaff(
+  ctx: OrgContext,
+  user: User,
+): Promise<boolean> {
+  if (ctx.membership.role === "owner") return true;
+  if (ctx.membership.role !== "admin") return false;
+  const grants = await loadCapabilities(ctx.org.id, user.id);
+  return canWith("admin", grants, "staff", "manage");
+}
