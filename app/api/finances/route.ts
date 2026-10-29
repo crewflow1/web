@@ -2,7 +2,8 @@ import { type NextRequest } from "next/server";
 import * as respond from "@/lib/api/respond";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireManagementApi, requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { verifyJobInOrg } from "@/lib/crm/reference-integrity";
 import {
   createFinanceSchema,
@@ -33,7 +34,9 @@ function isAllowedMime(mime: string | null | undefined): boolean {
 }
 
 export async function GET(request: NextRequest) {
-  const guard = await requireManagementApi();
+  // R4 — the cost ledger is read-gated by costs:view (owner full; admin only if
+  // granted). The POST below stays member-open by design (see its comment).
+  const guard = await requireCapabilityApi("costs", "view");
   if (guard instanceof Response) return guard;
   const { ctx } = guard;
   const supabase = await createClient();

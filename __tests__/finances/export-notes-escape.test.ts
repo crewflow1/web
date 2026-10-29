@@ -56,25 +56,17 @@ vi.mock("@/lib/supabase/server", () => ({
   })),
 }));
 
-vi.mock("@/server/auth/session", () => {
-  // Faithful fix-1 mirrors: requireManagementApi derives from the SAME base
-  // context mock; a missing/non-management role gets the real 403 shape.
-  const base =  vi.fn(async () => ({ ctx: { org: { id: "org-1" } } }));
-  const isMgmt = (r: unknown) => r === "owner" || r === "admin";
-  return {
-    requireOrgContext: base,
-    requireManagementRole: (ctx?: { membership?: { role?: string } }) => {
-      if (!isMgmt(ctx?.membership?.role)) throw new Error("REDIRECT:/dashboard?error=forbidden");
-    },
-    requireManagementApi: vi.fn(async () => {
-      const res = (await base()) as { ctx?: { membership?: { role?: string } } };
-      if (!isMgmt(res?.ctx?.membership?.role ?? "owner")) {
-        return Response.json({ error: "forbidden" }, { status: 403 });
-      }
-      return res;
-    }),
-  };
-});
+// R4: the export route now gates GET via requireCapabilityApi("costs","export")
+// (it no longer imports the session helpers). The authorization outcome by role
+// is proven in __tests__/security/r4-costs-capability.test.ts. Here we stand in a
+// GRANTED caller so this suite keeps testing the CSV escaping + active-org pin.
+vi.mock("@/server/auth/capabilities", () => ({
+  requireCapabilityApi: vi.fn(async () => ({
+    ctx: { org: { id: "org-1" } },
+    user: { id: "user-1", email: "u@example.test" },
+    grants: [],
+  })),
+}));
 
 // Import under test AFTER the mocks are registered.
 const { GET } = await import("@/app/api/finances/export/route");

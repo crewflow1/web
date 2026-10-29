@@ -155,6 +155,13 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       "app/(app)/expenses/page.tsx",
       "app/(app)/expenses/actions.ts",
       "app/(app)/expenses/budgets/actions.ts",
+      // R4 — costs module (the /finances route; "Costs" is its UI label). Only
+      // the cost LEDGER is gated — cost ENTRY (/finances/new + POST) stays
+      // member-open by design, so those files hold no capability symbol.
+      "app/(app)/finances/page.tsx",
+      "app/api/finances/route.ts",
+      "app/api/finances/[id]/route.ts",
+      "app/api/finances/export/route.ts",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;

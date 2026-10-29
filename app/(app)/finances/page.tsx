@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import {
   FINANCE_CATEGORIES,
   FINANCE_VAT_RATES,
@@ -47,9 +47,12 @@ export default async function FinancesPage({
 }: {
   searchParams: SP;
 }) {
-  const { ctx } = await requireOrgContext();
-  // Costs/finances is owner/admin only (nav ADMIN_ROLES); enforce server-side.
-  requireManagementRole(ctx);
+  // R4 — the cost LEDGER requires costs:view (owner full; admin only if granted
+  // costs:view / a broadening costs:manage / wildcard; staff never). Cost ENTRY
+  // (/finances/new + POST /api/finances) stays member-open BY DESIGN — see the
+  // documented split in app/api/finances/route.ts. This swaps the old
+  // requireManagementRole gate to the granular capability; RLS remains the floor.
+  const { ctx } = await requireCapability("costs", "view");
   const sp = await searchParams;
   const page = Math.max(parseInt(sp.page ?? "1", 10) || 1, 1);
   const offset = (page - 1) * PAGE_SIZE;

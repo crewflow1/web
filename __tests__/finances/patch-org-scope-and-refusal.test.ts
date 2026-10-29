@@ -57,28 +57,18 @@ vi.mock("@/lib/supabase/admin", () => ({
   })),
 }));
 
-vi.mock("@/server/auth/session", () => {
-  // Faithful fix-1 mirrors: requireManagementApi derives from the SAME base
-  // context mock; a missing/non-management role gets the real 403 shape.
-  const base =  vi.fn(async () => ({
-    ctx: { org: { id: "org-active" }, user: { id: "user-1" } },
+// R4: the route now gates PATCH via requireCapabilityApi("costs","edit") (it no
+// longer imports the session helpers). The authorization outcome by role — owner
+// full, admin only if granted, staff/member denied — is proven in
+// __tests__/security/r4-costs-capability.test.ts. Here we stand in a GRANTED
+// caller so this suite keeps testing active-org scoping + the 409 refusal map.
+vi.mock("@/server/auth/capabilities", () => ({
+  requireCapabilityApi: vi.fn(async () => ({
+    ctx: { org: { id: "org-active" } },
     user: { id: "user-1", email: "u@example.test" },
-  }));
-  const isMgmt = (r: unknown) => r === "owner" || r === "admin";
-  return {
-    requireOrgContext: base,
-    requireManagementRole: (ctx?: { membership?: { role?: string } }) => {
-      if (!isMgmt(ctx?.membership?.role)) throw new Error("REDIRECT:/dashboard?error=forbidden");
-    },
-    requireManagementApi: vi.fn(async () => {
-      const res = (await base()) as { ctx?: { membership?: { role?: string } } };
-      if (!isMgmt(res?.ctx?.membership?.role ?? "owner")) {
-        return Response.json({ error: "forbidden" }, { status: 403 });
-      }
-      return res;
-    }),
-  };
-});
+    grants: [],
+  })),
+}));
 
 const { PATCH } = await import("@/app/api/finances/[id]/route");
 
