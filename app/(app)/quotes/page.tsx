@@ -2,7 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { getRequestI18n } from "@/server/i18n/request";
-import { requireManagementRole } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { EmptyState } from "../_components/empty-state";
 import { HelpLink } from "../_components/help-link";
 import {
@@ -44,8 +44,9 @@ const UUID_RE =
 
 export default async function QuotesPage({ searchParams }: { searchParams: SP }) {
   const { ctx, t } = await getRequestI18n();
-  // Sales is owner/admin only (nav ADMIN_ROLES); enforce server-side.
-  requireManagementRole(ctx);
+  // R4 — requires quotes:view (owner full; admin only if granted). Defence in
+  // depth behind the segment layout's identical gate; RLS remains the floor.
+  await requireCapability("quotes", "view");
   const sp = await searchParams;
   const page = Math.max(parseInt(sp.page ?? "1", 10) || 1, 1);
   const offset = (page - 1) * PAGE_SIZE;

@@ -127,7 +127,9 @@ describe("deleteQuote — organisation isolation", () => {
   });
 
   it("resolves org context before the check", () => {
-    expect(FN).toMatch(/const \{ ctx \} = await requireOrgContext\(\)/);
+    // R4 added `user` to the destructure (for the capability gate), so match ctx
+    // tolerantly rather than pinning the exact destructure shape.
+    expect(FN).toMatch(/const \{[^}]*\bctx\b[^}]*\} = await requireOrgContext\(\)/);
     const ctxIdx = FN.indexOf("requireOrgContext()");
     const checkIdx = FN.indexOf('.from("invoices")');
     expect(ctxIdx).toBeLessThan(checkIdx);

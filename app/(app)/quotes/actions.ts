@@ -9,9 +9,9 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
 import {
   requireOrgContext,
-  requireManagementRole,
   type OrgContext,
 } from "@/server/auth/session";
+import { requireCapabilityFor } from "@/server/auth/capabilities";
 import {
   quoteFormSchema,
   type LineItem,
@@ -205,7 +205,7 @@ export async function createQuote(
   formData: FormData,
 ): Promise<FormState<QuoteFormInput>> {
   const { user, ctx } = await requireOrgContext();
-  requireManagementRole(ctx);
+  await requireCapabilityFor(ctx, user, "quotes", "create"); // R4
   const parsed = parseQuoteForm(formData);
   if (!parsed.success) return quoteValidationFailure(parsed, formData);
 
@@ -381,7 +381,7 @@ export async function duplicateQuoteAsDraft(
   _formData: FormData,
 ): Promise<FormState> {
   const { user, ctx } = await requireOrgContext();
-  requireManagementRole(ctx);
+  await requireCapabilityFor(ctx, user, "quotes", "create"); // R4 — duplicate as draft
   const parsedId = idSchema.safeParse(id);
   if (!parsedId.success) return formError("Invalid quote id.");
 
@@ -529,8 +529,8 @@ export async function updateQuote(
   _prevState: FormState<QuoteFormInput>,
   formData: FormData,
 ): Promise<FormState<QuoteFormInput>> {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx);
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "quotes", "edit"); // R4
   if (!idSchema.safeParse(id).success) {
     return formError("Invalid quote id.");
   }
@@ -672,8 +672,8 @@ export async function updateQuote(
 }
 
 export async function sendQuote(id: string) {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx);
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "quotes", "edit"); // R4 — dispatch to customer
   if (!idSchema.safeParse(id).success) redirect("/quotes");
 
   const supabase = await createClient();
@@ -775,8 +775,8 @@ function requireQuoteApprover(ctx: OrgContext): void {
 }
 
 export async function requestQuoteApproval(id: string) {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx);
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "quotes", "edit"); // R4 — submit for approval
   if (!idSchema.safeParse(id).success) redirect("/quotes");
 
   const supabase = await createClient();
@@ -822,7 +822,7 @@ export async function requestQuoteApproval(id: string) {
 
 export async function reviewQuote(id: string, formData: FormData) {
   const { ctx, user } = await requireOrgContext();
-  requireManagementRole(ctx);
+  await requireCapabilityFor(ctx, user, "quotes", "approve"); // R4 — approval decision
   if (!idSchema.safeParse(id).success) redirect("/quotes");
   requireQuoteApprover(ctx);
 
@@ -963,8 +963,8 @@ export async function reviewQuote(id: string, formData: FormData) {
 }
 
 export async function deleteQuote(id: string) {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx);
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "quotes", "delete"); // R4
   const supabase = await createClient();
 
   // INTEGRITY GUARD — refuse to delete a quote that invoices still depend on.
@@ -1040,8 +1040,8 @@ export async function deleteQuote(id: string) {
  * source quote.
  */
 export async function acceptQuoteAsOwner(id: string, formData: FormData) {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx);
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "quotes", "approve"); // R4 — accept on customer's behalf
   const signerName = String(formData.get("signer_name") ?? "Owner accepted on customer's behalf");
 
   const supabase = await createClient();
@@ -1266,8 +1266,8 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
 }
 
 export async function declineQuoteAsOwner(id: string) {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx);
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "quotes", "approve"); // R4 — decline on customer's behalf
   const supabase = await createClient();
   const { error } = await supabase
     .from("quotes")
@@ -1607,7 +1607,7 @@ export async function declineQuoteByToken(
  */
 export async function createVariation(jobId: string, formData: FormData) {
   const { user, ctx } = await requireOrgContext();
-  requireManagementRole(ctx);
+  await requireCapabilityFor(ctx, user, "quotes", "create"); // R4 — variation is a new quote
   if (!idSchema.safeParse(jobId).success) redirect("/jobs");
 
   const { variationFormSchema, computeVariation } = await import(
@@ -1912,7 +1912,7 @@ export async function recordVariationEotAgreement(
   formData: FormData,
 ) {
   const { user, ctx } = await requireOrgContext();
-  requireManagementRole(ctx);
+  await requireCapabilityFor(ctx, user, "quotes", "edit"); // R4 — record EoT agreement
   if (!idSchema.safeParse(quoteId).success) redirect("/quotes");
 
   // Recording an agreed contractual date is an owner/admin act, matching how
@@ -1970,8 +1970,8 @@ export async function recordVariationEotAgreement(
  * the requested date, and `valid_until` has never been a frozen column.
  */
 export async function reclassifyVariationValidUntilAsEot(quoteId: string) {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx);
+  const { ctx, user } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "quotes", "edit"); // R4
   if (!idSchema.safeParse(quoteId).success) redirect("/quotes");
 
   const role = ctx.membership.role;
