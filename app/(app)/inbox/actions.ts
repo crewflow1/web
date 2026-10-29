@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 
 /**
@@ -29,6 +29,7 @@ export async function markEnquiryStatus(
   formData: FormData,
 ): Promise<void> {
   const { ctx, user } = await requireOrgContext();
+  requireManagementRole(ctx); // inbox = customer comms, management-only; staff denied
   if (!idSchema.safeParse(id).success) redirect("/inbox?error=bad_id");
 
   const parsed = statusSchema.safeParse(formData.get("status"));
