@@ -176,6 +176,17 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       "app/(app)/tax/page.tsx",
       "app/(app)/tax/actions.ts",
       "app/api/tax/quarterly-pdf/route.ts",
+      // R4 — reports module. Layout gates the pages (reports:view); accounting +
+      // subscribe actions use hasCapability (export/manage); the index + CSV API
+      // routes use requireCapabilityApi (view/export); the per-report export route
+      // keeps member access for non-management reports and gates the management-
+      // only ones on reports:export.
+      "app/(app)/reports/layout.tsx",
+      "app/(app)/reports/accounting/actions.ts",
+      "app/(app)/reports/subscribe/actions.ts",
+      "app/api/reports/route.ts",
+      "app/api/reports/export/route.ts",
+      "app/api/reports/[report]/export/route.ts",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|requireCapabilityFor|hasCapability|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;

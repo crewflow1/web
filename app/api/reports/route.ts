@@ -1,5 +1,5 @@
 import * as respond from "@/lib/api/respond";
-import { requireManagementApi } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import {
   jobsPerWeek,
   revenuePerMonth,
@@ -20,7 +20,7 @@ import {
  */
 export async function GET() {
   try {
-    const guard = await requireManagementApi();
+    const guard = await requireCapabilityApi("reports", "view");
     if (guard instanceof Response) return guard;
     const { ctx } = guard;
     const [jobs_per_week, revenue_per_month, vat_per_quarter, top_customers] =
