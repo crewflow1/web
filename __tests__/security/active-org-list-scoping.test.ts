@@ -77,11 +77,11 @@ const RPC_ARG_PIN = /\.rpc\(\s*["'][a-z_]+["'],\s*\{\s*p_org_id:\s*orgId\b/;
 // getRequestI18n() (which returns the same ctx and enforces requireOrgContext
 // internally) satisfies this — both destructure ctx from the resolved request.
 const CAPTURES_CTX =
-  // Either the classic org-context capture, or the management-gated API form
-  // (fix 1: `const guard = await requireManagementApi(); … const { ctx } = guard;`)
-  // — the latter is STRICTLY stronger: it wraps requireOrgContext AND adds the
-  // owner/admin gate before any table read.
-  /const \{[^}]*\bctx\b[^}]*\} = await (requireOrgContext|getRequestI18n|requireManagementContext)\(\)|const guard = await requireManagementApi\(\);[\s\S]{0,300}?const \{[^}]*\bctx\b[^}]*\} = guard/;
+  // Either the classic org-context capture, or the gated API form
+  // (`const guard = await requireManagementApi()` / `requireCapabilityApi(...)`
+  // … `const { ctx } = guard;`) — both wrap requireOrgContext AND add the
+  // management / capability gate before any table read, so both yield ctx.
+  /const \{[^}]*\bctx\b[^}]*\} = await (requireOrgContext|getRequestI18n|requireManagementContext)\(\)|const guard = await require(ManagementApi|CapabilityApi)\([^)]*\);[\s\S]{0,300}?const \{[^}]*\bctx\b[^}]*\} = guard/;
 
 // ---------------------------------------------------------------------------
 // 1. List pages — one pin per collection read, keyed by the table it reads

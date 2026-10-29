@@ -1,7 +1,7 @@
 import { type NextRequest } from "next/server";
 import * as respond from "@/lib/api/respond";
 import { createClient } from "@/lib/supabase/server";
-import { requireManagementApi } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { updateInvoiceSchema } from "@/lib/invoices/schema";
 import { verifyJobInOrg } from "@/lib/crm/reference-integrity";
 import type { Database } from "@/lib/supabase/types";
@@ -23,8 +23,9 @@ type InvoiceUpdate = Database["public"]["Tables"]["invoices"]["Update"];
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function PATCH(request: NextRequest, { params }: Ctx) {
-  // Management-only (first-customer fix 1): this surface carries money.
-  const guard = await requireManagementApi();
+  // Requires the invoices:edit capability (R4). Owner always; admin only if
+  // granted. This surface carries money — the capability is the boundary, RLS backstops.
+  const guard = await requireCapabilityApi("invoices", "edit");
   if (guard instanceof Response) return guard;
   const { ctx } = guard;
   const { id } = await params;
@@ -94,8 +95,8 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
 }
 
 export async function DELETE(_request: NextRequest, { params }: Ctx) {
-  // Management-only (first-customer fix 1): this surface carries money.
-  const guard = await requireManagementApi();
+  // Requires the invoices:delete capability (R4). Owner always; admin only if granted.
+  const guard = await requireCapabilityApi("invoices", "delete");
   if (guard instanceof Response) return guard;
   const { ctx } = guard;
   const { id } = await params;

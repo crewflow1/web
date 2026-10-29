@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireManagementApi } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { INVOICE_STATUSES, type InvoiceStatus } from "@/lib/invoices/schema";
 import { csvEscape } from "@/lib/csv";
 import { fetchAllRows } from "@/lib/supabase/paginate";
@@ -83,7 +83,7 @@ type LineItemRow = {
 
 export async function GET(request: NextRequest) {
   // Management-only (first-customer fix 1): this surface carries money.
-  const guard = await requireManagementApi();
+  const guard = await requireCapabilityApi("invoices", "export");
   if (guard instanceof Response) return guard;
   const { ctx } = guard;
   const url = request.nextUrl;
