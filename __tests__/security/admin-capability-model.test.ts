@@ -36,13 +36,29 @@ describe("migration hygiene", () => {
     expect("20261241000000" > "20261240000000").toBe(true);
   });
 
-  it("is ADDITIVE — creates only the two new tables, alters no existing one", () => {
+  it("is ADDITIVE — 2 new tables + only a safe unique constraint on memberships", () => {
     const creates = exec.match(/create\s+table\s+if\s+not\s+exists\s+public\.(\w+)/gi) ?? [];
     expect(creates).toHaveLength(2);
     expect(exec).toMatch(/public\.membership_permissions/i);
     expect(exec).toMatch(/public\.permission_audit/i);
-    expect(exec).not.toMatch(/\balter\s+table\s+public\.(?!membership_permissions|permission_audit)/i);
+    // Nothing is dropped and no column/constraint is removed or altered.
     expect(exec).not.toMatch(/\bdrop\s+table\b/i);
+    expect(exec).not.toMatch(/alter\s+table[\s\S]*?\b(drop|alter\s+column)\b/i);
+    // The ONLY change to an existing table is an additive unique constraint on
+    // memberships (the composite-FK target); every other alter is on a new table.
+    const alters = exec.match(/alter\s+table\s+public\.(\w+)/gi) ?? [];
+    for (const a of alters) {
+      expect(a.toLowerCase()).toMatch(/membership_permissions|permission_audit|memberships/);
+    }
+    expect(exec).toMatch(
+      /alter\s+table\s+public\.memberships\s+add\s+constraint\s+memberships_id_org_key\s+unique\s*\(\s*id,\s*org_id\s*\)/i,
+    );
+  });
+
+  it("references memberships by a COMPOSITE (id, org_id) FK (same-org integrity)", () => {
+    expect(exec).toMatch(
+      /foreign key\s*\(\s*membership_id,\s*org_id\s*\)\s*references\s+public\.memberships\s*\(\s*id,\s*org_id\s*\)/i,
+    );
   });
 
   it("both tables are SERVICE-ROLE-ONLY: RLS on, client grants revoked, no client policy", () => {

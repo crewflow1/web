@@ -114,6 +114,20 @@ describeIntegration("membership_permissions / permission_audit are service-role-
     void backfill; // the migration's statement; asserted idempotent above
   });
 
+  it("the composite FK refuses a grant whose org_id is NOT the membership's org", async () => {
+    // Create a second real org; a grant for org-A's membership but stamped with
+    // org-B must be rejected by (membership_id, org_id) -> memberships(id, org_id).
+    const orgB = await svc().from("organizations").insert({ name: `MP ${T} B`, slug: `${T}b` }).select("id").single();
+    if (orgB.error) throw new Error(orgB.error.message);
+    const r = await svc().from("membership_permissions").insert({
+      org_id: String(orgB.data.id), // wrong org for this membership
+      membership_id: adminMembershipId, // belongs to org A
+      module: "jobs",
+      action: "edit",
+    });
+    expect(r.error, "a cross-org grant must violate the composite FK").not.toBeNull();
+  });
+
   it("permission_audit is service-role writable and client-unreadable", async () => {
     const w = await svc().from("permission_audit").insert({ org_id: orgId, actor_user_id: adminUserId, event: "grant_added", module: "jobs", action: "view" });
     expect(w.error).toBeNull();

@@ -128,6 +128,7 @@
     "marketplace_partners",
     "material_request_lines",
     "material_requests",
+    "membership_permissions",
     "memberships",
     "merchant_catalogue_items",
     "merchant_connections",
@@ -146,6 +147,7 @@
     "org_sso_config",
     "org_subscriptions",
     "payments",
+    "permission_audit",
     "payroll_line_adjustments",
     "payroll_lines",
     "payroll_runs",
@@ -235,6 +237,8 @@
     "worker_signoff_tokens"
   ],
   "excluded": {
+    "membership_permissions": "access-control configuration: per-admin module×action permission grants (authorization metadata, not data-subject personal data); keyed by membership and cascades on membership delete",
+    "permission_audit": "security accountability trail: append-only log of permission/admin/ownership changes (actor + target references, module/action, no tenant business data) — authorization audit metadata, not data-subject personal data",
     "accounting_connections": "credentials: OAuth access/refresh tokens",
     "accounting_pushed_entities": "service telemetry: provider-sync push-once high-water-mark (org/provider/entity_type/entity_id/pushed_at) — internal integration bookkeeping, no tenant business data; the referenced invoices/payments are themselves exported via their own tables",
     "admin_alert_state": "platform ops state",

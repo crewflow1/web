@@ -66,23 +66,25 @@ export async function loadCapabilities(
   // membership_permissions is not in the generated Database types until the R2
   // migration is applied + types regenerated (post-merge), so access it through
   // a minimal typed cast rather than the schema-typed client.
+  type GrantRows = PromiseLike<{
+    data: Array<{ module: string; action: string }> | null;
+    error: { message: string } | null;
+  }>;
   type GrantReader = {
     from: (t: string) => {
       select: (cols: string) => {
-        eq: (
-          k: string,
-          v: string,
-        ) => PromiseLike<{
-          data: Array<{ module: string; action: string }> | null;
-          error: { message: string } | null;
-        }>;
+        eq: (k: string, v: string) => { limit: (n: number) => GrantRows };
       };
     };
   };
+  // Bounded read (F-1): one membership can hold at most |modules|×(|actions|+1)
+  // distinct grants (~264 at today's taxonomy) by the unique constraint, so 512
+  // can never truncate a valid grant set while keeping the read honestly bounded.
   const { data, error } = await (admin as unknown as GrantReader)
     .from("membership_permissions")
     .select("module, action")
-    .eq("membership_id", row.id);
+    .eq("membership_id", row.id)
+    .limit(512);
   if (error) throw readFailure("capabilities: grants", error);
   return (data ?? []).map((g) => ({ module: g.module, action: g.action }));
 }
