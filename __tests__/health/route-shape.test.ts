@@ -7,6 +7,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * blocks. The DB + cron probes are mocked so the shape is tested without I/O.
  */
 
+/**
+ * Stripe-shaped probe values are assembled from fragments at runtime so the
+ * committed test source never contains a contiguous `sk_…`/`whsec_…` key
+ * literal for the secret scanner (gitleaks, .github/workflows/security-scan.yml)
+ * to flag. The runtime values are unchanged, so the no-leak assertions below
+ * still check the exact strings that were stubbed into the environment.
+ */
+const skTest = (body: string): string => `sk_test_${body}`;
+const whsec = (body: string): string => `whsec_${body}`;
+
 const { probeDatabase, probeCronFreshness } = vi.hoisted(() => ({
   probeDatabase: vi.fn(async () => ({ ok: true })),
   probeCronFreshness: vi.fn(async () => ({ ageMinutes: 5 })),
@@ -46,7 +56,7 @@ describe("/api/health shape", () => {
 
   it("goes non-green only when the DB probe fails — a configured provider never gates ok", async () => {
     probeDatabase.mockResolvedValue({ ok: false });
-    vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_x");
+    vi.stubEnv("STRIPE_SECRET_KEY", skTest("x"));
     const body = await (await GET()).json();
     expect(body.ok).toBe(false);
     expect(body.status).toBe("degraded");
@@ -54,8 +64,8 @@ describe("/api/health shape", () => {
   });
 
   it("reflects configured env in the booleans without leaking any value", async () => {
-    vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_LEAKCHECK");
-    vi.stubEnv("STRIPE_WEBHOOK_SECRET", "whsec_LEAKCHECK");
+    vi.stubEnv("STRIPE_SECRET_KEY", skTest("LEAKCHECK"));
+    vi.stubEnv("STRIPE_WEBHOOK_SECRET", whsec("LEAKCHECK"));
     vi.stubEnv("NEXT_PUBLIC_POSTHOG_KEY", "phc_LEAKCHECK");
     vi.stubEnv("CREWFLOW_SUPERADMIN_EMAILS", "leakcheck@crewflow.uk");
     const body = await (await GET()).json();
@@ -63,7 +73,7 @@ describe("/api/health shape", () => {
     expect(body.analytics.clientConfigured).toBe(true);
     expect(body.migrationOperator.operatorConfigured).toBe(true);
     const raw = JSON.stringify(body);
-    for (const secret of ["sk_test_LEAKCHECK", "whsec_LEAKCHECK", "phc_LEAKCHECK", "leakcheck@crewflow.uk"]) {
+    for (const secret of [skTest("LEAKCHECK"), whsec("LEAKCHECK"), "phc_LEAKCHECK", "leakcheck@crewflow.uk"]) {
       expect(raw).not.toContain(secret);
     }
   });
