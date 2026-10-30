@@ -309,8 +309,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the toolbox register (.limit(500)) — ≤500 unique PKs",
   "app/(app)/jobs/page.tsx:147":
     "bounded: the 'Today's jobs' panel query — one org × one calendar day (.eq('scheduled_date', todayIso)), a handful of rows, never near the cap. The paginated list query above it is windowed via .range(). Moved 136→147 in the final-roadmap wave (DataTable adoption) — pure shift, same read.",
-  "app/(app)/leads/page.tsx:60":
-    "paged: the pipeline read IS complete — executed via fetchAllRows((from,to) => query.range(from,to)) at the bottom of the fn; the builder pattern places the .range terminator beyond the static region window, so the analyser can't see it. (Line moved 51→57 when the lead-score band imports were added above this read; reason unchanged.)",
+  "app/(app)/leads/page.tsx:61":
+    "paged: the pipeline read IS complete — executed via fetchAllRows((from,to) => query.range(from,to)) at the bottom of the fn; the builder pattern places the .range terminator beyond the static region window, so the analyser can't see it. (Line moved 60→61 when the R4 capability gate replaced the 1-line requireManagementRole gate with a 2-line comment + requireCapability; reason unchanged.)",
 
   // ── .from(as never) CAST-FORM WAVE — genuinely-bounded per-parent-row reads
   //    surfaced only once the cast-form matcher was taught. Each is a single

@@ -205,6 +205,11 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       "app/(app)/customers/page.tsx",
       "app/(app)/customers/actions.ts",
       "app/api/customers/[id]/statement/pdf/route.ts",
+      // R4 — leads module. Layout + list page gate leads:view; 7 actions use
+      // requireCapabilityFor (create/edit/delete). No API routes.
+      "app/(app)/leads/layout.tsx",
+      "app/(app)/leads/page.tsx",
+      "app/(app)/leads/actions.ts",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|requireCapabilityFor|hasCapability|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;
