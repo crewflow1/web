@@ -109,19 +109,36 @@ its own.
 
 ## Remaining phases (not yet built)
 
-- **Phase 3** — operational child tables (documents, photos, snags, site diary,
-  site reports, time entries, checklists, permits, RA, toolbox talks, signatures,
-  material requests, inspections, completion docs, blueprints): assignment-aware
-  SELECT, splitting operationally-necessary from confidential data.
-- **Phase 4** — commercial-data denial + indirect-leak sweep (quotes, invoices,
-  budgets, billing plans/stages, valuations, retention, purchase prices,
-  expenses, profitability, financial reports, payroll, tax/cash) across tables,
-  views, RPCs, document downloads, signed URLs, and AI outputs.
-- **Phase 5** — workforce self-scoping (rota, clocking, leave): a staff member
-  cannot read another's rota/timesheets/leave by changing an identifier.
+Job-linked child-table inventory (36 tables carrying a `job_id`, enumerated from
+the migrations) classified for Phases 3–5:
 
-Each ships as its own stacked, apply-held, independently-reviewed migration with
-the same evidence shape as above.
+- **Phase 3 — operational, assignment-visible** (staff see rows only for jobs
+  they're assigned to; owner/admin keep org-wide): `job_documents`,
+  `job_checklists`, `job_progress_observations`, `job_programme_baselines`,
+  `snags`, `site_diary_entries`, `site_reports`, `completion_certificates`,
+  `inspection_test_plans`, `permits_to_work`, `risk_assessments`,
+  `toolbox_talks`, `worker_acknowledgements`, `worker_signoff_tokens` (H&S
+  evidence; token column already export-redacted), `material_requests`
+  (goods-received is operational — kept distinct from PO pricing),
+  `blueprints`, `blueprint_markup`, `blueprint_pins`, `delay_events`,
+  `asset_assignments`, `weather_watches`, `job_warranties`. Attachments/photos
+  ride `job_documents` + storage — **storage-object paths need their own
+  assignment check** (an assigned-job row does not auto-authorise every byte).
+- **Phase 4 — commercial, staff-barred regardless of assignment**: `finances`,
+  `job_billing_plans`, `job_billing_stages`, `job_budgets`, `job_valuations`,
+  `variation_requests` (valuation variations), `retention_releases`,
+  `purchase_orders` (supplier prices), `review_requests`, plus `stock_movements`
+  (carries cost/valuation) — confirm each. Indirect-leak sweep across views,
+  RPCs, document downloads, signed URLs and AI outputs. Preserve legitimate
+  staff **cost entry** and **goods-received confirmation** without exposing the
+  ledger.
+- **Phase 5 — workforce self-scoping**: `rota_entries`, `time_entries` (own
+  clock only) — a staff member cannot read another's rota/timesheets/leave by
+  changing an identifier. (`time_entries` is both job-linked and workforce; its
+  self-scope is the authoritative rule.)
+
+Each phase ships as its own stacked, apply-held, independently-reviewed migration
+with the same evidence shape as Phase 2.
 
 ---
 
