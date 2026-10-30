@@ -46,6 +46,28 @@
 -- IDEMPOTENT: policies dropped by name before (re)create.
 -- ============================================================================
 
+-- ---------------------------------------------------------------------------
+-- my_assigned_job_ids(): UNION BOTH assignment sources.
+--
+-- The app's LIVE assignment write path is jobs.assigned_to (app/(app)/jobs/
+-- actions.ts); nothing in the app writes job_assignments yet (only the Phase-1
+-- backfill + the new owner/admin crew panel do). The Phase-2 version of this
+-- helper read only job_assignments, so gating operational child reads on it
+-- alone would strand a staff member assigned through the ordinary UI from their
+-- own jobs' records. Redefine it to return the union of BOTH sources — the
+-- Phase-1 multi-worker table AND the legacy single-assignee column — so Phase 2
+-- (jobs) and Phase 3 (children) honour every assignment the product can create.
+-- Still SECURITY DEFINER + self-scoped by auth.uid() (reads jobs/job_assignments
+-- as the definer, bypassing their RLS — no recursion); still set-returning +
+-- STABLE so the planner evaluates it once per statement.
+-- ---------------------------------------------------------------------------
+create or replace function public.my_assigned_job_ids()
+returns setof uuid language sql stable security definer set search_path = public as $$
+  select job_id from public.job_assignments where user_id = auth.uid()
+  union
+  select id from public.jobs where assigned_to = auth.uid();
+$$;
+
 -- snags (job_id NULLABLE) -----------------------------------------------------
 drop policy if exists snags_select on public.snags;
 create policy snags_select on public.snags

@@ -29,19 +29,30 @@ const svc = () => db(serviceClient());
 const TOKEN = `r5p3-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
 // The first-slice operational child tables + their extra required columns.
+const rnd = () => Math.random().toString(36).slice(2, 8);
 const TABLES: { name: string; extra: () => Row }[] = [
+  // slice 1 (20261244)
   { name: "snags", extra: () => ({ title: "Snag" }) },
   { name: "site_diary_entries", extra: () => ({}) },
   { name: "site_reports", extra: () => ({ title: "Report", period_start: "2026-01-01", period_end: "2026-01-07" }) },
   { name: "job_progress_observations", extra: () => ({ percent: 50, observed_on: "2026-01-01" }) },
   { name: "job_checklists", extra: () => ({ label: "Task", sort: 1 }) },
+  // slice 2 (20261245) — safety / inspection / materials
+  { name: "permits_to_work", extra: () => ({ permit_type: "general", title: "Permit", scope: "scope text" }) },
+  { name: "risk_assessments", extra: () => ({ title: "RA", activity: "activity" }) },
+  { name: "toolbox_talks", extra: () => ({ topic: "Topic" }) },
+  { name: "inspection_test_plans", extra: () => ({ title: "ITP", work_package: `WP-${rnd()}` }) },
+  { name: "completion_certificates", extra: () => ({ certificate_number: `CC-${rnd()}`, completion_date: "2026-01-01" }) },
+  // material_requests DEFERRED — needs the offline self-scoped lookup fix first (see slice-2 migration note).
 ];
 
 let orgA = "";
 let orgB = "";
-let jobAssigned = ""; // orgA, assigned to `assigned`
+let jobAssigned = ""; // orgA, assigned to `assigned` via job_assignments
 let jobUnassigned = ""; // orgA, no assignee
 let jobB = ""; // orgB
+let jobLegacy = ""; // orgA, assigned to `legacyStaff` via jobs.assigned_to ONLY
+let legacySnagId = ""; // a snag on jobLegacy
 const tok: Record<string, string> = {};
 const uid: Record<string, string> = {};
 const uc = (who: string) => userClient(tok[who] ?? "");
@@ -93,7 +104,7 @@ describeIntegration("rls · operational child tables assignment-aware (20261244 
   beforeAll(async () => {
     orgA = await makeOrg("orgA");
     orgB = await makeOrg("orgB");
-    for (const who of ["owner", "admin", "assigned", "unassigned", "otherOrg"]) {
+    for (const who of ["owner", "admin", "assigned", "unassigned", "otherOrg", "legacyStaff"]) {
       const u = await makeUser(who);
       uid[who] = u.id;
       tok[who] = u.token;
@@ -103,12 +114,16 @@ describeIntegration("rls · operational child tables assignment-aware (20261244 
     await member(orgA, U("assigned"), "staff");
     await member(orgA, U("unassigned"), "staff");
     await member(orgB, U("otherOrg"), "staff");
+    await member(orgA, U("legacyStaff"), "staff");
 
     jobAssigned = await makeJob(orgA, null);
     jobUnassigned = await makeJob(orgA, null);
     jobB = await makeJob(orgB, null);
+    // The LIVE app assignment path: jobs.assigned_to, with NO job_assignments row.
+    jobLegacy = await makeJob(orgA, U("legacyStaff"));
     const ja = await svc().from("job_assignments").insert({ org_id: orgA, job_id: jobAssigned, user_id: U("assigned") });
     expect(ja.error, ja.error?.message).toBeNull();
+    legacySnagId = await seedChild("snags", orgA, jobLegacy, { title: "Legacy-assigned snag" });
 
     for (const { name, extra } of TABLES) {
       ids[name] = {
@@ -145,4 +160,20 @@ describeIntegration("rls · operational child tables assignment-aware (20261244 
       expect(res.data ?? []).toHaveLength(0); // anon sees nothing
     });
   }
+
+  it("LIVE PATH: a staff member assigned via jobs.assigned_to (no job_assignments row) sees their job's records", async () => {
+    // The app writes assignments to jobs.assigned_to; my_assigned_job_ids() unions
+    // that source, so operational child reads must resolve for a legacy-assigned
+    // staff member even without a job_assignments row. (Guards the HIGH finding:
+    // gating only on job_assignments would strand assigned staff.)
+    const seen = await db(uc("legacyStaff")).from("snags").select("id").in("id", [legacySnagId]);
+    expect(seen.error, seen.error?.message).toBeNull();
+    expect((seen.data ?? []).map((r) => String(r.id)), "legacy-assigned staff must see their job's snag").toEqual([
+      legacySnagId,
+    ]);
+    // An unassigned staff member still sees nothing on that job.
+    const none = await db(uc("unassigned")).from("snags").select("id").in("id", [legacySnagId]);
+    expect(none.error, none.error?.message).toBeNull();
+    expect(none.data ?? []).toHaveLength(0);
+  });
 });

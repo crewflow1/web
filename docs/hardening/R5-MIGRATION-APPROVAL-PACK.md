@@ -107,6 +107,45 @@ its own.
 
 ---
 
+## Phase 3 — operational child tables (slices 1–2 BUILT, apply-held)
+
+- **Slice 1** (`20261244`, PR #981): `snags`, `site_diary_entries`, `site_reports`,
+  `job_progress_observations`, `job_checklists`.
+- **Slice 2** (`20261245`): `permits_to_work`, `risk_assessments`, `toolbox_talks`,
+  `inspection_test_plans`, `completion_certificates`. (`material_requests`
+  DEFERRED to its own slice — it has an offline idempotency path needing the
+  same narrow self-scoped service-role lookup as `site_diary_entries`.)
+- Each SELECT policy → `member AND (is_org_admin OR job_id in my_assigned_job_ids())`.
+- **Assignment-source fix (from Phase-3 adversarial review):** `my_assigned_job_ids()`
+  now UNIONs **both** sources — `job_assignments` AND the legacy `jobs.assigned_to`
+  — because the live app writes `assigned_to`, not `job_assignments`. Gating on the
+  join table alone would have stranded assigned staff from their own jobs' records.
+  A regression test asserts a `jobs.assigned_to`-assigned staff member sees the
+  records. Verified: full `rls/` integration tier green, zero regressions.
+- **Caller reconciliation** (no blanket `created_by` exception, per founder): the
+  offline-writes idempotency lookup uses a narrow self-scoped service-role path
+  `(org_id, client_write_key, created_by)`; the blueprint-pins RPC + job-progress
+  tests seed real assignments.
+- **Remaining Phase-3 slices (not built):** `job_documents` + photos/**storage &
+  signed-URL authz** (needs its own object-path assignment check), `blueprints` /
+  `blueprint_markup` / `blueprint_pins`, `job_programme_baselines`, `job_warranties`,
+  `worker_acknowledgements`, `inspection`/safety remainder, `asset_assignments`,
+  `delay_events`, `weather_watches`.
+
+## ⚠️ Cross-cutting PRE-APPLY blocker (from both adversarial reviews)
+
+**The legacy write path must reconcile `job_assignments` before R5 read-enforcement
+is applied.** The `updateJob` single-assignee select (and any reassignment) writes
+`jobs.assigned_to` but does NOT touch `job_assignments`. The READ side now unions
+both, so **reads are correct**; but a worker **reassigned off** a job keeps a stale
+backfilled `job_assignments` row, so once Phase 2/3 enforce, they could retain
+access via that row. The panel's `removeWorker` clears both paths, but a legacy
+reassignment does not. **Resolve before applying Phase 2/3:** either (a) make
+`updateJob` reconcile `job_assignments` on an `assigned_to` change (service-role),
+or (b) drop the Phase-1 backfill and rely on the union read (so `assigned_to` is
+the only legacy source and reassignment naturally revokes). **Product decision:**
+does reassigning the primary remove the previous lead from the crew?
+
 ## Remaining phases (not yet built)
 
 Job-linked child-table inventory (36 tables carrying a `job_id`, enumerated from
