@@ -218,6 +218,14 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       "app/(app)/price-book/page.tsx",
       "app/(app)/price-book/[id]/page.tsx",
       "app/(app)/price-book/actions.ts",
+      // R4 — inbox module (customer comms; staff off-limits). Layout gates the
+      // subtree (inbox:view); the 5 server actions use requireCapabilityFor —
+      // create (reply / start conversation), edit (triage / open-close), approve
+      // (clear the AI review queue).
+      "app/(app)/inbox/layout.tsx",
+      "app/(app)/inbox/actions.ts",
+      "app/(app)/inbox/conversations/actions.ts",
+      "app/(app)/inbox/review/actions.ts",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|requireCapabilityFor|hasCapability|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;

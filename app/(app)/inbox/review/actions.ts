@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session";
+import { requireCapabilityFor } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { convertDestination } from "@/server/services/assistant-review";
 
@@ -31,7 +32,9 @@ export async function resolveAssistantAction(
   formData: FormData,
 ): Promise<void> {
   const { ctx, user } = await requireOrgContext();
-  requireManagementRole(ctx); // inbox = customer comms, management-only; staff denied
+  // Clearing the AI review queue (convert/dismiss a drafted action) is an
+  // approval decision over assistant-proposed comms.
+  await requireCapabilityFor(ctx, user, "inbox", "approve");
   if (!idSchema.safeParse(id).success) redirect("/inbox/review?error=bad_id");
 
   const decision = decisionSchema.safeParse(formData.get("decision"));
