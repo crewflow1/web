@@ -43,7 +43,8 @@ const TABLES: { name: string; extra: () => Row }[] = [
   { name: "toolbox_talks", extra: () => ({ topic: "Topic" }) },
   { name: "inspection_test_plans", extra: () => ({ title: "ITP", work_package: `WP-${rnd()}` }) },
   { name: "completion_certificates", extra: () => ({ certificate_number: `CC-${rnd()}`, completion_date: "2026-01-01" }) },
-  // material_requests DEFERRED — needs the offline self-scoped lookup fix first (see slice-2 migration note).
+  // slice 3 (20261247) — materials. number is text NOT NULL unique per org.
+  { name: "material_requests", extra: () => ({ number: `MR-${rnd()}-${rnd()}` }) },
 ];
 
 let orgA = "";
@@ -175,5 +176,49 @@ describeIntegration("rls · operational child tables assignment-aware (20261244 
     const none = await db(uc("unassigned")).from("snags").select("id").in("id", [legacySnagId]);
     expect(none.error, none.error?.message).toBeNull();
     expect(none.data ?? []).toHaveLength(0);
+  });
+
+  it("GRANDCHILD: material_request_lines inherit their parent request's assignment visibility", async () => {
+    // Lines have no job_id of their own — a line is visible exactly when its
+    // parent material_request is (via my_assigned_material_request_ids). Seed a
+    // line under the assigned-job and unassigned-job requests and the org-B
+    // request, then probe each role.
+    const parentAssigned = ids["material_requests"]!.assigned;
+    const parentUnassigned = ids["material_requests"]!.unassigned;
+    const parentB = ids["material_requests"]!.b;
+    const seedLine = async (org: string, requestId: string): Promise<string> => {
+      const r = await svc()
+        .from("material_request_lines")
+        .insert({ org_id: org, material_request_id: requestId, description: "Cement", qty: 10, unit: "bag", sort_order: 0 })
+        .select("id")
+        .single();
+      expect(r.error, `line seed: ${r.error?.message}`).toBeNull();
+      return String((r.data as { id: string }).id);
+    };
+    const lineAssigned = await seedLine(orgA, parentAssigned);
+    const lineUnassigned = await seedLine(orgA, parentUnassigned);
+    const lineB = await seedLine(orgB, parentB);
+    const all = [lineAssigned, lineUnassigned, lineB];
+    const seenLines = async (who: string): Promise<Set<string>> => {
+      const res = await db(uc(who)).from("material_request_lines").select("id").in("id", all);
+      expect(res.error, `${who}/lines: ${res.error?.message}`).toBeNull();
+      return new Set((res.data ?? []).map((r) => String(r.id)));
+    };
+
+    const owner = await seenLines("owner");
+    expect(owner.has(lineAssigned) && owner.has(lineUnassigned), "owner sees both org-A lines").toBe(true);
+    expect(owner.has(lineB), "org pin — never org B").toBe(false);
+
+    const assigned = await seenLines("assigned");
+    expect([...assigned], "assigned staff sees ONLY their assigned job's line").toEqual([lineAssigned]);
+
+    const unassigned = await seenLines("unassigned");
+    expect(unassigned.size, "an unassigned seat sees no lines").toBe(0);
+
+    const other = await seenLines("otherOrg");
+    expect(other.has(lineAssigned) || other.has(lineUnassigned), "cross-tenant denied").toBe(false);
+
+    const anon = await db(anonClient()).from("material_request_lines").select("id").in("id", all);
+    expect(anon.data ?? [], "anon sees no lines").toHaveLength(0);
   });
 });

@@ -105,8 +105,17 @@ describeIntegration("offline write expansion · DB idempotency (20261083)", () =
         offline_authored_at: args.offlineAuthoredAt ?? null,
       });
 
-  /** One request header, exactly as createMaterialRequestDraftRecord builds it. */
-  const insertHeader = (
+  /**
+   * One request header, exactly as createMaterialRequestDraftRecord builds it:
+   * a CLIENT-GENERATED id, inserted WITHOUT a RETURNING select. This mirrors the
+   * production offline core (which mints its own UUID and never RETURNING-reads
+   * under RLS) and is also required under R5 Phase 3 — the header is job-less, so
+   * the member can no longer SELECT it back, and an `.insert().select()` would
+   * fail to return the row. The insert itself is still a member-authored write
+   * under the unchanged INSERT policy, so every idempotency guarantee below is
+   * proven exactly as before.
+   */
+  const insertHeader = async (
     client: unknown,
     args: {
       orgId: string;
@@ -115,10 +124,12 @@ describeIntegration("offline write expansion · DB idempotency (20261083)", () =
       requestedBy?: string | null;
       offlineAuthoredAt?: string | null;
     },
-  ) =>
-    db(client)
+  ): Promise<{ data: { id: string } | null; error: Err }> => {
+    const id = crypto.randomUUID();
+    const { error } = await db(client)
       .from("material_requests")
       .insert({
+        id,
         org_id: args.orgId,
         number: args.number,
         status: "draft",
@@ -127,9 +138,9 @@ describeIntegration("offline write expansion · DB idempotency (20261083)", () =
         created_by: args.requestedBy ?? null,
         client_write_key: args.clientKey,
         offline_authored_at: args.offlineAuthoredAt ?? null,
-      })
-      .select("id")
-      .single();
+      });
+    return { data: error ? null : { id }, error };
+  };
 
   const insertLines = (client: unknown, orgId: string, requestId: string) =>
     db(client)
