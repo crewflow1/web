@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session";
+import { requireCapabilityFor } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { sendInboxReply } from "@/server/services/inbox-send";
@@ -93,7 +94,8 @@ type ConvResolve = {
  */
 export async function replyToConversation(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
-  requireManagementRole(ctx); // inbox = customer comms, management-only; staff denied
+  // Sending an outbound customer reply creates new comms content.
+  await requireCapabilityFor(ctx, user, "inbox", "create");
   const parsed = replySchema.safeParse({
     conversation_id: formData.get("conversation_id"),
     body: formData.get("body"),
@@ -163,7 +165,8 @@ export async function replyToConversation(formData: FormData): Promise<void> {
  */
 export async function startConversation(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
-  requireManagementRole(ctx); // inbox = customer comms, management-only; staff denied
+  // Starting a new outbound conversation creates new comms content.
+  await requireCapabilityFor(ctx, user, "inbox", "create");
   const parsed = startSchema.safeParse({
     channel: formData.get("channel"),
     contact: formData.get("contact"),
@@ -237,7 +240,8 @@ export async function startConversation(formData: FormData): Promise<void> {
 /** Archive or reactivate a conversation (members may update; org-pinned). */
 export async function setConversationStatus(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
-  requireManagementRole(ctx); // inbox = customer comms, management-only; staff denied
+  // Opening / closing / archiving a conversation is an edit.
+  await requireCapabilityFor(ctx, user, "inbox", "edit");
   const parsed = archiveSchema.safeParse({
     conversation_id: formData.get("conversation_id"),
     status: formData.get("status"),
