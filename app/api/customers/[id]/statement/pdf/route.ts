@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { createClient } from "@/lib/supabase/server";
-import { requireManagementApi } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { loadCustomerStatement } from "@/server/services/customer-statement";
 import { StatementPdf } from "@/lib/pdf/statement-pdf";
 
@@ -19,8 +19,9 @@ type Ctx = { params: Promise<{ id: string }> };
  * are optional — an invalid bound is treated as absent, not an error.
  */
 export async function GET(request: NextRequest, { params }: Ctx) {
-  // Management-only (first-customer fix 1): this surface carries money.
-  const guard = await requireManagementApi();
+  // R4 — viewing/downloading a customer statement (financial) → customers:view
+  // (owner always; an admin only if granted). Was management-only.
+  const guard = await requireCapabilityApi("customers", "view");
   if (guard instanceof Response) return guard;
   const { ctx } = guard;
   const { id } = await params;

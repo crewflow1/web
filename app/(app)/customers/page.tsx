@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getRequestI18n } from "@/server/i18n/request";
-import { requireManagementRole } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { EmptyState } from "../_components/empty-state";
 import { formatAddressOneLine, customerToAddress } from "@/lib/address";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
@@ -61,9 +61,10 @@ export default async function CustomersPage({
   searchParams: SP;
 }) {
   const { ctx, t } = await getRequestI18n();
-  // Sales/customers (carries financial rollups) is owner/admin only (nav
-  // ADMIN_ROLES); staff reach customer/site detail through their assigned job.
-  requireManagementRole(ctx);
+  // R4 — customers (carries financial rollups) requires customers:view (owner
+  // full; admin only if granted). Defence in depth behind the segment layout's
+  // identical gate; staff reach customer/site detail through their assigned job.
+  await requireCapability("customers", "view");
   const sp = await searchParams;
   const page = parsePage(sp.page);
   const offset = offsetForPage(page);
