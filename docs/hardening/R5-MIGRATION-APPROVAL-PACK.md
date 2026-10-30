@@ -107,7 +107,7 @@ its own.
 
 ---
 
-## Phase 3 — operational child tables (slices 1–2 BUILT, apply-held)
+## Phase 3 — operational child tables (slices 1–5 BUILT + ISOLATED-VERIFIED, apply-held)
 
 - **Slice 1** (`20261244`, PR #981): `snags`, `site_diary_entries`, `site_reports`,
   `job_progress_observations`, `job_checklists`.
@@ -126,25 +126,58 @@ its own.
   offline-writes idempotency lookup uses a narrow self-scoped service-role path
   `(org_id, client_write_key, created_by)`; the blueprint-pins RPC + job-progress
   tests seed real assignments.
-- **Remaining Phase-3 slices (not built):** `job_documents` + photos/**storage &
-  signed-URL authz** (needs its own object-path assignment check), `blueprints` /
-  `blueprint_markup` / `blueprint_pins`, `job_programme_baselines`, `job_warranties`,
-  `worker_acknowledgements`, `inspection`/safety remainder, `asset_assignments`,
-  `delay_events`, `weather_watches`.
+- **Slice 3** (`20261247`): `material_requests` + grandchild `material_request_lines`
+  → `member AND (is_org_admin OR job_id in my_assigned_job_ids())`; lines scoped via
+  the self-scoped helper `my_assigned_material_request_ids()`. Offline idempotency
+  reconciled with a narrow self-scoped service-role lookup
+  `(org_id, client_write_key, created_by)` (no `created_by` RLS exception). **BUILT +
+  ISOLATED-VERIFIED** (operational-child-access incl. grandchild, material-requests
+  lifecycle, offline-write-expansion — all green).
+- **Slice 4** (`20261248`): `job_documents` + `job_document_versions` → STAFF area
+  narrowed to assigned jobs; **private drop box unchanged (admin-only)**; versions
+  scoped via `my_assigned_job_document_ids()`. **This also secures the signed-URL
+  download with no app change** — `getJobDocumentDownloadUrl` mints a URL only for a
+  version row the tenant client can read, so the narrowed SELECT is the capability
+  gate. **BUILT + ISOLATED-VERIFIED** (rls/job-documents-access 4/4).
+- **Slice 5** (`20261249`): **job-photos STORAGE** SELECT narrowed from org-wide to
+  admin-or-assigned-job (closes a direct-storage uuid-guess IDOR; the GET route was
+  already Phase-2-gated). Cast-safe `job_photo_path_assigned(text)` fails closed on
+  malformed names. job-docs buckets need no storage change (download gated by the
+  slice-4 RLS read before the admin signs). **BUILT + ISOLATED-VERIFIED**
+  (rls/job-photos-storage-access 3/3, real storage API).
+- **Remaining Phase-3 (not built, not in the directive's named scope):**
+  `blueprints` / `blueprint_markup` / `blueprint_pins`, `job_programme_baselines`,
+  `job_warranties`, `worker_acknowledgements`, `asset_assignments`, `delay_events`,
+  `weather_watches`. Flagged for a later slice.
 
-## ⚠️ Cross-cutting PRE-APPLY blocker (from both adversarial reviews)
+## ✅ Cross-cutting PRE-APPLY blocker — RESOLVED (reconciliation migration `20261246`)
 
-**The legacy write path must reconcile `job_assignments` before R5 read-enforcement
-is applied.** The `updateJob` single-assignee select (and any reassignment) writes
-`jobs.assigned_to` but does NOT touch `job_assignments`. The READ side now unions
-both, so **reads are correct**; but a worker **reassigned off** a job keeps a stale
-backfilled `job_assignments` row, so once Phase 2/3 enforce, they could retain
-access via that row. The panel's `removeWorker` clears both paths, but a legacy
-reassignment does not. **Resolve before applying Phase 2/3:** either (a) make
-`updateJob` reconcile `job_assignments` on an `assigned_to` change (service-role),
-or (b) drop the Phase-1 backfill and rely on the union read (so `assigned_to` is
-the only legacy source and reassignment naturally revokes). **Product decision:**
-does reassigning the primary remove the previous lead from the crew?
+The earlier blocker ("legacy `updateJob`/reassignment writes `jobs.assigned_to` but
+not `job_assignments`, so a reassigned-off worker keeps a stale row") is **resolved**
+on branch `feat/jobs-assignment-reconciliation`:
+
+- **Two transactional SECURITY DEFINER RPCs** are now the single write path for
+  assignment (admin-only, org-pinned, `current_org_ids()`+`42501` guard):
+  - `set_job_primary_assignment(job, org, assignee)` — sets `jobs.assigned_to` AND
+    puts the assignee on the crew atomically, and on a CHANGE **preserves the
+    outgoing primary on the crew** (only if still a member) so reassigning the lead
+    never silently drops their access;
+  - `remove_job_worker(job, org, user)` — deletes the crew row AND nulls
+    `jobs.assigned_to` if it points at them, **atomically** — no stale path survives.
+- `createJob`/`updateJob` route `assigned_to` through the RPC (updateJob after its
+  admin gate, so the RPC reads the OUTGOING primary before it changes); the crew
+  panel's `removeWorker` uses the RPC.
+- **Product decision (answered by founder):** reassigning the primary does NOT remove
+  the previous lead from the crew — they stay until explicitly removed. Implemented.
+- **Independent adversarial review found + FIXED a HIGH concurrency defect:** a
+  set-vs-remove race (reproduced ~75%) could resurrect an explicitly-removed worker.
+  Fixed with a **per-job transaction advisory lock** in both RPCs; a 12-iteration
+  race regression test now passes. Two low-severity hardenings also applied
+  (loud P0002 on wrong-org remove; member-check on the preserve-insert).
+- **Verified:** rls/job-assignment-reconciliation 11/11 + secdef-org-rpc-guard 15/15.
+- **Apply ordering note:** `20261246` depends on the Phase-3 union helper (`20261244`),
+  so it applies AFTER Phase 3 slices 1–2 (prefix order already satisfies this:
+  242 → 243 → 244 → 245 → 246 → 247 → 248 → 249).
 
 ## Remaining phases (not yet built)
 
@@ -181,9 +214,31 @@ with the same evidence shape as Phase 2.
 
 ---
 
+## Apply order (all apply-held — explicit founder approval required)
+
+```
+242 job_assignments (P1)
+ → 243 jobs SELECT (P2)
+ → 244 operational children slice 1 + my_assigned_job_ids() union helper (P3)
+ → 245 safety/inspection children slice 2 (P3)
+ → 246 assignment reconciliation RPCs + concurrency lock   (branch feat/jobs-assignment-reconciliation)
+ → 247 material_requests + lines (P3 slice 3)
+ → 248 job_documents + versions + download gate (P3 slice 4)
+ → 249 job-photos storage read (P3 slice 5)
+```
+Prefix order already encodes the only hard dependency (246 needs the 244 union
+helper). Each is independently reviewable; apply in prefix order after the
+Phase-2 staff-facing job-read surfaces are reconciled (that remains the one app
+reconciliation gate — see Phase 2).
+
 ## Founder decisions required
 
 1. Approve **#975** (Phase 1) to merge + apply — unblocks applying Phase 2+.
 2. Approve the **Phase-2 app reconciliation → apply** ordering above.
 3. Confirm the Phase 3/4/5 table classification (the staff-access model in the
    master directive §1.2–§1.5 is taken as the confirmed classification).
+4. **The cross-cutting reconciliation blocker is RESOLVED** (migration 246 +
+   concurrency fix, above) — no decision pending; the "reassign keeps prior lead
+   on the crew" product call is answered and implemented.
+5. **Phase 4 (financial denial) + Phase 5 (workforce self-scope) are the next
+   build targets** — not yet built.
