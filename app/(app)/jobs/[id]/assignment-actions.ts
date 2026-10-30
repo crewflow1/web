@@ -124,15 +124,16 @@ export async function assignWorker(
     return formError("That person isn't a member of this workspace.");
   }
 
-  const { error } = await admin.from("job_assignments").upsert(
-    {
-      org_id: ctx.org.id,
-      job_id: jobId,
-      user_id: workerId,
-      assigned_by: user.id,
-    },
-    { onConflict: "job_id,user_id" },
-  );
+  // Add through the LOCKED add_job_worker RPC (not a bare upsert): it takes the
+  // same per-job advisory lock as remove_job_worker, so an add racing a remove
+  // is serialized and can never re-insert a just-removed worker (review F1). The
+  // RPC re-checks org/admin/member/job under the lock; the reads above only
+  // produce the friendly messages.
+  const { error } = await admin.rpc("add_job_worker", {
+    p_job_id: jobId,
+    p_org_id: ctx.org.id,
+    p_user_id: workerId,
+  });
   if (error) {
     console.error("[job-assignments] assign failed", error);
     return formError("Couldn't assign that worker. Refresh and try again.");

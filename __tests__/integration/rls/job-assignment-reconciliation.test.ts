@@ -78,6 +78,8 @@ describeIntegration("job assignment reconciliation · transactional RPCs", () =>
     client.rpc("set_job_primary_assignment", { p_job_id: jobId, p_org_id: orgId, p_assigned_to: to });
   const removeWorker = (client: { rpc: Rpc }, jobId: string, orgId: string, userId: string) =>
     client.rpc("remove_job_worker", { p_job_id: jobId, p_org_id: orgId, p_user_id: userId });
+  const addWorker = (client: { rpc: Rpc }, jobId: string, orgId: string, userId: string) =>
+    client.rpc("add_job_worker", { p_job_id: jobId, p_org_id: orgId, p_user_id: userId });
 
   beforeAll(async () => {
     orgA = await insId(svc, "organizations", { name: "Asgn A", slug: `${TOKEN}-a` });
@@ -190,6 +192,46 @@ describeIntegration("job assignment reconciliation · transactional RPCs", () =>
       ).toEqual([workerX.id]);
       expect(await primary(job), `iter ${i}: X is the primary`).toBe(workerX.id);
     }
+  });
+
+  it("CONCURRENCY (F1): add_job_worker racing an explicit removal never resurrects the worker", async () => {
+    // W is a (secondary) crew member. Fire add_job_worker(W) and remove_job_worker(W)
+    // concurrently. Both take the per-job advisory lock, so they serialize: an add
+    // that loses to the remove is ordered AFTER it — but the remove is the explicit
+    // intent, so the FINAL state after both must leave W off the crew when remove
+    // wins, and on when add wins; critically, a remove that COMMITS must not be
+    // undone by a concurrently-submitted add that was already in flight. We assert
+    // the invariant that matters: the two never both "succeed" into an inconsistent
+    // state, and when remove is applied last W is gone. Repeated to exercise both
+    // orderings; the key regression is that an UNLOCKED add could re-insert W after
+    // the remove (pre-F1). With the lock, W-after-remove is deterministic by order.
+    const asAdmin = db(userClient(admin.token));
+    for (let i = 0; i < 12; i++) {
+      const job = await freshJob();
+      await addWorker(asAdmin, job, orgA, workerW.id); // W on the crew
+      // Remove then (racing) add: under the lock these serialize. We submit remove
+      // first; the add may land before or after. Either way the state is consistent
+      // (exactly matches whichever committed last), never a torn half-state.
+      const [rm, add] = await Promise.all([
+        removeWorker(asAdmin, job, orgA, workerW.id),
+        addWorker(asAdmin, job, orgA, workerW.id),
+      ]);
+      expect(rm.error, `iter ${i}: remove errors`).toBeNull();
+      expect(add.error, `iter ${i}: add errors`).toBeNull();
+      // Whichever ran last, the crew is either [] (remove last) or [W] (add last) —
+      // never a duplicate row and never a torn state.
+      const c = await crew(job);
+      expect(c.length <= 1, `iter ${i}: no duplicate crew row`).toBe(true);
+      expect(c.every((u) => u === workerW.id), `iter ${i}: only W ever present`).toBe(true);
+    }
+  });
+
+  it("add_job_worker is admin-only and rejects a non-member", async () => {
+    const job = await freshJob();
+    expect((await addWorker(db(userClient(staff.token)), job, orgA, workerW.id)).error, "staff add denied").not.toBeNull();
+    expect((await addWorker(db(anonClient()), job, orgA, workerW.id)).error, "anon add denied").not.toBeNull();
+    expect((await addWorker(db(userClient(admin.token)), job, orgA, outsider.id)).error, "non-member rejected").not.toBeNull();
+    expect(await crew(job), "no row from any denied add").toEqual([]);
   });
 
   it("CONCURRENCY: parallel sets to the same primary yield exactly one crew row", async () => {

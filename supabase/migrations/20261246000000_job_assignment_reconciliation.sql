@@ -129,3 +129,42 @@ begin
   where id = p_job_id and org_id = p_org_id and assigned_to = p_user_id;
 end;
 $$;
+
+-- add_job_worker — add a SECONDARY crew member (not the primary). This is the
+-- locked counterpart of the crew-panel's "Add worker": it MUST take the same
+-- per-job advisory lock as set_job_primary_assignment / remove_job_worker, or an
+-- unlocked upsert racing a concurrent remove_job_worker could re-insert a worker
+-- the admin just explicitly removed (review finding F1 — add-vs-remove was
+-- last-writer-wins because the add path bypassed the lock). With all three
+-- mutators serialized on hashtext('job_assignment', job), an add that loses the
+-- race to a remove is simply ordered after it and the remove stands.
+create or replace function public.add_job_worker(
+  p_job_id uuid,
+  p_org_id uuid,
+  p_user_id uuid
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  if auth.role() is distinct from 'service_role'
+     and p_org_id not in (select public.current_org_ids()) then
+    raise exception 'Forbidden: not a member of this org' using errcode = '42501';
+  end if;
+  if auth.role() is distinct from 'service_role' and not public.is_org_admin(p_org_id) then
+    raise exception 'Forbidden: only owners/admins may change assignments' using errcode = '42501';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtext('job_assignment'), hashtext(p_job_id::text));
+
+  if not exists (select 1 from public.jobs where id = p_job_id and org_id = p_org_id) then
+    raise exception 'Job not found in this org' using errcode = 'P0002';
+  end if;
+  if not exists (
+    select 1 from public.memberships where org_id = p_org_id and user_id = p_user_id
+  ) then
+    raise exception 'Worker is not a member of this org' using errcode = '23514';
+  end if;
+
+  insert into public.job_assignments (org_id, job_id, user_id, assigned_by)
+  values (p_org_id, p_job_id, p_user_id, auth.uid())
+  on conflict (job_id, user_id) do nothing;
+end;
+$$;

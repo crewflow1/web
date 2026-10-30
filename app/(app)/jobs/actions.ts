@@ -18,6 +18,7 @@ import {
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { verifyCrmReferences } from "@/lib/crm/reference-integrity";
 import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
+import { hasCapability } from "@/server/auth/capabilities";
 
 /**
  * Job CRUD server actions.
@@ -82,11 +83,24 @@ export async function createJob(
   _prevState: FormState<JobValues>,
   formData: FormData,
 ): Promise<FormState<JobValues>> {
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const result = validateFormData(formData, jobFormSchema);
   if (!result.ok) return result.state as FormState<JobValues>;
 
   const supabase = await createClient();
+
+  // AUTHORISATION for assignment (review F2). Assigning a worker is an
+  // owner/admin action — set_job_primary_assignment is admin-only — so if a
+  // non-admin picked an assignee we must refuse UP FRONT with a clear message,
+  // not insert the job and then silently swallow the RPC's 42501 (which left the
+  // job unassigned under a misleading "Job created."). A member may still create
+  // the job with no assignee; an admin assigns it afterwards.
+  if (result.data.assigned_to && !(await hasCapability(ctx, user, "jobs", "manage"))) {
+    return formError(
+      "Only owners or admins can assign a worker. Create the job and ask an admin to assign it.",
+      result.data as JobValues,
+    );
+  }
 
   // Cross-tenant reference integrity (defence in depth over the DB composite FK
   // + membership trigger from 20261112000000): a caller must not attach another
@@ -148,11 +162,12 @@ export async function createJob(
 
   // Primary assignment — one transactional write that sets jobs.assigned_to AND
   // places the assignee on the crew (job_assignments). Routed through the RPC
-  // (not the insert) so the two stay consistent. Membership was already verified
-  // by verifyCrmReferences, so the only failure here is a transient DB fault:
-  // the job is already saved, so (like the template clone / calendar push below)
-  // we log and continue rather than orphaning a created job behind an error — the
-  // owner can set the worker from the job's edit screen.
+  // (not the insert) so the two stay consistent. The caller was already proven
+  // to hold jobs:manage above (F2) and membership was verified by
+  // verifyCrmReferences, so a 42501/validation failure cannot occur here; the
+  // only residual is a transient DB fault. The job is already saved, so (like the
+  // template clone / calendar push below) we log and continue rather than
+  // orphaning a created job — the owner can re-assign from the edit screen.
   if (result.data.assigned_to) {
     const { error: assignError } = await callRpc(supabase, "set_job_primary_assignment", {
       p_job_id: data.id,

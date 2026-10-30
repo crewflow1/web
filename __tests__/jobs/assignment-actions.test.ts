@@ -171,26 +171,22 @@ describe("assignWorker — validation", () => {
 });
 
 describe("assignWorker — success", () => {
-  it("upserts the assignment with the caller as assigned_by and the right conflict key", async () => {
+  it("adds the worker through the LOCKED add_job_worker RPC (not a bare upsert)", async () => {
     const res = await assignWorker(JOB_ID, INITIAL, form({ user_id: WORKER_ID }));
 
     expect(res.ok).toBe(true);
-    expect(calls.upsert).toHaveLength(1);
-    expect(calls.upsert[0]).toMatchObject({
-      table: "job_assignments",
-      onConflict: "job_id,user_id",
-      row: {
-        org_id: "org-1",
-        job_id: JOB_ID,
-        user_id: WORKER_ID,
-        assigned_by: "user-1",
-      },
+    // F1: the crew-add now takes the per-job advisory lock via the RPC, so it
+    // can never race a concurrent remove. No bare upsert any more.
+    expect(calls.upsert).toHaveLength(0);
+    expect(calls.rpc).toContainEqual({
+      fn: "add_job_worker",
+      args: { p_job_id: JOB_ID, p_org_id: "org-1", p_user_id: WORKER_ID },
     });
     expect(revalidatePathMock).toHaveBeenCalledWith(`/jobs/${JOB_ID}`);
   });
 
-  it("returns ok:false (no false success) when the upsert errors", async () => {
-    upsertError = { message: "boom" };
+  it("returns ok:false (no false success) when the RPC errors", async () => {
+    rpcError = { message: "boom" };
     const res = await assignWorker(JOB_ID, INITIAL, form({ user_id: WORKER_ID }));
     expect(res.ok).toBe(false);
     expect(revalidatePathMock).not.toHaveBeenCalled();
