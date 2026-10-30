@@ -226,6 +226,12 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       "app/(app)/inbox/actions.ts",
       "app/(app)/inbox/conversations/actions.ts",
       "app/(app)/inbox/review/actions.ts",
+      // R4 — insights intelligence surface. /insights is management business
+      // intelligence over financial data, and /api/ai/question answers over the
+      // same financial snapshot — both gated on reports:view (the data-visibility
+      // boundary), since the AI inherits the user's permission to that data.
+      "app/(app)/insights/page.tsx",
+      "app/api/ai/question/route.ts",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|requireCapabilityFor|hasCapability|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;

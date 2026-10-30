@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireManagementApi } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { askAi } from "@/server/services/ai-question";
 import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
 
@@ -10,9 +10,11 @@ import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
  * Tenant-side endpoint for the AI question box on /insights.
  * Reads-only — returns an `AiResponse` (answer + confidence + sources).
  *
- * Auth: requireOrgContext (user JWT + active membership). RLS-scoped
- * data is fetched server-side via the existing retention snapshot,
- * which uses the same JWT. Cross-org data leakage is impossible.
+ * Auth: requireCapabilityApi("reports","view") — the answer is built from a
+ * financial snapshot, so it inherits the same data-visibility boundary as
+ * /insights and /reports. RLS-scoped data is fetched server-side via the
+ * existing retention snapshot on the user JWT. Cross-org data leakage is
+ * impossible.
  *
  * Rate limit story: deferred to Phase 7 (security). For now the
  * Claude/OpenAI provider's own rate limits + a request timeout cap
@@ -31,8 +33,12 @@ const requestSchema = z.object({
 });
 
 export async function POST(request: Request): Promise<NextResponse> {
-  // Management-only (fix 1): the snapshot carries invoiced totals/counts.
-  const guard = await requireManagementApi();
+  // The AI answer is built from a snapshot carrying invoiced totals/counts, so
+  // this inherits the SAME data-visibility boundary as /insights and /reports:
+  // reports:view. (AI inherits the requesting user's permission to the data;
+  // the cost governor caps spend separately.) Owner always; admin with the
+  // grant; staff/members denied.
+  const guard = await requireCapabilityApi("reports", "view");
   // The 403 is a plain Response; this route's signature is NextResponse.
   if (guard instanceof Response) return NextResponse.json({ error: "forbidden" }, { status: 403 });
   const { ctx } = guard;

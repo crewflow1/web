@@ -147,8 +147,12 @@ describe("Phase 5 — askAi handler", () => {
 // =====================================================================
 
 describe("Phase 5 — /api/ai/question route", () => {
-  it("is auth-gated by requireOrgContext", () => {
-    expect(ROUTE).toMatch(/requireOrgContext/);
+  it("is auth-gated by the reports:view capability (R4)", () => {
+    // The answer is built from a financial snapshot, so the route inherits the
+    // /insights + /reports data-visibility boundary — stronger than merely
+    // authenticated (requireCapabilityApi resolves the session + org context AND
+    // enforces reports:view). Staff / ungranted admins are 403'd.
+    expect(ROUTE).toMatch(/requireCapabilityApi\(\s*"reports",\s*"view"\s*\)/);
   });
 
   it("validates the request with zod (min 3, max 500 chars)", () => {

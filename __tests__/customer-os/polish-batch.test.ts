@@ -218,8 +218,11 @@ describe("tenant ConfirmForm + applied to destructive ops", () => {
 describe("/insights tenant route", () => {
   const f = read("app/(app)/insights/page.tsx");
 
-  it("is gated by requireOrgContext (tenant scope)", () => {
-    expect(f).toMatch(/requireOrgContext/);
+  it("is gated by the reports:view capability (tenant scope, R4)", () => {
+    // R4: /insights is management financial intelligence, gated on reports:view.
+    // requireCapability resolves the active-org context AND enforces the
+    // capability — strictly stronger than the old member-floor requireOrgContext.
+    expect(f).toMatch(/requireCapability\(\s*"reports",\s*"view"\s*\)/);
   });
 
   it("reuses the dashboard's InsightsSection (single source of truth)", () => {
