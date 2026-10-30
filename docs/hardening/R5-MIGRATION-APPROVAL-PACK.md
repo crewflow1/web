@@ -229,7 +229,25 @@ with the same evidence shape as Phase 2.
  → 251 workforce self-scope — rota_entries, time_entries (P5)
  → 252 finances read denial (P4 slice 2)
  → 253 report RPCs owner/admin-only — indirect-leak close (P4 slice 3)
+ → 254 purchase_order_line_items read denial (P4 slice 4)
 ```
+**Sprint-3 (full-chain RC validation + adversarial-review fixes):**
+- Reset a fresh DB to the COMPLETE 242→254 sequence and ran the entire matrix
+  together: **94/94** (81 read/commercial/report + 13 reconciliation incl the F1
+  add-vs-remove race) on the final migration order. Chain is contiguous, no
+  prefix collision (R5 branches pushed to origin for CI).
+- **Review BLOCKER fixed:** 252 broke member-open staff COST ENTRY
+  (app/api/finances/route.ts did insert+RETURNING on the tenant client). Fixed —
+  the route mints its id and skips RETURNING; INSERT policy unchanged. Regression
+  test proves a non-admin can still enter a cost yet cannot read the ledger.
+- **Review HIGH fixed (254):** purchase_order_line_items (per-line unit prices /
+  totals) were left staff-readable while the PO header was locked — now admin-only.
+- **Review MEDIUM (noted, not blocking):** assign authority is granular
+  hasCapability on create/crew-add but coarse is_org_admin on update-reassign;
+  fails closed, not exploitable (admins are wildcard-granted; prod has 0 admins).
+- stock_movements masking: DESIGNED (docs/hardening/STOCK-MOVEMENTS-MASKING-DESIGN.md)
+  — a deliberate read-split refactor, NOT shipped (a blanket denial would zero
+  staff quantities + stock valuation).
 **Sprint-2 additions (all BUILT + ISOLATED-VERIFIED, apply-held):**
 - **246 gains `add_job_worker`** (review F1): the crew-add now takes the same
   per-job advisory lock, so add-vs-remove can no longer resurrect a removed
