@@ -28,20 +28,21 @@ its own.
   any client. Applying it is a no-op for every existing user.
 - **Lockout risk:** none (nothing enforces on it).
 - **Rollback:** `drop table if exists public.job_assignments;` (zero product impact).
-- **Status:** BUILT + independently reviewed (APPROVE). CI: fixed the one red
-  gate — the DSAR guard requires every org-scoped table to be classified in
-  `lib/gdpr/org-tables.json`. `job_assignments` is classified and, while it is
-  DARK (service-role-only, no authenticated read surface), **excluded from the
-  export** with a documented reason: the DSAR export reads as the requesting
-  user, so a service-role-only table cannot and must not be read there, and the
-  single-assignee link it currently holds is already exported via
-  `jobs.assigned_to`. **Re-classification trigger (precise):** the moment the app
-  write-path first creates a `job_assignments` row **not mirrored by
-  `jobs.assigned_to`** (a genuine multi-worker/secondary assignment), that row is
-  data-subject personal data absent from `jobs`, so the same change that enables
-  multi-worker writes must also grant an authenticated SELECT policy on
-  `job_assignments` and flip this to **included** — the two must not diverge
-  (add a guard/test when that phase lands). Re-verify CI-GREEN before approving.
+- **GDPR (resolved via service-side export, not exclusion):** `job_assignments`
+  is classified in `lib/gdpr/org-tables.json` as `service_side_export` and **IS
+  included in the DSAR export** via a service-role admin-client lane in
+  `server/services/gdpr-export.ts` (the user-JWT loop cannot read a service-role-
+  only table). The lane is org-pinned + redacted and gated by a defence-in-depth
+  membership probe (the caller's own RLS-subject client must see the
+  `organizations` row for `orgId` before the admin lane runs), so a non-member
+  can never trigger a service-role read of another org. Erasure already
+  hard-deletes `job_assignments` by default and user-erasure cascades it. This
+  resolves the "don't permanently exclude a dark table from subject access"
+  requirement; it also future-proofs multi-worker assignments (exported with no
+  divergence from `jobs.assigned_to`).
+- **Status:** BUILT + independently reviewed (APPROVE for the table/backfill;
+  the service-side export lane carries its own adversarial review). Re-verify
+  CI-GREEN before approving.
 
 ---
 
