@@ -153,9 +153,13 @@ describe("writes (app/(app)/pricing/actions.ts) — active-org pinned + gated", 
     expect(code).toMatch(/unit_price:\s*poundsToPence\(/);
   });
 
-  it("hard DELETE of a price-book item is admin-gated in the app layer too", () => {
+  it("hard DELETE of a price-book item is capability-gated (price_book:delete) in the app layer too", () => {
+    // R4: the delete gate moved from an inline owner/admin role check to the
+    // capability model — owner always; an admin only with an explicit
+    // price_book:delete grant (default-deny). This is strictly stronger than the
+    // old check (a view/edit admin can no longer hard-delete). RLS is the backstop.
     expect(code).toMatch(
-      /deletePriceBookItem[\s\S]*?role !== "owner" && ctx\.membership\.role !== "admin"[\s\S]*?return formError/,
+      /deletePriceBookItem[\s\S]*?requireCapabilityFor\(\s*ctx,\s*user,\s*"price_book",\s*"delete"\s*\)/,
     );
   });
 

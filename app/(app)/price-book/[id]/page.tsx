@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { penceToPounds } from "@/lib/money";
 import { getPriceBookItem } from "@/lib/pricing/queries";
 import { updatePriceBookItem } from "../actions";
@@ -8,6 +8,10 @@ import { PriceBookItemForm } from "../_forms";
 
 /**
  * /price-book/[id] — edit a single price-book item.
+ *
+ * AUTHZ (R4): this page IS the editor, so it gates on price_book:edit — a
+ * view-only admin can't reach it by URL (redirected), and the list page only
+ * shows the "Edit" link to editors. The update action re-checks edit server-side.
  *
  * Org-pinned by-id read (ctx.org.id): current_org_ids() is the outer RLS
  * boundary, so a by-id fetch MUST carry its own org predicate or a dual-org
@@ -23,7 +27,7 @@ export default async function EditPriceBookItemPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireCapability("price_book", "edit");
   const item = await getPriceBookItem(ctx.org.id, id);
   if (!item) notFound();
 
