@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   anonClient,
   describeIntegration,
@@ -540,3 +540,44 @@ describeIntegration(
     });
   },
 );
+
+/**
+ * Service-side membership probe FAILS CLOSED (no DB — injected fake clients).
+ *
+ * The service-role lane bypasses RLS, so its only backstop is the membership
+ * probe (buildOrgExport reads the organizations row through the caller's own
+ * RLS-subject client before touching the admin client). If that probe ERRORS,
+ * the whole export MUST abort loudly — never silently allow the service-role
+ * read, and never silently skip it. This pins that fail-closed contract against
+ * a future regression that treats a probe error as "not a member".
+ */
+describe("gdpr export · service-side membership probe fails closed", () => {
+  function fakeClient(opts: { probeErrors: boolean }) {
+    const chainFor = (table: string) => {
+      const chain = {
+        select: () => chain,
+        eq: () => chain,
+        order: () => chain,
+        range: () =>
+          Promise.resolve(
+            table === "organizations" && opts.probeErrors
+              ? { data: null, error: { message: "probe boom", code: "XX000" } }
+              : { data: [], error: null },
+          ),
+      };
+      return chain;
+    };
+    return { from: (t: string) => chainFor(t) } as never;
+  }
+
+  it("throws when the org-membership probe errors (never trusts a failed probe)", async () => {
+    await expect(
+      buildOrgExport({
+        orgId: "00000000-0000-0000-0000-000000000000",
+        generatedAt: "2026-01-01T00:00:00.000Z",
+        client: fakeClient({ probeErrors: true }),
+        adminClient: fakeClient({ probeErrors: false }),
+      }),
+    ).rejects.toThrow(/membership probe/i);
+  });
+});
