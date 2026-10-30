@@ -169,6 +169,14 @@ export async function collectPortalDocumentPdfs(args: {
         )
         .eq("org_id", customer.org_id)
         .eq("customer_id", customer.id)
+        // Match the invoices-tab list's visibility exactly: a VOID invoice
+        // (20261219) is retracted, so it must not ride into the bulk zip when it
+        // is hidden from the on-screen list (`.neq("status","void")`) and refused
+        // by the pay action. The zipped invoice PDF carries the org's bank details
+        // + the amount; shipping a voided bill would breach the same "never see it
+        // as owed / be shown bank details / be able to pay it" invariant. Mirrors
+        // the quote query's status gate just below (surface consistency).
+        .neq("status", "void")
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to) as unknown as PromiseLike<{
@@ -211,7 +219,12 @@ export async function collectPortalDocumentPdfs(args: {
 
   // --- Per-row ownership re-verification (defence-in-depth over the SQL). ------
   const invoices = ((invoiceData ?? []) as InvoiceRow[]).filter(
-    (inv) => inv.org_id === customer.org_id && invoiceCustomerId(inv) === customer.id,
+    (inv) =>
+      inv.org_id === customer.org_id &&
+      invoiceCustomerId(inv) === customer.id &&
+      // Defence-in-depth over the SQL `.neq("status","void")` — a retracted
+      // invoice must never reach the zip even if the filter above regresses.
+      inv.status !== "void",
   );
   const quotes = ((quoteData ?? []) as QuoteRow[]).filter(
     (q) =>

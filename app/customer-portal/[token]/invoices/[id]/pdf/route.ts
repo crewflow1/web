@@ -66,6 +66,17 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
   if (invoiceCustomerId(invoice) !== customer.id) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+  // STATUS GATE — a void invoice (20261219) is retracted. The invoices LIST
+  // excludes it (`.neq("status","void")`) and the pay action refuses it, both so
+  // "the customer must never see it as owed, be shown bank details for it, or be
+  // able to pay it". The per-invoice PDF carries the org's BANK DETAILS and the
+  // amount, and its URL survives the void (a customer may have it bookmarked), so
+  // without this gate a known/kept id would still serve a retracted bill — the
+  // exact stale-link gap #986 closed on the quote path. 404 identically to a
+  // foreign id so a voided invoice reveals nothing.
+  if (invoice.status === "void") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
 
   // Invoice-owned snapshot (Issue #349 Phase 2): the customer's PDF shows the
   // invoice as billed, unaffected by any later quote edit or deletion.
