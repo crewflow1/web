@@ -2,7 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ButtonLink } from "@/components/ui";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
+import { PermissionEditor } from "./_permission-editor";
 import {
   updateStaffProfile,
   updateStaffRole,
@@ -84,6 +86,38 @@ export default async function StaffDetailPage({
     employment_type: string | null;
     start_date: string | null;
   } | null;
+
+  // Owner-facing admin permission editor (R3 UI). ONLY the owner may view/set an
+  // admin's capability grants (the hard rule — an admin can never reach this, and
+  // setAdminPermissions re-checks isOwner server-side). Load the target admin's
+  // current grants on the service-role client (membership_permissions is never
+  // client-readable); the editor renders only for an admin target.
+  const viewerIsOwner = ctx.membership.role === "owner";
+  let adminGrants: Array<{ module: string; action: string }> = [];
+  if (viewerIsOwner && row.role === "admin") {
+    const adminDb = createAdminClient();
+    // LOUD reads: a failed grant load must throw, never silently return an empty
+    // set — otherwise the editor would render the admin as having NO permissions,
+    // and a subsequent Save (replace-all) would WIPE their real grants.
+    const { data: mem, error: memErr } = await adminDb
+      .from("memberships")
+      .select("id")
+      .eq("org_id", ctx.org.id)
+      .eq("user_id", id)
+      .maybeSingle();
+    if (memErr) throw readFailure("staff detail: admin membership", memErr);
+    if (mem) {
+      const { data: perms, error: permsErr } = await adminDb
+        .from("membership_permissions")
+        .select("module, action")
+        .eq("membership_id", (mem as { id: string }).id)
+        .limit(512);
+      if (permsErr) throw readFailure("staff detail: admin grants", permsErr);
+      adminGrants = ((perms as Array<{ module: string; action: string }> | null) ?? []).map(
+        (p) => ({ module: p.module, action: p.action }),
+      );
+    }
+  }
 
   // Pay + emergency contact live in staff_compensation (20261218): the self-or-
   // admin RLS admits an admin viewing any org member, and a member viewing their
@@ -478,6 +512,14 @@ export default async function StaffDetailPage({
             </button>
           </form>
         </section>
+      ) : null}
+
+      {viewerIsOwner && row.role === "admin" ? (
+        <PermissionEditor
+          targetUserId={id}
+          targetLabel={user?.full_name || user?.email || "this admin"}
+          initialGrants={adminGrants}
+        />
       ) : null}
 
       <AttachmentsPanel targetTable="memberships" targetId={id} />
