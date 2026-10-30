@@ -18,6 +18,16 @@ const { requireOrgContextMock, insertMock, deleteMock, createClientMock } = vi.h
 }));
 
 vi.mock("@/server/auth/session", () => ({ requireOrgContext: requireOrgContextMock }));
+// R4: the subscribe actions now gate via hasCapability (which would otherwise
+// read the service-role admin client). Mirror the gate OUTCOME by role so these
+// tests keep exercising the create/delete write path + the staff refusal; the
+// granular admin-grant behaviour is proven in r4-reports-capability.test.ts.
+vi.mock("@/server/auth/capabilities", () => ({
+  hasCapability: vi.fn(async (ctx: { membership?: { role?: string } }) => {
+    const role = ctx?.membership?.role;
+    return role === "owner" || role === "admin";
+  }),
+}));
 vi.mock("@/lib/supabase/server", () => ({ createClient: createClientMock }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/reports/subscriptions", () => ({

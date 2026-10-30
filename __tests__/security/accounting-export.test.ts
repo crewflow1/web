@@ -238,12 +238,23 @@ describe("accounting export service + surfaces", () => {
     expect(code).toMatch(/csvEscape/);
   });
 
-  it("route + action gate on owner/admin before exporting", () => {
-    for (const f of [ROUTE, ACTION]) {
-      const code = codeOf(read(f));
-      expect(code).toMatch(/role === "owner"/);
-      expect(code).toMatch(/role === "admin"/);
-    }
+  it("the CSV route gates on owner/admin before exporting", () => {
+    // The plain GET CSV download (app/api/accounting/export) keeps its coarse
+    // owner/admin role gate — it is not part of the R4 capability sweep.
+    const code = codeOf(read(ROUTE));
+    expect(code).toMatch(/role === "owner"/);
+    expect(code).toMatch(/role === "admin"/);
+  });
+
+  it("the provider-push/disconnect action gates on the reports capability (R4)", () => {
+    // R4: the action's coarse isAdminRole check became the granular capability
+    // gate — push is a financial export (reports:export), disconnect manages the
+    // connection (reports:manage). Owner always; an admin only if granted. The
+    // per-role behaviour is proven in r4-reports-capability.test.ts.
+    const code = codeOf(read(ACTION));
+    expect(code).not.toMatch(/\bisAdminRole\b/);
+    expect(code).toMatch(/hasCapability\([^)]*["']reports["'],\s*["']export["']\s*\)/);
+    expect(code).toMatch(/hasCapability\([^)]*["']reports["'],\s*["']manage["']\s*\)/);
   });
 
   it("the provider-push action delegates to the ONE push composition (syncToProvider)", () => {

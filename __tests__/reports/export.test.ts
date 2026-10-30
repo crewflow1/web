@@ -43,11 +43,16 @@ vi.mock("@/lib/reports/aggregates", () => ({
 
 vi.mock("@/server/auth/session", () => ({
   requireOrgContext: requireOrgContextMock,
-  // Faithful mirror of requireManagementApi (fix 1): the export route is
-  // management-only. Derives from the SAME requireOrgContextMock so each test's
-  // configured ctx keeps driving the outcome; a non-management role gets the
-  // same 403 JSON the real helper returns.
-  requireManagementApi: vi.fn(async () => {
+}));
+
+// R4: the export route now gates via requireCapabilityApi("reports","export")
+// (it no longer imports the session management helper). Mirror the authorization
+// OUTCOME by role — owner/admin pass, others get the same 403 JSON — deriving ctx
+// from the SAME requireOrgContextMock so each test's configured ctx keeps driving
+// the result. The granular admin-grant behaviour is proven in
+// __tests__/security/r4-reports-capability.test.ts.
+vi.mock("@/server/auth/capabilities", () => ({
+  requireCapabilityApi: vi.fn(async () => {
     const res = await requireOrgContextMock();
     const role = (res as { ctx?: { membership?: { role?: string } } })?.ctx
       ?.membership?.role;
@@ -173,12 +178,14 @@ describe("reports export wiring (source-pinned architecture)", () => {
     expect(code).not.toMatch(/createClient/);
   });
 
-  it("is org-isolated AND management-gated behind requireManagementApi", () => {
-    // Strengthened (fix 1): the route funnels through requireManagementApi,
-    // which wraps requireOrgContext (org isolation) and ADDS the owner/admin
-    // gate — this CSV carries revenue/VAT/top-customers, never staff-readable.
+  it("is org-isolated AND capability-gated behind requireCapabilityApi(reports:export)", () => {
+    // R4: the route funnels through requireCapabilityApi("reports","export"),
+    // which resolves org context (isolation) and ADDS the granular gate — owner
+    // always, an admin only if granted; this CSV carries revenue/VAT/top-
+    // customers, never staff-readable, and now not any-admin either.
     const code = read(ROUTE);
-    expect(code).toMatch(/requireManagementApi\s*\(\s*\)/);
+    expect(code).toMatch(/requireCapabilityApi\(\s*["']reports["'],\s*["']export["']\s*\)/);
+    expect(code).not.toMatch(/requireManagementApi/);
     expect(code).not.toMatch(/requireOrgContext\s*\(\s*\)/);
   });
 
