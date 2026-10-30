@@ -3,7 +3,21 @@
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { hasCapability } from "@/server/auth/capabilities";
 import { formError, formSuccess, type FormState } from "@/lib/forms/state";
+
+/**
+ * AUTHZ (R4): valuations / applications-for-payment are the job's invoicing &
+ * payment-claim workflow and are explicitly a staff-prohibited money surface, so
+ * every write gates on the `invoices` capability — create for raising a claim or
+ * generating its invoice, edit for amending/submitting/cancelling/linking, and
+ * approve for certifying (freezing) the figures. Owner always; an admin needs
+ * the grant (default-deny); staff/members get a graceful refusal. The
+ * SECURITY DEFINER certify/generate RPCs remain the DB backstop. (Previously the
+ * page's management gate + RLS were the only guards; a staff member could POST a
+ * draft-valuation action directly — this closes that path.)
+ */
+const NO_PERMISSION = "You don't have permission to do that.";
 
 /**
  * Interim-valuation / application-for-payment server actions (migration
@@ -98,6 +112,7 @@ export async function createValuation(
   formData: FormData,
 ): Promise<FormState> {
   const { user, ctx } = await requireOrgContext();
+  if (!(await hasCapability(ctx, user, "invoices", "create"))) return formError(NO_PERMISSION);
   if (!idSchema.safeParse(jobId).success) return formError("That job link looks wrong — reload and try again.");
 
   const parsed = parseDetails(formData);
@@ -155,7 +170,8 @@ export async function updateValuation(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const { ctx } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext();
+  if (!(await hasCapability(ctx, user, "invoices", "edit"))) return formError(NO_PERMISSION);
   if (!idSchema.safeParse(valuationId).success) return formError("That valuation link looks wrong — reload.");
 
   const parsed = parseDetails(formData);
@@ -189,7 +205,8 @@ export async function updateValuation(
 
 // ── submit (draft → submitted) ────────────────────────────────────────────────
 export async function submitValuation(valuationId: string, _prev: FormState): Promise<FormState> {
-  const { ctx } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext();
+  if (!(await hasCapability(ctx, user, "invoices", "edit"))) return formError(NO_PERMISSION);
   if (!idSchema.safeParse(valuationId).success) return formError("That valuation link looks wrong — reload.");
 
   const client = await db();
@@ -210,7 +227,8 @@ export async function submitValuation(valuationId: string, _prev: FormState): Pr
 
 // ── cancel (draft/submitted → cancelled) ──────────────────────────────────────
 export async function cancelValuation(valuationId: string, _prev: FormState): Promise<FormState> {
-  const { ctx } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext();
+  if (!(await hasCapability(ctx, user, "invoices", "edit"))) return formError(NO_PERMISSION);
   if (!idSchema.safeParse(valuationId).success) return formError("That valuation link looks wrong — reload.");
 
   const client = await db();
@@ -235,7 +253,9 @@ export async function certifyValuation(
   jobId: string,
   _prev: FormState,
 ): Promise<FormState> {
-  await requireOrgContext();
+  const { user, ctx } = await requireOrgContext();
+  // Certifying freezes the money columns — an approval decision.
+  if (!(await hasCapability(ctx, user, "invoices", "approve"))) return formError(NO_PERMISSION);
   if (!idSchema.safeParse(valuationId).success || !idSchema.safeParse(jobId).success) {
     return formError("That valuation link looks wrong — reload.");
   }
@@ -252,7 +272,9 @@ export async function generateValuationInvoice(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireOrgContext();
+  const { user, ctx } = await requireOrgContext();
+  // Generating the invoice mints a billing document — an invoices:create act.
+  if (!(await hasCapability(ctx, user, "invoices", "create"))) return formError(NO_PERMISSION);
   if (!idSchema.safeParse(valuationId).success || !idSchema.safeParse(jobId).success) {
     return formError("That valuation link looks wrong — reload.");
   }
@@ -279,6 +301,7 @@ export async function linkVariation(
   formData: FormData,
 ): Promise<FormState> {
   const { user, ctx } = await requireOrgContext();
+  if (!(await hasCapability(ctx, user, "invoices", "edit"))) return formError(NO_PERMISSION);
   if (!idSchema.safeParse(valuationId).success || !idSchema.safeParse(jobId).success) {
     return formError("That valuation link looks wrong — reload.");
   }
@@ -312,7 +335,8 @@ export async function unlinkVariation(
   jobId: string,
   _prev: FormState,
 ): Promise<FormState> {
-  const { ctx } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext();
+  if (!(await hasCapability(ctx, user, "invoices", "edit"))) return formError(NO_PERMISSION);
   if (!idSchema.safeParse(linkId).success || !idSchema.safeParse(jobId).success) {
     return formError("That link looks wrong — reload.");
   }

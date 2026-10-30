@@ -232,6 +232,14 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       // boundary), since the AI inherits the user's permission to that data.
       "app/(app)/insights/page.tsx",
       "app/api/ai/question/route.ts",
+      // R4 — job invoicing surfaces (billing + valuations). Both are the job's
+      // "get paid" workflow and map to the invoices capability: view to read the
+      // page, create/edit/approve on the actions (generate = create, certify =
+      // approve, amend/submit/cancel/link = edit).
+      "app/(app)/jobs/[id]/billing/page.tsx",
+      "app/(app)/jobs/[id]/billing/actions.ts",
+      "app/(app)/jobs/[id]/valuations/page.tsx",
+      "app/(app)/jobs/[id]/valuation-actions.ts",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|requireCapabilityFor|hasCapability|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;

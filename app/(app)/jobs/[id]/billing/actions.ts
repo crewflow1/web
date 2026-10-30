@@ -2,21 +2,23 @@
 
 import { revalidatePath } from "next/cache";
 import { requireOrgContext } from "@/server/auth/session";
+import { hasCapability } from "@/server/auth/capabilities";
 import { createClient } from "@/lib/supabase/server";
 import { round2, toPounds } from "@/lib/money";
 
 /**
  * Billing-plan server actions (H2-CASH).
  *
- * All are OWNER/ADMIN only — a billing plan is job-level commercial config. The
- * app check gives a friendly error; the DB RLS (is_org_admin on the write
- * policies) is the real boundary, so a direct PostgREST caller is also refused.
- * Invoice generation goes through the atomic `generate_stage_invoice` RPC.
+ * AUTHZ (R4): job progress-billing IS the invoicing workflow (generate_stage_invoice
+ * mints an invoice), so these gate on the `invoices` capability — create for
+ * setting up / adding / generating, edit for removing stage config / cancelling.
+ * Owner passes unconditionally; an admin needs the grant (default-deny); a denied
+ * caller is a silent no-op (the forms are management-only in the UI, and the DB
+ * RLS `is_org_admin` on the write policies remains the backstop for a direct
+ * PostgREST caller). Invoice generation goes through the atomic
+ * `generate_stage_invoice` RPC.
  */
 
-function isManager(role: string): boolean {
-  return role === "owner" || role === "admin";
-}
 function num(v: FormDataEntryValue | null): number {
   return round2(toPounds(typeof v === "string" ? v : 0));
 }
@@ -43,7 +45,7 @@ const looseFrom = (c: unknown) =>
 /** Create the active billing plan for a job (one active plan per job). */
 export async function createBillingPlan(formData: FormData): Promise<void> {
   const { user, ctx } = await requireOrgContext();
-  if (!isManager(ctx.membership.role)) return;
+  if (!(await hasCapability(ctx, user, "invoices", "create"))) return;
   const jobId = String(formData.get("job_id") ?? "");
   const structure = String(formData.get("structure") ?? "staged");
   const basis = num(formData.get("basis_amount"));
@@ -59,7 +61,7 @@ export async function createBillingPlan(formData: FormData): Promise<void> {
 /** Add one stage to a plan, resolving its net amount server-side. */
 export async function addBillingStage(formData: FormData): Promise<void> {
   const { user, ctx } = await requireOrgContext();
-  if (!isManager(ctx.membership.role)) return;
+  if (!(await hasCapability(ctx, user, "invoices", "create"))) return;
   const jobId = String(formData.get("job_id") ?? "");
   const planId = String(formData.get("plan_id") ?? "");
   const name = String(formData.get("name") ?? "").trim().slice(0, 120);
@@ -112,8 +114,8 @@ export async function addBillingStage(formData: FormData): Promise<void> {
 
 /** Generate the invoice for a stage (atomic + idempotent RPC). */
 export async function generateStageInvoice(formData: FormData): Promise<void> {
-  const { ctx } = await requireOrgContext();
-  if (!isManager(ctx.membership.role)) return;
+  const { user, ctx } = await requireOrgContext();
+  if (!(await hasCapability(ctx, user, "invoices", "create"))) return;
   const jobId = String(formData.get("job_id") ?? "");
   const stageId = String(formData.get("stage_id") ?? "");
   if (!stageId) return;
@@ -130,8 +132,8 @@ export async function generateStageInvoice(formData: FormData): Promise<void> {
 
 /** Delete a not-yet-invoiced stage. */
 export async function deleteBillingStage(formData: FormData): Promise<void> {
-  const { ctx } = await requireOrgContext();
-  if (!isManager(ctx.membership.role)) return;
+  const { user, ctx } = await requireOrgContext();
+  if (!(await hasCapability(ctx, user, "invoices", "edit"))) return;
   const jobId = String(formData.get("job_id") ?? "");
   const stageId = String(formData.get("stage_id") ?? "");
   if (!stageId) return;
@@ -148,8 +150,8 @@ export async function deleteBillingStage(formData: FormData): Promise<void> {
 
 /** Cancel the active plan (frees the job for a fresh plan). */
 export async function cancelBillingPlan(formData: FormData): Promise<void> {
-  const { ctx } = await requireOrgContext();
-  if (!isManager(ctx.membership.role)) return;
+  const { user, ctx } = await requireOrgContext();
+  if (!(await hasCapability(ctx, user, "invoices", "edit"))) return;
   const jobId = String(formData.get("job_id") ?? "");
   const planId = String(formData.get("plan_id") ?? "");
   if (!planId) return;
