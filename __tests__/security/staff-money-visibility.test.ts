@@ -74,22 +74,46 @@ describe("requireManagementRole — the money boundary primitive", () => {
 // ---------------------------------------------------------------------------
 // 2. THE THREE SURFACES ARE WIRED TO IT — before any money read
 // ---------------------------------------------------------------------------
-const SURFACES: { file: string; firstMoneyRead: string }[] = [
-  { file: "app/(app)/price-book/page.tsx", firstMoneyRead: "listPriceBookItems(" },
-  { file: "app/(app)/jobs/[id]/billing/page.tsx", firstMoneyRead: "loadJobBilling(" },
-  { file: "app/(app)/jobs/[id]/valuations/page.tsx", firstMoneyRead: "buildJobValuationsView(" },
+// Each surface must gate server-side BEFORE its first money read. price-book is
+// now on the R4 capability model (price_book:view) — a strictly-equal-or-stronger
+// boundary than the old management role (it still denies staff, and additionally
+// supports granular admins). The two jobs-commercial surfaces remain on
+// requireManagementRole until that module's R4 conversion lands; this guard
+// pins whichever gate each surface currently uses, and that it precedes the read.
+const SURFACES: {
+  file: string;
+  firstMoneyRead: string;
+  importRe: RegExp;
+  guardCall: string;
+}[] = [
+  {
+    file: "app/(app)/price-book/page.tsx",
+    firstMoneyRead: "listPriceBookItems(",
+    importRe: /requireCapability[\s\S]*from\s+"@\/server\/auth\/capabilities"/,
+    guardCall: 'requireCapability("price_book", "view")',
+  },
+  {
+    file: "app/(app)/jobs/[id]/billing/page.tsx",
+    firstMoneyRead: "loadJobBilling(",
+    importRe: /requireManagementRole[\s\S]*from\s+"@\/server\/auth\/session"/,
+    guardCall: "requireManagementRole(ctx)",
+  },
+  {
+    file: "app/(app)/jobs/[id]/valuations/page.tsx",
+    firstMoneyRead: "buildJobValuationsView(",
+    importRe: /requireManagementRole[\s\S]*from\s+"@\/server\/auth\/session"/,
+    guardCall: "requireManagementRole(ctx)",
+  },
 ];
 
 describe("money surfaces gate before reading", () => {
-  for (const { file, firstMoneyRead } of SURFACES) {
-    it(`${file} calls requireManagementRole before its money read`, () => {
+  for (const { file, firstMoneyRead, importRe, guardCall } of SURFACES) {
+    it(`${file} gates (${guardCall}) before its money read`, () => {
       const code = codeOf(read(file));
-      expect(code, `${file} must import the guard`).toMatch(
-        /requireManagementRole[\s\S]*from\s+"@\/server\/auth\/session"/,
-      );
-      const guardAt = code.indexOf("requireManagementRole(ctx)");
+      expect(code, `${file} must import the guard`).toMatch(importRe);
+      const guardAt = code.indexOf(guardCall);
       const readAt = code.indexOf(firstMoneyRead);
-      expect(guardAt, `${file} must call requireManagementRole(ctx)`).toBeGreaterThan(-1);
+      expect(guardAt, `${file} must call ${guardCall}`).toBeGreaterThan(-1);
       expect(readAt, `${file} must perform its money read (${firstMoneyRead})`).toBeGreaterThan(-1);
       expect(
         guardAt,

@@ -210,6 +210,14 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       "app/(app)/leads/layout.tsx",
       "app/(app)/leads/page.tsx",
       "app/(app)/leads/actions.ts",
+      // R4 — price_book module (the estimating rate library; a money boundary —
+      // staff never see prices). Layout + list page gate on price_book:view, the
+      // [id] editor on price_book:edit, and the 7 server actions on create/edit/
+      // delete via requireCapabilityFor; the list page uses canWith for affordances.
+      "app/(app)/price-book/layout.tsx",
+      "app/(app)/price-book/page.tsx",
+      "app/(app)/price-book/[id]/page.tsx",
+      "app/(app)/price-book/actions.ts",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|requireCapabilityFor|hasCapability|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;

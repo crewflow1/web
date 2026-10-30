@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session";
+import { requireCapabilityFor } from "@/server/auth/capabilities";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { poundsToPence } from "@/lib/money";
 import {
@@ -22,6 +23,11 @@ import {
 /**
  * /pricing server actions — the estimating price-book / rate-library CRUD and
  * saved quote templates.
+ *
+ * AUTHZ (R4): every write is gated by a price_book capability — create for new
+ * items/templates, edit for updates/rename/archive, delete for hard deletes.
+ * Owner passes unconditionally; an admin needs the explicit grant (default-deny);
+ * staff/members never reach these (the "staff can't see prices" money boundary).
  *
  * All writes run on the USER client so the org-pinned RLS policies are the real
  * authority; each write ALSO carries `.eq("org_id", ctx.org.id)` (the active
@@ -82,7 +88,8 @@ export async function createPriceBookItem(
   formData: FormData,
 ): Promise<FormState<PriceBookItemInput>> {
   const { user, ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  // Price book is pricing data: creating a rate requires price_book:create.
+  await requireCapabilityFor(ctx, user, "price_book", "create");
   const result = validateFormData(formData, priceBookItemSchema);
   if (!result.ok) return result.state as FormState<PriceBookItemInput>;
 
@@ -114,8 +121,8 @@ export async function updatePriceBookItem(
   _prev: FormState<PriceBookItemInput>,
   formData: FormData,
 ): Promise<FormState<PriceBookItemInput>> {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  const { user, ctx } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "price_book", "edit");
   if (!idSchema.safeParse(id).success) return formError("Bad item reference.");
   const result = validateFormData(formData, priceBookItemSchema);
   if (!result.ok) return result.state as FormState<PriceBookItemInput>;
@@ -159,8 +166,9 @@ export async function setPriceBookItemActive(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  const { user, ctx } = await requireOrgContext();
+  // Archive/restore is an edit of the rate library.
+  await requireCapabilityFor(ctx, user, "price_book", "edit");
   const parsed = setActiveSchema.safeParse({
     id: formData.get("id"),
     active: formData.get("active"),
@@ -189,11 +197,10 @@ export async function deletePriceBookItem(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
-  if (ctx.membership.role !== "owner" && ctx.membership.role !== "admin") {
-    return formError("Only owners and admins can delete price-book items. You can archive it instead.");
-  }
+  const { user, ctx } = await requireOrgContext();
+  // Hard delete requires the delete capability (owner always; admin only with
+  // an explicit price_book:delete grant). RLS remains the backstop.
+  await requireCapabilityFor(ctx, user, "price_book", "delete");
   const parsed = z.object({ id: idSchema }).safeParse({ id: formData.get("id") });
   if (!parsed.success) return formError("Bad request.");
 
@@ -236,7 +243,8 @@ export async function saveQuoteAsTemplate(
   formData: FormData,
 ): Promise<FormState<QuoteTemplateInput>> {
   const { user, ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  // Saving a reusable template creates new pricing data.
+  await requireCapabilityFor(ctx, user, "price_book", "create");
   if (!idSchema.safeParse(quoteId).success) return formError("Bad quote reference.");
   const result = validateFormData(formData, quoteTemplateSchema);
   if (!result.ok) return result.state as FormState<QuoteTemplateInput>;
@@ -321,8 +329,8 @@ export async function renameQuoteTemplate(
   _prev: FormState<QuoteTemplateInput>,
   formData: FormData,
 ): Promise<FormState<QuoteTemplateInput>> {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  const { user, ctx } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "price_book", "edit");
   if (!idSchema.safeParse(id).success) return formError("Bad template reference.");
   const result = validateFormData(formData, quoteTemplateSchema);
   if (!result.ok) return result.state as FormState<QuoteTemplateInput>;
@@ -350,8 +358,8 @@ export async function deleteQuoteTemplate(
   _prev: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx); // Sales/Money mutation (fix 1)
+  const { user, ctx } = await requireOrgContext();
+  await requireCapabilityFor(ctx, user, "price_book", "delete");
   const parsed = z.object({ id: idSchema }).safeParse({ id: formData.get("id") });
   if (!parsed.success) return formError("Bad request.");
 

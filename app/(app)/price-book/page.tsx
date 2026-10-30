@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
+import { canWith } from "@/lib/auth/capability-rules";
 import { formatPence } from "@/lib/money";
 import {
   listPriceBookItems,
@@ -25,19 +26,23 @@ import {
  * query helpers; RLS is the backstop. Money is stored as integer pence and
  * rendered via formatPence.
  *
- * MONEY BOUNDARY: the price book IS pricing data — the rate library a quote is
- * built from. Staff/field members must never see it (the "staff can't see
- * prices" rule), so this surface is management-only. Fail CLOSED here,
- * server-side, before any price read — not merely by hiding the nav link. A
- * hard DELETE remains admin-only within the management cohort.
+ * MONEY BOUNDARY (R4): the price book IS pricing data — the rate library a quote
+ * is built from. Staff/field members must never see it (the "staff can't see
+ * prices" rule), so this surface requires price_book:view. Fail CLOSED here,
+ * server-side, before any price read — not merely by hiding the nav link. The
+ * write affordances below are gated to the matching capability (create/edit/
+ * delete) so a view-only admin sees a read-only rate library rather than buttons
+ * that would be refused on submit.
  */
 
 export const dynamic = "force-dynamic";
 
 export default async function PricingPage() {
-  const { ctx } = await requireOrgContext();
-  requireManagementRole(ctx);
-  const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
+  const { ctx, grants } = await requireCapability("price_book", "view");
+  const role = ctx.membership.role;
+  const canCreate = canWith(role, grants, "price_book", "create");
+  const canEdit = canWith(role, grants, "price_book", "edit");
+  const canDelete = canWith(role, grants, "price_book", "delete");
 
   const [items, templates] = await Promise.all([
     listPriceBookItems(ctx.org.id, { includeArchived: true }),
@@ -57,18 +62,20 @@ export default async function PricingPage() {
         </p>
       </header>
 
-      {/* Add item ------------------------------------------------------- */}
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-base font-semibold text-slate-900">Add a price-book item</h2>
-        <div className="mt-4">
-          <PriceBookItemForm
-            action={createPriceBookItem}
-            submitLabel="Add item"
-            pendingLabel="Adding…"
-            resetOnSuccess
-          />
-        </div>
-      </section>
+      {/* Add item (create capability only) ------------------------------ */}
+      {canCreate ? (
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">Add a price-book item</h2>
+          <div className="mt-4">
+            <PriceBookItemForm
+              action={createPriceBookItem}
+              submitLabel="Add item"
+              pendingLabel="Adding…"
+              resetOnSuccess
+            />
+          </div>
+        </section>
+      ) : null}
 
       {/* Active items --------------------------------------------------- */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -102,17 +109,23 @@ export default async function PricingPage() {
                     <td className="px-2 py-2 text-right text-slate-600">{it.vat_rate}%</td>
                     <td className="px-2 py-2 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        <Link
-                          href={`/price-book/${it.id}`}
-                          className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                        >
-                          Edit
-                        </Link>
-                        <InlineActionButton
-                          action={setPriceBookItemActive}
-                          hidden={{ id: it.id, active: "false" }}
-                          label="Archive"
-                        />
+                        {canEdit ? (
+                          <>
+                            <Link
+                              href={`/price-book/${it.id}`}
+                              className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                            >
+                              Edit
+                            </Link>
+                            <InlineActionButton
+                              action={setPriceBookItemActive}
+                              hidden={{ id: it.id, active: "false" }}
+                              label="Archive"
+                            />
+                          </>
+                        ) : (
+                          <span className="text-xs text-slate-400">—</span>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -141,12 +154,14 @@ export default async function PricingPage() {
                     <td className="px-2 py-2 text-right text-slate-600">{formatPence(it.unit_price)}</td>
                     <td className="px-2 py-2 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        <InlineActionButton
-                          action={setPriceBookItemActive}
-                          hidden={{ id: it.id, active: "true" }}
-                          label="Restore"
-                        />
-                        {isAdmin ? (
+                        {canEdit ? (
+                          <InlineActionButton
+                            action={setPriceBookItemActive}
+                            hidden={{ id: it.id, active: "true" }}
+                            label="Restore"
+                          />
+                        ) : null}
+                        {canDelete ? (
                           <InlineActionButton
                             action={deletePriceBookItem}
                             hidden={{ id: it.id }}
@@ -154,6 +169,9 @@ export default async function PricingPage() {
                             confirm="Permanently delete this item? This can't be undone."
                             className="rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
                           />
+                        ) : null}
+                        {!canEdit && !canDelete ? (
+                          <span className="text-xs text-slate-400">—</span>
                         ) : null}
                       </div>
                     </td>
@@ -190,20 +208,24 @@ export default async function PricingPage() {
                       {t.line_count} line{t.line_count === 1 ? "" : "s"}
                     </p>
                   </div>
-                  <InlineActionButton
-                    action={deleteQuoteTemplate}
-                    hidden={{ id: t.id }}
-                    label="Delete"
-                    confirm={`Delete the template “${t.name}”?`}
-                    className="rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
-                  />
+                  {canDelete ? (
+                    <InlineActionButton
+                      action={deleteQuoteTemplate}
+                      hidden={{ id: t.id }}
+                      label="Delete"
+                      confirm={`Delete the template “${t.name}”?`}
+                      className="rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                    />
+                  ) : null}
                 </div>
-                <div className="mt-3 border-t border-slate-100 pt-3">
-                  <TemplateRenameForm
-                    action={renameQuoteTemplate.bind(null, t.id)}
-                    initial={{ name: t.name, job_type: t.job_type }}
-                  />
-                </div>
+                {canEdit ? (
+                  <div className="mt-3 border-t border-slate-100 pt-3">
+                    <TemplateRenameForm
+                      action={renameQuoteTemplate.bind(null, t.id)}
+                      initial={{ name: t.name, job_type: t.job_type }}
+                    />
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>
