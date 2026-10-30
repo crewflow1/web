@@ -21,6 +21,30 @@ import { setAdminPermissions } from "../permission-actions";
  */
 
 const key = (m: string, a: string) => `${m}:${a}`;
+const eq = (a: ReadonlySet<string>, b: ReadonlySet<string>) =>
+  a.size === b.size && [...a].every((x) => b.has(x));
+
+/**
+ * Collapse manage-superseded per-action grants: a module that has `manage` is
+ * saved as manage ONLY; a module without it keeps its explicit per-action
+ * grants. This keeps the SAVED set minimal and honest WITHOUT destroying the
+ * editor's in-progress granular selection — so turning `manage` back off
+ * restores the view/create/edit the owner had already ticked, instead of
+ * silently wiping them.
+ */
+export function normalize(set: ReadonlySet<string>): Set<string> {
+  const managed = new Set<string>();
+  for (const k of set) {
+    const [m = "", a = ""] = k.split(":");
+    if (a === "manage") managed.add(m);
+  }
+  const out = new Set<string>();
+  for (const k of set) {
+    const [m = "", a = ""] = k.split(":");
+    if (a === "manage" || !managed.has(m)) out.add(k);
+  }
+  return out;
+}
 
 export function PermissionEditor({
   targetUserId,
@@ -32,20 +56,21 @@ export function PermissionEditor({
   initialGrants: ReadonlyArray<{ module: string; action: string }>;
 }) {
   const initialSet = useMemo(
-    () => new Set(initialGrants.map((g) => key(g.module, g.action))),
+    () => normalize(new Set(initialGrants.map((g) => key(g.module, g.action)))),
     [initialGrants],
   );
   const [grants, setGrants] = useState<Set<string>>(() => new Set(initialSet));
+  // The last successfully-saved (normalized) set — the baseline `dirty` compares
+  // against, so after a save the editor settles to "no unsaved changes".
+  const [savedSet, setSavedSet] = useState<Set<string>>(() => new Set(initialSet));
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<
     { ok: true } | { ok: false; error: string } | null
   >(null);
 
-  const dirty = useMemo(() => {
-    if (grants.size !== initialSet.size) return true;
-    for (const g of grants) if (!initialSet.has(g)) return true;
-    return false;
-  }, [grants, initialSet]);
+  // Compare EFFECTIVE (normalized) sets: ticking manage over granular picks is a
+  // real change; toggling manage off to reveal the same picks again is not.
+  const dirty = useMemo(() => !eq(normalize(grants), savedSet), [grants, savedSet]);
 
   const hasManage = (m: CapModule) => grants.has(key(m, "manage"));
   const isChecked = (m: CapModule, a: CapAction) =>
@@ -58,11 +83,9 @@ export function PermissionEditor({
       const k = key(m, a);
       if (next.has(k)) next.delete(k);
       else next.add(k);
-      // Turning manage ON supersedes the per-action grants for that module
-      // (they're implied); drop them so the saved set is minimal and honest.
-      if (a === "manage" && next.has(k)) {
-        for (const act of CAP_ACTIONS) if (act !== "manage") next.delete(key(m, act));
-      }
+      // Non-destructive: turning `manage` on does NOT delete the per-action
+      // grants (they render as implied + locked and are collapsed away at save
+      // time by normalize()); turning `manage` off brings them back untouched.
       return next;
     });
   }
@@ -71,8 +94,14 @@ export function PermissionEditor({
     setResult(null);
     setGrants((prev) => {
       const next = new Set(prev);
-      for (const a of CAP_ACTIONS) next.delete(key(m, a));
-      if (on) next.add(key(m, "manage"));
+      if (on) {
+        // "All" → grant full control; keep any granular picks so unchecking
+        // manage later restores them (same non-destructive contract as toggle).
+        next.add(key(m, "manage"));
+      } else {
+        // "Clear" → remove every grant for this row (the explicit clear action).
+        for (const a of CAP_ACTIONS) next.delete(key(m, a));
+      }
       return next;
     });
   }
@@ -84,14 +113,16 @@ export function PermissionEditor({
 
   function save() {
     setResult(null);
-    const payload = Array.from(grants).map((g) => {
+    // Save the EFFECTIVE set: manage collapses its row to manage-only.
+    const effective = normalize(grants);
+    const payload = Array.from(effective).map((g) => {
       const [module = "", action = ""] = g.split(":");
       return { module, action };
     });
     startTransition(async () => {
       const res = await setAdminPermissions(targetUserId, payload);
       setResult(res);
-      if (res.ok) setGrants(new Set(grants)); // settle baseline via re-render
+      if (res.ok) setSavedSet(effective); // settle the dirty baseline
     });
   }
 

@@ -8,6 +8,10 @@ import {
   MODULE_GROUPS,
   MODULE_LABELS,
 } from "@/lib/auth/capability-labels";
+import { normalize } from "@/app/(app)/staff/[id]/_permission-editor";
+
+const K = (m: string, a: string) => `${m}:${a}`;
+const arr = (s: Set<string>) => [...s].sort();
 
 /**
  * R3 UI — owner-facing admin permission editor.
@@ -51,6 +55,40 @@ describe("capability labels cover the whole taxonomy", () => {
   });
 });
 
+describe("normalize — minimal saved set, non-destructive granular picks", () => {
+  it("a module with manage collapses to manage-only", () => {
+    const got = normalize(new Set([K("jobs", "view"), K("jobs", "create"), K("jobs", "manage")]));
+    expect(arr(got)).toEqual([K("jobs", "manage")]);
+  });
+
+  it("a module without manage keeps its explicit per-action grants", () => {
+    const got = normalize(new Set([K("jobs", "view"), K("jobs", "create")]));
+    expect(arr(got)).toEqual([K("jobs", "create"), K("jobs", "view")]);
+  });
+
+  it("normalizes each module independently", () => {
+    const got = normalize(
+      new Set([K("jobs", "manage"), K("jobs", "view"), K("quotes", "view"), K("quotes", "edit")]),
+    );
+    expect(arr(got)).toEqual([K("jobs", "manage"), K("quotes", "edit"), K("quotes", "view")]);
+  });
+
+  it("empty stays empty", () => {
+    expect(arr(normalize(new Set()))).toEqual([]);
+  });
+
+  it("THE FIX: toggling manage on then off restores the granular selection", () => {
+    // Owner picks view+create, then ticks manage (non-destructive: the set keeps
+    // the granular keys and merely ADDS manage), then unticks manage.
+    let set = new Set([K("jobs", "view"), K("jobs", "create")]);
+    set = new Set([...set, K("jobs", "manage")]); // tick manage (toggle adds only)
+    expect(arr(normalize(set))).toEqual([K("jobs", "manage")]); // saved = manage-only
+    set.delete(K("jobs", "manage")); // untick manage
+    // The granular picks are back — NOT wiped (the bug this fixes).
+    expect(arr(normalize(set))).toEqual([K("jobs", "create"), K("jobs", "view")]);
+  });
+});
+
 describe("editor + page wiring", () => {
   const ROOT = resolve(__dirname, "..", "..");
   const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
@@ -58,8 +96,14 @@ describe("editor + page wiring", () => {
   it("the editor saves via the owner-only setAdminPermissions action", () => {
     const editor = read("app/(app)/staff/[id]/_permission-editor.tsx");
     expect(editor).toMatch(/setAdminPermissions\(\s*targetUserId/);
-    // manage supersedes per-action grants (minimal honest saved set)
-    expect(editor).toMatch(/if \(a === "manage" && next\.has\(k\)\)/);
+    // manage supersedes per-action grants at SAVE time — a minimal, honest saved
+    // set — via normalize(), NOT by destroying the in-progress granular picks
+    // (so toggling manage off restores them). The save payload is normalized.
+    expect(editor).toMatch(/function normalize\(/);
+    expect(editor).toMatch(/const effective = normalize\(grants\)/);
+    // The old destructive behaviour must be gone: toggling manage must not delete
+    // the other per-action grants.
+    expect(editor).not.toMatch(/if \(a === "manage" && next\.has\(k\)\)/);
   });
 
   it("the staff page renders the editor ONLY for an owner viewing an admin", () => {
