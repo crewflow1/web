@@ -2,10 +2,8 @@
 
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import {
-  requireOrgContext,
-  requireManagementRole,
-} from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session";
+import { requireCapabilityFor } from "@/server/auth/capabilities";
 import { formError, formSuccess, type FormState } from "@/lib/forms/state";
 import {
   variationRequestFormSchema,
@@ -50,7 +48,14 @@ const jobUrl = (jobId: string, params: string): string =>
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type FromChain = { from: (t: string) => any };
 
-/** Member-level intake: log a variation request against a job. */
+/**
+ * Member-level intake: log a variation request against a job.
+ *
+ * R4: deliberately NOT capability-gated — this is staff field intake (a worker
+ * flags a change the customer asked for), the same operational-exception class
+ * as member cost-entry. The commercial decision on the request is the gated
+ * step (reviewVariationRequest → quotes:approve).
+ */
 export async function createVariationRequest(
   jobId: string,
   _prev: FormState,
@@ -122,7 +127,11 @@ export async function reviewVariationRequest(
   formData: FormData,
 ): Promise<FormState> {
   const { user, ctx } = await requireOrgContext();
-  requireManagementRole(ctx);
+  // Reviewing (accept/reject) a variation request is a commercial approval that
+  // decides whether a customer-requested change proceeds to a variation order —
+  // gate on quotes:approve (R4). createVariationRequest below stays member-open
+  // (staff field intake, like cost-entry). Owner always; admin with the grant.
+  await requireCapabilityFor(ctx, user, "quotes", "approve");
   if (!idSchema.safeParse(jobId).success) {
     return formError("That job link looks wrong — reload and try again.");
   }
