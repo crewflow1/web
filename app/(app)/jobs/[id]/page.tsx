@@ -27,6 +27,7 @@ import { JobMaterialsSection } from "./_job-materials";
 import { SiteTimelineSection } from "./_site-timeline";
 import { JobDocumentsPanel } from "./_job-documents";
 import { JobBlueprintsPanel } from "./_blueprints";
+import { JobAssignmentsSection } from "./_assignments";
 import { formatGbp } from "@/lib/jobs/commercial-position";
 import { computeCommercialCash } from "@/lib/commercial/cash";
 import {
@@ -990,6 +991,14 @@ export default async function EditJobPage({
         }
       >
         <div className="space-y-6">
+      {/* Assigned team (owner/admin only) — the job's crew, backed by the
+          service-role-only job_assignments table. Rendered solely for
+          owner/admin so the assignee list never enters a staff RSC payload;
+          the server actions enforce the same jobs:manage capability. */}
+      {isAdmin ? (
+        <JobAssignmentsSection jobId={job.id} orgId={ctx.membership.org_id} />
+      ) : null}
+
       <JobProgressSection jobId={job.id} orgId={ctx.membership.org_id} />
 
       {/* Programme baseline — sits directly under progress: the planned line
