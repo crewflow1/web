@@ -385,8 +385,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: jobs label lookup .in('id', ids) where ids is a de-duped Set drawn from the delays register (a bounded parent set) — batched name/date labels, ≤ parent rows, never near 1000. Same class as diary/page.tsx:83. (Line moved 92→93 when listJobOptions was paged via fetchAllRows for the F-1 picker-completion wave, adding the paginate import.)",
   "app/(app)/quality/_data.ts:242":
     "bounded: jobs label lookup .in('id', ids) where ids is a de-duped Set drawn from the quality register (a bounded parent set) — batched name/date labels, ≤ parent rows. Same class as diary/page.tsx:83. (Line moved 241→242 when listJobOptions was paged via fetchAllRows for the F-1 picker-completion wave, adding the paginate import.)",
-  "app/(app)/jobs/[id]/billing/actions.ts:81":
-    "bounded: ONE plan's stages (.eq('org_id').eq('plan_id', planId)) — the stages of a single billing plan; a plan has a handful of stages, never near 1000",
+  "app/(app)/jobs/[id]/billing/actions.ts:83":
+    "bounded: ONE plan's stages (.eq('org_id').eq('plan_id', planId)) — the stages of a single billing plan; a plan has a handful of stages, never near 1000. (Line moved 81→83 when the R4 invoices-capability gate added the hasCapability import + gate.)",
   "lib/schedule/calendar-data.ts:92":
     "paged: the jobs read IS complete — .from('jobs') lives in a `scoped()` builder-closure and is paged via fetchAllRows((from,to) => scoped()…range(from,to)) at the two call sites (nonRecurring + recurring) in a SEPARATE statement, beyond the statement-scoped window. Same builder class as leads/page.tsx:51.",
   "lib/jobs/schedule-spans.ts:62":

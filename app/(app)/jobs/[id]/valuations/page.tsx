@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
+import { canWith } from "@/lib/auth/capability-rules";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
@@ -22,13 +23,18 @@ export default async function JobValuationsPage({
   params: Promise<{ id: string }>;
 }) {
   const { id: jobId } = await params;
-  const { ctx } = await requireOrgContext();
-  // Money boundary: valuations/applications-for-payment expose the full internal
-  // contract + retention position. Staff/field members must never obtain those
-  // figures — not even by direct URL while the tab is hidden. Fail CLOSED here,
-  // server-side, before any valuations read (same posture as cash/invoices).
-  requireManagementRole(ctx);
-  const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
+  // Money boundary (R4): valuations / applications-for-payment expose the full
+  // internal contract + retention position — the job's payment-claim workflow,
+  // and an explicitly staff-prohibited surface. Gate on invoices:view (same class
+  // as /invoices + job billing), server-side, before any valuations read. Owner
+  // always; admin with the grant; staff/members denied.
+  const { ctx, grants } = await requireCapability("invoices", "view");
+  const role = ctx.membership.role;
+  // Affordances match the write capabilities so a view-only admin sees a
+  // read-only ledger rather than controls that would be refused on submit.
+  const canCreate = canWith(role, grants, "invoices", "create");
+  const canEdit = canWith(role, grants, "invoices", "edit");
+  const canApprove = canWith(role, grants, "invoices", "approve");
 
   const supabase = await createClient();
   type LB = PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }> & {
@@ -114,8 +120,10 @@ export default async function JobValuationsPage({
       ) : null}
 
       <ValuationsClient
+        canCreate={canCreate}
+        canEdit={canEdit}
+        canApprove={canApprove}
         jobId={jobId}
-        isAdmin={isAdmin}
         view={view}
         availableVariations={availableVariations}
       />

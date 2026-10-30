@@ -81,12 +81,16 @@ function DetailsFields({ line }: { line?: JobValuationLine }) {
 function ValuationCard({
   jobId,
   line,
-  isAdmin,
+  canCreate,
+  canEdit,
+  canApprove,
   availableVariations,
 }: {
   jobId: string;
   line: JobValuationLine;
-  isAdmin: boolean;
+  canCreate: boolean;
+  canEdit: boolean;
+  canApprove: boolean;
   availableVariations: AvailableVariation[];
 }) {
   const [editing, setEditing] = useState(false);
@@ -127,8 +131,8 @@ function ValuationCard({
         </p>
       ) : null}
 
-      {/* Draft: edit + link variations + submit + cancel */}
-      {isDraft ? (
+      {/* Draft: edit + link variations + submit + cancel (invoices:edit) */}
+      {isDraft && canEdit ? (
         <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
           {editing ? (
             <StateForm action={updateValuation.bind(null, line.id)} className="space-y-2">
@@ -166,20 +170,24 @@ function ValuationCard({
         </div>
       ) : null}
 
-      {/* Submitted: admin certifies, or cancel */}
-      {isSubmitted && isAdmin ? (
+      {/* Submitted: certify (invoices:approve) and/or cancel (invoices:edit) */}
+      {isSubmitted && (canApprove || canEdit) ? (
         <div className="mt-3 flex gap-2 border-t border-slate-100 pt-3">
-          <StateForm action={certifyValuation.bind(null, line.id, jobId)} confirm="Certify this valuation? Its figures will be frozen.">
-            <button type="submit" className="rounded bg-amber-600 px-3 py-1 text-sm text-white">Certify</button>
-          </StateForm>
-          <StateForm action={cancelValuation.bind(null, line.id)} confirm="Cancel this valuation?">
-            <button type="submit" className="rounded border border-slate-300 px-3 py-1 text-sm text-slate-500">Cancel</button>
-          </StateForm>
+          {canApprove ? (
+            <StateForm action={certifyValuation.bind(null, line.id, jobId)} confirm="Certify this valuation? Its figures will be frozen.">
+              <button type="submit" className="rounded bg-amber-600 px-3 py-1 text-sm text-white">Certify</button>
+            </StateForm>
+          ) : null}
+          {canEdit ? (
+            <StateForm action={cancelValuation.bind(null, line.id)} confirm="Cancel this valuation?">
+              <button type="submit" className="rounded border border-slate-300 px-3 py-1 text-sm text-slate-500">Cancel</button>
+            </StateForm>
+          ) : null}
         </div>
       ) : null}
 
-      {/* Certified: admin generates the stage invoice */}
-      {isCertified && isAdmin ? (
+      {/* Certified: generate the stage invoice (invoices:create) */}
+      {isCertified && canCreate ? (
         <StateForm action={generateValuationInvoice.bind(null, line.id, jobId)} className="mt-3 flex items-end gap-2 border-t border-slate-100 pt-3">
           <label className="text-xs text-slate-600">
             Invoice due date (optional)
@@ -200,12 +208,16 @@ function ValuationCard({
 
 export function ValuationsClient({
   jobId,
-  isAdmin,
+  canCreate,
+  canEdit,
+  canApprove,
   view,
   availableVariations,
 }: {
   jobId: string;
-  isAdmin: boolean;
+  canCreate: boolean;
+  canEdit: boolean;
+  canApprove: boolean;
   view: JobValuationsView;
   availableVariations: AvailableVariation[];
 }) {
@@ -223,15 +235,17 @@ export function ValuationsClient({
         </div>
       ) : null}
 
-      <div className="flex justify-end">
-        {creating ? null : (
-          <button type="button" onClick={() => setCreating(true)} className="rounded bg-slate-900 px-3 py-1.5 text-sm text-white">
-            New valuation
-          </button>
-        )}
-      </div>
+      {canCreate ? (
+        <div className="flex justify-end">
+          {creating ? null : (
+            <button type="button" onClick={() => setCreating(true)} className="rounded bg-slate-900 px-3 py-1.5 text-sm text-white">
+              New valuation
+            </button>
+          )}
+        </div>
+      ) : null}
 
-      {creating ? (
+      {creating && canCreate ? (
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <h2 className="mb-2 text-sm font-semibold text-slate-900">New valuation</h2>
           <StateForm action={createValuation.bind(null, jobId)} className="space-y-3">
@@ -255,7 +269,9 @@ export function ValuationsClient({
               key={line.id}
               jobId={jobId}
               line={line}
-              isAdmin={isAdmin}
+              canCreate={canCreate}
+              canEdit={canEdit}
+              canApprove={canApprove}
               availableVariations={line.status === "draft" ? availableVariations : []}
             />
           ))}

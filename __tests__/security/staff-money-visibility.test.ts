@@ -74,12 +74,12 @@ describe("requireManagementRole — the money boundary primitive", () => {
 // ---------------------------------------------------------------------------
 // 2. THE THREE SURFACES ARE WIRED TO IT — before any money read
 // ---------------------------------------------------------------------------
-// Each surface must gate server-side BEFORE its first money read. price-book is
-// now on the R4 capability model (price_book:view) — a strictly-equal-or-stronger
-// boundary than the old management role (it still denies staff, and additionally
-// supports granular admins). The two jobs-commercial surfaces remain on
-// requireManagementRole until that module's R4 conversion lands; this guard
-// pins whichever gate each surface currently uses, and that it precedes the read.
+// Each money surface must gate server-side BEFORE its first money read. All
+// three are now on the R4 capability model — price-book on price_book:view, and
+// the job-invoicing surfaces (billing + valuations) on invoices:view — a
+// strictly-equal-or-stronger boundary than the old management role (still denies
+// staff, additionally supports granular admins). This guard pins the exact gate
+// each surface uses and that it precedes the money read.
 const SURFACES: {
   file: string;
   firstMoneyRead: string;
@@ -95,14 +95,14 @@ const SURFACES: {
   {
     file: "app/(app)/jobs/[id]/billing/page.tsx",
     firstMoneyRead: "loadJobBilling(",
-    importRe: /requireManagementRole[\s\S]*from\s+"@\/server\/auth\/session"/,
-    guardCall: "requireManagementRole(ctx)",
+    importRe: /requireCapability[\s\S]*from\s+"@\/server\/auth\/capabilities"/,
+    guardCall: 'requireCapability("invoices", "view")',
   },
   {
     file: "app/(app)/jobs/[id]/valuations/page.tsx",
     firstMoneyRead: "buildJobValuationsView(",
-    importRe: /requireManagementRole[\s\S]*from\s+"@\/server\/auth\/session"/,
-    guardCall: "requireManagementRole(ctx)",
+    importRe: /requireCapability[\s\S]*from\s+"@\/server\/auth\/capabilities"/,
+    guardCall: 'requireCapability("invoices", "view")',
   },
 ];
 

@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
+import { canWith } from "@/lib/auth/capability-rules";
 import { loadJobForOrg } from "@/lib/jobs/load";
 import { loadJobBilling, type BillingStageView } from "@/server/services/billing";
 import { formatGbp } from "@/lib/money";
@@ -34,13 +35,17 @@ const STATUS_LABEL: Record<StageStatus, string> = {
 
 export default async function JobBillingPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: jobId } = await params;
-  const { ctx } = await requireOrgContext();
-  // Money boundary: this "Get paid" surface shows contract value, billed,
-  // received and debtor position. Staff/field members must never obtain those
-  // figures — not even by direct URL while the tab is hidden. Fail CLOSED here,
-  // server-side, before any billing read (same posture as cash/invoices).
-  requireManagementRole(ctx);
-  const isManager = ctx.membership.role === "owner" || ctx.membership.role === "admin";
+  // Money boundary (R4): this "Get paid" surface shows contract value, billed,
+  // received and debtor position — the job's invoicing workflow. Staff/field
+  // members must never obtain those figures, not even by direct URL. Gate on
+  // invoices:view, server-side, before any billing read (same class as
+  // /invoices). Owner always; admin with the grant; staff/members denied.
+  const { ctx, grants } = await requireCapability("invoices", "view");
+  const role = ctx.membership.role;
+  // Affordances match the write capabilities so a view-only admin sees a
+  // read-only schedule rather than controls that would silently no-op.
+  const canCreate = canWith(role, grants, "invoices", "create");
+  const canEdit = canWith(role, grants, "invoices", "edit");
   // ACTIVE-org read-pin (#456 read-side class): resolve the subject job through
   // the org-pinned chokepoint BEFORE delegating to the billing service. Without
   // this, a dual-org member could open /jobs/<other-org-job-id>/billing and see
@@ -105,7 +110,7 @@ export default async function JobBillingPage({ params }: { params: Promise<{ id:
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="text-base font-semibold text-slate-900">Set up how you&rsquo;ll get paid</h2>
           <p className="mt-1 text-sm text-slate-600">Pick a structure and the ex-VAT contract value; then add the stages.</p>
-          {isManager ? (
+          {canCreate ? (
             <form action={createBillingPlan} className="mt-4 flex flex-wrap items-end gap-3">
               <input type="hidden" name="job_id" value={jobId} />
               <label className="text-sm">
@@ -128,7 +133,7 @@ export default async function JobBillingPage({ params }: { params: Promise<{ id:
               </button>
             </form>
           ) : (
-            <p className="mt-3 text-sm text-slate-500">Only an owner or admin can set up a billing plan.</p>
+            <p className="mt-3 text-sm text-slate-500">You don&rsquo;t have permission to set up a billing plan.</p>
           )}
         </section>
       ) : (
@@ -160,20 +165,24 @@ export default async function JobBillingPage({ params }: { params: Promise<{ id:
                       <Link href={`/invoices/${st.invoiceId}`} className="inline-flex min-h-[36px] items-center rounded-md border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50">
                         {st.invoiceNumber ?? "View invoice"}
                       </Link>
-                    ) : isManager ? (
+                    ) : canCreate || canEdit ? (
                       <>
-                        <form action={generateStageInvoice}>
-                          <input type="hidden" name="job_id" value={jobId} />
-                          <input type="hidden" name="stage_id" value={st.id} />
-                          <button type="submit" disabled={!b.jobHasCustomer} className="inline-flex min-h-[36px] items-center rounded-md bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-40">
-                            Generate invoice
-                          </button>
-                        </form>
-                        <form action={deleteBillingStage}>
-                          <input type="hidden" name="job_id" value={jobId} />
-                          <input type="hidden" name="stage_id" value={st.id} />
-                          <button type="submit" aria-label={`Remove ${st.name}`} className="inline-flex min-h-[36px] items-center rounded-md px-2 text-xs font-medium text-slate-500 hover:text-red-600">Remove</button>
-                        </form>
+                        {canCreate ? (
+                          <form action={generateStageInvoice}>
+                            <input type="hidden" name="job_id" value={jobId} />
+                            <input type="hidden" name="stage_id" value={st.id} />
+                            <button type="submit" disabled={!b.jobHasCustomer} className="inline-flex min-h-[36px] items-center rounded-md bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-40">
+                              Generate invoice
+                            </button>
+                          </form>
+                        ) : null}
+                        {canEdit ? (
+                          <form action={deleteBillingStage}>
+                            <input type="hidden" name="job_id" value={jobId} />
+                            <input type="hidden" name="stage_id" value={st.id} />
+                            <button type="submit" aria-label={`Remove ${st.name}`} className="inline-flex min-h-[36px] items-center rounded-md px-2 text-xs font-medium text-slate-500 hover:text-red-600">Remove</button>
+                          </form>
+                        ) : null}
                       </>
                     ) : null}
                   </div>
@@ -182,8 +191,9 @@ export default async function JobBillingPage({ params }: { params: Promise<{ id:
             </ul>
           )}
 
-          {isManager ? (
+          {canCreate || canEdit ? (
             <div className="border-t border-slate-100 p-4">
+              {canCreate ? (
               <form action={addBillingStage} className="flex flex-wrap items-end gap-2">
                 <input type="hidden" name="job_id" value={jobId} />
                 <input type="hidden" name="plan_id" value={b.plan.id} />
@@ -225,11 +235,14 @@ export default async function JobBillingPage({ params }: { params: Promise<{ id:
                 </label>
                 <button type="submit" className="inline-flex min-h-[40px] items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 hover:bg-slate-50">+ Add stage</button>
               </form>
+              ) : null}
+              {canEdit ? (
               <form action={cancelBillingPlan} className="mt-3">
                 <input type="hidden" name="job_id" value={jobId} />
                 <input type="hidden" name="plan_id" value={b.plan.id} />
                 <button type="submit" className="text-xs font-medium text-slate-500 hover:text-red-600">Cancel this plan</button>
               </form>
+              ) : null}
             </div>
           ) : null}
         </section>
