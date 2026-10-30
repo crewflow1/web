@@ -1,50 +1,67 @@
 import { test, expect, type Page } from "@playwright/test";
+import { createClient } from "@supabase/supabase-js";
+import { assertLocalE2eTarget } from "./_guard";
 
 /**
- * CORE CUSTOMER FUNNEL (authenticated OWNER, real browser) — the top of the
- * launch-gate journey a construction owner runs daily:
+ * CORE CUSTOMER JOURNEY (authenticated OWNER, real browser) — the launch-gate
+ * flow a construction owner runs daily, split into small SERIAL tests so each
+ * step has its own timeout and asserts PERSISTED state (not a transient banner):
  *
- *   Lead → Customer → Quote (line items + VAT math).
+ *   1. lead → customer
+ *   2. quote with line items + correct VAT math
+ *   3. request approval → self-approve → accept  ⇒ auto Job + draft Invoice
+ *   4. assign a staff member to the job (persists)
+ *   5. record a payment ⇒ invoice balance/status + dashboard update
  *
- * Driven as the seeded OWNER (globalSetup mints owner.json in the active
- * "E2E Co" org). This is the first end-to-end AUTHENTICATED journey spec — the
- * other e2e specs cover auth walls and surface reachability, not a logged-in
- * create flow with a real calculation assertion.
+ * Verification is EVENT-BASED: `waitForURL` for redirects, `expect.poll` against
+ * the database (service-role, LOCAL-only via assertLocalE2eTarget) for persisted
+ * state. The only time-based wait is a short post-navigation hydration settle,
+ * because several forms are controlled React inputs / client `router.push` and a
+ * fill/click before hydration is silently lost (Playwright actionability waits do
+ * not cover React hydration).
  *
- * The REMAINDER of the journey (quote approval → accept → auto job + draft
- * invoice → staff assignment → progress → payment → dashboard) was VERIFIED
- * WORKING by hand against a production build during the launch-journey review
- * (2026-10-30): accepting an approved quote auto-created the Job and a draft
- * Invoice, the "View linked job" link resolved, and job staff-assignment
- * persisted to `jobs.assigned_to` (confirmed in the DB). It is kept below as a
- * documented `test.fixme` rather than an asserted test because the full 9-step
- * flow crosses three different form-navigation patterns (useActionState SPA nav,
- * server-action `redirect(?saved=)`, and `fetch()`→push) and needs robust
- * event-based waits (not hydration settles) before it is a stable CI gate.
- * Hardening it into a reliable end-to-end gate is tracked as follow-up.
- *
- * NOTE for runners: the full flow must run against a PRODUCTION build
- * (`npm run start`), not `next dev` — under dev, `router.push`-based post-action
- * navigation (Pattern A) is dropped, which is a dev-only artifact.
+ * MUST run against a PRODUCTION build (`npm run start`): under `next dev`,
+ * Pattern-A `router.push` post-action navigation is dropped (a dev-only artifact).
  */
+
+const svc = createClient(
+  assertLocalE2eTarget("core-journey.spec.ts"),
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  { auth: { autoRefreshToken: false, persistSession: false } },
+);
+
+type Row = Record<string, unknown>;
+async function one(table: string, col: string, val: string): Promise<Row | null> {
+  const { data } = await svc.from(table).select("*").eq(col, val).maybeSingle();
+  return (data as Row | null) ?? null;
+}
+async function many(table: string, col: string, val: string): Promise<Row[]> {
+  const { data } = await svc.from(table).select("*").eq(col, val);
+  return (data as Row[] | null) ?? [];
+}
 
 test.use({ storageState: "e2e/.auth/owner.json" });
 
 const TAG = `J${Date.now().toString(36)}`;
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
+const idOf = (url: string) => url.match(UUID)?.[0] ?? "";
 
-/** Navigate and wait for the client form to HYDRATE before interacting — several
- *  forms are controlled React inputs / use client router.push, so a fill or click
- *  before hydration is silently lost. networkidle + a short settle is the reliable
- *  signal here (Playwright's actionability waits do not cover React hydration). */
+// Shared across the serial chain.
+const S: { customerId: string; quoteId: string; jobId: string; invoiceId: string } = {
+  customerId: "",
+  quoteId: "",
+  jobId: "",
+  invoiceId: "",
+};
+
+async function settle(page: Page) {
+  await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(800); // post-navigation React hydration
+}
 async function gotoReady(page: Page, url: string) {
   await page.goto(url);
-  await page.waitForLoadState("networkidle");
-  await page.waitForTimeout(1000);
+  await settle(page);
 }
-
-/** Click a submit button by its exact label, then land on the redirect URL or
- *  surface the form validation error (so a failure names the cause). */
 async function submitAndLand(page: Page, label: string, urlRe: RegExp) {
   await page.getByRole("button", { name: label }).click();
   try {
@@ -58,61 +75,123 @@ async function submitAndLand(page: Page, label: string, urlRe: RegExp) {
   }
 }
 
-test("owner: lead → customer → quote with correct VAT math", async ({ page }) => {
-  test.setTimeout(90_000);
+test.describe.configure({ mode: "serial" });
 
-  await test.step("1. create a lead", async () => {
+test.describe("core customer journey — owner, real browser", () => {
+  test("1. lead → customer", async ({ page }) => {
+    test.setTimeout(60_000);
     await gotoReady(page, "/leads/new");
     await page.locator('input[name="contact_name"]').fill(`${TAG} Lead Co`);
     await page.locator('input[name="contact_email"]').fill(`${TAG}@lead.test`);
     await submitAndLand(page, "Save lead", new RegExp(`/leads/${UUID.source}`));
     await expect(page.getByRole("heading", { name: `${TAG} Lead Co` })).toBeVisible();
-  });
 
-  await test.step("2. convert the lead to a customer", async () => {
     await page.getByRole("button", { name: /convert to customer/i }).click();
     await page.waitForURL(new RegExp(`/customers/${UUID.source}`));
-    await expect(page.getByRole("heading", { name: `${TAG} Lead Co` })).toBeVisible();
+    S.customerId = idOf(page.url());
+    expect(S.customerId).not.toBe("");
+    // Persisted: the customer row exists for this org.
+    await expect.poll(() => one("customers", "id", S.customerId)).not.toBeNull();
   });
 
-  await test.step("3. create a quote; VAT + total compute (2 × £100 @ 20% = £240)", async () => {
+  test("2. quote with line items + correct VAT math", async ({ page }) => {
+    test.setTimeout(60_000);
     await gotoReady(page, "/quotes/new");
-    const cust = page.locator('select[name="customer_id"]');
-    const opts = await cust.locator("option").allTextContents();
-    const ci = opts.findIndex((o) => o.includes(TAG));
-    expect(ci, "the new customer must be selectable in the quote builder").toBeGreaterThan(-1);
-    await cust.selectOption({ index: ci });
-    // The builder starts with ONE empty line — fill it (a second would be empty).
+    await page.locator('select[name="customer_id"]').selectOption(S.customerId);
+    // The builder starts with ONE empty line — fill it. qty 2 × £100 @ 20% VAT.
     const desc = page.getByPlaceholder(/supply only/i).first();
     await desc.fill("Supply & fit (test)");
     await expect(desc).toHaveValue("Supply & fit (test)");
     await page.getByLabel(/quantity/i).first().fill("2");
     await page.getByLabel(/unit price/i).first().fill("100");
-    // VAT defaults to 20% on a new line, so 2 × £100 → subtotal £200, VAT £40.
-    // The live totals <dl>: total £240.
+    // Live totals <dl>: subtotal £200, VAT £40, total £240 (VAT defaults to 20%).
     await expect(page.getByText(/£240\.00/)).toBeVisible();
     await submitAndLand(page, "Save quote", new RegExp(`/quotes/${UUID.source}`));
-    await expect(page.getByText(/draft/i).first()).toBeVisible();
+    S.quoteId = idOf(page.url());
+    expect(S.quoteId).not.toBe("");
+    // Persisted: a DRAFT quote whose totals the SERVER computed to £240.
+    await expect
+      .poll(async () => {
+        const q = await one("quotes", "id", S.quoteId);
+        return q && { status: q.status, total: Number(q.total) };
+      })
+      .toEqual({ status: "draft", total: 240 });
+  });
+
+  test("3. approve → accept ⇒ auto Job + draft Invoice", async ({ page }) => {
+    test.setTimeout(90_000);
+    await gotoReady(page, `/quotes/${S.quoteId}`);
+    await page.getByRole("button", { name: /request approval/i }).click();
+    await page.waitForURL(/saved=approval_requested/);
+    await settle(page);
+    await page.getByRole("button", { name: /^approve$/i }).click();
+    await page.waitForURL(/saved=approved/);
+    await settle(page);
+    await page.getByRole("button", { name: /accept on customer'?s behalf/i }).click();
+    await page.waitForURL(/saved=accepted/);
+
+    // Persisted: quote accepted + a job auto-created (quotes.job_id set).
+    await expect
+      .poll(async () => {
+        const q = await one("quotes", "id", S.quoteId);
+        return q && { status: q.status, hasJob: !!q.job_id };
+      })
+      .toEqual({ status: "accepted", hasJob: true });
+    const q = await one("quotes", "id", S.quoteId);
+    S.jobId = String(q?.job_id ?? "");
+    expect(S.jobId).not.toBe("");
+
+    // Persisted: a draft invoice auto-created, linked to the job, totalling £240.
+    await expect
+      .poll(async () => {
+        const invs = await many("invoices", "job_id", S.jobId);
+        return invs.length === 1 ? Number(invs[0]!.total) : -1;
+      })
+      .toBe(240);
+    S.invoiceId = String((await many("invoices", "job_id", S.jobId))[0]!.id);
+  });
+
+  test("4. assign a staff member to the job (persists)", async ({ page }) => {
+    test.setTimeout(60_000);
+    await gotoReady(page, `/jobs/${S.jobId}`);
+    const sel = page.locator('select[name="assigned_to"]');
+    await expect(sel).toBeVisible();
+    const values = await sel
+      .locator("option")
+      .evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value).filter((v) => v.length > 10));
+    expect(values[0], "the job form must offer an assignable staff member").toBeTruthy();
+    await sel.selectOption(values[0]!);
+    await page.getByRole("button", { name: /save changes/i }).click();
+    // Persisted: jobs.assigned_to is now set to a real user.
+    await expect
+      .poll(async () => {
+        const j = await one("jobs", "id", S.jobId);
+        return !!j?.assigned_to;
+      })
+      .toBe(true);
+  });
+
+  test("5. record a payment ⇒ invoice balance/status + dashboard", async ({ page }) => {
+    test.setTimeout(60_000);
+    await gotoReady(page, `/invoices/${S.invoiceId}`);
+    // Amount defaults to the outstanding balance (£240); submit as-is.
+    await page.locator('input[name="amount"]').first().waitFor();
+    await page.getByRole("button", { name: /record payment/i }).click();
+
+    // Persisted: a payment row for the full amount, and the invoice derives paid.
+    await expect
+      .poll(async () => {
+        const pays = await many("invoice_payments", "invoice_id", S.invoiceId);
+        return pays.reduce((n, p) => n + Number(p.amount ?? 0), 0);
+      })
+      .toBe(240);
+    await expect
+      .poll(async () => (await one("invoices", "id", S.invoiceId))?.status)
+      .toBe("paid");
+
+    // Dashboard renders its money tiles for the owner.
+    await gotoReady(page, "/dashboard");
+    await expect(page.getByText(/cash in this month/i)).toBeVisible();
+    await expect(page.getByText(/outstanding/i).first()).toBeVisible();
   });
 });
-
-/**
- * FULL fulfilment tail — VERIFIED MANUALLY (see file header); kept as a fixme
- * harness pending robust-wait hardening for CI. Do not delete: it documents the
- * exact selectors/patterns for the accept→job→invoice→payment→dashboard flow.
- */
-test.fixme(
-  "owner: approve → accept (auto job + invoice) → assign → progress → payment → dashboard",
-  () => {
-    // Verified by hand 2026-10-30 against a production build:
-    //  4. Request approval → Approve (owner self-approve) → Accept on customer's
-    //     behalf  (quote detail, Pattern-B redirect ?saved=approved/accepted).
-    //  5. Accept auto-creates the Job + a draft Invoice; "View linked job →"
-    //     resolves to /jobs/<id>.
-    //  6. assigned_to <select> on the job form → Save changes persists the
-    //     assignment (confirmed in jobs.assigned_to).
-    //  7. Progress: percent input → Record → ?saved=progress.
-    //  8. /invoices → open the auto-created invoice → Record payment.
-    //  9. /dashboard shows "Cash in this month" / "Accepted this month" tiles.
-  },
-);
