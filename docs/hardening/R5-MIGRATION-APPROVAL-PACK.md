@@ -35,8 +35,13 @@ its own.
   export** with a documented reason: the DSAR export reads as the requesting
   user, so a service-role-only table cannot and must not be read there, and the
   single-assignee link it currently holds is already exported via
-  `jobs.assigned_to`. A later R5 phase that grants an authenticated SELECT policy
-  on `job_assignments` flips it to **included**. Re-verify CI-GREEN before approving.
+  `jobs.assigned_to`. **Re-classification trigger (precise):** the moment the app
+  write-path first creates a `job_assignments` row **not mirrored by
+  `jobs.assigned_to`** (a genuine multi-worker/secondary assignment), that row is
+  data-subject personal data absent from `jobs`, so the same change that enables
+  multi-worker writes must also grant an authenticated SELECT policy on
+  `job_assignments` and flip this to **included** — the two must not diverge
+  (add a guard/test when that phase lands). Re-verify CI-GREEN before approving.
 
 ---
 
@@ -44,9 +49,11 @@ its own.
 
 - **Migration:** `supabase/migrations/20261243000000_r5_phase2_jobs_assignment_rls.sql`
 - **What it does:**
-  - adds `is_job_assignee(target_job uuid)` — SECURITY DEFINER, self-scoped by
-    `auth.uid()` (returns only whether the **caller** is assigned; no row data,
-    no existence oracle, allowlisted in the secdef-org-rpc guard);
+  - adds `my_assigned_job_ids()` — SECURITY DEFINER, **no argument**, self-scoped
+    by `auth.uid()` (returns only the **caller's own** assigned job ids; no row
+    data, no cross-tenant oracle). Set-returning + STABLE so the policy evaluates
+    it once and drives from the Phase-1 `(user_id, org_id)` index — work is
+    bounded by the caller's assignment count, not the org's job count;
   - replaces the jobs SELECT policy:
     ```sql
     using (

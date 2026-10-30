@@ -21,10 +21,19 @@ import { anonClient, describeIntegration, serviceClient, userClient } from "../_
  */
 
 type Row = Record<string, unknown>;
-type Res = { data: Row[] | null; error: { message: string } | null };
-type Db = { from: (t: string) => { select: (c: string) => { eq: (c: string, v: unknown) => Promise<Res> } } };
-const db = (c: unknown): Db => c as unknown as Db;
-const svc = () => serviceClient();
+type Res<T = Row> = { data: T | null; error: { message: string } | null };
+interface Sel extends PromiseLike<Res<Row[]>> {
+  eq(column: string, value: unknown): Sel;
+}
+interface Ins extends PromiseLike<Res<null>> {
+  select(columns?: string): { single(): PromiseLike<Res<Row>> };
+}
+interface Table {
+  select(columns?: string): Sel;
+  insert(rows: Row | Row[]): Ins;
+}
+const db = (client: unknown) => client as unknown as { from(t: string): Table };
+const svc = () => db(serviceClient());
 
 const TOKEN = `r5p2-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -78,8 +87,11 @@ async function makeJob(org: string, assignedTo: string | null): Promise<string> 
   return (r.data as { id: string }).id;
 }
 
+const uc = (who: string) => userClient(tok[who] ?? "");
+const U = (who: string): string => uid[who] ?? "";
+
 async function idsFor(who: string): Promise<Set<string>> {
-  const res = await db(userClient(tok[who] ?? "")).from("jobs").select("id").eq("org_id", orgA);
+  const res = await db(uc(who)).from("jobs").select("id").eq("org_id", orgA);
   expect(res.error, `${who}: ${res.error?.message}`).toBeNull();
   return new Set((res.data ?? []).map((r) => String(r.id)));
 }
@@ -95,26 +107,26 @@ describeIntegration("rls · jobs assignment-aware SELECT (20261243 · R5 Phase 2
       tok[who] = u.token;
     }
 
-    await member(orgA, uid.owner, "owner");
-    await member(orgA, uid.admin, "admin");
-    await member(orgA, uid.assigned, "staff");
-    await member(orgA, uid.legacy, "staff");
-    await member(orgA, uid.unassigned, "staff");
-    await member(orgB, uid.otherOrg, "staff");
+    await member(orgA, U("owner"), "owner");
+    await member(orgA, U("admin"), "admin");
+    await member(orgA, U("assigned"), "staff");
+    await member(orgA, U("legacy"), "staff");
+    await member(orgA, U("unassigned"), "staff");
+    await member(orgB, U("otherOrg"), "staff");
 
     // A-org jobs: one assigned via the join table, one via the legacy column, one unassigned.
     jobAssigned = await makeJob(orgA, null);
-    jobLegacy = await makeJob(orgA, uid.legacy); // legacy single-assignee column
+    jobLegacy = await makeJob(orgA, U("legacy")); // legacy single-assignee column
     jobUnassigned = await makeJob(orgA, null);
     // Assigned to otherOrg so the cross-tenant test can also prove they are NOT
     // globally denied — a staff member sees their OWN assigned job, just not
     // another tenant's jobs.
-    jobB = await makeJob(orgB, uid.otherOrg);
+    jobB = await makeJob(orgB, U("otherOrg"));
 
     // Phase-1 multi-worker assignment (no legacy assigned_to on this job).
     const ja = await svc()
       .from("job_assignments")
-      .insert({ org_id: orgA, job_id: jobAssigned, user_id: uid.assigned });
+      .insert({ org_id: orgA, job_id: jobAssigned, user_id: U("assigned") });
     expect(ja.error, ja.error?.message).toBeNull();
   });
 
@@ -147,11 +159,22 @@ describeIntegration("rls · jobs assignment-aware SELECT (20261243 · R5 Phase 2
     expect(seen.size).toBe(0);
   });
 
+  it("by-id deep link: assigned staff CAN read their assigned job, unassigned CANNOT", async () => {
+    // The app reads jobs/[id] by id; prove the policy holds on the single-row path.
+    const ok = await db(uc("assigned")).from("jobs").select("id").eq("id", jobAssigned);
+    expect(ok.error, ok.error?.message).toBeNull();
+    expect((ok.data ?? []).map((r) => String(r.id))).toEqual([jobAssigned]);
+
+    const denied = await db(uc("unassigned")).from("jobs").select("id").eq("id", jobUnassigned);
+    expect(denied.error, denied.error?.message).toBeNull();
+    expect(denied.data ?? [], "unassigned staff by-id read must be empty (→ 404, not 403)").toHaveLength(0);
+  });
+
   it("a staff member of another org sees none of this org's jobs", async () => {
     const seen = await idsFor("otherOrg");
     expect(seen.size).toBe(0);
     // ...and does see their own org's job (sanity: not globally denied).
-    const own = await db(userClient(tok.otherOrg)).from("jobs").select("id").eq("org_id", orgB);
+    const own = await db(uc("otherOrg")).from("jobs").select("id").eq("org_id", orgB);
     expect(own.error, own.error?.message).toBeNull();
     expect(new Set((own.data ?? []).map((r) => String(r.id))).has(jobB)).toBe(true);
   });

@@ -81,10 +81,6 @@ const ALLOWLIST: ReadonlyMap<string, string> = new Map<string, string>([
     "is_org_admin",
     "admin membership primitive: checks the CALLER's own owner/admin membership via auth.uid() (with impersonation scoping); returns false for anon; leaks nothing.",
   ],
-  [
-    "is_job_assignee",
-    "assignment primitive (R5 Phase 2, 20261243): returns true iff a job_assignments row exists for (target_job, auth.uid()) — i.e. whether the CALLER is assigned to that job. Boolean only, no row data; self-scoped by auth.uid() so a caller learns only 'am I assigned to this job', never another user's/tenant's rows, and false whether the job is unassigned, foreign-org, or non-existent (no existence oracle); anon → false. SECURITY DEFINER only so the jobs SELECT policy can read the service-role-only job_assignments table without RLS recursion; it IS that policy's own assignee check.",
-  ],
 
   // Compensation-access primitives (20261218) — the staff_compensation RLS
   // policies' OWN check, same class as is_org_admin/is_org_member. Each returns a
