@@ -91,4 +91,19 @@ describeIntegration("rls · commercial denial (20261250 · R5 Phase 4)", () => {
       expect(anon.data ?? [], "anon denied").toHaveLength(0);
     });
   }
+
+  it("finances: a non-admin member can STILL INSERT a cost (member-open entry preserved)", async () => {
+    // Regression for the review BLOCKER: narrowing finances SELECT to is_org_admin
+    // must NOT break member-open cost entry. The INSERT policy is unchanged; the
+    // route mints its own id and skips RETURNING, so a staff insert succeeds even
+    // though the staff member cannot read the ledger back.
+    const id = crypto.randomUUID();
+    const ins = await (db(userClient(tok.staff ?? "")) as unknown as {
+      from(t: string): { insert(r: Row): PromiseLike<{ error: { message: string } | null }> };
+    }).from("finances").insert({ id, org_id: orgA, amount: 250, job_id: jobA });
+    expect(ins.error, `staff cost entry must succeed: ${ins.error?.message}`).toBeNull();
+    // ...but the staff member still cannot SELECT it back (ledger stays hidden).
+    const staffRead = await db(userClient(tok.staff ?? "")).from("finances").select("id").in("id", [id]);
+    expect(staffRead.data ?? [], "staff still cannot read the cost they entered").toHaveLength(0);
+  });
 });
