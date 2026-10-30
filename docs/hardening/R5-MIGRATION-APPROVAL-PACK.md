@@ -227,7 +227,25 @@ with the same evidence shape as Phase 2.
  → 249 job-photos storage read (P3 slice 5)
  → 250 commercial read denial — 8 tables (P4 slice 1)
  → 251 workforce self-scope — rota_entries, time_entries (P5)
+ → 252 finances read denial (P4 slice 2)
+ → 253 report RPCs owner/admin-only — indirect-leak close (P4 slice 3)
 ```
+**Sprint-2 additions (all BUILT + ISOLATED-VERIFIED, apply-held):**
+- **246 gains `add_job_worker`** (review F1): the crew-add now takes the same
+  per-job advisory lock, so add-vs-remove can no longer resurrect a removed
+  worker. **F2:** createJob refuses up-front when a non-admin picks an assignee
+  (no more silent "created-but-unassigned"). rls/job-assignment-reconciliation
+  13/13.
+- **252 finances** → is_org_admin SELECT (cost ledger off-limits to staff; cost
+  entry preserved; active-org-finance-scoping 64/64). **stock_movements still
+  deferred** (commercial+operational — needs column-level masking, not a blanket
+  denial).
+- **253 report RPCs** → six SECURITY-DEFINER report functions now require
+  is_org_admin (they bypassed RLS + the page gate is client-side). Found by the
+  indirect-leak sweep (PR #996). rls/report-rpc-admin-guard 6/6, reporting intact.
+- **Indirect-leak sweep verdict (PR #996):** NO app-code leak — signed-URL
+  issuers, exports, AI context, page tiles all correctly gated; the entire
+  exposure was these six RPCs (now fixed).
 **Phase 4 (slice 1) + Phase 5 are now BUILT + ISOLATED-VERIFIED** (apply-held):
 - **P4/250** narrows SELECT to `is_org_admin` on job_budgets, job_valuations,
   job_billing_plans, job_billing_stages, variation_requests, retention_releases,
