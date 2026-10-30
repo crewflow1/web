@@ -136,6 +136,15 @@ vi.mock("@/server/auth/session", () => ({
   })),
 }));
 
+// R4: the actions now gate via hasCapability (which would otherwise read the
+// service-role admin client). Mirror the gate OUTCOME by role so this suite
+// keeps exercising the prepare composer + org scope: owner/admin pass, others
+// are refused — the granular admin-grant behaviour is proven in
+// __tests__/security/r4-tax-capability.test.ts.
+vi.mock("@/server/auth/capabilities", () => ({
+  hasCapability: vi.fn(async () => caller.role === "owner" || caller.role === "admin"),
+}));
+
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 // The CIS dataset builder + contractor profile are their own tested services;
@@ -364,7 +373,7 @@ describe("prepareVatReturnAction — admin gate + org scope", () => {
     caller.role = "staff";
     await expect(
       actions.prepareVatReturnAction(fd({ quarterStart: "2026-07-01" })),
-    ).rejects.toThrow(/owner or admin/i);
+    ).rejects.toThrow(/do not have permission/i);
     expect(mock.inserts).toHaveLength(0);
   });
 

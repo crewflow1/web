@@ -170,6 +170,12 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       "app/api/cis/returns/[id]/export.csv/route.ts",
       "app/api/cis/statements/[id]/pdf/route.ts",
       "app/api/cis/statements/export.csv/route.ts",
+      // R4 — tax module (VAT / CIS300 / PAYE dashboard + HMRC prepare/submit).
+      // No member-open surface; page view + the 3 throw-style actions + the
+      // quarterly-PDF route. Submitting to HMRC → manage (highest-trust).
+      "app/(app)/tax/page.tsx",
+      "app/(app)/tax/actions.ts",
+      "app/api/tax/quarterly-pdf/route.ts",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|requireCapabilityFor|hasCapability|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;

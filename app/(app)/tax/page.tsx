@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
+import { canWith } from "@/lib/auth/capability-rules";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import {
@@ -68,9 +69,10 @@ function nextVatDeadline(periodEndExclusiveIso: string): Date {
 }
 
 export default async function TaxDashboardPage() {
-  const { ctx } = await requireOrgContext();
-  // Money-group surface (nav ADMIN_ROLES) — enforce server-side (fix 1).
-  requireManagementRole(ctx);
+  // R4 — the tax dashboard requires tax:view (owner full; admin only if granted
+  // tax:view / a broadening tax:manage / wildcard; staff never). Swaps the old
+  // requireManagementRole gate to the granular capability; RLS remains the floor.
+  const { ctx, grants } = await requireCapability("tax", "view");
   const supabase = await createClient();
 
   // The org's HMRC VAT stagger drives WHICH period the VAT figures cover. A LOUD
@@ -246,12 +248,17 @@ export default async function TaxDashboardPage() {
   // HMRC prepared/held returns — the internal frozen records (never filed).
   // getHmrcSubmissions is org-pinned + loud (throws on read failure).
   const hmrcSubmissions = await getHmrcSubmissions(ctx.org.id);
-  const canPrepare =
-    ctx.membership.role === "owner" || ctx.membership.role === "admin";
-  // The submit affordance exists ONLY when HMRC is connectable (vendor
-  // recognition + client creds + feature flag — ALL absent today, so it never
-  // renders dark). The action + orchestrator repeat the same guard server-side.
-  const canSubmit = canPrepare && isHmrcConnectable();
+  // R4 — the affordances mirror the SAME capabilities the server actions enforce
+  // (prepare → tax:create, submit → tax:manage), so a tax:view-only admin does
+  // not see buttons that would throw on click. The server action + orchestrator
+  // remain the real boundary; nav/affordance-hiding is never the boundary.
+  const canPrepare = canWith(ctx.membership.role, grants, "tax", "create");
+  // The submit affordance exists ONLY when the caller holds tax:manage AND HMRC
+  // is connectable (vendor recognition + client creds + feature flag — ALL absent
+  // today, so it never renders dark). The action + orchestrator repeat both
+  // guards server-side.
+  const canSubmit =
+    canWith(ctx.membership.role, grants, "tax", "manage") && isHmrcConnectable();
 
   const vatDeadline = nextVatDeadline(quarterEndExclusiveIso);
   const yearStartDate = new Date(yearStartIso);
