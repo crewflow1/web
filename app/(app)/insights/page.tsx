@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireOrgContext, requireManagementRole } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import {
   computeActivitySummary,
   computeLeadInsights,
@@ -42,9 +42,12 @@ import { isInferenceTierActivated } from "@/lib/ai/governor/readiness";
 export const dynamic = "force-dynamic";
 
 export default async function InsightsPage() {
-  const { ctx } = await requireOrgContext();
-  // Money-group surface (nav ADMIN_ROLES) — enforce server-side (fix 1).
-  requireManagementRole(ctx);
+  // Insights is management business intelligence over financial data (activity,
+  // lead analytics, company health, forecasts, cash position) — the "financial
+  // reports" class staff are barred from. R4 gates it on reports:view, the same
+  // data-visibility boundary as /reports. Owner always; admin with the grant;
+  // staff/members denied. The cash-out forecast tile keeps its own finer gate.
+  const { ctx } = await requireCapability("reports", "view");
 
   const [activity, leads, companySignals] = await Promise.all([
     computeActivitySummary(ctx.org.id, 30),
