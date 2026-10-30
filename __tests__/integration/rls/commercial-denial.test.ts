@@ -92,6 +92,25 @@ describeIntegration("rls · commercial denial (20261250 · R5 Phase 4)", () => {
     });
   }
 
+  it("purchase_order_line_items: staff denied the line pricing, owner allowed (review HIGH)", async () => {
+    // The sensitive unit costs/quantities/totals live in the lines, not the
+    // header — migration 20261254 narrows them to admin too.
+    const poId = rowA.purchase_orders!;
+    const lineId = await insId("purchase_order_line_items", {
+      org_id: orgA, purchase_order_id: poId, description: "Timber", qty: 10, unit: "each", unit_price: 25,
+    });
+    expect(lineId, "line seeded").not.toBe("");
+    const seeLine = async (who: string) => {
+      const r = await db(userClient(tok[who] ?? "")).from("purchase_order_line_items").select("id").in("id", [lineId]);
+      expect(r.error).toBeNull();
+      return (r.data ?? []).length;
+    };
+    expect(await seeLine("owner"), "owner sees the PO line").toBe(1);
+    expect(await seeLine("staff"), "staff denied the PO line pricing").toBe(0);
+    const anon = await db(anonClient()).from("purchase_order_line_items").select("id").in("id", [lineId]);
+    expect(anon.data ?? [], "anon denied").toHaveLength(0);
+  });
+
   it("finances: a non-admin member can STILL INSERT a cost (member-open entry preserved)", async () => {
     // Regression for the review BLOCKER: narrowing finances SELECT to is_org_admin
     // must NOT break member-open cost entry. The INSERT policy is unchanged; the
