@@ -240,6 +240,10 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       "app/(app)/jobs/[id]/billing/actions.ts",
       "app/(app)/jobs/[id]/valuations/page.tsx",
       "app/(app)/jobs/[id]/valuation-actions.ts",
+      // R4 — variation requests. reviewVariationRequest (accept/reject a
+      // customer-change request → variation order) gates quotes:approve;
+      // createVariationRequest stays member-open (staff field intake).
+      "app/(app)/jobs/[id]/variation-request-actions.ts",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|requireCapabilityFor|hasCapability|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;
