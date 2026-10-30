@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireManagementApi } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { sendQuoteEmail } from "@/lib/email/send-quote";
 import { readFailure } from "@/lib/supabase/read-failure";
 import * as Sentry from "@sentry/nextjs";
@@ -20,8 +20,9 @@ export const runtime = "nodejs";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function POST(request: NextRequest, { params }: Ctx) {
-  // Management-only (first-customer fix 1): this surface carries money.
-  const guard = await requireManagementApi();
+  // R4 — sending a quote to the customer mutates it to "sent" → quotes:edit
+  // (owner always; an admin only if granted). Was management-only.
+  const guard = await requireCapabilityApi("quotes", "edit");
   if (guard instanceof Response) return guard;
   const { ctx } = guard;
   const { id } = await params;

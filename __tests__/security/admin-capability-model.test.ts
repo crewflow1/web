@@ -189,6 +189,15 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       "app/api/reports/[report]/export/route.ts",
       // R4 — cash module (the /cash position page; no API, no actions, no layout).
       "app/(app)/cash/page.tsx",
+      // R4 — quotes module. Layout + list page gate quotes:view; the 12 management
+      // actions use requireCapabilityFor (create/edit/approve/delete); the PDF
+      // route is view, the send route is edit. Customer token actions
+      // (accept/declineQuoteByToken) are NOT capability-gated by design.
+      "app/(app)/quotes/layout.tsx",
+      "app/(app)/quotes/page.tsx",
+      "app/(app)/quotes/actions.ts",
+      "app/api/quotes/[id]/pdf/route.ts",
+      "app/api/quotes/[id]/send/route.ts",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|requireCapabilityFor|hasCapability|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;

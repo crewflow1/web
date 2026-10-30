@@ -147,9 +147,15 @@ vi.mock("@/server/auth/session", () => ({
     },
     user: { id: "user-owner" },
   })),
-  // Faithful mirror of the real guard (first-customer fix 1): quote actions are
-  // management-only; a staff caller is redirected exactly like production.
-  requireManagementRole: (ctx?: { membership?: { role?: string } }) => {
+}));
+
+// R4: the approval actions now gate via requireCapabilityFor (quotes:approve /
+// edit) instead of requireManagementRole. Mirror the authorization OUTCOME by
+// role — owner/admin pass, others redirect exactly like production — so this
+// suite keeps testing the approve/reject/accept/decline paths. The granular
+// admin-grant behaviour is proven in __tests__/security/r4-quotes-capability.test.ts.
+vi.mock("@/server/auth/capabilities", () => ({
+  requireCapabilityFor: async (ctx?: { membership?: { role?: string } }) => {
     const role = ctx?.membership?.role;
     if (role !== "owner" && role !== "admin") {
       redirectMock("/dashboard?error=forbidden");

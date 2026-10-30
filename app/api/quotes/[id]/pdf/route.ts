@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/paginate";
-import { requireManagementApi } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { QuotePdf, type QuotePdfInput } from "@/lib/pdf/quote-pdf";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 
@@ -21,8 +21,9 @@ export const runtime = "nodejs";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_request: NextRequest, { params }: Ctx) {
-  // Management-only (first-customer fix 1): this surface carries money.
-  const guard = await requireManagementApi();
+  // R4 — the internal quote PDF is a read/download → quotes:view (owner always;
+  // an admin only if granted). Was management-only; this surface carries money.
+  const guard = await requireCapabilityApi("quotes", "view");
   if (guard instanceof Response) return guard;
   const { ctx } = guard;
   const { id } = await params;
