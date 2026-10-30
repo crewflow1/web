@@ -69,13 +69,20 @@ its own.
 - **Owner lockout analysis:** NONE. `is_org_admin()` short-circuits the OR for
   role `owner`/`admin`, so an owner is never denied a job in their own org.
 - **App-behaviour dependency (deployment ordering):** the app reads jobs through
-  the RLS client, so staff-facing job lists will narrow to assigned-only. Before
-  this is APPLIED in production, the app write-path must write `job_assignments`
-  on every assignment (so multi-worker assignment is reflected) and staff job
-  surfaces must handle the assigned-only/empty-state view. The `assigned_to`
-  branch means the single-assignee path keeps working in the interim with no
-  lockout. **Apply order:** merge+deploy the app reconciliation → then apply this
-  migration.
+  the RLS client, so staff-facing job lists narrow to assigned-only. The one
+  blocker before APPLY is reconciling the staff-facing job-read surfaces
+  (~60+ `createClient().from("jobs")` read sites — empty states, assigned-only
+  lists, and by-id deep links returning 404 rather than erroring). **No
+  `job_assignments` write-path sync is required for the current single-assignee
+  flow** — the policy's `assigned_to = auth.uid()` branch already covers every
+  job assigned via the existing UI, so applying Phase 2 does not strand any
+  currently-assigned staff member. A write-path that populates `job_assignments`
+  is needed only when a **multi-worker assignment UI** is built (assigning
+  secondary workers who are not `assigned_to`); that feature, the authenticated
+  SELECT policy on `job_assignments`, and the GDPR re-classification land
+  together. **Apply order:** reconcile staff job-read surfaces → apply this
+  migration. (Also a conscious product call: with only owner/admin/staff roles,
+  an office coordinator modelled as `staff` loses org-wide job visibility.)
 - **Performance:** OR evaluated per candidate row for non-admins only;
   `assigned_to=auth.uid()` is a free column compare; `is_job_assignee` resolves
   via `job_assignments(unique job_id,user_id)` (live since Phase 1). No new index.
