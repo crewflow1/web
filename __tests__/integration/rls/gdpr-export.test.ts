@@ -10,6 +10,7 @@ import {
   KNOWN_ORG_SCOPED_TABLES,
   EXCLUDED_FROM_EXPORT,
   ORG_EXPORT_TABLES,
+  SERVICE_SIDE_EXPORT_TABLES,
   exportOrderKey,
 } from "@/lib/gdpr/export-tables";
 
@@ -175,6 +176,15 @@ describeIntegration("gdpr export · org-pinned, redacted, isolated", () => {
 
     await seedOrg(orgA, "A", A);
     await seedOrg(orgB, "B", B);
+
+    // Seed one job_assignments row per org. job_assignments is SERVICE-ROLE-ONLY
+    // (R5 Phase 1), so it is exported via the admin-client service-side lane, not
+    // the user-JWT loop. These rows prove that lane reads real data, org-scoped.
+    const ja = await svc.from("job_assignments").insert([
+      { org_id: orgA, job_id: A.job, user_id: member.id }, // member is staff of A
+      { org_id: orgB, job_id: B.job, user_id: dual.id }, //   dual is owner of B
+    ]);
+    expect(ja.error, ja.error?.message).toBeNull();
   });
 
   afterAll(async () => {
@@ -199,6 +209,7 @@ describeIntegration("gdpr export · org-pinned, redacted, isolated", () => {
       orgId: orgA,
       generatedAt: "2026-01-01T00:00:00.000Z",
       client: userClient(dualToken) as never,
+      adminClient: serviceClient() as never,
     });
 
     const byTable = new Map(exp.tables.map((t) => [t.table, t]));
@@ -216,6 +227,14 @@ describeIntegration("gdpr export · org-pinned, redacted, isolated", () => {
     const custIds = (customers?.rows ?? []).map((r) => r.id);
     expect(custIds).toContain(A.customer);
     expect(custIds).not.toContain(B.customer);
+
+    // SERVICE-SIDE LANE: the service-role-only job_assignments table IS exported
+    // (via the admin-client lane), org-scoped to A — org B's assignment never
+    // appears. This is the DSAR completeness the exclude-while-dark approach lost.
+    const ja = byTable.get("job_assignments");
+    expect(ja, "job_assignments exported via the service-side lane").toBeTruthy();
+    expect((ja?.rows ?? []).length).toBeGreaterThan(0);
+    for (const row of ja?.rows ?? []) expect(row.org_id).toBe(orgA);
   });
 
   it("2. an admin of A exporting orgId=B gets ZERO rows (RLS backstop)", async () => {
@@ -223,10 +242,19 @@ describeIntegration("gdpr export · org-pinned, redacted, isolated", () => {
       orgId: orgB,
       generatedAt: "2026-01-01T00:00:00.000Z",
       client: userClient(aOnlyToken) as never,
+      adminClient: serviceClient() as never,
     });
     // aOnly is not a member of B — RLS denies every row.
     expect(exp.manifest.total_rows).toBe(0);
     for (const t of exp.tables) expect(t.rowCount).toBe(0);
+    // CRITICAL: the service-side lane BYPASSES RLS, so without a backstop it would
+    // leak org B's job_assignments to this non-member. The membership probe (the
+    // caller's own RLS-subject client cannot see org B's organizations row) skips
+    // the whole lane — job_assignments must be ABSENT, not merely empty.
+    expect(
+      exp.tables.find((t) => t.table === "job_assignments"),
+      "service-side lane must be skipped for a non-member (no RLS bypass leak)",
+    ).toBeUndefined();
   });
 
   it("3. redacts portal_token and never names a credential table", async () => {
@@ -262,6 +290,7 @@ describeIntegration("gdpr export · org-pinned, redacted, isolated", () => {
       orgId: orgA,
       generatedAt: "2026-02-02T03:04:05.000Z",
       client: userClient(dualToken) as never,
+      adminClient: serviceClient() as never,
     });
     const m = exp.manifest;
     expect(m.generated_at).toBe("2026-02-02T03:04:05.000Z");
@@ -269,7 +298,12 @@ describeIntegration("gdpr export · org-pinned, redacted, isolated", () => {
     expect(m.scope).toMatch(/export-only/);
     // table_count = exported tables that exist in this DB (skipped excluded).
     expect(m.table_count).toBe(exp.tables.length);
-    expect(m.table_count + m.skipped_tables.length).toBe(ORG_EXPORT_TABLES.length);
+    // Both lanes contribute: the user-JWT loop (ORG_EXPORT_TABLES) + the
+    // service-side lane (SERVICE_SIDE_EXPORT_TABLES). A dual member of A sees the
+    // service-side lane run, so its tables count too.
+    expect(m.table_count + m.skipped_tables.length).toBe(
+      ORG_EXPORT_TABLES.length + SERVICE_SIDE_EXPORT_TABLES.length,
+    );
     // Per-table counts sum to the total.
     const sum = m.tables.reduce((n, t) => n + t.rowCount, 0);
     expect(sum).toBe(m.total_rows);
@@ -297,7 +331,9 @@ describeIntegration("gdpr export · org-pinned, redacted, isolated", () => {
     // new id-less table defaulting to a missing `id`) surfaces here as a
     // non-missing-relation error, failing CI before it can break a live DSAR.
     const badOrderKey: string[] = [];
-    for (const table of ORG_EXPORT_TABLES) {
+    // Both lanes page via exportOrderKey, so BOTH must have a valid live order
+    // key (the service-side lane would abort the whole export on a bad key too).
+    for (const table of [...ORG_EXPORT_TABLES, ...SERVICE_SIDE_EXPORT_TABLES]) {
       const res = await svc
         .from(table)
         .select("org_id")

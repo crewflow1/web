@@ -3,6 +3,7 @@ import {
   KNOWN_ORG_SCOPED_TABLES,
   EXCLUDED_FROM_EXPORT,
   ORG_EXPORT_TABLES,
+  SERVICE_SIDE_EXPORT_TABLES,
   isSensitiveColumn,
   redactRow,
   REDACTED_PLACEHOLDER,
@@ -18,20 +19,33 @@ import {
  */
 
 describe("GDPR export table registry", () => {
-  it("ORG_EXPORT_TABLES = KNOWN minus EXCLUDED (no overlap, full cover)", () => {
+  it("ORG_EXPORT_TABLES = KNOWN minus EXCLUDED minus SERVICE_SIDE (exact 3-way partition)", () => {
     const known = new Set<string>(KNOWN_ORG_SCOPED_TABLES);
     const excluded = new Set<string>(Object.keys(EXCLUDED_FROM_EXPORT));
+    const serviceSide = new Set<string>(SERVICE_SIDE_EXPORT_TABLES);
 
-    // Every excluded table is a real known org table (no dead deny-list entries).
+    // Every excluded / service-side table is a real known org table (no dead entries).
     for (const t of excluded) expect(known.has(t)).toBe(true);
+    for (const t of serviceSide) expect(known.has(t)).toBe(true);
 
-    // The exported set is exactly KNOWN \ EXCLUDED.
-    const expected = [...known].filter((t) => !excluded.has(t)).sort();
+    // Service-side tables are NOT in the deny-list — they ARE exported (via the
+    // admin-client lane), just not through the user-JWT loop.
+    for (const t of serviceSide) expect(excluded.has(t)).toBe(false);
+
+    // The client-loop set is exactly KNOWN \ EXCLUDED \ SERVICE_SIDE.
+    const expected = [...known]
+      .filter((t) => !excluded.has(t) && !serviceSide.has(t))
+      .sort();
     expect([...ORG_EXPORT_TABLES]).toEqual(expected);
 
-    // Partition is exact: EXPORT ∪ EXCLUDED === KNOWN, and they never overlap.
-    for (const t of ORG_EXPORT_TABLES) expect(excluded.has(t)).toBe(false);
-    expect(ORG_EXPORT_TABLES.length + excluded.size).toBe(known.size);
+    // Partition is exact + disjoint: EXPORT ∪ SERVICE_SIDE ∪ EXCLUDED === KNOWN.
+    for (const t of ORG_EXPORT_TABLES) {
+      expect(excluded.has(t)).toBe(false);
+      expect(serviceSide.has(t)).toBe(false);
+    }
+    expect(ORG_EXPORT_TABLES.length + serviceSide.size + excluded.size).toBe(
+      known.size,
+    );
   });
 
   it("is deterministic: ORG_EXPORT_TABLES is sorted and unique", () => {

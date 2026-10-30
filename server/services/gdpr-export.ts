@@ -1,10 +1,12 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import {
   ORG_EXPORT_TABLES,
+  SERVICE_SIDE_EXPORT_TABLES,
   EXCLUDED_FROM_EXPORT,
   exportOrderKey,
   redactRow,
@@ -181,6 +183,15 @@ export async function buildOrgExport(params: {
    * injected is still RLS-subject — this seam widens no boundary.
    */
   client?: SupabaseLike;
+  /**
+   * TEST SEAM ONLY. Production passes nothing and a real service-role admin
+   * client is constructed. The integration tier injects a real service-role
+   * client so the service-side lane (service-role-only tables) is exercised
+   * against Postgres. This lane BYPASSES RLS, so its only tenant boundary is the
+   * mandatory `.eq("org_id", orgId)` pin below — safe because `orgId` is the
+   * route's authorised active org, never caller-supplied.
+   */
+  adminClient?: SupabaseLike;
 }): Promise<OrgExport> {
   const { orgId, generatedAt } = params;
   const supabase: SupabaseLike =
@@ -189,47 +200,86 @@ export async function buildOrgExport(params: {
   const tables: TableExport[] = [];
   const skipped: string[] = [];
 
-  for (const table of ORG_EXPORT_TABLES) {
-    // COMPLETE READ (F-1). Page the whole table under the PostgREST max_rows cap
-    // via fetchAllRows, on a stable + unique order so no page can drop or repeat
-    // a row. The old single `.limit(999+1)` shot silently truncated any table
-    // with >999 rows, delivering a PARTIAL statutory export.
-    const { data, error } = await fetchAllRows<Record<string, unknown>>(
+  // COMPLETE READ (F-1). Page the whole table under the PostgREST max_rows cap
+  // via fetchAllRows, on a stable + unique order so no page can drop or repeat a
+  // row. The `.eq("org_id", orgId)` pins to the caller's ACTIVE org (#456).
+  async function pageTable(src: SupabaseLike, table: string) {
+    return fetchAllRows<Record<string, unknown>>(
       (from, to) =>
-        supabase
+        src
           .from(table)
-          // #456: pin to the caller's ACTIVE org. RLS is the outer boundary;
-          // this is the active-org narrowing for a multi-org member.
           .select("*")
           .eq("org_id", orgId)
-          // Stable, unique total ordering (its `id`, or the composite-key
-          // override) so pagination can't shift rows across page boundaries.
           .order(exportOrderKey(table), { ascending: true })
           .range(from, to) as unknown as PromiseLike<
           PageResult<Record<string, unknown>>
         >,
     );
-
-    if (error) {
-      // MIGRATE-FIRST TOLERANCE: a table that simply does not exist in THIS
-      // environment (a snapshot table ahead of the deployed schema, or behind
-      // it) is a benign shape difference, NOT a read failure — skip it and note
-      // it on the manifest. Everything else (RLS, network, PGRST embed errors)
-      // is a real failure and stays LOUD: never degrade it to an empty table.
-      // fetchAllRows is best-effort (returns the partial set + the error) — we
-      // refuse a partial export and throw.
-      const readError = error as ReadError;
-      if (isMissingRelation(readError)) {
-        skipped.push(table);
-        continue;
-      }
-      throw readFailure(`gdpr export: ${table}`, readError);
-    }
-
-    // Column-level defence in depth: strip any secret-named column.
-    const rows = data.map((r) => redactRow(r) as Record<string, unknown>);
-    tables.push({ table, rowCount: rows.length, rows });
   }
+
+  async function collect(
+    src: SupabaseLike,
+    tableList: readonly string[],
+  ): Promise<void> {
+    for (const table of tableList) {
+      const { data, error } = await pageTable(src, table);
+      if (error) {
+        // MIGRATE-FIRST TOLERANCE: a table absent from THIS environment's schema
+        // (a snapshot table ahead of / behind the deployed migrations) is a
+        // benign shape difference, not a read failure — skip + note it. Anything
+        // else (RLS, network, PGRST embed) stays LOUD: a partial statutory export
+        // is a lie, so refuse it and throw (fetchAllRows is best-effort).
+        const readError = error as ReadError;
+        if (isMissingRelation(readError)) {
+          skipped.push(table);
+          continue;
+        }
+        throw readFailure(`gdpr export: ${table}`, readError);
+      }
+      // Column-level defence in depth: strip any secret-named column.
+      const rows = data.map((r) => redactRow(r) as Record<string, unknown>);
+      tables.push({ table, rowCount: rows.length, rows });
+    }
+  }
+
+  // Lane 1 — the ordinary user-JWT client (RLS-subject). The explicit org pin is
+  // the active-org narrowing; RLS is the independent outer backstop.
+  await collect(supabase, ORG_EXPORT_TABLES);
+
+  // Lane 2 — service-role lane for subject-access-relevant tables that are
+  // service-role-only (no authenticated client grant), so Lane 1 cannot read
+  // them. These are NOT excluded from the DSAR — a dark table must not be
+  // permanently invisible to legitimate data-subject access.
+  //
+  // The admin client BYPASSES RLS, so the `.eq("org_id", orgId)` pin inside
+  // pageTable is the only row-level tenant filter. In production `orgId` is the
+  // route's authorised active org (owner/admin-gated), never caller-supplied —
+  // but to keep the SAME independent RLS backstop the user-JWT lane relies on,
+  // we FIRST confirm, through the caller's own RLS-subject client, that the
+  // caller actually belongs to `orgId`: a non-member cannot see the
+  // organizations row (its SELECT policy is membership via current_org_ids()),
+  // so the whole service-side lane is skipped for them. This makes the lane safe
+  // even if `orgId` ever reached here unauthorised.
+  if (SERVICE_SIDE_EXPORT_TABLES.length > 0) {
+    const probe = (await supabase
+      .from("organizations")
+      .select("id")
+      .eq("id", orgId)
+      .order("id", { ascending: true })
+      .range(0, 0)) as { data: unknown[] | null; error: ReadError | null };
+    if (probe.error) {
+      throw readFailure("gdpr export: org-membership probe", probe.error);
+    }
+    const callerBelongs = Array.isArray(probe.data) && probe.data.length > 0;
+    if (callerBelongs) {
+      const admin: SupabaseLike =
+        params.adminClient ?? (createAdminClient() as unknown as SupabaseLike);
+      await collect(admin, SERVICE_SIDE_EXPORT_TABLES);
+    }
+  }
+
+  // Deterministic archive regardless of lane order: sort tables by name.
+  tables.sort((a, b) => a.table.localeCompare(b.table));
 
   const totalRows = tables.reduce((n, t) => n + t.rowCount, 0);
 
