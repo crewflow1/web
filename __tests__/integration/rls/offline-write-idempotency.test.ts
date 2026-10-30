@@ -212,20 +212,35 @@ describeIntegration("offline write queue · DB idempotency (20261077)", () => {
     expect((row.data ?? [])[0]?.work_summary).toBe("original words");
   });
 
-  it("the surviving row is findable by (org_id, client_write_key) — the duplicate branch", async () => {
-    // server/services/offline-writes.ts answers a 23505 by looking the row up this
-    // exact way and reporting "duplicate" with its id. Prove the lookup works under
-    // the USER's own client, since that is who performs it.
+  it("the duplicate branch finds the OWN row via the self-scoped service path, not a broad member read (R5 Phase 3)", async () => {
+    // Under R5 staff isolation, a staff member can no longer broadly read a
+    // job-less (or unassigned-job) site_diary_entry — so server/services/
+    // offline-writes.ts answers a 23505 with a NARROW self-scoped lookup pinned to
+    // (org_id, client_write_key, created_by = this user) via the service-role
+    // client. This proves BOTH halves: the broad member read is denied (stronger
+    // isolation), and the self-scoped path still retrieves the user's OWN row.
     const key = crypto.randomUUID();
     const as = userClient(member.token);
-    await insertEntry(as, { orgId: orgA, clientKey: key, createdBy: member.id });
-    const found = await db(as)
+    await insertEntry(as, { orgId: orgA, clientKey: key, createdBy: member.id }); // job_id null
+
+    // (a) ISOLATION: the member cannot broadly read their job-less entry.
+    const broad = await db(as)
       .from("site_diary_entries")
       .select("id")
       .eq("org_id", orgA)
       .eq("client_write_key", key);
-    expect(found.error, found.error?.message).toBeNull();
-    expect(found.data ?? []).toHaveLength(1);
+    expect(broad.error, broad.error?.message).toBeNull();
+    expect(broad.data ?? [], "a staff member must not broad-read a job-less diary entry under R5").toHaveLength(0);
+
+    // (b) NARROW RETRIEVAL: the service's self-scoped lookup finds the OWN row.
+    const own = await svc()
+      .from("site_diary_entries")
+      .select("id")
+      .eq("org_id", orgA)
+      .eq("client_write_key", key)
+      .eq("created_by", member.id);
+    expect(own.error, own.error?.message).toBeNull();
+    expect(own.data ?? [], "the self-scoped (org,key,created_by) lookup retrieves the user's own submission").toHaveLength(1);
   });
 
   // ── scope of the index ─────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import type { OrgContext } from "@/server/auth/session";
 import {
@@ -132,6 +133,25 @@ type PgError = { message: string; code?: string } | null;
 // a minimal precise cast — the same idiom app/(app)/diary/actions.ts uses.
 type InsertChain = {
   insert: (row: unknown) => Promise<{ error: PgError }>;
+};
+/** Self-scoped duplicate lookup: (org_id, client_write_key, created_by) → id. */
+type FindOwnByKeyChain = {
+  select: (cols: string) => {
+    eq: (
+      k: string,
+      v: unknown,
+    ) => {
+      eq: (
+        k: string,
+        v: unknown,
+      ) => {
+        eq: (
+          k: string,
+          v: unknown,
+        ) => { maybeSingle: () => Promise<{ data: { id: string } | null; error: PgError }> };
+      };
+    };
+  };
 };
 type FindByKeyChain = {
   select: (cols: string) => {
@@ -288,27 +308,37 @@ export async function createDiaryEntryRecord(args: {
      * the active org so a multi-org member can never be handed another org's row id.
      */
     if (error.code === UNIQUE_VIOLATION) {
+      /**
+       * NARROW SELF-SCOPED IDEMPOTENCY LOOKUP (R5 Phase 3). The duplicate is the
+       * caller's OWN earlier submission (client_write_key is theirs). Under R5
+       * staff isolation the tenant/user client can no longer broadly read
+       * site_diary_entries for a non-assigned or job-less entry, so this lookup
+       * goes through the service-role admin client — but pinned to the caller's
+       * OWN row on THREE axes: active org_id + their client_write_key +
+       * created_by = THIS user. It therefore returns only the id of the user's
+       * own submission and never exposes any other job's or user's records; it is
+       * not a broad `created_by` read exception.
+       */
+      const admin = createAdminClient();
       const { data: existing, error: lookupErr } = await (
-        tenant.from("site_diary_entries" as never) as unknown as FindByKeyChain
+        admin.from("site_diary_entries" as never) as unknown as FindOwnByKeyChain
       )
         .select("id")
         .eq("org_id", orgId)
         .eq("client_write_key", clientKey)
+        .eq("created_by", args.user.id)
         .maybeSingle();
       /**
-       * The lookup's OWN error must be bound and classified, not discarded. If it
-       * is dropped, a transient failure here (a blip between the insert and this
-       * read) falls through to the permanent rejection below — which would mark
-       * the foreman's entry as permanently refused for a reason that had nothing
-       * to do with his entry. A failed read is not evidence of anything.
+       * The lookup's OWN error must be bound and classified, not discarded — a
+       * transient blip here must not masquerade as a permanent rejection.
        */
       if (lookupErr) {
         return { status: "retry", reason: lookupErr.code ?? "duplicate_lookup_failed" };
       }
       if (existing?.id) return { status: "duplicate", id: existing.id };
-      // The lookup SUCCEEDED and returned nothing, so the key genuinely exists in a
-      // row this caller cannot read. Refusing is the only safe answer: retrying
-      // would loop forever, and claiming success would report a row we cannot show.
+      // The key collided but no row of THIS user's in THIS org carries it — i.e.
+      // the key belongs to another user/org's row. Never hand back someone else's
+      // id; refuse. (Per-client keys make this effectively impossible in practice.)
       return { status: "rejected", reason: "not_permitted" };
     }
     const permanent = error.code ? PERMANENT_CODES[error.code] : undefined;

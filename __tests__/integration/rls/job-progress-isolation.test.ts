@@ -133,6 +133,16 @@ describeIntegration("job_progress_observations · isolation + integrity", () => 
       { org_id: orgB, user_id: dualUserId, role: "staff" },
     ]);
     expect(memberships.error, memberships.error?.message).toBeNull();
+
+    // R5 Phase 3: job_progress_observations is now assignment-gated for staff.
+    // The dual-org STAFF member is assigned to the probe job in BOTH orgs, so the
+    // multi-org blend this file proves (RLS returns both orgs; the service's
+    // org-pin is what narrows) still holds for an assignment-gated staff member.
+    const assigns = await svc.from("job_assignments").insert([
+      { org_id: orgA, job_id: jobA, user_id: dualUserId },
+      { org_id: orgB, job_id: jobB, user_id: dualUserId },
+    ]);
+    expect(assigns.error, assigns.error?.message).toBeNull();
   });
 
   afterAll(async () => {
