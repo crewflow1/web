@@ -46,6 +46,7 @@ const SEEDS: { table: string; row: (org: string, job: string) => Row }[] = [
   { table: "job_valuations", row: (org, job) => ({ org_id: org, job_id: job, sequence: 1 }) },
   { table: "purchase_orders", row: (org) => ({ org_id: org, number: `PO-${TOKEN}-${Math.random().toString(36).slice(2, 7)}` }) },
   { table: "review_requests", row: (org) => ({ org_id: org, platform: "google", send_at: new Date().toISOString() }) },
+  { table: "finances", row: (org, job) => ({ org_id: org, job_id: job, amount: 1000 }) },
 ];
 
 describeIntegration("rls · commercial denial (20261250 · R5 Phase 4)", () => {
