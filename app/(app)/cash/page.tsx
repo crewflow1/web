@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { buildOrgCash } from "@/server/services/org-cash";
 import {
   buildOrgCashOut,
@@ -140,17 +140,19 @@ function BillRow({ item }: { item: CashOutQueueItem }) {
 }
 
 export default async function CashPage() {
-  const { ctx } = await requireOrgContext();
-  if (ctx.membership.role === "staff") {
-    const { redirect } = await import("next/navigation");
-    redirect("/me");
-  }
+  // R4 — the cash position (collectable money-in minus money owed) is sensitive
+  // financial data → cash:view (owner full; admin only if granted; staff never).
+  // Swaps the old requireOrgContext + staff-redirect gate; a denied caller is
+  // redirected to /dashboard?error=forbidden. RLS on the underlying ledgers stays
+  // the floor.
+  const { ctx } = await requireCapability("cash", "view");
   // Money-out reads the admin-only ledgers (supplier payments, CIS snapshots,
-  // payroll). Today the role domain is owner|admin|staff and staff are already
-  // redirected above, so this is always true — it is here so that ADDING a role
-  // cannot silently produce an OVERSTATED payables figure: without admin rights
-  // the settlement ledger comes back empty and every bill reads as fully unpaid,
-  // which is wrong in the dangerous direction. Withheld beats understated.
+  // payroll). Everyone who passes cash:view today is the owner or a granted admin
+  // (both is_org_admin at the DB), so this is true here — it is kept as defence-
+  // in-depth so that ADDING a future role that can pass the gate but lacks admin
+  // ledger access cannot silently produce an OVERSTATED payables figure: without
+  // admin rights the settlement ledger comes back empty and every bill reads as
+  // fully unpaid, wrong in the dangerous direction. Withheld beats understated.
   const showOutflows = cashOutVisibleToRole(ctx.membership.role);
   const [
     { summary: s, forecast: f, queues, recentlyPaid, readyStages, unscheduledJobs, loadError },

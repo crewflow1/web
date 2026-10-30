@@ -319,7 +319,9 @@ describe("every money-out read is pinned to the active org", () => {
   });
 
   it("the page passes the ACTIVE org, never a client-supplied one", () => {
-    expect(pageCode).toMatch(/const \{ ctx \} = await requireOrgContext\(\)/);
+    // R4: ctx now comes from the capability gate (requireCapability resolves the
+    // same org context AND enforces cash:view) rather than a bare requireOrgContext.
+    expect(pageCode).toMatch(/const \{ ctx \} = await requireCapability\(\s*"cash",\s*"view"\s*\)/);
     expect(pageCode).toMatch(/buildOrgCashOut\(ctx\.org\.id\)/);
     expect(pageCode, "no org id may arrive from searchParams/props").not.toMatch(
       /buildOrgCashOut\((?!ctx\.org\.id)/,
@@ -472,8 +474,9 @@ describe("the money-out section is admin-only, because a non-admin would see it 
   it("the page uses the gate rather than showing an understated figure", () => {
     expect(pageCode).toMatch(/const showOutflows = cashOutVisibleToRole\(ctx\.membership\.role\)/);
     expect(pageCode).toMatch(/showOutflows \?/);
-    // And staff never reach the page at all (pre-existing).
-    expect(pageCode).toMatch(/if \(ctx\.membership\.role === "staff"\)/);
+    // And staff never reach the page at all — the R4 cash:view capability gate
+    // denies any non-owner/non-granted-admin (staff included) before this runs.
+    expect(pageCode).toMatch(/requireCapability\(\s*"cash",\s*"view"\s*\)/);
   });
 
   it("the reason is documented where the gate lives, not left as folklore", () => {

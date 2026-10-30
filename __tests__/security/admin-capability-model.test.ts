@@ -187,6 +187,8 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       "app/api/reports/route.ts",
       "app/api/reports/export/route.ts",
       "app/api/reports/[report]/export/route.ts",
+      // R4 — cash module (the /cash position page; no API, no actions, no layout).
+      "app/(app)/cash/page.tsx",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|requireCapabilityFor|hasCapability|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;
