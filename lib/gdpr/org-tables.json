@@ -102,6 +102,7 @@
     "invoice_payments",
     "invoice_reminders",
     "invoices",
+    "job_assignments",
     "job_billing_plans",
     "job_billing_stages",
     "job_budgets",
@@ -237,6 +238,7 @@
     "worker_signoff_tokens"
   ],
   "excluded": {
+    "job_assignments": "service-role-only while DARK (R5 Phase 1, 20261242): no authenticated read surface, so the DSAR export — which reads as the requesting user — cannot and must not read it; the single-assignee link it currently holds is already exported via jobs.assigned_to. Re-classify as included (drop this exclusion) when a later R5 phase grants an authenticated SELECT policy on job_assignments.",
     "membership_permissions": "access-control configuration: per-admin module×action permission grants (authorization metadata, not data-subject personal data); keyed by membership and cascades on membership delete",
     "permission_audit": "security accountability trail: append-only log of permission/admin/ownership changes (actor + target references, module/action, no tenant business data) — authorization audit metadata, not data-subject personal data",
     "accounting_connections": "credentials: OAuth access/refresh tokens",
