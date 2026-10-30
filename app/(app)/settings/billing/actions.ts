@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireOrgContext } from "@/server/auth/session";
+import { hasCapability } from "@/server/auth/capabilities";
 import { env } from "@/lib/env";
 import {
   wireSelfServeBillingDeps,
@@ -19,22 +20,19 @@ import {
  *   changePlan        — start a subscription Checkout for a target plan
  *                       (upgrade / downgrade) and redirect to it.
  *
- * BOTH are admin-gated (owner/admin) and REFUSE-before-fetch while the feature
- * is dark: the service's isConfigured() guard runs FIRST, so a disabled feature
- * returns feature_disabled with no Stripe call. redirect() is called OUTSIDE the
+ * BOTH are gated on settings:manage (R4 — owner always; an admin only with the
+ * grant; staff/members denied) and REFUSE-before-fetch while the feature is dark:
+ * the service's isConfigured() guard runs FIRST, so a disabled feature returns
+ * feature_disabled with no Stripe call. redirect() is called OUTSIDE the
  * try/catch so its NEXT_REDIRECT signal is never swallowed (the _stripe-actions
  * idiom).
  */
 
-function isAdminRole(role: string): boolean {
-  return role === "owner" || role === "admin";
-}
-
 const BILLING = "/settings/billing";
 
 export async function openBillingPortal(): Promise<void> {
-  const { ctx } = await requireOrgContext();
-  if (!isAdminRole(ctx.membership.role)) {
+  const { ctx, user } = await requireOrgContext();
+  if (!(await hasCapability(ctx, user, "settings", "manage"))) {
     redirect(`${BILLING}?error=forbidden`);
   }
 
@@ -60,8 +58,8 @@ const planSchema = z.object({
 });
 
 export async function changePlan(formData: FormData): Promise<void> {
-  const { ctx } = await requireOrgContext();
-  if (!isAdminRole(ctx.membership.role)) {
+  const { ctx, user } = await requireOrgContext();
+  if (!(await hasCapability(ctx, user, "settings", "manage"))) {
     redirect(`${BILLING}?error=forbidden`);
   }
 

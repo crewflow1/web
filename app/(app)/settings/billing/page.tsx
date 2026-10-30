@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { requireManagementContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
+import { canWith } from "@/lib/auth/capability-rules";
 import { isSelfServeBillingConfigured } from "@/lib/billing/self-serve";
 import { listPlans, getPlan, FEATURE_KEYS, type FeatureKey } from "@/lib/billing/plans";
 import { planHasFeature } from "@/lib/billing/entitlements";
@@ -49,15 +50,13 @@ export default async function BillingSettingsPage({
 }: {
   searchParams: Promise<{ error?: string; change?: string; plan?: string }>;
 }) {
-  // Management-only: redirect non-owner/admin BEFORE any subscription / Stripe
-  // invoice read. Previously the page resolved only the member floor and merely
-  // hid the admin buttons, so a `staff` member would see the org's subscription
-  // status and SaaS invoice list the moment self-serve billing is configured.
-  // Matches the api-keys / webhooks / imports settings pages.
-  const { ctx } = await requireManagementContext();
+  // R4: gate on settings:view BEFORE any subscription / Stripe invoice read, so a
+  // staff member never sees the org's subscription status or SaaS invoice list
+  // (even once self-serve billing is configured). The manage controls below are
+  // gated on settings:manage. Owner always; admin with the grant; staff denied.
+  const { ctx, grants } = await requireCapability("settings", "view");
   const sp = await searchParams;
-  const isAdmin =
-    ctx.membership.role === "owner" || ctx.membership.role === "admin";
+  const canManage = canWith(ctx.membership.role, grants, "settings", "manage");
   const configured = isSelfServeBillingConfigured();
 
   const currentPlanKey = await resolveOrgPlanKey(ctx.org.id);
@@ -138,7 +137,7 @@ export default async function BillingSettingsPage({
           })}
         </ul>
 
-        {configured && isAdmin ? (
+        {configured && canManage ? (
           <form action={openBillingPortal} className="mt-5">
             <button
               type="submit"
@@ -190,7 +189,7 @@ export default async function BillingSettingsPage({
                 <p className="mt-2 text-xs text-slate-500">
                   {plan.seats === null ? "Unlimited seats" : `Up to ${plan.seats} seats`}
                 </p>
-                {configured && isAdmin && plan.stripeLookupKey && !isCurrent ? (
+                {configured && canManage && plan.stripeLookupKey && !isCurrent ? (
                   <form action={changePlan} className="mt-3">
                     <input type="hidden" name="plan_key" value={plan.key} />
                     <button
