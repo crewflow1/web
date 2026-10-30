@@ -244,6 +244,10 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       // customer-change request → variation order) gates quotes:approve;
       // createVariationRequest stays member-open (staff field intake).
       "app/(app)/jobs/[id]/variation-request-actions.ts",
+      // R4 — settings/billing (self-serve tenant plan mgmt; DARK). Page gates
+      // settings:view; openBillingPortal + changePlan gate settings:manage.
+      "app/(app)/settings/billing/page.tsx",
+      "app/(app)/settings/billing/actions.ts",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|requireCapabilityFor|hasCapability|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;
