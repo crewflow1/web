@@ -225,7 +225,19 @@ with the same evidence shape as Phase 2.
  → 247 material_requests + lines (P3 slice 3)
  → 248 job_documents + versions + download gate (P3 slice 4)
  → 249 job-photos storage read (P3 slice 5)
+ → 250 commercial read denial — 8 tables (P4 slice 1)
+ → 251 workforce self-scope — rota_entries, time_entries (P5)
 ```
+**Phase 4 (slice 1) + Phase 5 are now BUILT + ISOLATED-VERIFIED** (apply-held):
+- **P4/250** narrows SELECT to `is_org_admin` on job_budgets, job_valuations,
+  job_billing_plans, job_billing_stages, variation_requests, retention_releases,
+  purchase_orders, review_requests (staff barred regardless of assignment).
+  `pg_policies` confirms one admin-only SELECT policy per table; rls/commercial-denial
+  4/4. **DEFERRED within P4:** `finances` (staff cost entry) + `stock_movements`
+  (goods-received) need a write-path audit before SELECT narrowing; indirect-leak
+  sweep (views/RPCs/signed-URLs/AI) tracked separately.
+- **P5/251** self-scopes rota_entries + time_entries (`is_org_admin OR user_id =
+  auth.uid()`); rls/workforce-self-scope 2/2 (a worker never reads another's).
 Prefix order already encodes the only hard dependency (246 needs the 244 union
 helper). Each is independently reviewable; apply in prefix order after the
 Phase-2 staff-facing job-read surfaces are reconciled (that remains the one app
