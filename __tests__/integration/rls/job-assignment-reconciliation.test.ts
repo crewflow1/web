@@ -166,6 +166,32 @@ describeIntegration("job assignment reconciliation · transactional RPCs", () =>
     expect(await primary(job), "X stays the primary").toBe(workerX.id);
   });
 
+  it("CONCURRENCY (RULE 2): reassign racing an explicit removal never resurrects the removed worker", async () => {
+    // Regression for the set-vs-remove race: primary=W, crew={W}; fire a
+    // reassignment (→X) and an explicit remove(W) concurrently. Under the
+    // per-job advisory lock the two serialize, and BOTH orderings must end with
+    // W gone (removed stays removed) and X the sole crew member + primary.
+    // Repeated so both interleavings are exercised.
+    const asAdmin = db(userClient(admin.token));
+    for (let i = 0; i < 12; i++) {
+      const job = await freshJob();
+      await setPrimary(asAdmin, job, orgA, workerW.id); // primary=W, crew={W}
+
+      const [setRes, rmRes] = await Promise.all([
+        setPrimary(asAdmin, job, orgA, workerX.id),
+        removeWorker(asAdmin, job, orgA, workerW.id),
+      ]);
+      expect(setRes.error, `iter ${i}: concurrent set must not error`).toBeNull();
+      expect(rmRes.error, `iter ${i}: concurrent remove must not error`).toBeNull();
+
+      expect(
+        await crew(job),
+        `iter ${i}: the explicitly-removed W must not survive; X is the sole crew member`,
+      ).toEqual([workerX.id]);
+      expect(await primary(job), `iter ${i}: X is the primary`).toBe(workerX.id);
+    }
+  });
+
   it("CONCURRENCY: parallel sets to the same primary yield exactly one crew row", async () => {
     const job = await freshJob();
     const asAdmin = db(userClient(admin.token));
@@ -213,6 +239,16 @@ describeIntegration("job assignment reconciliation · transactional RPCs", () =>
     // With their own org id but this (foreign) job: the job isn't in orgB.
     const foreignJob = await setPrimary(asOutsider, job, orgB, workerX.id);
     expect(foreignJob.error, "the job is not in the outsider's org").not.toBeNull();
+
+    // remove_job_worker is guarded the same way on both arms.
+    expect(
+      (await removeWorker(asOutsider, job, orgA, workerW.id)).error,
+      "outsider using orgA is blocked removing too",
+    ).not.toBeNull();
+    expect(
+      (await removeWorker(asOutsider, job, orgB, workerW.id)).error,
+      "the job is not in the outsider's org (loud P0002, not a silent no-op)",
+    ).not.toBeNull();
 
     expect(await primary(job), "the foreign job is untouched").toBe(workerW.id);
     expect(await crew(job)).toEqual([workerW.id]);

@@ -45,6 +45,16 @@ begin
     raise exception 'Forbidden: only owners/admins may change assignments' using errcode = '42501';
   end if;
 
+  -- SERIALIZE all assignment mutations on this job. Without this, a concurrent
+  -- set_job_primary_assignment (W→X) and remove_job_worker(W) can interleave so
+  -- that the removal's "null assigned_to where = W" and crew-delete both miss
+  -- (the set has already moved the primary to X and re-inserted W's crew row),
+  -- leaving the explicitly-removed W on the crew — a RULE 2 violation. A
+  -- transaction-scoped advisory lock, namespaced to ('job_assignment', job),
+  -- makes every mutation on a job run start-to-finish before the next begins.
+  -- Released automatically at commit/rollback.
+  perform pg_advisory_xact_lock(hashtext('job_assignment'), hashtext(p_job_id::text));
+
   select assigned_to into v_old_primary
   from public.jobs where id = p_job_id and org_id = p_org_id;
   if not found then
@@ -60,8 +70,14 @@ begin
   end if;
 
   -- RULE 1: preserve the OUTGOING primary on the crew when the primary changes,
-  -- so reassigning the lead never silently drops the previous lead's access.
-  if v_old_primary is not null and v_old_primary is distinct from p_assigned_to then
+  -- so reassigning the lead never silently drops the previous lead's access —
+  -- but only if they are STILL a member of the org (never resurrect a former
+  -- primary whose membership was since revoked; that would contradict the
+  -- "assignees are org members" invariant the new-primary check also enforces).
+  if v_old_primary is not null and v_old_primary is distinct from p_assigned_to
+     and exists (
+       select 1 from public.memberships where org_id = p_org_id and user_id = v_old_primary
+     ) then
     insert into public.job_assignments (org_id, job_id, user_id, assigned_by)
     values (p_org_id, p_job_id, v_old_primary, auth.uid())
     on conflict (job_id, user_id) do nothing;
@@ -91,6 +107,18 @@ begin
   end if;
   if auth.role() is distinct from 'service_role' and not public.is_org_admin(p_org_id) then
     raise exception 'Forbidden: only owners/admins may change assignments' using errcode = '42501';
+  end if;
+
+  -- Serialize against set_job_primary_assignment on the SAME job (see the note
+  -- there) so a concurrent reassignment cannot re-add this worker after we
+  -- remove them. Same namespaced, transaction-scoped advisory lock.
+  perform pg_advisory_xact_lock(hashtext('job_assignment'), hashtext(p_job_id::text));
+
+  -- Loud contract (matches set_job_primary_assignment): a wrong org makes this a
+  -- no-op silently, so refuse a job that is not in this org rather than report a
+  -- false "removed".
+  if not exists (select 1 from public.jobs where id = p_job_id and org_id = p_org_id) then
+    raise exception 'Job not found in this org' using errcode = 'P0002';
   end if;
 
   -- RULE 2: explicit removal revokes EVERY path, atomically.
