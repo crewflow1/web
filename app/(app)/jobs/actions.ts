@@ -37,6 +37,25 @@ import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
 
 type JobValues = Record<string, unknown>;
 
+/**
+ * The job-assignment reconciliation RPCs (set_job_primary_assignment /
+ * remove_job_worker, 20261246000000) are not in the generated Supabase types
+ * (types.ts is frozen alongside job_assignments), so they are invoked through
+ * this minimal structural cast — the same idiom assignment-actions.ts uses for
+ * its admin-client RPC. The function enforces admin + org authority itself.
+ */
+type RpcLike = (
+  fn: string,
+  args: Record<string, unknown>,
+) => PromiseLike<{ error: { message: string } | null }>;
+function callRpc(
+  client: { rpc: unknown },
+  fn: string,
+  args: Record<string, unknown>,
+): PromiseLike<{ error: { message: string } | null }> {
+  return (client.rpc as RpcLike)(fn, args);
+}
+
 function buildRecurring(
   pattern: string | undefined,
   endDate: string | undefined,
@@ -97,7 +116,10 @@ export async function createJob(
     .insert({
       org_id: ctx.org.id,
       customer_id: result.data.customer_id ?? null,
-      assigned_to: result.data.assigned_to ?? null,
+      // assigned_to is NOT set here — the primary assignment is owned by the
+      // transactional set_job_primary_assignment RPC (below) so jobs.assigned_to
+      // and the job_assignments crew row are always created together, never as
+      // independent writes that could drift (20261246000000).
       status: result.data.status,
       scheduled_date: result.data.scheduled_date ?? null,
       scheduled_end_date: result.data.scheduled_end_date ?? null,
@@ -122,6 +144,24 @@ export async function createJob(
     }
     console.error("[jobs] create failed", error);
     return formError("Couldn't save the job. Try again.", result.data as JobValues);
+  }
+
+  // Primary assignment — one transactional write that sets jobs.assigned_to AND
+  // places the assignee on the crew (job_assignments). Routed through the RPC
+  // (not the insert) so the two stay consistent. Membership was already verified
+  // by verifyCrmReferences, so the only failure here is a transient DB fault:
+  // the job is already saved, so (like the template clone / calendar push below)
+  // we log and continue rather than orphaning a created job behind an error — the
+  // owner can set the worker from the job's edit screen.
+  if (result.data.assigned_to) {
+    const { error: assignError } = await callRpc(supabase, "set_job_primary_assignment", {
+      p_job_id: data.id,
+      p_org_id: ctx.org.id,
+      p_assigned_to: result.data.assigned_to,
+    });
+    if (assignError) {
+      console.error("[jobs] initial assignment failed", assignError);
+    }
   }
 
   // Funnel: job created (fires after a confirmed insert; this is the manual
@@ -224,7 +264,11 @@ export async function updateJob(
     .update(
       {
         customer_id: result.data.customer_id ?? null,
-        assigned_to: result.data.assigned_to ?? null,
+        // assigned_to is NOT written here — the primary is reconciled by the
+        // transactional set_job_primary_assignment RPC (below) AFTER this update's
+        // admin gate passes. Writing it here would change jobs.assigned_to before
+        // the RPC could read the OUTGOING primary, defeating the rule that a
+        // reassignment preserves the previous primary on the crew (20261246000000).
         status: result.data.status,
         scheduled_date: result.data.scheduled_date ?? null,
         scheduled_end_date: result.data.scheduled_end_date ?? null,
@@ -261,6 +305,25 @@ export async function updateJob(
   if (count === 0) {
     return formError(
       "Only admins/owners can edit jobs.",
+      result.data as JobValues,
+    );
+  }
+
+  // Reconcile the primary assignment transactionally now that the admin gate has
+  // passed (count > 0). set_job_primary_assignment sets jobs.assigned_to, keeps
+  // the OUTGOING primary on the crew (never silently dropped), and places the new
+  // primary on the crew — all in one statement. The RPC re-checks admin + org, so
+  // it cannot be used to widen authority. A failure here means the primary field
+  // did not change, so surface it rather than reporting a clean save.
+  const { error: assignError } = await callRpc(supabase, "set_job_primary_assignment", {
+    p_job_id: id,
+    p_org_id: ctx.org.id,
+    p_assigned_to: result.data.assigned_to ?? null,
+  });
+  if (assignError) {
+    console.error("[jobs] assignment reconcile failed", assignError);
+    return formError(
+      "Couldn't update the assigned worker. Try again.",
       result.data as JobValues,
     );
   }

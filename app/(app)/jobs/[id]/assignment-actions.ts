@@ -64,6 +64,7 @@ type AdminLike = {
     update: (values: Record<string, unknown>) => WriteFilter;
     delete: () => WriteFilter;
   };
+  rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<DbResult>;
 };
 
 const NO_PERMISSION =
@@ -145,9 +146,11 @@ export async function assignWorker(
  * Remove a worker from a job.
  *
  * REMOVAL REVOKES ACCESS: if the removed worker is ALSO the job's legacy single
- * `assigned_to` primary assignee, that column is nulled in the same action — so
- * removing someone from the crew cannot leave them with access via the old
- * single-assignee path. Both writes are org-pinned.
+ * `assigned_to` primary assignee, that column is nulled too — so removing someone
+ * from the crew cannot leave them with access via the old single-assignee path.
+ * Both writes happen inside the ONE transactional remove_job_worker RPC
+ * (20261246000000), so the crew row and the legacy primary can never end up in a
+ * half-revoked state. Org-pinned (p_org_id) inside the function.
  */
 export async function removeWorker(
   jobId: string,
@@ -171,6 +174,8 @@ export async function removeWorker(
 
   const admin = createAdminClient() as unknown as AdminLike;
 
+  // The job must be in the caller's ACTIVE org (friendly refusal, not a silent
+  // no-op). The RPC is org-pinned too, but this gives the operator a clear message.
   const { data: job, error: jobError } = await admin
     .from("jobs")
     .select<JobRow>("id, assigned_to")
@@ -179,30 +184,16 @@ export async function removeWorker(
     .maybeSingle();
   if (jobError || !job) return formError(NOT_IN_ORG);
 
-  const { error: delError } = await admin
-    .from("job_assignments")
-    .delete()
-    .eq("job_id", jobId)
-    .eq("user_id", workerId)
-    .eq("org_id", ctx.org.id);
-  if (delError) {
-    console.error("[job-assignments] remove failed", delError);
+  // One transactional revoke: delete the crew row AND null jobs.assigned_to if it
+  // points at this worker — atomically, so no stale assignment path survives.
+  const { error } = await admin.rpc("remove_job_worker", {
+    p_job_id: jobId,
+    p_org_id: ctx.org.id,
+    p_user_id: workerId,
+  });
+  if (error) {
+    console.error("[job-assignments] remove failed", error);
     return formError("Couldn't remove that worker. Refresh and try again.");
-  }
-
-  // Revoke the legacy single-assignee access too, if it points at this worker.
-  if (job.assigned_to === workerId) {
-    const { error: clearError } = await admin
-      .from("jobs")
-      .update({ assigned_to: null })
-      .eq("id", jobId)
-      .eq("org_id", ctx.org.id);
-    if (clearError) {
-      console.error("[job-assignments] clear primary assignee failed", clearError);
-      return formError(
-        "Removed them from the crew, but couldn't clear the primary assignee. Refresh and try again.",
-      );
-    }
   }
 
   revalidatePath(`/jobs/${jobId}`);

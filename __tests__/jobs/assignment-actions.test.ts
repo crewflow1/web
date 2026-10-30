@@ -10,9 +10,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  *    constructed — no read, no write.
  *  - assignWorker validates the target is a member of the job's org, and upserts
  *    the correct payload with onConflict "job_id,user_id" + assigned_by = caller.
- *  - removeWorker deletes the (job_id, user_id) row, and ALSO clears
- *    jobs.assigned_to when (and only when) it points at the removed worker —
- *    the access-revocation requirement.
+ *  - removeWorker calls the transactional remove_job_worker RPC (which deletes
+ *    the crew row AND nulls jobs.assigned_to atomically); the delete+null
+ *    behaviour itself is proven against real Postgres in the integration tier
+ *    (rls/job-assignment-reconciliation.test.ts). Here we pin the call shape and
+ *    the no-false-success contract.
  */
 
 const JOB_ID = "11111111-1111-4111-8111-111111111111";
@@ -51,15 +53,12 @@ let jobError: { message: string } | null = null;
 let memberRow: { user_id: string } | null = { user_id: WORKER_ID };
 let memberError: { message: string } | null = null;
 let upsertError: { message: string } | null = null;
-let deleteError: { message: string } | null = null;
-let updateError: { message: string } | null = null;
+let rpcError: { message: string } | null = null;
 
-type Call = { table: string; filters: [string, unknown][] };
 const calls: {
   upsert: { table: string; row: Record<string, unknown>; onConflict: string }[];
-  delete: Call[];
-  update: (Call & { values: Record<string, unknown> })[];
-} = { upsert: [], delete: [], update: [] };
+  rpc: { fn: string; args: Record<string, unknown> }[];
+} = { upsert: [], rpc: [] };
 
 function selectChain(table: string) {
   const chain: Record<string, unknown> = {};
@@ -72,17 +71,6 @@ function selectChain(table: string) {
   return chain;
 }
 
-function writeBuilder(filters: [string, unknown][], result: () => { error: unknown }) {
-  const b: Record<string, unknown> = {};
-  b.eq = (col: string, val: unknown) => {
-    filters.push([col, val]);
-    return b;
-  };
-  b.then = (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
-    Promise.resolve(result()).then(resolve, reject);
-  return b;
-}
-
 const createAdminClientMock = vi.fn(() => ({
   from: (table: string) => ({
     select: () => selectChain(table),
@@ -90,17 +78,12 @@ const createAdminClientMock = vi.fn(() => ({
       calls.upsert.push({ table, row, onConflict: opts.onConflict });
       return Promise.resolve({ error: upsertError });
     },
-    delete: () => {
-      const filters: [string, unknown][] = [];
-      calls.delete.push({ table, filters });
-      return writeBuilder(filters, () => ({ error: deleteError }));
-    },
-    update: (values: Record<string, unknown>) => {
-      const filters: [string, unknown][] = [];
-      calls.update.push({ table, values, filters });
-      return writeBuilder(filters, () => ({ error: updateError }));
-    },
   }),
+  // removeWorker routes its atomic delete+null through the remove_job_worker RPC.
+  rpc: (fn: string, args: Record<string, unknown>) => {
+    calls.rpc.push({ fn, args });
+    return Promise.resolve({ error: rpcError });
+  },
 }));
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: createAdminClientMock,
@@ -125,11 +108,9 @@ beforeEach(() => {
   memberRow = { user_id: WORKER_ID };
   memberError = null;
   upsertError = null;
-  deleteError = null;
-  updateError = null;
+  rpcError = null;
   calls.upsert = [];
-  calls.delete = [];
-  calls.update = [];
+  calls.rpc = [];
   hasCapabilityMock.mockClear();
   revalidatePathMock.mockClear();
   createAdminClientMock.mockClear();
@@ -224,65 +205,43 @@ describe("removeWorker — authorization", () => {
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/permission/i);
     expect(createAdminClientMock).not.toHaveBeenCalled();
-    expect(calls.delete).toHaveLength(0);
+    expect(calls.rpc).toHaveLength(0);
     expect(revalidatePathMock).not.toHaveBeenCalled();
   });
 });
 
-describe("removeWorker — deletes and revokes access", () => {
-  it("deletes the (job_id, user_id) row scoped to the org", async () => {
-    jobRow = { id: JOB_ID, assigned_to: OTHER_ID }; // primary is someone else
-    const res = await removeWorker(JOB_ID, INITIAL, form({ user_id: WORKER_ID }));
-
-    expect(res.ok).toBe(true);
-    expect(calls.delete).toHaveLength(1);
-    const del = calls.delete[0];
-    if (!del) throw new Error("expected a delete call");
-    expect(del.table).toBe("job_assignments");
-    expect(del.filters).toEqual(
-      expect.arrayContaining([
-        ["job_id", JOB_ID],
-        ["user_id", WORKER_ID],
-        ["org_id", "org-1"],
-      ]),
-    );
-    expect(revalidatePathMock).toHaveBeenCalledWith(`/jobs/${JOB_ID}`);
-  });
-
-  it("also clears jobs.assigned_to when it points at the removed worker", async () => {
-    jobRow = { id: JOB_ID, assigned_to: WORKER_ID };
-    const res = await removeWorker(JOB_ID, INITIAL, form({ user_id: WORKER_ID }));
-
-    expect(res.ok).toBe(true);
-    expect(calls.update).toHaveLength(1);
-    const upd = calls.update[0];
-    if (!upd) throw new Error("expected an update call");
-    expect(upd.table).toBe("jobs");
-    expect(upd.values).toEqual({ assigned_to: null });
-    expect(upd.filters).toEqual(
-      expect.arrayContaining([
-        ["id", JOB_ID],
-        ["org_id", "org-1"],
-      ]),
-    );
-  });
-
-  it("does NOT touch jobs.assigned_to when it points at a different worker", async () => {
+describe("removeWorker — atomic revoke via RPC", () => {
+  it("calls remove_job_worker with the job, active org, and worker", async () => {
+    // assigned_to is irrelevant to the call shape — the RPC decides whether to
+    // null the primary; the action always passes the same args.
     jobRow = { id: JOB_ID, assigned_to: OTHER_ID };
     const res = await removeWorker(JOB_ID, INITIAL, form({ user_id: WORKER_ID }));
 
     expect(res.ok).toBe(true);
-    expect(calls.update).toHaveLength(0);
+    expect(calls.rpc).toHaveLength(1);
+    expect(calls.rpc[0]).toEqual({
+      fn: "remove_job_worker",
+      args: { p_job_id: JOB_ID, p_org_id: "org-1", p_user_id: WORKER_ID },
+    });
+    expect(revalidatePathMock).toHaveBeenCalledWith(`/jobs/${JOB_ID}`);
   });
 
-  it("rejects a missing/invalid worker id without deleting", async () => {
+  it("refuses when the job is not in the caller's active org (no RPC call)", async () => {
+    jobRow = null;
+    const res = await removeWorker(JOB_ID, INITIAL, form({ user_id: WORKER_ID }));
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/workspace/i);
+    expect(calls.rpc).toHaveLength(0);
+  });
+
+  it("rejects a missing/invalid worker id without calling the RPC", async () => {
     const res = await removeWorker(JOB_ID, INITIAL, form({}));
     expect(res.ok).toBe(false);
-    expect(calls.delete).toHaveLength(0);
+    expect(calls.rpc).toHaveLength(0);
   });
 
-  it("returns ok:false when the delete errors", async () => {
-    deleteError = { message: "boom" };
+  it("returns ok:false (no false success) when the RPC errors", async () => {
+    rpcError = { message: "boom" };
     const res = await removeWorker(JOB_ID, INITIAL, form({ user_id: WORKER_ID }));
     expect(res.ok).toBe(false);
     expect(revalidatePathMock).not.toHaveBeenCalled();
