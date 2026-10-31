@@ -26,20 +26,20 @@ This pack covers **applying R5 migrations `20261242` → `20261259` (incl `20261
 
 ## 2. Deployment health — the code-ahead-of-schema window (READ FIRST)
 
-Merging to `main` **auto-deploys to Vercel production.** The merged R5 **code** is therefore reaching production **before** its **schema**. This is an inherent consequence of the "merge code now, apply migrations later" sequence. Impact, assessed from the actual code paths:
+Merging to `main` **auto-deploys to Vercel production** — so the merged R5 **code** is live in prod (**prod now serves `f110944`**) **before** its **schema** (prod DB tip `20261241`). This is inherent to "merge code now, apply migrations later." A read-only verification sweep mapped the **complete** blast radius from the actual code paths:
 
-**Currently live (prod = `8a166c8`, the #998 merge) — LOW impact, no outage:**
-- The owner/admin **job crew panel** (`_assignments.tsx`) reads the not-yet-existing `job_assignments` table. The read is **error-handled**: it renders a contained red "Couldn't load who's assigned…" panel and **does not crash the page**. It is **owner/admin-only** (`{isAdmin ? … : null}`), inside a Suspense boundary — **staff are unaffected**, and every other section of the job page renders normally.
+**Hard-error surfaces (throw until the migration applies):**
+- **Entire `/stock` module** — `listStockMovements` reads the not-yet-existing `stock_movements_operational` view (loud throw, #480 doctrine). Six routes funnel through it: `/stock`, `/stock/items`, `/stock/items/[id]`, `/stock/locations/[id]`, `/stock/vans`, `/stock/replenishment`. Fixed by migration `20261257`.
+- **H&S / toolbox issued-doc pages** — `requiredOperatives` reads the `job_rota_crew` RPC (migration `20261256`); absent → throws on `/health-safety/[id]`, `/health-safety/permits/[id]`, `/toolbox/[id]` for an *issued, job-linked* document (drafts / job-less docs are fine).
+- **Material-request creation** — `find_own_material_request` (migration `20261255`) is on the *key-first* path (every submit), so an absent RPC returned `retry` and **blocked** material-request creation (no data loss — queued/retried — but the feature stalls).
 
-**Will occur once the #997 merge (`9005fd0b`) promotes to prod — BOUNDED hard-error until migrations apply:**
-- `listStockMovements` (loud read — **throws** on error, by the #480 doctrine) reads the not-yet-existing `stock_movements_operational` view. Blast radius is **exactly two pages**: `/stock/items/[id]` and `/stock/locations/[id]`. They will error until migration `20261257` is applied. (Loud-throw is correct design — the fix is to apply the schema, **not** to soften the read.)
-- **Offline replay** of a re-sent material-request / site-diary item uses `find_own_*` RPCs (migrations `255`/`259`), absent in prod → the replay idempotency branch errors. First-sync is unaffected; only a *replayed* queued item is affected.
+**Already-graceful surfaces (no crash, no fix needed):** the owner/admin job **crew panel** (contained red "couldn't load" box, admin-only, staff never see it), **crew add/remove** (clean "refresh and try again" message), **site-diary offline** (first-sync fine; only a *replayed* duplicate degrades to safe retry), and the **GDPR service export** (skips the absent table and continues).
 
-**Resolution:** applying migrations `242`→`259` **fully closes this window** — the crew panel, both stock detail pages, and offline replay all recover immediately. **This is the main reason to apply promptly.**
+**Resolution — two founder-gated options, either closes the window completely:**
+1. **Apply migrations `242`→`259`** (the proper fix — §3). Every surface recovers immediately; the compat fallbacks below then become dead code. **Recommended.**
+2. **Merge compat PR #1007** (`fix/r5-schema-compat-window`) — makes the deployed code *tolerant* of the pre-migration schema: each surface falls back to its exact pre-R5 behaviour **only** when the R5 object is absent, and every real error still fails loud. Independently adversarially-reviewed: **no bug, no cross-tenant leak, trust-boundary intact, no error-swallow**. Merging it (auto-deploys) closes the window without the DB apply, and the fallbacks go dead once (1) is done.
 
-**Founder options if you want zero window before applying:**
-1. **Apply now** (recommended) — approve this pack; the window closes on completion.
-2. **Hold the `9005fd0b` Vercel production promotion** until the apply is done (prod stays on `8a166c8`, which only has the graceful admin-panel degradation). Requires a Vercel-side action (not performed autonomously).
+Option (1) is the clean end state; (2) is available if you prefer to decouple the DB apply from closing the customer-facing window. Both are production actions requiring your approval; neither is performed autonomously.
 
 ---
 
