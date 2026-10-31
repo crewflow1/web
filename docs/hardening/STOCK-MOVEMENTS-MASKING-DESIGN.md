@@ -1,6 +1,19 @@
-# stock_movements financial masking — least-privilege design (remaining work)
+# stock_movements financial masking — least-privilege design
 
-**Status: DESIGNED, NOT YET IMPLEMENTED.** This is a deliberate read-split
+**Status: IMPLEMENTED (migrations 20261257 + 20261258) + VERIFIED.** The read-split
+below is built: the cost-free operational view, the self-scoped definer quantity
+balances, the base-table admin-only narrow, and the stock.ts caller split
+(staff → operational view; valuation/COGS → base cost reader). One extra step the
+build surfaced beyond the original design: the member WRITE-PATH RPCs
+(record_stock_issue / record_stock_transfer / record_stock_adjustment) read
+stock_movements internally for balance checks under SECURITY INVOKER, so the base
+narrow broke them for non-admins — they were converted to SECURITY DEFINER + org
+guard (20261258), same as the GRN receipt RPC. Verified: rls/stock-isolation 61/61
+incl. an explicit cost-masking case (staff see quantities via the view, cost NULL;
+base is admin-only; admin reads cost). Full integration + security + unit tiers green.
+
+---
+_Original design (for reference):_ This is a deliberate read-split
 refactor, not a one-line RLS change. It was explicitly held out of a timed
 sprint because a blanket `is_org_admin` SELECT on `stock_movements` **breaks
 staff stock quantities and stock valuation**, and the naive fix mis-states every

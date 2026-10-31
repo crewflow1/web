@@ -267,7 +267,10 @@ describeIntegration("operational stock · boundary, isolation, concurrency, immu
       p_notes: null,
     });
     expect(error).not.toBeNull();
-    expect(error?.message ?? "").toMatch(/not found/i);
+    // R5: the write-path RPCs are SECURITY DEFINER + org-guarded (20261258), so a
+    // non-member is refused by the membership guard (42501 "not a member") before
+    // the internal "not found" check — a stronger, earlier refusal.
+    expect(error?.message ?? "").toMatch(/not a member|forbidden|not found/i);
   });
 
   // ── the GRN → stock bridge ────────────────────────────────────────────────
@@ -610,6 +613,35 @@ describeIntegration("operational stock · boundary, isolation, concurrency, immu
 
     const still = await svc().from("stock_movements").select("qty").eq("id", id).maybeSingle();
     expect(Number(still.data?.qty)).toBe(40);
+  });
+
+  it("R5 cost-masking: staff read QUANTITIES via the operational view (cost NULL); the base is admin-only", async () => {
+    // A receipt movement exists by now (the GRN-bridge tests above). Its cost
+    // columns are commercial; staff must see quantity but never cost.
+    const mv = await svc().from("stock_movements").select("id, qty, effect")
+      .eq("org_id", orgA).eq("movement_type", "receipt").maybeSingle();
+    const id = String(mv.data?.id ?? "");
+    expect(id, "a seeded receipt movement").not.toBe("");
+
+    // Staff via the operational view: quantity present, the three cost columns NULL.
+    const staffView = await db(userClient(memberToken))
+      .from("stock_movements_operational")
+      .select("id, effect, unit_cost, cost_effect, costed_qty_effect")
+      .eq("id", id).maybeSingle();
+    expect(staffView.error, staffView.error?.message).toBeNull();
+    expect(staffView.data?.id, "staff sees the movement's quantities").toBe(id);
+    expect(staffView.data?.effect, "quantity effect is present").not.toBeNull();
+    expect(staffView.data?.unit_cost, "unit_cost masked").toBeNull();
+    expect(staffView.data?.cost_effect, "cost_effect masked").toBeNull();
+    expect(staffView.data?.costed_qty_effect, "costed_qty_effect masked").toBeNull();
+
+    // Staff direct on the BASE table: denied (admin-only SELECT) → no rows, no cost.
+    const staffBase = await db(userClient(memberToken)).from("stock_movements").select("id, cost_effect").eq("id", id);
+    expect(staffBase.data ?? [], "staff cannot read the cost-bearing base table").toHaveLength(0);
+
+    // An admin reads the base table (cost included).
+    const adminBase = await db(userClient(dualToken)).from("stock_movements").select("id").eq("id", id);
+    expect((adminBase.data ?? []).length, "admin reads the base movement").toBe(1);
   });
 
   it("the SIGN cannot be forged — the trigger overwrites whatever is supplied", async () => {
@@ -1211,9 +1243,11 @@ describeIntegration("operational stock · boundary, isolation, concurrency, immu
       p_item_id: itemA,
       p_site_id: depotA,
     });
-    // SECURITY INVOKER: RLS filters every row away, so the sum is zero rather
-    // than another company's real figure.
-    expect(Number(outsider.data ?? -1)).toBe(0);
+    // R5 (20261257): stock_balance is now SECURITY DEFINER + canonical org guard,
+    // so a non-member is refused with 42501 "not a member" — a stronger, explicit
+    // refusal than the old SECURITY-INVOKER silent zero.
+    expect(outsider.error, "a non-member must be refused the balance").not.toBeNull();
+    expect(outsider.error?.code === "42501" || /not a member|forbidden/i.test(outsider.error?.message ?? "")).toBe(true);
   });
 
   it("the balances VIEW is security_invoker — an outsider sees no rows", async () => {
