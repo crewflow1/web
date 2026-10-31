@@ -244,6 +244,15 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       // customer-change request → variation order) gates quotes:approve;
       // createVariationRequest stays member-open (staff field intake).
       "app/(app)/jobs/[id]/variation-request-actions.ts",
+      // R5 — assignment reconciliation. assignWorker/removeWorker gate
+      // jobs:manage before routing an assignment change through the admin-only
+      // reconciliation RPCs (set_job_primary_assignment / add_job_worker /
+      // remove_job_worker); jobs/actions.ts createJob gates the *assignee*
+      // up-front (F2: hasCapability("jobs","manage")) so a non-admin can never
+      // silently create an unassigned/mis-assigned job. Legitimate R5 capability
+      // enforcement, not early adoption of the dark R2/R3 surface.
+      "app/(app)/jobs/[id]/assignment-actions.ts",
+      "app/(app)/jobs/actions.ts",
       // R4 — settings/billing (self-serve tenant plan mgmt; DARK). Page gates
       // settings:view; openBillingPortal + changePlan gate settings:manage.
       "app/(app)/settings/billing/page.tsx",
