@@ -4,6 +4,7 @@ import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
 import { getRequestI18n } from "@/server/i18n/request";
 import { updateProfile, updateOrganization } from "./actions";
 import { ProfileForm, OrganizationForm } from "./_forms";
+import { SignOutButton } from "../_components/sign-out-button";
 import { LogoUpload } from "./_logo-upload";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 import { outboundWebhooksEnabled } from "@/lib/webhooks/flags";
@@ -469,6 +470,20 @@ export default async function SettingsPage() {
         </p>
       </section>
       )}
+
+      <section className="rounded-xl border border-red-200 bg-white p-4 sm:p-6">
+        <h2 className="text-sm font-semibold text-slate-900">Sign out</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          End your session on this device and return to the login screen.
+        </p>
+        <div className="mt-3">
+          <SignOutButton
+            showIcon
+            label="Log out"
+            className="inline-flex items-center gap-2 rounded-md border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50"
+          />
+        </div>
+      </section>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LogOut } from "lucide-react";
 import { signOut } from "@/app/(auth)/actions";
 import { clearAll, clearOfflineIdentity } from "@/lib/blueprints/offline-store";
 import {
@@ -83,7 +84,15 @@ async function countUnsent(): Promise<number> {
   return writes + photos;
 }
 
-export function SignOutButton({ className }: { className?: string }) {
+export function SignOutButton({
+  className,
+  label = "Sign out",
+  showIcon = false,
+}: {
+  className?: string;
+  label?: string;
+  showIcon?: boolean;
+}) {
   const [queued, setQueued] = useState(0);
 
   // Polled rather than event-driven: this button lives in the layout header on
@@ -142,7 +151,8 @@ export function SignOutButton({ className }: { className?: string }) {
       }}
     >
       <button type="submit" className={className}>
-        Sign out
+        {showIcon ? <LogOut className="h-4 w-4" aria-hidden /> : null}
+        {label}
         {queued > 0 ? (
           <span
             data-signout-unsent={queued}

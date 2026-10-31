@@ -203,5 +203,19 @@ export async function updateSession(request: NextRequest, requestId?: string) {
     return redirectTo(url);
   }
 
+  // Back-button / bfcache defense. A protected page must not be restorable from
+  // the browser's history (back-forward) cache AFTER logout — otherwise pressing
+  // Back would show the last authed page from cache with no network request, so
+  // this middleware never runs and never redirects. `no-store` disables bfcache
+  // for authed responses, forcing a fresh request on Back → (cookies cleared by
+  // signOut) → no user → /login. Public/marketing pages are untouched so they
+  // stay cacheable for crawlers and anonymous visitors.
+  if (user && !isPublicRoute && !isAuthFlow) {
+    supabaseResponse.headers.set(
+      "Cache-Control",
+      "no-store, max-age=0, must-revalidate",
+    );
+  }
+
   return stamp(supabaseResponse);
 }
