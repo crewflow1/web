@@ -91,6 +91,10 @@ const HIGH_VALUE_TABLES = new Set<string>([
   "quote_templates",
   "quote_template_lines",
   "stock_movements",
+  // R5 Phase 4: the cost-free projection of stock_movements (unit_cost/cost_effect
+  // NULL). Staff read it instead of the now-admin-only base; listStockMovements
+  // reads it COMPLETE via fetchAllRows, so it is policed exactly like the base.
+  "stock_movements_operational",
   "bank_statement_lines",
   "telematics_connections",
   "telematics_readings",

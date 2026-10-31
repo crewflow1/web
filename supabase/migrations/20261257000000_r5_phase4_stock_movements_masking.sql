@@ -45,7 +45,10 @@ with (security_invoker = false) as
   from public.stock_movements
   where org_id in (select public.current_org_ids());
 
-revoke all on public.stock_movements_operational from anon;
+-- Data-API grant discipline (slice 1.5): a new view must NOT inherit the broad
+-- historical anon/authenticated default grants — authenticated SELECT only, no
+-- anon/PUBLIC. Revoke everything first, then grant the one privilege.
+revoke all on public.stock_movements_operational from anon, authenticated, public;
 grant select on public.stock_movements_operational to authenticated;
 
 -- 2a. Quantity balance function → SECURITY DEFINER + canonical org guard (no cost).
@@ -82,6 +85,10 @@ with (security_invoker = false) as
     from public.stock_movements
    where org_id in (select public.current_org_ids())
    group by org_id, stock_item_id, site_id;
+-- Same grant discipline — the recreated view must not re-inherit anon's broad
+-- default grants (authenticated SELECT only; no anon/PUBLIC — slice 1.5 / the F
+-- over-exposed-views guard).
+revoke all on public.stock_balances from anon, authenticated, public;
 grant select on public.stock_balances to authenticated;
 
 -- 3. Base table SELECT → admin-only (cost columns off-limits to staff; the
