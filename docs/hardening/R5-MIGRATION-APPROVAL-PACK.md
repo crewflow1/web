@@ -288,5 +288,69 @@ reconciliation gate — see Phase 2).
 4. **The cross-cutting reconciliation blocker is RESOLVED** (migration 246 +
    concurrency fix, above) — no decision pending; the "reassign keeps prior lead
    on the crew" product call is answered and implemented.
-5. **Phase 4 (financial denial) + Phase 5 (workforce self-scope) are the next
-   build targets** — not yet built.
+5. **Phase 4 (financial denial) + Phase 5 (workforce self-scope) — BUILT, VERIFIED,
+   CI-GREEN.** See the FINAL STATUS section below.
+
+---
+
+## ✅ FINAL STATUS — 2026-10-31: R5 ENGINEERING COMPLETE, BOTH PRs CI-GREEN
+
+The whole R5 programme is now built, independently reviewed, and green across all
+CI tiers. **Nothing engineering-side is outstanding — the only remaining gates are
+the protected production actions in this pack (founder merge + apply) and the
+external credentials unrelated to R5.**
+
+**The two PRs (apply-held — do NOT merge/apply without explicit founder action):**
+- **#997 `r5/consolidated-operational-rls`** (tip `31526073`) — the full read-side
+  programme: Phase 2 (jobs), Phase 3 (operational children + material requests +
+  job documents + job-photo storage), Phase 4 (commercial/financial denial +
+  report-RPC admin guard + PO line-items + **stock_movements masking read-split**),
+  Phase 5 (workforce self-scope), and the offline uuid-RPC fix. **ALL 7 CI tiers
+  green** (lint, unit, integration, security, typecheck, e2e, gitleaks). Carries
+  migrations **242–259 minus 246**.
+- **#998 `feat/jobs-assignment-reconciliation`** (tip `77d2fbe1`) — Phase 1
+  (job_assignments) + the transactional assignment-reconciliation RPCs with the
+  per-job advisory-lock concurrency fix + the multi-worker crew UI. **ALL 7 CI
+  tiers green.** Carries migrations **242 + 246**.
+
+**Full combined chain (242 → 259, including 246) — REVIEWED + VERIFIED:**
+applied in prefix order on a fresh database with no collision or ordering fault,
+then the entire integration tier ran against that unified schema: **278 test files
+/ 2771 tests PASS**, including the 13-test assignment-reconciliation + set-vs-remove
+race suite. Financial denial, stock masking, workforce self-scope, cross-tenant
+isolation, worker revocation and mutation concurrency all hold *together*.
+
+```
+242 job_assignments (P1, #998)      250 P4 commercial denial
+243 P2 jobs RLS                      251 P5 workforce self-scope
+244 P3 operational children (+union) 252 P4 finances denial
+245 P3 slice 2                       253 P4 report-RPC admin guard
+246 assignment reconciliation (#998) 254 P4 PO line-items denial
+247 P3 material_requests             255 offline own-row lookup RPCs
+248 P3 job_documents                 256 P4 access regressions (GRN/crew/variation)
+249 P3 job-photo storage             257 P4 stock_movements masking (read-split)
+                                     258 P4 stock write RPCs → definer
+                                     259 fix: own-lookup RPC uuid param
+```
+Apply in prefix order; `246` slots after `245` (needs the `244` union helper) and
+before `247` — verified to interleave cleanly.
+
+**End-to-end proof:** the first-customer simulation (`e2e/first-customer-sim.spec.ts`,
+11 scenarios, owner/admin/staff/customer/HQ) passes against the production build with
+R5 applied — including the staff-denial scenario (a non-assigned staff member is
+refused a progress write), which auto-activates whenever the branch carries the R5
+migrations.
+
+**Founder actions to go live (protected — not performed autonomously):**
+1. Approve + merge **#998** and **#997** (either order; both share P1/242 and the
+   combined chain is verified to interleave).
+2. Apply migrations 242 → 259 (incl 246) to production in prefix order (single
+   production Supabase; no staging).
+3. Post-apply, confirm staff isolation on a real staff login (assigned vs
+   non-assigned job).
+
+**Unrelated external gates (not R5, from the integration verification):** Stripe
+(`STRIPE_SECRET_KEY`/webhook), Resend (`RESEND_API_KEY` + verified domain), Sentry
+DSN, Supabase Auth custom SMTP, and AI provider keys (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `CREWFLOW_INTERNAL_ORG_ID`). All corresponding code is
+code-complete and wired; each feature is dark purely pending its credential.
