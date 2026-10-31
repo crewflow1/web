@@ -45,6 +45,15 @@ export async function withCronTelemetry(
     const result = await fn();
     ok = result.ok !== false;
     payload = result;
+    // A route can fail WITHOUT throwing — e.g. an RPC that returns
+    // `{ ok: false, error }` (the prune pass did exactly this and its timeout
+    // was swallowed). Surface that error into the telemetry row so a
+    // non-throwing failure is still diagnosable, not a NULL-error ok=false.
+    if (!ok) {
+      const summary = (result.summary ?? {}) as { error?: unknown };
+      const err = result.error ?? summary.error;
+      errorMessage = err == null ? "route returned ok:false without an error" : String(err);
+    }
   } catch (e) {
     ok = false;
     errorMessage = e instanceof Error ? e.message : String(e);
