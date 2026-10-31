@@ -281,6 +281,13 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   // scalar columns only and never embeds users(...). Two FKs is inherent — who
   // ADDED the step and who TICKED it are separate accountable acts. Any future
   // embed must name its FK constraint; test 2 enforces it.
+  // Job assignments (R5 Phase 1, 20261242000000): user_id (the assignee) +
+  // assigned_by (who assigned them) both → users. Reviewed 2026-10-30: the table
+  // is service-role-only in Phase 1 with NO reader anywhere, so no users(...)
+  // embed exists; two FKs are inherent (who is assigned vs who assigned). Phase 2
+  // readers must select scalar user_id / assigned_by and resolve names via a
+  // separate id lookup, never a users(...) embed; test 2 enforces it.
+  "job_assignments → users",
   "job_checklists → users",
   "job_documents → users",
   // Milestone dependencies (P3, 20261132000002): milestone_id +

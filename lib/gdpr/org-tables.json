@@ -102,6 +102,7 @@
     "invoice_payments",
     "invoice_reminders",
     "invoices",
+    "job_assignments",
     "job_billing_plans",
     "job_billing_stages",
     "job_budgets",
@@ -290,6 +291,10 @@
     "whatsapp_number_routes": "credentials/provider routing + secrets",
     "whatsapp_webhook_events": "provider webhook payloads/secrets (service-internal)",
     "worker_signoff_tokens": "credentials: hashed external-worker sign-off link tokens (access-token material) + issuance metadata; the resulting H&S evidence is exported via worker_acknowledgements"
+  },
+  "_service_side_export_comment": "Org-scoped tables that ARE subject-access-relevant but are service-role-only (RLS on, no authenticated client grant), so the normal user-JWT export loop cannot read them. They are NOT excluded from the DSAR — they are read via a SEPARATE service-role (admin-client) lane in server/services/gdpr-export.ts that is MANDATORILY pinned to the caller's authorised active org (the route gates owner/admin of that org; the pin is the only tenant boundary once RLS is bypassed) and passes through the same redactRow. Keeps a dark table from being permanently invisible to legitimate data-subject access. ORG_EXPORT_TABLES = KNOWN − EXCLUDED − SERVICE_SIDE; the hermetic invariant is EXPORT ∪ SERVICE_SIDE ∪ EXCLUDED === KNOWN.",
+  "service_side_export": {
+    "job_assignments": "service-role-only (R5 Phase 1, 20261242): the worker↔job assignment graph is the data subject's own employment-activity record, so it belongs in their DSAR export, but the table has no authenticated client grant. Exported via the service-role lane, org-pinned + redacted. (Its single-assignee rows currently mirror jobs.assigned_to, which is also exported; the service-side lane keeps multi-worker assignments — once that UI exists — exported too, with no divergence.)"
   },
   "_order_keys_comment": "Stable, unique per-row ORDER BY column for the fully-paged DSAR export (server/services/gdpr-export.ts). Every exported table is paged via fetchAllRows, which REQUIRES a stable total ordering so no row is dropped/repeated at a page boundary. The default key is 'id'; the entries below are the ONLY exported tables lacking an 'id' column — each maps to a column that is unique WITHIN an org-pinned read (the non-org_id part of the table's primary key; org_id is constant under the .eq('org_id', orgId) pin). Ordering by a column that does not exist on a table is a hard read error (Postgres 42703) that would abort the whole export, so this map must stay exhaustive — the integration FORWARD drift test orders each table by its key against live Postgres, failing CI if a key is wrong or a new id-less table appears.",
   "order_keys": {

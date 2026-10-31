@@ -86,12 +86,36 @@ export const EXCLUDED_FROM_EXPORT: Readonly<Record<string, string>> =
   orgTables.excluded;
 
 /**
- * The tables an export actually reads — `KNOWN` minus `EXCLUDED`, sorted. Frozen
- * so no surface can mutate the manifest set at runtime.
+ * Subject-access-relevant org tables that are SERVICE-ROLE-ONLY (RLS on, no
+ * authenticated client grant), so the ordinary user-JWT export loop cannot read
+ * them. They are NOT excluded from the DSAR — the export service reads them via a
+ * separate service-role (admin-client) lane that is MANDATORILY pinned to the
+ * caller's authorised active org (the route gates owner/admin of that org, and
+ * the `.eq("org_id", orgId)` pin is the sole tenant boundary once RLS is
+ * bypassed) and passes through the same `redactRow`. This stops a dark table
+ * from being permanently invisible to legitimate data-subject access.
+ */
+export const SERVICE_SIDE_EXPORT_TABLES: readonly string[] = Object.freeze(
+  Object.keys(
+    (orgTables as { service_side_export?: Record<string, string> })
+      .service_side_export ?? {},
+  )
+    .slice()
+    .sort(),
+);
+
+/**
+ * The tables the CLIENT (user-JWT) export loop reads — `KNOWN` minus `EXCLUDED`
+ * minus the service-side set, sorted. Frozen so no surface can mutate the set at
+ * runtime. The service-side tables are exported too, via their own admin-client
+ * lane (see server/services/gdpr-export.ts); the hermetic invariant is therefore
+ * `ORG_EXPORT_TABLES ∪ SERVICE_SIDE_EXPORT_TABLES ∪ EXCLUDED === KNOWN`.
  */
 export const ORG_EXPORT_TABLES: readonly string[] = Object.freeze(
   KNOWN_ORG_SCOPED_TABLES.filter(
-    (t) => !(t in EXCLUDED_FROM_EXPORT),
+    (t) =>
+      !(t in EXCLUDED_FROM_EXPORT) &&
+      !SERVICE_SIDE_EXPORT_TABLES.includes(t),
   ).slice().sort(),
 );
 

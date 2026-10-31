@@ -18,6 +18,7 @@ import {
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { verifyCrmReferences } from "@/lib/crm/reference-integrity";
 import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
+import { hasCapability } from "@/server/auth/capabilities";
 
 /**
  * Job CRUD server actions.
@@ -36,6 +37,25 @@ import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
  */
 
 type JobValues = Record<string, unknown>;
+
+/**
+ * The job-assignment reconciliation RPCs (set_job_primary_assignment /
+ * remove_job_worker, 20261246000000) are not in the generated Supabase types
+ * (types.ts is frozen alongside job_assignments), so they are invoked through
+ * this minimal structural cast — the same idiom assignment-actions.ts uses for
+ * its admin-client RPC. The function enforces admin + org authority itself.
+ */
+type RpcLike = (
+  fn: string,
+  args: Record<string, unknown>,
+) => PromiseLike<{ error: { message: string } | null }>;
+function callRpc(
+  client: { rpc: unknown },
+  fn: string,
+  args: Record<string, unknown>,
+): PromiseLike<{ error: { message: string } | null }> {
+  return (client.rpc as RpcLike)(fn, args);
+}
 
 function buildRecurring(
   pattern: string | undefined,
@@ -63,11 +83,24 @@ export async function createJob(
   _prevState: FormState<JobValues>,
   formData: FormData,
 ): Promise<FormState<JobValues>> {
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const result = validateFormData(formData, jobFormSchema);
   if (!result.ok) return result.state as FormState<JobValues>;
 
   const supabase = await createClient();
+
+  // AUTHORISATION for assignment (review F2). Assigning a worker is an
+  // owner/admin action — set_job_primary_assignment is admin-only — so if a
+  // non-admin picked an assignee we must refuse UP FRONT with a clear message,
+  // not insert the job and then silently swallow the RPC's 42501 (which left the
+  // job unassigned under a misleading "Job created."). A member may still create
+  // the job with no assignee; an admin assigns it afterwards.
+  if (result.data.assigned_to && !(await hasCapability(ctx, user, "jobs", "manage"))) {
+    return formError(
+      "Only owners or admins can assign a worker. Create the job and ask an admin to assign it.",
+      result.data as JobValues,
+    );
+  }
 
   // Cross-tenant reference integrity (defence in depth over the DB composite FK
   // + membership trigger from 20261112000000): a caller must not attach another
@@ -97,7 +130,10 @@ export async function createJob(
     .insert({
       org_id: ctx.org.id,
       customer_id: result.data.customer_id ?? null,
-      assigned_to: result.data.assigned_to ?? null,
+      // assigned_to is NOT set here — the primary assignment is owned by the
+      // transactional set_job_primary_assignment RPC (below) so jobs.assigned_to
+      // and the job_assignments crew row are always created together, never as
+      // independent writes that could drift (20261246000000).
       status: result.data.status,
       scheduled_date: result.data.scheduled_date ?? null,
       scheduled_end_date: result.data.scheduled_end_date ?? null,
@@ -122,6 +158,25 @@ export async function createJob(
     }
     console.error("[jobs] create failed", error);
     return formError("Couldn't save the job. Try again.", result.data as JobValues);
+  }
+
+  // Primary assignment — one transactional write that sets jobs.assigned_to AND
+  // places the assignee on the crew (job_assignments). Routed through the RPC
+  // (not the insert) so the two stay consistent. The caller was already proven
+  // to hold jobs:manage above (F2) and membership was verified by
+  // verifyCrmReferences, so a 42501/validation failure cannot occur here; the
+  // only residual is a transient DB fault. The job is already saved, so (like the
+  // template clone / calendar push below) we log and continue rather than
+  // orphaning a created job — the owner can re-assign from the edit screen.
+  if (result.data.assigned_to) {
+    const { error: assignError } = await callRpc(supabase, "set_job_primary_assignment", {
+      p_job_id: data.id,
+      p_org_id: ctx.org.id,
+      p_assigned_to: result.data.assigned_to,
+    });
+    if (assignError) {
+      console.error("[jobs] initial assignment failed", assignError);
+    }
   }
 
   // Funnel: job created (fires after a confirmed insert; this is the manual
@@ -224,7 +279,11 @@ export async function updateJob(
     .update(
       {
         customer_id: result.data.customer_id ?? null,
-        assigned_to: result.data.assigned_to ?? null,
+        // assigned_to is NOT written here — the primary is reconciled by the
+        // transactional set_job_primary_assignment RPC (below) AFTER this update's
+        // admin gate passes. Writing it here would change jobs.assigned_to before
+        // the RPC could read the OUTGOING primary, defeating the rule that a
+        // reassignment preserves the previous primary on the crew (20261246000000).
         status: result.data.status,
         scheduled_date: result.data.scheduled_date ?? null,
         scheduled_end_date: result.data.scheduled_end_date ?? null,
@@ -261,6 +320,25 @@ export async function updateJob(
   if (count === 0) {
     return formError(
       "Only admins/owners can edit jobs.",
+      result.data as JobValues,
+    );
+  }
+
+  // Reconcile the primary assignment transactionally now that the admin gate has
+  // passed (count > 0). set_job_primary_assignment sets jobs.assigned_to, keeps
+  // the OUTGOING primary on the crew (never silently dropped), and places the new
+  // primary on the crew — all in one statement. The RPC re-checks admin + org, so
+  // it cannot be used to widen authority. A failure here means the primary field
+  // did not change, so surface it rather than reporting a clean save.
+  const { error: assignError } = await callRpc(supabase, "set_job_primary_assignment", {
+    p_job_id: id,
+    p_org_id: ctx.org.id,
+    p_assigned_to: result.data.assigned_to ?? null,
+  });
+  if (assignError) {
+    console.error("[jobs] assignment reconcile failed", assignError);
+    return formError(
+      "Couldn't update the assigned worker. Try again.",
       result.data as JobValues,
     );
   }

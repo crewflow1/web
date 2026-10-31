@@ -406,3 +406,16 @@ implementation. This RELOCATED 3 pre-existing discard-shaped reads (the two reso
 `server+lib+components` bucket: app/(app) discard 58 → 55, server+lib 38 → 41. No new
 debt — same reads, new file; the resolvers remain org-pinned (`.eq("org_id", orgId)`),
 asserted in `active-org-write-slice.test.ts` against `commit.ts`.
+
+## Baseline raise — 2026-10-31: R5 assignment reconciliation (crew panel enrichment)
+The owner/admin crew panel `app/(app)/jobs/[id]/_assignments.tsx` loads the job's
+`job_assignments` LOUDLY (bound + thrown `error` → explicit error state, never an
+empty "no crew"). On top of that loud primary read it layers TWO best-effort
+display enrichments, both deliberately soft:
+- the legacy single `jobs.assigned_to` — surfaces a pre-R5 assignee beside the
+  new multi-worker crew; a read failure degrades to "no legacy assignee".
+- a `users` name/email lookup — labels the crew rows; a read failure degrades to
+  id-only labels.
+Neither is a money/authority read, and neither must blank the crew panel that
+already loaded. **app/(app) discard 55 → 57.** Per the UP rule, baseline raised in
+the same commit with this reason.

@@ -318,12 +318,12 @@ const ALLOWLIST: Record<string, string> = {
   //    cardinality is bounded by the parent and cannot approach the 1000 cap.
   "app/(app)/jobs/[id]/commercial/page.tsx:186":
     "bounded: ONE job's retention releases (.eq('job_id').eq('org_id')) — feeds the committed/forecast retention figure for a single job; retention is released in 1-2 tranches per job, never near 1000. (Org-pinned per C66-A's cross-org money-injection fix. Moved to 186 in the security closeout when the staff-redirect guard was added to the top of the page.)",
-  "app/(app)/jobs/[id]/page.tsx:317":
-    "bounded: ONE job's retention releases (.eq('job_id', job.id)) — the derived retention position on the job detail page; retention is released in 1-2 tranches per job, never near 1000. job.id is org-verified upstream by loadJobForOrg (the same pin the sibling commercial:186 read carries in-statement). Surfaced by the J3 read-dedup: this read was previously vacuously-greened by the adjacent `jobs` retention read's `.maybeSingle()` sharing its statement window; removing that re-fetched `jobs` read exposed this genuinely-bounded sibling, which is now honestly allowlisted. (Line 307→317 after J2 (#920) added the one-superset quotes read + partition comments above it; same read.)",
+  "app/(app)/jobs/[id]/page.tsx:318":
+    "bounded: ONE job's retention releases (.eq('job_id', job.id)) — the derived retention position on the job detail page; retention is released in 1-2 tranches per job, never near 1000. job.id is org-verified upstream by loadJobForOrg (the same pin the sibling commercial:186 read carries in-statement). Surfaced by the J3 read-dedup: this read was previously vacuously-greened by the adjacent `jobs` retention read's `.maybeSingle()` sharing its statement window; removing that re-fetched `jobs` read exposed this genuinely-bounded sibling, which is now honestly allowlisted. (Line 307→317 after J2 (#920) added the one-superset quotes read + partition comments above it; then 317→318 on the reconciliation branch after merging main; same read.)",
   "app/(app)/jobs/[id]/commercial/page.tsx:191":
     "bounded: ONE job's purchase orders (.eq('job_id')) — feeds the committed-costs tile for a single job; a job has a handful to dozens of POs, never near 1000. (Moved to 191 in the security closeout when the staff-redirect guard was added above.)",
-  "app/(app)/jobs/[id]/page.tsx:336":
-    "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap. (Moved 315→317→330→337 across earlier waves; then 337→347 when J2 (#920) replaced the two variations/base quote reads above it with one superset read + partition comments; then 347→336 when J3 (#924) removed the second `jobs` retention read above it — both now merged; same read, unchanged bound.)",
+  "app/(app)/jobs/[id]/page.tsx:337":
+    "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap. (Moved 315→317→330→337 across earlier waves; then 337→347 when J2 (#920) replaced the two variations/base quote reads above it with one superset read + partition comments; then 347→336 when J3 (#924) removed the second `jobs` retention read above it; then 336→337 on the reconciliation branch after merging main — same read, unchanged bound.)",
   "app/(app)/jobs/retention-actions.ts:163":
     "bounded: ONE job's invoices (.eq('job_id')) — folded into the retention position for a single job; a job's invoices are a handful",
   "app/(app)/purchase-orders/[id]/page.tsx:161":
@@ -1129,6 +1129,17 @@ describe("F-1 bare-select guard — high-value table reads must page or be singl
  *   SINGLE     — only ever an existence / single-row probe (.limit(1)).
  */
 const COVERAGE_REVIEWED: Record<string, string> = {
+  // job_assignments (20261242, R5 P1) — service-role-only (RLS on, client grants
+  // revoked). Its ONE app-code set-read is the owner/admin crew panel
+  // (app/(app)/jobs/[id]/_assignments.tsx), read via the admin client and pinned
+  // PER-PARENT to one job: `.eq("job_id", jobId).eq("org_id", orgId)`. A single
+  // job's crew is a handful of workers — never near the 1000 cap — and the org
+  // pin is the tenant boundary on the RLS-bypassing admin client (the composite
+  // FK makes a cross-org row impossible regardless). The reconciliation RPCs read
+  // job_assignments in SQL (SECURITY DEFINER), not via the Data API, so they are
+  // outside this analyser's scope.
+  job_assignments:
+    "PER-PARENT: one job's crew (.eq('job_id').eq('org_id')) via the admin client for the owner/admin crew panel — a handful of workers, never near the cap; org-pinned tenant boundary.",
   // membership_permissions (20261241, R2) — per-admin capability grants. Its ONE
   // set-read (loadCapabilities in server/auth/capabilities.ts) is per-membership
   // (`.eq("membership_id", id)`), structurally bounded by |modules|×(|actions|+1)

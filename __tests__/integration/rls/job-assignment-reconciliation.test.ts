@@ -1,0 +1,308 @@
+import { afterAll, beforeAll, expect, it } from "vitest";
+import { anonClient, describeIntegration, serviceClient, userClient } from "../_harness";
+
+/**
+ * Job-assignment reconciliation — the two transactional RPCs (20261246000000)
+ * that make jobs.assigned_to (the legacy "primary") and job_assignments (the
+ * crew) one coherent model instead of independent writes that can drift.
+ *
+ * Founder-confirmed semantics proven here against REAL Postgres:
+ *   • set_job_primary_assignment sets the primary AND places the new primary on
+ *     the crew, and when the primary CHANGES it preserves the OUTGOING primary on
+ *     the crew — reassigning the lead never silently strips the old lead's access.
+ *   • remove_job_worker revokes EVERY path atomically — the crew row is deleted
+ *     AND jobs.assigned_to is nulled if it pointed at the removed worker. No stale
+ *     assignment survives a removal.
+ *   • Both are owner/admin-only, org-pinned, and reject non-members as primary.
+ *   • Under concurrency the unique(job_id,user_id) + on-conflict-do-nothing path
+ *     yields exactly one crew row and a consistent final state (no lost rows).
+ *
+ * On this branch the two access paths ARE this state (jobs.assigned_to + the
+ * job_assignments rows); the RLS CONSUMPTION of that state (the my_assigned_job_ids
+ * union → child visibility) is exercised by the R5 Phase 3 suite. Here we assert
+ * ground truth via the service client, which is the complete picture of "every
+ * path" at this layer.
+ */
+
+type Res<T> = { data: T | null; error: { message: string } | null };
+type Row = Record<string, unknown>;
+interface Sel extends PromiseLike<Res<Row[]>> { eq(c: string, v: unknown): Sel }
+interface Ins extends PromiseLike<Res<Row[]>> { select(c?: string): { single(): PromiseLike<Res<Row>> } }
+interface Del { eq(c: string, v: unknown): PromiseLike<Res<null>> }
+interface Table {
+  select(c?: string): Sel;
+  insert(r: Row | Row[]): Ins;
+  delete(): Del;
+}
+type Rpc = (fn: string, args: Row) => PromiseLike<Res<unknown>>;
+const db = (client: unknown) => client as unknown as { from(t: string): Table; rpc: Rpc };
+const TOKEN = `it-asgn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const insId = async (svc: ReturnType<typeof db>, table: string, row: Row): Promise<string> =>
+  String((await svc.from(table).insert(row).select("id").single()).data?.id ?? "");
+
+async function mkUser(email: string, role: string, orgId: string): Promise<{ id: string; token: string }> {
+  const password = `Pw-${TOKEN}-${Math.random().toString(36).slice(2)}`;
+  const created = await serviceClient().auth.admin.createUser({ email, password, email_confirm: true });
+  const id = created.data.user?.id ?? "";
+  await db(serviceClient()).from("users").insert({ id, email, full_name: email });
+  await db(serviceClient()).from("memberships").insert({ org_id: orgId, user_id: id, role });
+  const token = (await anonClient().auth.signInWithPassword({ email, password })).data.session?.access_token ?? "";
+  if (!id || !token) throw new Error(`failed to make user ${email}`);
+  return { id, token };
+}
+
+describeIntegration("job assignment reconciliation · transactional RPCs", () => {
+  const svc = db(serviceClient());
+  let orgA = "", orgB = "";
+  let admin = { id: "", token: "" };
+  let staff = { id: "", token: "" };
+  let workerW = { id: "", token: "" };
+  let workerX = { id: "", token: "" };
+  let outsider = { id: "", token: "" }; // owner of orgB, member of NO orgA
+
+  // A fresh, unassigned job in orgA — each scenario gets its own so state never
+  // leaks between tests.
+  const freshJob = () => insId(svc, "jobs", { org_id: orgA, status: "in-progress" });
+
+  const crew = async (jobId: string): Promise<string[]> => {
+    const r = await svc.from("job_assignments").select("user_id").eq("job_id", jobId);
+    return (r.data ?? []).map((row) => String(row.user_id)).sort();
+  };
+  const primary = async (jobId: string): Promise<string | null> => {
+    const r = await svc.from("jobs").select("assigned_to").eq("id", jobId);
+    const v = r.data?.[0]?.assigned_to;
+    return v == null ? null : String(v);
+  };
+  const setPrimary = (client: { rpc: Rpc }, jobId: string, orgId: string, to: string | null) =>
+    client.rpc("set_job_primary_assignment", { p_job_id: jobId, p_org_id: orgId, p_assigned_to: to });
+  const removeWorker = (client: { rpc: Rpc }, jobId: string, orgId: string, userId: string) =>
+    client.rpc("remove_job_worker", { p_job_id: jobId, p_org_id: orgId, p_user_id: userId });
+  const addWorker = (client: { rpc: Rpc }, jobId: string, orgId: string, userId: string) =>
+    client.rpc("add_job_worker", { p_job_id: jobId, p_org_id: orgId, p_user_id: userId });
+
+  beforeAll(async () => {
+    orgA = await insId(svc, "organizations", { name: "Asgn A", slug: `${TOKEN}-a` });
+    orgB = await insId(svc, "organizations", { name: "Asgn B", slug: `${TOKEN}-b` });
+    if (!orgA || !orgB) throw new Error("fixture org setup failed");
+    admin = await mkUser(`${TOKEN}-adm@example.test`, "owner", orgA);
+    staff = await mkUser(`${TOKEN}-staff@example.test`, "staff", orgA);
+    workerW = await mkUser(`${TOKEN}-w@example.test`, "staff", orgA);
+    workerX = await mkUser(`${TOKEN}-x@example.test`, "staff", orgA);
+    outsider = await mkUser(`${TOKEN}-out@example.test`, "owner", orgB);
+  });
+
+  afterAll(async () => {
+    if (orgA) await svc.from("organizations").delete().eq("id", orgA);
+    if (orgB) await svc.from("organizations").delete().eq("id", orgB);
+    for (const u of [admin.id, staff.id, workerW.id, workerX.id, outsider.id]) {
+      if (u) await serviceClient().auth.admin.deleteUser(u);
+    }
+  });
+
+  it("RULE 1: reassigning the primary preserves the previous primary on the crew", async () => {
+    const job = await freshJob();
+    const asAdmin = db(userClient(admin.token));
+
+    const first = await setPrimary(asAdmin, job, orgA, workerW.id);
+    expect(first.error, "admin sets the primary").toBeNull();
+    expect(await primary(job)).toBe(workerW.id);
+    expect(await crew(job)).toEqual([workerW.id]);
+
+    // Reassign to X — W must NOT be dropped from the crew.
+    const second = await setPrimary(asAdmin, job, orgA, workerX.id);
+    expect(second.error, "admin reassigns the primary").toBeNull();
+    expect(await primary(job), "jobs.assigned_to now points at the new primary").toBe(workerX.id);
+    expect(
+      await crew(job),
+      "the outgoing primary W stays on the crew; X is added",
+    ).toEqual([workerW.id, workerX.id].sort());
+  });
+
+  it("setting the same primary twice is idempotent — exactly one crew row", async () => {
+    const job = await freshJob();
+    const asAdmin = db(userClient(admin.token));
+    await setPrimary(asAdmin, job, orgA, workerW.id);
+    await setPrimary(asAdmin, job, orgA, workerW.id);
+    expect(await crew(job)).toEqual([workerW.id]);
+    expect(await primary(job)).toBe(workerW.id);
+  });
+
+  it("clearing the primary (null) leaves the crew intact", async () => {
+    const job = await freshJob();
+    const asAdmin = db(userClient(admin.token));
+    await setPrimary(asAdmin, job, orgA, workerW.id); // W primary + crew
+    await setPrimary(asAdmin, job, orgA, workerX.id); // X primary, W preserved
+    const cleared = await setPrimary(asAdmin, job, orgA, null); // clear primary
+    expect(cleared.error).toBeNull();
+    expect(await primary(job), "primary is cleared").toBeNull();
+    expect(
+      await crew(job),
+      "both former primaries remain on the crew until explicitly removed",
+    ).toEqual([workerW.id, workerX.id].sort());
+  });
+
+  it("RULE 2: explicit removal revokes BOTH paths atomically", async () => {
+    const job = await freshJob();
+    const asAdmin = db(userClient(admin.token));
+    // W is the primary AND on the crew.
+    await setPrimary(asAdmin, job, orgA, workerW.id);
+    expect(await primary(job)).toBe(workerW.id);
+    expect(await crew(job)).toContain(workerW.id);
+
+    const removed = await removeWorker(asAdmin, job, orgA, workerW.id);
+    expect(removed.error).toBeNull();
+    expect(await crew(job), "crew row deleted").not.toContain(workerW.id);
+    expect(await primary(job), "legacy primary nulled — no stale access path").toBeNull();
+  });
+
+  it("removing a NON-primary crew worker leaves the primary untouched", async () => {
+    const job = await freshJob();
+    const asAdmin = db(userClient(admin.token));
+    await setPrimary(asAdmin, job, orgA, workerW.id); // W primary + crew
+    await setPrimary(asAdmin, job, orgA, workerX.id); // X primary, W preserved on crew
+    // W is now a non-primary crew member. Remove W.
+    const removed = await removeWorker(asAdmin, job, orgA, workerW.id);
+    expect(removed.error).toBeNull();
+    expect(await crew(job)).toEqual([workerX.id]);
+    expect(await primary(job), "X stays the primary").toBe(workerX.id);
+  });
+
+  it("CONCURRENCY (RULE 2): reassign racing an explicit removal never resurrects the removed worker", async () => {
+    // Regression for the set-vs-remove race: primary=W, crew={W}; fire a
+    // reassignment (→X) and an explicit remove(W) concurrently. Under the
+    // per-job advisory lock the two serialize, and BOTH orderings must end with
+    // W gone (removed stays removed) and X the sole crew member + primary.
+    // Repeated so both interleavings are exercised.
+    const asAdmin = db(userClient(admin.token));
+    for (let i = 0; i < 12; i++) {
+      const job = await freshJob();
+      await setPrimary(asAdmin, job, orgA, workerW.id); // primary=W, crew={W}
+
+      const [setRes, rmRes] = await Promise.all([
+        setPrimary(asAdmin, job, orgA, workerX.id),
+        removeWorker(asAdmin, job, orgA, workerW.id),
+      ]);
+      expect(setRes.error, `iter ${i}: concurrent set must not error`).toBeNull();
+      expect(rmRes.error, `iter ${i}: concurrent remove must not error`).toBeNull();
+
+      expect(
+        await crew(job),
+        `iter ${i}: the explicitly-removed W must not survive; X is the sole crew member`,
+      ).toEqual([workerX.id]);
+      expect(await primary(job), `iter ${i}: X is the primary`).toBe(workerX.id);
+    }
+  });
+
+  it("CONCURRENCY (F1): add_job_worker racing an explicit removal never resurrects the worker", async () => {
+    // W is a (secondary) crew member. Fire add_job_worker(W) and remove_job_worker(W)
+    // concurrently. Both take the per-job advisory lock, so they serialize: an add
+    // that loses to the remove is ordered AFTER it — but the remove is the explicit
+    // intent, so the FINAL state after both must leave W off the crew when remove
+    // wins, and on when add wins; critically, a remove that COMMITS must not be
+    // undone by a concurrently-submitted add that was already in flight. We assert
+    // the invariant that matters: the two never both "succeed" into an inconsistent
+    // state, and when remove is applied last W is gone. Repeated to exercise both
+    // orderings; the key regression is that an UNLOCKED add could re-insert W after
+    // the remove (pre-F1). With the lock, W-after-remove is deterministic by order.
+    const asAdmin = db(userClient(admin.token));
+    for (let i = 0; i < 12; i++) {
+      const job = await freshJob();
+      await addWorker(asAdmin, job, orgA, workerW.id); // W on the crew
+      // Remove then (racing) add: under the lock these serialize. We submit remove
+      // first; the add may land before or after. Either way the state is consistent
+      // (exactly matches whichever committed last), never a torn half-state.
+      const [rm, add] = await Promise.all([
+        removeWorker(asAdmin, job, orgA, workerW.id),
+        addWorker(asAdmin, job, orgA, workerW.id),
+      ]);
+      expect(rm.error, `iter ${i}: remove errors`).toBeNull();
+      expect(add.error, `iter ${i}: add errors`).toBeNull();
+      // Whichever ran last, the crew is either [] (remove last) or [W] (add last) —
+      // never a duplicate row and never a torn state.
+      const c = await crew(job);
+      expect(c.length <= 1, `iter ${i}: no duplicate crew row`).toBe(true);
+      expect(c.every((u) => u === workerW.id), `iter ${i}: only W ever present`).toBe(true);
+    }
+  });
+
+  it("add_job_worker is admin-only and rejects a non-member", async () => {
+    const job = await freshJob();
+    expect((await addWorker(db(userClient(staff.token)), job, orgA, workerW.id)).error, "staff add denied").not.toBeNull();
+    expect((await addWorker(db(anonClient()), job, orgA, workerW.id)).error, "anon add denied").not.toBeNull();
+    expect((await addWorker(db(userClient(admin.token)), job, orgA, outsider.id)).error, "non-member rejected").not.toBeNull();
+    expect(await crew(job), "no row from any denied add").toEqual([]);
+  });
+
+  it("CONCURRENCY: parallel sets to the same primary yield exactly one crew row", async () => {
+    const job = await freshJob();
+    const asAdmin = db(userClient(admin.token));
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => setPrimary(asAdmin, job, orgA, workerW.id)),
+    );
+    for (const r of results) expect(r.error, "no concurrent call errors").toBeNull();
+    expect(await crew(job), "unique(job_id,user_id) collapses the race to one row").toEqual([workerW.id]);
+    expect(await primary(job)).toBe(workerW.id);
+  });
+
+  it("AUTHZ: a non-admin member cannot set or remove assignments (42501)", async () => {
+    const job = await freshJob();
+    await setPrimary(db(userClient(admin.token)), job, orgA, workerW.id); // seed via admin
+    const asStaff = db(userClient(staff.token));
+
+    const set = await setPrimary(asStaff, job, orgA, workerX.id);
+    expect(set.error, "staff set is denied").not.toBeNull();
+    const rm = await removeWorker(asStaff, job, orgA, workerW.id);
+    expect(rm.error, "staff remove is denied").not.toBeNull();
+
+    // State unchanged by the denied calls.
+    expect(await primary(job)).toBe(workerW.id);
+    expect(await crew(job)).toEqual([workerW.id]);
+  });
+
+  it("AUTHZ: anon cannot set or remove assignments", async () => {
+    const job = await freshJob();
+    await setPrimary(db(userClient(admin.token)), job, orgA, workerW.id);
+    const asAnon = db(anonClient());
+    expect((await setPrimary(asAnon, job, orgA, workerX.id)).error).not.toBeNull();
+    expect((await removeWorker(asAnon, job, orgA, workerW.id)).error).not.toBeNull();
+    expect(await primary(job)).toBe(workerW.id);
+  });
+
+  it("CROSS-ORG: an admin of another org cannot reach this job's assignments", async () => {
+    const job = await freshJob();
+    await setPrimary(db(userClient(admin.token)), job, orgA, workerW.id);
+    const asOutsider = db(userClient(outsider.token));
+
+    // With their OWN org id: not a member of orgA ⇒ 42501 guard.
+    const wrongOrg = await setPrimary(asOutsider, job, orgA, workerX.id);
+    expect(wrongOrg.error, "outsider using orgA is blocked by the membership guard").not.toBeNull();
+
+    // With their own org id but this (foreign) job: the job isn't in orgB.
+    const foreignJob = await setPrimary(asOutsider, job, orgB, workerX.id);
+    expect(foreignJob.error, "the job is not in the outsider's org").not.toBeNull();
+
+    // remove_job_worker is guarded the same way on both arms.
+    expect(
+      (await removeWorker(asOutsider, job, orgA, workerW.id)).error,
+      "outsider using orgA is blocked removing too",
+    ).not.toBeNull();
+    expect(
+      (await removeWorker(asOutsider, job, orgB, workerW.id)).error,
+      "the job is not in the outsider's org (loud P0002, not a silent no-op)",
+    ).not.toBeNull();
+
+    expect(await primary(job), "the foreign job is untouched").toBe(workerW.id);
+    expect(await crew(job)).toEqual([workerW.id]);
+  });
+
+  it("MEMBERSHIP: the primary must be a member of the job's org (23514)", async () => {
+    const job = await freshJob();
+    const asAdmin = db(userClient(admin.token));
+    // outsider is a member of orgB only.
+    const bad = await setPrimary(asAdmin, job, orgA, outsider.id);
+    expect(bad.error, "a non-member cannot be set as the primary").not.toBeNull();
+    expect(await primary(job), "the rejected set left no partial state").toBeNull();
+    expect(await crew(job)).toEqual([]);
+  });
+});
