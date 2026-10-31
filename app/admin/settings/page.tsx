@@ -14,6 +14,7 @@ import {
   type ProviderReadiness,
 } from "@/lib/comms/readiness";
 import { saveSection } from "./actions";
+import { HqSignOut } from "../_components/hq-sign-out";
 
 /**
  * /admin/settings — Phase 4, rebuilt by the settings-truth remediation
@@ -102,6 +103,20 @@ export default async function HqSettingsPage({
       <SectionSupport settings={settings} />
       <SectionIntegrations settings={settings} />
       <SectionFeatureFlags />
+
+      <section className="rounded-xl border border-red-200 bg-white p-4 sm:p-6">
+        <h2 className="text-sm font-semibold text-slate-900">Sign out</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          End your CrewFlow HQ session on this device and return to the login screen.
+        </p>
+        <div className="mt-3">
+          <HqSignOut
+            showIcon
+            label="Log out"
+            className="inline-flex items-center gap-2 rounded-md border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50"
+          />
+        </div>
+      </section>
     </div>
   );
 }
