@@ -45,15 +45,15 @@ const baseRows = [
 ];
 
 describe("isMissingDbObject", () => {
-  it("matches undefined relation/function SQLSTATEs and PostgREST schema-cache codes", () => {
-    for (const code of ["42P01", "42883", "PGRST202", "PGRST205"]) {
+  it("matches ONLY precise missing-object codes (absent table/view/function)", () => {
+    for (const code of ["42P01", "PGRST202", "PGRST205"]) {
       expect(isMissingDbObject({ code })).toBe(true);
     }
   });
 
-  it("matches by message when the code is absent", () => {
-    expect(isMissingDbObject({ message: 'relation "public.stock_movements_operational" does not exist' })).toBe(true);
-    expect(isMissingDbObject({ message: "Could not find the function public.set_job_primary_assignment in the schema cache" })).toBe(true);
+  it("matches PostgREST's exact missing-relation/function wording when the code is absent", () => {
+    expect(isMissingDbObject({ message: "Could not find the table 'public.stock_movements_operational' in the schema cache" })).toBe(true);
+    expect(isMissingDbObject({ message: "Could not find the function public.set_job_primary_assignment(...) in the schema cache" })).toBe(true);
   });
 
   it("does NOT match real failures (denials, transient, constraint) or empty input", () => {
@@ -63,6 +63,16 @@ describe("isMissingDbObject", () => {
     expect(isMissingDbObject(null)).toBe(false);
     expect(isMissingDbObject(undefined)).toBe(false);
     expect(isMissingDbObject({})).toBe(false);
+  });
+
+  it("does NOT match a PRESENT-but-broken function or other ambiguous states (no masking)", () => {
+    // 42883 is undefined_function AND undefined_operator: a present-but-broken RPC
+    // (the uuid-vs-text bug mig 20261259 fixes) raises it and MUST surface.
+    expect(isMissingDbObject({ code: "42883", message: "operator does not exist: uuid = text" })).toBe(false);
+    // 42703 undefined_column — a typo must fail loud, not trigger a fallback.
+    expect(isMissingDbObject({ code: "42703", message: 'column "foo" does not exist' })).toBe(false);
+    // PGRST200 ambiguous embed / missing relationship — the read-failure class.
+    expect(isMissingDbObject({ code: "PGRST200", message: "Could not find a relationship between 'a' and 'b' in the schema cache" })).toBe(false);
   });
 });
 

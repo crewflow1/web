@@ -19,18 +19,27 @@ export function isMissingDbObject(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const e = error as { code?: string; message?: string };
   const code = e.code ?? "";
-  // Postgres SQLSTATEs: 42P01 undefined_table/view, 42883 undefined_function.
-  // PostgREST schema-cache misses: PGRST202 (function not found), PGRST205
-  // (table/view not found). PostgREST answers before Postgres sees the call, so
-  // the schema-cache codes are what a missing relation/function usually yields.
-  if (code === "42P01" || code === "42883" || code === "PGRST202" || code === "PGRST205") {
+  // PRECISE missing-object signals only. PostgREST resolves a `.from()`/`.rpc()`
+  // against its schema cache before Postgres sees the call, so a genuinely-absent
+  // table/view yields PGRST205 and an absent function yields PGRST202; 42P01
+  // (undefined_table) is the Postgres-level backstop.
+  //
+  // We deliberately do NOT match 42883. That SQLSTATE is undefined_function AND
+  // undefined_operator — a PRESENT-but-broken function (e.g. the uuid-vs-text
+  // operator bug migration 20261259 fixes) raises 42883 while existing, and must
+  // surface, not be papered over by a fallback. A truly-missing function surfaces
+  // as PGRST202 here, so dropping 42883 loses no missing-object coverage.
+  if (code === "42P01" || code === "PGRST202" || code === "PGRST205") {
     return true;
   }
+  // Version-robust net for the SAME missing-object cases when a code is absent.
+  // Matched phrases are PostgREST's exact missing-relation/function wording — NOT
+  // the generic "does not exist" (which also means 42703 undefined_column) and NOT
+  // the generic "schema cache" (which also means PGRST200 ambiguous-embed), so a
+  // column typo or an ambiguous relationship still fails loud.
   const msg = (e.message ?? "").toLowerCase();
   return (
     msg.includes("could not find the function") ||
-    msg.includes("could not find the table") ||
-    msg.includes("does not exist") ||
-    msg.includes("schema cache")
+    msg.includes("could not find the table")
   );
 }
