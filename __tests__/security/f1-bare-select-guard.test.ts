@@ -412,8 +412,8 @@ const ALLOWLIST: Record<string, string> = {
   //    the cap. Same class as the already-allowlisted per-org fleet_vehicles reads.
   "app/(app)/health-safety/_data.ts:113":
     "bounded: ONE org's members (.eq('org_id')) — the assessor picker (listAssessors); an org's headcount is tens/low-hundreds, never near 1000",
-  "app/(app)/health-safety/_signoff-data.ts:137":
-    "bounded: name lookup .in('user_id', ids) where ids is a de-duped Set of sign-off user_ids from a bounded parent set — ≤ parent rows, never near 1000",
+  "app/(app)/health-safety/_signoff-data.ts:143":
+    "bounded: name lookup .in('user_id', ids) where ids is a de-duped Set of sign-off user_ids from a bounded parent set — ≤ parent rows, never near 1000 (line moved 137→143 when requiredOperatives switched its rota read to the org-guarded job_rota_crew RPC under R5)",
   "app/(app)/settings/page.tsx:80":
     "bounded: ONE org's members (.eq('org_id')) — the settings team panel; bounded by the org's headcount, never near 1000 (line moved 76→77 when the FlatRateSettings import was added; moved 77→80 when the i18n-wave getRequestI18n helper + its comment replaced the bare requireOrgContext call)",
   "app/(app)/staff/leave/page.tsx:97":
