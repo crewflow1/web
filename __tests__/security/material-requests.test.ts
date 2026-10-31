@@ -422,11 +422,18 @@ describe("the TypeScript mirror agrees with the SQL enforcer", () => {
 // ── 6. Slot discipline ──────────────────────────────────────────────────────
 
 describe("migration slots", () => {
-  it("this lane owns exactly 20261066 and 20261067", () => {
+  it("this lane owns 20261066/67 plus the R5 cross-cutting slices", () => {
     const mine = readdirSync(MIGRATIONS).filter((f) => /material_request/i.test(f));
     expect(mine.sort()).toEqual([
+      // Domain lane (Train 5).
       "20261066000000_material_requests.sql",
       "20261067000000_material_request_lifecycle.sql",
+      // R5 staff-isolation cross-cutting (assigned-job SELECT narrowing + the
+      // self-scoped offline-idempotency lookup RPC that keeps the replay working
+      // under that narrowing). These are R5-programme migrations that touch this
+      // table by necessity, not domain-lane scope creep.
+      "20261247000000_r5_phase3_material_requests_rls.sql",
+      "20261255000000_r5_material_request_own_lookup_rpc.sql",
     ]);
   });
 

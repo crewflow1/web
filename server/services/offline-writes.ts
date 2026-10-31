@@ -1,7 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import type { OrgContext } from "@/server/auth/session";
 import {
@@ -133,25 +132,6 @@ type PgError = { message: string; code?: string } | null;
 // a minimal precise cast — the same idiom app/(app)/diary/actions.ts uses.
 type InsertChain = {
   insert: (row: unknown) => Promise<{ error: PgError }>;
-};
-/** Self-scoped duplicate lookup: (org_id, client_write_key, created_by) → id. */
-type FindOwnByKeyChain = {
-  select: (cols: string) => {
-    eq: (
-      k: string,
-      v: unknown,
-    ) => {
-      eq: (
-        k: string,
-        v: unknown,
-      ) => {
-        eq: (
-          k: string,
-          v: unknown,
-        ) => { maybeSingle: () => Promise<{ data: { id: string } | null; error: PgError }> };
-      };
-    };
-  };
 };
 type FindByKeyChain = {
   select: (cols: string) => {
@@ -313,21 +293,22 @@ export async function createDiaryEntryRecord(args: {
        * caller's OWN earlier submission (client_write_key is theirs). Under R5
        * staff isolation the tenant/user client can no longer broadly read
        * site_diary_entries for a non-assigned or job-less entry, so this lookup
-       * goes through the service-role admin client — but pinned to the caller's
-       * OWN row on THREE axes: active org_id + their client_write_key +
-       * created_by = THIS user. It therefore returns only the id of the user's
-       * own submission and never exposes any other job's or user's records; it is
-       * not a broad `created_by` read exception.
+       * goes through the TENANT client + the self-scoped SECURITY DEFINER RPC
+       * find_own_site_diary_entry (migration 20261255) — pinned INSIDE the
+       * function to the caller's OWN row on THREE axes: active org_id + their
+       * client_write_key + created_by = auth.uid(). It returns only the id of the
+       * user's own submission and never exposes another job's or user's records;
+       * NO service-role client sits in the offline write path (trust-boundary
+       * invariant), and it is not a broad `created_by` read exception.
        */
-      const admin = createAdminClient();
-      const { data: existing, error: lookupErr } = await (
-        admin.from("site_diary_entries" as never) as unknown as FindOwnByKeyChain
-      )
-        .select("id")
-        .eq("org_id", orgId)
-        .eq("client_write_key", clientKey)
-        .eq("created_by", args.user.id)
-        .maybeSingle();
+      const { data: existingId, error: lookupErr } = await (
+        tenant as unknown as {
+          rpc: (fn: string, a: Record<string, unknown>) => Promise<{ data: unknown; error: { code?: string } | null }>;
+        }
+      ).rpc("find_own_site_diary_entry", {
+        p_org_id: orgId,
+        p_client_write_key: clientKey,
+      });
       /**
        * The lookup's OWN error must be bound and classified, not discarded — a
        * transient blip here must not masquerade as a permanent rejection.
@@ -335,7 +316,7 @@ export async function createDiaryEntryRecord(args: {
       if (lookupErr) {
         return { status: "retry", reason: lookupErr.code ?? "duplicate_lookup_failed" };
       }
-      if (existing?.id) return { status: "duplicate", id: existing.id };
+      if (existingId) return { status: "duplicate", id: existingId as string };
       // The key collided but no row of THIS user's in THIS org carries it — i.e.
       // the key belongs to another user/org's row. Never hand back someone else's
       // id; refuse. (Per-client keys make this effectively impossible in practice.)

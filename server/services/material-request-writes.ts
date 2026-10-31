@@ -1,7 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
 import type { OrgContext } from "@/server/auth/session";
 import type { MaterialRequestFormInput } from "@/lib/material-requests/schema";
 import { isStockModuleAbsent } from "@/server/services/material-fulfilment";
@@ -77,38 +76,6 @@ type HeaderLookupChain = {
     };
   };
 };
-/**
- * Self-scoped OWN-ROW lookup (three axes). Under R5 Phase 3 the member's own
- * material-request SELECT is narrowed to ASSIGNED jobs, so a JOB-LESS request
- * (or one whose job they were later unassigned from) is invisible to a tenant
- * read — which would break the offline replay's KEY-FIRST duplicate detection.
- * The replay therefore confirms its OWN prior write through the service-role
- * client, pinned to (org_id, client_write_key, created_by = this user): it can
- * only ever surface a row THIS caller wrote with THIS key in THIS org. It is NOT
- * a visibility widening — it never lets a member read anyone else's request, and
- * no created_by SELECT exception is added to RLS. Mirrors the site_diary_entries
- * self-scoped lookup from Phase 3 slice 1 (server/services/offline-writes.ts).
- */
-type OwnHeaderLookupChain = {
-  select: (cols: string) => {
-    eq: (
-      k: string,
-      v: unknown,
-    ) => {
-      eq: (
-        k: string,
-        v: unknown,
-      ) => {
-        eq: (
-          k: string,
-          v: unknown,
-        ) => {
-          maybeSingle: () => Promise<{ data: { id: string } | null; error: PgError }>;
-        };
-      };
-    };
-  };
-};
 type LinesProbeChain = {
   select: (cols: string) => {
     eq: (
@@ -143,27 +110,24 @@ export async function createMaterialRequestDraftRecord(args: {
   const orgId = args.ctx.org.id;
   const clientKey = args.clientKey ?? randomUUID();
   const tenant = await createClient();
-  // Service-role client used ONLY for the self-scoped own-row idempotency reads
-  // (never for a write, never unpinned). See OwnHeaderLookupChain.
-  const admin = createAdminClient();
 
   // ── 1. KEY-FIRST LOOKUP, pinned to this caller's OWN row (org + key +
   // created_by). Found means a previous attempt got at least the header in;
-  // ensureLines decides whether anything is still owed. Via the service-role
-  // client so a job-less / now-unassigned request stays detectable after the
-  // Phase 3 SELECT narrowing (it would otherwise be invisible to a tenant read).
+  // ensureLines decides whether anything is still owed. Via the TENANT client +
+  // a self-scoped SECURITY DEFINER RPC (find_own_material_request) so a job-less
+  // / now-unassigned request stays detectable after the Phase 3 SELECT narrowing
+  // WITHOUT a service-role client in the write path (trust-boundary invariant).
   const { id: priorId, error: priorErr } = await findOwnRequestId(
-    admin,
+    tenant,
     orgId,
     clientKey,
-    args.user.id,
   );
   if (priorErr) {
     // A failed READ is not evidence of anything — retry, never reject.
     return { status: "retry", reason: priorErr.code ?? "key_lookup_failed" };
   }
   if (priorId) {
-    return ensureLines(tenant, admin, orgId, priorId, args.input, /*headerPreexisted*/ true);
+    return ensureLines(tenant, orgId, priorId, args.input, /*headerPreexisted*/ true);
   }
 
   // ── 2. Guards, before anything is written.
@@ -229,16 +193,15 @@ export async function createMaterialRequestDraftRecord(args: {
        * "duplicate": that would green-tick a request that was never written.
        */
       const { id: winnerId, error: winnerErr } = await findOwnRequestId(
-        admin,
+        tenant,
         orgId,
         clientKey,
-        args.user.id,
       );
       if (winnerErr) {
         return { status: "retry", reason: winnerErr.code ?? "duplicate_lookup_failed" };
       }
       if (winnerId) {
-        return ensureLines(tenant, admin, orgId, winnerId, args.input, true);
+        return ensureLines(tenant, orgId, winnerId, args.input, true);
       }
       return { status: "retry", reason: "number_conflict" };
     }
@@ -261,29 +224,29 @@ export async function createMaterialRequestDraftRecord(args: {
 
 /**
  * Self-scoped own-row lookup: the id of THIS caller's material request for
- * (org_id, client_write_key), via the service-role client, additionally pinned
- * to created_by = userId so it can never surface another member's row. This is
- * the one read that must see past the Phase 3 SELECT narrowing (a job-less or
- * now-unassigned request is invisible to the member's own tenant read), so the
- * offline replay can still detect its own prior write. Not a visibility change.
+ * (org_id, client_write_key). Routed through the TENANT client + the
+ * find_own_material_request SECURITY DEFINER RPC (migration 20261255), which is
+ * self-scoped to created_by = auth.uid() so it can never surface another
+ * member's row. The RPC is the ONE read that sees past the Phase 3 SELECT
+ * narrowing (a job-less / now-unassigned request is invisible to the member's
+ * own tenant table read), so the offline replay can still detect its own prior
+ * write — WITHOUT a service-role client in the write path. Not a visibility
+ * change: a member still cannot browse any request that isn't their own.
  */
 async function findOwnRequestId(
-  admin: unknown,
+  tenant: unknown,
   orgId: string,
   clientKey: string,
-  userId: string,
 ): Promise<{ id: string | null; error: PgError }> {
   const { data, error } = await (
-    (admin as { from: (t: string) => unknown }).from(
-      "material_requests",
-    ) as OwnHeaderLookupChain
-  )
-    .select("id")
-    .eq("org_id", orgId)
-    .eq("client_write_key", clientKey)
-    .eq("created_by", userId)
-    .maybeSingle();
-  return { id: data?.id ?? null, error };
+    tenant as {
+      rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: PgError }>;
+    }
+  ).rpc("find_own_material_request", {
+    p_org_id: orgId,
+    p_client_write_key: clientKey,
+  });
+  return { id: (data as string | null) ?? null, error };
 }
 
 /**
@@ -294,32 +257,32 @@ async function findOwnRequestId(
  */
 async function ensureLines(
   tenant: unknown,
-  admin: unknown,
   orgId: string,
   requestId: string,
   input: MaterialRequestFormInput,
   headerPreexisted: boolean,
 ): Promise<OfflineWriteOutcome> {
-  // Probe for existing lines via the service-role client: requestId has already
-  // been proven to be THIS caller's own row (found by key+created_by, or freshly
-  // inserted by this caller), and under Phase 3 a job-less / now-unassigned
-  // request's lines are invisible to a tenant read — which would make the probe
-  // read empty and re-insert over an existing set. Pinned to (org, request).
-  const { data: probe, error: probeErr } = await (
-    (admin as { from: (t: string) => unknown }).from(
-      "material_request_lines",
-    ) as LinesProbeChain
-  )
-    .select("id")
-    .eq("org_id", orgId) // ACTIVE-ORG PIN
-    .eq("material_request_id", requestId)
-    .limit(1);
+  // Probe for existing lines via the TENANT client + the self-scoped
+  // own_material_request_line_count RPC: requestId has already been proven to be
+  // THIS caller's own row, and under Phase 3 a job-less / now-unassigned
+  // request's lines are invisible to a tenant table read — which would make the
+  // probe read empty and re-insert over an existing set. The RPC counts lines
+  // only for a request the caller OWNS (created_by = auth.uid()); no service-role
+  // client in the write path.
+  const { data: lineCount, error: probeErr } = await (
+    tenant as {
+      rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: PgError }>;
+    }
+  ).rpc("own_material_request_line_count", {
+    p_org_id: orgId,
+    p_request_id: requestId,
+  });
   if (probeErr) {
     // Empty-on-error must not read as "no lines" here: that would re-insert
     // over a read blip. LOUD and transient instead.
     return { status: "retry", reason: probeErr.code ?? "lines_probe_failed" };
   }
-  if ((probe ?? []).length > 0) {
+  if (((lineCount as number | null) ?? 0) > 0) {
     return headerPreexisted
       ? { status: "duplicate", id: requestId }
       : { status: "accepted", id: requestId };
