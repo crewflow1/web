@@ -3,10 +3,13 @@ import { anonClient, describeIntegration, serviceClient, userClient } from "../_
 
 /**
  * Required-operative data model (H&S M6b). The sign-off "required" set is the
- * distinct crew rota'd to a document's job (rota_entries — the canonical job
- * workforce). This proves the load-bearing assumption: a plain member (JWT) CAN
- * read their org's rota to derive that crew, it de-duplicates per job, and it is
- * org-scoped by RLS (another org's rota is invisible).
+ * distinct crew rota'd to a document's job. Under R5 Phase 5 rota_entries SELECT
+ * is self-scoped (a member sees only their OWN shifts), so the crew is derived
+ * through the org-guarded SECURITY DEFINER job_rota_crew RPC (20261256) — the
+ * same path app/(app)/health-safety/_signoff-data.ts:requiredOperatives uses.
+ * This proves: a member (JWT) in the job's org gets the WHOLE crew via that RPC,
+ * it de-duplicates per job, and it is org-scoped (another org's job → empty, and
+ * the RPC refuses an org the caller is not a member of).
  */
 
 type Res<T> = { data: T | null; error: { message: string } | null };
@@ -15,12 +18,15 @@ interface Sel extends PromiseLike<Res<Row[]>> { eq(c: string, v: unknown): Sel }
 interface Ins extends PromiseLike<Res<Row[]>> { select(c?: string): { single(): PromiseLike<Res<Row>> } }
 interface Del extends PromiseLike<Res<null>> { eq(c: string, v: unknown): Del }
 interface Table { select(c?: string): Sel; insert(r: Row | Row[]): Ins; delete(): Del }
-const db = (client: unknown) => client as unknown as { from(t: string): Table };
+type Rpc = (fn: string, args: Row) => PromiseLike<Res<string[]>>;
+const db = (client: unknown) => client as unknown as { from(t: string): Table; rpc: Rpc };
 const TOKEN = `it-reqop-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-const distinctCrew = async (client: unknown, jobId: string): Promise<string[]> => {
-  const { data } = await db(client).from("rota_entries").select("user_id").eq("job_id", jobId);
-  return [...new Set((data ?? []).map((r) => String(r.user_id)))].sort();
+// Caller's ACTIVE org is always its own (orgA); a foreign job returns [] (no rows
+// for the caller's org), and a foreign p_org_id is refused by the RPC's guard.
+const distinctCrew = async (client: unknown, orgId: string, jobId: string): Promise<string[]> => {
+  const { data } = await db(client).rpc("job_rota_crew", { p_job_id: jobId, p_org_id: orgId });
+  return [...new Set((data ?? []).map((u) => String(u)))].sort();
 };
 
 describeIntegration("H&S required operatives · rota-derived crew (JWT, org-scoped)", () => {
@@ -62,14 +68,15 @@ describeIntegration("H&S required operatives · rota-derived crew (JWT, org-scop
   });
 
   it("a member sees the DISTINCT crew of a job (two shifts for one user collapse to one)", async () => {
-    expect(await distinctCrew(userClient(tokenA), jobA)).toEqual([uA, uB].sort());
+    expect(await distinctCrew(userClient(tokenA), orgA, jobA)).toEqual([uA, uB].sort());
   });
 
   it("crew is per-job", async () => {
-    expect(await distinctCrew(userClient(tokenA), jobA2)).toEqual([uB]);
+    expect(await distinctCrew(userClient(tokenA), orgA, jobA2)).toEqual([uB]);
   });
 
-  it("another org's rota is invisible (RLS) — no cross-tenant crew leak", async () => {
-    expect(await distinctCrew(userClient(tokenA), jobB)).toEqual([]);
+  it("another org's job yields no crew (org-scoped) — no cross-tenant leak", async () => {
+    // orgA member asking for an orgB job via their own active org → empty.
+    expect(await distinctCrew(userClient(tokenA), orgA, jobB)).toEqual([]);
   });
 });

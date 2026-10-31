@@ -404,15 +404,19 @@ describeIntegration("R7 aged-ledgers RPC · real Postgres", () => {
     expect(rpcLedger.totals.pastDue).toBe(cash.overdue);
   });
 
-  it("[admin gate] a non-admin MEMBER is refused payables (42501) but can read receivables", async () => {
+  it("[admin gate] a non-admin MEMBER is refused BOTH payables and receivables (42501)", async () => {
+    // R5 Phase 4 (20261253) added `and not is_org_admin` to every aged-ledger
+    // report RPC — the aged LEDGER is commercial data, barred from staff. Both
+    // arms now refuse a non-admin; an admin reads both (asserted elsewhere).
     const ap = await dbRpc(userClient(member.token)).rpc("report_aged_payables", { p_org_id: orgA, p_as_at: AS_AT });
     expect(ap.error, "non-admin must not read payables").not.toBeNull();
     expect(ap.error?.code === "42501" || /not an admin|admin-only|forbidden/i.test(ap.error?.message ?? "")).toBe(true);
     expect(ap.data ?? []).toEqual([]);
 
     const ar = await dbRpc(userClient(member.token)).rpc("report_aged_receivables", { p_org_id: orgA, p_as_at: AS_AT });
-    expect(ar.error, "a member CAN read receivables").toBeNull();
-    expect((ar.data ?? []).length).toBeGreaterThan(0);
+    expect(ar.error, "non-admin must ALSO be refused receivables under R5").not.toBeNull();
+    expect(ar.error?.code === "42501" || /not an admin|admin-only|forbidden/i.test(ar.error?.message ?? "")).toBe(true);
+    expect(ar.data ?? []).toEqual([]);
   });
 
   it("[membership guard] a non-member is refused another org's receivables (42501)", async () => {
