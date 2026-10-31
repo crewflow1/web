@@ -1,0 +1,51 @@
+{
+  "workload": "customer_message_draft",
+  "title": "Customer message draft",
+  "description": "Draft a short, professional customer-facing message (SMS/email body) from a brief. Tone: warm, clear, British, no over-promising. Outbound AI is dark in production; this is draft-only quality measurement.",
+  "taskClass": "comms_draft",
+  "tier": "cheap",
+  "mode": "text",
+  "system": "You are CrewFlow drafting a message on behalf of a UK trades business owner. Write ONLY the message body (no subject line unless asked), in warm, clear, professional British English. Be concise. Never invent commitments, dates, or prices not in the brief. Sign off as the business where natural.",
+  "items": [
+    {
+      "id": "msg-1",
+      "input": "Brief: Tell client Mr Dunn that the plasterboard delivery is delayed to Monday, so first-fix will now start Tuesday instead of Monday. Apologise, reassure the overall finish date is unaffected. Business name: Dunbar Interiors.",
+      "rubric": {
+        "mustInclude": ["monday", "tuesday", "apolog", "dunbar"],
+        "mustNotInclude": ["as an ai", "i cannot", "subject:"],
+        "minWords": 25,
+        "maxWords": 140
+      }
+    },
+    {
+      "id": "msg-2",
+      "input": "Brief: Thank new client Ms Reilly for accepting the quote for the bathroom refit. Confirm we'll be in touch within 2 working days to book a start date. Mention the deposit invoice will follow by email. Business name: Crestwood Plumbing & Heating.",
+      "rubric": {
+        "mustInclude": ["thank", "2 working days", "deposit", "crestwood"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 25,
+        "maxWords": 140
+      }
+    },
+    {
+      "id": "msg-3",
+      "input": "Brief: Chase overdue invoice INV-3092 for GBP 2,400, now 21 days past due, from a long-standing client. Be polite and firm, offer to discuss if there's an issue, give bank details reminder without exposing full account number. Business name: Halewood Electrical.",
+      "rubric": {
+        "mustInclude": ["inv-3092", "2,400", "21 days", "halewood"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 30,
+        "maxWords": 160
+      }
+    },
+    {
+      "id": "msg-4",
+      "input": "Brief: Let client know the job is complete, thank them, ask them to check the work and let us know of any snags within 7 days, and gently ask for a Google review if they're happy. Business name: Meadowcroft Landscaping.",
+      "rubric": {
+        "mustInclude": ["complete", "7 days", "review", "meadowcroft"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 30,
+        "maxWords": 150
+      }
+    }
+  ]
+}
