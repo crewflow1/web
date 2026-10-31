@@ -29,4 +29,11 @@ regexes = [
   '''sk_test_abc123''',
   '''rk_test_abc123''',
   '''pk_live_abc123''',
+  # e2e/first-customer-sim.spec.ts: PASSWORD for the local-only synthetic E2E
+  # harness account (never a production credential; the account exists only in the
+  # ephemeral CI Postgres). generic-api-key matched on entropy (~3.78) of the
+  # label-shaped literal. Allowlisted by exact value — surgical, not a path
+  # exemption — so real high-entropy strings in that file still trip. (Needed on
+  # main because the #997 squash re-keyed the prior .gitleaksignore fingerprint.)
+  '''E2e-Harness-Pw-2f9c1a''',
 ]
