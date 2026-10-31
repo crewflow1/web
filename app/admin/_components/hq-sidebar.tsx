@@ -11,6 +11,7 @@ import {
   type HqNavArea,
 } from "../_nav/hq-nav-model";
 import { HqNavIcon } from "../_nav/hq-icons";
+import { HqSignOut } from "./hq-sign-out";
 
 /**
  * HQ sidebar — the grouped, hierarchical internal-operations navigation
@@ -69,6 +70,9 @@ export function HqSidebar({
           CrewFlow HQ
         </p>
         <p className="mt-0.5 truncate text-xs text-slate-500">{email}</p>
+        <div className="mt-2">
+          <HqSignOut />
+        </div>
       </div>
 
       {/* Search / command trigger — opens the HQ palette (also on ⌘K). */}

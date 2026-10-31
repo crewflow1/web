@@ -10,6 +10,7 @@ import {
   type HqNavArea,
 } from "./_nav/hq-nav-model";
 import { HqNavIcon } from "./_nav/hq-icons";
+import { HqSignOut } from "./_components/hq-sign-out";
 
 /**
  * Mobile top-bar + drawer for HQ (product UX rebuild, HQ phase). The desktop
@@ -166,6 +167,9 @@ export function HqNavMobile({
               >
                 ↩ Switch to customer view
               </a>
+              <div className="mt-3">
+                <HqSignOut />
+              </div>
             </div>
           </nav>
         </div>
