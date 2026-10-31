@@ -18,6 +18,14 @@ import type { StockClient } from "@/server/services/stock";
  * The read is exercised against a chainable mock that honours `.range(from, to)`
  * exactly like PostgREST — inclusive, hard-capped at 1000 rows per response. A
  * bare / single-page read would fold to HALF the true balance here.
+ *
+ * ── R5 read-split ────────────────────────────────────────────────────────────
+ * Under R5 Phase 4, `listStockMovements` (the STAFF operational quantity path)
+ * reads the cost-free `stock_movements_operational` view, not the base table
+ * (base SELECT is now admin-only). The view carries every operational column
+ * (qty/effect/occurred_at/id/org_id/…) and NULLs the 3 cost columns, so the F-1
+ * paging contract this test pins is unchanged — the mock just serves the rows on
+ * the operational relation the path now reads.
  */
 
 const RESPONSE_CAP = 1000;
@@ -33,7 +41,9 @@ function makeClient(): StockClient {
     const eqs: Array<[string, unknown]> = [];
     const orders: Array<[string, boolean]> = [];
     const filtered = () => {
-      let out = (table === "stock_movements" ? rows : []).filter((r) => {
+      // R5: the staff operational quantity path reads the cost-free view.
+      const operationalRelation = table === "stock_movements_operational";
+      let out = (operationalRelation ? rows : []).filter((r) => {
         for (const [c, v] of eqs) if (r[c] !== v) return false;
         return true;
       });
