@@ -4,7 +4,7 @@
 
 **Status key:** `VERIFIED` (automated test passes or behaviourally confirmed live) · `LIVE` (merged + deployed to prod) · `BUILT` (code complete, not yet live) · `APPLY-HELD` (migration built, awaiting founder apply approval) · `UNTESTED` (exists, not yet end-to-end verified this programme) · `DEFERRED` (intentionally post-launch) · `BLOCKED` (needs founder/external action).
 
-_Maintained factually. A feature is not `VERIFIED` until its stated evidence holds. Last update: 2026-10-30, prod `b588b6a`._
+_Maintained factually. A feature is not `VERIFIED` until its stated evidence holds. Last update: 2026-10-31, prod `f110944`, DB tip `20261259000000` (**R5 applied + verified live**)._
 
 ---
 
@@ -32,11 +32,11 @@ _Maintained factually. A feature is not `VERIFIED` until its stated evidence hol
 |------|--------|-------|
 | R2 capability model + R3 owner/admin mgmt + R4 33-module enforcement | **LIVE** | merged; capability gates across modules |
 | Owner-facing admin permission editor (incl. Manage-toggle fix) | **LIVE** | #978 merged + deployed `b588b6a` |
-| R5 Phase 1 — `job_assignments` model + backfill | **APPLY-HELD** | #975, CI-green, independently reviewed; migration not applied |
-| R5 Phase 1 — GDPR service-side DSAR export for the dark table | **APPLY-HELD** | #975; adversarial-reviewed APPROVE; included via membership-gated admin lane |
-| R5 Phase 2 — jobs assignment-aware SELECT RLS | **APPLY-HELD** | #977, isolated-Postgres verified, adversarial-reviewed APPROVE |
-| R5 Phases 3–5 — operational child tables / commercial denial / workforce self-scope | **BUILT (planning) / not started (migrations)** | 36 job-child tables inventoried + classified in the approval pack |
-| **Staff see only assigned jobs/data at the DB** | **NOT LIVE** | org-wide member RLS still in effect until R5 applied — **launch gate for any customer onboarding staff** |
+| R5 Phase 1 — `job_assignments` model + backfill | **LIVE** | migration `20261242000000` applied 2026-10-31; backfill correct (1 legacy assignment carried on prod) |
+| R5 Phase 1 — GDPR service-side DSAR export for the dark table | **LIVE** | shipped via #997/#998; `job_assignments` service-role-only (no client grant) verified on prod |
+| R5 Phase 2 — jobs assignment-aware SELECT RLS | **LIVE** | migration `20261243000000` applied; staff-only-assigned-jobs proven on prod (below) |
+| R5 Phases 3–5 — operational child tables / commercial denial / workforce self-scope | **LIVE** | migrations `20261244→20261259` applied; commercial + finances denial and rota/time self-scope proven on prod (below) |
+| **Staff see only assigned jobs/data at the DB** | **VERIFIED** | Real authenticated RLS proof on prod (Internal HQ org, rolled-back, 0 residue, 2026-10-31): staff saw only their assigned job (other worker's job denied incl. direct fetch), `job_budgets`=0 + `finances`=0, other-worker rota/time=0; owner saw all + commercial + finances. Evidence: `docs/hardening/R5-APPLY-RESULT-2026-10-31.md`. Also CI first-customer E2E 11/11 (staff-denial scenario) on prod build. |
 
 ---
 
@@ -65,8 +65,7 @@ _Maintained factually. A feature is not `VERIFIED` until its stated evidence hol
 
 ## E. Deferred (intentionally post-launch)
 
-- Multi-worker job assignment UI (model built in R5 P1; UI not built).
-- R5 Phases 3–5 production application (apply-held).
+- Multi-worker job assignment UI (model + reconciliation RPCs now live; richer UI is incremental).
 - Self-serve billing.
 - Advanced AI features above.
 
@@ -74,6 +73,9 @@ _Maintained factually. A feature is not `VERIFIED` until its stated evidence hol
 
 ## F. Outstanding founder/external actions
 
-1. Approve **#975 → #977** merge + **apply R5 migrations** (after the staff-job-read app reconciliation) — unblocks staff data isolation (the top launch gate for staffed customers).
-2. Authorise / perform the first **live Stripe charge** (£1,000 + £500/mo), sales-led.
-3. Confirm launch AI scope (quote drafting + insights) once their end-to-end verification completes.
+1. ~~Approve + apply R5 migrations~~ — **DONE 2026-10-31** (approved, applied 242→259, verified; staff data isolation now live).
+2. Run the real **staff-login UI click-through** against prod — I can drive it in the in-app browser once a staff (then owner) session is established in Internal HQ; I cannot create a prod login or enter prod passwords myself (safety boundary). DB/RLS layer already proven.
+3. **AI credentials** for live AI features: `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` + `CREWFLOW_INTERNAL_ORG_ID` (features are code-complete + CI-tested, dark on creds only).
+4. **Custom SMTP** verify in the Supabase Auth dashboard (transactional email sender).
+5. Authorise / perform the first **live Stripe charge** (£1,000 + £500/mo), sales-led.
+6. Review + approve **PR #1008** (cron-runs-prune timeout fix) and its migration `20261260000000` — a prod background-job defect found during this acceptance pass (fix on branch, not applied).
