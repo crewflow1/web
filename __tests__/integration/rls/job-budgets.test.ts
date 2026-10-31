@@ -400,14 +400,24 @@ describeIntegration("job cost baseline · boundary, isolation, immutability", ()
     expect(viaRpc.error, "SECURITY INVOKER must not be a back door").not.toBeNull();
   });
 
-  it("a staff member CAN read the baseline — they already see cost and margin", async () => {
-    const r = await db(userClient(staffToken))
+  it("a staff member is DENIED the cost baseline under R5 (commercial data); an admin reads it", async () => {
+    // R5 Phase 4 (20261250) narrowed job_budgets SELECT to is_org_admin — the job
+    // cost baseline (cost + margin) is commercial data barred from staff.
+    const staff = await db(userClient(staffToken))
       .from("job_budgets")
       .select("total_cost")
       .eq("org_id", orgA)
       .eq("job_id", jobA);
-    expect(r.error, r.error?.message).toBeNull();
-    expect((r.data ?? []).length).toBeGreaterThan(0);
+    expect(staff.error, staff.error?.message).toBeNull();
+    expect(staff.data ?? [], "staff see no commercial baseline").toHaveLength(0);
+
+    const admin = await db(userClient(dualToken))
+      .from("job_budgets")
+      .select("total_cost")
+      .eq("org_id", orgA)
+      .eq("job_id", jobA);
+    expect(admin.error, admin.error?.message).toBeNull();
+    expect((admin.data ?? []).length, "admin still reads the baseline").toBeGreaterThan(0);
   });
 
   it("an anonymous caller sees nothing at all", async () => {

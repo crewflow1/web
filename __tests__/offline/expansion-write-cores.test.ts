@@ -368,8 +368,10 @@ const MR_INPUT = {
 
 describe("createMaterialRequestDraftRecord — key-first with line recovery", () => {
   it("fresh write: number allocated server-side, header pinned to the session, lines in order", async () => {
-    scriptReads("material_requests", { data: null, error: null }); // key unknown
-    h.state.script.rpc.push({ data: "MR-0007", error: null });
+    // key-first lookup is now the self-scoped find_own_material_request RPC → none,
+    // then the pre-existing number allocator.
+    h.state.script.rpc.push({ data: null, error: null }); // find_own → not found
+    h.state.script.rpc.push({ data: "MR-0007", error: null }); // next_material_request_number
     scriptInserts("material_requests", { error: null });
     scriptInserts("material_request_lines", { error: null });
 
@@ -383,6 +385,10 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
     expect(out.status).toBe("accepted");
 
     expect(h.state.rpcs).toEqual([
+      {
+        fn: "find_own_material_request",
+        args: { p_org_id: "org-A", p_client_write_key: "22222222-2222-4222-8222-222222222222" },
+      },
       { fn: "next_material_request_number", args: { target_org: "org-A" } },
     ]);
     const header = h.state.inserts.find((i) => i.table === "material_requests")!
@@ -405,8 +411,8 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
   });
 
   it("complete replay: key found + lines present → duplicate, and NOTHING is written or allocated", async () => {
-    scriptReads("material_requests", { data: { id: "mr-1" }, error: null });
-    scriptReads("material_request_lines", { data: [{ id: "l-1" }], error: null });
+    h.state.script.rpc.push({ data: "mr-1", error: null }); // find_own → found
+    h.state.script.rpc.push({ data: 1, error: null }); // own line count → has lines
     const out = await createMaterialRequestDraftRecord({
       ctx: ctx("org-A"),
       user,
@@ -415,15 +421,19 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
     });
     expect(out).toEqual({ status: "duplicate", id: "mr-1" });
     expect(h.state.inserts).toHaveLength(0);
-    expect(h.state.rpcs).toHaveLength(0); // no number burned on a replay
+    // the two self-scoped lookups, and crucially NO number allocated on a replay
+    expect(h.state.rpcs.map((r) => r.fn)).toEqual([
+      "find_own_material_request",
+      "own_material_request_line_count",
+    ]);
   });
 
   it("STRANDED HEADER RECOVERY: key found + ZERO lines → the lines are written now", async () => {
     // The crash-between-statements case: reporting "duplicate" here without
     // writing the lines would green-tick a request that never says what the
     // site asked for — the exact data-loss machine 20261077's header describes.
-    scriptReads("material_requests", { data: { id: "mr-1" }, error: null });
-    scriptReads("material_request_lines", { data: [], error: null });
+    h.state.script.rpc.push({ data: "mr-1", error: null }); // find_own → found
+    h.state.script.rpc.push({ data: 0, error: null }); // own line count → ZERO lines
     scriptInserts("material_request_lines", { error: null });
     const out = await createMaterialRequestDraftRecord({
       ctx: ctx("org-A"),
@@ -439,11 +449,8 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
   });
 
   it("the lines PROBE failing is a RETRY — empty-on-error must not re-insert", async () => {
-    scriptReads("material_requests", { data: { id: "mr-1" }, error: null });
-    scriptReads("material_request_lines", {
-      data: null,
-      error: { message: "blip", code: "XX000" },
-    });
+    h.state.script.rpc.push({ data: "mr-1", error: null }); // find_own → found
+    h.state.script.rpc.push({ data: null, error: { message: "blip", code: "XX000" } }); // probe errors
     const out = await createMaterialRequestDraftRecord({
       ctx: ctx("org-A"),
       user,
@@ -455,14 +462,11 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
   });
 
   it("concurrent replay: header 23505 + key re-read finds the winner → its lines are ensured", async () => {
-    scriptReads(
-      "material_requests",
-      { data: null, error: null }, // key-first lookup: not there yet
-      { data: { id: "mr-9" }, error: null }, // after 23505: the other tab won
-    );
-    h.state.script.rpc.push({ data: "MR-0008", error: null });
+    h.state.script.rpc.push({ data: null, error: null }); // find_own: not there yet
+    h.state.script.rpc.push({ data: "MR-0008", error: null }); // number allocator
     scriptInserts("material_requests", { error: { message: "dup", code: "23505" } });
-    scriptReads("material_request_lines", { data: [{ id: "l-1" }], error: null });
+    h.state.script.rpc.push({ data: "mr-9", error: null }); // find_own re-read: the other tab won
+    h.state.script.rpc.push({ data: 1, error: null }); // own line count → winner's lines present
     const out = await createMaterialRequestDraftRecord({
       ctx: ctx("org-A"),
       user,
@@ -473,13 +477,10 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
   });
 
   it("A NUMBER RACE IS A RETRY, NEVER A DUPLICATE — the request was not written", async () => {
-    scriptReads(
-      "material_requests",
-      { data: null, error: null }, // key-first lookup
-      { data: null, error: null }, // after 23505: our key is NOT there ⇒ it was the number
-    );
-    h.state.script.rpc.push({ data: "MR-0008", error: null });
+    h.state.script.rpc.push({ data: null, error: null }); // find_own: key-first lookup
+    h.state.script.rpc.push({ data: "MR-0008", error: null }); // number allocator
     scriptInserts("material_requests", { error: { message: "dup", code: "23505" } });
+    h.state.script.rpc.push({ data: null, error: null }); // find_own re-read: our key NOT there ⇒ number race
     const out = await createMaterialRequestDraftRecord({
       ctx: ctx("org-A"),
       user,
@@ -490,8 +491,8 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
   });
 
   it("two recoveries race: the loser's line insert 23505s → duplicate, never doubled lines", async () => {
-    scriptReads("material_requests", { data: { id: "mr-1" }, error: null });
-    scriptReads("material_request_lines", { data: [], error: null });
+    h.state.script.rpc.push({ data: "mr-1", error: null }); // find_own → found
+    h.state.script.rpc.push({ data: 0, error: null }); // own line count → zero ⇒ recover
     scriptInserts("material_request_lines", {
       error: { message: "dup", code: "23505" }, // (material_request_id, sort_order)
     });
@@ -505,7 +506,7 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
   });
 
   it("cross-org job → job_missing before any allocation or write", async () => {
-    scriptReads("material_requests", { data: null, error: null });
+    h.state.script.rpc.push({ data: null, error: null }); // find_own → none
     scriptReads("jobs", { data: null, error: null });
     const out = await createMaterialRequestDraftRecord({
       ctx: ctx("org-A"),
@@ -514,12 +515,13 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
       clientKey: "22222222-2222-4222-8222-222222222222",
     });
     expect(out).toEqual({ status: "rejected", reason: "job_missing" });
-    expect(h.state.rpcs).toHaveLength(0);
+    // only the key-first lookup ran; NO number allocated before the guard failed
+    expect(h.state.rpcs.map((r) => r.fn)).toEqual(["find_own_material_request"]);
     expect(h.state.inserts).toHaveLength(0);
   });
 
   it("a line naming another org's catalogue item → stock_item_missing; a failed check stays transient", async () => {
-    scriptReads("material_requests", { data: null, error: null });
+    h.state.script.rpc.push({ data: null, error: null }); // find_own → none
     scriptReads("stock_items", { data: [], error: null }); // readable, absent in org
     const out = await createMaterialRequestDraftRecord({
       ctx: ctx("org-A"),
@@ -540,7 +542,7 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
     expect(out).toEqual({ status: "rejected", reason: "stock_item_missing" });
 
     // and the SAME check on a read blip retries instead of permanently rejecting
-    scriptReads("material_requests", { data: null, error: null });
+    h.state.script.rpc.push({ data: null, error: null }); // find_own → none
     scriptReads("stock_items", { data: null, error: { message: "blip", code: "XX000" } });
     const blip = await createMaterialRequestDraftRecord({
       ctx: ctx("org-A"),
@@ -562,8 +564,8 @@ describe("createMaterialRequestDraftRecord — key-first with line recovery", ()
   });
 
   it("a failed number allocation is a RETRY (the item keeps waiting, nothing burned)", async () => {
-    scriptReads("material_requests", { data: null, error: null });
-    h.state.script.rpc.push({ data: null, error: { message: "boom", code: "57014" } });
+    h.state.script.rpc.push({ data: null, error: null }); // find_own → none
+    h.state.script.rpc.push({ data: null, error: { message: "boom", code: "57014" } }); // allocator fails
     const out = await createMaterialRequestDraftRecord({
       ctx: ctx("org-A"),
       user,

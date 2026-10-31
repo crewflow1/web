@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { type NextRequest } from "next/server";
 import * as respond from "@/lib/api/respond";
 import { createClient } from "@/lib/supabase/server";
@@ -156,20 +157,28 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const { data: inserted, error: insertErr } = await supabase
+  // Client-generated id + NO `RETURNING` select: cost entry is member-open (field
+  // staff log costs), but R5 Phase 4 (migration 20261252) narrows the finances
+  // SELECT policy to is_org_admin — so a non-admin `INSERT … RETURNING` can no
+  // longer read its own row back and `.single()` would 500. We mint the id here
+  // (the column default is gen_random_uuid(); an explicit uuid is equivalent) and
+  // skip the read-back, exactly as the material_requests offline write core does.
+  // The INSERT policy itself is unchanged (members may insert), so staff cost
+  // entry keeps working while the ledger stays unreadable to them.
+  const financeId = randomUUID();
+  const { error: insertErr } = await supabase
     .from("finances")
     .insert({
+      id: financeId,
       org_id: ctx.org.id,
       amount: parsed.data.amount,
       vat_rate: parsed.data.vat_rate,
       category: parsed.data.category ?? null,
       notes: parsed.data.notes ?? null,
       job_id: parsed.data.job_id ?? null,
-    })
-    .select("id")
-    .single();
+    });
 
-  if (insertErr || !inserted) {
+  if (insertErr) {
     console.error("[finances] create failed", insertErr);
     return respond.error(500, "Failed to create cost");
   }
@@ -178,7 +187,7 @@ export async function POST(request: NextRequest) {
   if (receiptFile) {
     // Sanitise filename: keep extension + replace risky chars.
     const safeName = receiptFile.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-100);
-    receiptPath = `${ctx.org.id}/${inserted.id}/${safeName}`;
+    receiptPath = `${ctx.org.id}/${financeId}/${safeName}`;
     const admin = createAdminClient();
     const arrayBuffer = await receiptFile.arrayBuffer();
     const { error: upErr } = await admin.storage
@@ -191,16 +200,16 @@ export async function POST(request: NextRequest) {
       console.error("[finances] receipt upload failed", upErr);
       // Don't fail the whole request — the row is saved. Surface the partial
       // failure so the client can prompt for re-upload.
-      return respond.json({ id: inserted.id, warning: "Cost saved, but receipt upload failed" }, { status: 207 });
+      return respond.json({ id: financeId, warning: "Cost saved, but receipt upload failed" }, { status: 207 });
     }
     const { error: patchErr } = await supabase
       .from("finances")
       .update({ receipt_url: receiptPath })
-      .eq("id", inserted.id);
+      .eq("id", financeId);
     if (patchErr) {
       console.error("[finances] post-upload patch failed", patchErr);
     }
   }
 
-  return respond.json({ id: inserted.id, receipt_url: receiptPath }, { status: 201 });
+  return respond.json({ id: financeId, receipt_url: receiptPath }, { status: 201 });
 }

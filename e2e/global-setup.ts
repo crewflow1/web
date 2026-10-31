@@ -197,6 +197,20 @@ export default async function globalSetup(): Promise<void> {
   await seedMember("e2e-second@crewflow.test", "E2E Second", "second.json");
   await seedMember("e2e-third@crewflow.test", "E2E Third", "third.json");
 
+  // R5 P2 (assigned-job isolation): a plain `staff` member now sees ONLY the
+  // jobs they are assigned to. blueprint-offline.spec.ts signs in as `second`
+  // (staff) and opens JOB's blueprints to download them for offline use — the
+  // real field-worker flow. Assign `second` to JOB via jobs.assigned_to (unioned
+  // by my_assigned_job_ids()), otherwise the blueprints page is empty under R5
+  // and the "Download for offline" control never renders. Owner-session specs
+  // see JOB regardless (admin), so this is safe for the rest of the tier.
+  {
+    const secondId = (
+      await db.from("users").select("id").eq("email", "e2e-second@crewflow.test").maybeSingle()
+    ).data?.id as string | undefined;
+    if (secondId) await db.from("jobs").update({ assigned_to: secondId }).eq("id", JOB);
+  }
+
   // A DEDICATED staff member for the role-access boundary spec
   // (role-access-boundary.spec.ts). It must NOT be one of the sign-out members
   // above: those revoke their own session mid-run, and in file order they run

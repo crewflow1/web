@@ -30,7 +30,7 @@ const FORGED_USER = "00000000-0000-4000-8000-000000000abc"; // a plausible-but-n
 const BACKDATE = "2020-01-01T00:00:00Z";
 
 describeIntegration("H&S issue-path hardening · real authenticated member (JWT)", () => {
-  let orgA = "", orgB = "", uid = "", token = "";
+  let orgA = "", orgB = "", uid = "", token = "", jobA = "";
   const svc = () => db(serviceClient());
   const me = () => db(userClient(token));
 
@@ -51,6 +51,11 @@ describeIntegration("H&S issue-path hardening · real authenticated member (JWT)
     // not just an admin.
     const m = await svc().from("memberships").insert({ org_id: orgA, user_id: uid, role: "staff" });
     if (m.error) throw new Error(`membership insert: ${m.error.message}`);
+    // R5 Phase 3: the member reads a RAMS/permit only for a job they are assigned
+    // to, so job-link the drafts and assign the member — the issue-gate /
+    // provenance triggers are then what gate them, not row-invisibility.
+    jobA = String((await svc().from("jobs").insert({ org_id: orgA, status: "new", assigned_to: uid }).select("id").single()).data?.id ?? "");
+    if (!jobA) throw new Error("jobA setup failed");
     const signIn = await anonClient().auth.signInWithPassword({ email: `${TOKEN}@x.test`, password: `Pw-${TOKEN}` });
     if (signIn.error) throw new Error(`signIn: ${signIn.error.message}`);
     token = signIn.data.session?.access_token ?? "";
@@ -68,7 +73,7 @@ describeIntegration("H&S issue-path hardening · real authenticated member (JWT)
   // Create a draft RAMS as the member; optionally give it an assessor + a hazard.
   async function draftRa(opts: { assessor: boolean; hazard: boolean }): Promise<string> {
     const id = String((await me().from("risk_assessments")
-      .insert({ org_id: orgA, title: "Drafted", activity: "x", assessor_id: opts.assessor ? uid : null })
+      .insert({ org_id: orgA, title: "Drafted", activity: "x", assessor_id: opts.assessor ? uid : null, job_id: jobA })
       .select("id").single()).data?.id);
     if (opts.hazard) {
       await me().from("risk_assessment_hazards").insert({ org_id: orgA, risk_assessment_id: id, hazard: "Fall", likelihood: 3, severity: 3, control_measures: "harness" });
@@ -113,7 +118,7 @@ describeIntegration("H&S issue-path hardening · real authenticated member (JWT)
 
   it("[P1] issuing a permit pins issued_by=caller and issued_at=now (forge/back-date ignored)", async () => {
     const pid = String((await me().from("permits_to_work").insert({
-      org_id: orgA, permit_type: "general", title: "P", scope: "s",
+      org_id: orgA, permit_type: "general", title: "P", scope: "s", job_id: jobA,
       valid_from: new Date().toISOString(), valid_until: new Date(Date.now() + 3.6e6).toISOString(),
     }).select("id").single()).data?.id);
     const { error } = await me().from("permits_to_work")

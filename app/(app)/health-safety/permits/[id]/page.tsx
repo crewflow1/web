@@ -88,7 +88,7 @@ export default async function PermitDetailPage({
   const live = permit.status === "issued" || permit.status === "active";
   const acks = live ? await listAcknowledgements("permit_to_work", permit.id, ctx.org.id) : [];
   // Required operatives = the crew rota'd to this permit's job (M6b). No job → not tracked.
-  const required = live ? await requiredOperatives(permit.job_id) : [];
+  const required = live ? await requiredOperatives(permit.job_id, ctx.org.id) : [];
   const signoff = summariseSignoff(required.map((o) => o.id), acks.map((a) => a.user_id));
   const outstanding = required.filter((o) => signoff.outstanding.includes(o.id));
 

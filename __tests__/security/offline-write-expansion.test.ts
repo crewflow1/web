@@ -77,14 +77,31 @@ describe("expansion cores — exactly as privileged as the online forms", () => 
     }
   });
 
-  it("the material-request core's ONLY remote call is the pre-existing number allocator", () => {
-    // Executing code only — the comments explain the allocator by name too.
-    const calls = [...code(mrCoreSrc).matchAll(/\.rpc\(\s*"([^"]+)"/g)].map(
-      (m) => m[1]!,
+  it("the material-request core's remote calls are the number allocator + the self-scoped own-row lookups (no service-role)", () => {
+    // Executing code only. R5 Phase 3 narrowed material_requests SELECT to
+    // assigned jobs, so the offline replay can no longer read its OWN job-less /
+    // now-unassigned draft under JWT. The fix is NOT a service-role client (the
+    // trust-boundary invariant above forbids it) — it is two SELF-SCOPED SECURITY
+    // DEFINER lookup RPCs (find_own_material_request / own_material_request_line_count,
+    // migration 20261255) invoked on the TENANT client, each keyed INSIDE the
+    // function on created_by = auth.uid(). So the remote surface is exactly: the
+    // pre-existing number allocator plus those two read-only self-scoped lookups.
+    const calls = [...code(mrCoreSrc).matchAll(/\.rpc\(\s*"([^"]+)"/g)]
+      .map((m) => m[1]!)
+      .sort();
+    expect(calls).toEqual(
+      [
+        "find_own_material_request",
+        "next_material_request_number",
+        "own_material_request_line_count",
+      ].sort(),
     );
-    expect(calls).toEqual(["next_material_request_number"]);
-    // and it is invoked on the TENANT client with the ACTIVE org
+    // the allocator is still invoked with the ACTIVE org…
     expect(mrCoreSrc).toMatch(/\{ target_org: orgId \}/);
+    // …and both lookup RPCs are org-pinned (p_org_id) — they carry the canonical
+    // membership guard in-body (20261255) and are self-scoped, never privileged.
+    expect(mrCoreSrc).toMatch(/find_own_material_request",\s*\{\s*\n?\s*p_org_id: orgId/);
+    expect(mrCoreSrc).toMatch(/own_material_request_line_count",\s*\{\s*\n?\s*p_org_id: orgId/);
   });
 
   it("the migration adds no function of its own — the allocator predates it (20261066)", () => {
@@ -111,10 +128,14 @@ describe("expansion cores — exactly as privileged as the online forms", () => 
 
   it("every insert and every lookup in the new cores is ACTIVE-ORG pinned", () => {
     expect(mrCoreSrc).toMatch(/org_id: orgId/);
-    // key lookup, job guard, winner lookup, lines probe, stock probe
-    expect(
-      [...code(mrCoreSrc).matchAll(/\.eq\("org_id", orgId\)/g)].length,
-    ).toBeGreaterThanOrEqual(4);
+    // key lookup + winner lookup + lines probe are now org-pinned via the RPC
+    // arg `p_org_id: orgId`; job guard + stock probe keep `.eq("org_id", orgId)`.
+    // Count BOTH forms — every lookup remains active-org pinned, just some through
+    // a self-scoped RPC rather than a direct table read.
+    const orgPins =
+      [...code(mrCoreSrc).matchAll(/\.eq\("org_id", orgId\)/g)].length +
+      [...code(mrCoreSrc).matchAll(/p_org_id: orgId/g)].length;
+    expect(orgPins).toBeGreaterThanOrEqual(4);
     // the snag core's job guard, assignee guard and duplicate lookup
     const snagCore = writesSrc.slice(writesSrc.indexOf("export async function createSnagRecord"));
     expect(
@@ -175,11 +196,18 @@ describe("expansion cores — exactly as privileged as the online forms", () => 
 describe("material request replay — key-first with line recovery, honestly reported", () => {
   it("the key lookup comes FIRST, before allocation and before any insert", () => {
     const src = code(mrCoreSrc);
-    const keyLookup = src.indexOf('.eq("client_write_key", clientKey)');
-    const rpc = src.indexOf(".rpc(");
+    // The key lookup is the self-scoped own-row RPC (find_own_material_request,
+    // keyed on client_write_key inside the function); it must run before the
+    // number allocator and before any insert.
+    // The key lookup is the first findOwnRequestId(...) CALL (its body — the
+    // find_own_material_request RPC — is defined later in the file, so match the
+    // call site, not the helper definition).
+    const keyLookup = src.indexOf("findOwnRequestId(");
+    const allocation = src.indexOf('next_material_request_number"');
     const insert = src.indexOf(".insert(");
     expect(keyLookup).toBeGreaterThan(-1);
-    expect(keyLookup).toBeLessThan(rpc);
+    expect(allocation).toBeGreaterThan(-1);
+    expect(keyLookup).toBeLessThan(allocation);
     expect(keyLookup).toBeLessThan(insert);
   });
 

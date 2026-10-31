@@ -98,8 +98,19 @@ describe("offline sync — runs under the caller's own session, never a privileg
     expect(writesSrc).toMatch(/tenant\.from\("site_diary_entries" as never\)/);
   });
 
-  it("there is no RPC / SECURITY DEFINER / privileged replay path", () => {
-    expect(writesSrc).not.toMatch(/\.rpc\(/);
+  it("the only replay RPC is the self-scoped own-row lookup — no service-role / privileged path", () => {
+    // R5 Phase 3 narrowed site_diary_entries SELECT to assigned jobs, so the
+    // replay can no longer read its OWN job-less / now-unassigned entry under JWT
+    // to detect a duplicate. That ONE read goes through a self-scoped SECURITY
+    // DEFINER lookup RPC (find_own_site_diary_entry, keyed INSIDE the function on
+    // created_by = auth.uid() + an org guard), invoked on the TENANT client. It is
+    // read-only, org-pinned, and returns only the caller's own row — NOT a
+    // privileged/service-role path (the no-service-role contract above still holds).
+    const rpcs = [...code(writesSrc).matchAll(/\.rpc\(\s*"([^"]+)"/g)].map((m) => m[1]);
+    expect(rpcs).toEqual(["find_own_site_diary_entry"]);
+    expect(writesSrc).toMatch(/find_own_site_diary_entry",\s*\{\s*\n?\s*p_org_id: orgId/);
+    // The offline_write_expansion migration itself still adds no function/definer
+    // (the lookup fn lives in the separate, org-guarded 20261255).
     expect(migration).not.toMatch(/security definer/i);
     expect(migration).not.toMatch(/create (or replace )?function/i);
   });

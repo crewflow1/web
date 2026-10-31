@@ -174,6 +174,12 @@ describeIntegration("schedule recommendations · real resolutions + roster org i
     orgB = await insId(svc, "organizations", { name: "Rec B", slug: `${TOKEN}-b` });
 
     zoe = await mkUser("zoe", [orgA, orgB], `${TOKEN} Zoe Viewer`);
+    // Scheduling is a MANAGEMENT read: the conflict engine must see the whole
+    // team's shifts/jobs. Under R5 Phase 2/5 a staff JWT sees only its own jobs
+    // (20261243) and rota (20261251), so the viewer who runs the engine is an
+    // admin of BOTH orgs she belongs to. RLS still pins each query to its org, so
+    // the "org B sees only org B's roster" isolation assertion is unaffected.
+    await serviceClient().from("memberships").update({ role: "admin" }).eq("user_id", zoe.id);
     dave = await mkUser("dave", [orgA, orgB], `${TOKEN} Dave Baker`);
     erin = await mkUser("erin", [orgA], `${TOKEN} Erin Cole`);
     sam = await mkUser("sam", [orgA], `${TOKEN} Sam Okafor`);

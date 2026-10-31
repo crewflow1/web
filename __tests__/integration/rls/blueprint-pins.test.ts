@@ -74,6 +74,14 @@ describeIntegration("blueprint_pins · DB invariants", () => {
     member = await mkUser(`${TOKEN}-m@example.test`, "staff", orgA);
     admin = await mkUser(`${TOKEN}-adm@example.test`, "owner", orgA);
     outsider = await mkUser(`${TOKEN}-out@example.test`, "owner", orgB);
+    // R5: a staff member works their ASSIGNED jobs. Assign `member` to jobA so
+    // they can place + read back pins/snags there (the create-snag+pin RPC is
+    // SECURITY INVOKER and reads the snag back under the member's own RLS).
+    await db(serviceClient()).from("job_assignments").insert({
+      org_id: orgA,
+      job_id: jobA,
+      user_id: member.id,
+    });
   });
 
   afterAll(async () => {

@@ -111,22 +111,23 @@ export async function createMaterialRequestDraftRecord(args: {
   const clientKey = args.clientKey ?? randomUUID();
   const tenant = await createClient();
 
-  // ── 1. KEY-FIRST LOOKUP (org-pinned — a dual-org member can never be handed
-  // the other company's row id). Found means a previous attempt got at least
-  // the header in; ensureLines decides whether anything is still owed.
-  const { data: prior, error: priorErr } = await (
-    tenant.from("material_requests" as never) as unknown as HeaderLookupChain
-  )
-    .select("id")
-    .eq("org_id", orgId)
-    .eq("client_write_key", clientKey)
-    .maybeSingle();
+  // ── 1. KEY-FIRST LOOKUP, pinned to this caller's OWN row (org + key +
+  // created_by). Found means a previous attempt got at least the header in;
+  // ensureLines decides whether anything is still owed. Via the TENANT client +
+  // a self-scoped SECURITY DEFINER RPC (find_own_material_request) so a job-less
+  // / now-unassigned request stays detectable after the Phase 3 SELECT narrowing
+  // WITHOUT a service-role client in the write path (trust-boundary invariant).
+  const { id: priorId, error: priorErr } = await findOwnRequestId(
+    tenant,
+    orgId,
+    clientKey,
+  );
   if (priorErr) {
     // A failed READ is not evidence of anything — retry, never reject.
     return { status: "retry", reason: priorErr.code ?? "key_lookup_failed" };
   }
-  if (prior?.id) {
-    return ensureLines(tenant, orgId, prior.id, args.input, /*headerPreexisted*/ true);
+  if (priorId) {
+    return ensureLines(tenant, orgId, priorId, args.input, /*headerPreexisted*/ true);
   }
 
   // ── 2. Guards, before anything is written.
@@ -191,18 +192,16 @@ export async function createMaterialRequestDraftRecord(args: {
        * allocates a fresh number. A number race must never be reported as
        * "duplicate": that would green-tick a request that was never written.
        */
-      const { data: winner, error: winnerErr } = await (
-        tenant.from("material_requests" as never) as unknown as HeaderLookupChain
-      )
-        .select("id")
-        .eq("org_id", orgId)
-        .eq("client_write_key", clientKey)
-        .maybeSingle();
+      const { id: winnerId, error: winnerErr } = await findOwnRequestId(
+        tenant,
+        orgId,
+        clientKey,
+      );
       if (winnerErr) {
         return { status: "retry", reason: winnerErr.code ?? "duplicate_lookup_failed" };
       }
-      if (winner?.id) {
-        return ensureLines(tenant, orgId, winner.id, args.input, true);
+      if (winnerId) {
+        return ensureLines(tenant, orgId, winnerId, args.input, true);
       }
       return { status: "retry", reason: "number_conflict" };
     }
@@ -224,6 +223,33 @@ export async function createMaterialRequestDraftRecord(args: {
 }
 
 /**
+ * Self-scoped own-row lookup: the id of THIS caller's material request for
+ * (org_id, client_write_key). Routed through the TENANT client + the
+ * find_own_material_request SECURITY DEFINER RPC (migration 20261255), which is
+ * self-scoped to created_by = auth.uid() so it can never surface another
+ * member's row. The RPC is the ONE read that sees past the Phase 3 SELECT
+ * narrowing (a job-less / now-unassigned request is invisible to the member's
+ * own tenant table read), so the offline replay can still detect its own prior
+ * write — WITHOUT a service-role client in the write path. Not a visibility
+ * change: a member still cannot browse any request that isn't their own.
+ */
+async function findOwnRequestId(
+  tenant: unknown,
+  orgId: string,
+  clientKey: string,
+): Promise<{ id: string | null; error: PgError }> {
+  const { data, error } = await (
+    tenant as {
+      rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: PgError }>;
+    }
+  ).rpc("find_own_material_request", {
+    p_org_id: orgId,
+    p_client_write_key: clientKey,
+  });
+  return { id: (data as string | null) ?? null, error };
+}
+
+/**
  * The recovery half of the protocol: the header exists (this attempt or an
  * earlier one); make sure its lines do too, then answer honestly.
  * "duplicate" is only ever said when the WHOLE write — header AND lines — is
@@ -236,21 +262,27 @@ async function ensureLines(
   input: MaterialRequestFormInput,
   headerPreexisted: boolean,
 ): Promise<OfflineWriteOutcome> {
-  const { data: probe, error: probeErr } = await (
-    (tenant as { from: (t: string) => unknown }).from(
-      "material_request_lines",
-    ) as LinesProbeChain
-  )
-    .select("id")
-    .eq("org_id", orgId) // ACTIVE-ORG PIN
-    .eq("material_request_id", requestId)
-    .limit(1);
+  // Probe for existing lines via the TENANT client + the self-scoped
+  // own_material_request_line_count RPC: requestId has already been proven to be
+  // THIS caller's own row, and under Phase 3 a job-less / now-unassigned
+  // request's lines are invisible to a tenant table read — which would make the
+  // probe read empty and re-insert over an existing set. The RPC counts lines
+  // only for a request the caller OWNS (created_by = auth.uid()); no service-role
+  // client in the write path.
+  const { data: lineCount, error: probeErr } = await (
+    tenant as {
+      rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: PgError }>;
+    }
+  ).rpc("own_material_request_line_count", {
+    p_org_id: orgId,
+    p_request_id: requestId,
+  });
   if (probeErr) {
     // Empty-on-error must not read as "no lines" here: that would re-insert
     // over a read blip. LOUD and transient instead.
     return { status: "retry", reason: probeErr.code ?? "lines_probe_failed" };
   }
-  if ((probe ?? []).length > 0) {
+  if (((lineCount as number | null) ?? 0) > 0) {
     return headerPreexisted
       ? { status: "duplicate", id: requestId }
       : { status: "accepted", id: requestId };

@@ -1054,9 +1054,14 @@ describeIntegration("H2-CIS M3 deduction engine (real Postgres)", () => {
     const rpc = await post(asMember(), orgA, sub20, [{ finance_id: bill, amount: 1 }]);
     expect(rpc.error?.message ?? "").toMatch(/only an owner or admin|row-level security/i);
 
-    // But `finances` — the COST — stays member-readable. CIS hides tax, not cost.
-    const cost = await asMember().from("finances").select("id, amount").eq("id", bill);
-    expect((cost.data ?? []).length).toBe(1);
+    // Under R5 Phase 4 (20261252) the finances LEDGER is admin-only: a member
+    // reads NEITHER the CIS tax detail NOR the underlying cost row directly.
+    // (Cost ENTRY stays member-open — app/api/finances/route.ts — but reading the
+    // ledger back does not.) An admin still reads the cost + amount.
+    const memberCost = await asMember().from("finances").select("id, amount").eq("id", bill);
+    expect(memberCost.data ?? [], "member cannot read the finances ledger").toEqual([]);
+    const adminCost = await asAdmin().from("finances").select("id, amount").eq("id", bill);
+    expect((adminCost.data ?? []).length, "admin still reads the cost").toBe(1);
   });
 
   it("CROSS-ORG: another org's admin cannot read or write orgA's CIS data", async () => {

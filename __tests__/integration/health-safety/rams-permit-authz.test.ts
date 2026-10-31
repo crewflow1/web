@@ -38,6 +38,10 @@ describeIntegration("RAMS + permit lifecycle authz (S4 integrity / S5 intent, re
     memberId = created.data.user?.id ?? "";
     await svc().from("users").insert({ id: memberId, email, full_name: "Staff" });
     await svc().from("memberships").insert({ org_id: orgA, user_id: memberId, role: "staff" });
+    // R5 Phase 3: the member reads a RAMS only for a job they are assigned to —
+    // assign them to jobA so the draft→terminal / reparent-immutability triggers
+    // gate them, not row-invisibility. (job-link the RAMS inserts below too.)
+    await svc().from("jobs").update({ assigned_to: memberId }).eq("id", jobA);
     const s = await anonClient().auth.signInWithPassword({ email, password: `Pw-${T}` });
     if (s.error) throw new Error(s.error.message);
     memberTok = s.data.session?.access_token ?? "";
@@ -52,7 +56,7 @@ describeIntegration("RAMS + permit lifecycle authz (S4 integrity / S5 intent, re
   // ---- S4: RAMS draft->terminal forgery bypass is closed ---------------------
   it("[S4] a member cannot PATCH a draft RAMS straight to withdrawn/superseded", async () => {
     for (const to of ["withdrawn", "superseded"] as const) {
-      const d = await me().from("risk_assessments").insert({ org_id: orgA, title: "Forge", activity: "x" }).select("id").single();
+      const d = await me().from("risk_assessments").insert({ org_id: orgA, title: "Forge", activity: "x", job_id: jobA }).select("id").single();
       expect(d.error, d.error?.message).toBeNull();
       const id = String(d.data?.id);
       const r = await me().from("risk_assessments")
@@ -63,7 +67,7 @@ describeIntegration("RAMS + permit lifecycle authz (S4 integrity / S5 intent, re
   });
 
   it("[S4] a member CAN still author a draft RAMS and issue it (first delivery stays member-level)", async () => {
-    const d = await me().from("risk_assessments").insert({ org_id: orgA, title: "Real", activity: "roofing", assessor_id: memberId }).select("id").single();
+    const d = await me().from("risk_assessments").insert({ org_id: orgA, title: "Real", activity: "roofing", assessor_id: memberId, job_id: jobA }).select("id").single();
     expect(d.error, d.error?.message).toBeNull();
     const id = String(d.data?.id);
     await me().from("risk_assessment_hazards").insert({ org_id: orgA, risk_assessment_id: id, hazard: "Fall", likelihood: 3, severity: 3, control_measures: "harness" });
@@ -95,14 +99,14 @@ describeIntegration("RAMS + permit lifecycle authz (S4 integrity / S5 intent, re
   // ---- Adversarial follow-up: issued-hazard reparent immutability -----------
   it("[integrity] a member cannot reparent a hazard OFF an issued RAMS (hazard-strip bypass closed)", async () => {
     // seed an ISSUED RA_1 carrying one hazard
-    const d1 = await me().from("risk_assessments").insert({ org_id: orgA, title: "Frozen", activity: "roofing", assessor_id: memberId }).select("id").single();
+    const d1 = await me().from("risk_assessments").insert({ org_id: orgA, title: "Frozen", activity: "roofing", assessor_id: memberId, job_id: jobA }).select("id").single();
     expect(d1.error, d1.error?.message).toBeNull();
     const ra1 = String(d1.data?.id);
     const h = await me().from("risk_assessment_hazards").insert({ org_id: orgA, risk_assessment_id: ra1, hazard: "Fall", likelihood: 3, severity: 3, control_measures: "harness" }).select("id").single();
     const hz = String(h.data?.id);
     expect((await me().from("risk_assessments").update({ status: "issued", reference: `RA-${T}-fz`, issued_at: now() }).eq("id", ra1)).error, "seed issue").toBeNull();
     // a throwaway DRAFT to reparent into
-    const ra2 = String((await me().from("risk_assessments").insert({ org_id: orgA, title: "Throwaway", activity: "x" }).select("id").single()).data?.id);
+    const ra2 = String((await me().from("risk_assessments").insert({ org_id: orgA, title: "Throwaway", activity: "x", job_id: jobA }).select("id").single()).data?.id);
     // attack: move the hazard off the frozen RA_1 → must be rejected
     const move = await me().from("risk_assessment_hazards").update({ risk_assessment_id: ra2 }).eq("id", hz);
     expect(move.error?.message ?? "", "reparenting a hazard off an issued RAMS must be rejected").toMatch(/cannot move a hazard off|immutable/i);

@@ -138,6 +138,7 @@ describeIntegration("Toolbox Talks M1 · issue-path hardening (real member JWT)"
   let orgB = "";
   let uid = "";
   let token = "";
+  let jobA = ""; // R5: the talk's job, with the acting member assigned to it
   const FORGED_USER = "00000000-0000-4000-8000-000000000abc";
   const BACKDATE = "2020-01-01T00:00:00Z";
   const svc = () => db(serviceClient());
@@ -155,6 +156,11 @@ describeIntegration("Toolbox Talks M1 · issue-path hardening (real member JWT)"
     // is the cross-org oracle target.
     const m = await svc().from("memberships").insert({ org_id: orgA, user_id: uid, role: "staff" });
     if (m.error) throw new Error(`membership insert: ${m.error.message}`);
+    // R5 Phase 3: the member can only read a toolbox_talk for a job they are
+    // assigned to, so give the talks a job and assign the acting member to it —
+    // the issue-gate / provenance triggers then fire exactly as asserted.
+    jobA = String((await svc().from("jobs").insert({ org_id: orgA, status: "new", assigned_to: uid }).select("id").single()).data?.id ?? "");
+    if (!jobA) throw new Error("jobA setup failed");
     const signIn = await anonClient().auth.signInWithPassword({ email: `${T}-m@x.test`, password: `Pw-${T}` });
     if (signIn.error) throw new Error(`signIn: ${signIn.error.message}`);
     token = signIn.data.session?.access_token ?? "";
@@ -172,7 +178,7 @@ describeIntegration("Toolbox Talks M1 · issue-path hardening (real member JWT)"
 
   async function draft(opts: { keyPoints: boolean }): Promise<string> {
     const r = await me().from("toolbox_talks")
-      .insert({ org_id: orgA, topic: "Manual handling", key_points: opts.keyPoints ? "Lift with the legs" : null })
+      .insert({ org_id: orgA, topic: "Manual handling", key_points: opts.keyPoints ? "Lift with the legs" : null, job_id: jobA })
       .select("id").single();
     if (r.error) throw new Error(`draft insert: ${r.error.message}`);
     return String(r.data?.id);
@@ -234,6 +240,7 @@ describeIntegration("Toolbox Talks M1 · issue-path hardening (real member JWT)"
 // ===========================================================================
 describeIntegration("Toolbox Talks · post-audit authz + evidence integrity (real member JWT, 20261030)", () => {
   let orgA = "";
+  let jobAZ = ""; // R5: the talks' job, with the staff actor assigned to it
   let staffId = "";
   let staffTok = "";
   let adminId = "";
@@ -261,7 +268,7 @@ describeIntegration("Toolbox Talks · post-audit authz + evidence integrity (rea
   // the JWT gates, so it can stamp the delivered state directly for the test's precondition).
   async function seedIssued(): Promise<{ id: string; ref: string }> {
     const ref = `TBT-${refSeq++}`;
-    const d = await svc().from("toolbox_talks").insert({ org_id: orgA, topic: "Working at height", key_points: "Edge protection" }).select("id").single();
+    const d = await svc().from("toolbox_talks").insert({ org_id: orgA, topic: "Working at height", key_points: "Edge protection", job_id: jobAZ }).select("id").single();
     if (d.error) throw new Error(`seed draft: ${d.error.message}`);
     const id = String(d.data?.id);
     const iss = await svc().from("toolbox_talks").update({ status: "issued", reference: ref, issued_at: new Date().toISOString() }).eq("id", id);
@@ -275,6 +282,11 @@ describeIntegration("Toolbox Talks · post-audit authz + evidence integrity (rea
     ({ id: staffId, token: staffTok } = await mkMember("staff", "az-staff"));
     ({ id: adminId, token: adminTok } = await mkMember("admin", "az-admin"));
     if (!staffTok || !adminTok) throw new Error("authz fixture: member tokens missing");
+    // R5 Phase 3: the staff actor can only read/act on a toolbox_talk for a job
+    // they are assigned to; job-link every seeded talk and assign the staff member
+    // so the authz triggers (not row-invisibility) are what gate them.
+    jobAZ = String((await svc().from("jobs").insert({ org_id: orgA, status: "new", assigned_to: staffId }).select("id").single()).data?.id ?? "");
+    if (!jobAZ) throw new Error("authz fixture: jobAZ insert failed");
     // Sanity: both memberships must resolve (else every gate below is vacuous).
     const s = await staff().rpc("next_tbt_number", { target_org: orgA });
     if (s.error) throw new Error(`staff membership not effective: ${s.error.message}`);
@@ -288,7 +300,7 @@ describeIntegration("Toolbox Talks · post-audit authz + evidence integrity (rea
 
   it("[P0] a member cannot jump their own DRAFT straight to superseded/withdrawn (bypassing the issue gate)", async () => {
     for (const to of ["superseded", "withdrawn"] as const) {
-      const d = await staff().from("toolbox_talks").insert({ org_id: orgA, topic: "Forge", key_points: "k" }).select("id").single();
+      const d = await staff().from("toolbox_talks").insert({ org_id: orgA, topic: "Forge", key_points: "k", job_id: jobAZ }).select("id").single();
       expect(d.error, d.error?.message).toBeNull();
       const id = String(d.data?.id);
       // A single crafted PATCH that would otherwise mint backdated, misattributed, PDF-renderable evidence.
@@ -302,7 +314,7 @@ describeIntegration("Toolbox Talks · post-audit authz + evidence integrity (rea
 
   it("[P1] a member cannot deliver with a snapshot that disagrees with the record (forged reference / topic)", async () => {
     const mkDraft = async () => {
-      const d = await staff().from("toolbox_talks").insert({ org_id: orgA, topic: "Real topic", key_points: "Real points" }).select("id").single();
+      const d = await staff().from("toolbox_talks").insert({ org_id: orgA, topic: "Real topic", key_points: "Real points", job_id: jobAZ }).select("id").single();
       return String(d.data?.id);
     };
     const ref1 = String((await staff().rpc("next_tbt_number", { target_org: orgA })).data);
@@ -329,7 +341,7 @@ describeIntegration("Toolbox Talks · post-audit authz + evidence integrity (rea
 
   it("[P2] a member cannot inject a non-allowlist key (cost/PII) into the frozen evidence snapshot", async () => {
     const ref = String((await staff().rpc("next_tbt_number", { target_org: orgA })).data);
-    const d = await staff().from("toolbox_talks").insert({ org_id: orgA, topic: "T", key_points: "K" }).select("id").single();
+    const d = await staff().from("toolbox_talks").insert({ org_id: orgA, topic: "T", key_points: "K", job_id: jobAZ }).select("id").single();
     const id = String(d.data?.id);
     const r = await staff().from("toolbox_talks")
       .update({ status: "issued", reference: ref, snapshot: { talk_reference: ref, revision: 1, topic: "T", key_points: "K", day_rate: 350, injected_email: "x@y.test" } }).eq("id", id);
@@ -366,7 +378,7 @@ describeIntegration("Toolbox Talks · post-audit authz + evidence integrity (rea
     const root = String((await svc().from("toolbox_talks").select("root_toolbox_talk_id").eq("id", s.id).maybeSingle()).data?.root_toolbox_talk_id);
     // admin sets up the rev-2 draft (raising a revision is itself admin-gated, proven above)
     const rev2 = String((await admin().from("toolbox_talks")
-      .insert({ org_id: orgA, topic: "Working at height", key_points: "revised", root_toolbox_talk_id: root, revision_number: 2, supersedes_id: s.id }).select("id").single()).data?.id);
+      .insert({ org_id: orgA, topic: "Working at height", key_points: "revised", root_toolbox_talk_id: root, revision_number: 2, supersedes_id: s.id, job_id: jobAZ }).select("id").single()).data?.id);
     const snap = { talk_reference: `${s.ref}-R02`, revision: 2, topic: "Working at height", key_points: "revised" };
     const staffTry = await staff().rpc("issue_toolbox_talk_revision", { p_id: rev2, p_snapshot: snap });
     expect(staffTry.error?.message ?? "", "a staff member must not issue a revision").toMatch(/only an owner or admin can issue/i);
@@ -389,7 +401,7 @@ describeIntegration("Toolbox Talks · post-audit authz + evidence integrity (rea
   });
 
   it("[P2] a crafted issue snapshot cannot forge provenance — the DB overwrites issued_on/issuer + strips fabricated links", async () => {
-    const d = await staff().from("toolbox_talks").insert({ org_id: orgA, topic: "Real", key_points: "Real points" }).select("id").single();
+    const d = await staff().from("toolbox_talks").insert({ org_id: orgA, topic: "Real", key_points: "Real points", job_id: jobAZ }).select("id").single();
     const id = String(d.data?.id);
     const ref = String((await staff().rpc("next_tbt_number", { target_org: orgA })).data);
     // no RAMS/permit linked on the row; the crafted snapshot claims backdated issue, a spoofed

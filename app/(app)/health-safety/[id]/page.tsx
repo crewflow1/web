@@ -109,7 +109,7 @@ export default async function RiskAssessmentDetailPage({
   const isIssued = ra.status === "issued";
   const [acks, required, priorSignoff] = await Promise.all([
     isIssued ? listAcknowledgements("risk_assessment", ra.id, ctx.org.id) : Promise.resolve([]),
-    isIssued ? requiredOperatives(ra.job_id) : Promise.resolve([]),
+    isIssued ? requiredOperatives(ra.job_id, ctx.org.id) : Promise.resolve([]),
     isIssued && ra.revision_number > 1
       ? priorRevisionSignoff(ra.root_risk_assessment_id, ra.revision_number, userId)
       : Promise.resolve(null),

@@ -288,27 +288,38 @@ export async function createDiaryEntryRecord(args: {
      * the active org so a multi-org member can never be handed another org's row id.
      */
     if (error.code === UNIQUE_VIOLATION) {
-      const { data: existing, error: lookupErr } = await (
-        tenant.from("site_diary_entries" as never) as unknown as FindByKeyChain
-      )
-        .select("id")
-        .eq("org_id", orgId)
-        .eq("client_write_key", clientKey)
-        .maybeSingle();
       /**
-       * The lookup's OWN error must be bound and classified, not discarded. If it
-       * is dropped, a transient failure here (a blip between the insert and this
-       * read) falls through to the permanent rejection below — which would mark
-       * the foreman's entry as permanently refused for a reason that had nothing
-       * to do with his entry. A failed read is not evidence of anything.
+       * NARROW SELF-SCOPED IDEMPOTENCY LOOKUP (R5 Phase 3). The duplicate is the
+       * caller's OWN earlier submission (client_write_key is theirs). Under R5
+       * staff isolation the tenant/user client can no longer broadly read
+       * site_diary_entries for a non-assigned or job-less entry, so this lookup
+       * goes through the TENANT client + the self-scoped SECURITY DEFINER RPC
+       * find_own_site_diary_entry (migration 20261255) — pinned INSIDE the
+       * function to the caller's OWN row on THREE axes: active org_id + their
+       * client_write_key + created_by = auth.uid(). It returns only the id of the
+       * user's own submission and never exposes another job's or user's records;
+       * NO service-role client sits in the offline write path (trust-boundary
+       * invariant), and it is not a broad `created_by` read exception.
+       */
+      const { data: existingId, error: lookupErr } = await (
+        tenant as unknown as {
+          rpc: (fn: string, a: Record<string, unknown>) => Promise<{ data: unknown; error: { code?: string } | null }>;
+        }
+      ).rpc("find_own_site_diary_entry", {
+        p_org_id: orgId,
+        p_client_write_key: clientKey,
+      });
+      /**
+       * The lookup's OWN error must be bound and classified, not discarded — a
+       * transient blip here must not masquerade as a permanent rejection.
        */
       if (lookupErr) {
         return { status: "retry", reason: lookupErr.code ?? "duplicate_lookup_failed" };
       }
-      if (existing?.id) return { status: "duplicate", id: existing.id };
-      // The lookup SUCCEEDED and returned nothing, so the key genuinely exists in a
-      // row this caller cannot read. Refusing is the only safe answer: retrying
-      // would loop forever, and claiming success would report a row we cannot show.
+      if (existingId) return { status: "duplicate", id: existingId as string };
+      // The key collided but no row of THIS user's in THIS org carries it — i.e.
+      // the key belongs to another user/org's row. Never hand back someone else's
+      // id; refuse. (Per-client keys make this effectively impossible in practice.)
       return { status: "rejected", reason: "not_permitted" };
     }
     const permanent = error.code ? PERMANENT_CODES[error.code] : undefined;

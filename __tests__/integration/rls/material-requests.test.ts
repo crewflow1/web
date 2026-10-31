@@ -234,6 +234,19 @@ describeIntegration("material requests · lifecycle, roles, isolation", () => {
       .single();
     expect(sm.error, sm.error?.message).toBeNull();
 
+    // R5 Phase 3 (20261247): a staff member can read — and therefore act on —
+    // a material request only for a job they are ASSIGNED to. This mirrors the
+    // real model: staff can only raise a request against a job they can see, so
+    // the requester of a job-A request is assigned to job A. Without this the
+    // requester-workflow rows below are invisible to the staff JWT and their
+    // UPDATEs match zero rows (not a role refusal — simply unreachable). We
+    // assign here rather than add a requested_by SELECT exception, so the
+    // assigned-job security model is preserved, not weakened.
+    const sa = await svc()
+      .from("job_assignments")
+      .insert({ org_id: orgA, job_id: jobA, user_id: staffUserId });
+    expect(sa.error, sa.error?.message).toBeNull();
+
     // Deliberately SIMILAR requests in both orgs — a leak has to be a real
     // confusion (two "MR-9001"s for the same materials), not something a
     // human would spot instantly.

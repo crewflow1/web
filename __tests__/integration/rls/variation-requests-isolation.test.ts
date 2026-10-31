@@ -219,19 +219,29 @@ describeIntegration("variation requests · tenant isolation + state machine", ()
     expect(anon.error, anon.error?.message).toBeNull();
     expect(anon.data ?? []).toHaveLength(0);
 
-    const own = await db(userClient(staffToken))
+    // R5 Phase 4 (20261250/20261256): a CUSTOMER-filed variation is commercial
+    // and admin-only (staff see only their OWN staff-filed intake). The org's
+    // request is read by the ADMIN actor; a staff member does NOT see it.
+    const adminOwn = await db(userClient(adminToken))
       .from("variation_requests")
       .select("id")
       .eq("id", reqA);
-    expect(own.error, own.error?.message).toBeNull();
-    expect(own.data ?? []).toHaveLength(1);
+    expect(adminOwn.error, adminOwn.error?.message).toBeNull();
+    expect(adminOwn.data ?? [], "admin reads the org's request").toHaveLength(1);
 
-    const cross = await db(userClient(staffToken))
+    const staffOwn = await db(userClient(staffToken))
+      .from("variation_requests")
+      .select("id")
+      .eq("id", reqA);
+    expect(staffOwn.error, staffOwn.error?.message).toBeNull();
+    expect(staffOwn.data ?? [], "staff do NOT see a customer-filed variation").toHaveLength(0);
+
+    const cross = await db(userClient(adminToken))
       .from("variation_requests")
       .select("id")
       .eq("id", reqBId);
     expect(cross.error, cross.error?.message).toBeNull();
-    expect(cross.data ?? []).toHaveLength(0);
+    expect(cross.data ?? [], "org B rows invisible even to org A admin").toHaveLength(0);
   });
 
   it("a member can file a request in their own org, as themselves", async () => {

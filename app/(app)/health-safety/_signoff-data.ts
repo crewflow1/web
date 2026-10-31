@@ -120,15 +120,21 @@ export type Operative = { id: string; name: string };
  * keeping a second workforce list. Empty when the document has no job link: we
  * never invent a requirement. RLS-scoped (rota is org-member-readable).
  */
-export async function requiredOperatives(jobId: string | null): Promise<Operative[]> {
+export async function requiredOperatives(
+  jobId: string | null,
+  orgId: string,
+): Promise<Operative[]> {
   if (!jobId) return [];
   const supabase = await createClient();
+  // R5 Phase 5 self-scoped rota_entries to the viewer's own rows, which would make
+  // an operative see only THEMSELVES as the sign-off crew. Read the job's crew via
+  // the org-guarded SECURITY DEFINER job_rota_crew RPC (20261256) so every member
+  // on a job they can access sees the full required-operatives list.
   const { data: rows, error } = await (supabase as unknown as {
-    from: (t: string) => { select: (c: string) => { eq: (k: string, v: string) => Promise<{ data: Array<{ user_id: string }> | null; error: SupabaseReadError | null }> } };
-  })
-    .from("rota_entries").select("user_id").eq("job_id", jobId);
+    rpc: (fn: string, a: Record<string, unknown>) => Promise<{ data: string[] | null; error: SupabaseReadError | null }>;
+  }).rpc("job_rota_crew", { p_job_id: jobId, p_org_id: orgId });
   if (error) throw readFailure("health-safety: rota required operatives", error);
-  const ids = [...new Set((rows ?? []).map((r) => r.user_id))];
+  const ids = [...new Set(rows ?? [])];
   if (ids.length === 0) return [];
   // Names via the same memberships→users embed listAssessors uses (unambiguous FK).
   const { data: members } = await (supabase as unknown as {

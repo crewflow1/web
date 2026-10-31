@@ -206,11 +206,15 @@ export async function listStockMovements(
   orgId: string,
   opts: { itemId?: string; siteId?: string } = {},
 ): Promise<StockMovementRow[]> {
+  // R5 Phase 4: the STAFF quantity/history path reads the cost-free operational
+  // VIEW (unit_cost/cost_effect/costed_qty_effect come back NULL). The base table
+  // SELECT is now admin-only (it carries cost); valuation/COGS use
+  // listStockMovementsWithCost below. Quantities (`effect`) are identical.
   const { data, error } = await fetchAllRows<Row>((from, to) => {
     let q = db
-      .from("stock_movements")
+      .from("stock_movements_operational")
       .select(STOCK_MOVEMENT_COLUMNS)
-      .eq("org_id", orgId); // ACTIVE-ORG PIN
+      .eq("org_id", orgId); // ACTIVE-ORG PIN (the view also self-scopes by current_org_ids)
     if (opts.itemId) q = q.eq("stock_item_id", opts.itemId);
     if (opts.siteId) q = q.eq("site_id", opts.siteId);
     return q
@@ -219,6 +223,30 @@ export async function listStockMovements(
       .range(from, to);
   });
   if (error) throw readFailure("stock: movements", error);
+  return (data ?? []) as unknown as StockMovementRow[];
+}
+
+/**
+ * The COST-BEARING movement ledger (base table), for the valuation + COGS folds.
+ * The base stock_movements SELECT is admin-only under R5, and these reports are
+ * costs:view-gated (owner/admin), so the caller already holds the authority to
+ * read cost. Same complete, paged, loud read as listStockMovements — only the
+ * source (base vs cost-free view) differs, so quantities never disagree.
+ */
+export async function listStockMovementsWithCost(
+  db: StockClient,
+  orgId: string,
+): Promise<StockMovementRow[]> {
+  const { data, error } = await fetchAllRows<Row>((from, to) =>
+    db
+      .from("stock_movements")
+      .select(STOCK_MOVEMENT_COLUMNS)
+      .eq("org_id", orgId) // ACTIVE-ORG PIN
+      .order("occurred_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to),
+  );
+  if (error) throw readFailure("stock: movements (cost)", error);
   return (data ?? []) as unknown as StockMovementRow[];
 }
 
@@ -262,7 +290,13 @@ export async function loadStockValuationReport(
   db: StockClient,
   orgId: string,
 ): Promise<StockValuationSnapshot> {
-  const { items, movements } = await loadStockPositions(db, orgId);
+  // Valuation needs the COST facts, so it reads the base ledger (admin-only RLS;
+  // this report is costs:view-gated) rather than the cost-free operational view
+  // loadStockPositions uses. Quantities match (same rows), but cost_effect is real.
+  const [items, movements] = await Promise.all([
+    listStockItems(db, orgId),
+    listStockMovementsWithCost(db, orgId),
+  ]);
   const rows = buildValuationReport(items, foldItemValuations(movements));
   return { rows, totals: summariseValuation(rows) };
 }
@@ -291,7 +325,7 @@ export async function loadStockCogsCostRows(
   orgId: string,
   opts: { jobId?: string } = {},
 ): Promise<StockCogsCostRow[]> {
-  const movements = await listStockMovements(db, orgId);
+  const movements = await listStockMovementsWithCost(db, orgId);
   const rows = buildStockCogsCostRows(movements);
   return opts.jobId ? rows.filter((r) => r.job_id === opts.jobId) : rows;
 }
