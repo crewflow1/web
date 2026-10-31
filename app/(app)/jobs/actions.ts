@@ -19,6 +19,7 @@ import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { verifyCrmReferences } from "@/lib/crm/reference-integrity";
 import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
 import { hasCapability } from "@/server/auth/capabilities";
+import { isMissingDbObject } from "@/lib/supabase/schema-compat";
 
 /**
  * Job CRUD server actions.
@@ -45,16 +46,53 @@ type JobValues = Record<string, unknown>;
  * this minimal structural cast — the same idiom assignment-actions.ts uses for
  * its admin-client RPC. The function enforces admin + org authority itself.
  */
+type RpcError = { message: string; code?: string } | null;
 type RpcLike = (
   fn: string,
   args: Record<string, unknown>,
-) => PromiseLike<{ error: { message: string } | null }>;
+) => PromiseLike<{ error: RpcError }>;
 function callRpc(
   client: { rpc: unknown },
   fn: string,
   args: Record<string, unknown>,
-): PromiseLike<{ error: { message: string } | null }> {
+): PromiseLike<{ error: RpcError }> {
   return (client.rpc as RpcLike)(fn, args);
+}
+
+/**
+ * Set a job's primary assignee through the transactional set_job_primary_assignment
+ * RPC (20261246), which keeps jobs.assigned_to and the job_assignments crew row
+ * consistent and re-checks admin + org authority.
+ *
+ * SCHEMA-COMPAT (R5 deploy window): that RPC is created by migration 20261246.
+ * Until it is applied the function is absent, so fall back to the pre-R5 write —
+ * a direct, org-scoped `jobs.assigned_to` update (exactly what the jobs form did
+ * before R5). The caller is already admin-gated upstream, the update is org-pinned,
+ * and when migration 242 later backfills job_assignments from jobs.assigned_to any
+ * assignee set this way is folded onto the crew — so no state drifts. The fallback
+ * fires ONLY when the RPC is missing (isMissingDbObject); a real 42501/validation
+ * or transient error is returned unchanged so the caller still surfaces it.
+ */
+async function setPrimaryAssignment(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  jobId: string,
+  orgId: string,
+  assignedTo: string | null,
+): Promise<{ error: RpcError }> {
+  const { error } = await callRpc(supabase, "set_job_primary_assignment", {
+    p_job_id: jobId,
+    p_org_id: orgId,
+    p_assigned_to: assignedTo,
+  });
+  if (error && isMissingDbObject(error)) {
+    const { error: updErr } = await supabase
+      .from("jobs")
+      .update({ assigned_to: assignedTo })
+      .eq("id", jobId)
+      .eq("org_id", orgId);
+    return { error: updErr };
+  }
+  return { error };
 }
 
 function buildRecurring(
@@ -169,11 +207,12 @@ export async function createJob(
   // template clone / calendar push below) we log and continue rather than
   // orphaning a created job — the owner can re-assign from the edit screen.
   if (result.data.assigned_to) {
-    const { error: assignError } = await callRpc(supabase, "set_job_primary_assignment", {
-      p_job_id: data.id,
-      p_org_id: ctx.org.id,
-      p_assigned_to: result.data.assigned_to,
-    });
+    const { error: assignError } = await setPrimaryAssignment(
+      supabase,
+      data.id,
+      ctx.org.id,
+      result.data.assigned_to,
+    );
     if (assignError) {
       console.error("[jobs] initial assignment failed", assignError);
     }
@@ -330,11 +369,12 @@ export async function updateJob(
   // primary on the crew — all in one statement. The RPC re-checks admin + org, so
   // it cannot be used to widen authority. A failure here means the primary field
   // did not change, so surface it rather than reporting a clean save.
-  const { error: assignError } = await callRpc(supabase, "set_job_primary_assignment", {
-    p_job_id: id,
-    p_org_id: ctx.org.id,
-    p_assigned_to: result.data.assigned_to ?? null,
-  });
+  const { error: assignError } = await setPrimaryAssignment(
+    supabase,
+    id,
+    ctx.org.id,
+    result.data.assigned_to ?? null,
+  );
   if (assignError) {
     console.error("[jobs] assignment reconcile failed", assignError);
     return formError(

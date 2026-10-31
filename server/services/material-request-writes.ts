@@ -1,6 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
+import { isMissingDbObject } from "@/lib/supabase/schema-compat";
 import type { OrgContext } from "@/server/auth/session";
 import type { MaterialRequestFormInput } from "@/lib/material-requests/schema";
 import { isStockModuleAbsent } from "@/server/services/material-fulfilment";
@@ -121,6 +122,7 @@ export async function createMaterialRequestDraftRecord(args: {
     tenant,
     orgId,
     clientKey,
+    args.user.id,
   );
   if (priorErr) {
     // A failed READ is not evidence of anything — retry, never reject.
@@ -196,6 +198,7 @@ export async function createMaterialRequestDraftRecord(args: {
         tenant,
         orgId,
         clientKey,
+        args.user.id,
       );
       if (winnerErr) {
         return { status: "retry", reason: winnerErr.code ?? "duplicate_lookup_failed" };
@@ -237,6 +240,7 @@ async function findOwnRequestId(
   tenant: unknown,
   orgId: string,
   clientKey: string,
+  userId: string,
 ): Promise<{ id: string | null; error: PgError }> {
   const { data, error } = await (
     tenant as {
@@ -246,6 +250,37 @@ async function findOwnRequestId(
     p_org_id: orgId,
     p_client_write_key: clientKey,
   });
+  if (error && isMissingDbObject(error)) {
+    // SCHEMA-COMPAT (R5 deploy window): the find_own_material_request RPC is
+    // created by migration 20261255. Until it is applied, fall back to the pre-R5
+    // tenant-client lookup pinned to the SAME three axes the RPC self-scopes on
+    // (org + client_write_key + created_by = this caller). Still the TENANT client,
+    // never service-role, so the trust-boundary invariant holds; and pre-migration
+    // the Phase 3 SELECT narrowing isn't applied, so the caller can still read its
+    // own row. Only on a missing function; any real error is returned unchanged.
+    const { data: row, error: qErr } = await (
+      tenant as {
+        from: (t: string) => {
+          select: (c: string) => {
+            eq: (k: string, v: string) => {
+              eq: (k: string, v: string) => {
+                eq: (k: string, v: string) => {
+                  maybeSingle: () => Promise<{ data: { id: string } | null; error: PgError }>;
+                };
+              };
+            };
+          };
+        };
+      }
+    )
+      .from("material_requests")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("client_write_key", clientKey)
+      .eq("created_by", userId)
+      .maybeSingle();
+    return { id: row?.id ?? null, error: qErr };
+  }
   return { id: (data as string | null) ?? null, error };
 }
 
@@ -269,7 +304,7 @@ async function ensureLines(
   // probe read empty and re-insert over an existing set. The RPC counts lines
   // only for a request the caller OWNS (created_by = auth.uid()); no service-role
   // client in the write path.
-  const { data: lineCount, error: probeErr } = await (
+  const probe = await (
     tenant as {
       rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: PgError }>;
     }
@@ -277,12 +312,39 @@ async function ensureLines(
     p_org_id: orgId,
     p_request_id: requestId,
   });
+  let lineCount = probe.data as number | null;
+  let probeErr = probe.error;
+  if (probeErr && isMissingDbObject(probeErr)) {
+    // SCHEMA-COMPAT (R5 deploy window): the own_material_request_line_count RPC is
+    // created by migration 20261255. Until applied, count the request's lines via
+    // the TENANT client. requestId was already proven to be THIS caller's own row
+    // (findOwnRequestId), and pre-migration the Phase 3 narrowing isn't applied, so
+    // the tenant read is accurate — still no service-role client. Only on a missing
+    // function; a real count error still retries loud.
+    const { count, error: cErr } = await (
+      tenant as {
+        from: (t: string) => {
+          select: (c: string, o: { count: "exact"; head: true }) => {
+            eq: (k: string, v: string) => {
+              eq: (k: string, v: string) => Promise<{ count: number | null; error: PgError }>;
+            };
+          };
+        };
+      }
+    )
+      .from("material_request_lines")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .eq("material_request_id", requestId);
+    lineCount = count ?? 0;
+    probeErr = cErr;
+  }
   if (probeErr) {
     // Empty-on-error must not read as "no lines" here: that would re-insert
     // over a read blip. LOUD and transient instead.
     return { status: "retry", reason: probeErr.code ?? "lines_probe_failed" };
   }
-  if (((lineCount as number | null) ?? 0) > 0) {
+  if ((lineCount ?? 0) > 0) {
     return headerPreexisted
       ? { status: "duplicate", id: requestId }
       : { status: "accepted", id: requestId };

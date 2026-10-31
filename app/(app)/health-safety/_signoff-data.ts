@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
+import { isMissingDbObject } from "@/lib/supabase/schema-compat";
 import type { AcknowledgementRow } from "@/lib/health-safety/acknowledgements-schema";
 import type { AckSubjectType, RevisableSubject } from "@/lib/health-safety/acknowledgements";
 import { RAMS_REVISABLE } from "@/lib/health-safety/acknowledgements";
@@ -133,8 +134,34 @@ export async function requiredOperatives(
   const { data: rows, error } = await (supabase as unknown as {
     rpc: (fn: string, a: Record<string, unknown>) => Promise<{ data: string[] | null; error: SupabaseReadError | null }>;
   }).rpc("job_rota_crew", { p_job_id: jobId, p_org_id: orgId });
-  if (error) throw readFailure("health-safety: rota required operatives", error);
-  const ids = [...new Set(rows ?? [])];
+  let ids: string[];
+  if (error && isMissingDbObject(error)) {
+    // SCHEMA-COMPAT (R5 deploy window): the job_rota_crew RPC is created by
+    // migration 20261256. Until it is applied, read the canonical rota_entries
+    // directly — the pre-R5 source. Phase 5 (migration 20261251) only self-scopes
+    // rota_entries once applied, so pre-migration an org-scoped member read still
+    // returns the job's FULL crew, exactly as before R5. Only on a missing
+    // function; a real read failure below still throws loud.
+    const { data: rota, error: rotaErr } = await (supabase as unknown as {
+      from: (t: string) => {
+        select: (c: string) => {
+          eq: (k: string, v: string) => {
+            eq: (k: string, v: string) => Promise<{ data: Array<{ user_id: string }> | null; error: SupabaseReadError | null }>;
+          };
+        };
+      };
+    })
+      .from("rota_entries")
+      .select("user_id")
+      .eq("job_id", jobId)
+      .eq("org_id", orgId);
+    if (rotaErr) throw readFailure("health-safety: rota required operatives", rotaErr);
+    ids = [...new Set((rota ?? []).map((r) => r.user_id))];
+  } else if (error) {
+    throw readFailure("health-safety: rota required operatives", error);
+  } else {
+    ids = [...new Set(rows ?? [])];
+  }
   if (ids.length === 0) return [];
   // Names via the same memberships→users embed listAssessors uses (unambiguous FK).
   const { data: members } = await (supabase as unknown as {

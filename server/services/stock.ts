@@ -2,6 +2,7 @@ import "server-only";
 
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { isMissingDbObject } from "@/lib/supabase/schema-compat";
 import {
   buildItemPositions,
   foldItemTotals,
@@ -210,18 +211,30 @@ export async function listStockMovements(
   // VIEW (unit_cost/cost_effect/costed_qty_effect come back NULL). The base table
   // SELECT is now admin-only (it carries cost); valuation/COGS use
   // listStockMovementsWithCost below. Quantities (`effect`) are identical.
-  const { data, error } = await fetchAllRows<Row>((from, to) => {
-    let q = db
-      .from("stock_movements_operational")
-      .select(STOCK_MOVEMENT_COLUMNS)
-      .eq("org_id", orgId); // ACTIVE-ORG PIN (the view also self-scopes by current_org_ids)
-    if (opts.itemId) q = q.eq("stock_item_id", opts.itemId);
-    if (opts.siteId) q = q.eq("site_id", opts.siteId);
-    return q
-      .order("occurred_at", { ascending: false })
-      .order("id", { ascending: false })
-      .range(from, to);
-  });
+  const readFrom = (relation: string) =>
+    fetchAllRows<Row>((from, to) => {
+      let q = db
+        .from(relation)
+        .select(STOCK_MOVEMENT_COLUMNS)
+        .eq("org_id", orgId); // ACTIVE-ORG PIN (the view also self-scopes by current_org_ids)
+      if (opts.itemId) q = q.eq("stock_item_id", opts.itemId);
+      if (opts.siteId) q = q.eq("site_id", opts.siteId);
+      return q
+        .order("occurred_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to);
+    });
+
+  let { data, error } = await readFrom("stock_movements_operational");
+  // SCHEMA-COMPAT (R5 deploy window): the cost-free operational VIEW is created by
+  // migration 20261257. Until that is applied, fall back to the base table — which
+  // is exactly the pre-R5 read (quantities identical; the cost columns simply come
+  // back populated instead of NULL, i.e. the unchanged pre-R5 visibility, since the
+  // base SELECT is only narrowed to admin-only by the SAME migration that adds the
+  // view). Triggers ONLY on a missing relation; every other error still fails loud.
+  if (error && isMissingDbObject(error)) {
+    ({ data, error } = await readFrom("stock_movements"));
+  }
   if (error) throw readFailure("stock: movements", error);
   return (data ?? []) as unknown as StockMovementRow[];
 }
