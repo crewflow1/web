@@ -130,7 +130,7 @@ export default async function ToolboxTalkPage({
   // the org staff (for display names), the job name, and the linked RAMS/permit labels.
   const [acks, required, priorSignoff, siblings, staff, jobRow, rams, permit] = await Promise.all([
     isIssued ? listAcknowledgements("toolbox_talk", talk.id, ctx.org.id) : Promise.resolve([]),
-    isIssued ? requiredOperatives(talk.job_id) : Promise.resolve([]),
+    isIssued ? requiredOperatives(talk.job_id, ctx.org.id) : Promise.resolve([]),
     isIssued && isRevisionDraft && talk.root_toolbox_talk_id
       ? priorRevisionSignoff(talk.root_toolbox_talk_id, talk.revision_number ?? 1, user.id, TOOLBOX_REVISABLE)
       : Promise.resolve(null),
