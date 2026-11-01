@@ -1,5 +1,5 @@
 -- ============================================================================
--- Active-org pin for the valuation certify / generate-invoice RPCs.
+-- Active-org pin for the valuation certify / generate-invoice RPCs — EXPAND.
 -- ============================================================================
 -- certify_valuation(p_valuation_id) and generate_valuation_invoice(
 -- p_valuation_id, p_due_date) derived the org FROM the valuation row and gated
@@ -9,26 +9,32 @@
 -- the active-org integrity defect class (the #456 read-side / write-slice class):
 -- membership-in-the-row's-org is not the same as the caller's ACTIVE org.
 --
--- FIX: both RPCs now take the caller's ACTIVE org id as the first argument
--- (the action layer passes ctx.org.id) and:
---   1. guard it with current_org_ids() + 42501 — the caller must actually belong
---      to p_org_id (this also satisfies the secdef-org-rpc guard, since the
---      functions now take an org id and are executable by `authenticated`);
---   2. fetch the valuation PINNED to that org
---      (where id = p_valuation_id AND org_id = p_org_id) — a valuation outside
---      the active org is now indistinguishable from a missing one (no cross-org
---      oracle), so a dual-org admin can only act within the org they are in.
--- Everything else — the per-job advisory lock, the cumulation/variation fences,
--- the invoice authority, the CAS bind — is UNCHANGED (v_val.org_id now always
--- equals p_org_id, so the existing org-pinned sub-reads behave identically).
+-- FIX (the pinned overloads): new (p_org_id, …) signatures take the caller's
+-- ACTIVE org (the action layer passes ctx.org.id) and:
+--   1. guard it with current_org_ids() + 42501 — the caller must belong to
+--      p_org_id (also satisfies the secdef-org-rpc guard);
+--   2. fetch the valuation PINNED to that org (id = p_valuation_id AND
+--      org_id = p_org_id) — a valuation outside the active org is now
+--      indistinguishable from a missing one, so a dual-org admin can only act
+--      within the org they are in.
+-- Everything else (advisory lock, cumulation/variation fences, invoice
+-- authority, CAS bind) is UNCHANGED (v_val.org_id now always equals p_org_id).
 --
--- SIGNATURE CHANGE: the old single-arg / (uuid, date) signatures are DROPPED so
--- no unpinned overload survives; the app callers + generated types pass p_org_id.
--- ROLLBACK: re-create the 20261192000000 definitions (and drop these).
+-- ── EXPAND-AND-CONTRACT (zero-downtime, no unpinned window) ──────────────────
+-- This migration is the EXPAND half. Rather than DROP the old signatures (which
+-- would break the currently-live app between apply and the new deploy), it keeps
+-- them as THIN SECURE WRAPPERS that delegate to the pinned overload:
+--   • a caller with exactly ONE org has no active-org ambiguity — their only org
+--     IS their active org — so the wrapper resolves it and delegates (pinned);
+--   • a caller with >1 org (or anon/zero-org) is REFUSED with 42501 and must use
+--     the pinned call. So the legacy path is NOT an unpinned hole — the
+--     cross-active-org exploit is closed on it too, for every caller.
+-- Result: active-org isolation holds in BOTH the old and new app during the
+-- rollout, and certify/generate keeps working for single-org users (≈all of
+-- prod) throughout. The CONTRACT migration (20261268000000) drops the wrappers
+-- once the new app is fully live.
+-- ROLLBACK: see 20261268000000 header / the release plan.
 -- ============================================================================
-
-drop function if exists public.certify_valuation(uuid);
-drop function if exists public.generate_valuation_invoice(uuid, date);
 
 create or replace function public.certify_valuation(p_org_id uuid, p_valuation_id uuid)
 returns uuid
@@ -152,6 +158,37 @@ comment on function public.certify_valuation(uuid, uuid) is
   'them. Refuses a negative increment. Retention is not touched — it is derived '
   'from the invoice the next step generates.';
 
+-- LEGACY WRAPPER (transition-only; dropped by 20261268000000). Secure: a
+-- single-org caller's only org is unambiguously their active org, so resolve it
+-- and delegate to the pinned overload; a multi-org (or anon/zero-org) caller is
+-- refused with 42501 and must use the pinned call. No unpinned path survives.
+create or replace function public.certify_valuation(p_valuation_id uuid)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_orgs uuid[];
+begin
+  if auth.uid() is null then raise exception 'authentication required'; end if;
+  select array_agg(id) into v_orgs from (select public.current_org_ids() as id) s;
+  if coalesce(array_length(v_orgs, 1), 0) <> 1 then
+    raise exception 'active org is ambiguous for this legacy call — use certify_valuation(p_org_id, p_valuation_id)'
+      using errcode = '42501';
+  end if;
+  return public.certify_valuation(v_orgs[1], p_valuation_id);
+end $$;
+
+revoke all on function public.certify_valuation(uuid) from public, anon, authenticated;
+grant execute on function public.certify_valuation(uuid) to authenticated;
+
+comment on function public.certify_valuation(uuid) is
+  'TRANSITION WRAPPER (dropped by 20261268000000). Resolves the single-org '
+  'caller''s active org and delegates to certify_valuation(p_org_id, '
+  'p_valuation_id); refuses multi-org/anon callers with 42501. Kept only so the '
+  'pre-pin app build keeps working during the expand-and-contract rollout.';
+
 create or replace function public.generate_valuation_invoice(p_org_id uuid, p_valuation_id uuid, p_due_date date default null)
 returns uuid
 language plpgsql
@@ -274,3 +311,32 @@ comment on function public.generate_valuation_invoice(uuid, uuid, date) is
   '+ invoices + invoice_line_items, draft status). ex-VAT amount = '
   'net_certified_this so retention accrues once. CAS-binds invoice_id and flips '
   'status to invoiced; idempotent (refuses if already invoiced).';
+
+-- LEGACY WRAPPER (transition-only; dropped by 20261268000000). Same secure
+-- single-org-resolve-and-delegate pattern as the certify wrapper above.
+create or replace function public.generate_valuation_invoice(p_valuation_id uuid, p_due_date date default null)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_orgs uuid[];
+begin
+  if auth.uid() is null then raise exception 'authentication required'; end if;
+  select array_agg(id) into v_orgs from (select public.current_org_ids() as id) s;
+  if coalesce(array_length(v_orgs, 1), 0) <> 1 then
+    raise exception 'active org is ambiguous for this legacy call — use generate_valuation_invoice(p_org_id, p_valuation_id, p_due_date)'
+      using errcode = '42501';
+  end if;
+  return public.generate_valuation_invoice(v_orgs[1], p_valuation_id, p_due_date);
+end $$;
+
+revoke all on function public.generate_valuation_invoice(uuid, date) from public, anon, authenticated;
+grant execute on function public.generate_valuation_invoice(uuid, date) to authenticated;
+
+comment on function public.generate_valuation_invoice(uuid, date) is
+  'TRANSITION WRAPPER (dropped by 20261268000000). Resolves the single-org '
+  'caller''s active org and delegates to generate_valuation_invoice(p_org_id, '
+  'p_valuation_id, p_due_date); refuses multi-org/anon callers with 42501. Kept '
+  'only so the pre-pin app build keeps working during expand-and-contract.';

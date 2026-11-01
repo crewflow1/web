@@ -1,138 +1,131 @@
-# PR #1019 — Production Release Plan (migrations-first)
+# PR #1019 — Production Release Plan (expand-and-contract, zero-downtime)
 
-> **Apply-held.** Nothing here runs without explicit founder approval. This is the
-> decision pack for releasing the valuation active-org pin
-> (`fix/pin-valuation-rpcs-active-org`, migration `20261267000000`).
+> **Apply-held.** Nothing here runs without explicit founder approval. Decision
+> pack for releasing the valuation active-org pin (`fix/pin-valuation-rpcs-active-org`).
 
-## 1. What ships
+## 1. What ships (two migrations, applied in separate controlled steps)
 
-A single additive migration + its callers:
+- `20261267000000_pin_valuation_rpcs_active_org.sql` — **EXPAND**. Adds the
+  active-org-**pinned** overloads `certify_valuation(p_org_id, p_valuation_id)` and
+  `generate_valuation_invoice(p_org_id, p_valuation_id, p_due_date)`, and **keeps**
+  the old single-arg / `(uuid,date)` signatures as **thin secure wrappers** that
+  resolve a single-org caller's one org and delegate to the pinned overload, while
+  **refusing** multi-org / anon callers with `42501`.
+- `20261268000000_contract_valuation_legacy_wrappers.sql` — **CONTRACT**. Drops the
+  two legacy wrappers once the pinned app build is fully live. End state: only the
+  pinned signatures remain.
+- `app/(app)/jobs/[id]/valuation-actions.ts` — passes `p_org_id: ctx.org.id` (calls
+  the pinned overload). `lib/supabase/types.ts` — regenerated `Args`. Tests only otherwise.
 
-- `supabase/migrations/20261267000000_pin_valuation_rpcs_active_org.sql` — DROPs
-  the old `certify_valuation(uuid)` / `generate_valuation_invoice(uuid, date)`
-  and re-creates both taking the caller's **active org** (`p_org_id`) with the
-  canonical `current_org_ids()`+`42501` guard and an org-pinned valuation fetch.
-- `app/(app)/jobs/[id]/valuation-actions.ts` — passes `p_org_id: ctx.org.id`.
-- `lib/supabase/types.ts` — regenerated `Args`.
-- Tests only otherwise.
+**Sole runtime consumers:** the two server actions. Verified: **no** internal DB
+caller, trigger, cron, API route, or edge function calls either RPC.
 
-**Sole runtime consumers:** the two server actions above. Verified there is **no**
-internal DB caller, trigger, cron, API route, or edge function calling either RPC.
+## 2. Why expand-and-contract (independent review of the alternative)
 
-## 2. Migration-tip reconciliation (done)
+A single drop-and-recreate (the first draft of #1019) is correct at the end state
+but has a brief window between the migration applying and the new build going live
+where the *old* app calls a now-missing signature → certify/generate error.
+
+Expand-and-contract removes that window **without** adding security risk:
+
+| Phase | Legacy 1-arg path (old app) | Pinned path (new app) | Active-org isolation |
+|---|---|---|---|
+| EXPAND applied, old build live | single-org admin: delegates to pinned → **works**; multi-org/anon: **42501** | n/a (old build) | **held** — single-org's only org *is* their active org; multi-org forced to pinned |
+| new build live | wrapper still present but unused | pinned, org-checked | **held** |
+| CONTRACT applied | removed | pinned only | **held** |
+
+So there is **no unpinned window** (the legacy path is itself secure — the
+cross-active-org exploit is closed on it too) and certify/generate keeps working
+for single-org users (≈all of prod) throughout. **Recommended over the single
+migration.** Isolation is preserved in every phase (point 5 ✓).
+
+## 3. Verification evidence (local, real Postgres)
+
+- **End state** (267+268 applied): catalogue shows **only** the two pinned
+  signatures; `rls/valuation-active-org-pin` **3/3** (dual-org admin blocked
+  cross-org, works in active org; non-admin refused; non-member/anon 42501;
+  generated invoice = net £1000 / VAT £200 / draft / org B — money math unchanged),
+  `secdef-org-rpc-guard` **15/15**, retention + invoice-snapshot + payments-integrity
+  + customer-denormalisation **41/41**, static `job-valuations` **30/30**, grant guard
+  **7/7**, typecheck + eslint clean.
+- **Expand state** (267 only, 268 held back — verified by moving the contract
+  migration aside and resetting): catalogue shows **4** signatures (2 pinned + 2
+  wrappers); probe **3/3** — single-org admin's legacy 1-arg call delegates and
+  certifies; multi-org admin's legacy call is refused (42501) and the pinned call
+  then works; anon refused. (Transient-state probe; not a committed test, since the
+  end state has no wrapper.)
+- Workflows confirmed working end-to-end in both phases (point 6 ✓).
+
+## 4. Migration-tip reconciliation
 
 | Item | Value |
 |---|---|
 | Prod migration tip (applied, #1018 / `e85a377c`) | `20261266000000` |
-| This PR's migration | `20261267000000` (next free, **above** tip) |
-| Collision scan (open branches, `266–270` range) | none — `267` is free |
-| Drift | none (prod history in sync per #1018 release) |
+| EXPAND migration | `20261267000000` (next free, above tip) |
+| CONTRACT migration | `20261268000000` (above tip) |
+| Collision scan (open branches, `266–270`) | none — `267`/`268` free |
+| Next free prefix after this release | `20261269000000` |
 
-**Independent of the R5 chain.** This fixes the pre-existing valuation RPCs (from
-`20261192`), not R5. The R5 branch migrations (`20261242`–`20261251`, PRs #975/#977
-+ the local phase-3/4/5 chain) carry prefixes **below** the applied tip `266` and
-must be **re-stamped to `268+`** before they can apply in order — that is separate,
-pre-existing R5 debt (tracked in docs PRs #1002 / #1003 / #1006) and **must not be
-bundled with this release**. Because #1019 claims `267`, the re-consolidated R5
-chain should begin at `268`.
+**Independent of the R5 chain.** R5 branch migrations (`20261242`–`20261251`, PRs
+#975/#977 + the local phase-3/4/5 chain) carry prefixes **below** the applied tip
+`266` and must be re-stamped to `269+` before they can apply in order — separate,
+pre-existing R5 debt (docs PRs #1002/#1003/#1006), **not part of this release**.
 
-## 3. Deployment-compatibility assessment (point 6)
-
-This is a **breaking signature swap** (old signatures dropped). There is no app
-code that can call both shapes, so there is a brief incompatibility window between
-the migration applying and the new Vercel build going live:
-
-- **Migration applies, old build still serving:** old code calls the 1-arg RPC →
-  `function does not exist` → certify/generate error until the new build is live.
-- Window length = migration apply → Vercel promotion (minutes).
-
-**Risk rating: LOW**, because:
-1. `certify_valuation` / `generate_valuation_invoice` are **low-frequency,
-   admin-only** actions (interim valuations on construction jobs), not hot paths.
-2. The vulnerability being fixed (a dual-org admin acting outside the active org)
-   is **currently unreachable in prod** — prod has ~0 multi-org users (verify at
-   release time). So even keeping the old path briefly would expose nothing today.
-3. Only these two actions are affected; a failed attempt is a retry, not data loss.
-
-**Recommended:** accept the minimal window — release in a low-traffic slot and
-apply the migration immediately before promoting the build. If strict zero-gap is
-required, use the optional two-phase variant in §7.
-
-## 4. Pre-release gates (all must be green)
+## 5. Pre-release gates (all green before apply)
 
 1. **CI green** on #1019 (every mandatory check).
-2. **Founder approval** to merge + apply (this pack).
-3. **Backup fresh + verified:** run `scripts/ops/off-platform-backup.sh`; confirm
-   a `success` row in `ops_backup_runs` and `/admin/ops` freshness is GREEN
-   (encryption key custody confirmed). Capture the backup id/timestamp.
+2. **Founder approval** of this plan.
+3. **Backup fresh + verified:** `scripts/ops/off-platform-backup.sh`; confirm a
+   `success` row in `ops_backup_runs` + `/admin/ops` freshness GREEN + encryption-key
+   custody; capture backup id/timestamp.
 4. **Tip confirmed:** `supabase migration list --linked` shows tip `20261266000000`,
-   no drift, history in sync.
+   history in sync, no drift.
+5. **Restore verification:** confirm the §5.3 backup is restore-proven within policy
+   (the DR drill already proves schema replay + exact-match data restore). A full
+   drill is not required for a function-only change, but freshness must be GREEN.
+   PITR is OFF (CEO cost decision) — this change writes no data on apply, so a
+   data-restore is not an expected rollback path.
 
-## 5. Restore verification
+## 6. Recommended release sequence (exact migration IDs)
 
-- Confirm the backup from step 4.3 is **restore-proven** within policy (the DR drill
-  already proves schema replay + exact-match data restore). A full restore drill is
-  **not** required for a one-function-signature change, but backup freshness must be
-  GREEN before proceeding.
-- **PITR is OFF** (CEO cost decision) — in-place RPO ≈ last backup. This change makes
-  no data writes on apply, so a data-restore is not an expected rollback path.
+Migrations are applied **one at a time** with CrewFlow's controlled pattern
+(`supabase db query -f <file> --linked` then
+`supabase migration repair --status applied <version> --linked`) — **not** a blanket
+`db push`, so EXPAND and CONTRACT cannot collapse into one step.
 
-## 6. Deployment order (migrations-first)
-
-1. Merge #1019 → `main` (squash) after CI green + approval.
-2. **Apply the migration to prod FIRST:** `supabase db push --linked` (or
-   `migration up --linked`) applies `20261267000000`. Do this in the chosen
-   low-traffic window.
-3. **Promote the new build:** ensure the Vercel deploy of the merged `main` is live
-   (new code passing `p_org_id`). Keep step 2→3 as tight as possible.
-4. **Post-apply verification (read-only on prod):**
-   - `supabase migration list --linked` → tip now `20261267000000`.
-   - Catalogue check: only `certify_valuation(uuid,uuid)` and
-     `generate_valuation_invoice(uuid,uuid,date)` exist; the old `(uuid)` /
-     `(uuid,date)` are gone (same query used in isolated verification).
-   - App health: `/api/health` OK; a real certify/generate by an admin succeeds
-     (or confirm via the next genuine valuation — do **not** fabricate a prod
-     invoice solely to smoke-test).
-5. **Record** tip `266 → 267` in the release log.
+1. **Merge** #1019 → `main` (squash) after CI green + approval.
+2. **Backup + verify** (gates §5.3–§5.5).
+3. **Apply EXPAND** `20261267000000` to prod (`db query -f` + `migration repair`).
+   → Pinned overloads + secure wrappers now live; current (old) build keeps working.
+4. **Deploy the pinned app build** — confirm the Vercel deploy of merged `main` is
+   live (calls the pinned overload).
+5. **Confirm the old build is fully drained** (no instances serving the pre-merge
+   build). Low-traffic window recommended but not required (old path stays safe).
+6. **Apply CONTRACT** `20261268000000` to prod (`db query -f` + `migration repair`).
+   → Legacy wrappers dropped; only pinned signatures remain.
+7. **Post-apply verification (read-only on prod):**
+   - `supabase migration list --linked` → tip `20261268000000`.
+   - Catalogue: only `certify_valuation(uuid,uuid)` + `generate_valuation_invoice(uuid,uuid,date)` exist.
+   - `/api/health` OK; next genuine certify/generate by an admin succeeds (do not
+     fabricate a prod invoice solely to smoke-test).
+8. **Record** tip `266 → 268` in the release log.
 
 ## 7. Rollback
 
-Because the app and DB are coupled by the signature, rollback is **both**:
-
-1. **Revert the app:** redeploy the previous Vercel build (`e85a377c`) so live code
-   calls the 1-arg shape again.
-2. **Restore the old signatures:** apply the inverse SQL — drop the new signatures
-   and re-create the `20261192000000` definitions:
-   ```sql
-   drop function if exists public.certify_valuation(uuid, uuid);
-   drop function if exists public.generate_valuation_invoice(uuid, uuid, date);
-   -- then re-run the certify_valuation(uuid) + generate_valuation_invoice(uuid,date)
-   -- bodies + grants + comments exactly as in 20261192000000.
-   ```
-   (Ship this as a forward rollback migration `20261268000000`, not a history edit —
-   migrations are forward-only.)
-3. Order on rollback is the inverse: revert app first (so no live code needs the new
-   sig), then restore old signatures.
-4. **Last resort only** (catastrophic, unrelated): restore from the §4.3 backup —
-   not expected, since the migration writes no data.
-
-## 8. Optional: strict zero-gap (two-phase) variant
-
-If the window in §3 is unacceptable:
-
-- **Phase A migration:** CREATE the new `(…, p_org_id)` signatures **and keep** the
-  old ones; deploy the new app (now calling the pinned path). Both exist; new code
-  uses the safe one.
-- **Phase B migration:** once the new build is fully live, DROP the old signatures.
-
-This removes the window at the cost of a second migration + a short period where the
-old (unpinned) signature still exists — acceptable only because the exploit is
-currently unreachable (~0 multi-org users). Given the low frequency, §6 (single
-migration, tight window) is recommended over this.
+- **Between step 3 and step 6** (EXPAND applied, CONTRACT not yet): nothing to undo
+  for safety — the wrappers are secure and the old build works. If the new build
+  must be pulled, redeploy the previous build (`e85a377c`); the legacy wrappers keep
+  serving single-org admins. To fully revert the DB, ship a forward migration
+  `20261269000000` dropping the pinned overloads and restoring the `20261192000000`
+  bodies (never a history edit).
+- **After step 6** (CONTRACT applied): to restore the legacy path, ship a forward
+  migration re-creating the two wrappers exactly as in `20261267000000`.
+- **Last resort only** (catastrophic, unrelated): restore from the §5.3 backup — not
+  expected; the migrations write no data.
 
 ---
 
 ### Founder decision required
-Approve: (a) merge #1019, (b) apply `20261267000000` to prod via §6, (c) the §3
-window trade-off (or elect §8). R5 chain re-stamping is **not** part of this
-decision.
+Approve: (a) merge #1019; (b) the §6 expand-and-contract sequence (apply
+`20261267000000`, deploy, drain, apply `20261268000000`). R5 chain re-stamping is
+**not** part of this decision.
