@@ -16,6 +16,8 @@ const MIG_RESIDUAL = "supabase/migrations/20261071000000_stock_residual_hardenin
 const MIG_WAVG = "supabase/migrations/20261180000000_stock_weighted_average_cost.sql";
 /** Depot-only receipt: a job-tagged PO cannot enter stock (the COGS double-count fix). */
 const MIG_DEPOT_ONLY = "supabase/migrations/20261212000000_stock_receipt_depot_only.sql";
+/** Correction → admin-only: the after-the-fact ledger write joins adjustment's gate. */
+const MIG_CORR_ADMIN = "supabase/migrations/20261266000000_stock_correction_admin_gate.sql";
 /** The pure valuation fold — the read-side authority, must also never touch finances. */
 const LIB_VALUATION = "lib/stock/valuation.ts";
 const ACTIONS = "app/(app)/stock/actions.ts";
@@ -456,6 +458,44 @@ describe("negative stock is refused and the check is serialised", () => {
     expect(sql).toMatch(/only an owner or admin can adjust stock/);
     // and the app mirrors it so a member sees a sentence, not a raw refusal
     expect(codeOf(read(ACTIONS))).toMatch(/ctx\.membership\.role === "owner" \|\| ctx\.membership\.role === "admin"/);
+  });
+
+  it("corrections are ADMIN-ONLY too — the other after-the-fact ledger write (20261266000000)", () => {
+    // A correction REVERSES a posted movement and feeds job profitability, so it
+    // carries the SAME is_org_admin gate as record_stock_adjustment. The RPC is
+    // the enforcing control (callable directly via PostgREST), not the action.
+    const corr = sqlOnly(read(MIG_CORR_ADMIN));
+    // The redefinition is still SECURITY INVOKER — not a privileged back door.
+    const start = corr.indexOf("create or replace function public.record_stock_correction(");
+    expect(start, "correction RPC must be redefined here").toBeGreaterThan(-1);
+    const header = corr.slice(start, corr.indexOf("$$", start));
+    expect(header, "correction must stay SECURITY INVOKER").not.toMatch(/security definer/i);
+    // The admin gate, mirroring record_stock_adjustment verbatim (JWT-asymmetric).
+    expect(corr).toMatch(/if auth\.uid\(\) is not null and not public\.is_org_admin\(p_org_id\) then/);
+    expect(corr).toMatch(/only an owner or admin can correct a stock movement/);
+    // The ACTIVE-ORG PIN is preserved (tenant isolation unchanged).
+    expect(corr).toMatch(/where id = p_movement_id and org_id = p_org_id/);
+    // The app mirrors it so a member sees a sentence, not a raw 42501.
+    expect(codeOf(read(ACTIONS))).toMatch(
+      /Only an owner or admin can correct a stock movement/,
+    );
+  });
+
+  it("issue / transfer / receipt stay MEMBER-level — the PR must not gate routine ops", () => {
+    // Guard against over-reach: the three routine operational write paths must
+    // NOT acquire an is_org_admin gate. Each RPC body (from its own header to its
+    // $$ terminator) is checked in isolation so the adjustment/correction gate
+    // next door cannot be mistaken for theirs.
+    const rpcs = sqlOnly(read(MIG_RPCS));
+    for (const name of ["record_stock_issue", "record_stock_transfer", "record_stock_receipt_from_grn"]) {
+      const start = rpcs.indexOf(`create or replace function public.${name}(`);
+      expect(start, `${name} not found`).toBeGreaterThan(-1);
+      // Slice to the NEXT function definition (order-independent, robust against
+      // how each body terminates) so the adjustment gate next door is excluded.
+      const nextFn = rpcs.indexOf("create or replace function public.", start + 1);
+      const body = rpcs.slice(start, nextFn === -1 ? undefined : nextFn);
+      expect(body, `${name} must stay member-level`).not.toMatch(/is_org_admin/);
+    }
   });
 });
 

@@ -468,6 +468,15 @@ export async function correctStockMovement(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  // ADMIN-ONLY. A correction reverses the authoritative ledger and feeds job
+  // profitability, so it carries the same owner/admin gate as adjustStock. The
+  // enforcing control is the RPC (record_stock_correction checks is_org_admin —
+  // 20261266000000); this check exists so a member sees a sentence instead of a
+  // raw 42501. Issue/transfer/receive stay member-level by design.
+  const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
+  if (!isAdmin) {
+    return formError("Only an owner or admin can correct a stock movement.");
+  }
   const parsed = correctionFormSchema.safeParse({
     movement_id: formData.get("movement_id") ?? "",
     reason: formData.get("reason") ?? "",
