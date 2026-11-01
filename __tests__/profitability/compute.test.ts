@@ -181,6 +181,7 @@ describe("dashboard roll-ups", () => {
     );
     expect(averageMargin(noRev)).toBeNull();
   });
+
 });
 
 describe("monthly series", () => {
@@ -232,5 +233,28 @@ describe("monthly series", () => {
       now,
     );
     expect(p).toBe(1300); // 1500 - 200
+  });
+
+  it("profitByMonth EXCLUDES cost rows older than the window — all-time finances is safe for the tiles", () => {
+    // The dashboard passes an ALL-TIME `finances` read to this helper (so the
+    // per-job leaderboard gets all-time costs). This guards that doing so does
+    // NOT leak pre-window costs into the 6 monthly buckets: an old cost row must
+    // be dropped, exactly as an old revenue row is. (Regression guard for
+    // app/(app)/dashboard/page.tsx removing the 6-month `.gte` on finances.)
+    const now = new Date("2026-05-20T00:00:00Z");
+    const series = profitByMonth(
+      [{ amount: 1000, created_at: "2026-05-10T00:00:00Z" }],
+      [
+        { amount: 300, created_at: "2026-05-12T00:00:00Z" }, // in-window
+        { amount: 9999, created_at: "2024-01-01T00:00:00Z" }, // >1yr old — must be ignored
+      ],
+      6,
+      "created_at",
+      now,
+    );
+    const may = series.find((b) => b.month === "2026-05")!;
+    expect(may.costs).toBe(300); // the 9999 old cost did NOT leak in
+    // and the total cost across all 6 buckets excludes the old row too
+    expect(series.reduce((s, b) => s + b.costs, 0)).toBe(300);
   });
 });
