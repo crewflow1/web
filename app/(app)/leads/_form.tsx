@@ -17,6 +17,7 @@ import {
   TextareaField,
   SelectField,
 } from "../_components/field";
+import { CustomerCombobox } from "../_components/customer-combobox";
 import {
   LEAD_SOURCES,
   LEAD_URGENCIES,
@@ -87,11 +88,6 @@ export function LeadForm({
   // `withPreservedOption` guarantees the currently-set id always has an <option>.
   const selectedCustomerId = pick("customer_id");
   const selectedAssignee = pick("assigned_to");
-  const customerOptions = withPreservedOption(
-    customers,
-    selectedCustomerId,
-    (id) => ({ id, name: "Current customer" }),
-  );
   const staffOptions = withPreservedOption(
     staff,
     selectedAssignee,
@@ -179,14 +175,12 @@ export function LeadForm({
       />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <SelectField
+        <CustomerCombobox
           name="customer_id"
           label="Customer"
           defaultValue={selectedCustomerId}
-          options={[
-            { value: "", label: "— None / new enquirer —" },
-            ...customerOptions.map((c) => ({ value: c.id, label: c.name })),
-          ]}
+          initialOptions={customers}
+          noneLabel="— None / new enquirer —"
           error={fe.customer_id}
         />
         <SelectField

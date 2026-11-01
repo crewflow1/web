@@ -6,6 +6,11 @@ import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { getPreferencesForUserKeys } from "@/server/services/notification-preferences-service";
 import { resolvePushDelivery } from "./preferences";
 import {
+  batchNeedsAssignments,
+  isMemberEligible,
+  loadNotificationEligibilityContext,
+} from "./recipient-eligibility";
+import {
   buildPushPayload,
   type NotificationRow,
   type PushSubscriptionRecord,
@@ -188,17 +193,32 @@ export async function enqueuePushForNotifications(
   }
   if (subscribedByOrg.size === 0) return 0; // nobody subscribed in any org.
 
+  // STAFF PRIVACY. An org-wide row must not push to every subscriber — only to
+  // those eligible for it (admins always; staff only for non-sensitive rows
+  // their scope admits). Load the same context RLS uses, then gate each (row,
+  // user) pair through the shared rule. Fails closed on a read error.
+  const eligibilityCtx = await loadNotificationEligibilityContext(orgIds, {
+    needAssignments: batchNeedsAssignments(rows),
+  });
+
   // Candidate (row, user) recipients before preference filtering.
   const candidates: Array<{ row: NotificationRow; userId: string }> = [];
   for (const row of rows) {
     const subscribed = subscribedByOrg.get(row.org_id);
     if (!subscribed || subscribed.size === 0) continue;
     if (row.user_id != null) {
-      if (subscribed.has(row.user_id)) {
+      if (
+        subscribed.has(row.user_id) &&
+        isMemberEligible(row, row.user_id, eligibilityCtx)
+      ) {
         candidates.push({ row, userId: row.user_id });
       }
     } else {
-      for (const userId of subscribed) candidates.push({ row, userId });
+      for (const userId of subscribed) {
+        if (isMemberEligible(row, userId, eligibilityCtx)) {
+          candidates.push({ row, userId });
+        }
+      }
     }
   }
   if (candidates.length === 0) return 0;

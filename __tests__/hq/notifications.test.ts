@@ -135,6 +135,7 @@ function notif(over: Partial<NotificationRow> = {}): NotificationRow {
     org_id: "o1",
     user_id: null,
     audience: "customer",
+    audience_scope: "admins",
     type: "test",
     category: "other",
     title: "test",

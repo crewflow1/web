@@ -110,7 +110,12 @@ const PAGE_PINS: Array<[string, string[]]> = [
   ["app/(app)/assets/templates/page.tsx", ["asset_inspection_templates"]],
   // ---- commercial
   ["app/(app)/jobs/page.tsx", ["customers", "jobs"]],
-  ["app/(app)/customers/page.tsx", ["customers"]],
+  // NOTE: app/(app)/customers/page.tsx is NOT listed here — it no longer reads
+  // `customers` inline. It now matches through the shared search_customers RPC
+  // (lib/customers/search), whose active-org pin is `orgId: ctx.org.id` + the
+  // RPC's own current_org_ids()/42501 guard. That pin is asserted in its own
+  // block below ("customers list pins the active org through the shared RPC"),
+  // and the cross-tenant guarantee is proven in the integration-RLS tier.
   ["app/(app)/invoices/page.tsx", ["invoices", "customers"]],
   ["app/(app)/invoices/new/page.tsx", ["quotes"]],
   ["app/(app)/quotes/page.tsx", ["quotes", "customers"]],
@@ -393,7 +398,6 @@ describe("/api/search — every entity in the palette is active-org scoped", () 
   });
 
   for (const table of [
-    "customers",
     "memberships",
     "risk_assessments",
     "permits_to_work",
@@ -408,11 +412,24 @@ describe("/api/search — every entity in the palette is active-org scoped", () 
       expect(i, `${table} branch not found`).toBeGreaterThan(-1);
       // The pin must appear inside this branch's own chain, not merely
       // somewhere in the file — a per-branch window, because this route issues
-      // eight independent queries and dropping one is the realistic regression.
+      // several independent queries and dropping one is the realistic regression.
       const window = s.slice(i, i + 600);
       expect(window, `the ${table} search branch lost its active-org predicate`).toMatch(CTX_PIN);
     });
   }
+
+  it("pins the customers search branch via the guarded shared RPC", () => {
+    // Customers are matched through search_customers (SECURITY DEFINER,
+    // current_org_ids()+42501 guard). Its active-org pin is the p_org_id
+    // argument, not a .from("customers").eq(...) chain.
+    const s = SEARCH();
+    const i = s.indexOf('rpc("search_customers"');
+    expect(i, "customers RPC branch not found").toBeGreaterThan(-1);
+    const window = s.slice(i, i + 200);
+    expect(window, "the customers RPC branch lost its active-org argument").toMatch(
+      /p_org_id:\s*ctx\.org\.id/,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -638,10 +655,21 @@ describe("paged lists carry a unique `id` tiebreaker (the F-1 truncation class)"
     });
   }
 
-  it("customers already had the tiebreaker (regression guard, not a new fix)", () => {
-    expect(src("app/(app)/customers/page.tsx")).toMatch(
-      /\.order\("created_at"[\s\S]{0,120}?\.order\("id"/,
+  it("the customer-search RPC breaks created_at ties on the unique id (stable paging)", () => {
+    // The customers list no longer orders inline — it pages through the shared
+    // search_customers RPC. The stable created_at+id tiebreak that makes paging
+    // exact now lives in the RPC, so assert it there.
+    expect(src("supabase/migrations/20261261000000_customer_search.sql")).toMatch(
+      /order by[\s\S]{0,120}?r\.created_at desc[\s\S]{0,40}?r\.id desc/i,
     );
+  });
+
+  it("customers list pins the active org through the shared search RPC", () => {
+    // The active-org pin for the list is `orgId: ctx.org.id` passed to
+    // searchCustomers; the RPC refuses any other org (current_org_ids + 42501).
+    const s = src("app/(app)/customers/page.tsx");
+    expect(s).toContain("searchCustomers(");
+    expect(s).toMatch(/orgId:\s*ctx\.org\.id/);
   });
 
   it("the jobs list still breaks scheduled_date ties on id (regression guard)", () => {

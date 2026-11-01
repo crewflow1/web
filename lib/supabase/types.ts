@@ -24144,6 +24144,32 @@ export type Database = {
         }
         Returns: string
       }
+      search_customers: {
+        Args: {
+          p_limit?: number
+          p_offset?: number
+          p_org_id: string
+          p_query?: string
+          p_type?: string
+        }
+        Returns: {
+          address_line1: string
+          address_line2: string
+          city: string
+          country: string
+          county: string
+          created_at: string
+          customer_type: string
+          email: string
+          id: string
+          name: string
+          parent_customer_id: string
+          phone: string
+          postcode: string
+          relevance: number
+          total_count: number
+        }[]
+      }
       set_expense_budget: {
         Args: {
           p_amount_pence: number

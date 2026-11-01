@@ -568,6 +568,7 @@ export default async function EditCustomerPage({
         submitLabel="Save changes"
         cancelHref="/customers"
         parentOptions={parentOptions}
+        excludeId={customer.id}
         defaults={{
           name: customer.name,
           email: customer.email ?? "",

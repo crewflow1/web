@@ -311,8 +311,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: jobs name lookup CHUNKED .in('id', idsChunk) where each chunk is ≤JOB_IN_CHUNK=500 unique PKs — jobs.id is unique so a chunk yields ≤500 rows. The blueprints register above is fully PAGED (listBlueprintsForOrg → fetchAllRows), so the job-id set can exceed 500; the lookup is chunked to stay below the cap. Same class as site-reports/page.tsx:111.",
   "app/(app)/toolbox/page.tsx:90":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the toolbox register (.limit(500)) — ≤500 unique PKs",
-  "app/(app)/jobs/page.tsx:148":
-    "bounded: the 'Today's jobs' panel query — one org × one calendar day (.eq('scheduled_date', todayIso)), a handful of rows, never near the cap. The paginated list query above it is windowed via .range(). Moved 136→147 in the final-roadmap wave (DataTable adoption) — pure shift, same read.",
+  "app/(app)/jobs/page.tsx:145":
+    "bounded: the 'Today's jobs' panel query — one org × one calendar day (.eq('scheduled_date', todayIso)), a handful of rows, never near the cap. The paginated list query above it is windowed via .range(). Moved to :145 when Feature-1 search (#1014, searchCustomers RPC) and the Feature-2 Import button (#1013) both landed in jobs/page.tsx — pure shift, same read.",
   "app/(app)/leads/page.tsx:65":
     "paged: the pipeline read IS complete — executed via fetchAllRows((from,to) => query.range(from,to)) at the bottom of the fn; the builder pattern places the .range terminator beyond the static region window, so the analyser can't see it. (Line moved 60→61 when the R4 capability gate replaced the 1-line requireManagementRole gate with a 2-line comment + requireCapability; reason unchanged.)",
 
@@ -358,12 +358,14 @@ const ALLOWLIST: Record<string, string> = {
   // NOT A READ: `.from('notifications').insert(payload).select(ALL_COLS)` — an
   // INSERT…RETURNING. The returned set is bounded by the payload it just wrote,
   // so it cannot truncate; it trips only because the region carries `.select(`.
-  "server/services/notifications-service.ts:164":
-    "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read. (Line moved to 144 as the R4 push/notification-channel branch shifted surrounding lines; 144→159 when the uuidOrNull helper block landed; 159→164 when the HQ email-routing imports landed above it — pure shifts, same INSERT…RETURNING.)",
-  "lib/notifications/push.ts:533":
+  "server/services/notifications-service.ts:169":
+    "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read. (Line moved to 144 as the R4 push/notification-channel branch shifted surrounding lines; 144→159 when the uuidOrNull helper block landed; 159→164 when the HQ email-routing imports landed above it; 164→169 when the staff-privacy eligibility import + conditional audience_scope spreads landed — pure shifts, same INSERT…RETURNING.)",
+  // (push 533→553, sms 524→543 when the staff-privacy eligibility imports landed
+  // atop both channel files — FEATURE 3; pure shifts, same bounded drain reads.)
+  "lib/notifications/push.ts:553":
     "bounded: `.from('notifications').select(...).in('id', ids)` where ids is the batch drawn from the just-claimed push_deliveries drain (≤ PUSH_DRAIN_BATCH_SIZE < 1000) — an id-keyed hydrate of an already-bounded set, not a completeness-sensitive scan. Same class as cis-statements.ts:169.",
-  "lib/notifications/sms.ts:524":
-    "bounded: `.from('notifications').select(...).in('id', ids)` where ids is the batch drawn from the just-claimed sms_deliveries drain (≤ SMS_DRAIN_BATCH_SIZE=50 < 1000) — an id-keyed hydrate of an already-bounded set, not a completeness-sensitive scan. Same class as lib/notifications/push.ts:533.",
+  "lib/notifications/sms.ts:543":
+    "bounded: `.from('notifications').select(...).in('id', ids)` where ids is the batch drawn from the just-claimed sms_deliveries drain (≤ SMS_DRAIN_BATCH_SIZE=50 < 1000) — an id-keyed hydrate of an already-bounded set, not a completeness-sensitive scan. Same class as lib/notifications/push.ts:553.",
 
   // ── Job-billing schedule / retention wave — genuinely-bounded SINGLE-SCOPE
   //    reads surfaced once job_billing_plans/job_billing_stages/retention_releases

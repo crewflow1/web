@@ -27,6 +27,7 @@ import type {
   QuoteTemplateApplyOption,
 } from "@/lib/pricing/schema";
 import { PriceBookPicker } from "./_price-book-picker";
+import { CustomerCombobox } from "../_components/customer-combobox";
 
 /**
  * Quote builder — used by both /quotes/new and /quotes/[id].
@@ -299,35 +300,15 @@ export function QuoteBuilder({
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">Customer + site</h2>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div>
-            <label className="block text-sm font-medium text-slate-800" htmlFor="customer_id">
-              Customer <span className="text-red-500">*</span>
-            </label>
-            <select
-              id="customer_id"
-              name="customer_id"
-              required
-              value={customerId}
-              onChange={(e) => setCustomerId(e.target.value)}
-              aria-invalid={!!customerError}
-              aria-describedby={customerError ? "customer_id-error" : undefined}
-              className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-            >
-              <option value="" disabled>
-                {customers.length === 0 ? "— No customers yet —" : "Select a customer…"}
-              </option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            {customerError ? (
-              <p id="customer_id-error" role="alert" className="mt-1 text-xs text-red-700">
-                {customerError}
-              </p>
-            ) : null}
-          </div>
+          <CustomerCombobox
+            name="customer_id"
+            label="Customer"
+            required
+            defaultValue={customerId}
+            initialOptions={customers}
+            error={customerError}
+            onSelect={setCustomerId}
+          />
           <div>
             <label className="block text-sm font-medium text-slate-800" htmlFor="property_id">
               Site / property <span className="text-xs text-slate-500">Optional</span>

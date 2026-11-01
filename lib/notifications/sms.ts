@@ -4,6 +4,11 @@ import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { getNotificationSmsProvider } from "@/lib/comms";
 import { getPreferencesForUserKeys } from "@/server/services/notification-preferences-service";
 import { resolveSmsDelivery, type NotificationPreference } from "./preferences";
+import {
+  batchNeedsAssignments,
+  isMemberEligible,
+  loadNotificationEligibilityContext,
+} from "./recipient-eligibility";
 import type { NotificationRow } from "./types";
 
 /**
@@ -135,14 +140,19 @@ export function resolveSmsRecipients(args: {
   membersByOrg: ReadonlyMap<string, ReadonlySet<string>>;
   phonedKeys: ReadonlySet<string>;
   prefIndex: ReadonlyMap<string, NotificationPreference>;
+  /** Staff-privacy gate — may this member receive this row? Defaults to allow
+   *  so the pure resolver's existing unit tests (which don't model roles) keep
+   *  their meaning; the IO path always supplies the real eligibility check. */
+  isEligible?: (row: NotificationRow, userId: string) => boolean;
 }): SmsRecipient[] {
-  const { rows, membersByOrg, phonedKeys, prefIndex } = args;
+  const { rows, membersByOrg, phonedKeys, prefIndex, isEligible } = args;
   const out: SmsRecipient[] = [];
   const seen = new Set<string>();
 
   const keep = (row: NotificationRow, userId: string): void => {
     const dedupeKey = `${row.id}::${userId}`;
     if (seen.has(dedupeKey)) return;
+    if (isEligible && !isEligible(row, userId)) return;
     if (!phonedKeys.has(`${row.org_id}::${userId}`)) return;
     const pref = prefIndex.get(`${row.org_id}::${userId}::${row.category}`) ?? null;
     if (
@@ -297,12 +307,21 @@ export async function enqueueSmsForNotifications(
   }
   const prefIndex = await getPreferencesForUserKeys(Array.from(prefKeySet.values()));
 
-  // (4) Pure decision: fan-out × preference × phone.
+  // STAFF PRIVACY. Gate the org-wide fan-out so an org-wide row only reaches
+  // members eligible for it (admins always; staff only for non-sensitive rows
+  // their scope admits). Same context + rule as RLS and the push channel; fails
+  // closed on a read error.
+  const eligibilityCtx = await loadNotificationEligibilityContext(orgIds, {
+    needAssignments: batchNeedsAssignments(rows),
+  });
+
+  // (4) Pure decision: eligibility × fan-out × preference × phone.
   const recipients = resolveSmsRecipients({
     rows,
     membersByOrg,
     phonedKeys,
     prefIndex,
+    isEligible: (row, userId) => isMemberEligible(row, userId, eligibilityCtx),
   });
   if (recipients.length === 0) return 0;
 

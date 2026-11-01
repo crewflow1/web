@@ -132,8 +132,12 @@ describe("global search route — SQL-side + cross-entity address discovery", ()
     expect(src).toContain("combineOr(");
   });
 
-  it("searches customers across name + structured address columns", () => {
-    expect(src).toContain("CUSTOMER_SEARCH_COLUMNS");
+  it("matches customers through the ONE shared capability; jobs/leads via their column sets", () => {
+    // Customers now go through the shared search_customers RPC (multi-token,
+    // normalised postcode, phone-tolerant), so the route no longer builds a
+    // single-term CUSTOMER_SEARCH_COLUMNS ILIKE for them.
+    expect(src).toContain('search_customers');
+    expect(src).not.toContain("CUSTOMER_SEARCH_COLUMNS");
     expect(src).toContain("JOB_SEARCH_COLUMNS");
     expect(src).toContain("LEAD_SEARCH_COLUMNS");
   });
@@ -165,14 +169,18 @@ describe("global search route — SQL-side + cross-entity address discovery", ()
 describe("jobs page — address search via site columns + customer-id chaining", () => {
   const src = read("app/(app)/jobs/page.tsx");
 
-  it("imports the shared filter builders + column sets", () => {
+  it("imports the shared job filter builders + the shared customer-search capability", () => {
     expect(src).toContain('from "@/lib/search/filters"');
     expect(src).toContain("JOB_SEARCH_COLUMNS");
-    expect(src).toContain("CUSTOMER_SEARCH_COLUMNS");
+    // The customer axis of the jobs search now goes through the ONE shared
+    // capability (multi-token / normalised postcode / phone-tolerant), not a
+    // single-term CUSTOMER_SEARCH_COLUMNS ILIKE.
+    expect(src).toContain("searchCustomers");
+    expect(src).not.toContain("CUSTOMER_SEARCH_COLUMNS");
   });
 
-  it("runs a customer pre-pass and folds the ids into the jobs .or()", () => {
-    expect(src).toContain('.from("customers")');
+  it("runs the customer pre-pass through the shared RPC and folds the ids into the jobs .or()", () => {
+    expect(src).toContain("searchCustomers(");
     expect(src).toMatch(/inIdsBranch\(\s*"customer_id"/);
     expect(src).toContain("combineOr(siteBranch, customerIdBranch)");
     // The page now has TWO job queries (paginated list + the bounded "today"

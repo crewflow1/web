@@ -1,16 +1,15 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { readFailure } from "@/lib/supabase/read-failure";
 import { getRequestI18n } from "@/server/i18n/request";
 import { EmptyState } from "../_components/empty-state";
 import { HelpLink } from "../_components/help-link";
 import { ImportButton } from "@/components/import/import-button";
 import { resolveJobAddress, formatAddressOneLine } from "@/lib/address";
+import { searchCustomers } from "@/lib/customers/search";
 import {
   ilikeOrFilter,
   inIdsBranch,
   combineOr,
-  CUSTOMER_SEARCH_COLUMNS,
   JOB_SEARCH_COLUMNS,
 } from "@/lib/search/filters";
 import { MapActions } from "@/components/maps/MapActions";
@@ -101,25 +100,23 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
   const siteBranch = ilikeOrFilter(term, JOB_SEARCH_COLUMNS);
   let customerIdBranch: string | null = null;
   if (term) {
-    const custOr = ilikeOrFilter(term, CUSTOMER_SEARCH_COLUMNS);
-    if (custOr) {
-      const { data: matchCustomers, error: matchError } = await supabase
-        .from("customers")
-        .select("id")
-        // ACTIVE-org pin: without it the search resolves the OTHER org's
-        // customers into the `customer_id.in.(…)` branch below.
-        .eq("org_id", ctx.org.id)
-        .or(custOr)
-        .limit(CUSTOMER_MATCH_LIMIT);
-      // A failed pre-pass would silently drop the customer branch from the
-      // search — results would LOOK complete while missing every
-      // customer-matched job.
-      if (matchError) throw readFailure("jobs: customer search", matchError);
-      customerIdBranch = inIdsBranch(
-        "customer_id",
-        (matchCustomers ?? []).map((c) => c.id),
-      );
-    }
+    // Resolve matching customers through the ONE shared customer-search
+    // capability (the search_customers RPC) so a job is discoverable by the
+    // SAME rich match the customers list + pickers use — multi-token, partial
+    // anywhere, normalised postcode, formatting-tolerant phone — not just a
+    // single-term name/address ILIKE. The RPC is org-pinned + 42501-guarded, so
+    // the OTHER org's customers can never leak into the customer_id.in.(…) branch;
+    // it is LOUD (throws) so a failed pre-pass can't silently drop the customer
+    // axis and make results LOOK complete while missing every customer-matched job.
+    const { rows: matchCustomers } = await searchCustomers(supabase, {
+      orgId: ctx.org.id,
+      query: term,
+      limit: CUSTOMER_MATCH_LIMIT,
+    });
+    customerIdBranch = inIdsBranch(
+      "customer_id",
+      matchCustomers.map((c) => c.id),
+    );
   }
   const searchOr = combineOr(siteBranch, customerIdBranch);
 

@@ -4,6 +4,12 @@ import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { queueDigestEmail } from "@/lib/notifications/email";
 import {
+  isMemberEligible,
+  loadNotificationEligibilityContext,
+  type NotificationEligibilityContext,
+} from "@/lib/notifications/recipient-eligibility";
+import { coerceAudienceScope } from "@/lib/notifications/eligibility";
+import {
   buildDigestEmail,
   type DigestNotification,
   type NotificationCadence,
@@ -286,6 +292,14 @@ export async function runNotificationDigest(
   const cursors = await fetchCursors(c, orgIds, userIds);
   const emails = await fetchUserEmails(c, userIds);
 
+  // STAFF PRIVACY. The digest fans org-wide rows to each opted-in member, so it
+  // must apply the same eligibility rule as RLS/push/SMS. Load the context once
+  // for every org in this pass (assignments included — a daily cron can afford
+  // it) and gate each org-wide row per recipient inside processUserCadence.
+  const eligibilityCtx = await loadNotificationEligibilityContext(orgIds, {
+    needAssignments: true,
+  });
+
   // (4) Fairness: process the STALEST cursors first (nullsFirst = never-sent),
   // bounded per pass so a huge roster can't blow the function budget. Use each
   // user's oldest cursor across cadences as the sort key.
@@ -322,6 +336,7 @@ export async function runNotificationDigest(
           recipientName: email.name,
           cursorMs: cursors.get(`${u.org_id}::${u.user_id}::${cadence}`) ?? null,
           now,
+          eligibilityCtx,
         });
         if (queued.queued) {
           digestsQueued++;
@@ -366,6 +381,7 @@ async function processUserCadence(
     recipientName: string | null;
     cursorMs: number | null;
     now: Date;
+    eligibilityCtx: NotificationEligibilityContext;
   },
 ): Promise<{ queued: boolean; count: number }> {
   const {
@@ -377,6 +393,7 @@ async function processUserCadence(
     recipientName,
     cursorMs,
     now,
+    eligibilityCtx,
   } = args;
 
   const lookback = cadence === "daily" ? DAILY_LOOKBACK_MS : WEEKLY_LOOKBACK_MS;
@@ -391,7 +408,7 @@ async function processUserCadence(
   const { data, error } = await c
     .from("notifications" as never)
     .select(
-      "id, category, title, body, priority, action_url, created_at, user_id" as never,
+      "id, category, title, body, priority, action_url, created_at, user_id, audience_scope, source_module, source_id" as never,
     )
     .eq("org_id" as never, org_id as never)
     .in("audience" as never, ["customer", "both"] as never)
@@ -409,7 +426,21 @@ async function processUserCadence(
   const rows = ((data as unknown as Array<Record<string, unknown>>) ?? []).filter(
     (r) => {
       const uid = (r.user_id as string | null) ?? null;
-      return uid === null || uid === user_id;
+      // Targeted → only the owner. Org-wide → the staff-privacy rule (admins
+      // always; staff only for non-sensitive rows their scope admits), so the
+      // digest never carries a financial/admin org-wide row to a staff inbox.
+      return isMemberEligible(
+        {
+          user_id: uid,
+          org_id,
+          category: (r.category as never) ?? "other",
+          audience_scope: coerceAudienceScope(r.audience_scope),
+          source_module: (r.source_module as string | null) ?? null,
+          source_id: (r.source_id as string | null) ?? null,
+        },
+        user_id,
+        eligibilityCtx,
+      );
     },
   );
 
