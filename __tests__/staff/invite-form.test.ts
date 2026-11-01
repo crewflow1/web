@@ -94,9 +94,12 @@ describe("Staff page — admin-only Add Staff button (page-level role gate)", ()
     // the SAME conditional, so allow that one sibling between the gate and the
     // button — the gating itself is unchanged. (The "never unconditionally" test
     // below still guards that the button never escapes the isAdmin branch.)
-    expect(STAFF_PAGE).toMatch(
-      /\{\s*isAdmin\s*\?\s*\(?\s*(<ImportButton[^>]*\/>\s*)?<AddStaffButton/,
-    );
+    // `{isAdmin ? ( ...<AddStaffButton` — the required true-branch open paren
+    // then the button within it (the false branch is `: null`, no button), so
+    // this still proves true-branch placement even though a wrapper <div> and
+    // the admin-gated <ImportButton/> now precede it. Span-bounded so it can't
+    // drift across unrelated structure.
+    expect(STAFF_PAGE).toMatch(/\{\s*isAdmin\s*\?\s*\([\s\S]{0,300}?<AddStaffButton/);
   });
 
   it("uses a prominent size for the button (size=\"lg\")", () => {
