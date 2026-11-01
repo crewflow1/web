@@ -38,6 +38,9 @@ const GUIDE: Record<string, string> = {
   Payroll: "payroll-software",
   RAMS: "rams-software",
   "Permits & toolbox talks": "toolbox-talks",
+  Fleet: "fleet-management",
+  "Retention & aged debt": "retention-software",
+  "Stock & warehouses": "stock-management",
 };
 
 export default function FeaturesHubPage() {
