@@ -7,16 +7,33 @@
 
 /**
  * The create forms autofill supports in Phase 1 — one representative per domain.
- * The DB CHECK on `form_import_drafts.form_type` (migration 20261264000000) and
+ * The DB CHECK on `form_import_drafts.form_type` (migration 20261265000000) and
  * this list are pinned against each other by the registry test, so neither can
  * drift from the other without failing CI.
  */
 export const AUTOFILL_FORM_TYPES = [
-  "customer", // Sales
-  "supplier", // Money
-  "job", // Projects
-  "risk_assessment", // Site & Safety
-  "staff_invite", // People
+  // Sales
+  "customer",
+  "lead",
+  // Money / procurement
+  "supplier",
+  // Projects / sites
+  "job",
+  "site",
+  // Site & Safety
+  "risk_assessment",
+  "permit",
+  "toolbox_talk",
+  "snag",
+  "diary",
+  "compliance_document",
+  "itp",
+  // People
+  "staff_invite",
+  // Materials / Stock / Fleet / Assets
+  "stock_item",
+  "vehicle",
+  "asset",
 ] as const;
 export type AutofillFormType = (typeof AUTOFILL_FORM_TYPES)[number];
 

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ImportButton } from "@/components/import/import-button";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
@@ -101,12 +102,15 @@ export default async function CompliancePage({ searchParams }: { searchParams: S
             reminder 30 days, 7 days and the day each expiry lands.
           </p>
         </div>
-        <Link
-          href="/compliance/new"
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-        >
-          + Add document
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <ImportButton formType="compliance_document" />
+          <Link
+            href="/compliance/new"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            + Add document
+          </Link>
+        </div>
       </header>
 
       {errorMessage ? (

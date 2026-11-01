@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ImportButton } from "@/components/import/import-button";
 import { requireOrgContext } from "@/server/auth/session";
 import { loadFleetOverview } from "@/server/services/fleet-snapshot";
 import { formatGbp } from "@/lib/money";
@@ -67,6 +68,7 @@ export default async function FleetPage({ searchParams }: { searchParams: SP }) 
           >
             Vehicle register
           </Link>
+          <ImportButton formType="vehicle" />
           <Link
             href="/fleet/vehicles/new"
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"

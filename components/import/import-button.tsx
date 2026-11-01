@@ -54,10 +54,15 @@ export function ImportButton({
   formType,
   size = "md",
   className,
+  newPathOverride,
 }: {
   formType: AutofillFormType;
   size?: "sm" | "md" | "lg";
   className?: string;
+  /** For a CONTEXTUAL create route (e.g. /jobs/[id]/variations/new) the page
+   *  passes the resolved path; the registry's static newPath is used otherwise.
+   *  Ignored for event-target forms. */
+  newPathOverride?: string;
 }) {
   const config = AUTOFILL_FORMS[formType];
   const router = useRouter();
@@ -111,8 +116,9 @@ export function ImportButton({
       // Prefill the existing /new page. The values are re-read server-side from
       // the draft (so a refresh keeps them and they are re-validated), keyed by
       // the draft id in the URL.
-      const sep = config.target.newPath.includes("?") ? "&" : "?";
-      router.push(`${config.target.newPath}${sep}import=${encodeURIComponent(draftId)}`);
+      const path = newPathOverride ?? config.target.newPath;
+      const sep = path.includes("?") ? "&" : "?";
+      router.push(`${path}${sep}import=${encodeURIComponent(draftId)}`);
     } else {
       // The existing create modal listens for this event; hand it the draft id
       // and the proposed values so it can prefill itself.

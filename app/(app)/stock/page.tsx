@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ImportButton } from "@/components/import/import-button";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { loadStockPositions, type StockClient } from "@/server/services/stock";
@@ -112,6 +113,7 @@ export default async function StockPage({ searchParams }: { searchParams: SP }) 
           >
             All items
           </Link>
+          <ImportButton formType="stock_item" />
           <Link
             href="/stock/items/new"
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"

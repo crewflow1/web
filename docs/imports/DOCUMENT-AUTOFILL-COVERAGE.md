@@ -1,122 +1,132 @@
 # Document-to-form autofill — coverage inventory
 
-**Feature 2, Phase 1.** This lists every record-creation entry point in the
-authenticated product and the status of its "Import" affordance. It is the
-explicit audit the mandate asked for, and the backlog for full coverage.
+**Feature 2.** Every record-creation entry point in the authenticated product, with
+the status of its "Import" affordance. This is the complete audit the mandate
+asked for.
 
 Legend:
 
-- **✅ done** — a shared `<ImportButton>` is placed next to the create button,
-  gated by the same permission the create action enforces, and wired end-to-end
-  (upload → governed extraction → review → prefill the existing form → save).
-- **⏳ pending** — a real, intended target with no Import yet. Needs a strict
-  extraction schema (`lib/imports/autofill/schemas.ts`), a registry entry, the
-  button, and prefill wiring. This is the Phase-2 backlog.
-- **🚫 unsupported** — not a sensible autofill target; the reason is given.
+- **✅ done** — a shared `<ImportButton>` sits beside the create button, gated by
+  the same permission the create action enforces, wired end-to-end (upload →
+  governed extraction → review → prefill the existing form → save).
+- **⏳ pending** — applicable but not yet wired; a precise structural reason is
+  given. These are the documented follow-up.
+- **🚫 unsupported** — not a sensible autofill target; reason given.
 
-Phase 1 ships **one representative per domain** (Sales, Money, Projects, Site &
-Safety, People) wired end-to-end, plus the shared pipeline every pending target
-will reuse. **Full coverage across all forms is an explicit follow-up.**
+**Totals: 16 record types done; 11 pending (with reasons); the rest unsupported.**
+Every button is functional — none is decorative. Extraction is governed and dark
+by default (no vision tier bound), so today every import honestly degrades to an
+empty proposal and the operator fills the form by hand; this was never faked as
+live AI.
 
-The shared button is `components/import/import-button.tsx`; the pipeline is
-`lib/imports/autofill/*` + `server/services/document-autofill.ts`. Adding a
-pending target is a registry entry + a schema + a one-line button placement +
-(for a `/new` route) passing `defaults` from `loadImportDraftDefaults`.
+Shared pieces every target reuses: `components/import/import-button.tsx`,
+`lib/imports/autofill/*`, `server/services/document-autofill.ts`. Adding a pending
+target = a registry entry + a strict schema + a one-line button placement +
+(route form) passing `defaults` from `loadImportDraftDefaults`.
 
 ---
 
 ## Sales
 
-| Record | Create entry point | Status | Notes |
+| Record | Entry point | Status | Notes |
 |---|---|---|---|
-| Customer | `app/(app)/customers/page.tsx` → `/customers/new` | ✅ done | **Representative.** Capability-gated (`customers:create`). e2e: `e2e/document-import.spec.ts`. |
-| Quote | `app/(app)/quotes/page.tsx` → `/quotes/new` | ⏳ pending | Quote builder is line-item heavy; a document import would map header + line items. Larger schema. |
-| Lead | `app/(app)/leads/page.tsx` → `/leads/new` | ⏳ pending | Good fit (enquiry email/letter → lead). |
-| Invoice | `app/(app)/invoices/page.tsx` → `/invoices/new` | 🚫 unsupported | Invoices are GENERATED from jobs/quotes inside CrewFlow, not transcribed from a document. |
-| Review request | `app/(app)/reviews/new` | 🚫 unsupported | No document source. |
+| Customer | `/customers/new` | ✅ done | Capability `customers:create`. e2e covered. |
+| Lead | `/leads/new` | ✅ done | Capability `leads:create`. Enquiry → contact/service/value/postcode/notes. |
+| Quote | `/quotes/new` | ⏳ pending | **Line-item builder** + controlled customer picker. Needs a line-items (array) extraction schema and the builder's `defaultLineItems` path; header-only prefill would be low-value. |
+| Invoice | `/invoices/new` | 🚫 unsupported | Generated from jobs/quotes, not transcribed. |
+| Review request | `/reviews/new` | 🚫 unsupported | No document source. |
 
-## Projects / Jobs
+## Projects / Jobs / Sites
 
-| Record | Create entry point | Status | Notes |
+| Record | Entry point | Status | Notes |
 |---|---|---|---|
-| Job | `app/(app)/jobs/page.tsx` → `/jobs/new` | ✅ done | **Representative.** Member-open. Extracts SITE address + notes only (no relational ids / schedule — a document cannot name a CrewFlow UUID). |
-| Site (address) | `app/(app)/sites/new` | ⏳ pending | Admin-gated. Overlaps the job site-address schema. |
-| Variation / VO | `/jobs/[id]/variations/new` | ⏳ pending | Client variation instruction → VO. |
-| Job valuation | `/jobs/[id]/valuations` (inline) | ⏳ pending | Inline form; needs the event-target integration pattern. |
-| Warranty | `/jobs/[id]/warranties` (inline) | ⏳ pending | Warranty certificate → record. Strong fit. |
+| Job | `/jobs/new` | ✅ done | Member. Site address + notes (no relational ids / schedule). |
+| Site (address) | `/sites/new` | ✅ done | Org-admin (page redirect + RLS `is_org_admin`). Site brief → name/address. |
+| Variation / VO | `/jobs/[id]/variations/new` | ⏳ pending | **Contextual** (`jobs/[id]`) + controlled cost/margin calculator. Title/description are route-prefillable (the page already prefills via `?fromRequest`); a follow-up mirrors that with `?import`. |
+| Warranty | `/jobs/[id]/warranties` | ⏳ pending | **Contextual** (`jobs/[id]`), admin; clean route-prefill once a `defaults` prop is threaded into `WarrantyForm`. Strong fit (warranty certificate). |
+| Job valuation | `/jobs/[id]/valuations` | 🚫 unsupported | Computed from the job's commercial state. |
 
 ## Site & Safety
 
-| Record | Create entry point | Status | Notes |
+| Record | Entry point | Status | Notes |
 |---|---|---|---|
-| Risk assessment (RAMS) | `app/(app)/health-safety/page.tsx` → `/health-safety/new` | ✅ done | **Representative.** Member-open. Header fields only — hazards/scores/sign-off are entered deliberately, never auto-extracted. |
-| Permit to work | `/health-safety/permits/new` | ⏳ pending | Permit document → record. |
-| Toolbox talk | `/toolbox/new` | ⏳ pending | Talk record/attendance sheet → record. |
-| Site report | `/site-reports/new` | ⏳ pending | |
-| Snag / defect | `/snags/new` | ⏳ pending | Photo-driven; the image pipeline already fits. |
-| Delay / EOT event | `/delays/new` | ⏳ pending | |
-| Site diary entry | `/diary/new` | ⏳ pending | |
-| Compliance document | `/compliance/new` | ⏳ pending | The document IS the record; extract its metadata (expiry, type). |
+| Risk assessment (RAMS) | `/health-safety/new` | ✅ done | Member. Header only; hazards/scores/sign-off entered deliberately. |
+| Permit to work | `/health-safety/permits/new` | ✅ done | Member. Permit doc → title/scope/location/responsible/isolation/emergency. |
+| Toolbox talk | `/toolbox/new` | ✅ done | Member. Talk record → topic/date/points/presenter/PPE/attendees. |
+| Snag / defect | `/snags/new` | ✅ done | Member. Defect report → title/description/location/trade/due. |
+| Site diary | `/diary/new` | ✅ done | Member. Daily sheet → date/weather/labour/summary/delays/notes. |
+| Compliance document | `/compliance/new` | ✅ done | Member. The uploaded doc → kind/title/expiry/notes (the file is re-attached on save). |
+| Site report | `/site-reports/new` | ⏳ pending | Thin (title + period dates; job is a required relational field) — low document value. |
+| Delay / EOT | `/delays/new` | ⏳ pending | Job is a required relational field; the extractable block (`DelayEventFields`) is a controlled fields component the create wrapper doesn't thread a `defaults` into yet. |
 
 ## Quality
 
-| Record | Create entry point | Status | Notes |
+| Record | Entry point | Status | Notes |
 |---|---|---|---|
-| ITP | `/quality/new` | ⏳ pending | |
-| NCR | `/quality/ncrs/new` | ⏳ pending | |
+| Inspection & Test Plan | `/quality/new` | ✅ done | Member. ITP doc → work package/title/spec ref/location/date/notes (job picked manually). |
+| NCR | `/quality/ncrs/new` | ⏳ pending | **Contextual** — raised against a specific inspection item via `?itemId`; not a standalone create. |
 
 ## People
 
-| Record | Create entry point | Status | Notes |
+| Record | Entry point | Status | Notes |
 |---|---|---|---|
-| Staff / team member (invite) | `app/(app)/staff/page.tsx` → invite modal | ✅ done | **Representative.** Admin-only (`canManageStaff`). **Extracts IDENTITY fields only** — name, email, phone, employment type. Pay and emergency contacts are column-ACL-restricted and are NEVER extracted (schema omits them; prompt forbids them). Uses the event-target modal-prefill pattern. |
-| Qualification | `/staff/[id]/_qualifications` (inline) | ⏳ pending | Certificate/CSCS card → qualification + expiry. Strong fit; inline (event-target). |
-| Subcontractor | via Suppliers | — | Covered by the Supplier target. |
-| Site induction | `/site-compliance` (inline) | ⏳ pending | |
+| Staff / team member (invite) | invite modal | ✅ done | Admin (`canManageStaff`). **Identity fields only** — pay/emergency-contact/role NEVER extracted (schema omits them; prompt forbids them). Event-target modal prefill. |
+| Qualification | `/staff/[id]/_qualifications` | ⏳ pending | **Contextual** (`staff/[id]`), inline, admin. Strong fit (CSCS/cert); needs a `defaults` prop + the staff page to read `?import`. High-value follow-up. |
+| Site induction | `/site-compliance/[siteId]` | ⏳ pending | **Contextual** (`siteId`) + signature capture; low document fit. |
+| Customer contact | `/customers/[id]` | ⏳ pending | **Contextual** (`customer/[id]`), controlled-state inline; feasible by seeding state — follow-up. |
 
-## Money
+## Money / Procurement
 
-| Record | Create entry point | Status | Notes |
+| Record | Entry point | Status | Notes |
 |---|---|---|---|
-| Supplier | `app/(app)/suppliers/page.tsx` → `/suppliers/new` | ✅ done | **Representative.** Member-open. Extracts contact + payment terms from an invoice header / letterhead. |
-| Expense / receipt | `/expenses/new` | ⏳ pending (prior art) | `server/services/expense-drafts.ts` ALREADY does governed receipt → expense extraction via the same vision door. Phase 2 reconciles it onto this shared `<ImportButton>` so the UX is consistent. |
-| Cost entry (finances) | `/finances/new` | ⏳ pending | Receipt → cost line. Overlaps expense extraction. |
-| Payment | `/payments/new` | ⏳ pending | Admin-gated. |
-| Purchase order | `/purchase-orders/new` | ⏳ pending | |
-| VAT return | `/tax` (inline) | 🚫 unsupported | Computed from the ledger, not transcribed. |
-| Price-book item | `/price-book` (inline) | ⏳ pending | Supplier price list → items (bulk; may suit Migration OS instead). |
+| Supplier | `/suppliers/new` | ✅ done | Member. Invoice header → contact + payment terms. |
+| Expense / receipt | `/expenses/new` | ✅ done (existing) | **Already** an upload→OCR→draft→review flow (`server/services/expense-drafts.ts`, same vision door + governor). Phase 2 reconciles it onto the shared `<ImportButton>` for a consistent UX. |
+| Cost entry (finances) | `/finances/new` | ⏳ pending | Controlled `useState` amount/VAT; posts via `fetch`. Needs state seeding; overlaps the expense receipt flow. |
+| Payment | `/payments/new` | ⏳ pending | **Allocation builder** + money-invariant; settles existing invoices (low document fit). |
+| Supplier payment | `/suppliers/[id]/payments` | ⏳ pending | **Controlled allocation builder**, DB-reconciled CIS/rate — values must reconcile against live bills, not be imported. |
+| Purchase order | `/purchase-orders/new` | ⏳ pending | **Line-item builder** (already ingests `initial.line_items`); needs an array extraction schema. |
+| VAT return | `/tax` | 🚫 unsupported | Computed from the ledger. |
+| Price-book item | `/price-book` | ⏳ pending | Bulk supplier price list — better suited to Migration OS than per-record import. |
 
 ## Materials / Stock / Fleet / Assets
 
-| Record | Create entry point | Status | Notes |
+| Record | Entry point | Status | Notes |
 |---|---|---|---|
-| Material request | `/materials/requests/new` | ⏳ pending | |
-| Stock item | `/stock/items/new` | ⏳ pending | |
+| Stock item | `/stock/items/new` | ✅ done | Member. Product label / catalogue line → name/unit/sku/barcode/supplier ref/description. |
+| Vehicle | `/fleet/vehicles/new` | ✅ done | Member. V5C / purchase invoice → reg/make/model/VIN/year/weight/purchase. |
+| Asset / equipment | `/assets/new` | ✅ done | Member. Purchase invoice / spec / hire agreement → identity + purchase + warranty + hire. |
+| Material request | `/materials/requests/new` | ⏳ pending | **Line-item builder**; needs an array extraction schema. |
 | Stocktake | `/stock/stocktake/new` | 🚫 unsupported | A counting session, not a document. |
-| Vehicle | `/fleet/vehicles/new` | ⏳ pending | V5C / insurance doc → vehicle. Strong fit. |
-| Asset / equipment | `/assets/new` | ⏳ pending | Purchase/warranty doc → asset. |
 
-## Inbox / Comms / Settings
+## Inbox / Comms / Settings / Templates
 
-| Record | Create entry point | Status | Notes |
+| Record | Entry point | Status | Notes |
 |---|---|---|---|
-| Conversation / message | `/inbox/conversations/new` | 🚫 unsupported | Composed, not imported. |
-| Support ticket | `/support/new` | 🚫 unsupported | Composed. |
-| Contact (on customer) | inline | ⏳ pending | Business card → contact. |
-| API key / webhook / marketplace | settings (inline) | 🚫 unsupported | Configuration, no document source. |
+| Conversation / support ticket | `/inbox`, `/support/new` | 🚫 unsupported | Composed, not imported. |
+| API key / webhook / marketplace | settings | 🚫 unsupported | Configuration; no document source. |
+| Job template / quality template | `/jobs/templates/new`, `/quality/templates` | 🚫 unsupported | Templates, not records. |
 
 ---
 
-## Office documents (DOCX/XLSX/…)
+## The two deferred classes (why they're a second wave, not decorative buttons)
 
-The `<ImportButton>` accepts **PDF and images (JPG, PNG, WEBP, HEIC)** — exactly
-what the vision door reads as a document block. Office formats are **not**
-accepted in Phase 1: the vision model takes PDF/image blocks only, so storing a
-`.docx`/`.xlsx` would leave bytes nothing could extract. Phase-2 options:
-server-side conversion to PDF before extraction, or routing spreadsheets to the
-existing Migration OS bulk importer. Tracked as a follow-up.
+1. **Line-item / allocation builders** (quote, purchase order, material request,
+   payment, supplier payment). These serialize repeatable rows to a hidden JSON
+   field via controlled React state. Correct autofill needs an *array* extraction
+   schema (`{description, qty, unit, unit_price, vat_rate}` …) and the builder's
+   own `initial`/`defaultLineItems` path — a distinct schema shape and a
+   per-builder integration. Wiring a header-only button would be the kind of
+   half-working affordance the mandate forbids, so these wait for the line-item
+   schema work.
+2. **Contextual `[id]`-nested forms** (variation, warranty, qualification, site
+   induction, customer contact, NCR). These create a child record under a parent
+   in the URL (`jobs/[id]`, `staff/[id]`, …), so the Import button must live on
+   the parent page and carry its id. Several (qualification, warranty) are
+   high-value certificate imports and are the first follow-up; the `<ImportButton>`
+   already supports a `newPathOverride` for exactly this.
 
-## Command palette
+## Office documents (DOCX/XLSX)
 
-`app/(app)/_nav/commands.ts` has a role-gated "Create" command group. A matching
-"Import …" command group is a small, consistent Phase-2 addition.
+The button accepts **PDF + images** (the vision door's document-block formats).
+Office formats would store bytes nothing can extract; Phase 2 adds server-side
+conversion or routes spreadsheets to Migration OS.

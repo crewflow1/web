@@ -3,6 +3,8 @@ import { requireOrgContext } from "@/server/auth/session";
 import { listJobOptions, listMembers } from "../_data";
 import { createInspectionPlan } from "../actions";
 import { withPreservedOption } from "@/lib/quotes/preserve-option";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 
 /**
  * /quality/new — draft a new inspection & test plan header.
@@ -19,7 +21,7 @@ const ERROR_MAP: Record<string, string> = {
   validation: "Please check the form and try again.",
 };
 
-type SP = Promise<{ error?: string; jobId?: string }>;
+type SP = Promise<{ error?: string; jobId?: string; import?: string }>;
 
 const inputClass =
   "mt-1.5 block min-h-[44px] w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500";
@@ -33,6 +35,8 @@ export default async function NewInspectionPlanPage({ searchParams }: { searchPa
     listJobOptions(ctx.org.id),
     listMembers(ctx.org.id),
   ]);
+  const prefill = sp.import ? await loadImportDraftDefaults("itp", sp.import) : null;
+  const pf = prefill?.fields ?? {};
 
   // PICKER-COMPLETION (F-1). The reader is paged so a ?jobId= preset is present,
   // and this preserves that preset as a selectable <option> even if a future
@@ -58,6 +62,8 @@ export default async function NewInspectionPlanPage({ searchParams }: { searchPa
       </nav>
 
       <h1 className="text-2xl font-bold text-slate-900">New inspection &amp; test plan</h1>
+
+      {prefill ? <ImportPrefillBanner engine={prefill.engine} recordLabel="inspection & test plan" /> : null}
 
       {errorMessage ? (
         <div
@@ -117,6 +123,7 @@ export default async function NewInspectionPlanPage({ searchParams }: { searchPa
               required
               autoFocus
               maxLength={200}
+              defaultValue={pf.workPackage ?? ""}
               placeholder="Below-ground drainage, Plots 1–4"
               className={inputClass}
             />
@@ -135,6 +142,7 @@ export default async function NewInspectionPlanPage({ searchParams }: { searchPa
               type="text"
               required
               maxLength={200}
+              defaultValue={pf.title ?? ""}
               placeholder="ITP — foul and surface water drainage"
               className={inputClass}
             />
@@ -150,6 +158,7 @@ export default async function NewInspectionPlanPage({ searchParams }: { searchPa
                 name="specificationRef"
                 type="text"
                 maxLength={200}
+                defaultValue={pf.specificationRef ?? ""}
                 placeholder="D-101 rev C · NBS R12"
                 className={inputClass}
               />
@@ -165,6 +174,7 @@ export default async function NewInspectionPlanPage({ searchParams }: { searchPa
                 type="text"
                 maxLength={200}
                 placeholder="Plots 1–4, rear gardens"
+                defaultValue={pf.location ?? ""}
                 className={inputClass}
               />
             </div>
@@ -188,7 +198,7 @@ export default async function NewInspectionPlanPage({ searchParams }: { searchPa
               <label htmlFor="planDate" className={labelClass}>
                 Plan date
               </label>
-              <input id="planDate" name="planDate" type="date" className={inputClass} />
+              <input id="planDate" name="planDate" type="date" defaultValue={pf.planDate ?? ""} className={inputClass} />
             </div>
           </div>
 
@@ -202,6 +212,7 @@ export default async function NewInspectionPlanPage({ searchParams }: { searchPa
               rows={4}
               maxLength={20000}
               placeholder="Anything the site team needs to know about how these checks are run."
+              defaultValue={pf.notes ?? ""}
               className={inputClass}
             />
           </div>

@@ -3,13 +3,21 @@ import { requireOrgContext } from "@/server/auth/session";
 import { createLead } from "../actions";
 import { LeadForm } from "../_form";
 import { listCustomersForLead, listStaffForLead } from "../_form-helpers";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 
-export default async function NewLeadPage() {
+export default async function NewLeadPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ import?: string }>;
+}) {
   const { ctx } = await requireOrgContext();
 
-  const [customers, staff] = await Promise.all([
+  const sp = await searchParams;
+  const [customers, staff, prefill] = await Promise.all([
     listCustomersForLead(ctx.org.id),
     listStaffForLead(ctx.org.id),
+    sp.import ? loadImportDraftDefaults("lead", sp.import) : Promise.resolve(null),
   ]);
 
   return (
@@ -30,12 +38,15 @@ export default async function NewLeadPage() {
         </p>
       </header>
 
+      {prefill ? <ImportPrefillBanner engine={prefill.engine} recordLabel="lead" /> : null}
+
       <LeadForm
         action={createLead}
         submitLabel="Save lead"
         cancelHref="/leads"
         customers={customers}
         staff={staff}
+        defaults={prefill?.fields}
       />
     </div>
   );

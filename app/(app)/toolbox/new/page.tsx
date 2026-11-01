@@ -3,18 +3,21 @@ import { requireOrgContext } from "@/server/auth/session";
 import { createToolboxTalk } from "../actions";
 import { loadToolboxFormOptions } from "../_form-options";
 import { TalkForm } from "../_talk-form";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 
 const ERROR_MAP: Record<string, string> = {
   record_failed: "Couldn't save the talk. Try again.",
   validation: "Please check the form and try again.",
 };
 
-type SP = Promise<{ error?: string; job?: string }>;
+type SP = Promise<{ error?: string; job?: string; import?: string }>;
 
 export default async function NewToolboxTalkPage({ searchParams }: { searchParams: SP }) {
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const options = await loadToolboxFormOptions(ctx.org.id);
+  const prefill = sp.import ? await loadImportDraftDefaults("toolbox_talk", sp.import) : null;
 
   const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)) : null;
 
@@ -41,10 +44,12 @@ export default async function NewToolboxTalkPage({ searchParams }: { searchParam
         </div>
       ) : null}
 
+      {prefill ? <ImportPrefillBanner engine={prefill.engine} recordLabel="toolbox talk" /> : null}
+
       <TalkForm
         action={createToolboxTalk}
         options={options}
-        defaults={{ job_id: sp.job ?? null }}
+        defaults={{ job_id: sp.job ?? null, ...(prefill?.fields ?? {}) }}
         submitLabel="Save draft"
         cancelHref="/toolbox"
       />

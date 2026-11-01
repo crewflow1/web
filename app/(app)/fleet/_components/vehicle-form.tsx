@@ -48,6 +48,7 @@ export function VehicleForm({
   sites,
   submitLabel,
   cancelHref,
+  defaults,
 }: {
   action: (prev: VehicleFormState, formData: FormData) => Promise<VehicleFormState>;
   vehicle?: FleetVehicle;
@@ -56,6 +57,10 @@ export function VehicleForm({
   sites: SiteOption[];
   submitLabel: string;
   cancelHref: string;
+  /** Document-autofill prefill, keyed by the field `name`s. Seeds the pristine
+   *  render only; a user edit (echoed in state.values after a failed submit)
+   *  always wins. Create-only — on edit, `vehicle` is the source of truth. */
+  defaults?: Record<string, string>;
 }) {
   const [state, formAction, pending] = useActionState(
     action,
@@ -72,7 +77,7 @@ export function VehicleForm({
   const pristine = isPristine(state);
   /** After a failed submit, show exactly what the user typed; before any submit, the record's values. */
   const val = (key: string, fallback: string | number | null | undefined): string | number =>
-    pristine ? (fallback ?? "") : (state.values[key] ?? "");
+    pristine ? (defaults?.[key] ?? fallback ?? "") : (state.values[key] ?? "");
   const errs = state.fieldErrors;
 
   // DEFENCE-IN-DEPTH against the picker-class silent-null (F-1). The supplier

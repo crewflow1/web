@@ -5,17 +5,20 @@ import { loadSiteOptions, loadSupplierOptions } from "../../_components/load";
 import { VehicleForm } from "../../_components/vehicle-form";
 import { Banner } from "../../_components/ui";
 import { errorMessage } from "../../_components/messages";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 
 export const dynamic = "force-dynamic";
 
-type SP = Promise<{ error?: string }>;
+type SP = Promise<{ error?: string; import?: string }>;
 
 export default async function NewVehiclePage({ searchParams }: { searchParams: SP }) {
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
-  const [suppliers, sites] = await Promise.all([
+  const [suppliers, sites, prefill] = await Promise.all([
     loadSupplierOptions(ctx.org.id),
     loadSiteOptions(ctx.org.id),
+    sp.import ? loadImportDraftDefaults("vehicle", sp.import) : Promise.resolve(null),
   ]);
   const err = errorMessage(sp.error);
 
@@ -39,6 +42,7 @@ export default async function NewVehiclePage({ searchParams }: { searchParams: S
       </header>
 
       {err ? <Banner tone="error">{err}</Banner> : null}
+      {prefill ? <ImportPrefillBanner engine={prefill.engine} recordLabel="vehicle" /> : null}
 
       <VehicleForm
         action={createVehicle}
@@ -46,6 +50,7 @@ export default async function NewVehiclePage({ searchParams }: { searchParams: S
         sites={sites}
         submitLabel="Add vehicle"
         cancelHref="/fleet/vehicles"
+        defaults={prefill?.fields}
       />
     </div>
   );

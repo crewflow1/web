@@ -6,7 +6,7 @@ import { AUTOFILL_FORM_TYPES } from "@/lib/imports/autofill/types";
 
 /**
  * FEATURE 2 — the registry is the single source of truth, and it must agree with
- * the DB CHECK (migration 20261264000000) and with each form's extraction schema.
+ * the DB CHECK (migration 20261265000000) and with each form's extraction schema.
  * Drift between the code set and the database set is exactly how a form type gets
  * a button with no storable draft (or a storable draft with no button), so it is
  * pinned here.
@@ -27,12 +27,12 @@ describe("autofill registry alignment", () => {
 
   it("the form-type set equals the DB CHECK in the drafts migration", () => {
     const sql = readFileSync(
-      resolve(ROOT, "supabase/migrations/20261264000000_form_import_drafts.sql"),
+      resolve(ROOT, "supabase/migrations/20261265000000_form_import_drafts.sql"),
       "utf8",
     );
     const m = /form_type\s+text\s+not\s+null\s+check\s*\(\s*form_type\s+in\s*\(([\s\S]*?)\)\s*\)/i.exec(sql);
     expect(m, "could not find the form_type CHECK in the migration").not.toBeNull();
-    const dbTypes = Array.from(m![1].matchAll(/'([a-z_]+)'/g)).map((x) => x[1]).sort();
+    const dbTypes = Array.from((m![1] ?? "").matchAll(/'([a-z_]+)'/g)).map((x) => x[1]).sort();
     expect(dbTypes).toEqual([...AUTOFILL_FORM_TYPES].sort());
   });
 
@@ -77,12 +77,32 @@ describe("autofill registry alignment", () => {
 
   it("auth mirrors the create action: customer needs capability, staff is admin-only, the rest are member-open", () => {
     expect(AUTOFILL_FORMS.customer.auth).toEqual({
-      capability: { module: "customers", action: "create" },
-      adminOnly: false,
+      mode: "capability",
+      module: "customers",
+      action: "create",
     });
-    expect(AUTOFILL_FORMS.staff_invite.auth.adminOnly).toBe(true);
-    for (const t of ["supplier", "job", "risk_assessment"] as const) {
-      expect(AUTOFILL_FORMS[t].auth).toEqual({ capability: null, adminOnly: false });
+    expect(AUTOFILL_FORMS.lead.auth).toEqual({
+      mode: "capability",
+      module: "leads",
+      action: "create",
+    });
+    expect(AUTOFILL_FORMS.staff_invite.auth).toEqual({ mode: "manageStaff" });
+    expect(AUTOFILL_FORMS.site.auth).toEqual({ mode: "orgAdmin" });
+    for (const t of [
+      "supplier",
+      "job",
+      "risk_assessment",
+      "permit",
+      "toolbox_talk",
+      "snag",
+      "diary",
+      "compliance_document",
+      "itp",
+      "stock_item",
+      "vehicle",
+      "asset",
+    ] as const) {
+      expect(AUTOFILL_FORMS[t].auth).toEqual({ mode: "member" });
     }
   });
 });

@@ -3,18 +3,27 @@ import { redirect } from "next/navigation";
 import { requireOrgContext } from "@/server/auth/session";
 import { SiteForm } from "../_form";
 import { createSite } from "../actions";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 
 export const dynamic = "force-dynamic";
 
 export const metadata = { title: "Add site · CrewFlow" };
 
-export default async function NewSitePage() {
+export default async function NewSitePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ import?: string }>;
+}) {
   const { ctx } = await requireOrgContext();
   // Sites are reference data: `sites_insert` is `is_org_admin(org_id)`, so a
   // member reaching this URL would fill the form in and be refused by RLS on
   // submit. Send them back instead of wasting the typing.
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
   if (!isAdmin) redirect("/sites");
+
+  const sp = await searchParams;
+  const prefill = sp.import ? await loadImportDraftDefaults("site", sp.import) : null;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -32,7 +41,8 @@ export default async function NewSitePage() {
           job address isn&rsquo;t a site — that stays on the job.
         </p>
       </div>
-      <SiteForm action={createSite} submitLabel="Save site" cancelHref="/sites" />
+      {prefill ? <ImportPrefillBanner engine={prefill.engine} recordLabel="site" /> : null}
+      <SiteForm action={createSite} submitLabel="Save site" cancelHref="/sites" defaults={prefill?.fields} />
     </div>
   );
 }

@@ -149,6 +149,21 @@ const wholeNumber = (max: number) =>
     })
     .catch(null);
 
+/** A non-negative decimal (money / weight) as a 2dp string. Strips currency. */
+const decimal = (max: number) =>
+  z
+    .unknown()
+    .transform((v) => {
+      const s = asString(typeof v === "number" ? String(v) : v);
+      if (s === null) return null;
+      // Keep digits, one dot, strip £/$/commas/spaces.
+      const cleaned = s.replace(/[^0-9.]/g, "");
+      const n = Number.parseFloat(cleaned);
+      if (!Number.isFinite(n) || n < 0 || n > max) return null;
+      return String(Math.round(n * 100) / 100);
+    })
+    .catch(null);
+
 // ---------------------------------------------------------------------------
 // The five extraction schemas. Keys MUST match the create form input `name`s —
 // that equality is the prefill contract, pinned by the registry test.
@@ -236,3 +251,135 @@ export type SupplierExtraction = z.infer<typeof supplierExtractionSchema>;
 export type JobExtraction = z.infer<typeof jobExtractionSchema>;
 export type RiskAssessmentExtraction = z.infer<typeof riskAssessmentExtractionSchema>;
 export type StaffInviteExtraction = z.infer<typeof staffInviteExtractionSchema>;
+
+// ---------------------------------------------------------------------------
+// Coverage wave — the remaining document-populatable create forms. Each is a
+// subset of its create form's own schema (field names verified against the
+// live form), excluding relational UUIDs, file uploads, controlled builders,
+// and enum selects whose value set isn't safely inferable from a document.
+// ---------------------------------------------------------------------------
+
+/** Sales — a lead, from an enquiry email / letter / web form. */
+export const leadExtractionSchema = z.object({
+  contact_name: text(200),
+  contact_email: email(),
+  contact_phone: phone(40),
+  service: text(200),
+  postcode: postcode(),
+  estimated_value: decimal(99_999_999),
+  notes: text(5000),
+});
+
+/** Projects — a site/depot address, from a site brief / letterhead. */
+export const siteExtractionSchema = z.object({
+  name: text(200),
+  address_line1: text(200),
+  address_line2: text(200),
+  city: text(100),
+  county: text(100),
+  postcode: postcode(),
+  country: text(100),
+  notes: text(2000),
+});
+
+/** Site & Safety — a permit to work header, from an existing permit document. */
+export const permitExtractionSchema = z.object({
+  title: text(200),
+  scope: text(2000),
+  location: text(200),
+  responsiblePerson: text(200),
+  isolationDetails: text(4000),
+  emergencyArrangements: text(4000),
+});
+
+/** Site & Safety — a toolbox talk record / attendance sheet. */
+export const toolboxTalkExtractionSchema = z.object({
+  topic: text(200),
+  talk_date: isoDate(),
+  location: text(200),
+  key_points: text(8000),
+  presenter: text(200),
+  ppe: text(500),
+  attendee_count: wholeNumber(9999),
+  attendees: text(8000),
+  notes: text(5000),
+});
+
+/** Site & Safety — a snag / defect, from a defect report or notice. */
+export const snagExtractionSchema = z.object({
+  title: text(200),
+  description: text(8000),
+  location: text(200),
+  trade: text(120),
+  due_date: isoDate(),
+});
+
+/** Site & Safety — a site diary entry, from a daily record sheet. */
+export const diaryExtractionSchema = z.object({
+  entry_date: isoDate(),
+  weather: text(200),
+  labour_count: wholeNumber(9999),
+  work_summary: text(8000),
+  delays: text(8000),
+  notes: text(5000),
+});
+
+/** Site & Safety — a compliance document's metadata (the uploaded file IS the record). */
+export const complianceDocumentExtractionSchema = z.object({
+  kind: oneOf(["insurance", "certificate", "permit", "contract", "other"]),
+  title: text(200),
+  expires_at: isoDate(),
+  notes: text(5000),
+});
+
+/** Quality — an inspection & test plan header, from an ITP document. */
+export const itpExtractionSchema = z.object({
+  workPackage: text(200),
+  title: text(200),
+  specificationRef: text(200),
+  location: text(200),
+  planDate: isoDate(),
+  notes: text(20000),
+});
+
+/** Stock — a stock item, from a product label / supplier catalogue line. */
+export const stockItemExtractionSchema = z.object({
+  name: text(200),
+  unit: text(40),
+  sku: text(120),
+  barcode: text(120),
+  supplier_reference: text(120),
+  description: text(2000),
+});
+
+/** Fleet — a vehicle, from a V5C logbook / purchase invoice. */
+export const vehicleExtractionSchema = z.object({
+  name: text(200),
+  registration: text(40),
+  manufacturer: text(120),
+  model: text(120),
+  variant: text(120),
+  vin: text(40),
+  year_of_manufacture: wholeNumber(2100),
+  first_registered_on: isoDate(),
+  gross_weight_kg: wholeNumber(100_000),
+  purchase_date: isoDate(),
+  purchase_price: decimal(99_999_999),
+});
+
+/** Assets — equipment, from a purchase invoice / spec sheet / hire agreement. */
+export const assetExtractionSchema = z.object({
+  name: text(200),
+  category: text(120),
+  manufacturer: text(120),
+  model: text(120),
+  serial_number: text(120),
+  registration: text(40),
+  asset_ref: text(120),
+  purchase_date: isoDate(),
+  purchase_price: decimal(99_999_999),
+  warranty_expires_at: isoDate(),
+  hire_start: isoDate(),
+  hire_end: isoDate(),
+  hire_rate: decimal(999_999),
+});

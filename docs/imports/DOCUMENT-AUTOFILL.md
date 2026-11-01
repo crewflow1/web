@@ -4,10 +4,16 @@ Upload a document next to any supported "Create" button, let a vision model
 propose the form's values, review them, and save the record through the normal
 validated form. One shared pipeline, not dozens of integrations.
 
-Status: **Phase 1** — the shared pipeline + a shared `<ImportButton>`, proven
-end-to-end on one representative form per domain. Not merged, not deployed; no
-production migrations applied. Full form coverage is an explicit follow-up
-(`DOCUMENT-AUTOFILL-COVERAGE.md`).
+Status: the shared pipeline + a shared `<ImportButton>`, wired end-to-end across
+**16 record types** spanning every domain (Sales, Projects, Sites, Site &
+Safety, Quality, People, Money, Stock, Fleet, Assets). Not merged, not deployed;
+no production migrations applied. The remaining create forms are documented, with
+specific structural reasons, in `DOCUMENT-AUTOFILL-COVERAGE.md` — the two deferred
+classes are line-item/allocation builders and contextual `[id]`-nested forms.
+
+The 16 done: customer, lead, supplier, job, site, risk assessment, permit,
+toolbox talk, snag, diary, compliance document, ITP, staff invite, stock item,
+vehicle, asset.
 
 ---
 
@@ -69,10 +75,13 @@ operator edits → existing create ACTION saves the record (the only writer)
   enforcement; the document lands under the org's storage folder (bucket RLS,
   owner-scoped read/delete). Integration-proven:
   `__tests__/integration/rls/form-import-drafts-isolation.test.ts`.
-- **Capability gating.** The server action authorises the operator for the
-  target record's **create** permission — the same check the create action makes
-  (customer → `customers:create`; staff → `canManageStaff`; supplier/job/RAMS →
-  org member). The `<ImportButton>` is render-gated on the same decision.
+- **Capability gating.** The server action authorises the operator with the same
+  guard the create action enforces, expressed as a per-form `auth` mode in the
+  registry: `member` (supplier, job, RAMS, permit, toolbox, snag, diary,
+  compliance, ITP, stock item, vehicle, asset), `capability` (customer →
+  `customers:create`, lead → `leads:create`), `orgAdmin` (site — `is_org_admin`),
+  `manageStaff` (staff invite). The `<ImportButton>` is render-gated on the same
+  decision computed on the page.
 - **Field-level scoping (the allowlist).** The extraction schema is strict: zod
   strips unknown keys, so no crafted document can smuggle a field the form does
   not declare. **Staff autofill carries identity fields only — never pay,
@@ -111,9 +120,9 @@ operator edits → existing create ACTION saves the record (the only writer)
 ## Deploy & migration plan
 
 1. **Migrations** (additive, forward-only; apply in order, human-approved):
-   - `20261262000000_form_imports_bucket.sql` — private `form-imports` bucket +
+   - `20261264000000_form_imports_bucket.sql` — private `form-imports` bucket +
      storage RLS (org folder + owner).
-   - `20261264000000_form_import_drafts.sql` — `form_import_drafts` table + RLS
+   - `20261265000000_form_import_drafts.sql` — `form_import_drafts` table + RLS
      (org + self) + explicit `authenticated` grant (30-Oct Data-API rule) +
      indexes + updated-at trigger.
    (Prefix `20261263000000` is the parallel notification-privacy session's;

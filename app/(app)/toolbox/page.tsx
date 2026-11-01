@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ImportButton } from "@/components/import/import-button";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
@@ -106,12 +107,15 @@ export default async function ToolboxPage({ searchParams }: { searchParams: SP }
             who attended. Evidence you can show an inspector.
           </p>
         </div>
-        <Link
-          href="/toolbox/new"
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-        >
-          + Record a talk
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <ImportButton formType="toolbox_talk" />
+          <Link
+            href="/toolbox/new"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            + Record a talk
+          </Link>
+        </div>
       </header>
 
       {errorMessage ? (

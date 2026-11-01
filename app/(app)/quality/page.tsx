@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ImportButton } from "@/components/import/import-button";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { listPlans, type PlanListItem } from "./_data";
@@ -119,6 +120,7 @@ export default async function QualityRegisterPage({ searchParams }: { searchPara
           >
             Templates
           </Link>
+          <ImportButton formType="itp" />
           <Link
             href="/quality/new"
             className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"

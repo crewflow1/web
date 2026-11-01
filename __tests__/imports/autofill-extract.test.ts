@@ -41,7 +41,7 @@ describe("parseExtractionForForm", () => {
     const out = parseExtractionForForm("supplier", JSON.stringify({ fields: { name: "Timber Co" }, confidence: 50 }));
     expect(out.fields.name).toBe("Timber Co");
     // supplier has 6 fields; 1 filled ⇒ 5 missing.
-    expect(out.missingFields.sort()).toEqual(
+    expect([...out.missingFields].sort()).toEqual(
       ["category", "email", "notes", "payment_terms_days", "phone"].sort(),
     );
   });

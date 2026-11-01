@@ -80,8 +80,12 @@ describe("staff autofill field scoping (R5 / column-ACL boundary)", () => {
   });
 
   it("staff invite is admin-only; customer requires the create capability", () => {
-    expect(AUTOFILL_FORMS.staff_invite.auth.adminOnly).toBe(true);
-    expect(AUTOFILL_FORMS.customer.auth.capability).toEqual({ module: "customers", action: "create" });
+    expect(AUTOFILL_FORMS.staff_invite.auth).toEqual({ mode: "manageStaff" });
+    expect(AUTOFILL_FORMS.customer.auth).toEqual({
+      mode: "capability",
+      module: "customers",
+      action: "create",
+    });
   });
 });
 

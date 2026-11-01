@@ -20,7 +20,7 @@
 -- segment is the owning org — every policy below pins on it, so an object can
 -- only ever live under, and be read from, a folder whose name is an org the
 -- caller belongs to. The second segment is the `form_import_drafts` row id
--- (migration 20261264000000), which ties the bytes to their extraction draft.
+-- (migration 20261265000000), which ties the bytes to their extraction draft.
 --
 -- BUCKET-LEVEL LIMITS are defence-in-depth. Supabase enforces `file_size_limit`
 -- and `allowed_mime_types` on EVERY `.upload()` — including the service-role

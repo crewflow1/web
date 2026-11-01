@@ -2,7 +2,7 @@
  * FEATURE 2 — the upload constraints, shared by the client button (its `accept`
  * attribute + a pre-flight size check) and the server action (defence-in-depth),
  * which both must agree with the `form-imports` bucket limits
- * (migration 20261262000000). Pure constants — no server-only, no I/O.
+ * (migration 20261264000000). Pure constants — no server-only, no I/O.
  */
 
 /** 15 MB — must equal the bucket's file_size_limit. */

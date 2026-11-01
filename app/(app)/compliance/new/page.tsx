@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
 import { uploadComplianceDocument } from "../actions";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 
 const ERROR_MAP: Record<string, string> = {
   no_file: "Pick a file to upload.",
@@ -12,7 +14,7 @@ const ERROR_MAP: Record<string, string> = {
   "Use the date picker — format must be YYYY-MM-DD": "Pick a valid expiry date.",
 };
 
-type SP = Promise<{ error?: string }>;
+type SP = Promise<{ error?: string; import?: string }>;
 
 export default async function NewComplianceDocPage({
   searchParams,
@@ -22,6 +24,8 @@ export default async function NewComplianceDocPage({
   await requireOrgContext();
   const sp = await searchParams;
   const errorMessage = sp.error ? ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error) : null;
+  const prefill = sp.import ? await loadImportDraftDefaults("compliance_document", sp.import) : null;
+  const pf = prefill?.fields ?? {};
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -34,6 +38,8 @@ export default async function NewComplianceDocPage({
       </div>
 
       <h1 className="text-2xl font-bold text-slate-900">Add compliance document</h1>
+
+      {prefill ? <ImportPrefillBanner engine={prefill.engine} recordLabel="compliance document" /> : null}
 
       {errorMessage ? (
         <div
@@ -61,7 +67,7 @@ export default async function NewComplianceDocPage({
               id="kind"
               name="kind"
               required
-              defaultValue="insurance"
+              defaultValue={pf.kind ?? "insurance"}
               className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
             >
               <option value="insurance">Insurance certificate</option>
@@ -82,6 +88,7 @@ export default async function NewComplianceDocPage({
               id="expires_at"
               name="expires_at"
               type="date"
+              defaultValue={pf.expires_at ?? ""}
               className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
             />
             <p className="mt-1 text-xs text-slate-500">
@@ -102,6 +109,7 @@ export default async function NewComplianceDocPage({
             name="title"
             type="text"
             required
+            defaultValue={pf.title ?? ""}
             placeholder="Public Liability Insurance — Tradewise"
             className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
           />
@@ -119,6 +127,7 @@ export default async function NewComplianceDocPage({
             name="notes"
             rows={3}
             placeholder="Optional"
+            defaultValue={pf.notes ?? ""}
             className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
           />
         </div>

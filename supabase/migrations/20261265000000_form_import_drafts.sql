@@ -23,7 +23,7 @@
 --     vision model's text response is parsed into the strict schema and then
 --     discarded in-process — only the validated fields survive. The original
 --     bytes live solely in the private `form-imports` bucket (migration
---     20261262000000), under retention.
+--     20261264000000), under retention.
 --   * The AI invocation itself (tokens, cost, a SHA-256 of the bytes — never the
 --     bytes) is audited by the governor ledger `ai_invocations`, so a sensitive
 --     extraction is accountable without this table duplicating the content.
@@ -44,10 +44,21 @@ create table if not exists public.form_import_drafts (
   -- type added in code without a matching CHECK (or vice versa) fails CI.
   form_type text not null check (form_type in (
     'customer',
+    'lead',
     'supplier',
     'job',
+    'site',
     'risk_assessment',
-    'staff_invite'
+    'permit',
+    'toolbox_talk',
+    'snag',
+    'diary',
+    'compliance_document',
+    'itp',
+    'staff_invite',
+    'stock_item',
+    'vehicle',
+    'asset'
   )),
   status text not null default 'extracted' check (status in (
     'extracted',  -- values proposed, awaiting the operator

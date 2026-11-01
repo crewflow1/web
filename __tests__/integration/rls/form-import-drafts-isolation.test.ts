@@ -6,7 +6,7 @@ import { anonClient, describeIntegration, serviceClient, userClient } from "../_
 
 /**
  * FEATURE 2 — form_import_drafts RLS isolation, against real Postgres
- * (migration 20261264000000).
+ * (migration 20261265000000).
  *
  * A draft is ORG-scoped AND SELF-scoped: only its creator, within their org,
  * may read / edit / discard it. This proves the two locks hold for the most
@@ -20,7 +20,7 @@ import { anonClient, describeIntegration, serviceClient, userClient } from "../_
 type Loose = { from: (t: string) => any };
 const svc = () => serviceClient() as unknown as Loose;
 
-describeIntegration("form_import_drafts · org + self isolation (20261262)", () => {
+describeIntegration("form_import_drafts · org + self isolation (20261265)", () => {
   const T = `fid_${Date.now().toString(36)}`;
   let orgA = "";
   let orgB = "";

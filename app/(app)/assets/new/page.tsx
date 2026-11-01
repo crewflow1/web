@@ -9,18 +9,22 @@ import {
 } from "@/lib/assets/schema";
 import { createAsset } from "../actions";
 import { StateForm } from "@/components/forms/StateForm";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 
 const ERROR_MAP: Record<string, string> = {
   record_failed: "Couldn't save the asset. Try again.",
   validation: "Please check the form and try again.",
 };
 
-type SP = Promise<{ error?: string }>;
+type SP = Promise<{ error?: string; import?: string }>;
 
 export default async function NewAssetPage({ searchParams }: { searchParams: SP }) {
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
+  const prefill = sp.import ? await loadImportDraftDefaults("asset", sp.import) : null;
+  const pf = prefill?.fields ?? {};
 
   // `suppliers` is not in the generated Supabase types — cast like the other
   // post-types tables. Pinned to the active org: RLS returns every org the
@@ -67,6 +71,8 @@ export default async function NewAssetPage({ searchParams }: { searchParams: SP 
 
       <h1 className="text-2xl font-bold text-slate-900">Add an asset</h1>
 
+      {prefill ? <ImportPrefillBanner engine={prefill.engine} recordLabel="asset" /> : null}
+
       {errorMessage ? (
         <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {errorMessage}
@@ -78,13 +84,13 @@ export default async function NewAssetPage({ searchParams }: { searchParams: SP 
           <label htmlFor="name" className={label}>
             Name<span className="ml-0.5 text-red-500">*</span>
           </label>
-          <input id="name" name="name" type="text" required autoFocus placeholder="Kubota KX016-4 mini excavator" className={field} />
+          <input id="name" name="name" type="text" required autoFocus placeholder="Kubota KX016-4 mini excavator" className={field} defaultValue={pf.name ?? ""} />
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <label htmlFor="category" className={label}>Category</label>
-            <input id="category" name="category" list="asset-categories" placeholder="Plant / machinery" className={field} />
+            <input id="category" name="category" list="asset-categories" placeholder="Plant / machinery" className={field} defaultValue={pf.category ?? ""} />
             <datalist id="asset-categories">
               {ASSET_CATEGORY_SUGGESTIONS.map((c) => (
                 <option key={c} value={c} />
@@ -104,23 +110,23 @@ export default async function NewAssetPage({ searchParams }: { searchParams: SP 
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <label htmlFor="manufacturer" className={label}>Manufacturer</label>
-            <input id="manufacturer" name="manufacturer" type="text" placeholder="Kubota" className={field} />
+            <input id="manufacturer" name="manufacturer" type="text" placeholder="Kubota" className={field} defaultValue={pf.manufacturer ?? ""} />
           </div>
           <div>
             <label htmlFor="model" className={label}>Model</label>
-            <input id="model" name="model" type="text" placeholder="KX016-4" className={field} />
+            <input id="model" name="model" type="text" placeholder="KX016-4" className={field} defaultValue={pf.model ?? ""} />
           </div>
           <div>
             <label htmlFor="serial_number" className={label}>Serial number</label>
-            <input id="serial_number" name="serial_number" type="text" className={field} />
+            <input id="serial_number" name="serial_number" type="text" className={field} defaultValue={pf.serial_number ?? ""} />
           </div>
           <div>
             <label htmlFor="registration" className={label}>Registration</label>
-            <input id="registration" name="registration" type="text" placeholder="AB12 CDE" className={field} />
+            <input id="registration" name="registration" type="text" placeholder="AB12 CDE" className={field} defaultValue={pf.registration ?? ""} />
           </div>
           <div>
             <label htmlFor="asset_ref" className={label}>Your reference</label>
-            <input id="asset_ref" name="asset_ref" type="text" placeholder="Fleet no. 14" className={field} />
+            <input id="asset_ref" name="asset_ref" type="text" placeholder="Fleet no. 14" className={field} defaultValue={pf.asset_ref ?? ""} />
           </div>
           <div>
             <label htmlFor="supplier_id" className={label}>Supplier / hire company</label>
@@ -137,11 +143,11 @@ export default async function NewAssetPage({ searchParams }: { searchParams: SP 
           <legend className="px-1 text-xs font-medium uppercase tracking-wide text-slate-500">Finance</legend>
           <div>
             <label htmlFor="purchase_date" className={label}>Purchase date</label>
-            <input id="purchase_date" name="purchase_date" type="date" className={field} />
+            <input id="purchase_date" name="purchase_date" type="date" className={field} defaultValue={pf.purchase_date ?? ""} />
           </div>
           <div>
             <label htmlFor="purchase_price" className={label}>Purchase price £</label>
-            <input id="purchase_price" name="purchase_price" type="number" min={0} step="0.01" className={field} />
+            <input id="purchase_price" name="purchase_price" type="number" min={0} step="0.01" className={field} defaultValue={pf.purchase_price ?? ""} />
           </div>
           <div>
             <label htmlFor="current_value" className={label}>Current value £</label>
@@ -149,7 +155,7 @@ export default async function NewAssetPage({ searchParams }: { searchParams: SP 
           </div>
           <div>
             <label htmlFor="warranty_expires_at" className={label}>Warranty expiry</label>
-            <input id="warranty_expires_at" name="warranty_expires_at" type="date" className={field} />
+            <input id="warranty_expires_at" name="warranty_expires_at" type="date" className={field} defaultValue={pf.warranty_expires_at ?? ""} />
           </div>
         </fieldset>
 
@@ -157,15 +163,15 @@ export default async function NewAssetPage({ searchParams }: { searchParams: SP 
           <legend className="px-1 text-xs font-medium uppercase tracking-wide text-slate-500">Hire (if hired)</legend>
           <div>
             <label htmlFor="hire_start" className={label}>Hire start</label>
-            <input id="hire_start" name="hire_start" type="date" className={field} />
+            <input id="hire_start" name="hire_start" type="date" className={field} defaultValue={pf.hire_start ?? ""} />
           </div>
           <div>
             <label htmlFor="hire_end" className={label}>Hire end</label>
-            <input id="hire_end" name="hire_end" type="date" className={field} />
+            <input id="hire_end" name="hire_end" type="date" className={field} defaultValue={pf.hire_end ?? ""} />
           </div>
           <div>
             <label htmlFor="hire_rate" className={label}>Hire rate £</label>
-            <input id="hire_rate" name="hire_rate" type="number" min={0} step="0.01" className={field} />
+            <input id="hire_rate" name="hire_rate" type="number" min={0} step="0.01" className={field} defaultValue={pf.hire_rate ?? ""} />
           </div>
         </fieldset>
 

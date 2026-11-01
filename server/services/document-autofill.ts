@@ -85,13 +85,22 @@ async function authorizeImport(
   ctx: Awaited<ReturnType<typeof requireOrgContext>>["ctx"],
   user: Awaited<ReturnType<typeof requireOrgContext>>["user"],
 ): Promise<boolean> {
-  if (config.auth.adminOnly) return canManageStaff(ctx, user);
-  if (config.auth.capability) {
-    return hasCapability(ctx, user, config.auth.capability.module, config.auth.capability.action as never);
+  const auth = config.auth;
+  switch (auth.mode) {
+    case "member":
+      // Org membership is enough, and requireOrgContext established it.
+      return true;
+    case "capability":
+      return hasCapability(ctx, user, auth.module, auth.action as never);
+    case "orgAdmin":
+      // owner/admin only — is_org_admin equivalent (site).
+      return ctx.membership.role === "owner" || ctx.membership.role === "admin";
+    case "manageStaff":
+      return canManageStaff(ctx, user);
+    default:
+      // Exhaustiveness: an unhandled mode fails CLOSED.
+      return false;
   }
-  // Member-open create (supplier / job / RAMS): org membership is enough, and
-  // requireOrgContext has already established it.
-  return true;
 }
 
 /**

@@ -3,6 +3,8 @@ import { requireOrgContext } from "@/server/auth/session";
 import { listJobOptions, suggestDiaryWeather } from "../_data";
 import { DiaryForm } from "../_form";
 import { createDiaryEntry } from "../actions";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 
 const ERROR_MAP: Record<string, string> = {
   record_failed: "Couldn't save the entry. Try again.",
@@ -11,7 +13,7 @@ const ERROR_MAP: Record<string, string> = {
     "That job no longer exists in this company. Pick a current job and save again.",
 };
 
-type SP = Promise<{ error?: string; job?: string; date?: string }>;
+type SP = Promise<{ error?: string; job?: string; date?: string; import?: string }>;
 
 export default async function NewDiaryEntryPage({
   searchParams,
@@ -39,6 +41,8 @@ export default async function NewDiaryEntryPage({
     date: entryDate,
   });
 
+  const prefill = sp.import ? await loadImportDraftDefaults("diary", sp.import) : null;
+
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div className="flex items-center gap-2 text-sm text-slate-500">
@@ -61,6 +65,8 @@ export default async function NewDiaryEntryPage({
           (lib/offline/registry.ts). The identity handed to the form is the one the
           SERVER just resolved for this request — newly authored work is never
           attributed from a client-side marker on a shared tablet. */}
+      {prefill ? <ImportPrefillBanner engine={prefill.engine} recordLabel="diary entry" /> : null}
+
       <DiaryForm
         action={createDiaryEntry}
         jobs={jobs}
@@ -68,6 +74,7 @@ export default async function NewDiaryEntryPage({
           entry_date: entryDate,
           job_id: sp.job ?? "",
           weather: weatherSuggestion?.text ?? null,
+          ...(prefill?.fields ?? {}),
         }}
         weatherHint={
           weatherSuggestion
