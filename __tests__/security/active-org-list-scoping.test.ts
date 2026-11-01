@@ -398,7 +398,6 @@ describe("/api/search — every entity in the palette is active-org scoped", () 
   });
 
   for (const table of [
-    "customers",
     "memberships",
     "risk_assessments",
     "permits_to_work",
@@ -413,11 +412,24 @@ describe("/api/search — every entity in the palette is active-org scoped", () 
       expect(i, `${table} branch not found`).toBeGreaterThan(-1);
       // The pin must appear inside this branch's own chain, not merely
       // somewhere in the file — a per-branch window, because this route issues
-      // eight independent queries and dropping one is the realistic regression.
+      // several independent queries and dropping one is the realistic regression.
       const window = s.slice(i, i + 600);
       expect(window, `the ${table} search branch lost its active-org predicate`).toMatch(CTX_PIN);
     });
   }
+
+  it("pins the customers search branch via the guarded shared RPC", () => {
+    // Customers are matched through search_customers (SECURITY DEFINER,
+    // current_org_ids()+42501 guard). Its active-org pin is the p_org_id
+    // argument, not a .from("customers").eq(...) chain.
+    const s = SEARCH();
+    const i = s.indexOf('rpc("search_customers"');
+    expect(i, "customers RPC branch not found").toBeGreaterThan(-1);
+    const window = s.slice(i, i + 200);
+    expect(window, "the customers RPC branch lost its active-org argument").toMatch(
+      /p_org_id:\s*ctx\.org\.id/,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

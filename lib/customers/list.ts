@@ -14,8 +14,6 @@
  * already on screen.
  */
 
-import { ilikeOrFilter, CUSTOMER_SEARCH_COLUMNS } from "@/lib/search/filters";
-
 export const PAGE_SIZE = 200;
 
 /** Parse a 1-based page number from a query param; never below 1. */
@@ -46,25 +44,9 @@ export function pageWindow(
   };
 }
 
-/**
- * Build the PostgREST `.or()` filter for a server-side customer search.
- *
- * Address-first: spans name + email + phone AND the structured address columns
- * (line1/line2/city/county/postcode) so searching "BT9", "Malone Road",
- * "Lisburn" or "Apartment 4" returns the right customer — see
- * {@link CUSTOMER_SEARCH_COLUMNS}. Returns null when there's nothing to search
- * (→ full list).
- *
- * Delegates to {@link ilikeOrFilter}, which runs the term through the shared
- * sanitizer first (strips control chars + PostgREST structural/wildcard chars
- * `% _ , ( ) *`) so a crafted term can't broaden the match or break the `.or()`
- * grammar; the cleaned term still matches literally via `ilike`. Because the
- * filter is applied to the query BEFORE `.range()`, the search spans every
- * customer — a hit on row 550 of 598 is found from page 1, not just within the
- * first 200.
- */
-export function customerSearchOr(
-  term: string | undefined | null,
-): string | null {
-  return ilikeOrFilter(term, CUSTOMER_SEARCH_COLUMNS);
-}
+// Customer SEARCH (as opposed to this file's pagination math) now lives in the
+// ONE shared capability — lib/customers/search.ts → the search_customers RPC —
+// used by the customers list, the Cmd/K palette, the jobs-list customer axis and
+// every form picker. The old single-term `.or()` builder that used to live here
+// (customerSearchOr) was removed when the list page adopted the RPC, so there is
+// no second, weaker customer-search implementation to drift.
