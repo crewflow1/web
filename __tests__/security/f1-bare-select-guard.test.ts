@@ -358,12 +358,14 @@ const ALLOWLIST: Record<string, string> = {
   // NOT A READ: `.from('notifications').insert(payload).select(ALL_COLS)` — an
   // INSERT…RETURNING. The returned set is bounded by the payload it just wrote,
   // so it cannot truncate; it trips only because the region carries `.select(`.
-  "server/services/notifications-service.ts:164":
-    "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read. (Line moved to 144 as the R4 push/notification-channel branch shifted surrounding lines; 144→159 when the uuidOrNull helper block landed; 159→164 when the HQ email-routing imports landed above it — pure shifts, same INSERT…RETURNING.)",
-  "lib/notifications/push.ts:533":
+  "server/services/notifications-service.ts:169":
+    "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read. (Line moved to 144 as the R4 push/notification-channel branch shifted surrounding lines; 144→159 when the uuidOrNull helper block landed; 159→164 when the HQ email-routing imports landed above it; 164→169 when the staff-privacy eligibility import + conditional audience_scope spreads landed — pure shifts, same INSERT…RETURNING.)",
+  // (push 533→553, sms 524→543 when the staff-privacy eligibility imports landed
+  // atop both channel files — FEATURE 3; pure shifts, same bounded drain reads.)
+  "lib/notifications/push.ts:553":
     "bounded: `.from('notifications').select(...).in('id', ids)` where ids is the batch drawn from the just-claimed push_deliveries drain (≤ PUSH_DRAIN_BATCH_SIZE < 1000) — an id-keyed hydrate of an already-bounded set, not a completeness-sensitive scan. Same class as cis-statements.ts:169.",
-  "lib/notifications/sms.ts:524":
-    "bounded: `.from('notifications').select(...).in('id', ids)` where ids is the batch drawn from the just-claimed sms_deliveries drain (≤ SMS_DRAIN_BATCH_SIZE=50 < 1000) — an id-keyed hydrate of an already-bounded set, not a completeness-sensitive scan. Same class as lib/notifications/push.ts:533.",
+  "lib/notifications/sms.ts:543":
+    "bounded: `.from('notifications').select(...).in('id', ids)` where ids is the batch drawn from the just-claimed sms_deliveries drain (≤ SMS_DRAIN_BATCH_SIZE=50 < 1000) — an id-keyed hydrate of an already-bounded set, not a completeness-sensitive scan. Same class as lib/notifications/push.ts:553.",
 
   // ── Job-billing schedule / retention wave — genuinely-bounded SINGLE-SCOPE
   //    reads surfaced once job_billing_plans/job_billing_stages/retention_releases
