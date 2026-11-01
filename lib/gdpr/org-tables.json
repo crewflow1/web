@@ -77,6 +77,7 @@
     "expense_drafts",
     "finances",
     "fleet_vehicles",
+    "form_import_drafts",
     "gdpr_erasure_log",
     "gdpr_export_log",
     "goods_received_lines",

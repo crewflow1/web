@@ -141,6 +141,7 @@ export const ERASE_STORAGE_BUCKETS: readonly string[] = Object.freeze(
     "signatures",
     "company-logos",
     "imports",
+    "form-imports",
     "whatsapp-media",
   ]
     .slice()
