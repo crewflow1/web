@@ -1,0 +1,49 @@
+{
+  "workload": "embeddings",
+  "title": "Embedding retrieval quality",
+  "description": "Synthetic CrewFlow knowledge/memory corpus with labelled queries. Measures retrieval quality (precision@k, MRR, mean rank of first relevant) for local embedding models, compared conceptually against the production OpenAI text-embedding-3-small (1536-d) path. NOTE: OpenAI is NOT called; comparison is on dimensions, MTEB reputation (from public docs), and local latency only.",
+  "productionBaseline": {
+    "provider": "openai",
+    "model": "text-embedding-3-small",
+    "dimension": 1536,
+    "note": "Current CrewFlow embedding path per lib/ai/embeddings/openai.ts. Not called in this benchmark."
+  },
+  "corpus": [
+    { "id": "d01", "text": "To add VAT to a quote, set your VAT rate in Settings then Tax; it applies automatically to new quotes, with a per-line override available." },
+    { "id": "d02", "text": "CIS deductions are calculated automatically for subcontractors marked as CIS-registered; the deduction appears on their payment statement." },
+    { "id": "d03", "text": "The client portal lets your customers view quotes, approve them, see invoices and download documents in bulk." },
+    { "id": "d04", "text": "Member roles can see jobs and log costs, but money and profit reports and staff pay are restricted to admins only." },
+    { "id": "d05", "text": "Offline mode queues your site-diary entries and photos while you have no signal and syncs them automatically when you reconnect." },
+    { "id": "d06", "text": "To switch which company you are working in, use the organisation switcher at the top-left; this fixes invoice PDFs showing the wrong company." },
+    { "id": "d07", "text": "Invoices can be voided with a full audit trail instead of being deleted, which keeps your accounts consistent for HMRC." },
+    { "id": "d08", "text": "The dashboard shows your cash position, overdue invoices, job margins and upcoming payments at a glance." },
+    { "id": "d09", "text": "Quotes older than 30 days are flagged so you can follow up on your open pipeline before they go cold." },
+    { "id": "d10", "text": "Two-factor authentication can be enabled on any account from the security settings for an extra layer of protection." },
+    { "id": "d11", "text": "The weather forecast appears on each job's schedule and flags likely rain days so you can plan outdoor work." },
+    { "id": "d12", "text": "Material costs are logged against each job so you can see real-time margin versus the quoted budget." },
+    { "id": "d13", "text": "You can set a default profit margin per client type in the quote builder so trade and retail quotes price correctly." },
+    { "id": "d14", "text": "Appointment reminders are sent by SMS to clients ahead of a booked visit; timezones are handled automatically." },
+    { "id": "d15", "text": "Supplier invoices can be scanned and the supplier, amount, VAT and category extracted automatically to save typing." },
+    { "id": "d16", "text": "A loft conversion typically takes six to eight weeks and requires building control sign-off at structural stages." },
+    { "id": "d17", "text": "Mini excavators and breakers are available to hire by the day; delivery and collection are charged separately." },
+    { "id": "d18", "text": "Payroll figures in CrewFlow are estimates and do not yet include employer National Insurance or pension contributions." },
+    { "id": "d19", "text": "To reduce material spend, compare supplier prices on your most-used products; small percentage differences add up at volume." },
+    { "id": "d20", "text": "The recipe for a classic Victoria sponge involves creaming butter and sugar, folding in flour and baking at 180 degrees." },
+    { "id": "d21", "text": "Premier League fixtures are scheduled across weekends with occasional midweek rounds during congested periods." },
+    { "id": "d22", "text": "Photosynthesis converts carbon dioxide and water into glucose and oxygen using energy from sunlight." }
+  ],
+  "queries": [
+    { "id": "q1", "text": "how do I charge VAT on a quotation", "relevant": ["d01", "d13"] },
+    { "id": "q2", "text": "why does my invoice show the wrong business name", "relevant": ["d06"] },
+    { "id": "q3", "text": "can my site foreman be blocked from seeing wages and profit", "relevant": ["d04"] },
+    { "id": "q4", "text": "working on site with no internet signal", "relevant": ["d05"] },
+    { "id": "q5", "text": "automatically pull data off a supplier bill", "relevant": ["d15"] },
+    { "id": "q6", "text": "deductions for CIS subcontractors", "relevant": ["d02"] },
+    { "id": "q7", "text": "deleting or cancelling an invoice safely for the taxman", "relevant": ["d07"] },
+    { "id": "q8", "text": "will it rain on my outdoor job this week", "relevant": ["d11"] },
+    { "id": "q9", "text": "keeping track of how much profit a job is making", "relevant": ["d12", "d08"] },
+    { "id": "q10", "text": "securing my login with a second factor", "relevant": ["d10"] },
+    { "id": "q11", "text": "spending less money with merchants and builders yards", "relevant": ["d19"] },
+    { "id": "q12", "text": "does payroll include employer NI and pensions", "relevant": ["d18"] }
+  ]
+}
