@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ImportButton } from "@/components/import/import-button";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
@@ -128,12 +129,15 @@ export default async function SiteReportsPage({ searchParams }: { searchParams: 
             diary, snags and safety talks; you review, approve and issue.
           </p>
         </div>
-        <Link
-          href="/site-reports/new"
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-        >
-          + New report
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <ImportButton formType="site_report" />
+          <Link
+            href="/site-reports/new"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            + New report
+          </Link>
+        </div>
       </header>
 
       {errorMessage ? (

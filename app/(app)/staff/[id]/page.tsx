@@ -21,6 +21,9 @@ import { HolidayEntitlementForm } from "./_holiday-form";
 import { PensionEnrolmentForm } from "./_pension-form";
 import { PayrollTaxProfileForm } from "./_payroll-tax-form";
 import { AddQualificationForm } from "./_qualifications";
+import { ImportButton } from "@/components/import/import-button";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { readFailure } from "@/lib/supabase/read-failure";
@@ -48,7 +51,7 @@ export default async function StaffDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ error?: string; saved?: string }>;
+  searchParams: Promise<{ error?: string; saved?: string; import?: string }>;
 }) {
   const { id } = await params;
   const sp = await searchParams;
@@ -61,6 +64,10 @@ export default async function StaffDetailPage({
   // errors in any org with ≥2 members.
   const isAdmin =
     ctx.membership.role === "owner" || ctx.membership.role === "admin";
+  // Prefill the Add-qualification form from a certificate/CSCS-card import
+  // (admin-only, mirroring addStaffQualification's requireAdmin).
+  const qualPrefill =
+    isAdmin && sp.import ? await loadImportDraftDefaults("qualification", sp.import) : null;
 
   // Target row + extended profile.
   const { data: row, error: rowError } = await supabase
@@ -335,9 +342,18 @@ export default async function StaffDetailPage({
 
       {/* Qualifications / certifications */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-base font-semibold text-slate-900">
-          Qualifications &amp; certifications
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-base font-semibold text-slate-900">
+            Qualifications &amp; certifications
+          </h2>
+          {isAdmin ? (
+            <ImportButton
+              formType="qualification"
+              size="sm"
+              newPathOverride={`/staff/${id}`}
+            />
+          ) : null}
+        </div>
         <p className="mt-1 text-xs text-slate-500">
           Cards, tickets and certificates held by this person. Expiring or lapsed
           items surface in the daily briefing, and the rota generator prefers
@@ -395,7 +411,17 @@ export default async function StaffDetailPage({
           </ul>
         )}
         {isAdmin ? (
-          <AddQualificationForm action={addStaffQualification.bind(null, id)} />
+          <>
+            {qualPrefill ? (
+              <div className="mt-4">
+                <ImportPrefillBanner engine={qualPrefill.engine} recordLabel="qualification" />
+              </div>
+            ) : null}
+            <AddQualificationForm
+              action={addStaffQualification.bind(null, id)}
+              defaults={qualPrefill?.fields}
+            />
+          </>
         ) : null}
       </section>
 

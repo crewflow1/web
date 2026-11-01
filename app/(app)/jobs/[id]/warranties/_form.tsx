@@ -21,7 +21,15 @@ import { WARRANTY_KIND_LABELS } from "@/lib/warranties/schedule";
  * Posts through <StateForm> (FormState + full-document navigation) — see
  * components/forms/StateForm.tsx for why `redirect()` is unsafe at this depth.
  */
-export function WarrantyForm({ jobId }: { jobId: string }) {
+export function WarrantyForm({
+  jobId,
+  defaults,
+}: {
+  jobId: string;
+  /** Prefill values from a warranty-certificate import (title/provider/kind/
+   *  period_months/reference/cover/exclusions). */
+  defaults?: Record<string, string>;
+}) {
   return (
     <StateForm action={createWarranty.bind(null, jobId)} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
@@ -31,6 +39,7 @@ export function WarrantyForm({ jobId }: { jobId: string }) {
             name="title"
             required
             maxLength={200}
+            defaultValue={defaults?.title ?? ""}
             placeholder="e.g. Workmanship warranty"
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none"
           />
@@ -39,7 +48,7 @@ export function WarrantyForm({ jobId }: { jobId: string }) {
           <span className="mb-1 block font-medium text-slate-700">Type</span>
           <select
             name="kind"
-            defaultValue="workmanship"
+            defaultValue={defaults?.kind ?? "workmanship"}
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none"
           >
             {WARRANTY_KINDS.map((k) => (
@@ -61,6 +70,7 @@ export function WarrantyForm({ jobId }: { jobId: string }) {
           required
           rows={3}
           maxLength={4000}
+          defaultValue={defaults?.cover ?? ""}
           placeholder="e.g. All labour and workmanship on the roof covering, flashings and rainwater goods."
           className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none"
         />
@@ -75,6 +85,7 @@ export function WarrantyForm({ jobId }: { jobId: string }) {
           name="exclusions"
           rows={2}
           maxLength={4000}
+          defaultValue={defaults?.exclusions ?? ""}
           placeholder="e.g. Storm damage, misuse, or work by others."
           className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none"
         />
@@ -90,7 +101,7 @@ export function WarrantyForm({ jobId }: { jobId: string }) {
             min={1}
             max={600}
             step={1}
-            defaultValue={12}
+            defaultValue={defaults?.period_months ?? "12"}
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none"
           />
         </label>
@@ -116,6 +127,7 @@ export function WarrantyForm({ jobId }: { jobId: string }) {
           <input
             name="provider"
             maxLength={200}
+            defaultValue={defaults?.provider ?? ""}
             placeholder="e.g. Vaillant"
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none"
           />
@@ -130,6 +142,7 @@ export function WarrantyForm({ jobId }: { jobId: string }) {
           <input
             name="reference"
             maxLength={120}
+            defaultValue={defaults?.reference ?? ""}
             placeholder="Policy / serial number"
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none"
           />

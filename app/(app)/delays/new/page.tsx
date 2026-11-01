@@ -8,6 +8,8 @@ import {
 import { createDelayEvent } from "../actions";
 import { DelayCreateForm } from "../_create-form";
 import { withPreservedOption } from "@/lib/quotes/preserve-option";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 
 /**
  * /delays/new — draft a delay event.
@@ -20,11 +22,12 @@ import { withPreservedOption } from "@/lib/quotes/preserve-option";
  * while editing the draft is equally supported.
  */
 
-type SP = Promise<{ error?: string; jobId?: string }>;
+type SP = Promise<{ error?: string; jobId?: string; import?: string }>;
 
 export default async function NewDelayEventPage({ searchParams }: { searchParams: SP }) {
   const { ctx, user } = await requireOrgContext();
   const sp = await searchParams;
+  const prefill = sp.import ? await loadImportDraftDefaults("delay", sp.import) : null;
   const jobs = await listJobOptions(ctx.org.id);
   const presetJobId = sp.jobId ?? "";
   const preselectedJob = jobs.find((j) => j.id === presetJobId) ?? null;
@@ -91,14 +94,20 @@ export default async function NewDelayEventPage({ searchParams }: { searchParams
         // The identity handed to the form is the one the SERVER just resolved for
         // this request — newly authored work is never attributed from a client-side
         // marker on a shared tablet (#456).
-        <DelayCreateForm
-          action={createDelayEvent}
-          jobs={jobOptions}
-          preselectedJobId={presetJobId}
-          diaryOptions={diaryOptions}
-          variationOptions={variationOptions}
-          offline={{ userId: user.id, orgId: ctx.org.id }}
-        />
+        <>
+          {prefill ? (
+            <ImportPrefillBanner engine={prefill.engine} recordLabel="delay" />
+          ) : null}
+          <DelayCreateForm
+            action={createDelayEvent}
+            jobs={jobOptions}
+            preselectedJobId={presetJobId}
+            diaryOptions={diaryOptions}
+            variationOptions={variationOptions}
+            offline={{ userId: user.id, orgId: ctx.org.id }}
+            defaults={prefill?.fields}
+          />
+        </>
       )}
     </div>
   );

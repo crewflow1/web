@@ -22,7 +22,15 @@ type Action = (
  * detail route is not a force-dynamic [id] route, so this is safe here). On a
  * successful add the form is reset so the next entry starts blank.
  */
-export function AddQualificationForm({ action }: { action: Action }) {
+export function AddQualificationForm({
+  action,
+  defaults,
+}: {
+  action: Action;
+  /** Prefill from a certificate/CSCS-card import (qualification_type/title/
+   *  reference_no/issued_on/expires_on/notes). */
+  defaults?: Record<string, string>;
+}) {
   const [state, formAction, pending] = useActionState(
     action,
     INITIAL_FORM_STATE as FormState<Values>,
@@ -48,7 +56,12 @@ export function AddQualificationForm({ action }: { action: Action }) {
           Type
           <select
             name="qualification_type"
-            defaultValue="cscs"
+            defaultValue={
+              defaults?.qualification_type &&
+              (QUALIFICATION_TYPES as readonly string[]).includes(defaults.qualification_type)
+                ? defaults.qualification_type
+                : "cscs"
+            }
             className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
           >
             {QUALIFICATION_TYPES.map((t) => (
@@ -63,16 +76,18 @@ export function AddQualificationForm({ action }: { action: Action }) {
           name="title"
           placeholder="e.g. CSCS Blue Skilled Worker"
           error={fe.title}
+          defaultValue={defaults?.title}
         />
         <Text
           label="Reference no. (optional)"
           name="reference_no"
           placeholder="Card / certificate number"
           error={fe.reference_no}
+          defaultValue={defaults?.reference_no}
         />
         <div className="grid grid-cols-2 gap-2">
-          <DateInput label="Issued on" name="issued_on" error={fe.issued_on} />
-          <DateInput label="Expires on" name="expires_on" error={fe.expires_on} />
+          <DateInput label="Issued on" name="issued_on" error={fe.issued_on} defaultValue={defaults?.issued_on} />
+          <DateInput label="Expires on" name="expires_on" error={fe.expires_on} defaultValue={defaults?.expires_on} />
         </div>
       </div>
       <label className="block text-xs text-slate-600">
@@ -80,6 +95,7 @@ export function AddQualificationForm({ action }: { action: Action }) {
         <textarea
           name="notes"
           rows={2}
+          defaultValue={defaults?.notes ?? ""}
           className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
         />
         {fe.notes ? (
@@ -98,11 +114,13 @@ function Text({
   name,
   placeholder,
   error,
+  defaultValue,
 }: {
   label: string;
   name: string;
   placeholder?: string;
   error?: string;
+  defaultValue?: string;
 }) {
   const errorId = error ? `${name}-error` : undefined;
   return (
@@ -112,6 +130,7 @@ function Text({
         type="text"
         name={name}
         placeholder={placeholder}
+        defaultValue={defaultValue ?? ""}
         aria-invalid={error ? true : undefined}
         aria-describedby={errorId}
         className={`mt-1 block w-full rounded-md border px-2 py-1.5 text-sm ${
@@ -131,10 +150,12 @@ function DateInput({
   label,
   name,
   error,
+  defaultValue,
 }: {
   label: string;
   name: string;
   error?: string;
+  defaultValue?: string;
 }) {
   const errorId = error ? `${name}-error` : undefined;
   return (
@@ -143,6 +164,7 @@ function DateInput({
       <input
         type="date"
         name={name}
+        defaultValue={defaultValue ?? ""}
         aria-invalid={error ? true : undefined}
         aria-describedby={errorId}
         className={`mt-1 block w-full rounded-md border px-2 py-1.5 text-sm ${

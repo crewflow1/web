@@ -58,7 +58,11 @@ create table if not exists public.form_import_drafts (
     'staff_invite',
     'stock_item',
     'vehicle',
-    'asset'
+    'asset',
+    'delay',
+    'site_report',
+    'qualification',
+    'warranty'
   )),
   status text not null default 'extracted' check (status in (
     'extracted',  -- values proposed, awaiting the operator

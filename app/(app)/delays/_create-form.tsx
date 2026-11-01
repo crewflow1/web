@@ -91,6 +91,7 @@ export function DelayCreateForm({
   diaryOptions,
   variationOptions,
   offline,
+  defaults,
 }: {
   action: (formData: FormData) => void | Promise<void>;
   jobs: DelayJobOption[];
@@ -100,6 +101,8 @@ export function DelayCreateForm({
   variationOptions: Array<{ id: string; label: string }> | null;
   /** Present ⇒ this form may be saved offline. Absent ⇒ online only. */
   offline?: DelayOfflineConfig;
+  /** Prefill values from a document import (category/startedOn/endedOn/description). */
+  defaults?: Record<string, string>;
 }) {
   const [online, setOnline] = useState(true);
   const [state, setState] = useState<OfflineState>({ kind: "idle" });
@@ -248,6 +251,7 @@ export function DelayCreateForm({
       <DelayEventFields
         diaryOptions={evidenceAvailable ? diaryOptions : null}
         variationOptions={evidenceAvailable ? variationOptions : null}
+        defaults={defaults}
       />
 
       {!evidenceAvailable ? (

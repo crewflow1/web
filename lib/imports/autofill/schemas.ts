@@ -367,6 +367,66 @@ export const vehicleExtractionSchema = z.object({
   purchase_price: decimal(99_999_999),
 });
 
+/**
+ * Site & Safety — a delay / EOT event, from a notice / instruction / letter.
+ * Keys match the create form inputs (lib app/(app)/delays/_form-fields.tsx):
+ * `startedOn`/`endedOn` are camelCase there, so they are here too. `category`
+ * is a fixed set. `workingDaysLost` is DELIBERATELY excluded — the form labels
+ * it a manual claim the operator must make, never a figure read off a document.
+ */
+export const delayExtractionSchema = z.object({
+  category: oneOf([
+    "weather",
+    "client_instruction",
+    "access_restriction",
+    "third_party_dependency",
+    "design_change",
+    "other",
+  ]),
+  startedOn: isoDate(),
+  endedOn: isoDate(),
+  description: text(8000),
+});
+
+/** Site & Safety — a progress / site report header, from a report document.
+ *  The create form captures title + the reporting period; progress % and photos
+ *  are added on the report itself after it exists, so they are not extracted. */
+export const siteReportExtractionSchema = z.object({
+  title: text(200),
+  period_start: isoDate(),
+  period_end: isoDate(),
+});
+
+/**
+ * Projects — a warranty / guarantee, from a warranty certificate. Header fields
+ * only; the job it attaches to is chosen on the page (a UUID a document cannot
+ * name). `kind` is a fixed set; `period_months` a whole number of months.
+ */
+export const warrantyExtractionSchema = z.object({
+  title: text(200),
+  provider: text(200),
+  kind: oneOf(["workmanship", "product", "structural", "defects_liability", "other"]),
+  period_months: wholeNumber(600),
+  reference: text(120),
+  cover: text(8000),
+  exclusions: text(8000),
+});
+
+/**
+ * People — a staff QUALIFICATION, from a CSCS card / certificate / ticket.
+ * Identity of the qualification only (type, title, reference, issue/expiry) —
+ * the staff member it belongs to is the page's `[id]`, never extracted; pay,
+ * role and emergency contacts are categorically out of scope (as for invites).
+ */
+export const qualificationExtractionSchema = z.object({
+  qualification_type: text(120),
+  title: text(200),
+  reference_no: text(120),
+  issued_on: isoDate(),
+  expires_on: isoDate(),
+  notes: text(2000),
+});
+
 /** Assets — equipment, from a purchase invoice / spec sheet / hire agreement. */
 export const assetExtractionSchema = z.object({
   name: text(200),

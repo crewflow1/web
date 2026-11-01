@@ -88,6 +88,10 @@ describe("autofill registry alignment", () => {
     });
     expect(AUTOFILL_FORMS.staff_invite.auth).toEqual({ mode: "manageStaff" });
     expect(AUTOFILL_FORMS.site.auth).toEqual({ mode: "orgAdmin" });
+    // Coverage-completion wave: warranty + qualification create actions call
+    // requireAdmin, so their import mirrors it (owner/admin only).
+    expect(AUTOFILL_FORMS.warranty.auth).toEqual({ mode: "orgAdmin" });
+    expect(AUTOFILL_FORMS.qualification.auth).toEqual({ mode: "orgAdmin" });
     for (const t of [
       "supplier",
       "job",
@@ -101,6 +105,8 @@ describe("autofill registry alignment", () => {
       "stock_item",
       "vehicle",
       "asset",
+      "delay",
+      "site_report",
     ] as const) {
       expect(AUTOFILL_FORMS[t].auth).toEqual({ mode: "member" });
     }

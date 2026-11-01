@@ -33,6 +33,10 @@ import {
   stockItemExtractionSchema,
   vehicleExtractionSchema,
   assetExtractionSchema,
+  delayExtractionSchema,
+  siteReportExtractionSchema,
+  warrantyExtractionSchema,
+  qualificationExtractionSchema,
 } from "./schemas";
 
 /**
@@ -267,6 +271,38 @@ const ASSET_FIELDS: readonly AutofillField[] = [
   { key: "hire_rate", label: "Hire rate (£)" },
 ];
 
+const DELAY_FIELDS: readonly AutofillField[] = [
+  { key: "category", label: "Category" },
+  { key: "startedOn", label: "Started on" },
+  { key: "endedOn", label: "Ended on" },
+  { key: "description", label: "Description" },
+];
+
+const SITE_REPORT_FIELDS: readonly AutofillField[] = [
+  { key: "title", label: "Title" },
+  { key: "period_start", label: "Period start" },
+  { key: "period_end", label: "Period end" },
+];
+
+const WARRANTY_FIELDS: readonly AutofillField[] = [
+  { key: "title", label: "Title" },
+  { key: "provider", label: "Provider" },
+  { key: "kind", label: "Kind" },
+  { key: "period_months", label: "Period (months)" },
+  { key: "reference", label: "Reference" },
+  { key: "cover", label: "What's covered" },
+  { key: "exclusions", label: "Exclusions" },
+];
+
+const QUALIFICATION_FIELDS: readonly AutofillField[] = [
+  { key: "qualification_type", label: "Qualification type" },
+  { key: "title", label: "Title" },
+  { key: "reference_no", label: "Reference number" },
+  { key: "issued_on", label: "Issued on" },
+  { key: "expires_on", label: "Expires on" },
+  { key: "notes", label: "Notes" },
+];
+
 export const AUTOFILL_FORMS: Readonly<Record<AutofillFormType, AutofillFormConfig>> = {
   customer: {
     type: "customer",
@@ -483,6 +519,71 @@ export const AUTOFILL_FORMS: Readonly<Record<AutofillFormType, AutofillFormConfi
     systemPrompt: promptFor("asset / equipment", ASSET_FIELDS, [
       `- "serial_number" / "registration" identify the unit; "asset_ref" any internal code.`,
       `- Dates in YYYY-MM-DD; amounts in pounds. Hire fields only for a hire agreement.`,
+    ]),
+  },
+
+  // ─── Coverage completion wave — the remaining applicable+safe forms ───
+
+  delay: {
+    type: "delay",
+    recordLabel: "delay / EOT event",
+    // createDelay is member-open (requireOrgContext).
+    auth: { mode: "member" },
+    target: { kind: "route", newPath: "/delays/new" },
+    schema: delayExtractionSchema,
+    fields: DELAY_FIELDS,
+    uploadHint: "Upload a delay notice, client instruction or letter describing the event.",
+    systemPrompt: promptFor("delay / extension-of-time event", DELAY_FIELDS, [
+      `- "category" is one of weather, client_instruction, access_restriction, third_party_dependency, design_change, other — only if clear; else null.`,
+      `- "startedOn"/"endedOn" are the event's dates in YYYY-MM-DD.`,
+      `- Do NOT estimate working days lost — that is a manual claim the operator makes.`,
+    ]),
+  },
+  site_report: {
+    type: "site_report",
+    recordLabel: "site report",
+    // createSiteReport is member-open (requireOrgContext).
+    auth: { mode: "member" },
+    target: { kind: "route", newPath: "/site-reports/new" },
+    schema: siteReportExtractionSchema,
+    fields: SITE_REPORT_FIELDS,
+    uploadHint: "Upload a progress report or site report document.",
+    systemPrompt: promptFor("site / progress report", SITE_REPORT_FIELDS, [
+      `- "period_start"/"period_end" are the reporting period dates in YYYY-MM-DD.`,
+    ]),
+  },
+  qualification: {
+    type: "qualification",
+    recordLabel: "staff qualification",
+    // addStaffQualification is owner/admin (requireAdmin).
+    auth: { mode: "orgAdmin" },
+    // Contextual: raised against a specific staff member. The page passes
+    // newPathOverride = `/staff/${id}?import=…`; this static path is the fallback.
+    target: { kind: "route", newPath: "/staff" },
+    schema: qualificationExtractionSchema,
+    fields: QUALIFICATION_FIELDS,
+    uploadHint: "Upload a CSCS card, certificate or training ticket.",
+    systemPrompt: promptFor("staff qualification / certificate", QUALIFICATION_FIELDS, [
+      `- "qualification_type" is the kind of card/ticket (e.g. CSCS, SSSTS, First Aid).`,
+      `- "reference_no" is the card/certificate number; dates in YYYY-MM-DD.`,
+      `- Extract ONLY the qualification itself — never pay, role or any personal data beyond the certificate's own fields.`,
+    ]),
+  },
+  warranty: {
+    type: "warranty",
+    recordLabel: "warranty",
+    // createWarranty is owner/admin (requireAdmin).
+    auth: { mode: "orgAdmin" },
+    // Contextual: attached to a specific job. The page passes newPathOverride =
+    // `/jobs/${id}/warranties?import=…`; this static path is the fallback.
+    target: { kind: "route", newPath: "/jobs" },
+    schema: warrantyExtractionSchema,
+    fields: WARRANTY_FIELDS,
+    uploadHint: "Upload a warranty certificate or guarantee document.",
+    systemPrompt: promptFor("warranty / guarantee", WARRANTY_FIELDS, [
+      `- "kind" is one of workmanship, product, structural, defects_liability, other — only if clear.`,
+      `- "period_months" is the warranty length in whole months if stated.`,
+      `- "provider" is who issues/backs the warranty; "reference" any policy/certificate number.`,
     ]),
   },
 };

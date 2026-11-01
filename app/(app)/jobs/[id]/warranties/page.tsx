@@ -7,6 +7,9 @@ import { loadJobForOrg } from "@/lib/jobs/load";
 import { StateForm } from "@/components/forms/StateForm";
 import { WarrantyForm } from "./_form";
 import { publishWarranty, voidWarranty, withdrawWarrantyFromPortal } from "./actions";
+import { ImportButton } from "@/components/import/import-button";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
 import {
   computeWarrantyClock,
   NO_CERTIFICATE_NOTE,
@@ -97,13 +100,16 @@ export default async function JobWarrantiesPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ saved?: string }>;
+  searchParams: Promise<{ saved?: string; import?: string }>;
 }) {
   const { id } = await params;
-  const { saved } = await searchParams;
+  const { saved, import: importId } = await searchParams;
 
   const { ctx } = await requireOrgContext();
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
+  // Prefill from a warranty-certificate import (admin-only, mirroring create).
+  const prefill =
+    isAdmin && importId ? await loadImportDraftDefaults("warranty", importId) : null;
   const supabase = await createClient();
 
   const job = await loadJobForOrg<{ id: string; status: string }>(
@@ -333,8 +339,20 @@ export default async function JobWarrantiesPage({
 
       {isAdmin ? (
         <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 text-base font-semibold text-slate-900">Add a warranty</h2>
-          <WarrantyForm jobId={id} />
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-base font-semibold text-slate-900">Add a warranty</h2>
+            <ImportButton
+              formType="warranty"
+              size="sm"
+              newPathOverride={`/jobs/${id}/warranties`}
+            />
+          </div>
+          {prefill ? (
+            <div className="mb-4">
+              <ImportPrefillBanner engine={prefill.engine} recordLabel="warranty" />
+            </div>
+          ) : null}
+          <WarrantyForm jobId={id} defaults={prefill?.fields} />
         </section>
       ) : null}
     </div>

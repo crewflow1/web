@@ -28,8 +28,13 @@ export const AUTOFILL_FORM_TYPES = [
   "diary",
   "compliance_document",
   "itp",
+  "delay",
+  "site_report",
   // People
   "staff_invite",
+  "qualification",
+  // Projects (contextual, job-nested)
+  "warranty",
   // Materials / Stock / Fleet / Assets
   "stock_item",
   "vehicle",
