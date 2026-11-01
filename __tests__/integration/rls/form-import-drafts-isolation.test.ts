@@ -131,4 +131,37 @@ describeIntegration("form_import_drafts · org + self isolation (20261265)", () 
       .single();
     expect(ins.error).not.toBeNull();
   });
+
+  it("a DISCARDED draft is excluded from the 'extracted'-only prefill query (loadImportDraftDefaults)", async () => {
+    // loadImportDraftDefaults selects by id + form_type + status='extracted', so
+    // a draft the operator rejected (status='discarded') can never be re-loaded
+    // into a form via `?import=<id>`. Prove that data contract here.
+    const client = userClient(tokenA) as unknown as Loose;
+    const ins = await client
+      .from("form_import_drafts")
+      .insert({ org_id: orgA, form_type: "customer", extracted: { name: "Discarded Co" }, created_by: userA })
+      .select("id")
+      .single();
+    expect(ins.error, ins.error?.message).toBeNull();
+    const discardedId = String(ins.data.id);
+
+    const upd = await client.from("form_import_drafts").update({ status: "discarded" }).eq("id", discardedId);
+    expect(upd.error).toBeNull();
+
+    // The exact shape loadImportDraftDefaults uses: discarded → no prefill row.
+    const prefill = await client
+      .from("form_import_drafts")
+      .select("id, extracted")
+      .eq("id", discardedId)
+      .eq("form_type", "customer")
+      .eq("status", "extracted")
+      .maybeSingle();
+    expect(prefill.error).toBeNull();
+    expect(prefill.data).toBeNull();
+
+    // Sanity: the row still exists — it is the status filter that excludes it,
+    // not deletion (deletion is the retention sweep's job).
+    const raw = await client.from("form_import_drafts").select("id, status").eq("id", discardedId).maybeSingle();
+    expect(raw.data?.status).toBe("discarded");
+  });
 });
