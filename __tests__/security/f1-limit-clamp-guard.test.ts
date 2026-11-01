@@ -289,8 +289,8 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // aggregated documents with their job/customer name — never counted/summed.
   "app/(app)/documents/page.tsx:183":
     "bounded: /documents job-name lookup — CHUNKED .in('id', idsChunk) capped at .limit(JOB_IN_CHUNK=500) per chunk (jobs.id unique ⇒ ≤500 rows); a display-label lookup over a fully-read doc set, NOT counted/summed",
-  "app/(app)/jobs/page.tsx:106":
-    "bounded: search-match helper — collects up to 200 matching customer ids to fold into the .range()-paged jobs query; a name-search sub-sample, not a materialised set Moved 95→106 in the final-roadmap wave (DataTable adoption added JOB_COLUMNS + import) — pure shift, same read.",
+  "app/(app)/jobs/page.tsx:107":
+    "bounded: search-match helper — collects up to 200 matching customer ids to fold into the .range()-paged jobs query; a name-search sub-sample, not a materialised set Moved 95→106 in the final-roadmap wave (DataTable adoption added JOB_COLUMNS + import); moved 106→107 when the Feature 2 Import-button import was added — pure shift, same read.",
 
   // Customer-portal reads.
   //

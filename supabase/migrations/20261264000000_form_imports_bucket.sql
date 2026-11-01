@@ -63,46 +63,26 @@ on conflict (id) do update set
   allowed_mime_types = excluded.allowed_mime_types;
 
 -- ---------------------------------------------------------------------------
--- RLS on storage.objects for the `form-imports` bucket.
+-- NO tenant RLS policy on storage.objects for this bucket — BY DESIGN.
 --
--- LEAST PRIVILEGE, two independent locks:
---   1. ORG: the first path segment must be an org the caller belongs to
---      (`current_org_ids()`). This is the tenant-isolation boundary — a member
---      of org B can never read, write, or delete an object under org A's folder,
---      even by guessing the path.
---   2. OWNER: read and delete additionally require `owner = auth.uid()`, so an
---      operator only ever sees back the documents THEY uploaded, not other
---      members' in-flight imports. The capability gate ("can this user create
---      THIS record type") lives in the server action, which is where a
---      per-module decision belongs — storage RLS cannot know a form type.
+-- The 20261032 storage-mutation lockdown made byte mutation on storage.objects
+-- SERVICE-ROLE-ONLY (no `authenticated` INSERT/UPDATE/DELETE on any bucket), and
+-- __tests__/security/storage-company-logos-lockdown.test.ts pins that no later
+-- migration may revert it for ANY bucket. This bucket honours that, the same way
+-- `company-logos` and `portal-uploads` do:
 --
--- The bytes are never served publicly; the app reads them server-side (admin
--- client) only to run the one governed extraction, and mints a short-lived
--- signed URL for the operator's own review thumbnail where needed.
+--   * WRITES go through the server action only. `startDocumentImport`
+--     (server/services/document-autofill.ts) uploads via `createAdminClient()`
+--     (service_role, which bypasses RLS), with the org-id path segment pinned
+--     from the validated session — so tenant isolation is enforced in code at the
+--     one write path, not by a tenant storage policy. The discard path removes
+--     the object via the same service-role client.
+--   * READS, if ever needed for a review thumbnail, are SERVICE-MINTED SIGNED
+--     URLs (authorised by signature, not RLS) — again from the server action.
+--
+-- The bucket therefore needs no `storage.objects` policy at all: a tenant client
+-- can neither read nor write it directly, and every legitimate access is a
+-- service-role call behind the authenticated, capability-checked server action.
+-- The bucket stays private (public = false) and its byte limits above still apply
+-- to the service-role upload (bucket constraints are not RLS).
 -- ---------------------------------------------------------------------------
-
-drop policy if exists "form-imports: owner reads own org objects" on storage.objects;
-create policy "form-imports: owner reads own org objects"
-on storage.objects for select to authenticated
-using (
-  bucket_id = 'form-imports'
-  and owner = auth.uid()
-  and (storage.foldername(name))[1]::uuid in (select public.current_org_ids())
-);
-
-drop policy if exists "form-imports: members upload to own org" on storage.objects;
-create policy "form-imports: members upload to own org"
-on storage.objects for insert to authenticated
-with check (
-  bucket_id = 'form-imports'
-  and (storage.foldername(name))[1]::uuid in (select public.current_org_ids())
-);
-
-drop policy if exists "form-imports: owner deletes own org objects" on storage.objects;
-create policy "form-imports: owner deletes own org objects"
-on storage.objects for delete to authenticated
-using (
-  bucket_id = 'form-imports'
-  and owner = auth.uid()
-  and (storage.foldername(name))[1]::uuid in (select public.current_org_ids())
-);

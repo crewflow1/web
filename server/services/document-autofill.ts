@@ -247,31 +247,17 @@ export async function loadImportDraftDefaults(
 }
 
 /**
- * Mark a draft discarded and remove its stored document (the operator rejected
- * the suggestions). Tenant client → RLS enforces org + self; the storage remove
- * is scoped to the draft's own object. Best-effort; never throws to the caller.
+ * Mark a draft discarded (the operator rejected the suggestions). Tenant client
+ * → RLS enforces org + self, so a member can only ever discard their OWN draft;
+ * a foreign/absent id simply updates no rows. The stored document is left for
+ * `purgeExpiredFormImports`, which sweeps discarded rows AND removes their
+ * storage objects — so there is no pre-read here (no read whose failure could be
+ * silently swallowed), and no immediate service-role storage call.
  */
 export async function discardImportDraft(draftId: string): Promise<void> {
   if (!draftId) return;
-  const { ctx, user } = await requireOrgContext();
+  const { user } = await requireOrgContext();
   const supabase = await createClient();
-  const { data } = await (
-    supabase.from(DRAFTS as never) as unknown as {
-      select: (cols: string) => {
-        eq: (k: string, v: unknown) => {
-          eq: (k: string, v: unknown) => {
-            maybeSingle: () => Promise<{ data: DraftRow | null; error: SupabaseReadError | null }>;
-          };
-        };
-      };
-    }
-  )
-    .select("id, storage_path")
-    .eq("id", draftId)
-    .eq("created_by", user.id)
-    .maybeSingle();
-  if (!data) return; // not theirs / absent — nothing to do
-
   await (
     supabase.from(DRAFTS as never) as unknown as {
       update: (row: unknown) => {
@@ -284,11 +270,6 @@ export async function discardImportDraft(draftId: string): Promise<void> {
     .update({ status: "discarded" })
     .eq("id", draftId)
     .eq("created_by", user.id);
-
-  if (data.storage_path) {
-    await createAdminClient().storage.from(BUCKET).remove([data.storage_path]).catch(() => {});
-  }
-  void ctx;
 }
 
 /**
