@@ -37,6 +37,9 @@ import {
   siteReportExtractionSchema,
   warrantyExtractionSchema,
   qualificationExtractionSchema,
+  variationExtractionSchema,
+  materialRequestExtractionSchema,
+  materialRequestLineSchema,
 } from "./schemas";
 
 /**
@@ -85,6 +88,22 @@ export type AutofillFormConfig = {
   readonly systemPrompt: string;
   /** One line under the upload button telling the operator what to upload. */
   readonly uploadHint: string;
+  /**
+   * LINE-ITEM forms only (quote / purchase order / material request). When
+   * present, the extractor also proposes an array of rows (each validated by
+   * `schema`, a `z.array(z.object(...))`), the review UI renders them as a table,
+   * and the create form's builder seeds its rows from them. The `fields`/`schema`
+   * above stay the HEADER contract; this is the repeatable-row contract, kept
+   * separate so the header invariant (field keys == schema keys) is untouched.
+   */
+  readonly lineItem?: {
+    /** z.array(z.object({...})) → the validated rows, each a string map. */
+    readonly schema: z.ZodTypeAny;
+    /** Columns for the review table; keys match the builder row's fields. */
+    readonly fields: readonly AutofillField[];
+    /** Plural noun for the table heading ("Materials", "Line items"). */
+    readonly label: string;
+  };
 };
 
 /** Build the JSON-shape clause shared by every prompt from the field list. */
@@ -301,6 +320,22 @@ const QUALIFICATION_FIELDS: readonly AutofillField[] = [
   { key: "issued_on", label: "Issued on" },
   { key: "expires_on", label: "Expires on" },
   { key: "notes", label: "Notes" },
+];
+
+const VARIATION_FIELDS: readonly AutofillField[] = [
+  { key: "title", label: "Title" },
+  { key: "description", label: "Description" },
+];
+
+const MATERIAL_REQUEST_FIELDS: readonly AutofillField[] = [
+  { key: "needed_by", label: "Needed by" },
+  { key: "notes", label: "Notes" },
+];
+
+const MATERIAL_REQUEST_LINE_FIELDS: readonly AutofillField[] = [
+  { key: "description", label: "Material" },
+  { key: "qty", label: "Qty" },
+  { key: "unit", label: "Unit" },
 ];
 
 export const AUTOFILL_FORMS: Readonly<Record<AutofillFormType, AutofillFormConfig>> = {
@@ -585,6 +620,47 @@ export const AUTOFILL_FORMS: Readonly<Record<AutofillFormType, AutofillFormConfi
       `- "period_months" is the warranty length in whole months if stated.`,
       `- "provider" is who issues/backs the warranty; "reference" any policy/certificate number.`,
     ]),
+  },
+  variation: {
+    type: "variation",
+    recordLabel: "variation",
+    // createVariation → requireCapabilityFor(ctx, user, "quotes", "create").
+    auth: { mode: "capability", module: "quotes", action: "create" },
+    // Contextual: raised against a specific job. The page passes newPathOverride
+    // = `/jobs/${id}/variations/new?import=…`; this static path is the fallback.
+    target: { kind: "route", newPath: "/jobs" },
+    schema: variationExtractionSchema,
+    fields: VARIATION_FIELDS,
+    uploadHint: "Upload a client instruction, variation request or scope-change note.",
+    systemPrompt: promptFor("variation / variation order (VO)", VARIATION_FIELDS, [
+      `- "title" is a short name for the change; "description" the out-of-scope work requested.`,
+      `- Do NOT extract prices, quantities or margin — those are priced in the form.`,
+    ]),
+  },
+  material_request: {
+    type: "material_request",
+    recordLabel: "material request",
+    // createMaterialRequest is member-open (requireOrgContext).
+    auth: { mode: "member" },
+    target: { kind: "route", newPath: "/materials/requests/new" },
+    schema: materialRequestExtractionSchema,
+    fields: MATERIAL_REQUEST_FIELDS,
+    lineItem: {
+      schema: materialRequestLineSchema,
+      fields: MATERIAL_REQUEST_LINE_FIELDS,
+      label: "Materials",
+    },
+    uploadHint: "Upload a materials take-off, requisition or materials list.",
+    systemPrompt: [
+      promptFor("material request", MATERIAL_REQUEST_FIELDS, [
+        `- "needed_by" is the date the materials are needed by, in YYYY-MM-DD, if stated.`,
+      ]),
+      // Line-item extension — the model also returns a "lineItems" array.
+      `Also return "lineItems": an array of the materials, each { "description": <what it is>, "qty": <a number>, "unit": <ea, bag, m, m2, box, pack, roll, sheet, t, L…> }.`,
+      `- One array entry per material line on the document. Omit a line you cannot read; NEVER invent a line, a quantity or a unit.`,
+      `- "qty" is the quantity as a number only (no unit inside it); put the unit in "unit".`,
+      `- Do NOT extract prices — a material request carries no cost.`,
+    ].join("\n"),
   },
 };
 

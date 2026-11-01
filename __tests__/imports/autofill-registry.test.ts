@@ -86,6 +86,12 @@ describe("autofill registry alignment", () => {
       module: "leads",
       action: "create",
     });
+    // variation create = createVariation → requireCapabilityFor(quotes, create).
+    expect(AUTOFILL_FORMS.variation.auth).toEqual({
+      mode: "capability",
+      module: "quotes",
+      action: "create",
+    });
     expect(AUTOFILL_FORMS.staff_invite.auth).toEqual({ mode: "manageStaff" });
     expect(AUTOFILL_FORMS.site.auth).toEqual({ mode: "orgAdmin" });
     // Coverage-completion wave: warranty + qualification create actions call
@@ -107,8 +113,26 @@ describe("autofill registry alignment", () => {
       "asset",
       "delay",
       "site_report",
+      "material_request",
     ] as const) {
       expect(AUTOFILL_FORMS[t].auth).toEqual({ mode: "member" });
     }
+  });
+
+  it("a line-item form's lineItem columns parse from its lineItem schema, and never carry money", () => {
+    const config = AUTOFILL_FORMS.material_request;
+    expect(config.lineItem, "material_request must declare a lineItem").toBeTruthy();
+    // The row schema yields exactly the columns the review table renders.
+    const sampleRow = { description: "Cement 25kg", qty: "10", unit: "bag" };
+    const parsed = config.lineItem!.schema.parse([sampleRow]) as Record<string, string>[];
+    expect(parsed).toHaveLength(1);
+    expect(Object.keys(parsed[0] ?? {}).sort()).toEqual(
+      config.lineItem!.fields.map((f) => f.key).sort(),
+    );
+    // A request carries no cost — no price column may leak in.
+    expect(config.lineItem!.fields.map((f) => f.key)).not.toContain("unit_price");
+    // Invented/empty rows are dropped, never fabricated.
+    expect(config.lineItem!.schema.parse([{ qty: "5" }])).toEqual([]);
+    expect(config.lineItem!.schema.parse("not an array")).toEqual([]);
   });
 });

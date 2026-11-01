@@ -62,7 +62,9 @@ create table if not exists public.form_import_drafts (
     'delay',
     'site_report',
     'qualification',
-    'warranty'
+    'warranty',
+    'variation',
+    'material_request'
   )),
   status text not null default 'extracted' check (status in (
     'extracted',  -- values proposed, awaiting the operator
@@ -74,6 +76,12 @@ create table if not exists public.form_import_drafts (
   -- never carry a key the form does not have (no mass-assignment via a crafted
   -- extraction) and never a value that fails the form's own validation.
   extracted jsonb not null default '{}'::jsonb,
+  -- LINE-ITEM forms only (quote / purchase order / material request): the
+  -- proposed repeatable rows, a JSON ARRAY of string maps, each validated by the
+  -- form's line-item zod schema (invented/empty rows dropped) before it is
+  -- written. NULL for a header-only form. Same no-mass-assignment guarantee as
+  -- `extracted`: only the row keys the builder expects survive the schema.
+  line_items jsonb,
   -- Model self-reported confidence for the extraction as a whole, 0-100, capped.
   overall_confidence smallint not null default 0
     check (overall_confidence between 0 and 100),

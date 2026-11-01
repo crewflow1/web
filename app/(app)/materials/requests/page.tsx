@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ImportButton } from "@/components/import/import-button";
 import { requireOrgContext } from "@/server/auth/session";
 import { formatDateUK, formatDayKeyUK } from "@/lib/time/format";
 import {
@@ -206,12 +207,15 @@ export default async function MaterialRequestsPage({
             What site has asked for, and where each request has got to.
           </p>
         </div>
-        <Link
-          href="/materials/requests/new"
-          className="min-h-11 rounded-md bg-slate-900 px-3 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
-        >
-          + New request
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <ImportButton formType="material_request" />
+          <Link
+            href="/materials/requests/new"
+            className="min-h-11 rounded-md bg-slate-900 px-3 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            + New request
+          </Link>
+        </div>
       </div>
 
       {awaiting > 0 ? (

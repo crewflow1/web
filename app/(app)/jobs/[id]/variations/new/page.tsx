@@ -5,6 +5,9 @@ import { requireOrgContext } from "@/server/auth/session";
 import { loadJobForOrg } from "@/lib/jobs/load";
 import { createVariation } from "@/app/(app)/quotes/actions";
 import { VariationForm } from "./_form";
+import { ImportButton } from "@/components/import/import-button";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
 
 /**
  * New Variation Order page.
@@ -21,12 +24,16 @@ export default async function NewVariationPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ error?: string; fromRequest?: string }>;
+  searchParams: Promise<{ error?: string; fromRequest?: string; import?: string }>;
 }) {
   const { id } = await params;
-  const { error, fromRequest } = await searchParams;
+  const { error, fromRequest, import: importId } = await searchParams;
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
+  // Prefill title/description from an instruction/VO-request document import.
+  const importPrefill = importId
+    ? await loadImportDraftDefaults("variation", importId)
+    : null;
 
   const job = await loadJobForOrg<{
     id: string;
@@ -82,13 +89,20 @@ export default async function NewVariationPage({
         <span className="text-slate-900">New variation</span>
       </div>
 
-      <header>
-        <h1 className="text-2xl font-bold text-slate-900">New Variation Order</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Capture out-of-scope work for this job. The customer approves /
-          rejects via a shareable link; on approval an invoice is generated
-          and revenue rolls into this job&apos;s profitability.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">New Variation Order</h1>
+          <p className="mt-1 text-sm text-slate-600">
+            Capture out-of-scope work for this job. The customer approves /
+            rejects via a shareable link; on approval an invoice is generated
+            and revenue rolls into this job&apos;s profitability.
+          </p>
+        </div>
+        <ImportButton
+          formType="variation"
+          size="sm"
+          newPathOverride={`/jobs/${id}/variations/new`}
+        />
       </header>
 
       {errorMessage ? (
@@ -107,10 +121,16 @@ export default async function NewVariationPage({
         </p>
       ) : null}
 
+      {importPrefill ? (
+        <ImportPrefillBanner engine={importPrefill.engine} recordLabel="variation" />
+      ) : null}
+
       <VariationForm
         action={createVariation.bind(null, id)}
-        defaultTitle={requestPrefill?.title}
-        defaultDescription={requestPrefill?.description ?? undefined}
+        defaultTitle={requestPrefill?.title ?? importPrefill?.fields.title}
+        defaultDescription={
+          requestPrefill?.description ?? importPrefill?.fields.description ?? undefined
+        }
         variationRequestId={requestPrefill?.id}
       />
     </div>

@@ -164,6 +164,48 @@ const decimal = (max: number) =>
     })
     .catch(null);
 
+/**
+ * A LINE-ITEM array cleaner. Validates each row against `row`, DROPS any row the
+ * model invented without a description (the identity of a line) or that fails to
+ * parse, caps the count, and emits a clean string map per row. Never throws — a
+ * non-array or a fully-malformed array yields `[]`, the honest "no lines found".
+ * The builder re-validates on save; this is the conservative first pass.
+ */
+function lineItemArray(row: z.ZodTypeAny, max = 200) {
+  return z
+    .unknown()
+    .transform((v): Record<string, string>[] => {
+      if (!Array.isArray(v)) return [];
+      const out: Record<string, string>[] = [];
+      for (const raw of v.slice(0, max)) {
+        const parsed = row.safeParse(raw);
+        if (!parsed.success) continue;
+        const data = parsed.data as Record<string, string | null>;
+        if (!data.description) continue; // a line with no description is not a line
+        const clean: Record<string, string> = {};
+        for (const [k, val] of Object.entries(data)) if (val !== null) clean[k] = val;
+        out.push(clean);
+      }
+      return out;
+    })
+    .catch([]);
+}
+
+/** Materials — the request's repeatable rows (no money: a request, not a PO). */
+export const materialRequestLineSchema = lineItemArray(
+  z.object({
+    description: text(500),
+    qty: decimal(999_999),
+    unit: text(40),
+  }),
+);
+
+/** Materials — a material request header, from a take-off / materials list. */
+export const materialRequestExtractionSchema = z.object({
+  needed_by: isoDate(),
+  notes: text(2000),
+});
+
 // ---------------------------------------------------------------------------
 // The five extraction schemas. Keys MUST match the create form input `name`s —
 // that equality is the prefill contract, pinned by the registry test.
@@ -425,6 +467,16 @@ export const qualificationExtractionSchema = z.object({
   issued_on: isoDate(),
   expires_on: isoDate(),
   notes: text(2000),
+});
+
+/**
+ * Projects — a variation / VO header, from a client instruction or quote. Only
+ * the title + description are extracted; the line items, cost and margin are
+ * priced deliberately in the form's calculator, never read off a document.
+ */
+export const variationExtractionSchema = z.object({
+  title: text(200),
+  description: text(8000),
 });
 
 /** Assets — equipment, from a purchase invoice / spec sheet / hire agreement. */

@@ -201,6 +201,7 @@ export function ImportButton({
             <ReviewPanel
               extraction={phase.extraction}
               fields={config.fields}
+              lineItem={config.lineItem}
               recordLabel={config.recordLabel}
               pending={pending}
               onApply={() => apply(phase.draftId, phase.extraction)}
@@ -216,6 +217,7 @@ export function ImportButton({
 function ReviewPanel({
   extraction,
   fields,
+  lineItem,
   recordLabel,
   pending,
   onApply,
@@ -223,6 +225,7 @@ function ReviewPanel({
 }: {
   extraction: AutofillExtraction;
   fields: readonly { key: string; label: string }[];
+  lineItem?: { readonly fields: readonly { key: string; label: string }[]; readonly label: string };
   recordLabel: string;
   pending: boolean;
   onApply: () => void;
@@ -230,7 +233,8 @@ function ReviewPanel({
 }) {
   const uncertain = new Set(extraction.uncertainFields);
   const found = fields.filter((f) => f.key in extraction.fields);
-  const nothing = extraction.engine === "none" || found.length === 0;
+  const rows = extraction.lineItems ?? [];
+  const nothing = extraction.engine === "none" || (found.length === 0 && rows.length === 0);
 
   return (
     <div className="mt-5 space-y-5">
@@ -283,6 +287,41 @@ function ReviewPanel({
               );
             })}
           </dl>
+        </div>
+      ) : null}
+
+      {!nothing && lineItem && rows.length > 0 ? (
+        <div className="rounded-lg border border-slate-200">
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2 text-xs text-slate-500">
+            <span>{lineItem.label}</span>
+            <span>
+              {rows.length} {rows.length === 1 ? "row" : "rows"}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
+                  {lineItem.fields.map((c) => (
+                    <th key={c.key} className="px-4 py-2 font-medium">
+                      {c.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {rows.map((r, i) => (
+                  <tr key={i}>
+                    {lineItem.fields.map((c) => (
+                      <td key={c.key} className="px-4 py-2 text-slate-900">
+                        {r[c.key] ?? <span className="text-slate-400">—</span>}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : null}
 

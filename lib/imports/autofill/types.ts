@@ -35,10 +35,12 @@ export const AUTOFILL_FORM_TYPES = [
   "qualification",
   // Projects (contextual, job-nested)
   "warranty",
+  "variation",
   // Materials / Stock / Fleet / Assets
   "stock_item",
   "vehicle",
   "asset",
+  "material_request",
 ] as const;
 export type AutofillFormType = (typeof AUTOFILL_FORM_TYPES)[number];
 
@@ -71,6 +73,15 @@ export type AutofillExtraction = {
    *  path degraded (dark provider / over ceiling / duplicate / unsupported file)
    *  and nothing was extracted. The review UI states which. */
   readonly engine: "vision" | "none";
+  /**
+   * For a LINE-ITEM form (quote / purchase order / material request) the
+   * extracted rows, each a string map keyed by the line-item field names. Absent
+   * for a header-only form, and empty (never invented) when the document had no
+   * readable lines or extraction was dark. The create form's own builder
+   * re-validates every row on save — this is the first, conservative pass, the
+   * array analogue of `fields`.
+   */
+  readonly lineItems?: ReadonlyArray<Readonly<Record<string, string>>>;
 };
 
 /** An empty extraction — the honest degraded result. `engine` records whether a

@@ -96,6 +96,7 @@ export async function extractForForm(input: {
           config.systemPrompt,
           config.fields.map((f) => f.key),
           config.schema,
+          config.lineItem?.schema,
           base64,
           input.mimeType,
           isPdf,
@@ -127,6 +128,7 @@ async function runExtraction(
   systemPrompt: string,
   knownKeys: readonly string[],
   schema: import("zod").ZodTypeAny,
+  lineItemSchema: import("zod").ZodTypeAny | undefined,
   base64: string,
   mimeType: string,
   isPdf: boolean,
@@ -151,7 +153,7 @@ async function runExtraction(
     inputTokens: result.inputTokens,
     outputTokens: result.outputTokens,
   };
-  const value = parseExtraction(result.text, knownKeys, schema);
+  const value = parseExtraction(result.text, knownKeys, schema, lineItemSchema);
   // Whether or not we could parse it, the call COST what it cost — report usage
   // so the ledger reflects the spend. An unparseable response yields empty.
   return { value, usage };
@@ -171,13 +173,19 @@ export function parseExtractionForForm(
   rawText: string,
 ): AutofillExtraction {
   const config = AUTOFILL_FORMS[formType];
-  return parseExtraction(rawText, config.fields.map((f) => f.key), config.schema);
+  return parseExtraction(
+    rawText,
+    config.fields.map((f) => f.key),
+    config.schema,
+    config.lineItem?.schema,
+  );
 }
 
 function parseExtraction(
   rawText: string,
   knownKeys: readonly string[],
   schema: import("zod").ZodTypeAny,
+  lineItemSchema?: import("zod").ZodTypeAny,
 ): AutofillExtraction {
   const parsed = extractJson(rawText);
   if (!parsed || typeof parsed !== "object") return emptyExtraction("vision");
@@ -216,7 +224,17 @@ function parseExtraction(
     Math.max(0, Math.round(Number.isFinite(rawConfidence) ? rawConfidence : 0)),
   );
 
-  return { fields, overallConfidence, uncertainFields, missingFields, engine: "vision" };
+  // LINE-ITEM forms: validate the model's rows through the array schema (which
+  // drops invented/empty rows and nulls malformed cells). Absent for header-only
+  // forms; `[]` when the document had no readable lines — never invented.
+  let lineItems: ReadonlyArray<Record<string, string>> | undefined;
+  if (lineItemSchema) {
+    const rawItems = obj.lineItems ?? obj.items ?? obj.lines;
+    const safeItems = lineItemSchema.safeParse(rawItems);
+    lineItems = safeItems.success ? (safeItems.data as Record<string, string>[]) : [];
+  }
+
+  return { fields, overallConfidence, uncertainFields, missingFields, engine: "vision", lineItems };
 }
 
 /** Tolerant JSON extraction — handles ```json fences and surrounding prose. */

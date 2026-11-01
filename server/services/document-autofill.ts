@@ -53,6 +53,7 @@ type DraftRow = {
   form_type: string;
   status: string;
   extracted: Record<string, string> | null;
+  line_items: Record<string, string>[] | null;
   overall_confidence: number | null;
   uncertain_fields: string[] | null;
   missing_fields: string[] | null;
@@ -172,6 +173,7 @@ export async function startDocumentImport(
     form_type: formType,
     status: "extracted",
     extracted: extraction.fields,
+    line_items: extraction.lineItems ?? null,
     overall_confidence: extraction.overallConfidence,
     uncertain_fields: extraction.uncertainFields,
     missing_fields: extraction.missingFields,
@@ -219,7 +221,12 @@ export async function startDocumentImport(
 export async function loadImportDraftDefaults(
   formType: AutofillFormType,
   draftId: string,
-): Promise<{ fields: Record<string, string>; overallConfidence: number; engine: string } | null> {
+): Promise<{
+  fields: Record<string, string>;
+  lineItems: Record<string, string>[];
+  overallConfidence: number;
+  engine: string;
+} | null> {
   if (!draftId) return null;
   const supabase = await createClient();
   const { data, error } = await (
@@ -233,7 +240,7 @@ export async function loadImportDraftDefaults(
       };
     }
   )
-    .select("id, form_type, extracted, overall_confidence, extraction_engine")
+    .select("id, form_type, extracted, line_items, overall_confidence, extraction_engine")
     .eq("id", draftId)
     .eq("form_type", formType)
     .maybeSingle();
@@ -241,6 +248,7 @@ export async function loadImportDraftDefaults(
   if (!data) return null;
   return {
     fields: (data.extracted ?? {}) as Record<string, string>,
+    lineItems: (data.line_items ?? []) as Record<string, string>[],
     overallConfidence: data.overall_confidence ?? 0,
     engine: data.extraction_engine ?? "none",
   };
