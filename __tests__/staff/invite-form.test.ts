@@ -88,10 +88,15 @@ describe("inviteStaffSchema — accepts every CEO-required field", () => {
 
 describe("Staff page — admin-only Add Staff button (page-level role gate)", () => {
   it("renders <AddStaffButton/> only inside an isAdmin conditional", () => {
-    // The pattern `{isAdmin ? <AddStaffButton` (with optional whitespace)
-    // proves the button is rendered conditionally on isAdmin. Without
-    // this gate, staff users would see the button.
-    expect(STAFF_PAGE).toMatch(/\{\s*isAdmin\s*\?\s*\(?\s*<AddStaffButton/);
+    // The pattern `{isAdmin ? ( [<ImportButton/>] <AddStaffButton` proves the
+    // button is rendered conditionally on isAdmin. The document-autofill feature
+    // added an equally admin-gated <ImportButton/> immediately before it inside
+    // the SAME conditional, so allow that one sibling between the gate and the
+    // button — the gating itself is unchanged. (The "never unconditionally" test
+    // below still guards that the button never escapes the isAdmin branch.)
+    expect(STAFF_PAGE).toMatch(
+      /\{\s*isAdmin\s*\?\s*\(?\s*(<ImportButton[^>]*\/>\s*)?<AddStaffButton/,
+    );
   });
 
   it("uses a prominent size for the button (size=\"lg\")", () => {
