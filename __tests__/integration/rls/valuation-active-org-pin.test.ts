@@ -88,6 +88,16 @@ describeIntegration("rls · valuation RPCs active-org pin (20261267)", () => {
     const right = await dual.rpc("generate_valuation_invoice", { p_org_id: orgB, p_valuation_id: valB });
     expect(right.error, right.error?.message).toBeNull();
     expect(await statusOf(valB)).toBe("invoiced");
+
+    // Money math unchanged: net_certified_this = work(1000)+materials(0)+var(0)
+    // -prev(0)-deductions(0) = 1000; VAT @20% = 200. The invoice the RPC minted
+    // must carry exactly those (amount is ex-VAT, the full certified increment).
+    const inv = await svc().from("invoices").select("amount, vat_total, status, org_id").eq("id", String(right.data));
+    const r0 = inv.data?.[0];
+    expect(Number(r0?.amount), "ex-VAT amount = net_certified_this").toBe(1000);
+    expect(Number(r0?.vat_total), "VAT = net * 20%").toBe(200);
+    expect(r0?.status, "born draft").toBe("draft");
+    expect(String(r0?.org_id), "invoice billed within org B only").toBe(orgB);
   });
 
   it("a non-admin member is refused, and a non-member of p_org_id hits the 42501 guard", async () => {
