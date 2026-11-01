@@ -217,7 +217,7 @@ export const FEATURES: FeaturePage[] = [
       { q: "Can I raise an invoice from a job?", a: "Yes, that's the fast path. The job already has the customer, line items and variations, so creating the invoice is a click rather than a re-type." },
       { q: "Does CrewFlow take a cut of my invoices?", a: "No. CrewFlow doesn't process payments, so there's no card-processor skim and no per-invoice fee. You keep 100% of every invoice; CrewFlow just tracks whether it's been paid." },
     ],
-    related: ["job-management-software", "payments-reconciliation", "quoting-software", "tax-software", "cis-software"],
+    related: ["job-management-software", "payments-reconciliation", "retention-software", "tax-software", "cis-software"],
     industries: ["builders", "plumbers", "electricians"],
   },
   {
@@ -616,7 +616,7 @@ export const FEATURES: FeaturePage[] = [
       "CIS software for subcontractors",
       "construction CIS software",
       "CIS deductions software",
-      "subcontractor management software",
+      "CIS payroll software",
     ],
     name: "CIS",
     navLabel: "CIS",
@@ -780,6 +780,223 @@ export const FEATURES: FeaturePage[] = [
     ],
     related: ["rams-software", "job-management-software", "scheduling-software"],
     industries: ["builders", "roofers", "scaffolding", "groundworks", "electricians"],
+  },
+  {
+    slug: "fleet-management",
+    keyword: "construction fleet management software",
+    secondaryKeywords: [
+      "plant management software",
+      "construction fleet compliance software",
+      "plant and asset register",
+    ],
+    name: "Fleet & assets",
+    navLabel: "Fleet",
+    title: "Construction Fleet Management Software",
+    metaDescription:
+      "Keep the fleet legal and the plant accounted for: MOT, tax, insurance and inspection expiries flagged before they lapse, fuel logged, QR-labelled assets. Book a demo.",
+    eyebrow: "Fleet & assets",
+    h1: "Construction fleet management software that flags the expiry before it bites",
+    intro:
+      "A van caught with a lapsed MOT or no insurance is a prohibition notice, a fine and a job you can't get to. Spreadsheets of renewal dates get out of date the day you make them.\n\nCrewFlow keeps every vehicle and every bit of plant in one register, with MOT, tax, insurance, service and inspection dates flagged before they lapse, so the fleet stays legal and nothing gets stopped at the roadside.",
+    heroBullets: [
+      "MOT, tax, insurance and inspection expiries flagged before they lapse",
+      "Fuel and running costs logged against each vehicle",
+      "Plant and asset register with service and calibration schedules",
+      "QR labels to pull an asset's history on site",
+    ],
+    problem: {
+      heading: "The renewal you forgot is the van off the road",
+      body: "Fleet admin is invisible until something lapses, then it's a prohibition, a fine, or an uninsured vehicle on a job. For a firm with a yard of vans and plant, tracking every renewal date in your head or a spreadsheet doesn't scale. CrewFlow makes the next thing due impossible to miss.",
+    },
+    sections: [
+      {
+        h2: "Every renewal, flagged before it lapses",
+        body: "Record each vehicle's MOT, tax and insurance dates once, and CrewFlow flags them as they come due, before the deadline, not after the fine. The same goes for plant inspections, servicing and calibration, so the whole estate stays compliant without you keeping it all in your head.",
+      },
+      {
+        h2: "Fuel and costs against the vehicle that spent them",
+        body: "Log fuel and running costs against the specific vehicle, so you can see what each one actually costs to run. Paired with job costing, the real cost of getting to and from site stops being invisible.",
+      },
+      {
+        h2: "Scan the asset, see its history",
+        body: "Put a QR label on a vehicle or a piece of plant and anyone on site can scan it to pull up what it is, when it was last serviced or inspected, and what's due next. The register goes to the asset instead of living only in the office.",
+      },
+    ],
+    outcomes: [
+      { label: "Nothing lapses unseen", body: "MOT, tax, insurance and inspection dates flagged before the deadline." },
+      { label: "True running cost", body: "Fuel and costs logged per vehicle, feeding job costing." },
+      { stat: "QR", label: "scan on site", body: "Pull any asset's service and inspection history from its label." },
+    ],
+    faqs: [
+      { q: "Does CrewFlow track MOT, tax and insurance?", a: "Yes. Record each vehicle's MOT, tax and insurance dates and CrewFlow flags them before they lapse, so a van is never caught on the road with an expired certificate." },
+      { q: "Does it track vehicle location with GPS?", a: "No, CrewFlow isn't live vehicle tracking. It manages the fleet's compliance, costs and inspections, MOT/tax/insurance and service expiries, fuel, and inspection schedules, rather than real-time location." },
+      { q: "Can I manage plant and tools as well as vehicles?", a: "Yes. The asset register covers plant and equipment with service and calibration schedules, and QR labels so you can scan an item on site to see its history and what's due next." },
+      { q: "Do fleet costs show up in job costing?", a: "Fuel and running costs are logged against the vehicle, so the cost of running the fleet is visible rather than buried, and feeds the real picture of what a job costs." },
+    ],
+    related: ["job-costing-software", "expense-tracking", "stock-management", "job-management-software"],
+    industries: ["groundworks", "scaffolding", "builders", "roofers"],
+  },
+  {
+    slug: "retention-software",
+    keyword: "construction retention software",
+    secondaryKeywords: [
+      "retention tracking software",
+      "construction retention management",
+      "retention release tracking",
+    ],
+    name: "Retention",
+    navLabel: "Retention",
+    title: "Construction Retention Software",
+    metaDescription:
+      "Track every retention held against your jobs and the date it's due for release, so the money you've earned but not been paid never slips through the cracks. Book a demo.",
+    eyebrow: "Retention",
+    h1: "Construction retention software so you actually get the last 5% back",
+    intro:
+      "Retention is money you've already earned, held back until the job's signed off and the defects period is up. On commercial work it's often 5% split in two, and it's the money most likely to be forgotten, because the release date is months after you've moved on.\n\nCrewFlow tracks every retention held against every job and the date it's due for release, so you claim what's yours instead of writing it off.",
+    heroBullets: [
+      "Retention held tracked against each job and contract",
+      "Release dates visible so nothing is forgotten",
+      "See total retention outstanding across the business",
+      "Aged debt alongside it, so you know who owes what, when",
+    ],
+    problem: {
+      heading: "Forgotten retention is pure profit left on the table",
+      body: "The last slice of retention is released long after the job's done, when everyone's focus has moved to the next three jobs. With no system watching the release dates, it quietly never gets claimed, and because it's money already earned, every forgotten retention is straight off the bottom line. CrewFlow keeps it in view until it's paid.",
+    },
+    sections: [
+      {
+        h2: "Every retention, held against its job",
+        body: "When a job carries retention, CrewFlow records what's held and against which contract, so the amount you're owed but haven't been paid is never invisible. No separate spreadsheet of held sums that no one updates.",
+      },
+      {
+        h2: "Release dates you can actually act on",
+        body: "Each retention carries the date it's due for release, so the money becomes claimable on your radar instead of slipping past unnoticed months later. You chase it while the relationship and the paperwork are still fresh.",
+      },
+      {
+        h2: "The whole picture: retention plus aged debt",
+        body: "See total retention outstanding across the business next to your aged debt, so the full picture of money owed, both the overdue invoices and the retention still to come, sits in one place rather than scattered across jobs.",
+      },
+    ],
+    outcomes: [
+      { label: "Nothing written off", body: "Every retention tracked to its release date, not forgotten." },
+      { label: "Money already earned", body: "Claim the last slice instead of leaving it on the table." },
+      { label: "One view of what you're owed", body: "Retention and aged debt together, across the business." },
+    ],
+    faqs: [
+      { q: "What does CrewFlow track for retention?", a: "The retention held against each job and contract and the date it's due for release, so you can see exactly what you're owed and when it becomes claimable." },
+      { q: "Why does retention get lost without this?", a: "Because the release date lands months after the job's finished, when attention has moved on. Tracked against the job with its release date, it stays visible until it's paid instead of quietly being written off." },
+      { q: "Can I see all my retention at once?", a: "Yes. CrewFlow shows total retention outstanding across the business alongside aged debt, so the whole picture of money owed is in one place." },
+    ],
+    related: ["invoicing-software", "cis-software", "job-costing-software", "payments-reconciliation"],
+    industries: ["builders", "groundworks", "scaffolding", "electricians"],
+  },
+  {
+    slug: "stock-management",
+    keyword: "construction stock management software",
+    secondaryKeywords: [
+      "construction materials management software",
+      "construction inventory software",
+      "construction procurement software",
+    ],
+    name: "Stock & materials",
+    navLabel: "Stock",
+    title: "Construction Stock & Materials Software",
+    metaDescription:
+      "Know what stock you hold and where, fulfil site material requests from it, and control buying with purchase orders matched three ways against deliveries and bills. Book a demo.",
+    eyebrow: "Stock & materials",
+    h1: "Construction stock and materials software that controls what you buy and hold",
+    intro:
+      "Materials are one of the biggest costs on a job, and the one most likely to be over-ordered, double-bought or lost. If you don't know what's in the yard, you buy it again.\n\nCrewFlow keeps stock items and balances across your warehouses and yards, lets site request materials and fulfils them from what you hold, and controls buying with purchase orders matched three ways against deliveries and supplier bills.",
+    heroBullets: [
+      "Stock items and balances across your warehouses and yards",
+      "Site material requests fulfilled from the stock you hold",
+      "Purchase orders with three-way matching",
+      "Supplier records and bills in the same place",
+    ],
+    problem: {
+      heading: "If you don't know what's in the yard, you buy it twice",
+      body: "Materials bought and forgotten, deliveries no one checked against the order, bills paid that don't match what arrived, each one leaks margin quietly. Without stock and purchasing in the same system as your jobs, materials are a black hole. CrewFlow closes it by connecting what you hold, what site needs, and what you're billed.",
+    },
+    sections: [
+      {
+        h2: "Know what you hold, and where",
+        body: "Track stock items and their balances across your warehouses and yards, so before you buy, you can see what's already on hand. The reorder you didn't need to make is margin kept.",
+      },
+      {
+        h2: "Site asks, stock answers",
+        body: "Site raises a material request and it's fulfilled from the stock you already hold, so the materials move to the job that needs them with a record of where they went, rather than disappearing off the back of a van.",
+      },
+      {
+        h2: "Buy with control: three-way matching",
+        body: "Raise purchase orders to your suppliers and match them three ways, the order against the delivery against the bill, so you only pay for what you ordered and actually received. Supplier records and bills live alongside, so purchasing is one joined-up flow, not three disconnected ones.",
+      },
+    ],
+    outcomes: [
+      { label: "Stop double-buying", body: "See what's in the yard before you reorder." },
+      { label: "Materials on the right job", body: "Site requests fulfilled from stock, with a record of where it went." },
+      { stat: "3-way", label: "matched purchasing", body: "Order, delivery and bill reconciled, so you pay for what you got." },
+    ],
+    faqs: [
+      { q: "Can I track stock across more than one location?", a: "Yes. CrewFlow tracks stock items and balances across your warehouses and yards, so you can see what's held and where before you order more." },
+      { q: "How do site material requests work?", a: "Site raises a request and it's fulfilled from the stock you hold, so materials move to the job that needs them with a record of the movement, rather than going missing." },
+      { q: "What is three-way matching and does CrewFlow do it?", a: "It's matching the purchase order against the delivery against the supplier's bill, so you only pay for what you ordered and received. Yes, CrewFlow does it, with supplier records and bills in the same place." },
+    ],
+    related: ["expense-tracking", "job-costing-software", "subcontractor-management", "job-management-software"],
+    industries: ["builders", "groundworks", "electricians", "plumbers"],
+  },
+  {
+    slug: "subcontractor-management",
+    keyword: "subcontractor management software",
+    secondaryKeywords: [
+      "subcontractor compliance software",
+      "subcontractor payment software",
+      "manage subcontractors construction",
+    ],
+    name: "Subcontractors",
+    navLabel: "Subcontractors",
+    title: "Subcontractor Management Software",
+    metaDescription:
+      "Manage subcontractors in one place: records, insurance and certificate expiries, purchase orders and bills, payments and CIS deductions. Built for UK construction. Book a demo.",
+    eyebrow: "Subcontractors",
+    h1: "Subcontractor management software that keeps your subbies in order",
+    intro:
+      "On most jobs your subcontractors are most of your workforce, yet they usually live in a spreadsheet of phone numbers and a drawer of out-of-date insurance certificates. When a principal contractor asks whether your subbie's public liability is current, you shouldn't have to go hunting.\n\nCrewFlow keeps each subcontractor's records, compliance documents, purchase orders, bills, payments and CIS in one place.",
+    heroBullets: [
+      "A record per subcontractor, with insurance and certificate expiries",
+      "Purchase orders and bills raised against the subbie",
+      "Payments tracked, with CIS deductions applied",
+      "The subcontractor relationship in one place, not a spreadsheet",
+    ],
+    problem: {
+      heading: "An out-of-date insurance cert is a job you can't put them on",
+      body: "If you can't prove a subcontractor's insurance and qualifications are current, you can't put them on a principal contractor's site, and you find out at the worst moment. Scattered across emails and a spreadsheet, subbie admin is a risk hiding in plain sight. CrewFlow keeps every subcontractor's paperwork and money in one place you can actually trust.",
+    },
+    sections: [
+      {
+        h2: "Every subcontractor, with their paperwork current",
+        body: "Keep a record for each subcontractor with their insurance and certificate expiries tracked, so you know at a glance whose public liability or qualification is about to lapse, before it costs you a place on a site.",
+      },
+      {
+        h2: "Orders, bills and payments against the subbie",
+        body: "Raise purchase orders and record bills against the subcontractor, and track what you've paid them, so the commercial relationship is as organised as the compliance side. No more reconstructing what a subbie was owed from a pile of texts.",
+      },
+      {
+        h2: "CIS handled where the payment happens",
+        body: "Because payments to subcontractors run through CrewFlow, the right CIS deduction is applied as you pay, and the statements and monthly totals come out the other side. Subcontractor management and CIS are the same flow, not two.",
+      },
+    ],
+    outcomes: [
+      { label: "Compliance you can prove", body: "Insurance and certificate expiries tracked per subcontractor." },
+      { label: "The money, organised", body: "POs, bills and payments against each subbie, not a spreadsheet." },
+      { label: "CIS built in", body: "The right deduction applied where you pay, statements produced." },
+    ],
+    faqs: [
+      { q: "What does CrewFlow manage for subcontractors?", a: "A record per subcontractor with insurance and certificate expiries, purchase orders and bills raised against them, payments tracked, and CIS deductions applied, the whole relationship in one place." },
+      { q: "Does it track subcontractor insurance and certificates?", a: "Yes. Each subcontractor's insurance and certificate expiries are tracked, so you can prove a subbie is current before you put them on a principal contractor's site." },
+      { q: "How does CIS fit with subcontractor management?", a: "They're the same flow. Because you pay subcontractors through CrewFlow, the right CIS deduction is applied as you pay and the statements and monthly totals are produced, with the detail on the CIS page." },
+    ],
+    related: ["cis-software", "job-costing-software", "expense-tracking", "invoicing-software"],
+    industries: ["builders", "groundworks", "scaffolding", "roofers"],
   },
 ];
 

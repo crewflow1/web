@@ -35,7 +35,7 @@ export const INDUSTRIES: IndustryPage[] = [
         body: "CrewFlow shows real per-job profit, revenue minus materials minus actual clocked labour. So when you quote the next extension, you're pricing from what the last one really made, not a number you hope works out.",
       },
     ],
-    featuredModules: ["job-management-software", "quoting-software", "job-costing-software", "payroll-software", "cis-software"],
+    featuredModules: ["job-management-software", "quoting-software", "subcontractor-management", "payroll-software", "cis-software"],
     faqs: [
       { q: "Is CrewFlow good for a small building firm?", a: "Yes, it's built for UK construction companies of roughly 1 to 30 people. A small builder gets quoting, jobs, crews, invoices, payroll and tax in one system rather than juggling separate apps." },
       { q: "Can it handle multiple jobs and crews at once?", a: "That's the point. CrewFlow shows every live job and ties crews to jobs through the rota, flagging clashes before two teams turn up to the same site." },
@@ -220,7 +220,7 @@ export const INDUSTRIES: IndustryPage[] = [
         body: "Crews clock in with GPS stamping, and those hours become real labour cost on the job. For a trade where labour is the biggest variable, that's the difference between knowing your margin and guessing it.",
       },
     ],
-    featuredModules: ["job-management-software", "scheduling-software", "timesheet-software", "cis-software", "payroll-software"],
+    featuredModules: ["job-management-software", "scheduling-software", "fleet-management", "cis-software", "payroll-software"],
     faqs: [
       { q: "Does CrewFlow handle day-works and variations?", a: "Yes. Day-works and variations are captured against the job with their own value the moment they're agreed, so site extras get billed rather than absorbed." },
       { q: "Can it cost jobs from real labour?", a: "Yes. GPS-stamped clock-in records real crew hours per job, which feeds per-job profitability, essential for a labour-heavy, tight-margin trade." },
