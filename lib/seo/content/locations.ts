@@ -29,11 +29,20 @@ export const LOCATIONS: LocationPage[] = [
     intro:
       "CrewFlow is built in Belfast, by people who know the local trade, the operating system construction companies use to run quotes, jobs, crews, invoices, payroll and tax in one place.\n\nFor Belfast firms that means software made on your doorstep, not a faceless overseas vendor, that speaks UK tax and understands how a real building business runs.",
     localContext:
-      "Belfast's construction scene runs from residential refurb and extensions to commercial fit-out, carried by a deep base of owner-run trade SMEs across Greater Belfast. Being built here means we know that market first-hand, and because we're local, a demo is a genuine conversation about your business, not a call-centre script.",
+      "Belfast's construction scene runs from residential refurb and extensions across the BT postcodes to commercial fit-out in the city centre and Titanic Quarter, carried by a deep base of owner-run trade SMEs. Much of that work is subcontracted, so CIS is a weekly reality rather than an occasional chore, and plenty of firms also take jobs down the A1 and across the border into the Republic. Being built here means we know that market first-hand, and because we're local, a demo is a genuine conversation about your business, not a call-centre script.",
     localAngle:
-      "For a Belfast firm that usually means several small residential and fit-out jobs running at once, with subcontractors and material runs criss-crossing the city, the kind of moving parts that fall through the cracks when they live in separate apps.",
+      "For a Belfast firm that usually means several small residential and fit-out jobs running at once, subcontractors to verify and deduct CIS from, and material runs criss-crossing the city, the kind of moving parts that fall through the cracks when they live in separate apps.",
+    localChecklist: [
+      "Capture every Belfast enquiry and quote it the same day",
+      "Apply the right CIS deduction on every subcontractor payment",
+      "Run jobs, crews and site paperwork from one screen",
+      "Invoice straight from the job and chase payment automatically",
+      "See VAT, PAYE and Corporation Tax all year, ready for your accountant",
+      "Know the real margin on every job before it eats itself",
+    ],
     faqs: [
       { q: "Is CrewFlow a local Belfast company?", a: "Yes. CrewFlow is built in Belfast, Northern Ireland, for UK construction companies. Being local means we understand the trade here and you're not dealing with a faceless overseas vendor." },
+      { q: "Does CrewFlow handle CIS for Belfast subcontractors?", a: "Yes. CrewFlow applies the right CIS deduction, 20%, 30% or gross, to each subcontractor payment, tracks verification and produces the payment & deduction statements, with the monthly CIS300 totals ready for you or your accountant to file." },
       { q: "Can Belfast builders get a demo?", a: "Yes. Book a demo and we'll walk through your existing numbers and show what your dashboard would look like, we're on your doorstep." },
     ],
     related: ["northern-ireland", "lisburn", "newry"],
@@ -51,13 +60,22 @@ export const LOCATIONS: LocationPage[] = [
     intro:
       "CrewFlow is built in Northern Ireland for construction companies across the province, one operating system for leads, quotes, jobs, rota, timesheets, invoices, payments, payroll and tax.\n\nLocal software for local firms, that speaks UK tax and understands how NI construction businesses actually run.",
     localContext:
-      "Northern Ireland's construction sector is built on owner-run SMEs, builders, electricians, plumbers, groundworks and fit-out firms across Belfast, Derry/Londonderry, Newry, Lisburn and the wider province. Many also take work across the border into the Republic, so keeping each job's costs, invoices and paperwork straight in one place matters more here than most.",
+      "Northern Ireland's construction sector is built on owner-run SMEs, builders, electricians, plumbers, groundworks and fit-out firms across Belfast, Derry/Londonderry, Newry, Lisburn and the wider province. It's a heavily subcontracted market, so CIS verification and deductions are part of the weekly routine, and many firms also take work across the border into the Republic, where the VAT treatment differs. Northern Ireland also has its own Building Regulations and building control through the district councils, so keeping each job's costs, paperwork and site records straight in one place matters more here than most.",
     localAngle:
-      "For an NI firm that means the same crew and paperwork stretched across jobs from Belfast to the border, sometimes into the Republic, one place to see it all is what keeps a job from slipping between sites.",
+      "For an NI firm that means the same crew and paperwork stretched across jobs from Belfast to the border, subcontractors to verify and deduct CIS from, and sometimes work in the Republic too, one place to see it all is what keeps a job from slipping between sites.",
+    localChecklist: [
+      "One system for jobs from Belfast to the border, and across it",
+      "CIS deductions and subcontractor statements handled as you pay",
+      "Keep each job's costs and invoices straight whichever side of the border it's on",
+      "Hold RAMS, permits and site records against the job for building control",
+      "Run weekly payroll from your crew's real clocked hours",
+      "See VAT, PAYE and Corporation Tax all year, no deadline panic",
+    ],
     faqs: [
       { q: "Is CrewFlow built in Northern Ireland?", a: "Yes, CrewFlow is built in Belfast for UK construction companies, with Northern Ireland firms as our home market." },
-      { q: "Does it handle UK tax for NI businesses?", a: "Yes. VAT, PAYE, NI and Corporation Tax are tracked as you go, built for how UK and NI construction businesses are taxed." },
+      { q: "Does CrewFlow handle CIS?", a: "Yes. CrewFlow applies the right CIS deduction (20%, 30% or gross) to each subcontractor payment, tracks verification and produces payment & deduction statements, with the monthly CIS300 totals ready for you or your accountant to file." },
       { q: "We take work across the border, does that matter?", a: "CrewFlow keeps every job's costs, quotes and invoices in one place whichever side of the border the work is on, with the figures ready for your accountant to handle the VAT treatment." },
+      { q: "We work to Northern Ireland building regs, does that matter?", a: "CrewFlow isn't a building-control submission tool, but it keeps each job's drawings, RAMS, site records and certificates together, ready for your district council's building control." },
     ],
     related: ["belfast", "lisburn", "newry"],
   },
@@ -72,13 +90,22 @@ export const LOCATIONS: LocationPage[] = [
     eyebrow: "Lisburn",
     h1: "Construction software for Lisburn builders and trades",
     intro:
-      "CrewFlow gives Lisburn construction firms one system for the whole business, from the first enquiry to the final invoice and the tax that follows. Built just up the road in Belfast, it's local software that understands the trade.",
+      "CrewFlow gives Lisburn construction firms one system for the whole business, from the first enquiry to the final invoice, the CIS deductions on your subbies, and the tax that follows. Built just up the road in Belfast, it's local software that understands the trade.",
     localContext:
-      "Lisburn sits inside the Belfast travel-to-work area, with a strong base of building, electrical, plumbing and groundworks firms working across the city and the surrounding towns. CrewFlow is built minutes away for exactly these firms, close enough that support is a local conversation, not a ticket in a queue.",
+      "Lisburn sits inside the Belfast travel-to-work area, with a strong base of building, electrical, plumbing and groundworks firms working across the city, Hillsborough, Moira and the surrounding towns and out into Greater Belfast. Like most of Northern Ireland it's heavily subcontracted work, so getting CIS verification and deductions right every week is part of the job. CrewFlow is built minutes away for exactly these firms, close enough that support is a local conversation, not a ticket in a queue.",
     localAngle:
-      "For a Lisburn firm working across the city and out into Greater Belfast, that means one diary, one set of quotes and one set of invoices instead of a phone full of half-remembered jobs.",
+      "For a Lisburn firm working across the city and out into Greater Belfast, that means one diary, one set of quotes, the right CIS deduction on every subcontractor, and one set of invoices, instead of a phone full of half-remembered jobs.",
+    localChecklist: [
+      "Quote Lisburn and Greater Belfast work fast from one price book",
+      "Apply the right CIS deduction to every subcontractor payment",
+      "One diary for jobs across the city and out into Belfast",
+      "Invoice from the finished job and chase payment automatically",
+      "Run weekly payroll from your crew's real clocked hours",
+      "See VAT, PAYE and Corporation Tax all year, ready for your accountant",
+    ],
     faqs: [
-      { q: "Is CrewFlow suitable for Lisburn trade businesses?", a: "Yes. From sole traders to growing firms, CrewFlow brings quoting, jobs, scheduling, invoicing, payroll and tax into one local, UK-built system." },
+      { q: "Is CrewFlow suitable for Lisburn trade businesses?", a: "Yes. From sole traders to growing firms, CrewFlow brings quoting, jobs, scheduling, invoicing, CIS, payroll and tax into one local, UK-built system." },
+      { q: "Does CrewFlow handle CIS for my subcontractors?", a: "Yes. CrewFlow applies the right CIS deduction (20%, 30% or gross) to each subcontractor payment, tracks verification and produces the statements, with the monthly CIS300 totals ready for you or your accountant to file." },
       { q: "Do you support Lisburn firms that also work into Belfast?", a: "Yes. CrewFlow keeps every job in one place wherever it is, so a firm working across Lisburn and Greater Belfast runs one diary rather than trying to track two." },
     ],
     related: ["belfast", "northern-ireland", "newry"],
@@ -94,14 +121,23 @@ export const LOCATIONS: LocationPage[] = [
     eyebrow: "Newry",
     h1: "Construction software for Newry builders and contractors",
     intro:
-      "CrewFlow gives Newry construction businesses one operating system for leads, quotes, jobs, crews, invoices, payroll and tax. Built in Belfast, it's local software that understands a border-region building business.",
+      "CrewFlow gives Newry construction businesses one operating system for leads, quotes, jobs, crews, CIS, invoices, payroll and tax. Built in Belfast, it's local software that understands a border-region building business.",
     localContext:
-      "Newry sits on the border, and many firms here work on both sides of it, general builders, groundworks and trade contractors serving Northern Ireland and the Republic. That makes keeping every job's costs, invoices and paperwork in one clear place especially valuable, whichever side of the border the work is on.",
+      "Newry sits right on the border in the gap between the Mournes and Ring of Gullion, and many firms here work on both sides of it, general builders, groundworks and trade contractors serving County Down, Armagh and across into Louth and the Republic. Cross-border jobs carry different VAT treatment, and the heavily subcontracted work means CIS verification and deductions every week, so keeping every job's costs, invoices and paperwork in one clear place is especially valuable here, whichever side of the border the work is on.",
     localAngle:
-      "For a Newry firm with jobs on both sides of the border, that means every job's costs and paperwork in one place whichever jurisdiction it sits in, so nothing gets lost in the gap between two systems.",
+      "For a Newry firm with jobs on both sides of the border, that means every job's costs, CIS deductions and paperwork in one place whichever jurisdiction it sits in, so nothing gets lost in the gap between two systems.",
+    localChecklist: [
+      "Keep every job's costs and invoices straight on both sides of the border",
+      "Apply the right CIS deduction to each subcontractor payment",
+      "One system for work across Newry, Down, Armagh and into the Republic",
+      "Hold RAMS, permits and site records against the job",
+      "Invoice from the job and chase payment automatically",
+      "See VAT, PAYE and Corporation Tax all year for your accountant",
+    ],
     faqs: [
       { q: "Can Newry construction firms use CrewFlow?", a: "Yes. CrewFlow is built for UK construction SMEs and made in Northern Ireland, so Newry firms get local, UK-tax-native software for the whole business." },
       { q: "Does CrewFlow suit firms working across the border?", a: "Yes, every job's costs, quotes and invoices live in one place regardless of which side of the border the work is on. CrewFlow keeps the figures straight; your accountant handles the VAT treatment." },
+      { q: "Does CrewFlow handle CIS for Newry subcontractors?", a: "Yes. CrewFlow applies the right CIS deduction (20%, 30% or gross) to each subcontractor payment, tracks verification and produces the statements, with the monthly CIS300 totals ready for you or your accountant to file." },
     ],
     related: ["belfast", "northern-ireland", "lisburn"],
   },

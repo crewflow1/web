@@ -120,6 +120,13 @@ export type LocationPage = {
    * so it is not byte-identical across locations.
    */
   localAngle: string;
+  /**
+   * Optional per-location version of the "one system" checklist. When set, it
+   * replaces the generic default in the template, so a page's list speaks to the
+   * local reality (CIS, cross-border VAT, local building control) instead of the
+   * same six byte-identical bullets on every page. Only claim LIVE capabilities.
+   */
+  localChecklist?: string[];
   faqs: Faq[];
   related: string[]; // other location slugs
 };
