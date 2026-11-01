@@ -303,8 +303,8 @@ const ALLOWLIST: Record<string, string> = {
   // analyser cannot see through a long builder chain.
   "app/(app)/diary/page.tsx:84":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the diary register (.limit(500)) — ≤500 unique PKs, analyser can't see .in's slice bound",
-  "app/(app)/site-reports/page.tsx:111":
-    "bounded: jobs name lookup CHUNKED .in('id', idsChunk) where each chunk is ≤JOB_IN_CHUNK=500 unique PKs — jobs.id is unique so a chunk yields ≤500 rows. (C66: the reports register above is now fully PAGED, so jobIds can exceed 500; the lookup is chunked to stay below the cap, and the line moved 99→111.)",
+  "app/(app)/site-reports/page.tsx:112":
+    "bounded: jobs name lookup CHUNKED .in('id', idsChunk) where each chunk is ≤JOB_IN_CHUNK=500 unique PKs — jobs.id is unique so a chunk yields ≤500 rows. (C66: the reports register above is now fully PAGED, so jobIds can exceed 500; the lookup is chunked to stay below the cap. Line moved 99→111, then 111→112 when the Import button's import was added to this page — pure shift, same read.)",
   "app/(app)/snags/page.tsx:135":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the snags register (.limit(500)) — ≤500 unique PKs",
   "app/(app)/blueprints/page.tsx:68":
