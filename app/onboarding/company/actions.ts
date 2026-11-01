@@ -3,7 +3,11 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { requireUser } from "@/server/auth/session";
+import {
+  requireUser,
+  getOrgForUser,
+  orgHasActiveAccess,
+} from "@/server/auth/session";
 import { createOrgWithOwner } from "@/server/services/bootstrap-account";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { notifyOnCustomerSignup } from "@/lib/notifications/events";
@@ -46,6 +50,18 @@ function makeSlug(name: string): string {
 
 export async function createOrg(formData: FormData) {
   const user = await requireUser();
+
+  // Idempotency guard (server-side, the load-bearing one). This signup flow
+  // creates a user's FIRST org; it must never create a SECOND. Without this,
+  // a user who already belongs to an org — e.g. an existing user whose only
+  // membership was removed, who then loops back through onboarding — can
+  // re-submit this form and spawn duplicate orgs (observed: 6 pending orgs,
+  // all named after the email, created seconds apart). If they already have an
+  // org, send them where they belong instead of creating another.
+  const existing = await getOrgForUser(user.id);
+  if (existing) {
+    redirect(orgHasActiveAccess(existing.org.status) ? "/dashboard" : "/access-pending");
+  }
 
   // Terms consent is a hard gate: the stamp below records a legal fact, so an
   // org is never created without the explicit tick (the checkbox is required

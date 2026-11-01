@@ -1,6 +1,10 @@
 import { redirect } from "next/navigation";
 import { createOrg } from "./actions";
-import { requireUser } from "@/server/auth/session";
+import {
+  requireUser,
+  getOrgForUser,
+  orgHasActiveAccess,
+} from "@/server/auth/session";
 
 type SearchParams = Promise<{ error?: string }>;
 
@@ -15,6 +19,14 @@ export default async function CompanyPage({
   const meta = (user.app_metadata ?? {}) as { invited_org_id?: string };
   if (meta.invited_org_id) {
     redirect("/onboarding/join");
+  }
+
+  // A user who already has an org must not see the create-company form again
+  // (re-submitting it spawned duplicate pending orgs). Send them where they
+  // belong — the server action enforces the same guard for a direct POST.
+  const existing = await getOrgForUser(user.id);
+  if (existing) {
+    redirect(orgHasActiveAccess(existing.org.status) ? "/dashboard" : "/access-pending");
   }
 
   const { error } = await searchParams;
