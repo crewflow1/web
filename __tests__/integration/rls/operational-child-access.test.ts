@@ -45,6 +45,12 @@ const TABLES: { name: string; extra: () => Row }[] = [
   { name: "completion_certificates", extra: () => ({ certificate_number: `CC-${rnd()}`, completion_date: "2026-01-01" }) },
   // slice 3 (20261247) — materials. number is text NOT NULL unique per org.
   { name: "material_requests", extra: () => ({ number: `MR-${rnd()}-${rnd()}` }) },
+  // Phase 3 remainder (20261269) — operational programme baseline (admin-insert).
+  { name: "job_programme_baselines", extra: () => ({ planned_start: "2026-01-01", planned_end: "2026-02-01" }) },
+  // Phase 3 remainder (20261270/71) — job-linked operational records.
+  { name: "blueprints", extra: () => ({ drawing_number: `A-${rnd()}`, title: "GA Plan" }) },
+  { name: "delay_events", extra: () => ({ category: "other", started_on: "2026-01-01", description: "delay" }) },
+  { name: "job_warranties", extra: () => ({ title: "Warranty", cover: "parts and labour", period_months: 12 }) },
 ];
 
 let orgA = "";

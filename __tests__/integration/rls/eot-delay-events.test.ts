@@ -182,6 +182,14 @@ describeIntegration("delay_events · org binding, lifecycle, teardown (20261084)
       .select("user_id")
       .single();
     expect(m.error, m.error?.message).toBeNull();
+    // R5 Phase 3 (20261271): delay_events SELECT is now assigned-job-scoped for
+    // staff. A member recording an EOT delay is on that job, so assign userA to
+    // jobA — otherwise their own RETURNING read-backs are hidden by RLS. Does not
+    // weaken any assertion below (provenance/lifecycle are unchanged).
+    const ja = await svc()
+      .from("job_assignments")
+      .insert({ org_id: orgA, job_id: jobA, user_id: userAId });
+    expect(ja.error, ja.error?.message).toBeNull();
     const signedIn = await anonClient().auth.signInWithPassword({ email, password });
     expect(signedIn.error, signedIn.error?.message).toBeNull();
     userAToken = signedIn.data.session?.access_token ?? "";

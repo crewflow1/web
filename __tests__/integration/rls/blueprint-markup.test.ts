@@ -56,6 +56,11 @@ describeIntegration("blueprint_markup · DB invariants", () => {
     member = await mkUser(`${TOKEN}-m@example.test`, "staff", orgA);
     admin = await mkUser(`${TOKEN}-adm@example.test`, "owner", orgA);
     outsider = await mkUser(`${TOKEN}-out@example.test`, "owner", orgB);
+    // R5 Phase 3 (20261270): blueprint_markup SELECT is assigned-job-scoped for
+    // staff. A member who draws markup is working on that job, so assign them to
+    // jobA — otherwise their own RETURNING read-back is hidden by RLS. Security
+    // assertions (soft-delete/hard-delete authority, tenant isolation) unchanged.
+    await svc.from("job_assignments").insert({ org_id: orgA, job_id: jobA, user_id: member.id });
   });
 
   afterAll(async () => {
