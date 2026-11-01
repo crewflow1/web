@@ -2,6 +2,9 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { loadBusinessOptions } from "@/lib/customers/companies";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
+import type { CustomerFormInput } from "@/lib/customers/schema";
 import { createCustomer } from "../actions";
 import { CustomerForm } from "../_form";
 
@@ -15,10 +18,21 @@ import { CustomerForm } from "../_form";
  * parent business immediately (loud read — a failure throws, never a silent
  * empty picker). Active-org pinned inside the loader.
  */
-export default async function NewCustomerPage() {
+export default async function NewCustomerPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ import?: string }>;
+}) {
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const parentOptions = await loadBusinessOptions(supabase, ctx.org.id);
+
+  // Document-autofill prefill. The draft is RLS-scoped to this operator + org;
+  // an absent/foreign/wrong-type id simply yields no defaults, so the form opens
+  // blank. The values are suggestions — the operator edits and saves normally.
+  const sp = await searchParams;
+  const prefill = sp.import ? await loadImportDraftDefaults("customer", sp.import) : null;
+  const defaults = (prefill?.fields ?? undefined) as Partial<CustomerFormInput> | undefined;
 
   return (
     <div className="mx-auto max-w-xl space-y-6">
@@ -37,11 +51,14 @@ export default async function NewCustomerPage() {
         </p>
       </header>
 
+      {prefill ? <ImportPrefillBanner engine={prefill.engine} recordLabel="customer" /> : null}
+
       <CustomerForm
         action={createCustomer}
         submitLabel="Save customer"
         cancelHref="/customers"
         parentOptions={parentOptions}
+        defaults={defaults}
       />
     </div>
   );

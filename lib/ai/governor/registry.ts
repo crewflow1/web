@@ -549,6 +549,24 @@ export const AI_FEATURES = {
       "OcrUnavailableError — the upload action redirects with `error=ocr_unavailable` and tells the operator to upload CSV / Excel instead. Byte-identical to the no-key path today.",
   },
   /**
+   * Universal document-to-form autofill (FEATURE 2). When an operator clicks
+   * "Import" next to a create button and uploads a PDF/photo, a vision model
+   * proposes values for THAT form type's strict schema; the operator reviews and
+   * edits them in the existing create form before the normal save.
+   *
+   * `classification` — structured extraction of a fixed JSON schema from a
+   * document, exactly like `expense.receipt_extraction` and `imports.ocr`. The
+   * same kind of work must carry the same class, so it routes to the cheap tier
+   * through the shared vision door (lib/imports/autofill/extract.ts).
+   */
+  "document.form_autofill": {
+    key: "document.form_autofill",
+    label: "Document-to-form autofill",
+    taskClass: "classification",
+    degradesTo:
+      "Empty proposal — the review step shows no suggested values and the operator fills the create form by hand, exactly as they do today. The upload itself never fails for want of a model.",
+  },
+  /**
    * The inbound-lead summary on the leads screen.
    *
    * `drafting`: operator-facing prose about a real customer, in the same shape

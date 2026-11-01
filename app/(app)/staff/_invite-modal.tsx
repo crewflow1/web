@@ -49,8 +49,28 @@ export function InviteStaffModal() {
   const firstFieldRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
+  // Document-autofill prefill. The "+ Add staff" button dispatches the open
+  // event with no detail; the "Import" button dispatches it carrying the
+  // extracted identity fields. SECURITY: only name / email / phone /
+  // employment_type are ever read here — pay, emergency contacts and role are
+  // NEVER prefilled from a document, and the extraction schema cannot even
+  // produce them (lib/imports/autofill/schemas.ts). `formKey` remounts the form
+  // so the new defaults take on the uncontrolled inputs.
+  const [prefill, setPrefill] = useState<Record<string, string>>({});
+  const [formKey, setFormKey] = useState(0);
+
   useEffect(() => {
-    function onOpen() {
+    function onOpen(e: Event) {
+      const detail = (e as CustomEvent<{ prefill?: Record<string, string> }>).detail;
+      const incoming = detail?.prefill ?? {};
+      setPrefill({
+        full_name: typeof incoming.full_name === "string" ? incoming.full_name : "",
+        email: typeof incoming.email === "string" ? incoming.email : "",
+        phone: typeof incoming.phone === "string" ? incoming.phone : "",
+        employment_type:
+          typeof incoming.employment_type === "string" ? incoming.employment_type : "",
+      });
+      setFormKey((k) => k + 1);
       setOpen(true);
       setDone(null);
       setError(null);
@@ -125,7 +145,7 @@ export function InviteStaffModal() {
             </div>
           ) : null}
 
-          <form onSubmit={onSubmit} className="mt-5 space-y-4" noValidate>
+          <form key={formKey} onSubmit={onSubmit} className="mt-5 space-y-4" noValidate>
             <Row>
               <Field label="Full name" error={fieldErrors.full_name}>
                 <input
@@ -134,6 +154,7 @@ export function InviteStaffModal() {
                   maxLength={200}
                   autoComplete="name"
                   placeholder="e.g. Jane Smith"
+                  defaultValue={prefill.full_name ?? ""}
                   className={INPUT}
                 />
               </Field>
@@ -144,6 +165,7 @@ export function InviteStaffModal() {
                   required
                   autoComplete="email"
                   placeholder="jane@example.com"
+                  defaultValue={prefill.email ?? ""}
                   className={INPUT}
                 />
               </Field>
@@ -160,7 +182,7 @@ export function InviteStaffModal() {
                 </select>
               </Field>
               <Field label="Employment type" error={fieldErrors.employment_type}>
-                <select name="employment_type" defaultValue="" className={INPUT}>
+                <select name="employment_type" defaultValue={prefill.employment_type ?? ""} className={INPUT}>
                   <option value="">—</option>
                   {EMPLOYMENT_TYPES.map((t) => (
                     <option key={t} value={t}>
@@ -179,6 +201,7 @@ export function InviteStaffModal() {
                   maxLength={40}
                   autoComplete="tel"
                   placeholder="07700 900 123"
+                  defaultValue={prefill.phone ?? ""}
                   className={INPUT}
                 />
               </Field>

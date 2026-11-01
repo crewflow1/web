@@ -8,6 +8,7 @@ import {
 } from "@/server/services/suppliers";
 import { EmptyState } from "../_components/empty-state";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
+import { ImportButton } from "@/components/import/import-button";
 
 /**
  * /suppliers — list suppliers for the ACTIVE org.
@@ -75,6 +76,7 @@ export default async function SuppliersPage() {
               Compare performance
             </Link>
           ) : null}
+          <ImportButton formType="supplier" />
           <Link
             href="/suppliers/new"
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
