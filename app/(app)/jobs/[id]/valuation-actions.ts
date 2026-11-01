@@ -260,7 +260,12 @@ export async function certifyValuation(
     return formError("That valuation link looks wrong — reload.");
   }
   const client = await db();
-  const { error } = await client.rpc("certify_valuation", { p_valuation_id: valuationId });
+  // Active-org pinned: the RPC verifies the valuation is in THIS org (20261267),
+  // so a dual-org admin cannot certify another org's valuation by id.
+  const { error } = await client.rpc("certify_valuation", {
+    p_org_id: ctx.org.id,
+    p_valuation_id: valuationId,
+  });
   if (error) return formError(error.message);
   return formSuccess({ redirectTo: valuationsUrl(jobId, "saved=valuation_certified") });
 }
@@ -282,7 +287,9 @@ export async function generateValuationInvoice(
   const due = typeof dueRaw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dueRaw) ? dueRaw : null;
 
   const client = await db();
+  // Active-org pinned (20261267) — see certifyValuation.
   const { data, error } = await client.rpc("generate_valuation_invoice", {
+    p_org_id: ctx.org.id,
     p_valuation_id: valuationId,
     p_due_date: due,
   });

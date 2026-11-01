@@ -22656,7 +22656,7 @@ export type Database = {
         Args: { p_org_id: string; p_reason?: string; p_session_id: string }
         Returns: string
       }
-      certify_valuation: { Args: { p_valuation_id: string }; Returns: string }
+      certify_valuation: { Args: { p_org_id: string; p_valuation_id: string }; Returns: string }
       cis_derive_verification_expiry: {
         Args: { p_verified: string }
         Returns: string
@@ -22950,7 +22950,7 @@ export type Database = {
         Returns: string
       }
       generate_valuation_invoice: {
-        Args: { p_due_date?: string; p_valuation_id: string }
+        Args: { p_due_date?: string; p_org_id: string; p_valuation_id: string }
         Returns: string
       }
       hq_ai_task_cancel: {
