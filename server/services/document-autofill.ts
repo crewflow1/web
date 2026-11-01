@@ -234,7 +234,9 @@ export async function loadImportDraftDefaults(
       select: (cols: string) => {
         eq: (k: string, v: unknown) => {
           eq: (k: string, v: unknown) => {
-            maybeSingle: () => Promise<{ data: DraftRow | null; error: SupabaseReadError | null }>;
+            eq: (k: string, v: unknown) => {
+              maybeSingle: () => Promise<{ data: DraftRow | null; error: SupabaseReadError | null }>;
+            };
           };
         };
       };
@@ -243,6 +245,11 @@ export async function loadImportDraftDefaults(
     .select("id, form_type, extracted, line_items, overall_confidence, extraction_engine")
     .eq("id", draftId)
     .eq("form_type", formType)
+    // Only a live ('extracted') draft prefills a form — a draft the operator
+    // DISCARDED must never be re-loadable via `?import=<id>`. (Drafts are not
+    // yet marked 'consumed' on save, so 'extracted' is the normal live state;
+    // this filter removes exactly the discarded ones.)
+    .eq("status", "extracted")
     .maybeSingle();
   if (error) throw readFailure("document-autofill: load draft", error);
   if (!data) return null;
