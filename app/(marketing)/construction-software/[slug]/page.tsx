@@ -46,6 +46,20 @@ const CORE_FEATURES = [
   "tax-software",
 ];
 
+/**
+ * Default "one system" checklist. A location can override it with its own
+ * `localChecklist` (locations.ts) so the page isn't byte-identical to every
+ * other city. Every item here is a LIVE CrewFlow capability.
+ */
+const DEFAULT_LOCATION_CHECKLIST = [
+  "Capture every enquiry and quote it fast",
+  "Manage jobs, crews and schedules from one screen",
+  "Invoice straight from the job and chase payment automatically",
+  "Run weekly payroll from your crew's real clocked hours",
+  "See VAT, PAYE and Corporation Tax all year, no deadline panic",
+  "Know the real margin on every job",
+];
+
 export default async function LocationPage({
   params,
 }: {
@@ -95,14 +109,7 @@ export default async function LocationPage({
           <p className="mt-4 text-lg leading-relaxed text-ink-mut">{l.localAngle}</p>
           <CheckList
             className="mt-6"
-            items={[
-              "Capture every enquiry and quote it fast",
-              "Manage jobs, crews and schedules from one screen",
-              "Invoice straight from the job and chase payment automatically",
-              "Run weekly payroll from your crew's real clocked hours",
-              "See VAT, PAYE and Corporation Tax all year, no deadline panic",
-              "Know the real margin on every job",
-            ]}
+            items={l.localChecklist ?? DEFAULT_LOCATION_CHECKLIST}
           />
         </div>
       </Section>
