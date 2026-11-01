@@ -4,6 +4,8 @@ import { requireOrgContext } from "@/server/auth/session";
 import { listSuppliersForOrg, type SuppliersClient } from "@/server/services/suppliers";
 import { createStockItem } from "../../actions";
 import { StockItemForm } from "../_form";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 
 export const dynamic = "force-dynamic";
 
@@ -18,13 +20,19 @@ export const metadata = { title: "Add stock item · CrewFlow" };
  * stock_items.preferred_supplier_id would then refuse the save — a leak turned
  * into an unexplainable error.
  */
-export default async function NewStockItemPage() {
+export default async function NewStockItemPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ import?: string }>;
+}) {
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const suppliers = await listSuppliersForOrg<{ id: string; name: string }>(
     supabase as unknown as SuppliersClient,
     ctx.org.id,
   );
+  const sp = await searchParams;
+  const prefill = sp.import ? await loadImportDraftDefaults("stock_item", sp.import) : null;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -39,11 +47,14 @@ export default async function NewStockItemPage() {
         </p>
       </header>
 
+      {prefill ? <ImportPrefillBanner engine={prefill.engine} recordLabel="stock item" /> : null}
+
       <StockItemForm
         action={createStockItem}
         suppliers={suppliers}
         submitLabel="Add item"
         cancelHref="/stock/items"
+        defaults={prefill?.fields}
       />
     </div>
   );

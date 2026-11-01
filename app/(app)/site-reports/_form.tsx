@@ -79,6 +79,7 @@ export function SiteReportForm({
   defaultPeriodStart,
   defaultPeriodEnd,
   offline,
+  defaultTitle,
 }: {
   action: (formData: FormData) => void | Promise<void>;
   jobs: SiteReportJobOption[];
@@ -87,6 +88,8 @@ export function SiteReportForm({
   defaultPeriodEnd: string;
   /** Present ⇒ this form may be saved offline (as a draft). Absent ⇒ online only. */
   offline?: SiteReportOfflineConfig;
+  /** Prefill the title from a document import; dates come via the period props. */
+  defaultTitle?: string;
 }) {
   const [online, setOnline] = useState(true);
   const [state, setState] = useState<OfflineState>({ kind: "idle" });
@@ -215,6 +218,7 @@ export function SiteReportForm({
           type="text"
           required
           autoFocus
+          defaultValue={defaultTitle ?? ""}
           placeholder="Weekly progress report — week 12"
           className={input}
         />

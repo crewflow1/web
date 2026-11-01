@@ -1,9 +1,11 @@
 import Link from "next/link";
+import { ImportButton } from "@/components/import/import-button";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { getRequestI18n } from "@/server/i18n/request";
 import { requireCapability } from "@/server/auth/capabilities";
+import { canWith } from "@/lib/auth/capability-rules";
 import { EmptyState } from "../_components/empty-state";
 import {
   LEAD_STAGES,
@@ -53,7 +55,9 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
   const { ctx, t } = await getRequestI18n();
   // R4 — the sales pipeline (value/forecast) requires leads:view (owner full;
   // admin only if granted). Defence in depth behind the segment layout gate.
-  await requireCapability("leads", "view");
+  const { ctx: capCtx, grants } = await requireCapability("leads", "view");
+  // Import mirrors createLead → requireCapabilityFor(ctx, user, "leads", "create").
+  const canImport = canWith(capCtx.membership.role, grants, "leads", "create");
   const sp = await searchParams;
   const supabase = await createClient();
 
@@ -225,12 +229,15 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
             {GBP.format(totalValue)}
           </p>
         </div>
-        <Link
-          href="/leads/new"
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-        >
-          {t("leads.action.new")}
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          {canImport ? <ImportButton formType="lead" /> : null}
+          <Link
+            href="/leads/new"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+          >
+            {t("leads.action.new")}
+          </Link>
+        </div>
       </header>
 
       {/* Filters */}

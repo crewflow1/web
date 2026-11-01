@@ -92,6 +92,8 @@ export function MaterialRequestForm({
   jobLabel,
   backHref,
   offline,
+  defaults,
+  initialLineItems,
 }: {
   action: (
     prev: FormState<MaterialRequestFormInput>,
@@ -102,9 +104,22 @@ export function MaterialRequestForm({
   backHref: string;
   /** Present ⇒ this form may be saved offline (as a draft). Absent ⇒ online only. */
   offline?: MaterialRequestOfflineConfig;
+  /** Prefill the header (needed_by/notes) from a document import. */
+  defaults?: Record<string, string>;
+  /** Prefill the materials rows from a document import; falls back to one blank row. */
+  initialLineItems?: ReadonlyArray<Record<string, string>>;
 }) {
   const [state, formAction, pending] = useActionState(action, INITIAL_FORM_STATE);
-  const [rows, setRows] = useState<Row[]>([blankRow()]);
+  const [rows, setRows] = useState<Row[]>(() => {
+    const seeded = (initialLineItems ?? [])
+      .map((r) => ({
+        description: (r.description ?? "").slice(0, 500),
+        qty: r.qty ?? "1",
+        unit: r.unit ?? "ea",
+      }))
+      .filter((r) => r.description.trim() !== "");
+    return seeded.length > 0 ? seeded : [blankRow()];
+  });
   const [intent, setIntent] = useState<"submit" | "draft">("submit");
   const [online, setOnline] = useState(true);
   const [offlineState, setOfflineState] = useState<OfflineState>({ kind: "idle" });
@@ -329,6 +344,7 @@ export function MaterialRequestForm({
           <input
             type="date"
             name="needed_by"
+            defaultValue={defaults?.needed_by ?? ""}
             className="mt-1 min-h-11 w-full rounded-lg border border-slate-300 px-3 py-2 text-base text-slate-900 focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
           />
         </label>
@@ -356,6 +372,7 @@ export function MaterialRequestForm({
           name="notes"
           rows={3}
           maxLength={5000}
+          defaultValue={defaults?.notes ?? ""}
           placeholder="e.g. deliver to the rear gate before 10am"
           className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900"
         />

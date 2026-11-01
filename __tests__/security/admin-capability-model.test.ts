@@ -257,6 +257,17 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       // settings:view; openBillingPortal + changePlan gate settings:manage.
       "app/(app)/settings/billing/page.tsx",
       "app/(app)/settings/billing/actions.ts",
+      // Feature 2 — document-to-form autofill. The import server action gates the
+      // operator for the TARGET record's create permission, mirroring each create
+      // action exactly (hasCapability for customer/lead; canManageStaff for staff;
+      // org-admin for site; member otherwise) — so an import can never bypass the
+      // create authorisation. Legitimate per-record create gating, not early
+      // adoption of the dark R2/R3 surface.
+      "server/services/document-autofill.ts",
+      // The registry is pure data (per-form auth mode) and names the create
+      // guards (requireCapabilityFor / hasCapability / canManageStaff) only in
+      // its explanatory comments; it calls nothing.
+      "lib/imports/autofill/registry.ts",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|requireCapabilityFor|hasCapability|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;

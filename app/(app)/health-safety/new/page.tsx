@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
 import { ramsTemplateOptions } from "@/lib/health-safety/rams-templates";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 import { listAssessors } from "../_data";
 import { createRiskAssessment, generateRamsDraft } from "../actions";
 
@@ -21,7 +23,7 @@ const ERROR_MAP: Record<string, string> = {
 /** Blank PPE rows on the create form — the action drops the empty ones. */
 const PPE_SLOTS = 6;
 
-type SP = Promise<{ error?: string }>;
+type SP = Promise<{ error?: string; import?: string }>;
 
 const inputClass =
   "mt-1.5 block min-h-[44px] w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500";
@@ -40,6 +42,11 @@ export default async function NewRiskAssessmentPage({
   const errorMessage = sp.error
     ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
     : null;
+
+  // Document-autofill prefill (RLS-scoped to this operator + org). An absent or
+  // foreign id yields no values, so the form opens blank.
+  const prefill = sp.import ? await loadImportDraftDefaults("risk_assessment", sp.import) : null;
+  const pf = prefill?.fields ?? {};
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -116,6 +123,10 @@ export default async function NewRiskAssessmentPage({
         <span className="h-px flex-1 bg-slate-200" aria-hidden />
       </div>
 
+      {prefill ? (
+        <ImportPrefillBanner engine={prefill.engine} recordLabel="risk assessment" />
+      ) : null}
+
       <form
         action={createRiskAssessment}
         className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
@@ -131,6 +142,7 @@ export default async function NewRiskAssessmentPage({
             required
             autoFocus
             maxLength={200}
+            defaultValue={pf.title ?? ""}
             placeholder="Working at height — scaffold erection"
             className={inputClass}
           />
@@ -146,6 +158,7 @@ export default async function NewRiskAssessmentPage({
             rows={2}
             required
             maxLength={500}
+            defaultValue={pf.activity ?? ""}
             placeholder="What work does this RAMS cover?"
             className={inputClass}
           />
@@ -161,6 +174,7 @@ export default async function NewRiskAssessmentPage({
               name="location"
               type="text"
               maxLength={200}
+              defaultValue={pf.location ?? ""}
               placeholder="Plot 4, rear elevation"
               className={inputClass}
             />
@@ -192,6 +206,7 @@ export default async function NewRiskAssessmentPage({
               id="assessmentDate"
               name="assessmentDate"
               type="date"
+              defaultValue={pf.assessmentDate ?? ""}
               className={inputClass}
             />
           </div>
@@ -203,6 +218,7 @@ export default async function NewRiskAssessmentPage({
               id="reviewDate"
               name="reviewDate"
               type="date"
+              defaultValue={pf.reviewDate ?? ""}
               className={inputClass}
             />
           </div>
@@ -237,6 +253,7 @@ export default async function NewRiskAssessmentPage({
             name="methodStatement"
             rows={6}
             maxLength={20000}
+            defaultValue={pf.methodStatement ?? ""}
             placeholder="Describe, step by step, how the work will be carried out safely."
             className={inputClass}
           />

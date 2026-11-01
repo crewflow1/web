@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { AddStaffButton, InviteStaffModal } from "./_invite-modal";
+import { ImportButton } from "@/components/import/import-button";
 import { PendingInvites } from "./_pending-invites";
 import { listPendingInvites } from "./_invites";
 import { readFailure } from "@/lib/supabase/read-failure";
@@ -153,9 +154,12 @@ export default async function StaffPage({
           </p>
         </div>
         {isAdmin ? (
-          <AddStaffButton size="lg" testId="add-staff-button">
-            + Add staff
-          </AddStaffButton>
+          <div className="flex flex-wrap items-center gap-2">
+            <ImportButton formType="staff_invite" size="lg" />
+            <AddStaffButton size="lg" testId="add-staff-button">
+              + Add staff
+            </AddStaffButton>
+          </div>
         ) : null}
       </header>
 

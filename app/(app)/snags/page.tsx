@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ImportButton } from "@/components/import/import-button";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { listStaffForOrg } from "../jobs/_form-helpers";
@@ -155,12 +156,15 @@ export default async function SnagsPage({ searchParams }: { searchParams: SP }) 
             before handover.
           </p>
         </div>
-        <Link
-          href="/snags/new"
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-        >
-          + Log a snag
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <ImportButton formType="snag" />
+          <Link
+            href="/snags/new"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            + Log a snag
+          </Link>
+        </div>
       </header>
 
       {errorMessage ? (

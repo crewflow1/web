@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ImportButton } from "@/components/import/import-button";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import {
@@ -65,12 +66,15 @@ export default async function SitesPage({ searchParams }: { searchParams: SP }) 
           </p>
         </div>
         {isAdmin ? (
-          <Link
-            href="/sites/new"
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-          >
-            + Add site
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <ImportButton formType="site" />
+            <Link
+              href="/sites/new"
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              + Add site
+            </Link>
+          </div>
         ) : null}
       </header>
 

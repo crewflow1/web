@@ -6,6 +6,8 @@ import { SiteReportForm } from "../_form";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { withPreservedOption } from "@/lib/quotes/preserve-option";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 
 const ERROR_MAP: Record<string, string> = {
   record_failed: "Couldn't create the report. Try again.",
@@ -20,7 +22,7 @@ type JobOption = {
   customer: { name: string | null } | null;
 };
 
-type SP = Promise<{ error?: string; job?: string }>;
+type SP = Promise<{ error?: string; job?: string; import?: string }>;
 
 export default async function NewSiteReportPage({
   searchParams,
@@ -29,6 +31,7 @@ export default async function NewSiteReportPage({
 }) {
   const { ctx, user } = await requireOrgContext();
   const sp = await searchParams;
+  const prefill = sp.import ? await loadImportDraftDefaults("site_report", sp.import) : null;
   const supabase = await createClient();
 
   // PAGED (F-1 picker-completion class). This feeds the site report's REQUIRED
@@ -104,13 +107,17 @@ export default async function NewSiteReportPage({
           The identity handed to the form is the one the SERVER just resolved for
           this request — newly authored work is never attributed from a client-side
           marker on a shared tablet (#456). */}
+      {prefill ? (
+        <ImportPrefillBanner engine={prefill.engine} recordLabel="site report" />
+      ) : null}
       <SiteReportForm
         action={createSiteReport}
         jobs={jobOptions}
         presetJob={presetJobId}
-        defaultPeriodStart={start}
-        defaultPeriodEnd={end}
+        defaultPeriodStart={prefill?.fields.period_start || start}
+        defaultPeriodEnd={prefill?.fields.period_end || end}
         offline={{ userId: user.id, orgId: ctx.org.id }}
+        defaultTitle={prefill?.fields.title}
       />
     </div>
   );

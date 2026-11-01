@@ -6,6 +6,8 @@ import { createSnag } from "../actions";
 import { SnagForm } from "../_form";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 
 const ERROR_MAP: Record<string, string> = {
   record_failed: "Couldn't save the snag. Try again.",
@@ -23,7 +25,7 @@ type JobOption = {
   customer: { name: string | null } | null;
 };
 
-type SP = Promise<{ error?: string; job?: string }>;
+type SP = Promise<{ error?: string; job?: string; import?: string }>;
 
 export default async function NewSnagPage({
   searchParams,
@@ -33,6 +35,7 @@ export default async function NewSnagPage({
   const { ctx, user } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();
+  const prefill = sp.import ? await loadImportDraftDefaults("snag", sp.import) : null;
 
   const [{ data: jobsRaw, error: jobsError }, staff] = await Promise.all([
     // PAGED (F-1 picker-completion class). This feeds the snag's OPTIONAL job
@@ -103,11 +106,14 @@ export default async function NewSnagPage({
           The identity handed to the form is the one the SERVER just resolved
           for this request — newly authored work is never attributed from a
           client-side marker on a shared tablet. */}
+      {prefill ? <ImportPrefillBanner engine={prefill.engine} recordLabel="snag" /> : null}
+
       <SnagForm
         action={createSnag}
         jobs={jobs}
         staff={staff.map((s) => ({ id: s.id, label: s.full_name || s.email || "—" }))}
         presetJob={presetJob}
+        defaults={prefill?.fields}
         offline={{ userId: user.id, orgId: ctx.org.id }}
       />
     </div>

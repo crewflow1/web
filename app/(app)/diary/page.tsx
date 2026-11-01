@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ImportButton } from "@/components/import/import-button";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
@@ -100,12 +101,15 @@ export default async function DiaryPage({ searchParams }: { searchParams: SP }) 
             done, and any delays. Your evidence for progress and disputes.
           </p>
         </div>
-        <Link
-          href="/diary/new"
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-        >
-          + New entry
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <ImportButton formType="diary" />
+          <Link
+            href="/diary/new"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            + New entry
+          </Link>
+        </div>
       </header>
 
       {errorMessage ? (

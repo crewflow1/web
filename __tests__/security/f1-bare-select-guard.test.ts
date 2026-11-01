@@ -301,19 +301,19 @@ const ALLOWLIST: Record<string, string> = {
   // CRM wave (jobs/leads/customers joined HIGH_VALUE_TABLES). Each is either a
   // hard-bounded id-batch name lookup or a genuinely paged read the static
   // analyser cannot see through a long builder chain.
-  "app/(app)/diary/page.tsx:83":
+  "app/(app)/diary/page.tsx:84":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the diary register (.limit(500)) — ≤500 unique PKs, analyser can't see .in's slice bound",
-  "app/(app)/site-reports/page.tsx:111":
-    "bounded: jobs name lookup CHUNKED .in('id', idsChunk) where each chunk is ≤JOB_IN_CHUNK=500 unique PKs — jobs.id is unique so a chunk yields ≤500 rows. (C66: the reports register above is now fully PAGED, so jobIds can exceed 500; the lookup is chunked to stay below the cap, and the line moved 99→111.)",
-  "app/(app)/snags/page.tsx:134":
+  "app/(app)/site-reports/page.tsx:112":
+    "bounded: jobs name lookup CHUNKED .in('id', idsChunk) where each chunk is ≤JOB_IN_CHUNK=500 unique PKs — jobs.id is unique so a chunk yields ≤500 rows. (C66: the reports register above is now fully PAGED, so jobIds can exceed 500; the lookup is chunked to stay below the cap. Line moved 99→111, then 111→112 when the Import button's import was added to this page — pure shift, same read.)",
+  "app/(app)/snags/page.tsx:135":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the snags register (.limit(500)) — ≤500 unique PKs",
   "app/(app)/blueprints/page.tsx:68":
     "bounded: jobs name lookup CHUNKED .in('id', idsChunk) where each chunk is ≤JOB_IN_CHUNK=500 unique PKs — jobs.id is unique so a chunk yields ≤500 rows. The blueprints register above is fully PAGED (listBlueprintsForOrg → fetchAllRows), so the job-id set can exceed 500; the lookup is chunked to stay below the cap. Same class as site-reports/page.tsx:111.",
-  "app/(app)/toolbox/page.tsx:89":
+  "app/(app)/toolbox/page.tsx:90":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the toolbox register (.limit(500)) — ≤500 unique PKs",
-  "app/(app)/jobs/page.tsx:144":
-    "bounded: the 'Today's jobs' panel query — one org × one calendar day (.eq('scheduled_date', todayIso)), a handful of rows, never near the cap. The paginated list query above it is windowed via .range(). Moved 136→147 in the final-roadmap wave (DataTable adoption) — pure shift, same read.",
-  "app/(app)/leads/page.tsx:61":
+  "app/(app)/jobs/page.tsx:145":
+    "bounded: the 'Today's jobs' panel query — one org × one calendar day (.eq('scheduled_date', todayIso)), a handful of rows, never near the cap. The paginated list query above it is windowed via .range(). Moved to :145 when Feature-1 search (#1014, searchCustomers RPC) and the Feature-2 Import button (#1013) both landed in jobs/page.tsx — pure shift, same read.",
+  "app/(app)/leads/page.tsx:65":
     "paged: the pipeline read IS complete — executed via fetchAllRows((from,to) => query.range(from,to)) at the bottom of the fn; the builder pattern places the .range terminator beyond the static region window, so the analyser can't see it. (Line moved 60→61 when the R4 capability gate replaced the 1-line requireManagementRole gate with a 2-line comment + requireCapability; reason unchanged.)",
 
   // ── .from(as never) CAST-FORM WAVE — genuinely-bounded per-parent-row reads
@@ -424,7 +424,7 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: ONE org's members (.eq('org_id')) — the settings team panel; bounded by the org's headcount, never near 1000 (line moved 76→77 when the FlatRateSettings import was added; moved 77→80 when the i18n-wave getRequestI18n helper + its comment replaced the bare requireOrgContext call; moved 80→81 when the SignOutButton import was added for the Settings Log out button)",
   "app/(app)/staff/leave/page.tsx:97":
     "bounded: ONE org's members (.eq('org_id')) — the leave-page name lookup; bounded by the org's headcount (line moved 96→97 when the getHolidayBalanceForUser import was added for the holiday-balance card)",
-  "app/(app)/staff/page.tsx:56":
+  "app/(app)/staff/page.tsx:57":
     "bounded: ONE org's members (.eq('org_id')) — the staff register; bounded by the org's headcount. (Line moved to 55 in the security closeout when hourly_pay was dropped from the users embed — pay now reads from staff_compensation below; moved 55→56 when the DataTable import was added for the G3 canonical-table adoption.)",
   "app/(app)/staff/rota/page.tsx:112":
     "bounded: ONE org's members (.eq('org_id')) — the rota staff list + assign-form labels; bounded by the org's headcount",

@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getRequestI18n } from "@/server/i18n/request";
 import { EmptyState } from "../_components/empty-state";
 import { HelpLink } from "../_components/help-link";
+import { ImportButton } from "@/components/import/import-button";
 import { resolveJobAddress, formatAddressOneLine } from "@/lib/address";
 import { searchCustomers } from "@/lib/customers/search";
 import {
@@ -218,6 +219,7 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
           >
             Templates
           </Link>
+          <ImportButton formType="job" />
           <Link
             href="/jobs/new"
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"

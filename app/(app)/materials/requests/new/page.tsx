@@ -5,6 +5,8 @@ import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { createMaterialRequest } from "../actions";
 import { MaterialRequestForm } from "../_request-form";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 
 /**
  * Raise a materials request.
@@ -36,10 +38,13 @@ function label(job: JobRow): string {
 export default async function NewMaterialRequestPage({
   searchParams,
 }: {
-  searchParams: Promise<{ job?: string }>;
+  searchParams: Promise<{ job?: string; import?: string }>;
 }) {
-  const { job: jobParam } = await searchParams;
+  const { job: jobParam, import: importId } = await searchParams;
   const { ctx, user } = await requireOrgContext();
+  const prefill = importId
+    ? await loadImportDraftDefaults("material_request", importId)
+    : null;
   const supabase = await createClient();
 
   // ACTIVE-ORG PIN as well as RLS: current_org_ids() returns every org the
@@ -121,12 +126,17 @@ export default async function NewMaterialRequestPage({
           material_request.create). The identity handed to the form is the one
           the SERVER just resolved for this request — newly authored work is
           never attributed from a client-side marker on a shared tablet. */}
+      {prefill ? (
+        <ImportPrefillBanner engine={prefill.engine} recordLabel="material request" />
+      ) : null}
       <MaterialRequestForm
         action={createMaterialRequest}
         jobId={pinned?.id ?? null}
         jobLabel={pinned ? label(pinned) : null}
         backHref={backHref}
         offline={{ userId: user.id, orgId: ctx.org.id }}
+        defaults={prefill?.fields}
+        initialLineItems={prefill?.lineItems}
       />
     </div>
   );

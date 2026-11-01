@@ -4,6 +4,8 @@ import { listCustomersForOrg, listStaffForOrg } from "../_form-helpers";
 import { listActiveJobTemplates } from "@/lib/jobs/template-list";
 import { JobForm } from "../_form";
 import { requireOrgContext } from "@/server/auth/session";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 
 /**
  * Create-job page.
@@ -14,13 +16,20 @@ import { requireOrgContext } from "@/server/auth/session";
  * are no customers yet, the form helper text links out to /customers/new.
  * Form-level + per-field errors render inline via useActionState.
  */
-export default async function NewJobPage() {
+export default async function NewJobPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ import?: string }>;
+}) {
   const { ctx } = await requireOrgContext();
   const [customers, staff, templates] = await Promise.all([
     listCustomersForOrg(ctx.org.id),
     listStaffForOrg(ctx.org.id),
     listActiveJobTemplates(ctx.org.id),
   ]);
+
+  const sp = await searchParams;
+  const prefill = sp.import ? await loadImportDraftDefaults("job", sp.import) : null;
 
   return (
     <div className="mx-auto max-w-xl space-y-6">
@@ -36,6 +45,8 @@ export default async function NewJobPage() {
         <h1 className="text-2xl font-bold text-slate-900">New job</h1>
       </header>
 
+      {prefill ? <ImportPrefillBanner engine={prefill.engine} recordLabel="job" /> : null}
+
       <JobForm
         action={createJob}
         submitLabel="Create job"
@@ -43,6 +54,7 @@ export default async function NewJobPage() {
         customers={customers}
         staff={staff}
         templates={templates}
+        defaults={prefill?.fields}
       />
     </div>
   );

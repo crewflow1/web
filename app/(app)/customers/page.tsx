@@ -2,6 +2,8 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getRequestI18n } from "@/server/i18n/request";
 import { requireCapability } from "@/server/auth/capabilities";
+import { canWith } from "@/lib/auth/capability-rules";
+import { ImportButton } from "@/components/import/import-button";
 import { EmptyState } from "../_components/empty-state";
 import { formatAddressOneLine, customerToAddress } from "@/lib/address";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
@@ -64,7 +66,10 @@ export default async function CustomersPage({
   // R4 — customers (carries financial rollups) requires customers:view (owner
   // full; admin only if granted). Defence in depth behind the segment layout's
   // identical gate; staff reach customer/site detail through their assigned job.
-  await requireCapability("customers", "view");
+  const { ctx: capCtx, grants } = await requireCapability("customers", "view");
+  // Import sits beside "New customer" only for operators who may CREATE one —
+  // the same gate createCustomer enforces (requireCapabilityFor customers:create).
+  const canImport = canWith(capCtx.membership.role, grants, "customers", "create");
   const sp = await searchParams;
   const page = parsePage(sp.page);
   const offset = offsetForPage(page);
@@ -113,12 +118,15 @@ export default async function CustomersPage({
                   : `${totalCount} ${totalCount === 1 ? "customer" : "customers"}`}
           </p>
         </div>
-        <Link
-          href="/customers/new"
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-        >
-          {t("customers.action.new")}
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          {canImport ? <ImportButton formType="customer" /> : null}
+          <Link
+            href="/customers/new"
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+          >
+            {t("customers.action.new")}
+          </Link>
+        </div>
       </header>
 
       {/* Search runs server-side across ALL customers, not just this page. */}

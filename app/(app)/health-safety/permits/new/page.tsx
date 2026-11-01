@@ -6,6 +6,8 @@ import { listRamsOptions } from "../_data";
 import { PermitFormFields } from "../_fields";
 import { errorMessage, primaryBtn } from "../_meta";
 import { StateForm } from "@/components/forms/StateForm";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
+import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 
 /**
  * /health-safety/permits/new — draft a new permit.
@@ -18,7 +20,7 @@ import { StateForm } from "@/components/forms/StateForm";
  * (see _datetime-field); both are optional here and enforced by the issue gate.
  */
 
-type SP = Promise<{ error?: string }>;
+type SP = Promise<{ error?: string; import?: string }>;
 
 export default async function NewPermitPage({
   searchParams,
@@ -28,9 +30,10 @@ export default async function NewPermitPage({
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
 
-  const [jobs, ramsOptions] = await Promise.all([
+  const [jobs, ramsOptions, prefill] = await Promise.all([
     listJobOptions(ctx.org.id),
     listRamsOptions(ctx.org.id),
+    sp.import ? loadImportDraftDefaults("permit", sp.import) : Promise.resolve(null),
   ]);
 
   const error = errorMessage(sp.error);
@@ -54,6 +57,8 @@ export default async function NewPermitPage({
 
       <h1 className="text-2xl font-bold text-slate-900">New permit to work</h1>
 
+      {prefill ? <ImportPrefillBanner engine={prefill.engine} recordLabel="permit" /> : null}
+
       {error ? (
         <div
           role="alert"
@@ -72,6 +77,7 @@ export default async function NewPermitPage({
           jobs={jobs}
           ramsOptions={ramsOptions}
           autoFocusTitle
+          defaults={prefill?.fields}
         />
 
         <p className="text-xs text-slate-500">

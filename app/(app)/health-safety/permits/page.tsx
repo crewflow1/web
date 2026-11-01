@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ImportButton } from "@/components/import/import-button";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "@/app/(app)/_components/empty-state";
 import { listJobOptions } from "@/app/(app)/diary/_data";
@@ -69,9 +70,12 @@ export default async function PermitsRegisterPage({
             only valid between its ‘valid from’ and ‘valid until’ times.
           </p>
         </div>
-        <Link href="/health-safety/permits/new" className={primaryBtn}>
-          + New permit
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <ImportButton formType="permit" />
+          <Link href="/health-safety/permits/new" className={primaryBtn}>
+            + New permit
+          </Link>
+        </div>
       </header>
 
       {error ? (

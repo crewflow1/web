@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ImportButton } from "@/components/import/import-button";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
@@ -96,6 +97,7 @@ export default async function PurchaseOrdersPage({
           >
             Bill matching
           </Link>
+          <ImportButton formType="purchase_order" />
           <Link
             href="/purchase-orders/new"
             className="rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"

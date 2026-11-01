@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
+import { ImportButton } from "@/components/import/import-button";
 import { listRiskAssessments } from "./_data";
 import { HealthSafetySignals } from "./_hs-signals";
 import { buildHealthSafetySnapshot } from "@/server/services/health-safety-snapshot";
@@ -164,12 +165,15 @@ export default async function HealthSafetyPage({
             the site.
           </p>
         </div>
-        <Link
-          href="/health-safety/new"
-          className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
-        >
-          + New risk assessment
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <ImportButton formType="risk_assessment" />
+          <Link
+            href="/health-safety/new"
+            className="inline-flex min-h-[44px] items-center justify-center rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
+          >
+            + New risk assessment
+          </Link>
+        </div>
       </header>
 
       <nav

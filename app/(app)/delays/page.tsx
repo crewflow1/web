@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ImportButton } from "@/components/import/import-button";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { listDelayEvents, type DelayListItem } from "./_data";
@@ -96,12 +97,15 @@ export default async function DelaysRegisterPage({ searchParams }: { searchParam
             and let the pack show what is still missing.
           </p>
         </div>
-        <Link
-          href="/delays/new"
-          className="inline-flex min-h-[44px] items-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-        >
-          Log a delay
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <ImportButton formType="delay" />
+          <Link
+            href="/delays/new"
+            className="inline-flex min-h-[44px] items-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+          >
+            Log a delay
+          </Link>
+        </div>
       </header>
 
       {errorMessage ? (
