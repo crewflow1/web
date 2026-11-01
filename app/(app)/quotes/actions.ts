@@ -1301,6 +1301,28 @@ export async function declineQuoteAsOwner(id: string) {
 }
 
 /**
+ * The quote statuses a CUSTOMER may act on through the public /q token.
+ *
+ * Mirrors exactly what the public quote page renders an accept/decline form for
+ * (app/q/[token]/page.tsx: VISIBLE minus the locked terminal states) — a quote
+ * that has cleared the internal approval gate and been issued. The lifecycle is
+ *   draft → pending_approval → approved → sent → viewed → accepted/declined/expired
+ * and an edit to an approved/sent/viewed quote REVERTS it to pending_approval
+ * (migration 20260522), while a reviewer can set it to rejected — both WITHOUT
+ * clearing public_token. Because the accept/decline server actions are bound to
+ * the token and stay POST-able after the page itself has started showing
+ * InvalidLinkPage, the status must be re-checked server-side here or a reverted/
+ * rejected/draft quote could be driven straight to accepted (auto-creating an
+ * invoice + job) or declined. The DB approval trigger (20261090) deliberately
+ * exempts service_role — which these helpers use — so this is the only gate.
+ */
+const CUSTOMER_ACTIONABLE_QUOTE_STATUSES: ReadonlySet<string> = new Set([
+  "approved",
+  "sent",
+  "viewed",
+]);
+
+/**
  * Service-role helper used by the public portal (which has no user JWT).
  * Exposed via separate file at /q/[token]/actions.ts so this module
  * keeps user-context only.
@@ -1330,6 +1352,13 @@ export async function acceptQuoteByToken(
   if (quote.status === "accepted") return { ok: true, quoteId: quote.id };
   if (quote.status === "declined") return { ok: false, error: "Quote already declined" };
   if (quote.status === "expired") return { ok: false, error: "Quote has expired" };
+  // Fail closed for any non-actionable status (draft / pending_approval /
+  // rejected / anything future): a quote reverted after sending — or never
+  // approved — must not be acceptable through a stale/known token even though
+  // its public_token survives the revert. See CUSTOMER_ACTIONABLE_QUOTE_STATUSES.
+  if (!CUSTOMER_ACTIONABLE_QUOTE_STATUSES.has(quote.status)) {
+    return { ok: false, error: "This quote isn't available to accept." };
+  }
   if (quote.valid_until && quote.valid_until < now.slice(0, 10)) {
     await admin.from("quotes").update({ status: "expired" }).eq("id", quote.id);
     return { ok: false, error: "Quote has expired" };
@@ -1539,6 +1568,12 @@ export async function declineQuoteByToken(
   if (!quote) return { ok: false, error: "Quote not found" };
   if (quote.status === "accepted") return { ok: false, error: "Quote already accepted" };
   if (quote.status === "declined") return { ok: true, quoteId: quote.id };
+  // Fail closed for any non-actionable status (draft / pending_approval /
+  // rejected / expired / anything future): a quote the customer can't act on
+  // through the page must not be respondable through a stale/known token.
+  if (!CUSTOMER_ACTIONABLE_QUOTE_STATUSES.has(quote.status)) {
+    return { ok: false, error: "This quote isn't available to respond to." };
+  }
 
   // Append decline reason into the existing notes field for the audit trail.
   const nextNotes = reason
