@@ -60,7 +60,7 @@ export const FEATURES: FeaturePage[] = [
       { q: "Do field staff need a separate app?", a: "No. Field staff get a mobile-first dashboard built for someone standing in a van, today's jobs, clock-in, and the ability to attach photos to the right job." },
       { q: "Does the job link to the quote and invoice?", a: "Yes, that's the point. A job is created from an accepted quote and becomes an invoice when the work is done, with the same customer, value and line items flowing through." },
     ],
-    related: ["construction-crm", "quoting-software", "invoicing-software", "scheduling-software", "job-costing-software"],
+    related: ["construction-crm", "quoting-software", "invoicing-software", "scheduling-software", "rams-software"],
     industries: ["builders", "electricians", "plumbers", "roofers"],
   },
   {
@@ -217,7 +217,7 @@ export const FEATURES: FeaturePage[] = [
       { q: "Can I raise an invoice from a job?", a: "Yes, that's the fast path. The job already has the customer, line items and variations, so creating the invoice is a click rather than a re-type." },
       { q: "Does CrewFlow take a cut of my invoices?", a: "No. CrewFlow doesn't process payments, so there's no card-processor skim and no per-invoice fee. You keep 100% of every invoice; CrewFlow just tracks whether it's been paid." },
     ],
-    related: ["job-management-software", "payments-reconciliation", "quoting-software", "tax-software", "job-costing-software"],
+    related: ["job-management-software", "payments-reconciliation", "quoting-software", "tax-software", "cis-software"],
     industries: ["builders", "plumbers", "electricians"],
   },
   {
@@ -369,7 +369,7 @@ export const FEATURES: FeaturePage[] = [
       { q: "Where do the hours come from?", a: "Straight from clocked timesheets. Because time tracking and payroll are one system, you're never re-keying paper timesheets into separate payroll software." },
       { q: "Can my accountant get the data?", a: "Yes. Every pay run exports to CSV, so handing off to your accountant or bookkeeper is a clean export rather than a manual rebuild." },
     ],
-    related: ["timesheet-software", "scheduling-software", "tax-software", "job-costing-software"],
+    related: ["timesheet-software", "cis-software", "scheduling-software", "tax-software", "job-costing-software"],
     industries: ["builders", "groundworks", "electricians"],
   },
   {
@@ -510,7 +510,7 @@ export const FEATURES: FeaturePage[] = [
       { q: "Does this replace my accountant?", a: "No, and it's not meant to. CrewFlow is the operations layer that keeps your tax position current and produces clean figures; your accountant does the filing. It makes their job easier and their bill lower." },
       { q: "What does my accountant actually get?", a: "A clean quarterly PDF they can work from directly, instead of reconciling scattered spreadsheets and receipts. It turns quarter-end into a short conversation." },
     ],
-    related: ["invoicing-software", "payroll-software", "expense-tracking", "job-costing-software"],
+    related: ["cis-software", "invoicing-software", "payroll-software", "expense-tracking", "job-costing-software"],
     industries: ["builders", "electricians", "plumbers"],
   },
   {
@@ -608,6 +608,178 @@ export const FEATURES: FeaturePage[] = [
     ],
     related: ["invoicing-software", "job-costing-software", "tax-software", "construction-crm"],
     industries: ["builders", "plumbers", "electricians"],
+  },
+  {
+    slug: "cis-software",
+    keyword: "CIS software",
+    secondaryKeywords: [
+      "CIS software for subcontractors",
+      "construction CIS software",
+      "CIS deductions software",
+      "subcontractor management software",
+    ],
+    name: "CIS",
+    navLabel: "CIS",
+    title: "CIS Software for Construction",
+    metaDescription:
+      "CIS software that works out subcontractor deductions, tracks verification, and produces monthly CIS returns and payment & deduction statements. Book a demo.",
+    eyebrow: "CIS",
+    h1: "CIS software that handles the deductions, statements and returns for you",
+    intro:
+      "The Construction Industry Scheme turns every subcontractor payment into a compliance task: verify the subbie, apply the right deduction, keep the statement, total it up for the monthly return. Get it wrong and it's a penalty; do it by hand and it eats a day a month.\n\nCrewFlow runs CIS as part of how you already pay subcontractors, so the deductions, the statements and the monthly figures fall out of the work instead of being a separate chore.",
+    heroBullets: [
+      "Deductions worked out automatically at 20%, 30% or gross",
+      "Verification status tracked against each subcontractor",
+      "Payment & deduction statements produced as PDFs",
+      "Monthly CIS return totals ready to file",
+    ],
+    problem: {
+      heading: "CIS is a penalty waiting for the month you're too busy",
+      body: "Miss a verification, apply the wrong rate, forget a statement or file the monthly return late, and HMRC's penalties start at £100 and climb. The scheme doesn't care that you were on site all month. CrewFlow keeps the deductions right and the paperwork ready as you pay subcontractors, so the monthly return is a review, not a scramble.",
+    },
+    sections: [
+      {
+        h2: "The right deduction on every subcontractor payment",
+        body: "Set each subcontractor's status, gross, net at 20%, or unregistered at 30%, and CrewFlow applies it automatically every time you record a payment. The deduction is taken off the labour element, materials are left out of the calculation, and the figure is logged against both the subcontractor and the job it belongs to.",
+        bullets: [
+          "20%, 30% or gross applied per subcontractor",
+          "Deduction calculated on labour, not materials",
+          "Every deduction tied to the subcontractor and the job",
+        ],
+      },
+      {
+        h2: "Verification and statements, kept as you go",
+        body: "Record each subcontractor's HMRC verification number and status so you always know who's verified and at what rate before you pay them. Every payment produces a payment & deduction statement as a clean PDF you can send the subcontractor, the proof they need of the tax you've withheld on their behalf.",
+      },
+      {
+        h2: "The monthly return, totalled and ready to file",
+        body: "At month end CrewFlow totals every subcontractor, every payment and every deduction into the figures your CIS300 monthly return needs. CrewFlow produces the numbers and the statements; you or your accountant submit the return to HMRC, so filing is a five-minute check rather than a reconciliation from a shoebox of invoices.",
+      },
+    ],
+    outcomes: [
+      { label: "Right rate, every time", body: "20%, 30% or gross applied automatically per subcontractor." },
+      { label: "Statements done", body: "Payment & deduction statement PDFs produced as you pay." },
+      { stat: "Month end", label: "without the scramble", body: "CIS300 totals ready to file, not reconstructed under pressure." },
+    ],
+    faqs: [
+      { q: "Does CrewFlow calculate CIS deductions automatically?", a: "Yes. Set each subcontractor's status, gross, 20% net or 30% unregistered, and CrewFlow applies the right deduction to the labour element of every payment and logs it against the subcontractor and the job." },
+      { q: "Does CrewFlow file the CIS300 return to HMRC?", a: "No, and like our tax figures that's deliberate. CrewFlow produces the monthly CIS300 totals and the subcontractor statements; you or your accountant submit the return to HMRC. It removes the admin, not your control over filing." },
+      { q: "Can I produce subcontractor payment and deduction statements?", a: "Yes. Every subcontractor payment produces a payment & deduction statement as a PDF you can send the subcontractor as proof of the tax deducted." },
+      { q: "Does it track subcontractor verification?", a: "Yes. You record each subcontractor's HMRC verification number and status, so you always know who's verified and at what rate before you pay them." },
+    ],
+    related: ["invoicing-software", "payroll-software", "tax-software", "expense-tracking", "job-costing-software"],
+    industries: ["builders", "groundworks", "scaffolding", "roofers"],
+  },
+  {
+    slug: "rams-software",
+    keyword: "construction RAMS software",
+    secondaryKeywords: [
+      "RAMS software",
+      "risk assessment method statement software",
+      "method statement software",
+      "RAMS software UK",
+    ],
+    name: "RAMS & permits",
+    navLabel: "RAMS",
+    title: "Construction RAMS Software",
+    metaDescription:
+      "RAMS software for construction: build risk assessments and method statements, issue permits to work, and get workers to sign on site. Audit-ready PDFs. Book a demo.",
+    eyebrow: "RAMS",
+    h1: "Construction RAMS software that gets the site signed off and signed up",
+    intro:
+      "No RAMS, no start, and on bigger jobs the principal contractor won't let you through the gate without them. But risk assessments and method statements written in Word, printed, and signed on a dog-eared sheet are slow to produce and impossible to prove were read.\n\nCrewFlow lets you build RAMS, issue permits to work, and have every worker sign them on their phone, with a dated audit trail that stands up when someone asks who signed what.",
+    heroBullets: [
+      "Risk assessments scored on a 5×5 matrix, issued and revision-tracked",
+      "Method statements and permits to work in the same place",
+      "Workers sign by secure link on site, no login or app",
+      "Audit-ready PDFs attached to the job they belong to",
+    ],
+    problem: {
+      heading: "A RAMS nobody can prove was read is no protection at all",
+      body: "The point of RAMS isn't the document, it's being able to show the hazards were assessed and the crew understood the method before work started. A printed sheet in a van doesn't prove that. If there's an incident or an audit and you can't show who signed the current version, the paperwork fails you exactly when it matters. CrewFlow makes the sign-off real and provable.",
+    },
+    sections: [
+      {
+        h2: "Build the risk assessment, score it properly",
+        body: "Create a risk assessment with hazards scored on a 5×5 likelihood-by-severity matrix, the standard assessors expect, with control measures and residual risk for each one. Reuse your common assessments as a starting point so a RAMS for a familiar job takes minutes, not an afternoon, and every revision is tracked so the version on site is the current one.",
+      },
+      {
+        h2: "Method statements and permits in one pack",
+        body: "Pair each risk assessment with a method statement that sets out how the work is actually done, and issue permits to work, hot works, confined space, working at height, against the same job. It's the full compliance pack a principal contractor asks for, produced from one place rather than stitched together from three.",
+      },
+      {
+        h2: "Sign-off you can actually prove",
+        body: "Send the RAMS or permit to the crew and they sign by secure link on their own phone, no login, no app to install. CrewFlow records who signed, which version, and when, and keeps it all as an audit-ready PDF against the job. When someone asks for evidence, it's a search, not an archaeology dig through the van.",
+      },
+    ],
+    outcomes: [
+      { stat: "5×5", label: "risk scoring", body: "Hazards assessed on the matrix assessors and principal contractors expect." },
+      { label: "Provable sign-off", body: "Who signed which version, when, recorded and kept." },
+      { label: "Through the gate", body: "The compliance pack bigger jobs demand, ready on day one." },
+    ],
+    faqs: [
+      { q: "What does RAMS stand for and does CrewFlow do both parts?", a: "RAMS is Risk Assessment and Method Statement. CrewFlow does both, a risk assessment scored on a 5×5 matrix with control measures, and a method statement for how the work is carried out, issued together against the job." },
+      { q: "Can workers sign RAMS on site?", a: "Yes. Workers sign by a secure link on their own phone, no login or app needed. CrewFlow records who signed, which version and when, so you can prove the crew read the current RAMS before starting." },
+      { q: "Does it handle permits to work?", a: "Yes. Alongside RAMS you can issue permits to work, such as hot works, confined space or working at height, against the same job, with the same sign-off and PDF record." },
+      { q: "Does CrewFlow write the RAMS for me?", a: "CrewFlow gives you the structure and lets you reuse your own common assessments as a starting point, so a RAMS for a familiar job takes minutes. The content is yours, a competent person still makes the assessment, which is exactly what the regulations require." },
+    ],
+    related: ["toolbox-talks", "job-management-software", "scheduling-software", "customer-portal"],
+    industries: ["builders", "roofers", "scaffolding", "groundworks", "electricians"],
+  },
+  {
+    slug: "toolbox-talks",
+    keyword: "toolbox talk app",
+    secondaryKeywords: [
+      "toolbox talks software",
+      "toolbox talk record app",
+      "construction toolbox talks software UK",
+    ],
+    name: "Toolbox talks",
+    navLabel: "Toolbox talks",
+    title: "Toolbox Talk App for Construction",
+    metaDescription:
+      "Run toolbox talks, capture who attended, and keep a dated PDF record for every one. CrewFlow proves your site briefings happened when an audit asks. Book a demo.",
+    eyebrow: "Toolbox talks",
+    h1: "A toolbox talk app that proves the briefing actually happened",
+    intro:
+      "You do the toolbox talks. The problem is proving it. A scribbled attendance sheet that lives in the site box is worthless the day a principal contractor's auditor, or worse, an HSE inspector, asks to see your last three months of talks.\n\nCrewFlow lets you run a toolbox talk, capture who was there, and keep a dated PDF record of every one, so the proof is filed the moment the briefing ends.",
+    heroBullets: [
+      "Record every toolbox talk against the job and date",
+      "Capture who attended, on site, on a phone",
+      "A dated PDF record kept for every talk",
+      "Pull the history instantly when an audit asks",
+    ],
+    problem: {
+      heading: "The talk you can't evidence is the talk that didn't happen",
+      body: "In the eyes of an auditor or an inspector, a safety briefing with no record is one you never gave. Paper attendance sheets get rained on, lost, or left in a van, and reconstructing three months of talks from memory is impossible. CrewFlow captures the record at the moment of the talk, so your safety culture is backed by evidence, not good intentions.",
+    },
+    sections: [
+      {
+        h2: "Run the talk, capture the room",
+        body: "Hold your toolbox talk as you always would, then record it against the job and the date and capture who attended there and then, on a phone, standing on site. No passing a clipboard round and hoping it comes back with every name on it.",
+      },
+      {
+        h2: "A record that's ready before you've left site",
+        body: "Each talk is kept as a dated PDF record showing the subject, the date and who attended. The evidence is filed the moment the briefing ends, not written up later from memory, so there's never a gap between doing the talk and being able to prove it.",
+      },
+      {
+        h2: "The audit history, one search away",
+        body: "When a principal contractor, an auditor or an inspector asks to see your toolbox talks, you pull the history in seconds, by job or by date, instead of hunting through site boxes. It's the difference between a question answered and a finding against you.",
+      },
+    ],
+    outcomes: [
+      { label: "Every talk evidenced", body: "A dated PDF record captured as the briefing happens." },
+      { label: "Real attendance", body: "Who was there, caught on site, not reconstructed later." },
+      { stat: "Seconds", label: "to answer an audit", body: "Pull the toolbox-talk history by job or date on demand." },
+    ],
+    faqs: [
+      { q: "What does the toolbox talk app actually do?", a: "It lets you record each toolbox talk against the job and date, capture who attended on site, and keep a dated PDF record, so you can prove every briefing happened." },
+      { q: "How does it prove a talk took place?", a: "Each talk is kept as a dated PDF showing the subject, date and attendees, captured at the time, so you have audit-ready evidence rather than a paper sheet that can go missing." },
+      { q: "Can I find past talks quickly for an audit?", a: "Yes. The full history is searchable by job and by date, so when a principal contractor or inspector asks, you pull the records in seconds instead of hunting through site boxes." },
+      { q: "Does it work on site, on a phone?", a: "Yes. Toolbox talks are captured on a phone, built for someone standing on site, so the attendance record is taken at the talk, not written up back at the office." },
+    ],
+    related: ["rams-software", "job-management-software", "scheduling-software"],
+    industries: ["builders", "roofers", "scaffolding", "groundworks", "electricians"],
   },
 ];
 

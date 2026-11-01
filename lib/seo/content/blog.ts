@@ -198,7 +198,7 @@ export const POSTS: BlogPost[] = [
       { q: "Does CrewFlow file CIS returns?", a: "CrewFlow keeps your invoicing, payments and tax records clean and in one place, which makes CIS admin much easier. The CIS filing itself is handled with HMRC and your accountant." },
     ],
     related: ["how-to-get-paid-faster-in-construction", "best-construction-software-uk"],
-    relatedFeatures: ["invoicing-software", "tax-software"],
+    relatedFeatures: ["cis-software", "invoicing-software", "tax-software"],
   },
 ];
 
