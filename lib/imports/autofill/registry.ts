@@ -40,6 +40,8 @@ import {
   variationExtractionSchema,
   materialRequestExtractionSchema,
   materialRequestLineSchema,
+  purchaseOrderExtractionSchema,
+  purchaseOrderLineSchema,
 } from "./schemas";
 
 /**
@@ -336,6 +338,20 @@ const MATERIAL_REQUEST_LINE_FIELDS: readonly AutofillField[] = [
   { key: "description", label: "Material" },
   { key: "qty", label: "Qty" },
   { key: "unit", label: "Unit" },
+];
+
+const PURCHASE_ORDER_FIELDS: readonly AutofillField[] = [
+  { key: "supplier_reference", label: "Supplier reference" },
+  { key: "expected_date", label: "Expected date" },
+  { key: "notes", label: "Notes" },
+];
+
+const PURCHASE_ORDER_LINE_FIELDS: readonly AutofillField[] = [
+  { key: "description", label: "Description" },
+  { key: "qty", label: "Qty" },
+  { key: "unit", label: "Unit" },
+  { key: "unit_price", label: "Unit price (£)" },
+  { key: "vat_rate", label: "VAT %" },
 ];
 
 export const AUTOFILL_FORMS: Readonly<Record<AutofillFormType, AutofillFormConfig>> = {
@@ -660,6 +676,32 @@ export const AUTOFILL_FORMS: Readonly<Record<AutofillFormType, AutofillFormConfi
       `- One array entry per material line on the document. Omit a line you cannot read; NEVER invent a line, a quantity or a unit.`,
       `- "qty" is the quantity as a number only (no unit inside it); put the unit in "unit".`,
       `- Do NOT extract prices — a material request carries no cost.`,
+    ].join("\n"),
+  },
+  purchase_order: {
+    type: "purchase_order",
+    recordLabel: "purchase order",
+    // createPurchaseOrder is member-open (requireOrgContext).
+    auth: { mode: "member" },
+    target: { kind: "route", newPath: "/purchase-orders/new" },
+    schema: purchaseOrderExtractionSchema,
+    fields: PURCHASE_ORDER_FIELDS,
+    lineItem: {
+      schema: purchaseOrderLineSchema,
+      fields: PURCHASE_ORDER_LINE_FIELDS,
+      label: "Order lines",
+    },
+    uploadHint: "Upload a supplier quote, proforma or order confirmation.",
+    systemPrompt: [
+      promptFor("purchase order", PURCHASE_ORDER_FIELDS, [
+        `- "supplier_reference" is the supplier's own quote/order number if shown.`,
+        `- "expected_date" is any delivery/expected date in YYYY-MM-DD.`,
+        `- Do NOT guess which supplier or job this is for — those are chosen in the form.`,
+      ]),
+      `Also return "lineItems": an array of the order lines, each { "description": <item>, "qty": <a number>, "unit": <unit of issue>, "unit_price": <price per unit in pounds, number only>, "vat_rate": <VAT percent as a number, e.g. 20> }.`,
+      `- One entry per priced line on the document. Omit a line you cannot read; NEVER invent a line, a quantity, a price or a VAT rate.`,
+      `- "unit_price" is the NET price per unit in pounds (strip the £ and any commas); do not include VAT in it.`,
+      `- If a line shows no VAT rate, use 20.`,
     ].join("\n"),
   },
 };

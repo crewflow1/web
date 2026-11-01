@@ -206,6 +206,24 @@ export const materialRequestExtractionSchema = z.object({
   notes: text(2000),
 });
 
+/** Procurement — a purchase order's priced rows, from a supplier quote/proforma. */
+export const purchaseOrderLineSchema = lineItemArray(
+  z.object({
+    description: text(500),
+    qty: decimal(999_999),
+    unit: text(40),
+    unit_price: decimal(99_999_999),
+    vat_rate: decimal(100),
+  }),
+);
+
+/** Procurement — a purchase order header, from a supplier quote / proforma. */
+export const purchaseOrderExtractionSchema = z.object({
+  supplier_reference: text(120),
+  expected_date: isoDate(),
+  notes: text(2000),
+});
+
 // ---------------------------------------------------------------------------
 // The five extraction schemas. Keys MUST match the create form input `name`s —
 // that equality is the prefill contract, pinned by the registry test.

@@ -41,6 +41,7 @@ export const AUTOFILL_FORM_TYPES = [
   "vehicle",
   "asset",
   "material_request",
+  "purchase_order",
 ] as const;
 export type AutofillFormType = (typeof AUTOFILL_FORM_TYPES)[number];
 
