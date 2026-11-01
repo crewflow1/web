@@ -17,6 +17,7 @@ import {
   TextareaField,
   SelectField,
 } from "../_components/field";
+import { CustomerCombobox } from "../_components/customer-combobox";
 import { withPreservedOption } from "@/lib/quotes/preserve-option";
 
 type JobValues = Record<string, unknown>;
@@ -77,11 +78,6 @@ export function JobForm({
   // lib/quotes/preserve-option.ts.
   const selectedCustomerId = pick("customer_id");
   const selectedAssignee = pick("assigned_to");
-  const customerOptions = withPreservedOption(
-    customers,
-    selectedCustomerId,
-    (id) => ({ id, name: "Current customer" }),
-  );
   const staffOptions = withPreservedOption(
     staff,
     selectedAssignee,
@@ -102,23 +98,13 @@ export function JobForm({
         message={state.ok && !state.redirectTo ? state.successMessage : null}
       />
 
-      <SelectField
+      <CustomerCombobox
         name="customer_id"
         label="Customer"
         defaultValue={selectedCustomerId}
+        initialOptions={customers}
+        noneLabel="— None —"
         error={fe.customer_id}
-        options={[
-          {
-            value: "",
-            label: customers.length === 0 ? "— No customers yet —" : "— None —",
-          },
-          ...customerOptions.map((c) => ({ value: c.id, label: c.name })),
-        ]}
-        help={
-          customers.length === 0
-            ? "Add a customer first via the Customers tab."
-            : undefined
-        }
       />
       <SelectField
         name="assigned_to"

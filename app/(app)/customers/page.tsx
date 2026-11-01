@@ -10,8 +10,8 @@ import {
   parsePage,
   offsetForPage,
   pageWindow,
-  customerSearchOr,
 } from "@/lib/customers/list";
+import { searchCustomers } from "@/lib/customers/search";
 
 /**
  * Customers list.
@@ -72,49 +72,24 @@ export default async function CustomersPage({
   const typeFilter = parseTypeFilter(sp.type);
 
   const supabase = await createClient();
-  let query = supabase
-    .from("customers")
-    .select(
-      // country is intentionally omitted from the displayed list: it defaults
-      // to "United Kingdom" on every row, so including it would just append
-      // ", United Kingdom" to every one-line address. Search still spans the
-      // street/town/postcode columns (CUSTOMER_SEARCH_COLUMNS) regardless.
-      "id, name, email, phone, customer_type, address_line1, address_line2, city, county, postcode, created_at",
-      { count: "exact" },
-    )
-    // ACTIVE-org pin. RLS's `current_org_ids()` admits EVERY org the viewer
-    // belongs to, so a dual-org member's address book listed BOTH companies'
-    // customers and the exact count paginated over the blend.
-    .eq("org_id", ctx.org.id)
-    // Secondary `id` sort is a STABLE tiebreaker: a bulk import can insert many
-    // rows with identical created_at, and without a deterministic tiebreaker
-    // PostgREST may order ties differently between page requests — duplicating
-    // or skipping rows across page boundaries. id is unique, so paging is exact.
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: false });
-
-  if (typeFilter) {
-    // Applied BEFORE .range() so the exact count reflects the filtered set.
-    query = query.eq("customer_type", typeFilter);
-  }
-
-  const orFilter = customerSearchOr(term);
-  if (orFilter) {
-    // Applied BEFORE .range() ⇒ searches every customer, then paginates the
-    // matches. The exact count below reflects matches, not the whole table.
-    query = query.or(orFilter);
-  }
-
-  const { data: customers, count, error } = await query.range(
+  // The list page now matches customers through the SHARED search capability
+  // (the search_customers RPC via lib/customers/search) — the SAME matching the
+  // Cmd/K palette and the form typeahead pickers use, so a search here spans
+  // name / email / phone (formatting-tolerant) / address / partial postcode,
+  // multi-token and anywhere, not just a single whole-term ILIKE. The RPC is
+  // ACTIVE-org pinned + 42501-guarded (RLS's current_org_ids admits EVERY org
+  // the viewer belongs to, so a dual-org member must never see a blend), paginates
+  // with a stable created_at+id tiebreak, and returns an EXACT whole-org match
+  // total for true-total pagination. A read failure THROWS (loud), never an
+  // empty-looking list.
+  const { rows, total: totalCount } = await searchCustomers(supabase, {
+    orgId: ctx.org.id,
+    query: term,
+    type: typeFilter,
+    limit: PAGE_SIZE,
     offset,
-    offset + PAGE_SIZE - 1,
-  );
+  });
 
-  if (error) {
-    console.error("[customers] list failed", error);
-  }
-  const rows = customers ?? [];
-  const totalCount = count ?? 0;
   const { totalPages, from, to } = pageWindow(totalCount, offset, rows.length);
 
   // Preserve the active search + type filter across pagination links.
@@ -237,7 +212,7 @@ export default async function CustomersPage({
             rows={rows.map((c) => ({
               id: c.id,
               href: `/customers/${c.id}`,
-              filterText: `${c.name} ${c.email ?? ""} ${c.phone ?? ""} ${formatAddressOneLine(customerToAddress(c))}`,
+              filterText: `${c.name} ${c.email ?? ""} ${c.phone ?? ""} ${formatAddressOneLine(customerToAddress({ ...c, country: null }))}`,
               sortValues: {
                 name: c.name,
                 email: c.email,
@@ -254,7 +229,7 @@ export default async function CustomersPage({
                     ) : null}
                   </span>
                 ),
-                address: formatAddressOneLine(customerToAddress(c)) || "—",
+                address: formatAddressOneLine(customerToAddress({ ...c, country: null })) || "—",
                 email: c.email ?? "—",
                 phone: c.phone ?? "—",
                 open: (
@@ -281,9 +256,9 @@ export default async function CustomersPage({
                           </span>
                         ) : null}
                       </p>
-                      {formatAddressOneLine(customerToAddress(c)) ? (
+                      {formatAddressOneLine(customerToAddress({ ...c, country: null })) ? (
                         <p className="mt-0.5 truncate text-xs text-slate-600">
-                          {formatAddressOneLine(customerToAddress(c))}
+                          {formatAddressOneLine(customerToAddress({ ...c, country: null }))}
                         </p>
                       ) : null}
                       {c.email ? (

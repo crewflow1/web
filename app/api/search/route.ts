@@ -9,7 +9,6 @@ import {
   ilikeOrFilter,
   inIdsBranch,
   combineOr,
-  CUSTOMER_SEARCH_COLUMNS,
   JOB_SEARCH_COLUMNS,
   LEAD_SEARCH_COLUMNS,
   JOB_DOCUMENT_SEARCH_COLUMNS,
@@ -32,9 +31,10 @@ export const runtime = "nodejs";
  *
  * Address-first. A tradesperson searches by address far more than by name, so
  * the term is matched in SQL across:
- *   - customers: name/email/phone + the structured address columns (line1/2,
- *     city, county, postcode) — see CUSTOMER_SEARCH_COLUMNS — plus the legacy
- *     free-text `notes` column that addresses used to live in.
+ *   - customers: matched through the shared search_customers RPC
+ *     (lib/customers/search) — multi-token, partial-anywhere, normalised
+ *     postcode, formatting-tolerant phone, plus the legacy free-text `notes`
+ *     column — the SAME matching the customers list + the form pickers use.
  *   - jobs: the site-address override columns, PLUS any job whose linked
  *     customer matched (a job with no site override inherits the customer
  *     address). Resolved via customer-id chaining, not a JS scan of a capped
@@ -282,21 +282,6 @@ export async function GET(req: NextRequest) {
   }
   const like = `%${safe}%`;
 
-  // Customers match on name/email/phone + every structured address column
-  // (CUSTOMER_SEARCH_COLUMNS) — plus `notes`, the legacy free-text field where
-  // addresses were stashed before the structured columns existed. `notes` is
-  // kept as its own OR-branch rather than added to the shared column set: it is
-  // not an address column, and dropping it would make anything the previous
-  // route could find unfindable.
-  const custOr = combineOr(
-    ilikeOrFilter(q, CUSTOMER_SEARCH_COLUMNS),
-    `notes.ilike.${like}`,
-  );
-  if (!custOr) {
-    // safe.length > 0 guarantees a non-null filter; this only narrows the type.
-    return respond.json({ hits: [] satisfies Hit[] });
-  }
-
   // Tables that post-date the generated types → loose cast. `eq` chains so a
   // read can stack the org pin with a second structural pin (the attachments
   // read pins target_table = 'jobs' as well as org_id).
@@ -335,14 +320,17 @@ export async function GET(req: NextRequest) {
     qualificationsRes,
     attachmentsRes,
   ] = await Promise.all([
-    supabase
-      .from("customers")
-      .select(
-        "id, name, email, phone, address_line1, address_line2, city, county, postcode",
-      )
-      .eq("org_id", ctx.org.id)
-      .or(custOr)
-      .limit(CHAIN_LIMIT),
+    // Customers match through the ONE shared capability (the search_customers
+    // RPC) — multi-token, partial-anywhere, normalised postcode, formatting-
+    // tolerant phone, and the legacy `notes` free-text — identical to the
+    // customers list + the form pickers. The RPC is org-pinned + 42501-guarded
+    // (replacing the explicit .eq("org_id") pin, which now lives inside it), and
+    // returns the same id/name/email/phone/address_* columns this route reads.
+    supabase.rpc("search_customers", {
+      p_org_id: ctx.org.id,
+      p_query: safe,
+      p_limit: CHAIN_LIMIT,
+    }),
     supabase
       .from("memberships")
       .select("user_id, role, user:users ( id, full_name, email )")

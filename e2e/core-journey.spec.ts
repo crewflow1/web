@@ -62,6 +62,18 @@ async function gotoReady(page: Page, url: string) {
   await page.goto(url);
   await settle(page);
 }
+/**
+ * Pick a customer in the shared CustomerCombobox typeahead (replaced the old
+ * <select name="customer_id">). Types a term, then clicks the option whose
+ * label contains `matchName`. The combobox debounces + hits
+ * /api/customers/search, so the option is awaited (Playwright auto-waits).
+ */
+async function pickCustomer(page: Page, typeText: string, matchName: string) {
+  const box = page.getByRole("combobox", { name: /customer/i });
+  await box.click();
+  await box.fill(typeText);
+  await page.getByRole("option", { name: new RegExp(matchName) }).first().click();
+}
 async function submitAndLand(page: Page, label: string, urlRe: RegExp) {
   await page.getByRole("button", { name: label }).click();
   try {
@@ -97,7 +109,8 @@ test.describe("core customer journey — owner, real browser", () => {
   test("2. quote with line items + correct VAT math", async ({ page }) => {
     test.setTimeout(60_000);
     await gotoReady(page, "/quotes/new");
-    await page.locator('select[name="customer_id"]').selectOption(S.customerId);
+    // The converted customer is named after the lead's contact (`${TAG} Lead Co`).
+    await pickCustomer(page, TAG, `${TAG} Lead Co`);
     // The builder starts with ONE empty line — fill it. qty 2 × £100 @ 20% VAT.
     const desc = page.getByPlaceholder(/supply only/i).first();
     await desc.fill("Supply & fit (test)");
