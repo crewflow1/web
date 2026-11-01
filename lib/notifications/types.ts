@@ -5,6 +5,8 @@
  * (server/services/notifications-service.ts) converts to/from these.
  */
 
+import type { NotificationAudienceScope } from "./eligibility";
+
 export const NOTIFICATION_AUDIENCES = ["customer", "hq", "both"] as const;
 export type NotificationAudience = (typeof NOTIFICATION_AUDIENCES)[number];
 
@@ -178,6 +180,9 @@ export type NotificationRow = {
   org_id: string;
   user_id: string | null;
   audience: NotificationAudience;
+  /** WHO within the org may see an org-wide (user_id null) row — the staff
+   *  privacy boundary. Ignored for targeted rows (user_id set). */
+  audience_scope: NotificationAudienceScope;
   type: string;
   category: NotificationCategory;
   title: string;
@@ -227,6 +232,11 @@ export type NotificationCreate = {
   org_id: string;
   user_id: string | null;
   audience: NotificationAudience;
+  /** Staff-privacy scope for org-wide rows. Omit to accept the DB default
+   *  ('admins' — deny-by-default). Set 'all' for genuine staff-wide news, or
+   *  'assigned' (with source_module 'jobs' + source_id = the job id) to reach
+   *  only the staff assigned to that job. Irrelevant when user_id is set. */
+  audience_scope?: NotificationAudienceScope;
   type: string;
   category: NotificationCategory;
   title: string;

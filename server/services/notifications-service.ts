@@ -31,6 +31,7 @@ import {
   type NotificationCreate,
   type NotificationAudience,
 } from "@/lib/notifications/types";
+import { coerceAudienceScope } from "@/lib/notifications/eligibility";
 
 /**
  * CrewFlow — Notifications service (HQ-8).
@@ -102,6 +103,8 @@ export async function createNotification(
     org_id: input.org_id,
     user_id: input.user_id,
     audience: input.audience,
+    // Staff-privacy scope for org-wide rows; omitted → DB default ('admins').
+    ...(input.audience_scope ? { audience_scope: input.audience_scope } : {}),
     type: input.type,
     category: input.category,
     title: input.title,
@@ -143,6 +146,8 @@ async function insertNotificationsReturning(
     org_id: n.org_id,
     user_id: n.user_id,
     audience: n.audience,
+    // Staff-privacy scope for org-wide rows; omitted → DB default ('admins').
+    ...(n.audience_scope ? { audience_scope: n.audience_scope } : {}),
     type: n.type,
     category: n.category,
     title: n.title,
@@ -427,7 +432,7 @@ async function fetchOrgEmails(
 // centre and unread badge. The caller passes the ACTIVE org explicitly.
 
 const ALL_COLS =
-  "id, org_id, user_id, audience, type, category, title, body, priority, source_module, source_id, action_url, read_at, dismissed_at, metadata, created_at, updated_at";
+  "id, org_id, user_id, audience, audience_scope, type, category, title, body, priority, source_module, source_id, action_url, read_at, dismissed_at, metadata, created_at, updated_at";
 
 export async function getLatestNotificationsForCustomer(
   orgId: string,
@@ -636,6 +641,7 @@ function coerce(raw: unknown): NotificationRow {
     org_id: r.org_id as string,
     user_id: (r.user_id as string | null) ?? null,
     audience: (r.audience as NotificationRow["audience"]) ?? "customer",
+    audience_scope: coerceAudienceScope(r.audience_scope),
     type,
     // L1 — backfill the category for trigger-written invoice/payment rows
     // that defaulted to "other" (see notificationCategoryForType).

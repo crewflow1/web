@@ -46,6 +46,7 @@ function mkRow(partial: Partial<NotificationRow> & { org_id: string }): Notifica
     id: `n${++seq}`,
     user_id: partial.user_id ?? null,
     audience: partial.audience ?? "customer",
+    audience_scope: partial.audience_scope ?? "admins",
     type: partial.type ?? "job.updated",
     category: partial.category ?? "system",
     title: partial.title ?? "Title",
