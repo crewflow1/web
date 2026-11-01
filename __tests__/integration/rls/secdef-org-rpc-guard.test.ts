@@ -118,20 +118,14 @@ const ALLOWLIST: ReadonlyMap<string, string> = new Map<string, string>([
     "membership-guarded: requires the caller be an admin of p_org_id (is_org_admin) AND that p_org_id own the listing (v_owner = p_org_id); a non-admin or cross-org caller is refused. Generic exception (not 42501), so misses the canonical auto-pass.",
   ],
 
-  // Interim-valuation RPCs (20261192000000). Both take a valuation uuid, look the
-  // row up, DERIVE org_id from that row, and enforce is_org_admin(that org) — a
-  // caller passing another org's valuation uuid is refused because they are not an
-  // admin of the row's org. They never trust a caller-supplied org, only write
-  // within the row's org, and are revoked from anon/authenticated at CREATE +
-  // re-granted to authenticated (admin-gated inside). Not cross-tenant primitives.
-  [
-    "certify_valuation",
-    "membership-guarded: derives org_id from the valuation row addressed by the uuid and enforces is_org_admin(that org); a foreign-org uuid is refused. Also takes a per-job advisory lock before the cumulation read.",
-  ],
-  [
-    "generate_valuation_invoice",
-    "membership-guarded: derives org_id from the valuation row addressed by the uuid and enforces is_org_admin(that org); a foreign-org uuid is refused. Bills only within the row's org via next_invoice_number + invoices.",
-  ],
+  // NOTE: certify_valuation and generate_valuation_invoice were formerly
+  // allowlisted here (they derived org_id from the valuation row and gated on
+  // is_org_admin(that org)). That let a dual-org admin certify/invoice ANOTHER
+  // of their orgs' valuations by id — the active-org integrity class. Migration
+  // 20261267000000 re-signatured them to take the caller's ACTIVE org
+  // (p_org_id), added the canonical current_org_ids()+42501 guard, and pinned
+  // the valuation fetch to p_org_id. They are now canonically guarded and MUST
+  // NOT be allowlisted — covered by FIXED_VALUATION_ACTIVE_ORG below.
 
   // Guarded by a direct memberships lookup on auth.uid() + 42501 — sound, just
   // not via the current_org_ids() helper, so it misses the auto-pass predicate.
@@ -164,6 +158,16 @@ const ALLOWLIST: ReadonlyMap<string, string> = new Map<string, string>([
 const FIXED_TWO_STATE: readonly string[] = [
   "purchase_order_receipt_state",
   "material_request_fulfilment_state",
+];
+
+// The interim-valuation RPCs, active-org-pinned in migration 20261267000000.
+// Formerly allowlisted (derived org from the row); now they take the caller's
+// active org (p_org_id) with the canonical current_org_ids()+42501 guard and a
+// fetch pinned to that org. Like the FIXED lists above they MUST stay guarded
+// and MUST NOT be re-allowlisted.
+const FIXED_VALUATION_ACTIVE_ORG: readonly string[] = [
+  "certify_valuation",
+  "generate_valuation_invoice",
 ];
 
 type Row = {
@@ -221,7 +225,7 @@ describeIntegration("SECURITY DEFINER org-RPC membership guard · systemic", () 
   it("the fixed functions are guarded and are NOT allowlisted", async () => {
     const rows = await secdefOrgRpcs();
     const byName = new Map(rows.map((r) => [r.proname, r]));
-    for (const fn of [...FIXED_SIX, ...FIXED_TWO_STATE]) {
+    for (const fn of [...FIXED_SIX, ...FIXED_TWO_STATE, ...FIXED_VALUATION_ACTIVE_ORG]) {
       const row = byName.get(fn);
       expect(row, `${fn} is missing from the class — did its signature change?`).toBeDefined();
       expect(
