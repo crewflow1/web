@@ -35,7 +35,7 @@ export const INDUSTRIES: IndustryPage[] = [
         body: "CrewFlow shows real per-job profit, revenue minus materials minus actual clocked labour. So when you quote the next extension, you're pricing from what the last one really made, not a number you hope works out.",
       },
     ],
-    featuredModules: ["job-management-software", "quoting-software", "job-costing-software", "payroll-software", "invoicing-software"],
+    featuredModules: ["job-management-software", "quoting-software", "job-costing-software", "payroll-software", "cis-software"],
     faqs: [
       { q: "Is CrewFlow good for a small building firm?", a: "Yes, it's built for UK construction companies of roughly 1 to 30 people. A small builder gets quoting, jobs, crews, invoices, payroll and tax in one system rather than juggling separate apps." },
       { q: "Can it handle multiple jobs and crews at once?", a: "That's the point. CrewFlow shows every live job and ties crews to jobs through the rota, flagging clashes before two teams turn up to the same site." },
@@ -146,7 +146,7 @@ export const INDUSTRIES: IndustryPage[] = [
         body: "Tie shifts to jobs and reshuffle the week when the forecast turns. Approved leave and clashes show before you assign, so a rained-off Tuesday becomes a reschedule, not a write-off.",
       },
     ],
-    featuredModules: ["quoting-software", "job-management-software", "scheduling-software", "job-costing-software", "invoicing-software"],
+    featuredModules: ["quoting-software", "job-management-software", "rams-software", "job-costing-software", "invoicing-software"],
     faqs: [
       { q: "Can I capture variations on roofing jobs?", a: "Yes, log each extra against the job with its own value the moment it's agreed, so the 'while we're up here' work is billed rather than done for free." },
       { q: "Where do site photos go?", a: "Straight onto the job. Before/after photos from any phone attach to the right job, giving you proof of completion and a portfolio for future quotes." },
@@ -220,7 +220,7 @@ export const INDUSTRIES: IndustryPage[] = [
         body: "Crews clock in with GPS stamping, and those hours become real labour cost on the job. For a trade where labour is the biggest variable, that's the difference between knowing your margin and guessing it.",
       },
     ],
-    featuredModules: ["job-management-software", "scheduling-software", "timesheet-software", "job-costing-software", "payroll-software"],
+    featuredModules: ["job-management-software", "scheduling-software", "timesheet-software", "cis-software", "payroll-software"],
     faqs: [
       { q: "Does CrewFlow handle day-works and variations?", a: "Yes. Day-works and variations are captured against the job with their own value the moment they're agreed, so site extras get billed rather than absorbed." },
       { q: "Can it cost jobs from real labour?", a: "Yes. GPS-stamped clock-in records real crew hours per job, which feeds per-job profitability, essential for a labour-heavy, tight-margin trade." },
@@ -329,7 +329,7 @@ export const INDUSTRIES: IndustryPage[] = [
         body: "Attach inspection records and site photos to the job, so the documentation that keeps you compliant and protects you in a dispute is exactly where it should be, not in a folder in the van.",
       },
     ],
-    featuredModules: ["quoting-software", "scheduling-software", "job-management-software", "invoicing-software"],
+    featuredModules: ["quoting-software", "rams-software", "job-management-software", "cis-software"],
     faqs: [
       { q: "Can CrewFlow track hire periods?", a: "Yes. Quote and invoice erect, hire and dismantle as line items on the job, so hire periods get billed rather than quietly running on for free." },
       { q: "Where do inspection records go?", a: "Onto the job, alongside site photos, so compliance documentation is attached to the right job and easy to find when you need it." },

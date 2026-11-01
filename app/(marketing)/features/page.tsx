@@ -36,6 +36,8 @@ const GUIDE: Record<string, string> = {
   "CIS & tax figures": "tax-software",
   Workforce: "timesheet-software",
   Payroll: "payroll-software",
+  RAMS: "rams-software",
+  "Permits & toolbox talks": "toolbox-talks",
 };
 
 export default function FeaturesHubPage() {
