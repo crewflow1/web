@@ -151,13 +151,6 @@ export default async function DashboardPage() {
   const monthStart = startOfMonthISO();
   const quarterStart = startOfQuarterISO();
   const weekStart = sevenDaysAgoISO();
-  // Profitability charts span 6 calendar months — widen finance fetch
-  // so the older buckets render with real data rather than zeros.
-  const sixMonthsAgo = new Date();
-  sixMonthsAgo.setUTCMonth(sixMonthsAgo.getUTCMonth() - 5);
-  sixMonthsAgo.setUTCDate(1);
-  sixMonthsAgo.setUTCHours(0, 0, 0, 0);
-  const sixMonthsAgoIso = sixMonthsAgo.toISOString();
 
   // Fetch everything in parallel. RLS is the OUTER boundary, not the scope:
   // `current_org_ids()` returns EVERY org the viewer belongs to, so an
@@ -274,12 +267,20 @@ export default async function DashboardPage() {
         .range(from, to),
     ),
     invoicesReadPromise,
+    // ALL-TIME finances. This one read feeds BOTH the monthly profit tiles/
+    // series (totalProfitThisMonth / profitByMonth — which window to the
+    // current month / last 6 buckets INTERNALLY, so extra older rows are
+    // ignored) AND the per-job profitability leaderboard (computeAllJobsProfit-
+    // ability), whose revenue (invoices) and stock COGS are BOTH all-time /
+    // job-lifetime. A date bound here would drop costs older than the window
+    // from the leaderboard while its revenue stayed all-time, silently OVER-
+    // stating per-job margins once an org accrues >6-month history — so it must
+    // be unbounded to match its revenue horizon. Paginated (F-1 safe).
     fetchAllRows((from, to) =>
       supabase
         .from("finances")
         .select("id, amount, vat_total, created_at, category, job_id")
         .eq("org_id", ctx.org.id)
-        .gte("created_at", sixMonthsAgoIso)
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to),
