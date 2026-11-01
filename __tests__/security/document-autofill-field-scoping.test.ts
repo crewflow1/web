@@ -50,12 +50,30 @@ describe("extraction schemas are a strict allowlist", () => {
       for (const key of Object.keys(out)) {
         expect(allowed.has(key), `${type} leaked a key outside its allowlist: ${key}`).toBe(true);
       }
-      // And the obviously-sensitive keys never appear.
+      // And the obviously-sensitive keys never appear — UNLESS a form legitimately
+      // declares one as a benign, value-constrained field (customer_contact's
+      // "role" is a contact category: billing/site/partner/tenant/other, never a
+      // privilege). A declared field is already allowlisted + reviewed; the first
+      // loop proves nothing escapes the allowlist, and the staff-specific test
+      // below hard-guards that staff_invite declares NO role at all.
       for (const forbidden of ["hourly_pay", "salary", "role", "is_admin", "org_id", "id", "created_by"]) {
+        if (allowed.has(forbidden)) continue;
         expect(forbidden in out, `${type} emitted forbidden key ${forbidden}`).toBe(false);
       }
     });
   }
+
+  it("customer_contact's role is a benign contact category, never a privilege", () => {
+    const parse = (v: unknown) =>
+      (AUTOFILL_FORMS.customer_contact.schema.parse({ role: v }) as { role: string | null }).role;
+    // A privilege value can never survive — it is not in the oneOf.
+    expect(parse("owner")).toBeNull();
+    expect(parse("admin")).toBeNull();
+    expect(parse("primary")).toBeNull(); // app-set designation, not extractable
+    // A real contact category passes.
+    expect(parse("billing")).toBe("billing");
+    expect(parse("site")).toBe("site");
+  });
 
   it("object prototype is not polluted by parsing a hostile blob", () => {
     AUTOFILL_FORMS.customer.schema.parse(HOSTILE);

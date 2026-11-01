@@ -65,7 +65,8 @@ create table if not exists public.form_import_drafts (
     'warranty',
     'variation',
     'material_request',
-    'purchase_order'
+    'purchase_order',
+    'customer_contact'
   )),
   status text not null default 'extracted' check (status in (
     'extracted',  -- values proposed, awaiting the operator

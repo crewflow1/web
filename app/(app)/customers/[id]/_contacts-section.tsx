@@ -4,6 +4,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { CONTACT_ROLES, type ContactRole } from "@/lib/customers/contacts";
 import { CustomerContactsClient, type StaffContact } from "./_contacts-client";
+import { loadImportDraftDefaults } from "@/server/services/document-autofill";
 
 /**
  * Staff customer-contacts section. Owns its ACTIVE-org + customer pinned read
@@ -36,9 +37,20 @@ function toStaffContact(row: ContactRow): StaffContact {
   };
 }
 
-export async function CustomerContactsSection({ customerId }: { customerId: string }) {
+export async function CustomerContactsSection({
+  customerId,
+  importDraftId,
+}: {
+  customerId: string;
+  /** A document-import draft id (?import=…) to prefill the Add-a-contact form. */
+  importDraftId?: string;
+}) {
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
+
+  const importDraft = importDraftId
+    ? (await loadImportDraftDefaults("customer_contact", importDraftId))?.fields
+    : undefined;
 
   const { data, error } = await fetchAllRows<ContactRow>((from, to) =>
     supabase
@@ -76,6 +88,10 @@ export async function CustomerContactsSection({ customerId }: { customerId: stri
       a.role === "primary" ? -1 : b.role === "primary" ? 1 : 0,
     );
   return (
-    <CustomerContactsClient customerId={customerId} initialContacts={contacts} />
+    <CustomerContactsClient
+      customerId={customerId}
+      initialContacts={contacts}
+      importDraft={importDraft}
+    />
   );
 }

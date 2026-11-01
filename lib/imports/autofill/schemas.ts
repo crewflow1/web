@@ -224,6 +224,20 @@ export const purchaseOrderExtractionSchema = z.object({
   notes: text(2000),
 });
 
+/**
+ * Sales — a CONTACT on an existing customer, from a business card / email
+ * signature. Identity only. "role" excludes "primary": primary is an app
+ * designation set deliberately (setPrimaryCustomerContact), never read off a
+ * card. No signing or approval attaches to a contact.
+ */
+export const customerContactExtractionSchema = z.object({
+  name: text(200),
+  email: email(),
+  phone: phone(50),
+  role: oneOf(["billing", "site", "partner", "tenant", "other"]),
+  notes: text(2000),
+});
+
 // ---------------------------------------------------------------------------
 // The five extraction schemas. Keys MUST match the create form input `name`s —
 // that equality is the prefill contract, pinned by the registry test.

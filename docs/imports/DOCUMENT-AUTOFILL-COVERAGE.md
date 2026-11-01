@@ -13,7 +13,7 @@ Legend:
   given. These are the documented follow-up.
 - **🚫 unsupported** — not a sensible autofill target; reason given.
 
-**Totals: 23 record types done; a small number deliberately unsupported or
+**Totals: 24 record types done; a small number deliberately unsupported or
 deferred, each with a reason below.** Every button is functional — none is
 decorative.
 
@@ -86,8 +86,8 @@ target = a registry entry + a strict schema + a one-line button placement +
 |---|---|---|---|
 | Staff / team member (invite) | invite modal | ✅ done | Admin (`canManageStaff`). **Identity fields only** — pay/emergency-contact/role NEVER extracted (schema omits them; prompt forbids them). Event-target modal prefill. |
 | Qualification | `/staff/[id]` | ✅ done | Owner/admin, staff-nested (newPathOverride). CSCS/certificate → type/title/reference/issue+expiry/notes; never pay, role, or data beyond the certificate. |
-| Site induction | `/site-compliance/[siteId]` | ⏳ pending | **Contextual** (`siteId`) + signature capture; low document fit. |
-| Customer contact | `/customers/[id]` | ⏳ pending | **Contextual** (`customer/[id]`), controlled-state inline; feasible by seeding state — follow-up. |
+| Site induction | `/site-compliance/[siteId]` | 🚫 preserved | The record IS a signed on-site induction. A document cannot provide the signature, and importing partial metadata would risk implying an induction occurred — the **signing requirement is preserved** by not offering an import here. |
+| Customer contact | `/customers/[id]` | ✅ done | Member, customer-nested (newPathOverride). Business card / email signature → name/role/email/phone/notes; role can only be a contact category (never a privilege), seeded into the controlled inline form. |
 
 ## Money / Procurement
 | Record | Entry point | Status | Notes |

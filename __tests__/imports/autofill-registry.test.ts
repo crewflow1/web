@@ -115,6 +115,7 @@ describe("autofill registry alignment", () => {
       "site_report",
       "material_request",
       "purchase_order",
+      "customer_contact",
     ] as const) {
       expect(AUTOFILL_FORMS[t].auth).toEqual({ mode: "member" });
     }

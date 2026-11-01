@@ -42,6 +42,7 @@ import {
   materialRequestLineSchema,
   purchaseOrderExtractionSchema,
   purchaseOrderLineSchema,
+  customerContactExtractionSchema,
 } from "./schemas";
 
 /**
@@ -352,6 +353,14 @@ const PURCHASE_ORDER_LINE_FIELDS: readonly AutofillField[] = [
   { key: "unit", label: "Unit" },
   { key: "unit_price", label: "Unit price (£)" },
   { key: "vat_rate", label: "VAT %" },
+];
+
+const CUSTOMER_CONTACT_FIELDS: readonly AutofillField[] = [
+  { key: "name", label: "Name" },
+  { key: "role", label: "Role" },
+  { key: "email", label: "Email" },
+  { key: "phone", label: "Phone" },
+  { key: "notes", label: "Notes" },
 ];
 
 export const AUTOFILL_FORMS: Readonly<Record<AutofillFormType, AutofillFormConfig>> = {
@@ -703,6 +712,22 @@ export const AUTOFILL_FORMS: Readonly<Record<AutofillFormType, AutofillFormConfi
       `- "unit_price" is the NET price per unit in pounds (strip the £ and any commas); do not include VAT in it.`,
       `- If a line shows no VAT rate, use 20.`,
     ].join("\n"),
+  },
+  customer_contact: {
+    type: "customer_contact",
+    recordLabel: "customer contact",
+    // addCustomerContact is member-open (requireOrgContext); it attaches to a
+    // customer the page already scopes. Contextual: the page passes
+    // newPathOverride = `/customers/${id}?import=…`.
+    auth: { mode: "member" },
+    target: { kind: "route", newPath: "/customers" },
+    schema: customerContactExtractionSchema,
+    fields: CUSTOMER_CONTACT_FIELDS,
+    uploadHint: "Upload a business card or an email signature.",
+    systemPrompt: promptFor("contact on a customer", CUSTOMER_CONTACT_FIELDS, [
+      `- "role" is one of billing, site, partner, tenant, other — only if the card makes it clear; else null. NEVER "primary" — that is set deliberately in the app.`,
+      `- Extract ONLY this person's contact details; never any pricing, account or payment data.`,
+    ]),
   },
 };
 

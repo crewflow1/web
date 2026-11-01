@@ -46,15 +46,20 @@ function toFormData(d: Draft): FormData {
 export function CustomerContactsClient({
   customerId,
   initialContacts,
+  importDraft,
 }: {
   customerId: string;
   initialContacts: StaffContact[];
+  /** Prefill the "Add a contact" form from a business-card/email-signature import. */
+  importDraft?: Partial<Draft>;
 }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [, startTransition] = useTransition();
-  const [adding, setAdding] = useState<Draft>(emptyDraft);
+  const [adding, setAdding] = useState<Draft>(() =>
+    importDraft ? { ...emptyDraft, ...importDraft } : emptyDraft,
+  );
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Draft>(emptyDraft);
 

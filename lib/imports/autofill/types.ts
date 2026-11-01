@@ -15,6 +15,7 @@ export const AUTOFILL_FORM_TYPES = [
   // Sales
   "customer",
   "lead",
+  "customer_contact",
   // Money / procurement
   "supplier",
   // Projects / sites

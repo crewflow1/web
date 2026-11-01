@@ -17,6 +17,7 @@ import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { CustomerForm } from "../_form";
 import { StatementPanel } from "./_statement-panel";
 import { CustomerContactsSection } from "./_contacts-section";
+import { ImportButton } from "@/components/import/import-button";
 import { ShareLinkPanel } from "@/app/_components/share-link-panel";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { env } from "@/lib/env";
@@ -36,10 +37,10 @@ export default async function EditCustomerPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ error?: string; saved?: string }>;
+  searchParams: Promise<{ error?: string; saved?: string; import?: string }>;
 }) {
   const { id } = await params;
-  const { error, saved } = await searchParams;
+  const { error, saved, import: importId } = await searchParams;
 
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
@@ -464,7 +465,14 @@ export default async function EditCustomerPage({
       />
 
       {/* Named contacts (staff CRUD) */}
-      <CustomerContactsSection customerId={customer.id} />
+      <div className="flex justify-end">
+        <ImportButton
+          formType="customer_contact"
+          size="sm"
+          newPathOverride={`/customers/${customer.id}`}
+        />
+      </div>
+      <CustomerContactsSection customerId={customer.id} importDraftId={importId} />
 
       {/* Statement of account */}
       {statementSent ? (
