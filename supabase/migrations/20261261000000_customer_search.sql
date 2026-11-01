@@ -162,6 +162,28 @@ declare
   v_q      text   := btrim(coalesce(p_query, ''));
   v_pc     text   := nullif(upper(regexp_replace(coalesce(p_query, ''), '[^A-Za-z0-9]', '', 'g')), '');
   v_tokens text[];
+  -- WHOLE-QUERY phone forms. A user who writes a UK mobile the natural way —
+  -- "+44 7700 900123" — splits into whitespace tokens ["+44","7700","900123"].
+  -- The per-token AND then fails on "+44": its digits are "44", its UK-
+  -- significant form is EMPTY (44 stripped), so a nationally-stored "07700
+  -- 900123" (which contains no "44") makes that token unmatchable and the row is
+  -- excluded. To keep the documented promise ("either form finds the customer"),
+  -- when the query is phone-only (no letters, >=7 digits) we ALSO let a row
+  -- qualify if the query's whole digit string — or its UK-significant form —
+  -- is a substring of the row's phone. This only ever BROADENS phone-only
+  -- queries; it never relaxes the tenant filter (the org_id predicate is
+  -- unconditional) and never affects mixed name+number queries.
+  v_qdigits text := nullif(regexp_replace(coalesce(p_query, ''), '[^0-9]', '', 'g'), '');
+  v_qsig    text := nullif(
+    case
+      when regexp_replace(coalesce(p_query, ''), '[^0-9]', '', 'g') like '44%'
+        then substr(regexp_replace(coalesce(p_query, ''), '[^0-9]', '', 'g'), 3)
+      when regexp_replace(coalesce(p_query, ''), '[^0-9]', '', 'g') like '0%'
+        then substr(regexp_replace(coalesce(p_query, ''), '[^0-9]', '', 'g'), 2)
+      else regexp_replace(coalesce(p_query, ''), '[^0-9]', '', 'g')
+    end, '');
+  v_phone_only boolean := (v_q <> '' and v_q !~ '[A-Za-z]'
+                           and length(regexp_replace(v_q, '[^0-9]', '', 'g')) >= 7);
 begin
   -- Canonical org-membership guard — MUST be the first act (SECURITY DEFINER
   -- bypasses RLS). A non-member via the Data API is refused with 42501 before a
@@ -223,7 +245,20 @@ begin
       and (v_type is null or c.customer_type = v_type)
       -- "every token matches somewhere" == "no token fails to match". With an
       -- empty query `toks` is empty, so this is vacuously true → all rows.
-      and not exists (
+      -- A phone-only query ALSO qualifies a row whose phone contains the whole
+      -- query's digit string or its UK-significant form — so the spaced
+      -- international form ("+44 7700 900123", which tokenises the "+44" into an
+      -- unmatchable country-code fragment) still finds a nationally-stored
+      -- number. Phone-only guard + the unconditional org_id filter above mean
+      -- this broadens nothing but phone matching and crosses no tenant boundary.
+      and (
+        (v_phone_only and (
+          (c.phone_sig is not null and v_qsig is not null
+             and c.phone_sig like '%' || v_qsig || '%')
+          or (c.phone_normalized is not null and v_qdigits is not null
+             and c.phone_normalized like '%' || v_qdigits || '%')
+        ))
+        or not exists (
         select 1
         from toks t
         where not (
@@ -245,6 +280,7 @@ begin
                 and c.phone_sig like '%' || t.sig || '%')
           or (t.pc is not null and c.postcode_normalized is not null
                 and c.postcode_normalized like '%' || t.pc || '%')
+        )
         )
       )
   ),

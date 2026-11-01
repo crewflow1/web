@@ -128,7 +128,9 @@ describeIntegration("rls · search_customers RPC (20261261 · universal customer
       },
     ]);
 
-    // Org B customer — the cross-tenant probe. Same name a term in A's tests hits.
+    // Org B customers — the cross-tenant probes. "John Smith" shares a name a
+    // term in A's tests hits; "Zeta Unique" holds a phone number NO org-A
+    // customer has, so a phone-only search from A must never surface it.
     await insMany("customers", [
       {
         org_id: orgB,
@@ -139,6 +141,16 @@ describeIntegration("rls · search_customers RPC (20261261 · universal customer
         address_line1: "99 Other Street",
         city: "Derry",
         postcode: "BT48 6AA",
+      },
+      {
+        org_id: orgB,
+        name: "Zeta Unique",
+        email: "zeta@other.com",
+        phone: "+44 7000 000999",
+        customer_type: "individual",
+        address_line1: "1 Canary Wharf",
+        city: "London",
+        postcode: "E14 5AB",
       },
     ]);
   });
@@ -167,6 +179,26 @@ describeIntegration("rls · search_customers RPC (20261261 · universal customer
     expect(await namesA({ p_query: "07700 900123" })).toEqual(["John Smith"]);
     // The landline, typed in its 0-form, finds the business.
     expect(await namesA({ p_query: "028 9024" })).toEqual(["Smithson Builders Ltd"]);
+  });
+
+  it("reconciles the spaced INTERNATIONAL form against a nationally-stored number", async () => {
+    // Mary is stored "07700 900999" (national). Written the natural international
+    // way WITH SPACES — "+44 7700 900999" — the "+44" tokenises into a country-
+    // code fragment whose UK-significant form is empty, so the per-token AND
+    // alone cannot match a number that contains no "44". The whole-query phone
+    // signature reconciles it. (Staging-acceptance regression: this returned
+    // zero before the whole-query phone branch was added to 20261261.)
+    expect(await namesA({ p_query: "+44 7700 900999" })).toEqual(["Mary O'Hara"]);
+    // The contiguous international form keeps working too.
+    expect(await namesA({ p_query: "+447700900999" })).toEqual(["Mary O'Hara"]);
+  });
+
+  it("the spaced international phone form stays INSIDE the tenant boundary", async () => {
+    // Only org B's "Zeta Unique" holds +44 7000 000999. A phone-only search from
+    // org A — even in the spaced international form the new branch broadens —
+    // must return nothing: the org_id filter is unconditional.
+    expect(await namesA({ p_query: "+44 7000 000999" })).toEqual([]);
+    expect(await namesA({ p_query: "07000 000999" })).toEqual([]);
   });
 
   it("a letter-bearing token never leaks a stray digit into a phone match", async () => {
