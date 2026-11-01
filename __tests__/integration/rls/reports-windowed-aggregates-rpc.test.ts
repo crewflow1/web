@@ -146,6 +146,13 @@ describeIntegration("reports · windowed aggregate RPCs (A6)", () => {
 
   let orgA = "";
   let orgB = "";
+  // Dedicated org for the UTC month-boundary bucketing probe. It holds ONLY the
+  // two edge invoices, so the general orgA fixtures (notably the "10 days ago"
+  // £200 invoice, which lands in the previous calendar month when the suite runs
+  // in the first ~10 days of a month) can never leak into the edge buckets. This
+  // is what used to make the edge test flaky around month boundaries
+  // (expected 13, got 213 = 13 + 200).
+  let orgEdge = "";
   let adminA = { id: "", token: "" };
   let adminB = { id: "", token: "" };
 
@@ -242,7 +249,8 @@ describeIntegration("reports · windowed aggregate RPCs (A6)", () => {
   beforeAll(async () => {
     orgA = await makeOrg("a");
     orgB = await makeOrg("b");
-    if (!orgA || !orgB) throw new Error("failed to create probe orgs");
+    orgEdge = await makeOrg("edge");
+    if (!orgA || !orgB || !orgEdge) throw new Error("failed to create probe orgs");
     adminA = await makeUser("admin-a");
     adminB = await makeUser("admin-b");
     for (const [org, user] of [
@@ -293,10 +301,15 @@ describeIntegration("reports · windowed aggregate RPCs (A6)", () => {
     await seedInvoice(orgA, { amount: 13, vat_total: 0, paid_at: edgeEarlyZ });
     //  org B paid invoice — must never reach org A's buckets:
     await seedInvoice(orgB, { amount: 5555, vat_total: 0, paid_at: dOffsetIso(10) });
+
+    // ── invoices (org EDGE) — ONLY the two month-boundary invoices, in isolation
+    //    so the general fixtures above can never pollute the edge-bucketing probe:
+    await seedInvoice(orgEdge, { amount: 11, vat_total: 0, paid_at: edgeLateZ });
+    await seedInvoice(orgEdge, { amount: 13, vat_total: 0, paid_at: edgeEarlyZ });
   });
 
   afterAll(async () => {
-    for (const id of [orgA, orgB]) if (id) await svc().from("organizations").delete().eq("id", id);
+    for (const id of [orgA, orgB, orgEdge]) if (id) await svc().from("organizations").delete().eq("id", id);
     for (const u of [adminA.id, adminB.id])
       if (u) await serviceClient().auth.admin.deleteUser(u).catch(() => undefined);
   });
@@ -369,8 +382,12 @@ describeIntegration("reports · windowed aggregate RPCs (A6)", () => {
   });
 
   it("buckets by UTC month across a last-day 23:30Z / next-day 00:30Z edge", async () => {
+    // orgEdge holds ONLY the two boundary invoices, so no general fixture can
+    // leak into these buckets regardless of the date the suite runs (the old
+    // flake: orgA's "10 days ago" £200 invoice falling into the lateKey month
+    // in the first days of a month → expected 13, got 213).
     const got = await rpc(serviceClient()).rpc("reports_revenue_per_month", {
-      p_org_id: orgA,
+      p_org_id: orgEdge,
       p_months: 12,
     });
     expect(got.error, got.error?.message).toBeNull();
