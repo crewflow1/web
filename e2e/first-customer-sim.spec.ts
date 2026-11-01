@@ -129,6 +129,17 @@ async function gotoReady(page: Page, url: string) {
   await page.goto(url);
   await settle(page);
 }
+/**
+ * Pick a customer in the shared CustomerCombobox typeahead (replaced the old
+ * <select name="customer_id">). Types a term, clicks the option whose label
+ * contains `matchName`. The combobox debounces + hits /api/customers/search.
+ */
+async function pickCustomer(page: Page, typeText: string, matchName: string) {
+  const box = page.getByRole("combobox", { name: /customer/i });
+  await box.click();
+  await box.fill(typeText);
+  await page.getByRole("option", { name: new RegExp(matchName) }).first().click();
+}
 async function submitAndLand(page: Page, label: string, urlRe: RegExp) {
   const btn = page.getByRole("button", { name: label });
   await btn.waitFor({ state: "visible" });
@@ -317,12 +328,12 @@ test.describe("first-customer simulation — owner, admin, staff, customer, HQ",
   test("2. owner creates two jobs, each assigned to a different staff member", async ({ page }) => {
     test.setTimeout(90_000);
     const specs = [
-      { customerId: () => S.customerAId, assignee: () => S.primaryStaffId, set: (id: string) => (S.jobAId = id) },
-      { customerId: () => S.customerBId, assignee: () => S.crewStaffId, set: (id: string) => (S.jobBId = id) },
+      { customerName: `${TAG} Customer A`, assignee: () => S.primaryStaffId, set: (id: string) => (S.jobAId = id) },
+      { customerName: `${TAG} Customer B`, assignee: () => S.crewStaffId, set: (id: string) => (S.jobBId = id) },
     ];
     for (const spec of specs) {
       await gotoReady(page, "/jobs/new");
-      await page.locator('select[name="customer_id"]').selectOption(spec.customerId());
+      await pickCustomer(page, spec.customerName, spec.customerName);
       await page.locator('select[name="assigned_to"]').selectOption(spec.assignee());
       await submitAndLand(page, "Create job", new RegExp(`/jobs/${UUID.source}`));
       const id = idOf(page.url());
@@ -408,7 +419,7 @@ test.describe("first-customer simulation — owner, admin, staff, customer, HQ",
   test("6. owner builds a quote for customer A with correct VAT math", async ({ page }) => {
     test.setTimeout(60_000);
     await gotoReady(page, "/quotes/new");
-    await page.locator('select[name="customer_id"]').selectOption(S.customerAId);
+    await pickCustomer(page, `${TAG} Customer A`, `${TAG} Customer A`);
     const desc = page.getByPlaceholder(/supply only/i).first();
     await desc.fill("Supply & fit (first-customer sim)");
     await expect(desc).toHaveValue("Supply & fit (first-customer sim)");

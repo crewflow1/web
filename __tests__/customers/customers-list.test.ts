@@ -132,15 +132,18 @@ describe("customers/page.tsx wiring (guards the exact regression)", () => {
     "utf-8",
   );
 
-  it("fetches an EXACT count instead of inferring the total from rows.length", () => {
-    expect(src).toMatch(/count:\s*"exact"/);
-    expect(src).toContain("const totalCount = count ?? 0");
+  it("takes its EXACT whole-org total from the shared search result, not rows.length", () => {
+    // The 598-row regression: the header must show the real total, never the
+    // page size. searchCustomers returns `total` (the RPC's count(*) over()
+    // window), which the page renames to totalCount.
+    expect(src).toMatch(/total:\s*totalCount\s*\}\s*=\s*await searchCustomers/);
     // the old buggy headline must be gone
     expect(src).not.toContain("{rows.length} {rows.length === 1");
   });
 
-  it("paginates server-side with .range() and no longer caps the list at .limit(200)", () => {
-    expect(src).toMatch(/\.range\(\s*offset,\s*offset \+ PAGE_SIZE - 1/);
+  it("paginates server-side through the RPC (offset + PAGE_SIZE), not a .limit(200) cap", () => {
+    expect(src).toMatch(/limit:\s*PAGE_SIZE/);
+    expect(src).toMatch(/offset,/);
     expect(src).not.toContain(".limit(200)");
   });
 
@@ -149,18 +152,24 @@ describe("customers/page.tsx wiring (guards the exact regression)", () => {
     expect(src).toContain("of {totalCount}");
   });
 
-  it("runs search server-side via the shared customerSearchOr/.or() path", () => {
-    expect(src).toContain("customerSearchOr(");
-    expect(src).toContain("query.or(orFilter)");
+  it("runs search server-side via the ONE shared customer-search capability", () => {
+    // The list, the Cmd/K palette and the form pickers all match through the
+    // same search_customers RPC (lib/customers/search) — no bespoke per-surface
+    // query. The old single-term customerSearchOr/.or() path is gone from here.
+    expect(src).toContain("searchCustomers(");
+    expect(src).toMatch(/orgId:\s*ctx\.org\.id/);
+    expect(src).not.toContain("customerSearchOr(");
+    expect(src).not.toContain("query.or(orFilter)");
   });
 
-  it("selects + displays the structured address (address-first list)", () => {
-    // The address columns must be fetched and rendered, and the search box must
-    // advertise address/postcode so users know they can search by them.
-    expect(src).toContain("address_line1");
-    expect(src).toContain("postcode");
-    expect(src).toContain("formatAddressOneLine(customerToAddress(c))");
+  it("displays the structured address (address-first list), country omitted by design", () => {
+    // The structured address columns are now returned by the shared RPC; the
+    // page RENDERS the one-line address (country stripped — it defaults to
+    // "United Kingdom" on every row) and the search box still advertises that a
+    // tradesperson can search by address/postcode.
+    expect(src).toContain("formatAddressOneLine(customerToAddress({ ...c, country: null }))");
     expect(src).toMatch(/placeholder="[^"]*address[^"]*"/i);
+    expect(src).toMatch(/placeholder="[^"]*postcode[^"]*"/i);
   });
 
   it("preserves the active search term across pagination links", () => {

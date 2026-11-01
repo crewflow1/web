@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { withPreservedOption } from "@/lib/quotes/preserve-option";
+import { CustomerCombobox } from "../../_components/customer-combobox";
 import { createReviewRequestAction } from "../actions";
 
 const ERROR_MAP: Record<string, string> = {
@@ -110,33 +111,17 @@ export default async function NewReviewRequestPage({
         action={createReviewRequestAction}
         className="space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
       >
-        <div>
-          <label
-            htmlFor="customer_id"
-            className="block text-sm font-medium text-slate-800"
-          >
-            Customer<span className="ml-0.5 text-red-500">*</span>
-          </label>
-          <select
-            id="customer_id"
-            name="customer_id"
-            required
-            defaultValue={sp.customer_id ?? ""}
-            className="mt-1.5 block w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-          >
-            <option value="">— Choose a customer —</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name ?? "Customer"}
-                {c.email ? ` · ${c.email}` : " · no email"}
-              </option>
-            ))}
-          </select>
-          <p className="mt-1 text-xs text-slate-500">
-            Customers without an email can still be tracked, but you won&rsquo;t be
-            able to use &ldquo;Send email now&rdquo;.
-          </p>
-        </div>
+        <CustomerCombobox
+          name="customer_id"
+          label="Customer"
+          required
+          defaultValue={sp.customer_id ?? ""}
+          initialOptions={customers.map((c) => ({
+            id: c.id,
+            name: c.name ?? "Customer",
+          }))}
+          help="Customers without an email can still be tracked, but you won’t be able to use “Send email now”."
+        />
 
         <div>
           <label

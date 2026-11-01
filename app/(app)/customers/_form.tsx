@@ -14,6 +14,7 @@ import { SubmitButton } from "@/components/forms/FormShell";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { Field, TextareaField, SelectField } from "../_components/field";
+import { CustomerCombobox } from "../_components/customer-combobox";
 import type { CustomerFormInput } from "@/lib/customers/schema";
 
 /** A candidate parent business the operator can roll this customer up under. */
@@ -39,6 +40,7 @@ export function CustomerForm({
   cancelHref,
   defaults,
   parentOptions = [],
+  excludeId,
 }: {
   action: CustomerAction;
   submitLabel: string;
@@ -46,6 +48,10 @@ export function CustomerForm({
   defaults?: Partial<CustomerFormInput>;
   /** Business customers in the org this record can roll up under (excl. self). */
   parentOptions?: ParentOption[];
+  /** The record being edited — excluded from the parent typeahead so a business
+   * can never be offered itself as its own parent (belt-and-braces beside the
+   * DB no-self-parent CHECK + the server-loaded options already excluding it). */
+  excludeId?: string;
 }) {
   const [state, formAction, pending] = useActionState(
     action,
@@ -149,16 +155,16 @@ export function CustomerForm({
           />
         </div>
         {parentOptions.length > 0 ? (
-          <SelectField
+          <CustomerCombobox
             name="parent_customer_id"
             label="Parent business"
-            options={[
-              { value: "", label: "— None (top-level) —" },
-              ...parentOptions.map((p) => ({ value: p.id, label: p.name })),
-            ]}
+            type="business"
+            excludeId={excludeId}
+            initialOptions={parentOptions}
             defaultValue={
               v.parent_customer_id ?? defaults?.parent_customer_id ?? ""
             }
+            noneLabel="— None (top-level) —"
             help="Roll this record up under a business account (e.g. a site or contact)."
             error={state.fieldErrors?.parent_customer_id}
           />
