@@ -9,6 +9,7 @@ import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { sendEmail } from "@/lib/email/send";
+import { escapeHtml } from "@/lib/html";
 
 /**
  * Phase H — Review request actions.
@@ -315,11 +316,3 @@ export async function emailReviewRequestNow(id: string): Promise<void> {
   redirect(`/reviews?saved=emailed`);
 }
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}

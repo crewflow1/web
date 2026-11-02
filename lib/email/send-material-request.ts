@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/email/send";
 import { formatDateUK } from "@/lib/time/format";
+import { escapeHtml } from "@/lib/html";
 
 /**
  * Material-request notification emails.
@@ -27,15 +28,6 @@ import { formatDateUK } from "@/lib/time/format";
  * NEVER THROWS — failures are logged so they can't break the action. The
  * in-app notification is the reliable channel; email is the nudge.
  */
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 function wrap(title: string, bodyHtml: string): string {
   return `<!doctype html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0f172a;background:#f8fafc;margin:0;padding:24px;">
