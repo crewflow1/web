@@ -34,7 +34,14 @@
 
 | **D-9** | **P1** | **A/B** | **Staff could read AND write the org's post-sale billing records via direct authenticated PostgREST (no UI).** Direct staff-JWT probe: `invoices` → INV-0001 total £21,675, plus `invoice_payments` + `payments` readable, and `invoice_payments` INSERT allowed. The SELECT/INSERT/UPDATE policies were org-member-wide; route/UI gates (and #1036) only hid it in the browser. | the R5 financial boundary was enforced only at the route/UI/capability layer; the DB RLS on these billing tables was org-member-wide. | **FIXED** — migration `20261275000000` scopes SELECT/INSERT/UPDATE on invoices/invoice_payments/payments to `is_org_admin(org_id)`. Quotes/quote_line_items deliberately preserved (tested staff-drafting flow). **PR #1037, apply-held (migration NOT applied).** | staff read→0 / write→42501; owner+admin OK; cross-org+revoked denied; new 17-case test; full security (8,598) + integration RLS (1,761) tiers green |
 
-## P1 found + fixed (D-9). No P0 found.
+| **D-10** | **P2** | A/B | **Staff read the whole org CRM** (`customers`: names/emails/phones/addresses/VAT) via direct API. | `customers` SELECT org-member-wide. | **FIXED** — migration 20261276000000: staff SELECT scoped to assigned-job customers (`my_assigned_customer_ids()`), admin writes. **PR #1038.** | 6-case test; full RLS tier green |
+| **D-11** | **P2** | A/B | **Staff read the full price-book** (rate library / margins) via direct API. | `price_book_items` SELECT org-member-wide. | **FIXED** — migration 20261277000000: admin-only. **PR #1039.** | 4-case test; tiers green |
+| **D-12** | **P2** | A/B | **Staff read the whole sales pipeline** (`leads`: contact PII, estimated values) via direct API. | `leads` SELECT org-member-wide. | **FIXED** — migration 20261277000000: admin OR assignee. **PR #1039.** | 4-case test; tiers green |
+| D-13 | TBD | A/B | `quotes`/`quote_line_items` member-wide (staff read every quote + line price via API). | member-wide SELECT; staff quote-drafting is a tested RLS-layer flow. | **OPEN — product decision** (intended staff quotation workflow); recommended scope + plan in the financial-data security audit doc §5. | — |
+
+## P1 found + fixed (D-9). P2s D-8/10/11/12 fixed. D-13 pending a product decision. No P0 found.
+See `docs/qa/CREWFLOW-FINANCIAL-DATA-SECURITY-AUDIT.md` for the full direct-API
+audit, census, and coordinated release pack (#1036/#1037/#1038/#1039).
 D-9 is a within-org staff-over-privilege on financial data (not cross-tenant, so
 not P0), confirmed by direct-API probe and remediated at the DB layer (apply-held
 **#1037**). Recommend treating as a release blocker alongside #1036. The earlier
