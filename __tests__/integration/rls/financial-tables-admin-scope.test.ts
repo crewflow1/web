@@ -127,12 +127,8 @@ describeIntegration("financial tables · admin-only SELECT/INSERT/UPDATE", () =>
     expect(await rows(revoked.token, "invoices")).toBe(0);
   });
 
-  // --- Quotes are intentionally NOT restricted (staff drafting is legit) ----
-  it("QUOTES remain member-readable (deliberate — staff draft/send quotes)", async () => {
-    const custId = await insId("customers", { org_id: orgA, name: "Fin Cust" });
-    const qid = await insId("quotes", { org_id: orgA, customer_id: custId, number: `Q-${TOKEN}`, status: "draft", subtotal: 0, vat_total: 0, total: 0 });
-    expect(qid).not.toBe("");
-    const r = await db(userClient(staff.token)).from("quotes").select("id").eq("org_id", orgA);
-    expect((r.data ?? []).length, "staff can still read quotes by design").toBeGreaterThan(0);
-  });
+  // NOTE: quotes/quote_line_items scoping is covered by its own suite
+  // (quotes-admin-only-scope.test.ts, D-13/#1040). This billing-tables suite
+  // deliberately makes no assertion about quote visibility, so it holds whether
+  // #1040 is applied or not.
 });
