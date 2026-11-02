@@ -1,6 +1,29 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
+import { createHash } from "node:crypto";
+
+/**
+ * CONTENT ANCHOR (replaces the brittle `file:line` allowlist key).
+ *
+ * The ALLOWLIST was keyed `"<relpath>:<lineNo>"`, so any harmless edit above an
+ * allowlisted read shifted its line and forced a re-key. An anchor keys on the
+ * read's own enclosing STATEMENT text (the same `region` the detector uses), so
+ * it moves with the code and is invariant to line shifts and reformatting:
+ *
+ *   `<relpath>#<table>#<sha1_12(whitespace-stripped region)>`
+ *
+ * FAIL-CLOSED (proved by the "allowlist hygiene" tests at the end of this file):
+ * a missing / no-longer-matching entry FAILS, and an ambiguous (duplicated, or
+ * two offenders sharing an anchor) entry FAILS — never a silent widening.
+ */
+function normaliseReadText(s: string): string {
+  return s.replace(/\s+/g, "");
+}
+function bareReadAnchorKey(rel: string, table: string, region: string): string {
+  const h = createHash("sha1").update(normaliseReadText(region)).digest("hex").slice(0, 12);
+  return `${rel}#${table}#${h}`;
+}
 
 /**
  * F-1 BARE-SELECT GUARD (repo-wide) — a read on a HIGH-VALUE (money / ledger /
@@ -247,211 +270,116 @@ const HIGH_VALUE_TABLES = new Set<string>([
 
 // "file:line" → reason. Keep tight; every entry is a documented smell.
 const ALLOWLIST: Record<string, string> = {
-  // R088 lead-sourcing dedupe — per-run id-batch probe (see the limit-clamp
-  // guard's twin entry). (Line moved 195→187 when the bulk-pool path landed.)
-  "server/services/hq-lead-sourcing-runner.ts:187":
+// CONTENT-ANCHORED keys (migrated from file:line). Key = `<relpath>#<table>#<sha1_12(normalised read + .limit(arg))>` — see readAnchorKey.
+// Each entry is validated live by the "allowlist hygiene" tests (must match
+// EXACTLY ONE current producer read, else fail-closed).
+  "server/services/hq-lead-sourcing-runner.ts#hq_sales_companies#e3506db78890":
     "id-batch dedupe probe: which of THIS RUN's candidate company numbers already exist — .in('companies_house_number', numbers) where numbers is the sourcing batch (SOURCING_BATCH_MAX=10 per run), so the set is structurally bounded by the IN-list, never a scan; the .limit(1000) is the honest-bound clamp. Completeness holds per batch: an unknown number inserts via the sanctioned createCompany door, a known one skips.",
-  // Surfaced only once the guard learned to see the `table()` `.from`-wrapper
-  // indirection (below). The read is GENUINELY BOUNDED, just not in a way the
-  // static analyser can see: `.in("id", idsChunk)` where `idsChunk` is
-  // `paymentIds.slice(i, i + JOIN_CHUNK)` with JOIN_CHUNK=500, and
-  // supplier_payments.id is unique — so each call returns ≤500 rows, below the
-  // 1000 cap. The snapshot set it joins is itself fully paged (listMonthSnapshots
-  // above). Prefer fetchAllRows/.limit only if this ever stops being chunked.
-  "server/services/cis-statements.ts:169":
+  "server/services/cis-statements.ts#supplier_payments#15f52fe44813":
     "bounded: chunked .in('id', slice(≤500 unique PKs)) — ≤500 rows, analyser can't see the slice bound",
-  // The VAT-authority read layer (server/services/vat-quarter-inputs.ts). Every
-  // line below is a CHUNKED id-keyed lookup whose parent set is itself fully
-  // PAGED via fetchAllRows in the same file, so each `.in(...)` returns
-  // ≤ IN_CHUNK=500 rows (< the 1000 cap) — the analyser cannot see the slice
-  // bound. Same class as cis-statements.ts:169. Line numbers moved when the CF-1
-  // cash-input wiring added the supplier-payment ledger (box-4/7 on payment) and
-  // the standard-scheme accrual-invoice source; the fully-paged reads
-  // (invoice_payments:171, finances:250, invoices:343, supplier_payments:391)
-  // need no entry — only these chunked `.in(...)` enrichments do.
-  "server/services/vat-quarter-inputs.ts:192":
+  "server/services/vat-quarter-inputs.ts#invoices#24987a69ac2e":
     "bounded: chunked .in('id', slice(≤IN_CHUNK=500 unique invoice PKs)) — parent invoice_payments read is fully paged; ≤500 rows per call",
-  "server/services/vat-quarter-inputs.ts:276":
+  "server/services/vat-quarter-inputs.ts#supplier_payment_allocations#ed981cfdc36e":
     "bounded: chunked .in('finance_id', slice(≤IN_CHUNK=500 unique finance PKs)) — reverse-charge allocations; parent finances window is fully paged (fetchAllRows); ≤500 rows per call",
-  "server/services/vat-quarter-inputs.ts:295":
+  "server/services/vat-quarter-inputs.ts#supplier_payments#64b9c11e68e8":
     "bounded: chunked .in('id', slice(≤IN_CHUNK=500 unique payment PKs)) — reverse-charge void filter; the payment-id set is drawn from the already-chunked allocations, supplier_payments.id is unique so ≤500 rows per call",
-  "server/services/vat-quarter-inputs.ts:414":
+  "server/services/vat-quarter-inputs.ts#supplier_payment_allocations#bd1a65fab91b":
     "bounded: chunked .in('payment_id', slice(≤IN_CHUNK=500 unique payment PKs)) — CF-1 cash-input allocations; parent supplier_payments window is fully paged (fetchAllRows); ≤500 rows per call",
-  "server/services/vat-quarter-inputs.ts:435":
+  "server/services/vat-quarter-inputs.ts#finances#04b0da5797f6":
     "bounded: chunked .in('id', slice(≤IN_CHUNK=500 unique finance PKs)) — CF-1 cash-input parent bills; the finance-id set is drawn from the already-chunked allocations; ≤500 rows per call",
-  // Surfaced only once quote_line_items joined HIGH_VALUE_TABLES. This line is an
-  // INSERT (`.from('quote_line_items').insert(rows)`), NOT a read — it cannot
-  // truncate. It trips solely as a region artifact: the AFTER window bleeds into
-  // the adjacent, fully-bounded `leads` `.select('status')…maybeSingle()`, whose
-  // `.maybeSingle()`/`.eq('id')` bound markers fall just past the 1100-char cap.
-  "app/(app)/quotes/actions.ts:192":
-    "not a read: `.from('quote_line_items').insert(rows)` — flagged only because the region bleeds into an adjacent bounded leads .select whose bound falls outside the window. (Line moved 178→192 when verifyQuoteReferences was added to createQuote in 20261113000000.)",
-  // The .limit(1000) BOUNDARY entries (surfaced when this guard learned that an
-  // exactly-at-clamp .limit is not an honest bound). Each is a GENUINELY-bounded
-  // sample, not a standing-backlog producer like the overdue scan (which was
-  // PAGED, not allowlisted). Mirrors f1-limit-clamp-guard's BOUNDARY_ALLOWLIST.
-  // material-fulfilment: REMOVED (false narrower-than-use entries). "ONE
-  // material request … request-sized" was untrue — the two real callers pass
-  // multi-request / org-wide line sets, so both reads are now PAGED in full via
-  // fetchAllRows + chunked .in() and carry a .range() that bounds them here.
-  "server/services/sites.ts:187":
+  "server/services/sites.ts#fleet_vehicles#808fa26b3eac":
     "bounded: per-org fleet_vehicles count sample (.eq(org_id)) — an org's fleet is tens of vehicles. (Moved 159→187 when listSitesForOrg was split into a bounded + paged (fetchAllRows) picker read for the F-1 picker-completion wave.)",
-  "server/services/van-stock.ts:105":
+  "server/services/van-stock.ts#fleet_vehicles#61a8598d48b7":
     "bounded: per-org fleet_vehicles picker (.eq(org_id)) — an org's fleet is tens of vehicles",
-  // CRM wave (jobs/leads/customers joined HIGH_VALUE_TABLES). Each is either a
-  // hard-bounded id-batch name lookup or a genuinely paged read the static
-  // analyser cannot see through a long builder chain.
-  "app/(app)/diary/page.tsx:84":
+  "app/(app)/diary/page.tsx#jobs#60d8df6904ab":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the diary register (.limit(500)) — ≤500 unique PKs, analyser can't see .in's slice bound",
-  "app/(app)/site-reports/page.tsx:112":
+  "app/(app)/site-reports/page.tsx#jobs#a2a6185d509a":
     "bounded: jobs name lookup CHUNKED .in('id', idsChunk) where each chunk is ≤JOB_IN_CHUNK=500 unique PKs — jobs.id is unique so a chunk yields ≤500 rows. (C66: the reports register above is now fully PAGED, so jobIds can exceed 500; the lookup is chunked to stay below the cap. Line moved 99→111, then 111→112 when the Import button's import was added to this page — pure shift, same read.)",
-  "app/(app)/snags/page.tsx:135":
+  "app/(app)/snags/page.tsx#jobs#60d8df6904ab":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the snags register (.limit(500)) — ≤500 unique PKs",
-  "app/(app)/blueprints/page.tsx:68":
+  "app/(app)/blueprints/page.tsx#jobs#9bc14d407dfc":
     "bounded: jobs name lookup CHUNKED .in('id', idsChunk) where each chunk is ≤JOB_IN_CHUNK=500 unique PKs — jobs.id is unique so a chunk yields ≤500 rows. The blueprints register above is fully PAGED (listBlueprintsForOrg → fetchAllRows), so the job-id set can exceed 500; the lookup is chunked to stay below the cap. Same class as site-reports/page.tsx:111.",
-  "app/(app)/toolbox/page.tsx:90":
+  "app/(app)/toolbox/page.tsx#jobs#60d8df6904ab":
     "bounded: jobs name lookup .in('id', jobIds) where jobIds is a Set drawn from the toolbox register (.limit(500)) — ≤500 unique PKs",
-  "app/(app)/jobs/page.tsx:145":
+  "app/(app)/jobs/page.tsx#jobs#96e1e25f3128":
     "bounded: the 'Today's jobs' panel query — one org × one calendar day (.eq('scheduled_date', todayIso)), a handful of rows, never near the cap. The paginated list query above it is windowed via .range(). Moved to :145 when Feature-1 search (#1014, searchCustomers RPC) and the Feature-2 Import button (#1013) both landed in jobs/page.tsx — pure shift, same read.",
-  "app/(app)/leads/page.tsx:65":
+  "app/(app)/leads/page.tsx#leads#98cf5c958061":
     "paged: the pipeline read IS complete — executed via fetchAllRows((from,to) => query.range(from,to)) at the bottom of the fn; the builder pattern places the .range terminator beyond the static region window, so the analyser can't see it. (Line moved 60→61 when the R4 capability gate replaced the 1-line requireManagementRole gate with a 2-line comment + requireCapability; reason unchanged.)",
-
-  // ── .from(as never) CAST-FORM WAVE — genuinely-bounded per-parent-row reads
-  //    surfaced only once the cast-form matcher was taught. Each is a single
-  //    parent entity's child set (a job's / a PO's), never a cross-tenant scan:
-  //    cardinality is bounded by the parent and cannot approach the 1000 cap.
-  "app/(app)/jobs/[id]/commercial/page.tsx:186":
+  "app/(app)/jobs/[id]/commercial/page.tsx#retention_releases#acdeb3464001":
     "bounded: ONE job's retention releases (.eq('job_id').eq('org_id')) — feeds the committed/forecast retention figure for a single job; retention is released in 1-2 tranches per job, never near 1000. (Org-pinned per C66-A's cross-org money-injection fix. Moved to 186 in the security closeout when the staff-redirect guard was added to the top of the page.)",
-  "app/(app)/jobs/[id]/page.tsx:318":
+  "app/(app)/jobs/[id]/page.tsx#retention_releases#a107dd98a8a9":
     "bounded: ONE job's retention releases (.eq('job_id', job.id)) — the derived retention position on the job detail page; retention is released in 1-2 tranches per job, never near 1000. job.id is org-verified upstream by loadJobForOrg (the same pin the sibling commercial:186 read carries in-statement). Surfaced by the J3 read-dedup: this read was previously vacuously-greened by the adjacent `jobs` retention read's `.maybeSingle()` sharing its statement window; removing that re-fetched `jobs` read exposed this genuinely-bounded sibling, which is now honestly allowlisted. (Line 307→317 after J2 (#920) added the one-superset quotes read + partition comments above it; then 317→318 on the reconciliation branch after merging main; same read.)",
-  "app/(app)/jobs/[id]/commercial/page.tsx:191":
+  "app/(app)/jobs/[id]/commercial/page.tsx#purchase_orders#ab19e12891e9":
     "bounded: ONE job's purchase orders (.eq('job_id')) — feeds the committed-costs tile for a single job; a job has a handful to dozens of POs, never near 1000. (Moved to 191 in the security closeout when the staff-redirect guard was added above.)",
-  "app/(app)/jobs/[id]/page.tsx:337":
+  "app/(app)/jobs/[id]/page.tsx#purchase_orders#4aea1f3fc123":
     "bounded: ONE job's purchase orders (.eq('job_id')) — the committed-costs tile on the job detail page; per-job POs, far below the cap. (Moved 315→317→330→337 across earlier waves; then 337→347 when J2 (#920) replaced the two variations/base quote reads above it with one superset read + partition comments; then 347→336 when J3 (#924) removed the second `jobs` retention read above it; then 336→337 on the reconciliation branch after merging main — same read, unchanged bound.)",
-  "app/(app)/jobs/retention-actions.ts:163":
+  "app/(app)/jobs/retention-actions.ts#invoices#0c991bbe5f71":
     "bounded: ONE job's invoices (.eq('job_id')) — folded into the retention position for a single job; a job's invoices are a handful",
-  "app/(app)/purchase-orders/[id]/page.tsx:161":
+  "app/(app)/purchase-orders/[id]/page.tsx#finances#12f29d134efe":
     "bounded: ONE purchase order's supplier bills (.eq('purchase_order_id')) — a single PO has a handful of finance entries, never near 1000. (Moved 149→161 when the merchant-submit imports, ERROR_COPY entries and the connected-merchant read were added above it.)",
-  // Two enrichment lookups keyed by a ≤500-row parent's distinct org ids: the
-  // parent read is capped (.limit(500)), so the distinct-org id set handed to
-  // `.in('id', …)` is ≤500 — well below the cap. Not a cross-tenant estate scan.
-  "app/admin/ai-receptionist/deliveries/page.tsx:76":
+  "app/admin/ai-receptionist/deliveries/page.tsx#organizations#8fee0d14c2ee":
     "bounded: org-name enrichment (.in('id', distinct orgs)) for the newest-500 lifecycle rows — ≤500 distinct orgs, analyser can't see the .limit(500) parent bound",
-  "app/admin/ai-receptionist/review/page.tsx:57":
+  "app/admin/ai-receptionist/review/page.tsx#organizations#8fee0d14c2ee":
     "bounded: org-name enrichment (.in('id', distinct orgs)) for listReviewQueue({limit:500}) — ≤500 distinct orgs, analyser can't see the parent bound",
-  // Single-row read whose bound markers fall outside the region window: the long
-  // select list + the active-org comment push `.eq('id')`/`.maybeSingle()` past
-  // the 1100-char AFTER window, so the region-scan can't see the bound.
-  "server/services/customer-support-service.ts:143":
+  "server/services/customer-support-service.ts#support_tickets#ea8bb286a367":
     "bounded: ONE ticket (.eq('org_id').eq('id').maybeSingle()) — a single-row read; the long select list + active-org comment push the .eq('id')/.maybeSingle bound markers past the region window",
-  // Per-org billing invoices for the /admin/billing expand-row: an org's billing
-  // invoices are monthly-cadence (≈12/yr), so ≤1000 would take ~83 years.
-  "server/services/hq-billing-snapshot.ts:267":
+  "server/services/hq-billing-snapshot.ts#billing_invoices#25fa24f148f8":
     "bounded: ONE org's billing invoices (.eq('org_id')) for the /admin/billing inline expand-row — monthly cadence, structurally far below 1000. (Moved 258→267 when the owner-enrichment read above it was paged for the C65 memberships wave.)",
-  // Recent-N estate health events: the read is ordered `recomputed_at desc` and
-  // the caller (admin/analytics) slices the newest `limit` (15) in JS. Because it
-  // is ordered DESC, the PostgREST 1000-clamp can only ever drop rows OLDER than
-  // the top-N, so the sliced result is identical whether the table has 100 or
-  // 100k events — a genuinely-bounded recent-N display, not a set read.
-  "server/services/hq-health-recompute.ts:308":
+  "server/services/hq-health-recompute.ts#health_score_events#93b0565ad8c6":
     "bounded: recent-N estate health events — ordered recomputed_at DESC then .slice(0, limit) (caller passes 15) in JS; the desc order means the 1000-clamp can only drop rows past the top-N, so the result is complete",
-  // NOT A READ: `.from('notifications').insert(payload).select(ALL_COLS)` — an
-  // INSERT…RETURNING. The returned set is bounded by the payload it just wrote,
-  // so it cannot truncate; it trips only because the region carries `.select(`.
-  "server/services/notifications-service.ts:169":
+  "server/services/notifications-service.ts#notifications#7c91f21f9f3d":
     "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read. (Line moved to 144 as the R4 push/notification-channel branch shifted surrounding lines; 144→159 when the uuidOrNull helper block landed; 159→164 when the HQ email-routing imports landed above it; 164→169 when the staff-privacy eligibility import + conditional audience_scope spreads landed — pure shifts, same INSERT…RETURNING.)",
-  // (push 533→553, sms 524→543 when the staff-privacy eligibility imports landed
-  // atop both channel files — FEATURE 3; pure shifts, same bounded drain reads.)
-  "lib/notifications/push.ts:553":
+  "lib/notifications/push.ts#notifications#b9ec1c19ec4e":
     "bounded: `.from('notifications').select(...).in('id', ids)` where ids is the batch drawn from the just-claimed push_deliveries drain (≤ PUSH_DRAIN_BATCH_SIZE < 1000) — an id-keyed hydrate of an already-bounded set, not a completeness-sensitive scan. Same class as cis-statements.ts:169.",
-  "lib/notifications/sms.ts:543":
+  "lib/notifications/sms.ts#notifications#5dd37ef3aab7":
     "bounded: `.from('notifications').select(...).in('id', ids)` where ids is the batch drawn from the just-claimed sms_deliveries drain (≤ SMS_DRAIN_BATCH_SIZE=50 < 1000) — an id-keyed hydrate of an already-bounded set, not a completeness-sensitive scan. Same class as lib/notifications/push.ts:553.",
-
-  // ── Job-billing schedule / retention wave — genuinely-bounded SINGLE-SCOPE
-  //    reads surfaced once job_billing_plans/job_billing_stages/retention_releases
-  //    joined HIGH_VALUE_TABLES. Each is scoped to ONE job or ONE plan, never an
-  //    org-wide estate scan; cardinality is bounded by the single parent, far
-  //    below the 1000 cap. (The org-wide portal-schedule reads that motivated the
-  //    wave are PAGED via fetchAllRows in app/customer-portal/[token]/_schedule.ts,
-  //    not allowlisted — the delete-the-fix probe proves the guard bites them.)
-  "app/(app)/jobs/retention-actions.ts:178":
+  "app/(app)/jobs/retention-actions.ts#retention_releases#c5be620364ef":
     "bounded: ONE job's retention releases (.eq('job_id', jobId)) — folded into the retention position for a single job; a job's releases are a handful, never near 1000. (Surfaced via the .from(as never) cast form; sibling to the already-allowlisted :163 invoices read in the same fn.)",
-  "server/services/billing.ts:163":
+  "server/services/billing.ts#job_billing_stages#d6f8eae510e6":
     "bounded: ONE plan's stages (.eq('org_id').eq('plan_id', plan.id)) — the stages of a single active billing plan; a plan has a handful of stages, never near 1000",
-
-  // ── VACUOUSNESS-HARDENING WAVE (statement-scoped regionAround) ──────────────
-  // regionAround was tightened from a fixed BEFORE=300/AFTER=1100 CHARACTER window
-  // to the ENCLOSING STATEMENT, because the old window bled a paged NEIGHBOUR's
-  // fetchAllRows/.range markers into a bare read's window and VACUOUSLY greened it
-  // (the exact bug the portal-schedule delete-the-fix probe exposed). Tightening
-  // surfaced these pre-existing reads that were ALSO only green via neighbour
-  // bleed. Each is verified GENUINELY bounded / paged / not-a-read — none is a
-  // truncation bug (none needed paging), so each carries an honest reason:
-  "app/(app)/delays/_data.ts:93":
+  "app/(app)/delays/_data.ts#jobs#4f960d888048":
     "bounded: jobs label lookup .in('id', ids) where ids is a de-duped Set drawn from the delays register (a bounded parent set) — batched name/date labels, ≤ parent rows, never near 1000. Same class as diary/page.tsx:83. (Line moved 92→93 when listJobOptions was paged via fetchAllRows for the F-1 picker-completion wave, adding the paginate import.)",
-  "app/(app)/quality/_data.ts:242":
+  "app/(app)/quality/_data.ts#jobs#4f960d888048":
     "bounded: jobs label lookup .in('id', ids) where ids is a de-duped Set drawn from the quality register (a bounded parent set) — batched name/date labels, ≤ parent rows. Same class as diary/page.tsx:83. (Line moved 241→242 when listJobOptions was paged via fetchAllRows for the F-1 picker-completion wave, adding the paginate import.)",
-  "app/(app)/jobs/[id]/billing/actions.ts:83":
+  "app/(app)/jobs/[id]/billing/actions.ts#job_billing_stages#998236adc2db":
     "bounded: ONE plan's stages (.eq('org_id').eq('plan_id', planId)) — the stages of a single billing plan; a plan has a handful of stages, never near 1000. (Line moved 81→83 when the R4 invoices-capability gate added the hasCapability import + gate.)",
-  "lib/schedule/calendar-data.ts:92":
+  "lib/schedule/calendar-data.ts#jobs#d40e655cec52":
     "paged: the jobs read IS complete — .from('jobs') lives in a `scoped()` builder-closure and is paged via fetchAllRows((from,to) => scoped()…range(from,to)) at the two call sites (nonRecurring + recurring) in a SEPARATE statement, beyond the statement-scoped window. Same builder class as leads/page.tsx:51.",
-  "lib/jobs/schedule-spans.ts:62":
+  "lib/jobs/schedule-spans.ts#jobs#c60aa8262b3e":
     "paged: the gantt/resource jobs read IS complete — .from('jobs') lives in a `scoped()` builder-closure and is paged via fetchAllRows((from,to) => scoped()…range(from,to)) in a SEPARATE statement, beyond the statement-scoped window. Same builder class as calendar-data.ts:92.",
-  "app/(app)/invoices/[id]/page.tsx:135":
+  "app/(app)/invoices/[id]/page.tsx#invoice_payments#195e3ab9a822":
     "bounded: ONE invoice's payments (.eq('invoice_id', id)) — the payment ledger for a single invoice folded into paidTotal; a single invoice has a handful of payments, never near 1000",
-  "app/admin/billing/actions.ts:160":
+  "app/admin/billing/actions.ts#billing_invoices#072a39a59fa7":
     "not a read: `untypedAdminTable('billing_invoices').insert(insert).select('id')` — INSERT…RETURNING, bounded by the inserted row, cannot truncate a read; flagged only because the statement carries `.select(`. Same class as notifications-service.ts:159.",
-  "server/services/bank-sync.ts:699":
+  "server/services/bank-sync.ts#bank_statement_lines#6169b7f238bc":
     "bounded: chunked dedupe read .in('provider_tx_id', batch) where batch = providerTxIds.slice(i, i+DEDUPE_IN_CHUNK) — each call returns ≤ DEDUPE_IN_CHUNK rows, well below the 1000 cap. Same class as cis-statements.ts:169.",
-
-  // ── C65 MEMBERSHIPS / COMPLETION_CERTIFICATES WAVE — surfaced once memberships
-  //    + completion_certificates joined HIGH_VALUE_TABLES. The one genuine
-  //    cross-tenant truncation this wave found — the FOUR HQ owner-enrichment
-  //    reads (.in(<full-estate roster>).eq('role','owner')) whose orgId set is a
-  //    fetchAllRows-paged estate roster — were PAGED (admin/organizations,
-  //    hq-alerts/hq-billing/hq-customer snapshots), not allowlisted; the
-  //    delete-the-fix probe proves the guard bites the unpaged shape. The reads
-  //    below are all SINGLE-SCOPE: either .eq('org_id', ONE org) (bounded by that
-  //    org's headcount — tens, low-hundreds; a single org never approaches 1000
-  //    members) or .eq('user_id', ONE user) / .in(<bounded parent set>). None is
-  //    a cross-tenant estate scan; each is bounded by a single parent well below
-  //    the cap. Same class as the already-allowlisted per-org fleet_vehicles reads.
-  "app/(app)/health-safety/_data.ts:113":
+  "app/(app)/health-safety/_data.ts#memberships#ddf675ec7d1b":
     "bounded: ONE org's members (.eq('org_id')) — the assessor picker (listAssessors); an org's headcount is tens/low-hundreds, never near 1000",
-  "app/(app)/health-safety/_signoff-data.ts:143":
+  "app/(app)/health-safety/_signoff-data.ts#memberships#1070de691223":
     "bounded: name lookup .in('user_id', ids) where ids is a de-duped Set of sign-off user_ids from a bounded parent set — ≤ parent rows, never near 1000 (line moved 137→143 when requiredOperatives switched its rota read to the org-guarded job_rota_crew RPC under R5)",
-  "app/(app)/settings/page.tsx:81":
+  "app/(app)/settings/page.tsx#memberships#5d4531c51cdf":
     "bounded: ONE org's members (.eq('org_id')) — the settings team panel; bounded by the org's headcount, never near 1000 (line moved 76→77 when the FlatRateSettings import was added; moved 77→80 when the i18n-wave getRequestI18n helper + its comment replaced the bare requireOrgContext call; moved 80→81 when the SignOutButton import was added for the Settings Log out button)",
-  "app/(app)/staff/leave/page.tsx:97":
+  "app/(app)/staff/leave/page.tsx#memberships#14002dd331ee":
     "bounded: ONE org's members (.eq('org_id')) — the leave-page name lookup; bounded by the org's headcount (line moved 96→97 when the getHolidayBalanceForUser import was added for the holiday-balance card)",
-  "app/(app)/staff/page.tsx:57":
+  "app/(app)/staff/page.tsx#memberships#b005d3cc2373":
     "bounded: ONE org's members (.eq('org_id')) — the staff register; bounded by the org's headcount. (Line moved to 55 in the security closeout when hourly_pay was dropped from the users embed — pay now reads from staff_compensation below; moved 55→56 when the DataTable import was added for the G3 canonical-table adoption.)",
-  "app/(app)/staff/rota/page.tsx:112":
+  "app/(app)/staff/rota/page.tsx#memberships#82dcacdf298f":
     "bounded: ONE org's members (.eq('org_id')) — the rota staff list + assign-form labels; bounded by the org's headcount",
-  "app/customer-portal/_warranties.ts:133":
+  "app/customer-portal/_warranties.ts#completion_certificates#493db435984a":
     "bounded: completion_certificates for the customer's OWN warranty job set (.eq('org_id').eq('status','issued').in('job_id', <de-duped set from the customer's visible warranties>)) — one issued cert per job, bounded by the customer's warranties, not a cross-tenant scan",
-  "server/auth/session.ts:147":
+  "server/auth/session.ts#memberships#5c60abf3185c":
     "bounded: ONE user's memberships (.eq('user_id')) — loadMembershipsWithOrgs, the single cached membership+org read now shared by BOTH org resolution (getOrgForUser) and the header switcher (listOrgsForUser); a user belongs to a handful of orgs, never near 1000. (Consolidated from the former two reads at :128/:226 in the product-UX perf pass.)",
-  "lib/email/send-leave.ts:60":
+  "lib/email/send-leave.ts#memberships#645e06ff4c51":
     "bounded: ONE org's owner/admin recipients (.eq('org_id').in('role', ['owner','admin'])) — a handful of privileged users per org, far below 1000",
-  "lib/email/send-material-request.ts:110":
-    "bounded: ONE org's owner/admin recipients (.eq('org_id').in('role', ['owner','admin'])) — a handful of privileged users per org",
-  "lib/profitability/labour-rates.ts:36":
+  "lib/profitability/labour-rates.ts#memberships#f720348792b3":
     "bounded: ONE org's member ids (.eq('org_id')) — folded into an hourly-pay map (loadOrgHourlyPay); bounded by the org's headcount, and the sibling staff_compensation read is a chunk-safe .in(memberIds). (Line moved to 36 in the security closeout when the docstring grew for the users.hourly_pay→staff_compensation move.)",
-
-  // ── C66 cast-form de-vacuum: hq_sales_companies NAME-ENRICHMENT lookups
-  //    surfaced once the depth-aware windowing saw these cast-form reads. Each is
-  //    loadCompanyNames(admin, ids).in('id', unique) where `ids` is drawn from the
-  //    caller's recent-runs read, itself capped at .limit(Math.min(max(limit,1),50))
-  //    (listRecent{Outreach,Qualification,Research}Runs) — so `unique` is ≤50 ids,
-  //    far below the 1000 cap. Not a cross-tenant estate scan; the estate reads in
-  //    these files are the paged pipeline / count reads, not these lookups.
-  "server/services/hq-outreach.ts:786":
+  "server/services/hq-outreach.ts#hq_sales_companies#8996fdcd1d87":
     "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentOutreachRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 757→786 when ctx.memory recall/remember wiring was added to the runner.)",
-  "server/services/hq-qualification.ts:928":
+  "server/services/hq-qualification.ts#hq_sales_companies#8996fdcd1d87":
     "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentQualificationRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 867→928 when P3 threaded the recall into the artifact's memory_context.)",
-  "server/services/hq-research.ts:1579":
+  "server/services/hq-research.ts#hq_sales_companies#8996fdcd1d87":
     "bounded: hq_sales_companies name lookup .in('id', ≤50 unique ids) — ids from listRecentResearchRuns (.limit(≤50)); ≤50 rows, analyser can't see the parent cap. (Line moved 1555→1579 when P3 threaded the recall into the artifact's memory_context.)",
+
 };
 
 function walk(dir: string, out: string[]): void {
@@ -644,7 +572,7 @@ function boundedRegion(region: string, env: Map<string, number>): boolean {
  * by the repo-wide scan and the "would have caught the pre-fix weather-fetch"
  * regression proof, so both exercise identical detection.
  */
-function offendersIn(rel: string, raw: string): string[] {
+function offendersIn(rel: string, raw: string, sink?: (anchor: string) => void): string[] {
   if (!raw.includes(".from(")) return [];
   const src = stripComments(raw);
   const env = numericConsts(src);
@@ -657,13 +585,14 @@ function offendersIn(rel: string, raw: string): string[] {
     if (!/\.select\(/.test(region)) return;
     if (boundedRegion(region, env)) return;
     const line = src.slice(0, index).split("\n").length;
-    const key = `${rel}:${line}`;
-    if (ALLOWLIST[key]) return;
+    const anchor = bareReadAnchorKey(rel, table, region);
+    sink?.(anchor); // hygiene: every candidate anchor, BEFORE the allowlist gate
+    if (ALLOWLIST[anchor]) return;
     const atBoundary = regionLimitBound(region, env) === CLAMP;
     offenders.push(
       atBoundary
-        ? `${key} → ${shape} capped at exactly .limit(${CLAMP}) — boundary trap, page it or allowlist`
-        : `${key} → bare ${shape} with no .range/.limit(<${CLAMP})/.single`,
+        ? `${rel}:${line} [${anchor}] → ${shape} capped at exactly .limit(${CLAMP}) — boundary trap, page it or allowlist (keyed by anchor)`
+        : `${rel}:${line} [${anchor}] → bare ${shape} with no .range/.limit(<${CLAMP})/.single (allowlist keyed by anchor)`,
     );
   };
 
@@ -1599,5 +1528,87 @@ describe("F-1 coverage-completeness meta-guard — every table with a set-read i
       ["blueprints", ["y.ts:1"]], // reviewed (PER-PARENT)
     ]);
     expect(coverageOffenders(ok)).toEqual([]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONTENT-ANCHOR ALLOWLIST HYGIENE (fail-closed guarantees) + mutation proofs
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Every bare-read candidate anchor in the repo → how many reads share it.
+ * Reuses offendersIn's OWN detection via a sink, so it can never drift from the
+ * guard it validates. */
+function collectBareReadAnchors(): Map<string, number> {
+  const files: string[] = [];
+  for (const d of SCAN_DIRS) walk(resolve(ROOT, d), files);
+  const counts = new Map<string, number>();
+  for (const file of files) {
+    const rel = file.slice(ROOT.length + 1);
+    offendersIn(rel, readFileSync(file, "utf8"), (anchor) =>
+      counts.set(anchor, (counts.get(anchor) ?? 0) + 1),
+    );
+  }
+  return counts;
+}
+
+describe("F-1 bare-select content-anchor allowlist hygiene (fail-closed)", () => {
+  const anchorCounts = collectBareReadAnchors();
+
+  it("every ALLOWLIST anchor matches EXACTLY ONE live read (no stale, no ambiguous)", () => {
+    const stale: string[] = [];
+    const ambiguous: string[] = [];
+    for (const key of Object.keys(ALLOWLIST)) {
+      const n = anchorCounts.get(key) ?? 0;
+      if (n === 0) stale.push(key);
+      else if (n > 1) ambiguous.push(`${key} (×${n})`);
+    }
+    expect(
+      stale,
+      "STALE bare-select anchors — match NO current read (paged/removed/changed). " +
+        "Fail-closed: delete or re-anchor after review:\n" + stale.join("\n"),
+    ).toEqual([]);
+    expect(
+      ambiguous,
+      "AMBIGUOUS bare-select anchors — match >1 read; disambiguate:\n" + ambiguous.join("\n"),
+    ).toEqual([]);
+  });
+
+  it("no two distinct bare reads share an anchor (collision would hide one)", () => {
+    const collisions = [...anchorCounts.entries()].filter(([, n]) => n > 1).map(([a, n]) => `${a} ×${n}`);
+    expect(collisions, "anchor COLLISION among bare reads:\n" + collisions.join("\n")).toEqual([]);
+  });
+});
+
+describe("F-1 bare-select content-anchor: bound to content, stable under line shifts", () => {
+  const REGION_A = `const { data } = await admin.from("invoices").select("id, total").eq("org_id", orgId)`;
+  it("is INVARIANT under whitespace / line-shift reformatting", () => {
+    const inline = bareReadAnchorKey("f.ts", "invoices", REGION_A);
+    const reflowed = bareReadAnchorKey(
+      "f.ts",
+      "invoices",
+      `const { data } = await admin\n    .from("invoices")\n    .select("id, total")\n    .eq("org_id", orgId)`,
+    );
+    expect(reflowed).toBe(inline);
+  });
+  it("CHANGES when the read's columns/filters change", () => {
+    expect(bareReadAnchorKey("f.ts", "invoices", REGION_A)).not.toBe(
+      bareReadAnchorKey("f.ts", "invoices", REGION_A + '.eq("status", "sent")'),
+    );
+  });
+  it("CHANGES when the file path changes (exception does not transfer between files)", () => {
+    expect(bareReadAnchorKey("a.ts", "invoices", REGION_A)).not.toBe(
+      bareReadAnchorKey("b.ts", "invoices", REGION_A),
+    );
+  });
+  it("guard flags a never-seen bare high-value read (new anchor ∉ allowlist)", () => {
+    const mutated = [
+      `const { data } = await admin`,
+      `  .from("invoices")`,
+      `  .select("id, total, UNMISTAKABLE_BARE_MUTATION")`,
+      `  .eq("org_id", orgId);`,
+    ].join("\n");
+    const flagged = offendersIn("server/services/nowhere.ts", mutated);
+    expect(flagged.length, "a never-before-seen bare producer read must be flagged").toBeGreaterThan(0);
+    expect(flagged[0]).toMatch(/#[0-9a-f]{12}\]/);
   });
 });
