@@ -81,6 +81,7 @@ export function EventCard({
             dateTime={event.ts}
             title={event.ts}
             className="shrink-0 whitespace-nowrap pt-0.5 text-[11px] tabular-nums text-slate-500"
+            suppressHydrationWarning
           >
             {relativeTime(event.ts)}
           </time>
