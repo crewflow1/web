@@ -30,6 +30,18 @@ hq,/admin,HQ home,yes,no,n/a,none,,PASSED IN CHROME
 hq,/admin/customers,Customers OS (51 orgs),yes,no,n/a,none,,PASSED IN CHROME
 hq,/admin/customers/[id],customer profile + operator actions,yes,no,n/a,trivial 404 asset,OBS-2,PASSED IN CHROME
 hq,/admin/ops,system status (presence-only env),yes,no,n/a,none,,PASSED IN CHROME
-owner,"(remaining ~170 app routes: diary, assets, fleet, stock, suppliers, PO, cash, expenses, costs, cis, tax, reports, settings, imports, compliance, delays, snagging, works-quality, site-reports, drawings, documents, rota, leave, price-book, reviews, inbox, calendar, templates, blueprints, operations, marketplace, help, onboarding)",not yet browser-tested,,,,,"NOT TESTED"
+owner,/operations,operations hub,yes,no,n/a,none,,PASSED IN CHROME
+owner,/assets/new,create asset (JCB 3CX),yes,yes,yes (assets row price/value/serial),none,,PASSED IN CHROME
+owner,/assets,assets list (shows created asset),yes,no,yes,none,,PASSED IN CHROME
+owner,/fleet,fleet hub,yes,no,n/a,none,,PASSED IN CHROME
+owner,/stock,stock hub,yes,no,n/a,none,,PASSED IN CHROME
+owner,/suppliers,suppliers list,yes,no,n/a,none,,PASSED IN CHROME
+owner,/suppliers/new,create supplier,yes,yes,yes (suppliers row terms/category),none,,PASSED IN CHROME
+owner,/cash,cash position (cross-module consistent),yes,no,yes (COLLECTABLE £11675 matches INV outstanding),none,,PASSED IN CHROME
+owner,/reports,reports hub (P&L/aged-debtors/cashflow/etc),yes,no,n/a,none,,PASSED IN CHROME
+owner,/expenses,expenses (AI receipt extract),yes,no,n/a,none,,PASSED IN CHROME
+owner,/settings,org/profile settings,yes,no,n/a,none,,PASSED IN CHROME
+owner,/tax,tax dashboard (VAT/corp tax),yes,no,yes (VAT £1464.82 ties to cash; corp tax 19%x18500=3515),none,,PASSED IN CHROME
+owner,"(remaining ~160 app routes: materials/requests, sites, purchase-orders, costs, cis, tax, insights, staff/rota, staff/leave, toolbox, diary, permits, snagging, works-quality, site-reports, drawings, documents, compliance, delays, blueprints, price-book, reviews, calendar, templates, imports, marketplace, help, onboarding, + nested detail/edit routes)",not yet browser-tested,,,,,"NOT TESTED"
 hq,"(remaining ~75 admin routes: sales/research/qualification/outreach AI consoles, AI boardroom, billing detail, demos/onboarding flows, governance/decisions, analytics, AI costs, support, impersonation, launch checklist, settings)",not yet browser-tested,,,,,"NOT TESTED"
 worker,"/a/[token], worker sign-off / acknowledgement portal",not browser-tested (covered by integration/security tiers),,,,,"NOT TESTED"

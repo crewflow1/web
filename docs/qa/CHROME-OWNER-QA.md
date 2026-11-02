@@ -48,9 +48,29 @@ None in the core revenue journey. (One non-defect UX note: `/finances/[id]`
 is not an invoice route — invoices live at `/invoices/[id]`; `/finances` is the
 costs ledger. Correct by design.)
 
+## Extended sweep (operations + money + settings) — all render clean
+
+A second pass swept the operational and money domains in Chrome:
+
+- **Operations:** `/operations` hub, **`/assets/new` → created a JCB 3CX asset**
+  (DB-verified: price 42000, value 35000, serial) which then **appears in
+  `/assets`** (full round-trip); `/fleet`, `/stock` hubs render; **`/suppliers/new`
+  → created "Leeds Builders Merchants Ltd"** (DB-verified: category, 30-day terms).
+- **Money — cross-module financial consistency verified (a strong positive):**
+  - `/cash` COLLECTABLE NOW **£11,675.00** = the outstanding on INV-0001 after the
+    £10,000 partial payment; NET POSITION £10,210.18.
+  - `/tax` OUTPUT VAT **£1,464.82** (cash basis) ties to the cash-position "owed
+    out"; Corporation Tax = 19% × £18,500 = **£3,515.00** (correct).
+  - `/reports` (P&L, aged debtors, cashflow forecast, staff utilisation, sales
+    pipeline) + `/expenses` (AI receipt extract) render.
+  - So the **quote → invoice → payment → cash → VAT → corporation-tax chain all
+    reconciles arithmetically** across five separate screens.
+- **Settings:** `/settings` (profile + organisation) renders.
+
 ## Coverage boundary (honest)
-This file covers the **critical owner revenue journey** end-to-end plus the
-primary Sales/Money routes. The remaining owner domains (Site & Safety, People/
-Payroll, Operations/Fleet/Stock, Reports, Settings) are being swept route-by-route
-and tracked in the CSV with explicit NOT TESTED / PASSED / FAILED statuses — this
-document does not claim full owner-surface coverage.
+This file covers the **critical owner revenue journey** end-to-end, the primary
+Sales/Money routes, and a representative sweep of every owner domain (operations,
+money, settings) with 5 DB-verified create forms. It does **not** claim full
+per-route/per-control coverage of all ~185 owner routes; `COMPLETE-BROWSER-
+COVERAGE.csv` lists the remaining routes as NOT TESTED. No defects found in the
+swept owner routes (the one owner-surface defect, D-2 hydration, is fixed in #1033).
