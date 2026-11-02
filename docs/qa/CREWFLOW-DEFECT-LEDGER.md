@@ -32,5 +32,11 @@
 - **Console/network**: dashboard, leads, customers, quotes, invoices, H&S, HQ
   pages loaded with no functional errors.
 
-## No P0 or P1 found in either programme.
-Consistent with the two prior independent hardening/certification waves.
+| **D-9** | **P1** | **A/B** | **Staff could read AND write the org's post-sale billing records via direct authenticated PostgREST (no UI).** Direct staff-JWT probe: `invoices` → INV-0001 total £21,675, plus `invoice_payments` + `payments` readable, and `invoice_payments` INSERT allowed. The SELECT/INSERT/UPDATE policies were org-member-wide; route/UI gates (and #1036) only hid it in the browser. | the R5 financial boundary was enforced only at the route/UI/capability layer; the DB RLS on these billing tables was org-member-wide. | **FIXED** — migration `20261275000000` scopes SELECT/INSERT/UPDATE on invoices/invoice_payments/payments to `is_org_admin(org_id)`. Quotes/quote_line_items deliberately preserved (tested staff-drafting flow). **PR #1037, apply-held (migration NOT applied).** | staff read→0 / write→42501; owner+admin OK; cross-org+revoked denied; new 17-case test; full security (8,598) + integration RLS (1,761) tiers green |
+
+## P1 found + fixed (D-9). No P0 found.
+D-9 is a within-org staff-over-privilege on financial data (not cross-tenant, so
+not P0), confirmed by direct-API probe and remediated at the DB layer (apply-held
+**#1037**). Recommend treating as a release blocker alongside #1036. The earlier
+"no P0/P1" statement applied before the direct-API financial audit; the UI-only
+passes had not probed PostgREST directly.
