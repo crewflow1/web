@@ -48,6 +48,26 @@ would be cleaner. Logged as **OBS-1 (P3, cosmetic)**.
 `/login`, `/me`, `/staff`, `/staff/[id]`, and denied-probes of `/invoices`,
 `/invoices/[id]`, `/quotes`, `/reports`, `/finances`, `/jobs/[id]` (unassigned).
 
+## Second pass — R5 positive case + a real commercial leak (found + fixed)
+
+After assigning the staff user to the auto-created job (`job_assignments`):
+
+- **R5 positive case PASSED:** `/jobs` now shows **exactly the one assigned job**
+  (was empty/denied before); the job detail **opens** (was 404 before assignment).
+  So the assigned-job scoping works both ways — denies unassigned, permits assigned.
+- **D-8 (P2) — FOUND then FIXED:** the assigned job's **Overview leaked commercial
+  figures** to the staff member — the cash strip (contract £21,675 / £10,000
+  received / outstanding £11,675) and the "Get paid — billing plan" link. The
+  dedicated `/commercial`, `/billing`, `/valuations` sub-pages correctly redirect
+  non-admins, but the Overview (which assigned staff can open) rendered the same
+  figures ungated. **Root cause:** the Overview's commercial strip + billing link
+  were gated only on `billed>0`, not role. (The invoices/quotes/payments SELECT
+  RLS is org-member-wide **by design** across all four financial tables — the R5
+  financial boundary is a route/UI gate, so the correct fix is the UI gate, not
+  RLS.) **Fixed** by gating both behind `canViewPrivate` (owner/admin) —
+  **PR #1036**, with 3 new regression assertions. Re-verified in Chrome: staff
+  Overview no longer shows the strip or billing link; owner unaffected.
+
 ## Coverage boundary (honest)
 This covers the **isolation boundary** thoroughly (the security priority).
 Full exercise of every staff-permitted feature (toolbox acknowledgements, job

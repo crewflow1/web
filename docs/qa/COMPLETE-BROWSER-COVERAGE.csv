@@ -23,6 +23,8 @@ staff,/quotes,denied (direct URL),yes,no,n/a,forbidden redirect (expected),,PASS
 staff,/reports,denied (direct URL),yes,no,n/a,forbidden redirect (expected),,PASSED IN CHROME
 staff,/finances,denied (redirect to /me),yes,no,n/a,expected,,PASSED IN CHROME
 staff,/jobs/[id] (unassigned),denied (404 not data),yes,no,yes (R5: no data exposed),none,,PASSED IN CHROME
+staff,/jobs (assigned),sees ONLY the assigned job after assignment (R5 positive),yes,no,yes (job_assignments scoping),none,,PASSED IN CHROME
+staff,/jobs/[id] (assigned),opens assigned job; Overview LEAKED commercial figures (contract/billed/outstanding + Get-paid),yes,no,yes,commercial strip shown to staff,D-8,FAILED IN CHROME -> FIXED AND RETESTED (#1036)
 staff,/staff,team roster (names/roles only),yes,no,n/a,none,,PASSED IN CHROME
 staff,/staff/[id],other member detail (pay/emergency stripped),yes,no,yes (seeded data not exposed),none,OBS-1,PASSED IN CHROME
 hq,/login,HQ superadmin sign-in,yes,yes,n/a,none,,PASSED IN CHROME
