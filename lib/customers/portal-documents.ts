@@ -17,6 +17,8 @@
  * Pure — the caller passes already-scoped rows; no clocks, no IO.
  */
 
+import { formatBytes } from "@/lib/format/bytes";
+
 export type PortalDocType =
   | "quote"
   | "invoice"
@@ -181,8 +183,3 @@ export function buildDocumentLibrary(input: {
   return docs.sort((a, b) => (a.date !== b.date ? (a.date < b.date ? 1 : -1) : a.title.localeCompare(b.title)));
 }
 
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}

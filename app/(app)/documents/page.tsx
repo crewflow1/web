@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
+import { formatBytes } from "@/lib/format/bytes";
 import {
   ilikeOrFilter,
   JOB_DOCUMENT_SEARCH_COLUMNS,
@@ -334,11 +335,6 @@ export default async function DocumentsPage({ searchParams }: { searchParams: SP
   );
 }
 
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function SourceFilter({
   current,
