@@ -249,8 +249,8 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // (Line key re-pointed 119→120: pure shift — the analytics-event-wiring PR
   // added one `@/lib/analytics/events` import above this read. The read itself
   // is unchanged from origin/main.)
-  "app/(app)/quotes/actions.ts:120":
-    "bounded: quote→job carry (fix 4) copies the first 50 line-item DESCRIPTIONS into the job's notes as a human scope summary — a display sample, never financial truth (amounts/items stay on the quote, linked via quotes.job_id + the auto-invoice). A 50-line cap on a notes blurb is deliberate; paging would only grow an unreadable note.",
+  "app/(app)/quotes/actions.ts:119":
+    "bounded: quote→job carry (fix 4) copies the first 50 line-item DESCRIPTIONS into the job's notes as a human scope summary — a display sample, never financial truth (amounts/items stay on the quote, linked via quotes.job_id + the auto-invoice). A 50-line cap on a notes blurb is deliberate; paging would only grow an unreadable note. (Line moved :120→:119 when the variation-actions split removed the loadJobForOrg import above this read.)",
 
   // Global-search result caps — the command-palette (/api/search). Each is an
   // org-pinned (.eq('org_id', ctx.org.id)) top-N DISPLAY hit list, capped by the
