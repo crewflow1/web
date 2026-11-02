@@ -5,7 +5,7 @@ import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import {
   recordVariationEotAgreement,
   reclassifyVariationValidUntilAsEot,
-} from "../actions";
+} from "../variation-actions";
 
 /**
  * Variation-specific surface on the quote detail page.
