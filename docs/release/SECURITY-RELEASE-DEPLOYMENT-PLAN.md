@@ -44,14 +44,43 @@ push_deliveries/sms_deliveries; unrelated to the financial tables).
    (`~/CrewFlow-backups`, per the DR runbook).
 4. `supabase migration list --linked` shows tip `20261273000000`, no drift.
 
-## 4. Verification evidence (from the combined environment)
-- Full **security tier (8,598)**, full **integration RLS tier (1,745)**, quote/
-  variation **unit tests (81)** — green with all four migrations applied.
-- Per-table positive/negative tests (owner/admin read+write; staff/cross-org/
-  revoked denied) for billing, customers, price_book, leads, quotes.
-- Direct staff-JWT PostgREST probe: every restricted table → 0 rows / 42501.
-- Owner end-to-end lifecycle verified in Chrome; legitimate staff workflows
-  (assigned-job customer, site costs, assigned leads) intact.
+## 4. Verification evidence (combined `integration/security-combined` env)
+
+**All 5 PRs merged clean (zero conflicts); migrations 275→278 apply cleanly in
+sequence via `db reset`.** Combined-branch gates:
+
+| Gate | Result |
+|---|---|
+| Typecheck (`tsc --noEmit`) | clean (app code) |
+| Lint (`eslint`) | 0 errors on changed files |
+| Unit tier | **11,812 pass** |
+| Security tier | **8,601 pass** |
+| Integration tier (full) | **2,835 pass** (the 1 combined failure — #1037's obsolete "quotes member-readable" case — was removed, superseded by #1040; the 2 "file not found" were a mid-run branch-switch artifact, since re-confirmed present) |
+| Production build | **blocked locally by host ENOSPC** (disk), NOT a code error — each PR's CI build gate passes + typecheck is clean; rely on CI build on merge |
+
+Per-table positive/negative tests (owner/admin read+write; staff/cross-org/
+revoked denied) for billing (17), customers (6), price_book+leads (4), quotes (6).
+Direct staff-JWT PostgREST probe: every restricted table → 0 rows / 42501.
+
+**Browser verification on the combined branch (real Chromium):**
+- **Owner** signed in; **created a customer** (DB-verified) and a **quote with a
+  line item** (DB-verified: Q-0001, subtotal £5,000 / VAT £1,000 / total £6,000) —
+  the full owner lifecycle works under the combined admin-only RLS; VAT correct.
+- **Staff** signed in → `/me`; nav shows **no Sales / Money / Operations**;
+  direct `/quotes` → `?error=forbidden`. Legitimate staff workflows (assigned-job
+  customer, site costs, assigned leads) intact (RLS tier).
+- Note: a dev-only **PWA service-worker cache** served stale server-action bundles
+  across dev-server restarts (the recurring "Something went wrong" on login =
+  OBS-3) — cleared with `serviceWorker.unregister()` + `caches.delete()`; an
+  environment artifact, not a product defect.
+
+## 4a. Outstanding risks / notes
+- **Production build not run locally** (host disk). Mitigation: CI build gate on
+  each PR + clean typecheck. Re-confirm the build on the merge commit before deploy.
+- **#1030 (migration 274)** is independent; apply in prefix order if approved.
+- **#1035** (quote-variation refactor, NOT in this security set) is red on CI from
+  source-pinned tests invalidated by the file split — deferred, not a blocker here.
+- No P0. One P1 (D-9 billing) + P2s (D-8/10/11/12/13) all remediated here.
 
 ## 5. Apply (migrations-first, one at a time, from `~/Code/web`)
 For each of `20261275000000 … 20261278000000` (and `274` if #1030 approved), in
