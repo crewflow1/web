@@ -53,6 +53,7 @@ Severity: **P0** break-launch · **P1** fix-before-scale · **P2** fix-soon ·
 | D-4 | P3 | No | 3 flaky/brittle unit tests (timing/shared-state). | **FIXED.** **#1028.** |
 | D-5 | Ops | No | Cron auth compared the secret non-constant-time. | **HARDENED** — constant-time compare + 7 tests. **#1027.** |
 | D-6 | — | n/a | **Review catch:** #1029's `escapeHtml` removal shifted lines under two line-keyed F-1 allowlist entries (`send-leave.ts`, `documents/page.tsx`), reddening the security tier. | **FIXED** — allowlist re-keyed to the new anchor lines; both F-1 guards green. (The reads were unchanged and still bounded.) |
+| D-7 | P3 | No | **Intermittent e2e flake:** `asset-inspections.spec.ts` occasionally lands on the parent URL (`?saved=status`) instead of the child inspection route — the documented Next.js **deep-swap commit race** (server work commits, URL doesn't, at route-swap depth ≥4). Pre-existing on `main`; 190/191 e2e pass. | **Flagged for Wave 2** — confirm save-progress uses the mandated FormState + `window.location.assign` pattern (not `redirect()`/`router.push`) per `reference_nextjs_deep_swap_commit_race`. Not a data-correctness bug (the save lands); a navigation-UX intermittency. |
 
 **No P0 or P1 was found.** No RLS weakening, no tenant-isolation hole, no broken
 access control, no unsafe AI call path surfaced in this pass — consistent with
