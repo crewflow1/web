@@ -291,8 +291,8 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // `.in('id', idsChunk)` where each chunk is ≤JOB_IN_CHUNK=500 unique job ids
   // (jobs.id is unique, so a chunk yields ≤500 rows), used only to label the
   // aggregated documents with their job/customer name — never counted/summed.
-  "app/(app)/documents/page.tsx:183":
-    "bounded: /documents job-name lookup — CHUNKED .in('id', idsChunk) capped at .limit(JOB_IN_CHUNK=500) per chunk (jobs.id unique ⇒ ≤500 rows); a display-label lookup over a fully-read doc set, NOT counted/summed",
+  "app/(app)/documents/page.tsx:184":
+    "bounded: /documents job-name lookup — CHUNKED .in('id', idsChunk) capped at .limit(JOB_IN_CHUNK=500) per chunk (jobs.id unique ⇒ ≤500 rows); a display-label lookup over a fully-read doc set, NOT counted/summed (line moved from :183 when the copy-pasted escapeHtml was replaced by the lib/html import)",
   // NOTE: the jobs-list customer-match helper is no longer a `.from("customers")
   // .limit(…)` read — it now resolves matching customer ids through the shared
   // search_customers RPC (searchCustomers), so it is not a producer-limit read.
