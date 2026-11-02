@@ -37,9 +37,9 @@
 | **D-10** | **P2** | A/B | **Staff read the whole org CRM** (`customers`: names/emails/phones/addresses/VAT) via direct API. | `customers` SELECT org-member-wide. | **FIXED** — migration 20261276000000: staff SELECT scoped to assigned-job customers (`my_assigned_customer_ids()`), admin writes. **PR #1038.** | 6-case test; full RLS tier green |
 | **D-11** | **P2** | A/B | **Staff read the full price-book** (rate library / margins) via direct API. | `price_book_items` SELECT org-member-wide. | **FIXED** — migration 20261277000000: admin-only. **PR #1039.** | 4-case test; tiers green |
 | **D-12** | **P2** | A/B | **Staff read the whole sales pipeline** (`leads`: contact PII, estimated values) via direct API. | `leads` SELECT org-member-wide. | **FIXED** — migration 20261277000000: admin OR assignee. **PR #1039.** | 4-case test; tiers green |
-| D-13 | TBD | A/B | `quotes`/`quote_line_items` member-wide (staff read every quote + line price via API). | member-wide SELECT; staff quote-drafting is a tested RLS-layer flow. | **OPEN — product decision** (intended staff quotation workflow); recommended scope + plan in the financial-data security audit doc §5. | — |
+| **D-13** | **P2** | A/B | `quotes`/`quote_line_items` member-wide (staff read every quote + line price via API). | member-wide SELECT/INSERT/UPDATE. | **FIXED** — founder decided owner/admin-only; migration 20261278000000 scopes to `is_org_admin`; portal/automation/owner lifecycle preserved. **PR #1040.** | rewritten quote-approval-authz (admin-only) + new quotes-admin-only-scope (6); full RLS (1,745) + security (8,598) + quote unit (81) tiers green; owner `/quotes` verified in Chrome |
 
-## P1 found + fixed (D-9). P2s D-8/10/11/12 fixed. D-13 pending a product decision. No P0 found.
+## P1 found + fixed (D-9). P2s D-8/10/11/12/13 all fixed. No P0 found.
 See `docs/qa/CREWFLOW-FINANCIAL-DATA-SECURITY-AUDIT.md` for the full direct-API
 audit, census, and coordinated release pack (#1036/#1037/#1038/#1039).
 D-9 is a within-org staff-over-privilege on financial data (not cross-tenant, so

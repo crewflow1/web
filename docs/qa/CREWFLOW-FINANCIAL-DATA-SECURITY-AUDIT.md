@@ -22,7 +22,7 @@ control or route redirect does not fix a database access vulnerability.**
 | customers | MEMBER-WIDE r/w | **assigned-job SELECT; admin write** (#1038) |
 | price_book_items | MEMBER-WIDE r/w | **admin-only** (#1039) |
 | leads | MEMBER-WIDE r/w | **admin OR assignee SELECT** (#1039) |
-| quotes, quote_line_items | MEMBER-WIDE r/w | **unchanged — product decision pending** (§5) |
+| quotes, quote_line_items | MEMBER-WIDE r/w | **admin-only** (#1040, D-13 decided) |
 | suppliers | MEMBER-WIDE r | unchanged — low-sensitivity (§5) |
 | finances/costs | member insert (by design), admin read | unchanged — intentional (staff log site costs) |
 | jobs, job_documents, job_valuations, purchase_orders | already admin / assigned-job | unchanged |
@@ -57,33 +57,71 @@ works). **No legitimate workflow is broken** — confirmed by the full tiers bel
 - #1036 (UI), #1037/#1038/#1039 (DB) **agree**: the UI hides it, the route
   forbids it, and the DB now denies it — defence-in-depth at all three layers.
 
-## 5. Remaining — product decisions (not yet changed)
+## 5. D-13 resolved + remaining low-sensitivity item
 
-- **quotes / quote_line_items** — still member-wide, so a staff JWT can read
-  every quote + line price. Staff have **no Sales UI** (no quote drafting in the
-  app today), but `quote-approval-authz.test.ts` documents staff quote
-  draft/edit/send as an intended **RLS-layer** capability (only the *approval*
-  transition is trigger-gated). **Decision needed:** is there an active/intended
-  staff quotation workflow?
-  - If **no** → scope quotes to `is_org_admin` (and update that test).
-  - If **yes** → scope to `created_by = auth.uid() OR job_id IN
-    my_assigned_job_ids()` (staff see only their own drafts + assigned-job
-    quotes), set `created_by` on the quote-create action, and reseed the test's
-    quote with `created_by = staff`. Columns exist (`created_by`, `job_id`).
-  I recommend the second (narrowest that preserves a future staff-draft flow).
-  Ready to implement on your call.
-- **suppliers** — member-readable (vendor names/contacts; lower sensitivity) and
-  used by staff global search + fleet (owner). Recommend leaving member-level
-  unless supplier commercial terms are considered sensitive, in which case scope
-  SELECT to `is_org_admin`.
+- **quotes / quote_line_items — DECIDED + FIXED (#1040).** Founder decision
+  (2026-11-02): quotes are **owner/admin only**; ordinary staff may not read/
+  create/edit/delete quotes via UI/PostgREST/APIs/RPCs (a dedicated estimating
+  permission may come later). Migration `20261278000000` scopes SELECT/INSERT/
+  UPDATE to `is_org_admin`. Customer-portal accept/decline (service-role), the
+  owner/admin lifecycle, and quote→invoice/job automation are preserved. The
+  `quote-approval-authz` test was rewritten to the approved model and a dedicated
+  staff/cross-org/revoked negative test added.
+- **suppliers** — member-readable (vendor names/contacts; lower sensitivity),
+  used by staff global search + fleet. **Left member-level** (documented); scope
+  SELECT to `is_org_admin` if supplier commercial terms are later deemed
+  sensitive.
 
-## 6. Release pack (dependency-safe, apply-held)
+## 6. Legitimate staff workflows — confirmed still functional (finding §8)
 
-All migrations are additive, independent (distinct tables), reversible, and
-rewrite no data. Apply in prefix order after founder approval:
-`20261275000000` (billing) → `20261276000000` (customers) → `20261277000000`
-(price_book/leads). #1036 is code-only (no migration). Per-migration apply/
-rollback detail: `docs/release/FINANCIAL-RLS-FIX-APPLY-PLAN.md`.
+- **Site expenses / costs** — the `finances`/costs table stays member-open
+  (staff log authorised site costs) — untouched by this hardening.
+- **Assigned-job access** — staff still see their assigned jobs + that job's
+  customer (customers scoped to `my_assigned_customer_ids()`), site docs, toolbox,
+  material requests, timesheets. Verified by the full integration RLS tier.
+- **Leads assigned to a staff member** remain visible to that assignee (#1039).
+- Owner/admin quote lifecycle verified in Chrome (`/quotes` reachable, create
+  flow intact) + the quote unit tests + quote-approval-authz admin cases.
 
-**Recommend treating #1036/#1037/#1038/#1039 as a coordinated security release
-and a launch blocker.** Nothing is applied to production.
+## 7. Coordinated security release pack (dependency-safe, apply-held)
+
+Migrations are additive, independent (distinct tables/policies), reversible, and
+rewrite **no data**. One code-only PR (#1036) + four migration PRs.
+
+**Apply order (after approval), from `~/Code/web` (linked checkout):**
+| Step | Migration | PR | Tables |
+|---|---|---|---|
+| 1 | `20261275000000` | #1037 | invoices, invoice_payments, payments |
+| 2 | `20261276000000` | #1038 | customers (+ `my_assigned_customer_ids()`) |
+| 3 | `20261277000000` | #1039 | price_book_items, leads |
+| 4 | `20261278000000` | #1040 | quotes, quote_line_items |
+
+(#1030's `20261274000000` push/SMS claim is independent; apply in prefix order if
+also approved. #1036 is code-only.)
+
+Per step: `supabase db query --linked -f <file>` then `supabase migration repair
+--status applied <version> --linked`.
+
+**Backup (pre-apply):** fresh off-platform prod backup + integrity/restore proof
+(per `docs/release/FINANCIAL-RLS-FIX-APPLY-PLAN.md`); `supabase migration list
+--linked` shows no drift.
+
+**Post-apply verification (read-only on prod):**
+```sql
+-- every target table's SELECT policy is admin/assigned-scoped, none member-wide:
+select tablename, policyname, qual from pg_policies
+ where cmd='SELECT'
+   and tablename in ('invoices','invoice_payments','payments','customers',
+                     'price_book_items','leads','quotes','quote_line_items')
+ order by tablename;
+-- helper present:
+select proname from pg_proc where proname='my_assigned_customer_ids';
+```
+Plus a direct non-admin-member JWT SELECT on each table → expect 0 rows (or
+assigned-scope only). `/api/health` OK.
+
+**Rollback:** each is reversible via a forward migration recreating the prior
+member policy (`using (org_id in (select current_org_ids()))`). No data path.
+
+**Recommend treating #1036/#1037/#1038/#1039/#1040 as one coordinated security
+release and a launch blocker.** Nothing is applied to production.
