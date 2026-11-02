@@ -362,10 +362,10 @@ const ALLOWLIST: Record<string, string> = {
     "not a read: `.from('notifications').insert(payload).select(ALL_COLS)` — INSERT…RETURNING, bounded by the inserted payload, cannot truncate a read. (Line moved to 144 as the R4 push/notification-channel branch shifted surrounding lines; 144→159 when the uuidOrNull helper block landed; 159→164 when the HQ email-routing imports landed above it; 164→169 when the staff-privacy eligibility import + conditional audience_scope spreads landed — pure shifts, same INSERT…RETURNING.)",
   // (push 533→553, sms 524→543 when the staff-privacy eligibility imports landed
   // atop both channel files — FEATURE 3; pure shifts, same bounded drain reads.)
-  "lib/notifications/push.ts:553":
-    "bounded: `.from('notifications').select(...).in('id', ids)` where ids is the batch drawn from the just-claimed push_deliveries drain (≤ PUSH_DRAIN_BATCH_SIZE < 1000) — an id-keyed hydrate of an already-bounded set, not a completeness-sensitive scan. Same class as cis-statements.ts:169.",
-  "lib/notifications/sms.ts:543":
-    "bounded: `.from('notifications').select(...).in('id', ids)` where ids is the batch drawn from the just-claimed sms_deliveries drain (≤ SMS_DRAIN_BATCH_SIZE=50 < 1000) — an id-keyed hydrate of an already-bounded set, not a completeness-sensitive scan. Same class as lib/notifications/push.ts:553.",
+  "lib/notifications/push.ts:552":
+    "bounded: `.from('notifications').select(...).in('id', ids)` where ids is the batch drawn from the just-claimed push_deliveries drain (≤ PUSH_DRAIN_BATCH_SIZE < 1000) — an id-keyed hydrate of an already-bounded set, not a completeness-sensitive scan. Same class as cis-statements.ts:169. (Line moved :553→:552 when the drain select became the push_claim_deliveries RPC call.)",
+  "lib/notifications/sms.ts:544":
+    "bounded: `.from('notifications').select(...).in('id', ids)` where ids is the batch drawn from the just-claimed sms_deliveries drain (≤ SMS_DRAIN_BATCH_SIZE=50 < 1000) — an id-keyed hydrate of an already-bounded set, not a completeness-sensitive scan. Same class as lib/notifications/push.ts:553. (Line moved :543→:544 when the drain select became the sms_claim_deliveries RPC call.)",
 
   // ── Job-billing schedule / retention wave — genuinely-bounded SINGLE-SCOPE
   //    reads surfaced once job_billing_plans/job_billing_stages/retention_releases
@@ -729,6 +729,15 @@ const RPC_ALLOWLIST: Record<string, string> = {
   // and correctly so.
   "server/services/ai-cost-snapshot.ts:493":
     "bounded: ai_invocations_month_by_feature groups by the CLOSED feature registry (tens of rows), never near the 1000 cap. (Moved 475→493 when per-org effective-ceiling overrides were threaded into buildAiCostSnapshot in 20261147000000.)",
+  // Push/SMS drain claim RPCs (20261274000000): a `RETURNS TABLE` that claims at
+  // most `p_limit` rows (LIMIT greatest(p_limit,1)) under FOR UPDATE ... SKIP
+  // LOCKED. The drains call with p_limit = PUSH/SMS_DRAIN_BATCH_SIZE = 50, far
+  // below the 1000 cap; a self-draining queue re-ticks for the rest. Same class
+  // as the former `.from(...).select()...limit(BATCH)` drain they replaced.
+  "lib/notifications/push.ts:380":
+    "bounded: push_claim_deliveries claims ≤ p_limit (PUSH_DRAIN_BATCH_SIZE=50) rows per call (SQL LIMIT greatest(p_limit,1)), far below 1000; self-draining queue claim, not a completeness scan.",
+  "lib/notifications/sms.ts:386":
+    "bounded: sms_claim_deliveries claims ≤ p_limit (SMS_DRAIN_BATCH_SIZE=50) rows per call (SQL LIMIT greatest(p_limit,1)), far below 1000; self-draining queue claim, not a completeness scan.",
 };
 
 // `.range(` / `fetchAllRows` anywhere around the call = it IS paged (the fix).
@@ -1204,15 +1213,13 @@ const COVERAGE_REVIEWED: Record<string, string> = {
   // read (.eq('status','queued').lte('scheduled_for',now) ordered scheduled_for
   // ASC, .limit(PUSH_DRAIN_BATCH_SIZE)) — a sent row leaves 'queued'.
   push_subscriptions: "PAGED: fetchAllRows, org-pinned .in('org_id', orgIds) (push send path)",
-  push_deliveries:
-    "BOUNDED DRAIN: .eq('status','queued').lte('scheduled_for', now) ordered scheduled_for ASC, .limit(PUSH_DRAIN_BATCH_SIZE); self-draining. Service-role send queue.",
-  // MP Wave W4 — SMS notification channel. sms_deliveries drain mirrors
-  // push_deliveries exactly: a self-draining bounded queue read
-  // (.eq('status','queued').lte('scheduled_for', now) ordered scheduled_for ASC,
-  // .limit(SMS_DRAIN_BATCH_SIZE)); a sent/skipped row leaves 'queued'. The other
-  // reads are settle/cleanup writes by id/status, never completeness scans.
-  sms_deliveries:
-    "BOUNDED DRAIN: .eq('status','queued').lte('scheduled_for', now) ordered scheduled_for ASC, .limit(SMS_DRAIN_BATCH_SIZE); self-draining. Service-role send queue.",
+  // push_deliveries / sms_deliveries no longer carry a `.from().select()`
+  // set-read: the bounded drain claim is now the push_claim_deliveries /
+  // sms_claim_deliveries RPC (20261274000000), allowlisted in RPC_ALLOWLIST.
+  // The remaining `.from()` sites are upsert (enqueue) / update (settle+retry) /
+  // delete (cleanup), all by id/status — none is a completeness scan. With no
+  // set-read left, these entries would be stale COVERAGE_REVIEWED rows, so they
+  // are removed (the RPC claim is bounded by p_limit; see RPC_ALLOWLIST).
   // MP Wave R4 — WhatsApp assistant pending-review queue (assistant-review.ts):
   // fetchAllRows-paged, org-pinned, .eq('status','pending_review').
   whatsapp_assistant_actions: "PAGED: fetchAllRows, org-pinned pending-review queue",
