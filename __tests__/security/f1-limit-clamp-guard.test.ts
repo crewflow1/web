@@ -21,10 +21,29 @@ import { createHash } from "node:crypto";
  *     share an anchor → FAIL (never silently widen coverage).
  */
 function normaliseReadText(s: string): string {
-  // Strip ALL whitespace so the anchor is invariant to line shifts AND to any
-  // reformatting (prettier reflow, re-indentation, joining/splitting the chain).
-  // The table name is a separate key component, so merged tokens never cross reads.
-  return s.replace(/\s+/g, "");
+  // Strip STRUCTURAL whitespace (so the anchor is invariant to line shifts and
+  // reformatting) but PRESERVE whitespace INSIDE string / template literals, which
+  // is semantically meaningful: `.eq("name","a b")` and `.eq("name","ab")` are
+  // different queries and must NOT collapse to the same anchor. We scan char by
+  // char, copying literal interiors verbatim (honouring backslash escapes) and
+  // dropping whitespace only in code position. Template-literal interiors
+  // (including any `${…}`) are copied verbatim too — that only ever makes anchors
+  // MORE distinct, never falsely merges two different reads.
+  let out = "";
+  let quote: string | null = null;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]!;
+    if (quote) {
+      out += c;
+      if (c === "\\") { out += s[i + 1] ?? ""; i++; continue; }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") { quote = c; out += c; continue; }
+    if (/\s/.test(c)) continue; // structural whitespace — drop
+    out += c;
+  }
+  return out;
 }
 function readAnchorKey(rel: string, table: string, between: string, arg: string): string {
   const sig = `${normaliseReadText(between)}|.limit(${normaliseReadText(arg)})`;
@@ -195,71 +214,71 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
 // EXACTLY ONE current producer read, else fail-closed).
   "server/services/hq-lead-sourcing-runner.ts#hq_sales_companies#b443a865ce89":
     "id-batch dedupe probe: which of THIS RUN's candidate company numbers already exist — .in('companies_house_number', numbers) where numbers is the sourcing batch (SOURCING_BATCH_MAX=10 per run), so the set is structurally bounded by the IN-list, never a scan; the .limit(1000) is the honest-bound clamp. Completeness holds per batch: an unknown number inserts via the sanctioned createCompany door, a known one skips.",
-  "server/services/notification-preferences-service.ts#notifications#90ac8d6b0564":
+  "server/services/notification-preferences-service.ts#notifications#1cd629abbd6f":
     "bounded batch: ONE user's digest-eligible notifications (.eq('org_id') for that user, category-filtered) capped at 200 and ordered created_at ASC; the digest cursor advances only to the last INCLUDED row, so overflow rolls to the next pass rather than being dropped — a self-draining per-pass batch, not a completeness read.",
   "server/services/sites.ts#fleet_vehicles#26e36440bdd7":
     "bounded: per-org fleet_vehicles count sample (.eq(org_id)) — an org's fleet is tens of vehicles. (Moved 159→187 when listSitesForOrg was split into a bounded + paged (fetchAllRows) picker read for the F-1 picker-completion wave.)",
   "server/services/van-stock.ts#fleet_vehicles#d8498f361324":
     "bounded: per-org fleet_vehicles picker (.eq(org_id)) — an org's fleet is tens of vehicles",
-  "app/(app)/assets/[id]/page.tsx#jobs#e69dbd6326a2":
+  "app/(app)/assets/[id]/page.tsx#jobs#55a31200fb52":
     "bounded: recent-200 jobs referencing this asset — detail-page display list, not a write-back picker",
-  "app/(app)/dashboard/page.tsx#leads#616ca6cd47d9":
+  "app/(app)/dashboard/page.tsx#leads#4f9b44ba7bb4":
     "bounded: dashboard 'recent 5 leads' widget — an intentional top-5 display. (Moved to 230 in the security closeout when the payroll-tile read switched to loadOrgHourlyPay + a comment was added above; same intentional top-5 semantics inside the merged `coreWave` Promise.all.) Moved 230→231 in the final-roadmap wave (L4/L7 import shifts) — pure line shift, same read. Moved 231→262 in Workstream A2 (quotes fetch-once-share added the `quotesReadPromise`/`sharedQuoteRows` block above `coreWave`) — pure line shift, SAME bounded top-5 display read. Moved 262→288 in Workstream A3 (invoices fetch-once-share added the `invoicesReadPromise`/`sharedInvoiceRows` block above `coreWave`) — pure line shift, SAME bounded top-5 display read. Moved 288→289 in the Phase-1 dashboard-profitability fix (dropped the 6-month `finances` `.gte` bound + added an explanatory comment above the finances read) — pure line shift, SAME bounded top-5 display read; the cap is still correct because this is a recent-leads display sample, not a set fed to any picker or aggregation.",
-  "app/(app)/leads/[id]/page.tsx#quotes#097c1b05de1f":
+  "app/(app)/leads/[id]/page.tsx#quotes#d5e3f5c81918":
     "bounded: this lead's related quotes — top-5 display on the lead detail page. (Line moved 132→136 when the lead→customer conversion imports were added; then 136→142 when the lead-score imports + panel were added above this read; reason unchanged.)",
-  "app/(app)/me/page.tsx#jobs#a609bd372487":
+  "app/(app)/me/page.tsx#jobs#93b2f95d6f52":
     "bounded: 'my recent 20 jobs' widget on the profile page — a top-N display. (Line moved to 145 in the security closeout when the own-pay read was split out to staff_compensation above this read; reason unchanged.)",
-  "server/services/fleet-snapshot.ts#telematics_readings#3dc0d0fcac72":
+  "server/services/fleet-snapshot.ts#telematics_readings#36c95fa1ef88":
     "bounded: last-50 telematics readings for a vehicle track display (recent-N sample)",
-  "server/services/hq-customer-snapshot.ts#invoice_payments#0f5485c7ef8c":
+  "server/services/hq-customer-snapshot.ts#invoice_payments#a382eff0eca5":
     "bounded: last-10 payments for an HQ customer snapshot display (top-N). (Moved 215→216 when a fetchAllRows import was added for the .from(as never) cast-form wave; 216→277 when the L11 member-roster read — itself PAGED via fetchAllRows — and the CustomerMember type were added above.)",
-  "app/(app)/toolbox/_form-options.ts#jobs#66ce61078275":
+  "app/(app)/toolbox/_form-options.ts#jobs#35be1991d5b3":
     "bounded: recent-200 jobs sample for the toolbox-talk picker; the EDIT form (_talk-form.tsx) preserve-injects the saved job_id so an out-of-sample link can never be dropped",
-  "app/(app)/toolbox/_form-options.ts#jobs#9ff35f441fd6":
+  "app/(app)/toolbox/_form-options.ts#jobs#d5a83111e739":
     "bounded: recent-200 jobs sample for the toolbox-talk picker; the EDIT form (_talk-form.tsx) preserve-injects the saved job_id so an out-of-sample link can never be dropped",
-  "app/(app)/toolbox/_form-options.ts#jobs#d1ed70881dca":
+  "app/(app)/toolbox/_form-options.ts#jobs#32417ceca973":
     "bounded: recent-200 jobs sample for the toolbox-talk picker; the EDIT form (_talk-form.tsx) preserve-injects the saved job_id so an out-of-sample link can never be dropped",
-  "server/services/rota.ts#jobs#0251c71035a5":
+  "server/services/rota.ts#jobs#da6cbccea4fe":
     "bounded: recent-50 jobs for the assign-shift picker; assigning is a create action, not an edit re-render of a saved reference",
-  "app/(app)/invoices/[id]/page.tsx#jobs#93a6f2db924b":
+  "app/(app)/invoices/[id]/page.tsx#jobs#d444a415d358":
     "bounded: recent-50 link-to-job picker; a controlled per-control select whose write fires only on explicit onChange (no shared-form save), and the linked job is preserve-injected in page.tsx so it always displays",
-  "app/(app)/quotes/actions.ts#quote_line_items#e05357e3261a":
+  "app/(app)/quotes/actions.ts#quote_line_items#c69af5fcfc18":
     "bounded: quote→job carry (fix 4) copies the first 50 line-item DESCRIPTIONS into the job's notes as a human scope summary — a display sample, never financial truth (amounts/items stay on the quote, linked via quotes.job_id + the auto-invoice). A 50-line cap on a notes blurb is deliberate; paging would only grow an unreadable note.",
-  "app/api/search/route.ts#jobs#e4368730637c":
+  "app/api/search/route.ts#jobs#f5ab2bc2e800":
     "bounded: search jobs — .limit(CHAIN_LIMIT=50) DISPLAY hits, org-pinned; ids chained into ≤50 .in() lookups, NOT counted/summed",
-  "app/api/search/route.ts#quotes#74ad7ba51f5c":
+  "app/api/search/route.ts#quotes#f12cb00b7876":
     "bounded: search quotes — .limit(CHAIN_LIMIT=50) DISPLAY hits, org-pinned; ids chained into ≤50 .in() lookups, NOT counted/summed",
-  "app/api/search/route.ts#leads#763854610dc1":
+  "app/api/search/route.ts#leads#ed1145d62546":
     "bounded: search leads — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
-  "app/api/search/route.ts#invoices#f9a9701c13ee":
+  "app/api/search/route.ts#invoices#895586934f79":
     "bounded: search invoices — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
-  "app/api/search/route.ts#purchase_orders#999f67dadab9":
+  "app/api/search/route.ts#purchase_orders#f2bff006c3fa":
     "bounded: search purchase_orders — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
-  "app/api/search/route.ts#site_reports#6b8018a93824":
+  "app/api/search/route.ts#site_reports#2e45b7b12b72":
     "bounded: search site_reports — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
-  "app/api/search/route.ts#support_tickets#298b262f8322":
+  "app/api/search/route.ts#support_tickets#552a41bdbdb5":
     "bounded: search support_tickets — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
-  "app/api/search/route.ts#fleet_vehicles#a8d44276fe48":
+  "app/api/search/route.ts#fleet_vehicles#7918dc518780":
     "bounded: search fleet_vehicles — .or(asset_id.in.(≤50 matched asset ids)) profile lookup capped at .limit(CHAIN_LIMIT=50); decides vehicle-vs-asset hit rendering for the ≤50 matched assets, NOT counted/summed",
-  "app/api/search/route.ts#finances#fcd6e874d7dc":
+  "app/api/search/route.ts#finances#3ce126b6e0dc":
     "bounded: search finances — .limit(PER_TYPE=8) DISPLAY hits, org-pinned; selects NO money columns (category/notes/date only), NOT fed to any count/sum",
-  "app/(app)/documents/page.tsx#jobs#81aa841febca":
+  "app/(app)/documents/page.tsx#jobs#9d001d9d40e5":
     "bounded: /documents job-name lookup — CHUNKED .in('id', idsChunk) capped at .limit(JOB_IN_CHUNK=500) per chunk (jobs.id unique ⇒ ≤500 rows); a display-label lookup over a fully-read doc set, NOT counted/summed",
-  "app/(app)/purchase-orders/_receiving-data.ts#goods_received_notes#2ad644de23fe":
+  "app/(app)/purchase-orders/_receiving-data.ts#goods_received_notes#52493c003e96":
     "bounded: every goods-received note for ONE purchase order (.eq('purchase_order_id')) — a PO has a handful of deliveries, top-200",
-  "server/services/stock.ts#stock_movements#929640182bc4":
+  "server/services/stock.ts#stock_movements#d9164f06057c":
     "bounded: receipt movements for a specific GRN's line-id set (.in('grn_line_id', grnLineIds)) — request-sized lookup; the balance-fold read (listStockMovements) is separately paged via fetchAllRows. (Moved 272→303 when the stock-COGS wave added the loadStockCogsCostRows helper + import above this read; 303→355 when the R8 profit-rollup wave added the StockRpcClient type + loadStockCogsRollup; then 355→389 when the R5 stock-masking read-split added listStockMovementsWithCost above this read — a pure line shift, the cap is unchanged.)",
-  "app/(app)/layout.tsx#notifications#b533a5b78d5d":
+  "app/(app)/layout.tsx#notifications#255dabd1fa75":
     "bounded: the top nav notification bell — recent-30 notifications for ONE user in the active org (.eq('org_id').eq('user_id').limit(30)), a per-user top-N display. (Moved 32→34 when the offline read-cache + photo-outbox client components were imported into the app layout; moved 34→38 when the i18n-wave request helper + its comment replaced the bare requireOrgContext call.)",
-  "app/customer-portal/_future-work.ts#leads#7e0d7b711195":
+  "app/customer-portal/_future-work.ts#leads#a48fe634ce53":
     "bounded: ONE customer's own portal future-work requests (.eq('org_id').eq('customer_id').eq('source','portal').limit(50)) — token-scoped to a single customer, a recent-50 display",
-  "server/services/hq-health-deep-dive.ts#health_score_events#ccebe16fc243":
+  "server/services/hq-health-deep-dive.ts#health_score_events#2e528945cfca":
     "bounded: ONE org's health-score timeline (.eq('org_id').limit(Math.min(limit,1000))) — listHealthHistoryForOrg, a per-org recent-N display (caller passes 50), not a cross-tenant set",
-  "app/api/search/route.ts#memberships#0609dee98125":
+  "app/api/search/route.ts#memberships#b153908eb219":
     "bounded: search members — .limit(40) command-palette DISPLAY hits, org-pinned (.eq('org_id')); a top-N result list, NOT fed to any count/sum. Same class as the other /api/search reads.",
-  "app/customer-portal/_photos.ts#site_reports#dbe70f4b2794":
+  "app/customer-portal/_photos.ts#site_reports#8823e7b451a1":
     "bounded: recent-50 published reports for the portal PHOTO GALLERY (.eq('customer_id').eq('org_id')...order('portal_published_at' desc).limit(50)), further capped at MAX_PORTAL_PHOTOS extracted photos — a display gallery, NOT the documents-library count/ZIP (those use listPortalReports, now PAGED)",
-  "server/services/receptionist-operators.ts#memberships#a64c4529ce21":
+  "server/services/receptionist-operators.ts#memberships#e1480d87455e":
     "bounded: ONE org's operators picker (.eq('org_id').limit(500)) — reassignment target list; bounded by the org's headcount (tens), never near the cap",
   "server/services/hq-sales.ts#hq_sales_companies#81d9980d1d46":
     "bounded: recent-8 sales companies (.order('created_at' desc).limit(8)) — a top-N DISPLAY facet on the HQ sales dashboard, NOT summed/counted (the estate FACET reads that ARE summed — pipelineValue/aggregateSalesFacets — were PAGED in the C66 de-vacuum). (Line moved 995→1006 when the two FacetRow facet reads above it were paged.)",
@@ -1466,5 +1485,26 @@ describe("F-1 old(line) vs new(anchor) parity on shared fixtures", () => {
       offenders.push(...boundaryOffendersIn_LINE_ORACLE(rel, readFileSync(file, "utf8"), lineAllow));
     }
     expect(offenders, "line-oracle (mirrored from anchors) must also be clean").toEqual([]);
+  });
+});
+
+describe("F-1 content-anchor: whitespace INSIDE string literals is significant (point-4 fix)", () => {
+  const base = `.from("customers").select("id").eq("name",`;
+  it("distinguishes two reads that differ only by whitespace inside a string value", () => {
+    // Structural whitespace is stripped (invariance), but in-string whitespace is
+    // meaningful: these are DIFFERENT queries and must get DIFFERENT anchors.
+    const withSpace = readAnchorKey("f.ts", "customers", `${base} "a b")`, "50");
+    const noSpace = readAnchorKey("f.ts", "customers", `${base} "ab")`, "50");
+    expect(withSpace).not.toBe(noSpace);
+  });
+  it("is still invariant to structural whitespace around the SAME string value", () => {
+    const tight = readAnchorKey("f.ts", "customers", `.from("customers").select("id").eq("name","a b")`, "50");
+    const loose = readAnchorKey("f.ts", "customers", `.from("customers")\n  .select("id")\n  .eq( "name" , "a b" )`, "50");
+    expect(loose).toBe(tight);
+  });
+  it("preserves whitespace inside a template literal too (never a false merge)", () => {
+    const a = readAnchorKey("f.ts", "jobs", '.from("jobs").select(`id, ${col}`)', "50");
+    const b = readAnchorKey("f.ts", "jobs", '.from("jobs").select(`id,${col}`)', "50");
+    expect(a).not.toBe(b);
   });
 });
