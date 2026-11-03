@@ -196,6 +196,9 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       "app/(app)/quotes/layout.tsx",
       "app/(app)/quotes/page.tsx",
       "app/(app)/quotes/actions.ts",
+      // #1035 extracted the variation/EoT management actions here; same reviewed
+      // R4-quote capability surface as actions.ts (requireCapabilityFor-gated).
+      "app/(app)/quotes/variation-actions.ts",
       "app/api/quotes/[id]/pdf/route.ts",
       "app/api/quotes/[id]/send/route.ts",
       // R4 — customers module. Layout + list page gate customers:view; 5 actions
