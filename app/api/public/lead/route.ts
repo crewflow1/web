@@ -94,7 +94,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .select("id, contact_email, contact_phone")
       .eq("org_id", org.id)
       .eq("source", "web")
-      .gte("created_at", sinceIso);
+      .gte("created_at", sinceIso)
+      // Bounded dedup sample: the most recent web leads in the 5-min window.
+      // A genuine double-submit lands within seconds; the public form is IP
+      // rate-limited (5 / 10 min), so this cap is never reached in practice and
+      // dedup-on-sample is the intended behaviour (keeps the read honest for F-1).
+      .order("created_at", { ascending: false })
+      .limit(200);
     const dup = (recent.data ?? []).some(
       (r: { contact_email: string | null; contact_phone: string | null }) =>
         (email && norm(r.contact_email) === norm(email)) ||

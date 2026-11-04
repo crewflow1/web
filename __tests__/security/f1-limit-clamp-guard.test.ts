@@ -238,6 +238,8 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
     "bounded: recent-200 jobs sample for the toolbox-talk picker; the EDIT form (_talk-form.tsx) preserve-injects the saved job_id so an out-of-sample link can never be dropped",
   "server/services/rota.ts:81":
     "bounded: recent-50 jobs for the assign-shift picker; assigning is a create action, not an edit re-render of a saved reference",
+  "app/api/public/lead/route.ts:93":
+    "bounded dedup sample: the most-recent 200 web leads in a 5-minute window, used ONLY to absorb a double-submit of the SAME public enquiry. Not a picker or aggregate — no saved reference is re-rendered off it, and a genuine double-submit arrives within seconds. The public form is IP rate-limited (5 / 10 min), so the cap is never reached; dedup-on-sample is the intended behaviour. The unique write itself is the source of truth, not this read.",
 
   // In-page link picker with preserve-option + explicit onChange write.
   "app/(app)/invoices/[id]/page.tsx:127":
