@@ -25,6 +25,8 @@ import { JobSnagsSection } from "./_job-snags";
 import { VariationRequestPanel } from "./_variation-request-panel";
 import { JobMaterialsSection } from "./_job-materials";
 import { SiteTimelineSection } from "./_site-timeline";
+import { SiteManagerPanel } from "./_site-manager";
+import { roleCanViewPrivate } from "@/server/auth/financial-visibility";
 import { JobDocumentsPanel } from "./_job-documents";
 import { JobBlueprintsPanel } from "./_blueprints";
 import { JobAssignmentsSection } from "./_assignments";
@@ -119,8 +121,7 @@ export default async function EditJobPage({
   // Private job documents are owner/admin only. We compute this here and pass
   // it down so the panel can gate the private-area FETCH (not just the render),
   // keeping private rows out of a staff member's RSC payload.
-  const canViewPrivate =
-    ctx.membership.role === "owner" || ctx.membership.role === "admin";
+  const canViewPrivate = roleCanViewPrivate(ctx.membership.role);
   // The site's calendar day (Europe/London), computed once so every panel on
   // this render agrees on what "overdue" means.
   const todayIso = formatDayKeyUK(new Date());
@@ -1052,6 +1053,8 @@ export default async function EditJobPage({
       <AttachmentsPanel targetTable="jobs" targetId={job.id} />
 
       <SiteTimelineSection jobId={job.id} orgId={ctx.membership.org_id} />
+
+      <SiteManagerPanel jobId={job.id} />
         </div>
       </Suspense>
 
