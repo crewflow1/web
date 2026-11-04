@@ -236,8 +236,8 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
   // paged by the same class fix in #721; its stale key was likewise dropped.)
   "app/(app)/toolbox/_form-options.ts:41":
     "bounded: recent-200 jobs sample for the toolbox-talk picker; the EDIT form (_talk-form.tsx) preserve-injects the saved job_id so an out-of-sample link can never be dropped",
-  "server/services/rota.ts:81":
-    "bounded: recent-50 jobs for the assign-shift picker; assigning is a create action, not an edit re-render of a saved reference",
+  "server/services/rota.ts:108":
+    "bounded: recent-50 jobs for the assign-shift picker; assigning is a create action, not an edit re-render of a saved reference. (Line 81→108 when auto-rota persistence added insertRotaEntries + the persist helpers above this read; same picker, unchanged bound.)",
 
   // In-page link picker with preserve-option + explicit onChange write.
   "app/(app)/invoices/[id]/page.tsx:127":
