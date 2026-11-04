@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
 import { parsePublicLead } from "@/lib/public-lead/schema";
+import { emitNotifications } from "@/server/services/notifications-service";
 
 /**
  * Public per-company lead capture — POST /api/public/lead.
@@ -130,6 +131,43 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       { ok: false, error: "We couldn't submit your enquiry. Please try again." },
       { status: 500 },
     );
+  }
+
+  // Reliable owner notification. Drop the enquiry onto the org's notification
+  // bus (in-app bell + email / push / SMS, each per the admin's own channel
+  // preference, all best-effort inside emitNotifications). Omitting
+  // audience_scope keeps the DB default 'admins' — a lead is commercial, so
+  // only owners/admins are alerted, never the whole crew.
+  //
+  // NO DUPLICATE ALERTS BY CONSTRUCTION: this runs ONLY after a genuine new
+  // row is inserted. The dedupe gate above returns early for a same-contact
+  // re-submit within 5 min (and the honeypot path returns before any insert),
+  // so one enquiry → at most one lead row → exactly one notification.
+  const leadId = String((ins.data as { id: string }).id);
+  try {
+    await emitNotifications([
+      {
+        org_id: org.id,
+        user_id: null,
+        audience: "customer",
+        type: "lead.web_enquiry",
+        category: "system",
+        priority: "medium",
+        title: `New website enquiry — ${d.name}`,
+        body: [d.service || null, d.postcode || null, d.message]
+          .filter(Boolean)
+          .join(" · ")
+          .slice(0, 500),
+        action_url: `/leads/${leadId}`,
+        source_module: "lead",
+        source_id: leadId,
+        metadata: { source: "web" },
+      },
+    ]);
+  } catch (e) {
+    // emitNotifications is itself best-effort; this guard only covers a
+    // synchronous build error. A failed alert must never fail the enquiry.
+    console.error("[public-lead] owner notification failed", e);
   }
 
   return NextResponse.json({ ok: true });

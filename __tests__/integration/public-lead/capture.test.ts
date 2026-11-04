@@ -106,4 +106,69 @@ describeIntegration("public lead capture · POST /api/public/lead", () => {
     expect((await res2.json()).deduped).toBe(true);
     expect((await leadsFor(orgB)).length).toBe(mid); // no second row
   });
+
+  // ── Owner notification (the journey #1046 left open) ──────────────────────
+  async function webLeadNotesFor(orgId: string): Promise<Row[]> {
+    const r = await db(serviceClient())
+      .from("notifications")
+      .select("id, org_id, type, audience, audience_scope, source_module, source_id, action_url, title")
+      .eq("org_id", orgId)
+      .eq("type", "lead.web_enquiry");
+    return (r.data ?? []) as Row[];
+  }
+  async function freshOrg(tag: string): Promise<string> {
+    const id = String(
+      (await svc.from("organizations").insert({ name: `Lead Co ${tag}`, slug: `${TOKEN}-${tag}` }).select("id").single()).data?.id ?? "",
+    );
+    if (!id) throw new Error("org seed failed");
+    return id;
+  }
+  async function dropOrg(id: string): Promise<void> {
+    await svc.from("notifications").delete().eq("org_id", id);
+    await svc.from("leads").delete().eq("org_id", id);
+    await svc.from("organizations").delete().eq("id", id);
+  }
+
+  it("a genuine web lead emits exactly ONE owner notification, pointed at that lead", async () => {
+    const org = await freshOrg("n1");
+    try {
+      const res = await post({ ...base, orgSlug: `${TOKEN}-n1`, email: "notify@prospect.example" });
+      expect(res.status).toBe(200);
+      const notes = await webLeadNotesFor(org);
+      expect(notes.length).toBe(1);
+      const n = notes[0]!;
+      // Commercial lead → tenant 'customer' audience, admins-only scope (never the whole crew).
+      expect(n.audience).toBe("customer");
+      expect(n.source_module).toBe("lead");
+      const leads = await leadsFor(org);
+      expect(n.source_id).toBe(leads[0]!.id);
+      expect(String(n.action_url)).toBe(`/leads/${leads[0]!.id}`);
+    } finally {
+      await dropOrg(org);
+    }
+  });
+
+  it("honeypot spam emits NO owner notification", async () => {
+    const org = await freshOrg("n2");
+    try {
+      await post({ ...base, orgSlug: `${TOKEN}-n2`, email: "bot@spam.example", website: "http://spam" });
+      expect((await webLeadNotesFor(org)).length).toBe(0);
+    } finally {
+      await dropOrg(org);
+    }
+  });
+
+  it("a deduped double-submit does NOT emit a second notification (no alert spam)", async () => {
+    const org = await freshOrg("n3");
+    try {
+      const email = "dupnote@prospect.example";
+      await post({ ...base, orgSlug: `${TOKEN}-n3`, email });
+      expect((await webLeadNotesFor(org)).length).toBe(1);
+      const res2 = await post({ ...base, orgSlug: `${TOKEN}-n3`, email });
+      expect((await res2.json()).deduped).toBe(true);
+      expect((await webLeadNotesFor(org)).length).toBe(1); // still one — no spam
+    } finally {
+      await dropOrg(org);
+    }
+  });
 });
