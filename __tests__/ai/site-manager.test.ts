@@ -22,7 +22,7 @@ const canned = {
   financialsDenied: { facts: { authorised: false }, sources: [], unauthorised: true },
 };
 
-let financialsResult = canned.financialsOwner;
+let financialsResult: ToolResult = canned.financialsOwner;
 
 vi.mock("@/server/services/site-manager/tools", () => ({
   toolListMyJobs: vi.fn(async () => canned.listMyJobs),
@@ -33,11 +33,11 @@ vi.mock("@/server/services/site-manager/tools", () => ({
   toolJobFinancials: vi.fn(async () => financialsResult),
 }));
 
-const isTierActivated = vi.fn(() => false);
-vi.mock("@/lib/ai/governor/readiness", () => ({ isTierActivated: (...a: unknown[]) => isTierActivated(...(a as [never])) }));
+const isTierActivated = vi.fn((_tier?: unknown): boolean => false);
+vi.mock("@/lib/ai/governor/readiness", () => ({ isTierActivated: (tier: unknown) => isTierActivated(tier) }));
 
-const getTextProvider = vi.fn(() => null as unknown);
-vi.mock("@/lib/ai/text", () => ({ getTextProvider: (...a: unknown[]) => getTextProvider(...(a as [never])) }));
+const getTextProvider = vi.fn((_tier?: unknown): unknown => null);
+vi.mock("@/lib/ai/text", () => ({ getTextProvider: (tier: unknown) => getTextProvider(tier) }));
 
 const invokeWithGovernor = vi.fn();
 vi.mock("@/lib/ai/governor", () => ({ invokeWithGovernor: (...a: unknown[]) => invokeWithGovernor(...(a as [never])) }));
@@ -45,6 +45,7 @@ vi.mock("@/lib/ai/governor", () => ({ invokeWithGovernor: (...a: unknown[]) => i
 import { classifyIntent, answerSiteManager } from "@/server/services/site-manager/orchestrator";
 import { roleCanViewPrivate, canSeeCommercial } from "@/server/auth/financial-visibility";
 import { AI_FEATURES } from "@/lib/ai/governor/registry";
+import type { ToolResult } from "@/server/services/site-manager/tools";
 
 const ownerCtx = { org: { id: "org-1" }, membership: { role: "owner" } };
 const staffCtx = { org: { id: "org-1" }, membership: { role: "staff" } };

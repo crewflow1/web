@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { loadJobForOrg } from "@/lib/jobs/load";
 import { loadJobDiaryPanel, loadJobSnagsPanel } from "@/server/services/job-site-hub";
 import { loadJobMaterialsPanel } from "@/server/services/material-requests";
@@ -52,7 +53,10 @@ export async function toolListMyJobs(
     .order("created_at", { ascending: false })
     .limit(limit);
   if (args.status) q = q.eq("status", args.status);
-  const { data } = await q;
+  const { data, error } = await q;
+  // Fail loud: a transient query error must never masquerade as "you have no
+  // jobs" (that would make the AI confidently answer from an empty set).
+  if (error) throw readFailure("site-manager: list my jobs", error);
   const jobs = (data ?? []) as Array<{ id: string; status: string; scheduled_date: string | null; customer: { name: string | null } | null }>;
   return {
     facts: {
