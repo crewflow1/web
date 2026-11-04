@@ -117,6 +117,10 @@ const ALLOWLIST: ReadonlyMap<string, string> = new Map<string, string>([
     "marketplace_submit_listing",
     "membership-guarded: requires the caller be an admin of p_org_id (is_org_admin) AND that p_org_id own the listing (v_owner = p_org_id); a non-admin or cross-org caller is refused. Generic exception (not 42501), so misses the canonical auto-pass.",
   ],
+  [
+    "tenant_search_semantic",
+    "membership-guarded tenant search (20261282): the FIRST statement checks p_org_id = any(current_org_ids()) and RETURNS '[]' for a non-member — fail-closed, disclosing nothing (it does not raise, so it misses the 42501 auto-pass). Inside, every row is further filtered to p_org_id AND (job_id is null or job_id in my_assigned_job_ids()) AND a positive visibility allowlist, and the embedding is never returned. anon has no auth.uid() → current_org_ids() empty → '[]' (and anon EXECUTE is revoked). Verified by the function body + __tests__/integration/rls/tenant-search-semantic.test.ts (cross-tenant / unassigned-job / management / private all fail closed).",
+  ],
 
   // NOTE: certify_valuation and generate_valuation_invoice were formerly
   // allowlisted here (they derived org_id from the valuation row and gated on
