@@ -156,7 +156,9 @@ export default async function RotaPage({ searchParams }: { searchParams: SP }) {
       ? "Shift added."
       : sp.saved === "removed"
         ? "Shift removed."
-        : null
+        : sp.saved === "generated"
+          ? "Generated rota saved."
+          : null
     : null;
 
   return (
