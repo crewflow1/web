@@ -25,6 +25,9 @@
 // ---------------------------------------------------------------------------
 
 export const ANALYTICS_EVENTS = {
+  // Marketing funnel (public site, pre-signup — SEO → demo attribution)
+  DEMO_CTA_CLICKED: "demo_cta_clicked",
+  DEMO_REQUESTED: "demo_requested",
   // Acquisition
   SIGNUP_STARTED: "signup_started",
   SIGNUP_COMPLETED: "signup_completed",
