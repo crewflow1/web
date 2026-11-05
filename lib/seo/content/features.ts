@@ -617,12 +617,14 @@ export const FEATURES: FeaturePage[] = [
       "construction CIS software",
       "CIS deductions software",
       "CIS payroll software",
+      "construction industry payroll software",
+      "CIS and payroll software",
     ],
     name: "CIS",
     navLabel: "CIS",
     title: "CIS Software for Construction",
     metaDescription:
-      "CIS software that works out subcontractor deductions, tracks verification, and produces monthly CIS returns and payment & deduction statements. Book a demo.",
+      "CIS software that handles subcontractor deductions, verification, monthly CIS returns and statements, alongside PAYE payroll for your own team, in one system. Book a demo.",
     eyebrow: "CIS",
     h1: "CIS software that handles the deductions, statements and returns for you",
     intro:
@@ -655,6 +657,15 @@ export const FEATURES: FeaturePage[] = [
         h2: "The monthly return, totalled and ready to file",
         body: "At month end CrewFlow totals every subcontractor, every payment and every deduction into the figures your CIS300 monthly return needs. CrewFlow produces the numbers and the statements; you or your accountant submit the return to HMRC, so filing is a five-minute check rather than a reconciliation from a shoebox of invoices.",
       },
+      {
+        h2: "CIS for subcontractors and PAYE payroll for your own team, in one system",
+        body: "Most construction firms pay two kinds of people: subcontractors under CIS and employees under PAYE. Run them in separate tools and every month end means reconciling two sets of figures. CrewFlow handles both in the same system, so the people side of the business closes together instead of in two places.",
+        bullets: [
+          "CIS deductions and statements for your subcontractors",
+          "PAYE payroll for employees, built from the hours they've clocked",
+          "One system, so you're not re-keying between CIS and payroll",
+        ],
+      },
     ],
     outcomes: [
       { label: "Right rate, every time", body: "20%, 30% or gross applied automatically per subcontractor." },
@@ -666,6 +677,8 @@ export const FEATURES: FeaturePage[] = [
       { q: "Does CrewFlow file the CIS300 return to HMRC?", a: "No, and like our tax figures that's deliberate. CrewFlow produces the monthly CIS300 totals and the subcontractor statements; you or your accountant submit the return to HMRC. It removes the admin, not your control over filing." },
       { q: "Can I produce subcontractor payment and deduction statements?", a: "Yes. Every subcontractor payment produces a payment & deduction statement as a PDF you can send the subcontractor as proof of the tax deducted." },
       { q: "Does it track subcontractor verification?", a: "Yes. You record each subcontractor's HMRC verification number and status, so you always know who's verified and at what rate before you pay them." },
+      { q: "Can CrewFlow run CIS and payroll together?", a: "Yes. CrewFlow handles CIS deductions and statements for your subcontractors and PAYE payroll for the employees on your books, in one system, so you're not reconciling CIS in one tool and payroll in another every month." },
+      { q: "Is there free CIS software?", a: "HMRC offers a free online tool for filing the monthly CIS300 return, but it won't verify subcontractors as you go, work out and log deductions on every payment, produce payment and deduction statements, or connect to how you pay your own team. CrewFlow isn't free, but it does the work around the filing so the return is a quick check." },
     ],
     related: ["invoicing-software", "payroll-software", "tax-software", "expense-tracking", "job-costing-software"],
     industries: ["builders", "groundworks", "scaffolding", "roofers"],
