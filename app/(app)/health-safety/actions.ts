@@ -38,6 +38,31 @@ function firstError(issues: { message: string }[]): string {
   return issues[0]?.message ?? "Invalid input";
 }
 
+/**
+ * D-16: resolve a submitted jobId to one that genuinely belongs to THIS org, else
+ * null. The risk_assessments→jobs FK is bare (job_id → jobs.id, not composite), so
+ * the FK check alone would accept another tenant's job id; the create form's picker
+ * only ever offers same-org jobs, so a legitimate submit always resolves. RLS
+ * scopes this read to the caller's orgs and the explicit org predicate pins it to
+ * the ACTIVE org, so a foreign or stale id resolves to null (no link) rather than
+ * linking across tenants.
+ */
+async function resolveOrgJobId(
+  supabase: unknown,
+  jobId: string,
+  orgId: string,
+): Promise<string | null> {
+  const { data, error } = await tbl(supabase)("jobs")
+    .select("id")
+    .eq("id", jobId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  // Fail loud — a rejected read must not be mistaken for "job not in this org"
+  // and silently drop a legitimate link.
+  if (error) throw readFailure("health-safety: resolve job link", error);
+  return (data as { id: string } | null)?.id ?? null;
+}
+
 // ---------------------------------------------------------------------------
 // RAMS header
 // ---------------------------------------------------------------------------
@@ -59,10 +84,14 @@ export async function createRiskAssessment(formData: FormData): Promise<void> {
   const v = parsed.data;
   const id = randomUUID();
   const supabase = await createClient();
+  // D-16: only persist a job link that belongs to this org (bare FK — see helper).
+  const linkedJobId = v.jobId ? await resolveOrgJobId(supabase, v.jobId, ctx.org.id) : null;
+  if (v.jobId && !linkedJobId)
+    redirect(`/health-safety/new?error=${encodeURIComponent("That job is no longer available.")}`);
   const { error } = await tbl(supabase)("risk_assessments").insert({
     id,
     org_id: ctx.org.id,
-    job_id: v.jobId ?? null,
+    job_id: linkedJobId,
     title: v.title,
     activity: v.activity,
     location: orNull(v.location),
@@ -109,10 +138,16 @@ export async function generateRamsDraft(formData: FormData): Promise<void> {
 
   const id = randomUUID();
   const supabase = await createClient();
+  // D-16: only persist a job link that belongs to this org (bare FK — see helper).
+  const linkedJobId = parsed.data.jobId
+    ? await resolveOrgJobId(supabase, parsed.data.jobId, ctx.org.id)
+    : null;
+  if (parsed.data.jobId && !linkedJobId)
+    redirect(`/health-safety/new?error=${encodeURIComponent("That job is no longer available.")}`);
   const { error: headerError } = await tbl(supabase)("risk_assessments").insert({
     id,
     org_id: ctx.org.id,
-    job_id: parsed.data.jobId ?? null,
+    job_id: linkedJobId,
     title: draft.header.title,
     activity: draft.header.activity,
     ppe: draft.header.ppe,
