@@ -153,9 +153,20 @@ describe("job Overview gates inline commercial figures from staff", () => {
   const overview = codeOf(read("app/(app)/jobs/[id]/page.tsx"));
 
   it("defines canViewPrivate as owner/admin only", () => {
-    expect(overview).toMatch(
-      /canViewPrivate\s*=[\s\S]{0,160}role\s*===\s*"owner"[\s\S]{0,60}role\s*===\s*"admin"/,
-    );
+    // canViewPrivate is now derived via the shared roleCanViewPrivate helper
+    // (server/auth/financial-visibility.ts) — one source of truth shared with the
+    // AI Site Manager's financial gate — rather than an inline role comparison.
+    // Accept EITHER form, and assert the helper itself is owner/admin-only so the
+    // security property is still pinned wherever the definition lives.
+    const inline = /canViewPrivate\s*=[\s\S]{0,160}role\s*===\s*"owner"[\s\S]{0,60}role\s*===\s*"admin"/;
+    const viaHelper = /canViewPrivate\s*=\s*roleCanViewPrivate\(/;
+    expect(inline.test(overview) || viaHelper.test(overview)).toBe(true);
+    if (viaHelper.test(overview)) {
+      const helper = codeOf(read("server/auth/financial-visibility.ts"));
+      expect(helper).toMatch(
+        /roleCanViewPrivate[\s\S]{0,160}role\s*===\s*"owner"[\s\S]{0,60}role\s*===\s*"admin"/,
+      );
+    }
   });
 
   it("gates the commercial cash strip (outstanding/billed/contract) behind canViewPrivate", () => {
