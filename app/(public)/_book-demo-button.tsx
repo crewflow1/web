@@ -14,6 +14,8 @@
  * event; the mount shell lazy-loads the dialog on the first event and the dialog
  * opens itself via its own listener.
  */
+import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
+
 export function BookDemoButton({
   children = "Book a demo",
   className = "inline-flex h-11 items-center rounded-lg bg-gold-500 px-5 text-sm font-semibold text-navy-950 shadow-cf-gold transition-colors hover:bg-gold-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100",
@@ -24,7 +26,14 @@ export function BookDemoButton({
   return (
     <button
       type="button"
-      onClick={() => window.dispatchEvent(new Event("crewflow:open-book-demo"))}
+      onClick={() => {
+        // Consent-gated + a no-op until PostHog is live; measures which pages
+        // drive demo intent. Never carries PII (path only).
+        trackEvent(ANALYTICS_EVENTS.DEMO_CTA_CLICKED, {
+          path: window.location.pathname,
+        });
+        window.dispatchEvent(new Event("crewflow:open-book-demo"));
+      }}
       className={className}
     >
       {children}

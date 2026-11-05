@@ -37,8 +37,14 @@ describe("promoteDemoToCustomer no longer relies on Supabase's invite email", ()
     expect(src).toMatch(/type:\s*"magiclink"/);
   });
 
-  it("captures action_link from the generateLink response", () => {
-    expect(src).toMatch(/action_link/);
+  it("builds the embedded link at OUR /auth/callback (token_hash), not GoTrue's hosted action_link", () => {
+    // The hosted action_link verifies at GoTrue and returns the session in a
+    // URL hash fragment (implicit flow) the server callback can't read — it
+    // would burn the one-time token and bounce the customer to /login. We must
+    // embed {appUrl}/auth/callback?token_hash=...&type=... instead.
+    expect(src).toMatch(/buildCallbackMagicLink/);
+    // Must NOT assign the raw hosted action_link into the embedded magic link.
+    expect(src).not.toMatch(/magicLinkUrl\s*=\s*linkData\.properties\.action_link/);
   });
 
   it("sends the branded onboarding email with the magic link URL via Resend", () => {

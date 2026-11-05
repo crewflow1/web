@@ -36,4 +36,9 @@ regexes = [
   # exemption — so real high-entropy strings in that file still trip. (Needed on
   # main because the #997 squash re-keyed the prior .gitleaksignore fingerprint.)
   '''E2e-Harness-Pw-2f9c1a''',
+  # __tests__/staff/staff-invite-service.test.ts: HASHED_TOKEN fixture — the fake
+  # hashed one-time token the invite/onboarding magic-link test embeds in a
+  # /auth/callback?token_hash=… URL. 56-char hex (URL-safe) trips generic-api-key
+  # on entropy; carries no real secret. Allowlisted by exact value (surgical).
+  '''fb9202308f44aabbccddeeff00112233445566778899aabbccddeeff''',
 ]
