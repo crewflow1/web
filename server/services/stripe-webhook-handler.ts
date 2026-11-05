@@ -243,6 +243,12 @@ export async function processStripeEvent(
   try {
     switch (event.type) {
       case "checkout.session.completed":
+      // Async/delayed payment methods settle AFTER checkout: the money confirms
+      // via async_payment_succeeded (session now "paid") or fails via
+      // async_payment_failed (session "unpaid"). Both route through the same
+      // payment-gated handler, so success provisions and failure is a no-op.
+      case "checkout.session.async_payment_succeeded":
+      case "checkout.session.async_payment_failed":
         actions.push(...(await handleCheckoutCompleted(event)));
         break;
       case "customer.subscription.created":
@@ -295,6 +301,34 @@ async function handleCheckoutCompleted(
 ): Promise<string[]> {
   const session = event.data.object as Stripe.Checkout.Session;
   const meta = (session.metadata ?? {}) as Partial<CheckoutSessionMetadata>;
+
+  // PAYMENT-CONFIRMED GATE (first, so it protects BOTH the demo and org flows).
+  // This handler serves checkout.session.completed AND .async_payment_succeeded
+  // / .async_payment_failed. For card checkout, `completed` arrives "paid". For
+  // async/delayed methods, `completed` arrives "unpaid" and the money confirms
+  // later via async_payment_succeeded ("paid") or fails via async_payment_failed
+  // ("unpaid"). Provisioning paid access — or confirming a demo setup-fee —
+  // before payment is confirmed would grant access without money. Gate here.
+  // "no_payment_required" covers genuine £0 / fully-discounted sessions.
+  const paymentConfirmed =
+    session.payment_status === "paid" || session.payment_status === "no_payment_required";
+  if (!paymentConfirmed) {
+    await recordAdminActivity({
+      actorId: null,
+      actorEmail: null,
+      action: "stripe.checkout_completed_unpaid_skipped",
+      targetTable: meta.demo_id ? "demo_requests" : "organizations",
+      targetId: meta.org_id ?? meta.demo_id ?? session.id,
+      metadata: {
+        stripe_session_id: session.id,
+        payment_status: session.payment_status ?? null,
+        kind: meta.kind ?? null,
+        demo_id: meta.demo_id ?? null,
+        event_type: event.type,
+      },
+    });
+    return [`skipped_unpaid:payment_status=${session.payment_status ?? "unknown"}`];
+  }
 
   // --- DEMO flow: setup-fee paid BEFORE the org exists. -------------
   // The Demos CRM "Send setup payment" action mints a Checkout Session
@@ -352,28 +386,6 @@ async function handleCheckoutCompleted(
       .update({ stripe_customer_id: customerId })
       .eq("id", meta.org_id);
     out.push(`stripe_customer_id_set:${customerId}`);
-  }
-
-  // PAYMENT-CONFIRMED GATE. `checkout.session.completed` fires when checkout is
-  // completed, but `payment_status` can be "unpaid" for async / delayed payment
-  // methods (the money confirms LATER via async_payment_succeeded / invoice.paid
-  // / payment_intent.succeeded). Provisioning paid access here on an "unpaid"
-  // session would grant the workspace before payment lands — never do that.
-  // "no_payment_required" covers genuine £0 / fully-discounted sessions.
-  // The stripe_customer_id persisted above is a non-access identifier, safe to keep.
-  const paymentConfirmed =
-    session.payment_status === "paid" || session.payment_status === "no_payment_required";
-  if (!paymentConfirmed) {
-    await recordAdminActivity({
-      actorId: meta.actor_id ?? null,
-      actorEmail: null,
-      action: "stripe.checkout_completed_unpaid_skipped",
-      targetTable: "organizations",
-      targetId: meta.org_id,
-      metadata: { stripe_session_id: session.id, payment_status: session.payment_status ?? null, kind: meta.kind ?? null },
-    });
-    out.push(`skipped_unpaid:payment_status=${session.payment_status ?? "unknown"}`);
-    return out;
   }
 
   if (meta.kind === "setup_fee") {

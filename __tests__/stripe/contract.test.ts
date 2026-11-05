@@ -55,6 +55,8 @@ describe("PROCESSED_STRIPE_EVENTS — every directive-mandated event", () => {
     // slip through isProcessedEvent and skip the side-effects.
     for (const evt of [
       "checkout.session.completed",
+      "checkout.session.async_payment_succeeded",
+      "checkout.session.async_payment_failed",
       "customer.subscription.created",
       "customer.subscription.updated",
       "customer.subscription.deleted",

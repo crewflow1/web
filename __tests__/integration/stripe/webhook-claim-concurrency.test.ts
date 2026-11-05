@@ -327,10 +327,14 @@ describeIntegration("stripe webhook · in-flight concurrency claim", () => {
   // a PAID subscription checkout provisions access; an UNPAID one must NOT.
   // Real DB effects, not source patterns.
   // -------------------------------------------------------------------
-  const subscriptionEvent = (eventId: string, paymentStatus: string): Stripe.Event =>
+  const subscriptionEvent = (
+    eventId: string,
+    paymentStatus: string,
+    type: string = "checkout.session.completed",
+  ): Stripe.Event =>
     ({
       id: eventId,
-      type: "checkout.session.completed",
+      type,
       data: {
         object: {
           id: `cs_${eventId}`,
@@ -363,6 +367,32 @@ describeIntegration("stripe webhook · in-flight concurrency claim", () => {
     const res = await processStripeEvent(subscriptionEvent(freshEventId(), "unpaid"));
     expect(res.status).toBe("processed"); // the event is handled…
     expect(await orgStatus()).toBe("pending"); // …but access is NOT granted
+    const acts = (res as { actions?: string[] }).actions ?? [];
+    expect(acts.some((a) => a.includes("skipped_unpaid"))).toBe(true);
+  });
+
+  it("DELAYED payment SUCCEEDS (async_payment_succeeded, paid) → org activates", async () => {
+    await setOrgStatus("pending");
+    // Mirror the real sequence: completed arrives unpaid (no provisioning)…
+    await processStripeEvent(
+      subscriptionEvent(freshEventId(), "unpaid", "checkout.session.completed"),
+    );
+    expect(await orgStatus()).toBe("pending");
+    // …then the delayed payment confirms → provisioning happens.
+    const res = await processStripeEvent(
+      subscriptionEvent(freshEventId(), "paid", "checkout.session.async_payment_succeeded"),
+    );
+    expect(res.status).toBe("processed");
+    expect(await orgStatus()).toBe("active");
+  });
+
+  it("DELAYED payment FAILS (async_payment_failed) → org stays unprovisioned", async () => {
+    await setOrgStatus("pending");
+    const res = await processStripeEvent(
+      subscriptionEvent(freshEventId(), "unpaid", "checkout.session.async_payment_failed"),
+    );
+    expect(res.status).toBe("processed");
+    expect(await orgStatus()).toBe("pending");
     const acts = (res as { actions?: string[] }).actions ?? [];
     expect(acts.some((a) => a.includes("skipped_unpaid"))).toBe(true);
   });
