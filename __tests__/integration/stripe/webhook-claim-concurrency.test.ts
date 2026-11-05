@@ -343,9 +343,9 @@ describeIntegration("stripe webhook · in-flight concurrency claim", () => {
     }) as unknown as Stripe.Event;
 
   const orgStatus = async () => {
-    const r = await db(serviceClient()).from("organizations").select("status").eq("id", orgId).single();
+    const r = await db(serviceClient()).from("organizations").select("status").eq("id", orgId);
     expect(r.error, r.error?.message).toBeNull();
-    return (r.data as { status: string }).status;
+    return ((r.data ?? [])[0] as { status: string } | undefined)?.status;
   };
   const setOrgStatus = async (s: string) => {
     await db(serviceClient()).from("organizations").update({ status: s }).eq("id", orgId);
