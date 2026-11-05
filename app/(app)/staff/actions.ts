@@ -11,7 +11,16 @@ import {
   type StaffInviteMetadata,
 } from "@/server/services/staff-invite";
 import { requireOrgContext, type OrgContext } from "@/server/auth/session";
-import { listUserShiftsOnDay, type RotaClient } from "@/server/services/rota";
+import {
+  listUserShiftsOnDay,
+  listWeekRotaEntries,
+  insertRotaEntries,
+  type RotaClient,
+  type RotaWriteClient,
+  type RotaInsertRow,
+} from "@/server/services/rota";
+import { buildRotaPlan } from "@/server/services/schedule-integrity";
+import { planRotaPersistence } from "@/lib/schedule/persist";
 import {
   bestEffortPushRota,
   bestEffortDeleteRotaEvent,
@@ -42,7 +51,12 @@ import {
   notifyStaffOfLeaveDecision,
 } from "@/lib/email/send-leave";
 import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
-import { requireOwner, isOwner, canManageStaff } from "@/server/auth/capabilities";
+import {
+  requireOwner,
+  isOwner,
+  canManageStaff,
+  requireCapabilityFor,
+} from "@/server/auth/capabilities";
 import { recordPermissionEvent } from "@/server/services/permission-audit";
 
 /**
@@ -683,6 +697,145 @@ export async function deleteRotaEntry(entryId: string) {
   }
   revalidatePath("/staff/rota");
   redirect("/staff/rota?saved=removed");
+}
+
+/**
+ * Approve and SAVE the generated rota — the write half of /staff/rota/generate.
+ *
+ * The generate page proposes a whole rota but writes nothing; this is where an
+ * owner turns that proposal into real `rota_entries`. It is deliberately strict:
+ *
+ *   • AUTHZ — `requireCapabilityFor(rota:create)`. Owner always; an admin only
+ *     with the grant; anyone else is redirected. RLS's admin `WITH CHECK` is the
+ *     fail-closed boundary underneath, so a non-admin can never write even if a
+ *     gate were bypassed.
+ *
+ *   • SERVER-DERIVED, NEVER CLIENT-TRUSTED — the plan is RE-GENERATED here from
+ *     the org's own rows (deterministic solver), so nothing the browser submits
+ *     can inject a row, a person or a time. The form carries no assignment data.
+ *
+ *   • IDEMPOTENT — we re-read the live rota for the window and skip any shift
+ *     that is already saved, so clicking Approve twice does not double-book. (The
+ *     solver also stops proposing a job once it is staffed, so the second run is
+ *     usually empty anyway; the dedup is the belt to that braces.)
+ *
+ *   • NEVER OVERWRITE — a proposal that clashes with a shift already on the rota
+ *     (e.g. one confirmed by hand since the plan was generated) is left out and
+ *     reported, not written over. This path only ever INSERTs.
+ *
+ *   • ALL-OR-NOTHING — the clean rows are written in one atomic insert.
+ *
+ * Returns a FormState. On a clean save it sets `redirectTo` so the client (which
+ * must use window.location.assign — this route sits at swap-depth ≥4 where Next
+ * 15.5 drops router navigations) lands on the rota with the saved shifts shown.
+ * When something was skipped it stays put and explains what and why.
+ */
+export async function persistGeneratedRota(
+  _prevState: FormState<Record<string, unknown>>,
+  _formData: FormData,
+): Promise<FormState<Record<string, unknown>>> {
+  const { ctx, user } = await requireOrgContext();
+  // Owner/admin-only write gate (R4 capability helper). Owner passes
+  // unconditionally; a denied caller is redirected to their dashboard.
+  await requireCapabilityFor(ctx, user, "rota", "create");
+
+  try {
+    const { plan, window } = await buildRotaPlan(ctx.org.id);
+    if (plan.assignments.length === 0) {
+      return formSuccess({
+        successMessage:
+          "Nothing to save — every job in the window is already staffed.",
+      });
+    }
+
+    const supabase = await createClient();
+
+    // Re-read the LIVE rota across the whole plan window (pinned to the active
+    // org, like every other rota read) so dedup + clash checks see shifts added
+    // since the plan was generated.
+    const startIso = new Date(window.interval.start).toISOString();
+    const endIso = new Date(window.interval.end).toISOString();
+    const existing = await listWeekRotaEntries(
+      supabase as unknown as RotaClient,
+      ctx.org.id,
+      startIso,
+      endIso,
+    );
+
+    const persist = planRotaPersistence(
+      plan.assignments.map((a) => ({
+        userId: a.userId,
+        jobId: a.jobId,
+        startIso: a.startIso,
+        endIso: a.endIso,
+        notes: `Auto-generated rota · ${a.explanation}`.slice(0, 1000),
+      })),
+      existing.map((e) => ({
+        user_id: e.user_id,
+        job_id: e.job_id,
+        starts_at: e.starts_at,
+        ends_at: e.ends_at,
+      })),
+    );
+
+    const rows: RotaInsertRow[] = persist.toInsert.map((a) => ({
+      org_id: ctx.org.id,
+      user_id: a.userId,
+      job_id: a.jobId,
+      starts_at: a.startIso,
+      ends_at: a.endIso,
+      notes: a.notes ?? null,
+      created_by: user.id,
+    }));
+
+    const inserted = await insertRotaEntries(
+      supabase as unknown as RotaWriteClient,
+      rows,
+    );
+
+    revalidatePath("/staff/rota");
+
+    // Best-effort one-way calendar push per saved shift. A no-op while the
+    // calendar integration is dark; never blocks or fails the save.
+    for (const r of inserted) {
+      await bestEffortPushRota(ctx.org.id, r.id);
+    }
+
+    const saved = inserted.length;
+    const skipped = persist.alreadySaved.length;
+    const clashes = persist.conflicts.length;
+
+    const parts: string[] = [];
+    parts.push(
+      saved === 0
+        ? "No new shifts were added."
+        : `Saved ${saved} ${saved === 1 ? "shift" : "shifts"} to the rota.`,
+    );
+    if (skipped > 0) {
+      parts.push(
+        `${skipped} ${skipped === 1 ? "was" : "were"} already on the rota and left as ${skipped === 1 ? "it was" : "they were"}.`,
+      );
+    }
+    if (clashes > 0) {
+      parts.push(
+        `${clashes} ${clashes === 1 ? "clashed" : "clashed"} with an existing shift and ${clashes === 1 ? "was" : "were"} left untouched — open the schedule check to resolve ${clashes === 1 ? "it" : "them"}.`,
+      );
+    }
+    const successMessage = parts.join(" ");
+
+    // Clean save (nothing left behind) → send them to the rota to see it. When
+    // something was skipped, stay here with the explanation so it is not missed.
+    const clean = clashes === 0;
+    return formSuccess({
+      successMessage,
+      redirectTo: clean && saved > 0 ? "/staff/rota?saved=generated" : undefined,
+    });
+  } catch (err) {
+    console.error("[rota] persist generated rota failed", err);
+    return formError(
+      "Couldn't save the generated rota. Nothing was changed — try again.",
+    );
+  }
 }
 
 // -------------------------------------------------------------------------

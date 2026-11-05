@@ -51,6 +51,33 @@ export type RotaJobOption = {
 
 export type ShiftWindow = { starts_at: string; ends_at: string };
 
+/** A row the generated-rota approval writes into `rota_entries`. */
+export type RotaInsertRow = {
+  org_id: string;
+  user_id: string;
+  job_id: string | null;
+  starts_at: string;
+  ends_at: string;
+  notes: string | null;
+  created_by: string;
+};
+
+/**
+ * Write-capable client shape for the bulk rota insert. Kept separate from the
+ * read `RotaClient` so the read surface stays read-only, and typed minimally so
+ * the integration suite can drive the EXACT same call with a real user JWT.
+ */
+export type RotaWriteClient = {
+  from: (t: string) => {
+    insert: (rows: RotaInsertRow[]) => {
+      select: (c: string) => PromiseLike<{
+        data: Row[] | null;
+        error: SupabaseReadError | null;
+      }>;
+    };
+  };
+};
+
 /** How many jobs the assign-shift picker offers. */
 export const ROTA_JOB_PICKER_LIMIT = 50;
 
@@ -109,4 +136,33 @@ export async function listUserShiftsOnDay(
   // would let a double-booked shift through.
   if (error) throw readFailure("rota: user shifts on day", error);
   return (data ?? []) as unknown as ShiftWindow[];
+}
+
+/**
+ * Write the approved generated rota — ALL-OR-NOTHING.
+ *
+ * Every row is written in ONE `insert([...])`, which Postgres runs as a single
+ * `INSERT … VALUES (…),(…),…` statement: if any row fails a constraint (the
+ * `rota_entries_check` on `ends_at > starts_at`, a foreign key, or RLS's admin
+ * `WITH CHECK`) the whole statement rolls back and NOTHING is written. There is
+ * no partial save to reconcile, so no transaction wrapper or RPC is needed.
+ *
+ * The caller (`persistGeneratedRota`) has already deduplicated against the live
+ * rota (idempotency) and dropped clashes (never overwrite), so the rows handed
+ * here are the clean set to add. RLS still enforces admin-only INSERT underneath
+ * — this function is the write path a non-admin can never reach.
+ *
+ * Returns the inserted rows. An empty input writes nothing and returns [].
+ */
+export async function insertRotaEntries(
+  db: RotaWriteClient,
+  rows: RotaInsertRow[],
+): Promise<RotaEntryRow[]> {
+  if (rows.length === 0) return [];
+  const { data, error } = await db
+    .from("rota_entries")
+    .insert(rows)
+    .select("id, user_id, job_id, starts_at, ends_at, notes");
+  if (error) throw readFailure("rota: bulk insert", error);
+  return (data ?? []) as unknown as RotaEntryRow[];
 }
