@@ -520,8 +520,13 @@ const RATCHET: Array<{
     // the WRONG copy ("disable it first" for an employee that may be disabled).
     // The read now binds the error and redirects with honest try-again copy, so
     // the discard shape is gone and the baseline returns to 14.
+    // 10 → 11 (public lead capture): app/api/public/lead/route.ts's double-submit
+    // dedup read (bounded recent web leads) is deliberately best-effort — wrapped
+    // in try/catch so a transient DB blip lets a genuine enquiry through rather
+    // than dropping it (a possible duplicate is strictly better than a lost lead;
+    // the unique write itself still succeeds or fails loud). One soft-data read.
     discard: 14,
-    softData: 10,
+    softData: 11,
     countOnly: 0,
   },
   {
