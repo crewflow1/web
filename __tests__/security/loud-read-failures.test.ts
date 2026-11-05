@@ -582,7 +582,7 @@ const RATCHET: Array<{
     // `error` — a transient storage hiccup hides ONE "Open" link, never blanks the
     // inbox. Same best-effort shape as getPaymentProofSignedUrl. See
     // docs/loud-read-failures.md (C ledger).
-    discard: 41 /* 38 → 41 (operator Migration OS): the 3 discard-shaped reads in lib/imports/commit.ts (resolveCustomerByName/resolveInvoiceByNumber + the lead-branch inline customer insert) RELOCATED here from app/(app)/imports/actions.ts (−3 there) when insertOne + resolvers were extracted for reuse by the operator surface — same pre-existing debt, new bucket, net zero */,
+    discard: 42 /* 38 → 41 (operator Migration OS): the 3 discard-shaped reads in lib/imports/commit.ts (resolveCustomerByName/resolveInvoiceByNumber + the lead-branch inline customer insert) RELOCATED here from app/(app)/imports/actions.ts (−3 there) when insertOne + resolvers were extracted for reuse by the operator surface — same pre-existing debt, new bucket, net zero. 41 → 42 (tenant semantic search): server/services/tenant-search-embedder.ts isTenantSearchWorkerEnabled() fails DARK (returns false on any error) — identical best-effort shape to memory-embedder.ts's gate read; a gate hiccup leaves the worker disabled for the tick, never throws into the cron. See docs/loud-read-failures.md (C ledger) */,
     // 61 → 62: server/services/hq-support-snapshot.ts `listSupportTicketRowsForHq`
     // is the lean, message-free board reader (HQ Support AI) — it degrades to `[]`
     // exactly like its sibling `listSupportTicketsForHq` in the same file, and the

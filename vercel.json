@@ -106,6 +106,10 @@
       "schedule": "*/2 * * * *"
     },
     {
+      "path": "/api/cron/tenant-search-embed",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/memory-lifecycle",
       "schedule": "*/15 * * * *"
     },

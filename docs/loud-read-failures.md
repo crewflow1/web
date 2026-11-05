@@ -419,3 +419,15 @@ display enrichments, both deliberately soft:
 Neither is a money/authority read, and neither must blank the crew panel that
 already loaded. **app/(app) discard 55 → 57.** Per the UP rule, baseline raised in
 the same commit with this reason.
+
+## Baseline raise — 2026-11-04: tenant semantic search (embedding worker gate)
+The tenant semantic-search embedding worker `server/services/tenant-search-embedder.ts`
+adds ONE deliberately best-effort read: `isTenantSearchWorkerEnabled()` reads the
+`tenant_search.worker_enabled` gate and FAILS DARK (returns `false` on any error),
+so a transient gate-read hiccup simply leaves the worker disabled for that tick
+rather than throwing into the cron. This is the identical shape to
+`memory-embedder.ts`'s `isEmbedWorkerEnabled()` gate (already ledgered) — an infra
+switch read, never a tenant-data read, and never a money/authority read. The worker
+itself never throws; per-document failures are recorded in SQL (retry/backoff/DLQ).
+**server + lib + components discard 41 → 42.** Per the UP rule, baseline raised in
+the same commit with this reason.
