@@ -466,12 +466,18 @@ export default async function EditJobPage({
 
       {/* H2-CASH — get-paid billing plan (deposit / staged invoicing). */}
       <div className="flex flex-wrap gap-2 text-sm">
-        <Link
-          href={`/jobs/${job.id}/billing`}
-          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
-        >
-          Get paid — billing plan
-        </Link>
+        {/* Billing plan is commercial (deposits / staged invoicing) — owner/admin
+            only, matching the admin-gated /jobs/[id]/billing + /commercial pages.
+            Without this gate an assigned staff member saw the billing entry point
+            on the job Overview. Site timeline stays visible to everyone. */}
+        {canViewPrivate ? (
+          <Link
+            href={`/jobs/${job.id}/billing`}
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Get paid — billing plan
+          </Link>
+        ) : null}
         <Link
           href={`/jobs/${job.id}/timeline`}
           className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
@@ -481,8 +487,12 @@ export default async function EditJobPage({
       </div>
 
       {/* Programme D — cash-first commercial strip (ledger-truthful). Links to
-          the full unified commercial position + lifecycle timeline. */}
-      {(commercialCash.billed > 0 || commercialCash.revised > 0) ? (
+          the full unified commercial position + lifecycle timeline.
+          Owner/admin ONLY: this strip exposes contract value, amount billed,
+          received and outstanding. The dedicated /commercial page already
+          redirects non-admins; without this gate the same figures leaked onto
+          the job Overview, which assigned staff can open (R5 financial boundary). */}
+      {canViewPrivate && (commercialCash.billed > 0 || commercialCash.revised > 0) ? (
         <Link
           href={`/jobs/${job.id}/commercial`}
           className="block rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-300"

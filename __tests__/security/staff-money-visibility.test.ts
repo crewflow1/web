@@ -138,3 +138,35 @@ describe("job Valuations + Billing tabs are management-only", () => {
     expect(codeOf(tabs)).toMatch(/TABS\.filter\(\(t\)\s*=>\s*isAdmin\s*\|\|\s*!t\.adminOnly\)/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 4. THE JOB OVERVIEW ITSELF must not leak commercial figures to staff
+// ---------------------------------------------------------------------------
+// Unlike the dedicated /billing, /commercial and /valuations sub-pages (which
+// all redirect non-admins), the job Overview (jobs/[id]/page.tsx) is reachable
+// by an ASSIGNED staff member. It renders two commercial surfaces INLINE — the
+// cash strip (contract / billed / received / outstanding) and the
+// "Get paid — billing plan" entry point — so both must be gated behind
+// canViewPrivate (owner/admin). Regression for the pre-launch Chrome finding
+// where an assigned staff user saw the job's money on the Overview.
+describe("job Overview gates inline commercial figures from staff", () => {
+  const overview = codeOf(read("app/(app)/jobs/[id]/page.tsx"));
+
+  it("defines canViewPrivate as owner/admin only", () => {
+    expect(overview).toMatch(
+      /canViewPrivate\s*=[\s\S]{0,160}role\s*===\s*"owner"[\s\S]{0,60}role\s*===\s*"admin"/,
+    );
+  });
+
+  it("gates the commercial cash strip (outstanding/billed/contract) behind canViewPrivate", () => {
+    expect(overview).toMatch(
+      /canViewPrivate\s*&&\s*\(commercialCash\.billed\s*>\s*0\s*\|\|\s*commercialCash\.revised\s*>\s*0\)/,
+    );
+  });
+
+  it("gates the 'Get paid — billing plan' link behind canViewPrivate", () => {
+    expect(overview).toMatch(
+      /canViewPrivate\s*\?[\s\S]{0,220}\/jobs\/\$\{job\.id\}\/billing/,
+    );
+  });
+});
