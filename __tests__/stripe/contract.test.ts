@@ -175,6 +175,23 @@ describe("processStripeEvent handler", () => {
     expect(HANDLER).toMatch(/handleSubscriptionDeleted/);
     expect(HANDLER).toMatch(/subscription_deleted_recorded/);
   });
+
+  it("GATES paid-access provisioning on confirmed payment (never provision an 'unpaid' checkout)", () => {
+    // checkout.session.completed can arrive with payment_status 'unpaid' for
+    // async/delayed methods; provisioning setup_fee='paid' or status='active'
+    // then would grant access before the money lands. The handler must gate on
+    // payment_status before the provisioning blocks and skip an unpaid session.
+    expect(HANDLER).toMatch(/payment_status === "paid"/);
+    expect(HANDLER).toMatch(/no_payment_required/);
+    expect(HANDLER).toMatch(/skipped_unpaid/);
+    // The gate must sit BEFORE the access-granting writes.
+    const gateIdx = HANDLER.indexOf("paymentConfirmed");
+    const setupPaidIdx = HANDLER.indexOf('setup_fee_status: "paid"');
+    const activeIdx = HANDLER.indexOf('status: "active"');
+    expect(gateIdx).toBeGreaterThan(-1);
+    expect(gateIdx).toBeLessThan(setupPaidIdx);
+    expect(gateIdx).toBeLessThan(activeIdx);
+  });
 });
 
 // =====================================================================

@@ -354,6 +354,28 @@ async function handleCheckoutCompleted(
     out.push(`stripe_customer_id_set:${customerId}`);
   }
 
+  // PAYMENT-CONFIRMED GATE. `checkout.session.completed` fires when checkout is
+  // completed, but `payment_status` can be "unpaid" for async / delayed payment
+  // methods (the money confirms LATER via async_payment_succeeded / invoice.paid
+  // / payment_intent.succeeded). Provisioning paid access here on an "unpaid"
+  // session would grant the workspace before payment lands — never do that.
+  // "no_payment_required" covers genuine £0 / fully-discounted sessions.
+  // The stripe_customer_id persisted above is a non-access identifier, safe to keep.
+  const paymentConfirmed =
+    session.payment_status === "paid" || session.payment_status === "no_payment_required";
+  if (!paymentConfirmed) {
+    await recordAdminActivity({
+      actorId: meta.actor_id ?? null,
+      actorEmail: null,
+      action: "stripe.checkout_completed_unpaid_skipped",
+      targetTable: "organizations",
+      targetId: meta.org_id,
+      metadata: { stripe_session_id: session.id, payment_status: session.payment_status ?? null, kind: meta.kind ?? null },
+    });
+    out.push(`skipped_unpaid:payment_status=${session.payment_status ?? "unknown"}`);
+    return out;
+  }
+
   if (meta.kind === "setup_fee") {
     // One-off — record paid setup fee on the org.
     await adminTable("organizations")
