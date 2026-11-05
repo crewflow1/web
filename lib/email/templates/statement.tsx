@@ -1,4 +1,5 @@
 import "server-only";
+import { escapeHtml } from "@/lib/html";
 
 /**
  * Plain HTML statement-of-account email body builder.
@@ -24,15 +25,6 @@ export type StatementEmailInput = {
   closing_balance: number;
   message: string | null;
 };
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 function balancePhrase(v: number): string {
   if (v < 0) return `${GBP.format(-v)} in credit`;

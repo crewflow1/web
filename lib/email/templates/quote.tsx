@@ -1,4 +1,5 @@
 import "server-only";
+import { escapeHtml } from "@/lib/html";
 
 /**
  * Plain HTML quote email body builder. Mirrors the invoice template but the
@@ -21,15 +22,6 @@ export type QuoteEmailInput = {
   message: string | null;
   portal_url: string; // /q/<public_token> — view + approve/reject
 };
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 export function buildQuoteEmail(input: QuoteEmailInput): {
   html: string;

@@ -2,6 +2,7 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { formatBytes } from "@/lib/format/bytes";
 // Type-only import: the service module is `server-only`, so it must never be
 // pulled into the client bundle. All runtime values (accept list, max size,
 // doc types) arrive as props from the server panel.
@@ -36,12 +37,6 @@ const ERROR_MAP: Record<string, string> = {
 };
 const friendly = (code: string): string => ERROR_MAP[code] ?? code;
 
-function formatBytes(n: number | null | undefined): string {
-  if (!n || n <= 0) return "";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
 
 function prettyDocType(s: string): string {
   return s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());

@@ -1,4 +1,5 @@
 import "server-only";
+import { escapeHtml } from "@/lib/html";
 
 /**
  * Portal-reply NOTIFICATION email.
@@ -20,15 +21,6 @@ export type PortalReplyEmailInput = {
   portal_url: string;
   ticket_number: number;
 };
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 export function buildPortalReplyEmail(input: PortalReplyEmailInput): {
   html: string;

@@ -1,4 +1,5 @@
 import "server-only";
+import { escapeHtml } from "@/lib/html";
 
 /**
  * Report-published NOTIFICATION email.
@@ -24,15 +25,6 @@ export type ReportPublishedEmailInput = {
   /** Human reference for the subject line, e.g. "SR-0007". Null → generic copy. */
   report_number: string | null;
 };
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 export function buildReportPublishedEmail(input: ReportPublishedEmailInput): {
   html: string;

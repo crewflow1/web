@@ -432,8 +432,8 @@ const ALLOWLIST: Record<string, string> = {
     "bounded: completion_certificates for the customer's OWN warranty job set (.eq('org_id').eq('status','issued').in('job_id', <de-duped set from the customer's visible warranties>)) — one issued cert per job, bounded by the customer's warranties, not a cross-tenant scan",
   "server/auth/session.ts:147":
     "bounded: ONE user's memberships (.eq('user_id')) — loadMembershipsWithOrgs, the single cached membership+org read now shared by BOTH org resolution (getOrgForUser) and the header switcher (listOrgsForUser); a user belongs to a handful of orgs, never near 1000. (Consolidated from the former two reads at :128/:226 in the product-UX perf pass.)",
-  "lib/email/send-leave.ts:60":
-    "bounded: ONE org's owner/admin recipients (.eq('org_id').in('role', ['owner','admin'])) — a handful of privileged users per org, far below 1000",
+  "lib/email/send-leave.ts:52":
+    "bounded: ONE org's owner/admin recipients (.eq('org_id').in('role', ['owner','admin'])) — a handful of privileged users per org, far below 1000 (line moved from :60 when the copy-pasted escapeHtml was replaced by the lib/html import)",
   "lib/email/send-material-request.ts:110":
     "bounded: ONE org's owner/admin recipients (.eq('org_id').in('role', ['owner','admin'])) — a handful of privileged users per org",
   "lib/profitability/labour-rates.ts:36":

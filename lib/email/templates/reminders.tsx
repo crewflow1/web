@@ -1,4 +1,5 @@
 import "server-only";
+import { escapeHtml } from "@/lib/html";
 
 /**
  * Email body builders for the cron-driven follow-ups.
@@ -20,15 +21,6 @@ const GBP = new Intl.NumberFormat("en-GB", {
   currency: "GBP",
   minimumFractionDigits: 2,
 });
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 function shell(bodyHtml: string): string {
   return `<!doctype html>

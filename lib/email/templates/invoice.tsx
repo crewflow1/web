@@ -1,4 +1,5 @@
 import "server-only";
+import { escapeHtml } from "@/lib/html";
 
 /**
  * Plain HTML invoice email body builder.
@@ -23,15 +24,6 @@ export type InvoiceEmailInput = {
   message: string | null;
   pdf_url: string | null; // optional inline link as a fallback to the attachment
 };
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 export function buildInvoiceEmail(input: InvoiceEmailInput): { html: string; text: string; subject: string } {
   const subject = `${escapeHtml(input.org_name)} — Invoice ${input.invoice_number} (${GBP.format(input.total)})`;
