@@ -69,6 +69,10 @@ describeIntegration("stripe webhook · in-flight concurrency claim", () => {
         object: {
           id: `cs_${eventId}`,
           customer: `cus_${eventId}`,
+          // A real completed card checkout carries payment_status "paid"; the
+          // handler gates paid-access provisioning on this (migration-free
+          // fix/billing-payment-status-gate).
+          payment_status: "paid",
           metadata: { org_id: orgId, kind: "setup_fee", amount_gbp: "1000" },
         },
       },
@@ -316,5 +320,50 @@ describeIntegration("stripe webhook · in-flight concurrency claim", () => {
     expect(rows[0]?.processed_at).toBeTruthy();
     expect(rows[0]?.claimed_at).toBeTruthy();
     expect(rows[0]?.error_message).toBeNull();
+  });
+
+  // -------------------------------------------------------------------
+  // Behavioural payment-confirmed gate (fix/billing-payment-status-gate):
+  // a PAID subscription checkout provisions access; an UNPAID one must NOT.
+  // Real DB effects, not source patterns.
+  // -------------------------------------------------------------------
+  const subscriptionEvent = (eventId: string, paymentStatus: string): Stripe.Event =>
+    ({
+      id: eventId,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: `cs_${eventId}`,
+          customer: `cus_${eventId}`,
+          subscription: `sub_${eventId}`,
+          payment_status: paymentStatus,
+          metadata: { org_id: orgId, kind: "subscription" },
+        },
+      },
+    }) as unknown as Stripe.Event;
+
+  const orgStatus = async () => {
+    const r = await db(serviceClient()).from("organizations").select("status").eq("id", orgId).single();
+    expect(r.error, r.error?.message).toBeNull();
+    return (r.data as { status: string }).status;
+  };
+  const setOrgStatus = async (s: string) => {
+    await db(serviceClient()).from("organizations").update({ status: s }).eq("id", orgId);
+  };
+
+  it("PAID subscription checkout → org.status becomes 'active'", async () => {
+    await setOrgStatus("pending");
+    const res = await processStripeEvent(subscriptionEvent(freshEventId(), "paid"));
+    expect(res.status).toBe("processed");
+    expect(await orgStatus()).toBe("active");
+  });
+
+  it("UNPAID subscription checkout → org is NOT activated (paid-access gate)", async () => {
+    await setOrgStatus("pending");
+    const res = await processStripeEvent(subscriptionEvent(freshEventId(), "unpaid"));
+    expect(res.status).toBe("processed"); // the event is handled…
+    expect(await orgStatus()).toBe("pending"); // …but access is NOT granted
+    const acts = (res as { actions?: string[] }).actions ?? [];
+    expect(acts.some((a) => a.includes("skipped_unpaid"))).toBe(true);
   });
 });
