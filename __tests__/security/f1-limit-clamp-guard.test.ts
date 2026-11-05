@@ -238,6 +238,8 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
     "bounded: recent-200 jobs sample for the toolbox-talk picker; the EDIT form (_talk-form.tsx) preserve-injects the saved job_id so an out-of-sample link can never be dropped",
   "server/services/rota.ts:81":
     "bounded: recent-50 jobs for the assign-shift picker; assigning is a create action, not an edit re-render of a saved reference",
+  "server/services/site-manager/tools.ts:50":
+    "bounded: 'list my jobs' for the AI Site Manager — a top-N (limit clamped 1..50) sample over the caller's RLS-scoped jobs, used to answer 'what jobs do I have' and summarise a count. The AI must NEVER load an org's entire jobs table into a model prompt (cost + context blow-up); a bounded recent sample is the intended, safe behaviour, and no edit re-renders a saved reference off this read.",
 
   // In-page link picker with preserve-option + explicit onChange write.
   "app/(app)/invoices/[id]/page.tsx:127":
