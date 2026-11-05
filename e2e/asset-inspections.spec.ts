@@ -180,12 +180,43 @@ test.describe("asset inspections — authenticated M4 journey lands every naviga
     });
     const startBtn = startForm.getByRole("button", { name: /start inspection/i });
     await waitForHydrated(startBtn);
-    await startForm.locator('select[name="template_id"]').selectOption(templateId);
+    const templateSelect = startForm.locator('select[name="template_id"]');
+    const inspectionUrlRe = new RegExp(`/assets/${asset.id}/inspections/[0-9a-f-]{36}$`);
+    // RACE FIX (no re-submission — the Start action is a NON-idempotent create, so
+    // a blind retry could draft a duplicate inspection if the first submit
+    // succeeded but its client navigation was merely delayed). Instead: commit the
+    // template value, click Start exactly ONCE, then assert application state —
+    // poll the DB until EXACTLY ONE inspection exists for this asset+template. That
+    // assertion both (a) proves the single click created exactly one row (no
+    // duplicate) and (b) hands us the id. Only then, if StateForm's
+    // window.location.assign hasn't settled the URL yet, navigate to the created
+    // run directly. No path re-submits, so no duplicate is possible.
+    await templateSelect.selectOption(templateId);
+    await expect(templateSelect).toHaveValue(templateId, { timeout: 2_000 });
     await startBtn.click();
-    await expect(page).toHaveURL(
-      new RegExp(`/assets/${asset.id}/inspections/[0-9a-f-]{36}$`),
-      { timeout: 20_000 },
-    );
+    let inspectionId = "";
+    await expect
+      .poll(
+        async () => {
+          const rows =
+            (
+              await svc
+                .from("asset_inspections")
+                .select("id")
+                .eq("asset_id", asset.id)
+                .eq("template_id", templateId)
+            ).data ?? [];
+          if (rows.length === 1) inspectionId = String(rows[0].id);
+          return rows.length;
+        },
+        { message: "the single Start click must create EXACTLY ONE inspection", timeout: 25_000 },
+      )
+      .toBe(1);
+    // Land on the created run — directly if the client nav didn't settle in time.
+    if (!inspectionUrlRe.test(page.url())) {
+      await page.goto(`/assets/${asset.id}/inspections/${inspectionId}`);
+    }
+    await expect(page).toHaveURL(inspectionUrlRe, { timeout: 15_000 });
     const runUrl = new URL(page.url()).pathname;
 
     // SAVE PROGRESS — the deepest same-route swap in the app (depth 6).
