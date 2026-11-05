@@ -2,6 +2,7 @@ import { beforeAll, expect, it } from "vitest";
 import { anonClient, describeIntegration, serviceClient, userClient } from "../_harness";
 import { loadJobForOrg } from "@/lib/jobs/load";
 import { roleCanViewPrivate } from "@/server/auth/financial-visibility";
+import { JOB_OVERVIEW_COLUMNS } from "@/server/services/site-manager/tools";
 
 /**
  * AI Site Manager — job data gate, against real Postgres.
@@ -109,6 +110,16 @@ describeIntegration("rls · AI site-manager overview tool read gate", () => {
   it("owner reads any job in their org", async () => {
     expect(await overview("owner", jobAssigned, orgA)).not.toBeNull();
     expect(await overview("owner", jobUnassigned, orgA)).not.toBeNull();
+  });
+
+  it("the overview tool's EXACT column list reads successfully (column-drift guard)", async () => {
+    // Reproduces the defect Chrome caught: toolJobOverview selected `end_date`
+    // (does not exist; the column is `scheduled_end_date`), the query errored, and
+    // a `.catch(() => null)` masked it as "couldn't find that job". Running the
+    // exact shared column list against real PG fails loud on any such drift.
+    const job = await loadJobForOrg(uc("owner") as never, jobAssigned, orgA, JOB_OVERVIEW_COLUMNS);
+    expect(job, "overview columns must all exist + be readable").not.toBeNull();
+    expect((job as { id: string }).id).toBe(jobAssigned);
   });
 
   it("assigned staff reads their assigned job", async () => {

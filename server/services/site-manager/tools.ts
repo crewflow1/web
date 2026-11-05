@@ -67,18 +67,26 @@ export async function toolListMyJobs(
   };
 }
 
+/**
+ * Columns the overview tool reads. Exported so a real-PG test can exercise the
+ * EXACT select and catch column drift (the `end_date` vs `scheduled_end_date`
+ * bug that a `.catch(() => null)` previously masked as "couldn't find that job").
+ * NOTE: the column is `scheduled_end_date`, not `end_date`.
+ */
+export const JOB_OVERVIEW_COLUMNS =
+  "id, status, scheduled_date, scheduled_end_date, site_address_line1, site_city, site_postcode, customer:customers ( name )";
+
 /** Job overview — status/schedule/site/customer only (NO commercial fields). */
 export async function toolJobOverview(ctx: SiteManagerCtx, jobId: string): Promise<ToolResult> {
   const supabase = await createClient();
-  const job = await loadJobForOrg(
-    supabase as never,
-    jobId,
-    ctx.org.id,
-    "id, status, scheduled_date, end_date, site_address_line1, site_city, site_postcode, customer:customers ( name )",
-  ).catch(() => null);
+  // Do NOT wrap this in `.catch(() => null)` — loadJobForOrg already throws loud
+  // on a real query error (readFailure) and returns null only for a genuine
+  // not-found/other-org row. Swallowing the error here would turn a bad column or
+  // transient failure into a false "couldn't find that job" for a visible job.
+  const job = await loadJobForOrg(supabase as never, jobId, ctx.org.id, JOB_OVERVIEW_COLUMNS);
   if (!job) return { facts: { found: false }, sources: [] };
   const j = job as unknown as {
-    id: string; status: string; scheduled_date: string | null; end_date: string | null;
+    id: string; status: string; scheduled_date: string | null; scheduled_end_date: string | null;
     site_address_line1: string | null; site_city: string | null; site_postcode: string | null;
     customer: { name: string | null } | null;
   };
@@ -87,7 +95,7 @@ export async function toolJobOverview(ctx: SiteManagerCtx, jobId: string): Promi
       found: true,
       status: j.status,
       scheduled_date: j.scheduled_date,
-      end_date: j.end_date,
+      end_date: j.scheduled_end_date,
       site: [j.site_address_line1, j.site_city, j.site_postcode].filter(Boolean).join(", ") || null,
       customer: j.customer?.name ?? null,
     },
