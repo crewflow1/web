@@ -10,6 +10,8 @@
 export const PROCESSED_STRIPE_EVENTS = [
   // Checkout
   "checkout.session.completed",
+  "checkout.session.async_payment_succeeded",
+  "checkout.session.async_payment_failed",
   // Subscriptions
   "customer.subscription.created",
   "customer.subscription.updated",
