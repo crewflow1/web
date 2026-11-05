@@ -463,6 +463,14 @@ export const AI_FEATURES = {
       "NOTHING — a scope of works cannot be computed, so there is no deterministic leg. The surface reports honestly that AI drafting is off and the operator writes the quote in the existing builder, exactly as today.",
   },
 
+  "site_manager.answer": {
+    key: "site_manager.answer",
+    label: "AI Site Manager answer",
+    taskClass: "complex",
+    degradesTo:
+      "A deterministic, reader-backed summary (no model): the server runs the same permission-gated job tools and composes a grounded answer from the real rows, labelled 'deterministic'. Same gates, no AI prose.",
+  },
+
   // ─────────────────────────────────────────────────────────────────────────
   // The closure wave. Every entry below names a provider call that EXISTED
   // BEFORE the governor and reached a model without passing through it — the
