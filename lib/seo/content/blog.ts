@@ -18,6 +18,7 @@ export const POSTS: BlogPost[] = [
     excerpt:
       "There's no single 'best' construction software, there's the best one for your business. Here's how to choose, and an honest look at the main options for UK firms.",
     datePublished: "2026-06-16",
+    dateModified: "2026-11-05",
     readMinutes: 9,
     category: "Buying guides",
     body: [
@@ -46,6 +47,13 @@ export const POSTS: BlogPost[] = [
       { type: "p", text: "Strong if detailed takeoff and estimating is the heart of your business. Less focused on the whole-business operations around the estimate." },
       { type: "h3", text: "All-in-one UK operating systems (CrewFlow)" },
       { type: "p", text: "This is the category we built CrewFlow for: UK construction SMEs who want one system covering leads, quotes, jobs, rota, timesheets, invoices, payments, profitability, payroll and tax, instead of stitching five tools together. UK-native, transparent pricing, live in days." },
+      { type: "h2", text: "Which is best for the size of firm you run?" },
+      { type: "p", text: "The honest answer to 'what's the best construction software' depends almost entirely on the size and shape of your firm. Here's the rough mapping most UK businesses land on:" },
+      { type: "ul", items: [
+        "Sole trader or a couple of lads: a light trades app for quoting and invoicing is often enough to start. You'll feel the limits once payroll, CIS and job profitability start to matter.",
+        "Small but growing firm with staff on the books: this is where one UK system earns its keep, quotes, jobs, timesheets, invoicing, payroll, CIS and VAT in one place instead of five apps and a spreadsheet. It's the firm CrewFlow is built for.",
+        "Large main contractor on complex commercial projects: an enterprise platform like Procore is designed for your scale, and worth the weight.",
+      ] },
       { type: "h2", text: "How to make the final call" },
       { type: "ol", items: [
         "List the five needs above and tick the ones that apply to you today and in 12 months.",
@@ -61,9 +69,11 @@ export const POSTS: BlogPost[] = [
       { q: "What is the best construction software for a small UK firm?", a: "For a small UK firm that wants one system for the whole business, quotes, jobs, payroll, invoicing and tax, an all-in-one UK operating system like CrewFlow is usually the best fit. For sole traders who only need quoting and invoicing, a light trades app may be enough." },
       { q: "Do I need separate software for payroll and tax?", a: "Not necessarily. Some tools (like CrewFlow) include payroll from clocked hours and track VAT, PAYE and Corporation Tax in the same system, which avoids re-keying data between apps." },
       { q: "How much does construction software cost in the UK?", a: "It ranges from low monthly per-user app subscriptions to enterprise quote-based pricing. CrewFlow uses transparent pricing (£1,000 setup + £500/mo) aimed at SMEs who want everything in one place." },
+      { q: "Is there free construction software in the UK?", a: "There are free and freemium tools, usually basic quoting or invoicing. Free tends to mean limited: you outgrow it quickly once payroll, CIS and real job-by-job profitability start to matter, and end up paying for several add-ons anyway. CrewFlow isn't free, but it replaces several paid tools with one system." },
+      { q: "What is the best construction project management software in the UK?", a: "If project management (scheduling, site records, variations, crews) is your core need, look at job-management-focused tools. For UK SMEs who want that plus the money, people and tax side, invoicing, payroll, CIS and VAT, in one place rather than a separate PM app, an all-in-one UK platform like CrewFlow usually fits better." },
     ],
     related: ["how-to-price-a-construction-job", "how-to-get-paid-faster-in-construction"],
-    relatedFeatures: ["job-management-software", "construction-crm"],
+    relatedFeatures: ["job-management-software", "construction-crm", "quoting-software", "invoicing-software", "payroll-software", "cis-software"],
   },
   {
     slug: "how-to-price-a-construction-job",
