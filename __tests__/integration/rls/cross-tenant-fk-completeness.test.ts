@@ -92,7 +92,6 @@ const INTERNAL_RLS: readonly string[] = [
   "bank_statement_lines_matched_payment_id_fkey",
   "blueprint_versions_blueprint_id_fkey",
   "blueprints_job_id_fkey",
-  "calls_conversation_id_fkey",
   "calls_lead_id_fkey",
   "cis_monthly_return_lines_return_id_fkey",
   "cis_statement_payments_statement_id_fkey",

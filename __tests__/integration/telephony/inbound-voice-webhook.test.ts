@@ -249,4 +249,57 @@ describeIntegration("inbound voice · routing/idempotency/isolation", () => {
     });
     expect(bad.error, "mismatched (call_id, org_id) must be refused by the composite FK").not.toBeNull();
   });
+
+  // ── End-to-end linkage journey (the fix for the call→conversation FK bug) ────
+  // Mirrors the voice route's exact sequence: record the call → ingest the
+  // enquiry (lead + receptionist conversation) → link the call to BOTH. Before
+  // migration 20261290000000 the link UPDATE FK-violated and rolled back, so the
+  // call stayed orphaned (lead_id + conversation_id NULL) and /leads/[id] could
+  // never show the call. This proves the whole journey now lands in the DB.
+  it("links an inbound call to its lead AND receptionist conversation (the journey)", async () => {
+    const svcMod = await import("@/server/services/telephony");
+    const sid = `CA-${TOKEN}-E2E`;
+    const { callId } = await recordInboundCall(orgA, call({ providerCallId: sid, to: NUM_A }));
+
+    // Ingest exactly as the voice route does at origination (reply deferred).
+    const { lead_id, conversation_id } = await processInboundEnquiry(
+      {
+        org_id: orgA,
+        channel: "phone",
+        caller: "+447700900123",
+        dedup_key: sid,
+        provider_message_id: sid,
+      },
+      { textback: "defer" },
+    );
+    expect(lead_id, "origination must resolve a lead").toBeTruthy();
+    expect(conversation_id, "a caller id must resolve a receptionist conversation").toBeTruthy();
+
+    await svcMod.updateCallAssociation(orgA, sid, {
+      leadId: lead_id,
+      conversationId: conversation_id,
+    });
+
+    // Assert the real DB effect: the call now points at the right lead +
+    // conversation, both in org A.
+    const linked = await db(serviceClient())
+      .from("calls")
+      .select("id, org_id, lead_id, conversation_id")
+      .eq("id", callId);
+    expect(linked.error, linked.error?.message).toBeNull();
+    const callRow = (linked.data ?? [])[0] as Record<string, unknown> | undefined;
+    expect(callRow?.lead_id).toBe(lead_id);
+    expect(callRow?.conversation_id).toBe(conversation_id);
+    expect(callRow?.org_id).toBe(orgA);
+
+    // The conversation it points at is genuinely a receptionist_conversations
+    // row in the SAME org (not a stray/other-tenant id).
+    const conv = await db(serviceClient())
+      .from("receptionist_conversations")
+      .select("id, org_id")
+      .eq("id", conversation_id);
+    expect(conv.error, conv.error?.message).toBeNull();
+    const convRow = (conv.data ?? [])[0] as Record<string, unknown> | undefined;
+    expect(convRow?.org_id).toBe(orgA);
+  });
 });
