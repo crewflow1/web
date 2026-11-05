@@ -212,6 +212,10 @@ const BOUNDARY_ALLOWLIST: Record<string, string> = {
 // CONTENT-ANCHORED keys (migrated from file:line). Key = `<relpath>#<table>#<sha1_12(normalised read + .limit(arg))>` — see readAnchorKey.
 // Each entry is validated live by the "allowlist hygiene" tests (must match
 // EXACTLY ONE current producer read, else fail-closed).
+  "server/services/site-manager/tools.ts#jobs#31c3c5126f19":
+    "bounded: 'list my jobs' for the AI Site Manager — a top-N (limit clamped 1..50) sample over the caller's RLS-scoped jobs, used to answer 'what jobs do I have' and summarise a count. The AI must NEVER load an org's entire jobs table into a model prompt (cost + context blow-up); a bounded recent sample is the intended, safe behaviour, and no edit re-renders a saved reference off this read.",
+  "app/api/public/lead/route.ts#leads#980a5f1331e2":
+    "bounded dedup sample: the most-recent 200 web leads in a 5-minute window, used ONLY to absorb a double-submit of the SAME public enquiry. Not a picker or aggregate — no saved reference is re-rendered off it, and a genuine double-submit arrives within seconds. The public form is IP rate-limited (5 / 10 min), so the cap is never reached; dedup-on-sample is the intended behaviour. The unique write itself is the source of truth, not this read.",
   "server/services/hq-lead-sourcing-runner.ts#hq_sales_companies#b443a865ce89":
     "id-batch dedupe probe: which of THIS RUN's candidate company numbers already exist — .in('companies_house_number', numbers) where numbers is the sourcing batch (SOURCING_BATCH_MAX=10 per run), so the set is structurally bounded by the IN-list, never a scan; the .limit(1000) is the honest-bound clamp. Completeness holds per batch: an unknown number inserts via the sanctioned createCompany door, a known one skips.",
   "server/services/notification-preferences-service.ts#notifications#1cd629abbd6f":
