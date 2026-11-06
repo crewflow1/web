@@ -274,7 +274,9 @@ describe("quotes actions — reads and writes pinned to the active org", () => {
   });
 
   it("createVariation resolves the job through the active-org chokepoint", () => {
-    const F = fn(ACTIONS, "createVariation");
+    // createVariation was extracted to variation-actions.ts (#1035); the active-org
+    // chokepoint assertion is unchanged, just read from where the code now lives.
+    const F = fn(src("app/(app)/quotes/variation-actions.ts"), "createVariation");
     expect(F).toMatch(/loadJobForOrg[\s\S]{0,200}?ctx\.org\.id/);
     expect(F).not.toMatch(/from\("jobs"\)[\s\S]{0,160}?\.eq\("id", jobId\)\s*\.maybeSingle\(\)/);
     // Everything the variation is stamped with came from the job row.

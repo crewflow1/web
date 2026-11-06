@@ -79,6 +79,40 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
   const weekEndIso = addDaysIso(weekStartIso, 6);
   const monthStartIso = startOfMonthIso(now);
 
+  // D-17 fix: "My jobs" + the clock-in picker must honour BOTH assignment stores.
+  // The job page's "Assigned team" panel writes the service-role-only
+  // job_assignments table (also what the jobs RLS uses to decide a worker's
+  // visible jobs); the legacy single-assignee lives on jobs.assigned_to. Reading
+  // jobs.assigned_to alone (the pre-fix behaviour) left a crew-assigned worker
+  // with "No jobs assigned to you" and only "— general work —" at clock-in, so
+  // they could not book time against their own job. my_assigned_job_ids() is the
+  // SAME STABLE SECURITY DEFINER the jobs RLS calls; it UNIONs job_assignments
+  // with jobs.assigned_to, so it is the single source of truth for "jobs that
+  // are mine" and is EXECUTE-granted to authenticated. Read it LOUDLY — a failed
+  // read must not masquerade as the "no jobs" empty state.
+  // my_assigned_job_ids() is a SETOF uuid SECURITY DEFINER that isn't in the
+  // generated types yet — the same cast idiom the codebase uses for untyped RPCs.
+  type AssignedJobIdsRpc = {
+    rpc(fn: "my_assigned_job_ids"): PromiseLike<{
+      data: string[] | null;
+      error: { message?: string | null; code?: string | null } | null;
+    }>;
+  };
+  const assignedIdsRes = await (
+    supabase as unknown as AssignedJobIdsRpc
+  ).rpc("my_assigned_job_ids");
+  if (assignedIdsRes.error)
+    throw readFailure("me: my assigned job ids", assignedIdsRes.error);
+  const assignedJobIds = Array.from(
+    new Set(((assignedIdsRes.data ?? []) as unknown[]).map((v) => String(v))),
+  );
+  // Sentinel keeps the `.in(...)` filter well-formed (and empty-returning) when a
+  // worker has no assignments yet, instead of special-casing the query shape.
+  const assignedJobIdFilter =
+    assignedJobIds.length > 0
+      ? assignedJobIds
+      : ["00000000-0000-0000-0000-000000000000"];
+
   const [profileRes, compRes, openRes, weekRes, rotaRes, leavesRes, jobsRes, monthRes] =
     await Promise.all([
       supabase
@@ -146,9 +180,12 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
         // assigned_to MUST stay selected — the panel filter reads it (2026-08-29 fix).
         .select("id, status, scheduled_date, assigned_to, customer:customers ( name )")
         .eq("org_id", ctx.org.id)
-        // OWN assignments only — an unassigned-jobs or-branch shared the 20-row
-        // LIMIT and could crowd the worker's own job out (reviewer fix, 2026-08-29).
-        .eq("assigned_to", user.id)
+        // OWN assignments only — scoped to my_assigned_job_ids() (crew panel +
+        // legacy assigned_to), NOT raw assigned_to, so a crew-assigned worker's
+        // jobs appear here and at clock-in (D-17). Still the worker's OWN jobs
+        // only — the function filters to auth.uid() — so the 20-row LIMIT is
+        // never crowded by unassigned work (the 2026-08-29 reviewer concern).
+        .in("id", assignedJobIdFilter)
         // Active work only: completed is done, cancelled (20261220) is dead —
         // a field worker's "My jobs" must never point them at a cancelled site.
         .not("status", "in", "(completed,cancelled)")
@@ -255,8 +292,12 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
   const errorMessage = ERROR_MESSAGES[errorKey] ?? null;
   const savedMessage = SAVED_MESSAGES[savedKey] ?? null;
 
-  const myJobs = (jobsRes.data ?? []).filter(
-    (j) => (j as { assigned_to?: string | null }).assigned_to === user.id,
+  // Every row is already scoped to my_assigned_job_ids() at the DB; the Set is a
+  // defensive re-assertion that each job is genuinely one of mine (crew OR legacy
+  // assignee), mirroring the old assigned_to re-filter without dropping crew jobs.
+  const assignedJobIdSet = new Set(assignedJobIds);
+  const myJobs = (jobsRes.data ?? []).filter((j) =>
+    assignedJobIdSet.has((j as { id: string }).id),
   );
 
   // "My tasks" — checklist items assigned to me, still open (migration

@@ -21,6 +21,10 @@ import {
   customerToAddress,
   formatAddressOneLine,
 } from "@/lib/address";
+import { isEmbeddingConfigured } from "@/lib/ai/embeddings";
+import { governedEmbed } from "@/lib/ai/embeddings/governed";
+import { hybridRank } from "@/lib/search/semantic/rank";
+import type { SemanticHit } from "@/lib/search/semantic/types";
 
 export const runtime = "nodejs";
 
@@ -245,6 +249,103 @@ type EmbeddedCustomer = {
   postcode?: string | null;
   country?: string | null;
 } | null;
+
+/**
+ * Map a semantic corpus hit (source_table + source_id + snippet) to a palette
+ * Hit. Only member-reachable / safe source tables appear — the RPC already
+ * enforces tenant + staff + visibility, and roleVisible() is applied again at
+ * the merge for defence in depth. Returns null for a source table with no
+ * presentation (so a future corpus source cannot surface untyped).
+ */
+function semanticHitToHit(row: SemanticHit): Hit | null {
+  const firstLine = (row.snippet.split("\n")[0] ?? row.snippet).slice(0, 80).trim();
+  const id = row.sourceId;
+  switch (row.sourceTable) {
+    case "jobs":
+      return { type: "job", id, title: firstLine || "Job", subtitle: "Job", href: `/jobs/${id}` };
+    case "job_document":
+    case "job_documents":
+      return {
+        type: "job_document",
+        id,
+        title: firstLine || "Document",
+        subtitle: "Document",
+        href: row.jobId ? `/jobs/${row.jobId}` : "/documents",
+      };
+    case "site_reports":
+      return { type: "site_report", id, title: firstLine || "Site report", subtitle: "Site report", href: `/site-reports/${id}` };
+    case "snags":
+      return { type: "snag", id, title: firstLine || "Snag", subtitle: "Snag", href: `/snags/${id}` };
+    case "customers":
+      return { type: "customer", id, title: firstLine || "Customer", subtitle: "Customer", href: `/customers/${id}` };
+    default:
+      return null;
+  }
+}
+
+/**
+ * The optional SEMANTIC channel. Best-effort and purely additive: any failure
+ * (embeddings dark, governor refusal, RPC error) returns [] so the caller falls
+ * back to keyword search unchanged. Embeds the query through the GOVERNED door
+ * (billed to the tenant org) and calls the permissioned retrieval RPC via the
+ * TENANT client, so current_org_ids() / my_assigned_job_ids() / is_org_admin()
+ * resolve to the signed-in user and the SQL gate enforces the boundary.
+ */
+async function semanticHits(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  orgId: string,
+  safeQuery: string,
+): Promise<Hit[]> {
+  try {
+    // Only spend on a query embedding when the embedding tier is actually armed.
+    if (!isEmbeddingConfigured()) return [];
+    const embed = await governedEmbed({
+      texts: [safeQuery],
+      feature: "memory.embedding_query",
+      orgId,
+      userId: null,
+    });
+    const queryEmbedding = embed.status === "embedded" ? embed.vectors[0] : null;
+    const queryVersion = embed.status === "embedded" ? embed.info.version : null;
+
+    // Degrade to the corpus LEXICAL channel if the query could not be embedded
+    // (no vectors) — still a useful signal, and the RPC handles a null embedding.
+    // tenant_search_semantic post-dates the generated types, so call it through a
+    // loose rpc cast (same pattern the memory services use) — still the RLS-scoped
+    // tenant client, so the SQL gate resolves the signed-in user.
+    const looseRpc = supabase.rpc.bind(supabase) as unknown as (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => Promise<{ data: unknown; error: { message: string } | null }>;
+    const { data, error } = await looseRpc("tenant_search_semantic", {
+      p_org_id: orgId,
+      p_query: safeQuery,
+      p_query_embedding: queryEmbedding ?? null,
+      p_query_version: queryVersion ?? null,
+      p_limit: 20,
+    });
+    if (error || !Array.isArray(data)) return [];
+
+    // The RPC returns snake_case jsonb; normalise to the camelCase SemanticHit
+    // the pure ranker consumes. The embedding column is never among these keys.
+    const rows: SemanticHit[] = (data as Array<Record<string, unknown>>)
+      .filter((r) => r && typeof r === "object" && typeof r.source_table === "string" && typeof r.source_id === "string")
+      .map((r) => ({
+        sourceTable: String(r.source_table),
+        sourceId: String(r.source_id),
+        jobId: typeof r.job_id === "string" ? r.job_id : null,
+        visibility: r.visibility as SemanticHit["visibility"],
+        snippet: typeof r.snippet === "string" ? r.snippet : "",
+        cosSim: typeof r.cos_sim === "number" ? r.cos_sim : null,
+        tsRank: typeof r.ts_rank === "number" ? r.ts_rank : 0,
+      }));
+    return hybridRank(rows)
+      .map(semanticHitToHit)
+      .filter((h): h is Hit => h !== null);
+  } catch {
+    return [];
+  }
+}
 
 export async function GET(req: NextRequest) {
   // The command palette is mounted in the app shell, so it is the single most
@@ -818,5 +919,20 @@ export async function GET(req: NextRequest) {
   // entity type surfaced it, with type priority breaking ties. Array.sort is
   // stable, so within an equal score+priority the original wave order stands.
   // (sortHits IS sortHitsByMatch's algorithm — see TYPE_PRIORITY above.)
-  return respond.json({ hits: sortHits(roleVisible(hits), q) });
+  const keywordHits = sortHits(roleVisible(hits), q);
+
+  // SEMANTIC AUGMENTATION (additive, dark-safe). Keyword hits — exact/prefix/
+  // substring matches, high confidence — keep their order at the top; the
+  // semantic channel contributes ONLY records the keyword search did not already
+  // find, appended in hybrid-ranked order. This never changes existing keyword
+  // behaviour: when embeddings are dark `semanticHits` returns [] immediately,
+  // and any failure degrades to keyword-only. The RPC enforces tenant + staff +
+  // visibility in SQL; roleVisible() is applied again here for defence in depth.
+  const seen = new Set(keywordHits.map((h) => `${h.type}:${h.id}`));
+  const semantic = (await semanticHits(supabase, ctx.org.id, safe)).filter(
+    (h) => !seen.has(`${h.type}:${h.id}`),
+  );
+  // roleVisible is applied to the FULL merged set (idempotent over the already-
+  // filtered keyword hits) — the single chokepoint the role-boundary guard pins.
+  return respond.json({ hits: roleVisible([...keywordHits, ...semantic]) });
 }

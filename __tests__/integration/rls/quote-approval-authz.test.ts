@@ -2,39 +2,26 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { anonClient, describeIntegration, serviceClient, userClient } from "../_harness";
 
 /**
- * QUOTE APPROVAL AUTHZ against real Postgres (migration 20261090000000).
+ * QUOTE AUTHZ against real Postgres — ADMIN-ONLY model (migration 20261278000000).
  *
- * The owner/admin approval gate on quotes was enforced ONLY in the server
- * action (`requireQuoteApprover`). RLS on `quotes` is member-level
- * (`org_id in (select current_org_ids())`), so a STAFF-role JWT could skip the
- * UI and drive a quote to 'approved'/'sent' or stamp approval provenance
- * straight through PostgREST. This file proves the SAME gate now holds at the
- * DATABASE with a BEFORE UPDATE trigger, without breaking one legitimate flow.
+ * PRODUCT DECISION (D-13, founder-approved 2026-11-02): quotes + quote_line_items
+ * are owner/admin only. Ordinary staff must not read, create, edit or delete
+ * quotes via the UI, PostgREST, APIs or RPCs. (This supersedes the earlier model
+ * in which staff could draft/send quotes at the RLS layer with only the approval
+ * transition trigger-gated — that staff access is deliberately NOT preserved.)
  *
- * The proofs, one per case (numbered to match the ship-gate):
- *   1  staff self-approve (→ 'approved')            → REJECTED, status unchanged
- *   2  staff stamps approved_by = self              → REJECTED, provenance unchanged
- *   3  staff draft → sent (gate bypass)             → REJECTED
- *   4  admin approves (status + approved_by/_at)    → SUCCEEDS
- *   5  staff sends an already-APPROVED quote        → SUCCEEDS (legit)
- *   6  staff edit-reverts an approved quote to null → SUCCEEDS (legit)
- *   7  staff submits a draft for approval           → SUCCEEDS (legit)
- *   8  staff edits a plain draft field              → SUCCEEDS (legit)
- *   9  customer-accept via SERVICE ROLE (exempt)    → SUCCEEDS (legit)
+ * This file proves the DB boundary with real JWTs:
+ *   - an ADMIN reads quotes and performs the full lifecycle (draft → pending →
+ *     approved → sent);
+ *   - STAFF cannot READ / INSERT / UPDATE / DELETE quotes (RLS: 0 rows or 42501);
+ *   - quote_line_items follow quotes (admin reads, staff sees nothing);
+ *   - customer-accept via the SERVICE-ROLE client still succeeds (portal path is
+ *     RLS-exempt).
  *
- * MUTATION PROOF. Cases 1–3 are the security arms; cases 4–9 protect the
- * legitimate flows. A reviewer can confirm the trigger is load-bearing by
- * dropping it and re-running:
- *
- *     drop trigger enforce_quote_approval_authz on public.quotes;
- *
- * With the trigger gone, cases 1, 2 and 3 flip GREEN (the staff writes now
- * succeed) — i.e. the assertions in this file are the only thing standing
- * between a staff JWT and a self-approved/un-approved-but-sent quote. Cases
- * 4–9 stay green either way (they are the flows the trigger must NOT touch), so
- * the drop isolates exactly what the trigger is responsible for. The drop is
- * described, not automated, so the committed suite always runs with the real
- * schema.
+ * The enforce_quote_approval_authz trigger remains as defence-in-depth, but
+ * admin-only RLS is now the primary gate (it denies non-admins before the
+ * trigger runs). Cross-org + revoked-user negatives live in the dedicated
+ * `quotes-admin-only-scope.test.ts`.
  */
 
 type Res<T> = { data: T | null; error: { message: string; code?: string } | null };
@@ -168,181 +155,70 @@ describeIntegration("quote approval authz · DB-layer owner/admin gate", () => {
     }
   });
 
-  // ── security arms (the trigger's whole reason to exist) ────────────────────
+  // ── Admin-only model (D-13, founder-approved): quotes are owner/admin only.
+  // Ordinary staff cannot read/create/edit/delete quotes via PostgREST; the
+  // customer-portal (service-role) and the owner/admin lifecycle are preserved.
+  // The enforce_quote_approval_authz trigger remains as defence-in-depth, but
+  // admin-only RLS now fires first for non-admins.
 
-  it("1 · staff self-approving a draft is REJECTED, and the status is unchanged", async () => {
+  it("an ADMIN can read quotes", async () => {
     const id = await seedQuote();
-    const res = await db(userClient(staffToken))
-      .from("quotes")
-      .update({ status: "approved" })
-      .eq("id", id);
-    expect(res.error, "a staff member must not be able to approve a quote").not.toBeNull();
-    expect(res.error?.message ?? "").toMatch(/owner or admin/i);
-    expect(await statusOf(id), "the rejected update must roll back").toBe("draft");
+    const r = await db(userClient(adminToken)).from("quotes").select("id").eq("id", id);
+    expect((r.data ?? []).map((x) => String((x as Row).id))).toContain(id);
   });
 
-  it("2 · staff stamping approved_by = self is REJECTED, and provenance is unchanged", async () => {
+  it("an ADMIN performs the full lifecycle: draft → pending → approved → sent", async () => {
     const id = await seedQuote();
-    const res = await db(userClient(staffToken))
-      .from("quotes")
-      .update({ approved_by: staffId })
-      .eq("id", id);
-    expect(res.error, "a staff member must not be able to stamp approval").not.toBeNull();
-    expect(res.error?.message ?? "").toMatch(/owner or admin/i);
-    const after = await svc().from("quotes").select("approved_by").eq("id", id).maybeSingle();
-    expect(after.data?.approved_by ?? null, "approved_by must stay null").toBeNull();
-  });
-
-  it("3 · staff sending a DRAFT (draft → sent, gate bypass) is REJECTED", async () => {
-    const id = await seedQuote();
-    const res = await db(userClient(staffToken))
-      .from("quotes")
-      .update({ status: "sent" })
-      .eq("id", id);
-    expect(res.error, "an un-approved quote must not be sendable").not.toBeNull();
-    expect(res.error?.message ?? "").toMatch(/approved before it can be sent/i);
-    expect(await statusOf(id)).toBe("draft");
-  });
-
-  // ── legitimate flows the trigger must NOT break (fail here ⇒ DO NOT SHIP) ──
-
-  it("4 · an admin approving (status + approved_by + approved_at) SUCCEEDS", async () => {
-    const id = await seedQuote({ status: "pending_approval" });
-    const res = await db(userClient(adminToken))
-      .from("quotes")
-      .update({
-        status: "approved",
-        approved_by: adminId,
-        approved_at: new Date().toISOString(),
-      })
-      .eq("id", id);
-    expect(res.error, JSON.stringify(res.error)).toBeNull();
+    const a = db(userClient(adminToken));
+    expect((await a.from("quotes").update({ status: "pending_approval" }).eq("id", id)).error).toBeNull();
+    expect(await statusOf(id)).toBe("pending_approval");
+    expect((await a.from("quotes").update({ status: "approved", approved_by: adminId, approved_at: new Date().toISOString() }).eq("id", id)).error).toBeNull();
     expect(await statusOf(id)).toBe("approved");
-  });
-
-  it("5 · staff SENDING an already-approved quote (approved → sent) SUCCEEDS", async () => {
-    const id = await seedQuote({ status: "approved", approved_by: adminId });
-    const res = await db(userClient(staffToken))
-      .from("quotes")
-      .update({ status: "sent" })
-      .eq("id", id);
-    expect(res.error, JSON.stringify(res.error)).toBeNull();
+    expect((await a.from("quotes").update({ status: "sent" }).eq("id", id)).error).toBeNull();
     expect(await statusOf(id)).toBe("sent");
   });
 
-  it("6 · staff edit-reverting an approved quote (→ pending, approved_by → null) SUCCEEDS", async () => {
-    const id = await seedQuote({
-      status: "approved",
-      approved_by: adminId,
-      approved_at: new Date().toISOString(),
-    });
-    const res = await db(userClient(staffToken))
-      .from("quotes")
-      .update({ status: "pending_approval", approved_by: null, approved_at: null })
-      .eq("id", id);
-    expect(res.error, JSON.stringify(res.error)).toBeNull();
-    expect(await statusOf(id)).toBe("pending_approval");
-    const after = await svc().from("quotes").select("approved_by").eq("id", id).maybeSingle();
-    expect(after.data?.approved_by ?? null).toBeNull();
-  });
-
-  it("7 · staff submitting a draft for approval (draft → pending_approval) SUCCEEDS", async () => {
+  it("STAFF cannot READ quotes (0 rows)", async () => {
     const id = await seedQuote();
-    const res = await db(userClient(staffToken))
-      .from("quotes")
-      .update({ status: "pending_approval" })
-      .eq("id", id);
-    expect(res.error, JSON.stringify(res.error)).toBeNull();
-    expect(await statusOf(id)).toBe("pending_approval");
+    const r = await db(userClient(staffToken)).from("quotes").select("id").eq("id", id);
+    expect(r.data ?? []).toHaveLength(0);
   });
 
-  it("8 · staff editing a plain draft field (notes) leaving status draft SUCCEEDS", async () => {
+  it("STAFF cannot INSERT a quote (RLS 42501)", async () => {
+    const r = await db(userClient(staffToken))
+      .from("quotes")
+      .insert({ org_id: orgA, customer_id: customerA, number: `${TOKEN}-STAFF-INS`, status: "draft" })
+      .select("id")
+      .single();
+    expect(r.error?.code, JSON.stringify(r.error)).toBe("42501");
+  });
+
+  it("STAFF cannot UPDATE a quote (0 rows — status unchanged)", async () => {
     const id = await seedQuote();
-    const res = await db(userClient(staffToken))
-      .from("quotes")
-      .update({ notes: "revised scope note" })
-      .eq("id", id);
-    expect(res.error, JSON.stringify(res.error)).toBeNull();
-    const after = await svc().from("quotes").select("status, notes").eq("id", id).maybeSingle();
-    expect(String(after.data?.status)).toBe("draft");
-    expect(String(after.data?.notes)).toBe("revised scope note");
+    await db(userClient(staffToken)).from("quotes").update({ status: "sent", notes: "sneaky" }).eq("id", id);
+    expect(await statusOf(id)).toBe("draft");
   });
 
-  it("9 · customer-accept via SERVICE ROLE (sent → accepted) SUCCEEDS — service_role is exempt", async () => {
+  it("STAFF cannot DELETE a quote (it remains)", async () => {
+    const id = await seedQuote();
+    await db(userClient(staffToken)).from("quotes").delete().eq("id", id);
+    expect(await statusOf(id)).toBe("draft");
+  });
+
+  it("quote_line_items: ADMIN reads, STAFF reads nothing", async () => {
+    const id = await seedQuote();
+    const ins = await svc().from("quote_line_items").insert({ org_id: orgA, quote_id: id, description: "Item" }).select("id").single();
+    expect(ins.error, JSON.stringify(ins.error)).toBeNull();
+    const adminRows = await db(userClient(adminToken)).from("quote_line_items").select("id").eq("quote_id", id);
+    expect((adminRows.data ?? []).length).toBeGreaterThan(0);
+    const staffRows = await db(userClient(staffToken)).from("quote_line_items").select("id").eq("quote_id", id);
+    expect(staffRows.data ?? []).toHaveLength(0);
+  });
+
+  it("customer-accept via SERVICE ROLE still succeeds (portal path, RLS-exempt)", async () => {
     const id = await seedQuote({ status: "sent", approved_by: adminId });
-    const res = await svc()
-      .from("quotes")
-      .update({ status: "accepted", accepted_at: new Date().toISOString() })
-      .eq("id", id);
-    expect(res.error, JSON.stringify(res.error)).toBeNull();
+    const r = await svc().from("quotes").update({ status: "accepted", accepted_at: new Date().toISOString() }).eq("id", id);
+    expect(r.error, JSON.stringify(r.error)).toBeNull();
     expect(await statusOf(id)).toBe("accepted");
-  });
-
-  // ── INSERT arm: the gate must hold on creation too, not only on UPDATE.
-  // A BEFORE UPDATE-only trigger let a staff JWT skip the gate by CREATING a
-  // quote already at 'approved'/'sent'. These prove the INSERT path is closed.
-  // The staff INSERT must satisfy the member-insert RLS policy (org_id), which
-  // it does — staff is a member of orgA — so the REFUSAL is the trigger, not RLS.
-
-  it("10 · staff INSERTing a quote already 'approved' (self-approval on create) is REJECTED", async () => {
-    const res = await db(userClient(staffToken))
-      .from("quotes")
-      .insert({
-        org_id: orgA,
-        customer_id: customerA,
-        number: `${TOKEN}-INS-APPROVED`,
-        status: "approved",
-        approved_by: staffId,
-      })
-      .select("id")
-      .single();
-    expect(res.error, "staff must not create an already-approved quote").not.toBeNull();
-    expect(res.error?.message ?? "").toMatch(/owner or admin/i);
-  });
-
-  it("11 · staff INSERTing a quote already 'sent' (un-approved → customer) is REJECTED", async () => {
-    const res = await db(userClient(staffToken))
-      .from("quotes")
-      .insert({
-        org_id: orgA,
-        customer_id: customerA,
-        number: `${TOKEN}-INS-SENT`,
-        status: "sent",
-      })
-      .select("id")
-      .single();
-    expect(res.error, "staff must not create an already-sent quote").not.toBeNull();
-    expect(res.error?.message ?? "").toMatch(/approved before it can be sent/i);
-  });
-
-  it("12 · staff INSERTing a draft that stamps approved_by is REJECTED", async () => {
-    const res = await db(userClient(staffToken))
-      .from("quotes")
-      .insert({
-        org_id: orgA,
-        customer_id: customerA,
-        number: `${TOKEN}-INS-STAMP`,
-        status: "draft",
-        approved_by: staffId,
-      })
-      .select("id")
-      .single();
-    expect(res.error, "staff must not stamp approval provenance on create").not.toBeNull();
-    expect(res.error?.message ?? "").toMatch(/owner or admin/i);
-  });
-
-  it("13 · staff INSERTing a plain DRAFT (the real createQuote path) SUCCEEDS", async () => {
-    const res = await db(userClient(staffToken))
-      .from("quotes")
-      .insert({
-        org_id: orgA,
-        customer_id: customerA,
-        number: `${TOKEN}-INS-DRAFT`,
-        status: "draft",
-      })
-      .select("id")
-      .single();
-    expect(res.error, JSON.stringify(res.error)).toBeNull();
-    expect(String(res.data?.id ?? "")).not.toBe("");
   });
 });

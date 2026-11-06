@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 /**
- * Regression proofs for `createVariation` in app/(app)/quotes/actions.ts.
+ * Regression proofs for `createVariation` in app/(app)/quotes/variation-actions.ts.
  *
  * TWO defects are pinned here.
  *
@@ -118,7 +118,7 @@ vi.mock("@/server/services/automation-dispatcher", () => ({
   dispatchAutomation: vi.fn(async () => ({ ok: true })),
 }));
 
-const actions = await import("@/app/(app)/quotes/actions");
+const actions = await import("@/app/(app)/quotes/variation-actions");
 
 /** The form the operator submits, with an EoT request on it. */
 function variationForm(overrides: Record<string, string> = {}): FormData {

@@ -3,7 +3,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { ramsTemplateOptions } from "@/lib/health-safety/rams-templates";
 import { loadImportDraftDefaults } from "@/server/services/document-autofill";
 import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
-import { listAssessors } from "../_data";
+import { listAssessors, listLinkableJobs } from "../_data";
 import { createRiskAssessment, generateRamsDraft } from "../actions";
 
 /**
@@ -23,7 +23,7 @@ const ERROR_MAP: Record<string, string> = {
 /** Blank PPE rows on the create form — the action drops the empty ones. */
 const PPE_SLOTS = 6;
 
-type SP = Promise<{ error?: string; import?: string }>;
+type SP = Promise<{ error?: string; import?: string; job?: string }>;
 
 const inputClass =
   "mt-1.5 block min-h-[44px] w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500";
@@ -37,7 +37,13 @@ export default async function NewRiskAssessmentPage({
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const assessors = await listAssessors(ctx.org.id);
+  const jobs = await listLinkableJobs(ctx.org.id);
   const templates = ramsTemplateOptions();
+
+  // Preselect the job when arrived at via "Create RAMS for this job" (D-16); the
+  // value is only honoured if it is one of the caller's linkable jobs, so a
+  // stale/foreign id falls back to no link rather than leaking existence.
+  const presetJob = sp.job && jobs.some((j) => j.id === sp.job) ? sp.job : "";
 
   const errorMessage = sp.error
     ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
@@ -108,6 +114,28 @@ export default async function NewRiskAssessmentPage({
               ))}
             </select>
           </div>
+          <div>
+            <label htmlFor="jobId-generate" className={labelClass}>
+              Link to job
+            </label>
+            <select
+              id="jobId-generate"
+              name="jobId"
+              defaultValue={presetJob}
+              className={inputClass}
+            >
+              <option value="">No job (org-wide RAMS)</option>
+              {jobs.map((j) => (
+                <option key={j.id} value={j.id}>
+                  {j.label}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-slate-500">
+              Linking a job makes this RAMS show on the job&rsquo;s Health &amp; safety
+              panel and clears its &ldquo;no current RAMS&rdquo; warning once issued.
+            </p>
+          </div>
           <button
             type="submit"
             className="inline-flex min-h-[44px] items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2"
@@ -162,6 +190,24 @@ export default async function NewRiskAssessmentPage({
             placeholder="What work does this RAMS cover?"
             className={inputClass}
           />
+        </div>
+
+        <div>
+          <label htmlFor="jobId" className={labelClass}>
+            Link to job
+          </label>
+          <select id="jobId" name="jobId" defaultValue={presetJob} className={inputClass}>
+            <option value="">No job (org-wide RAMS)</option>
+            {jobs.map((j) => (
+              <option key={j.id} value={j.id}>
+                {j.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-slate-500">
+            Linking a job makes this RAMS show on the job&rsquo;s Health &amp; safety
+            panel and clears its &ldquo;no current RAMS&rdquo; warning once issued.
+          </p>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">

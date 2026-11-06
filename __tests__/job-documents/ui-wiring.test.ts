@@ -47,9 +47,11 @@ describe("Job Detail page wiring", () => {
   it("captures ctx from requireOrgContext and derives owner/admin access", () => {
     const src = read(PAGE);
     expect(src).toMatch(/const\s+\{\s*ctx\s*\}\s*=\s*await\s+requireOrgContext\(\)/);
-    expect(src).toMatch(/ctx\.membership\.role === "owner"/);
-    expect(src).toMatch(/ctx\.membership\.role === "admin"/);
-    expect(src).toMatch(/const\s+canViewPrivate\s*=/);
+    // canViewPrivate is now derived via the shared owner/admin rule in
+    // server/auth/financial-visibility.ts (one source of truth, shared with the
+    // AI Site Manager's financial gate) rather than an inline role comparison.
+    expect(src).toMatch(/roleCanViewPrivate\b.*from\s+"@\/server\/auth\/financial-visibility"/s);
+    expect(src).toMatch(/const\s+canViewPrivate\s*=\s*roleCanViewPrivate\(ctx\.membership\.role\)/);
   });
 
   it("imports and mounts the panel, passing canViewPrivate down", () => {

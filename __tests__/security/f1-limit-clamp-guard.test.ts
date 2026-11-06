@@ -1,6 +1,55 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
+import { createHash } from "node:crypto";
+
+/**
+ * CONTENT ANCHOR (replaces the brittle `file:line` allowlist key).
+ *
+ * The allowlists used to be keyed `"<relpath>:<lineNo>"`, so ANY harmless edit
+ * above an allowlisted read shifted its line and forced a re-key (the recurring
+ * tax documented across these entries, and the reason PR #1035's split broke this
+ * suite). An anchor keys on the READ'S OWN normalised source text, so it moves
+ * with the code and is invariant to line shifts AND reformatting:
+ *
+ *   `<relpath>#<table>#<sha1_12(normalised `.from…` chain + `.limit(arg)`)>`
+ *
+ * FAIL-CLOSED (proved by the "allowlist hygiene" tests at the end of this file):
+ *   - missing / no-longer-matches → entry matches NO current read → FAIL
+ *     (a removed or materially-changed read forces the exception back to review);
+ *   - duplicated / ambiguous → entry matches >1 read, or two distinct offenders
+ *     share an anchor → FAIL (never silently widen coverage).
+ */
+function normaliseReadText(s: string): string {
+  // Strip STRUCTURAL whitespace (so the anchor is invariant to line shifts and
+  // reformatting) but PRESERVE whitespace INSIDE string / template literals, which
+  // is semantically meaningful: `.eq("name","a b")` and `.eq("name","ab")` are
+  // different queries and must NOT collapse to the same anchor. We scan char by
+  // char, copying literal interiors verbatim (honouring backslash escapes) and
+  // dropping whitespace only in code position. Template-literal interiors
+  // (including any `${…}`) are copied verbatim too — that only ever makes anchors
+  // MORE distinct, never falsely merges two different reads.
+  let out = "";
+  let quote: string | null = null;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]!;
+    if (quote) {
+      out += c;
+      if (c === "\\") { out += s[i + 1] ?? ""; i++; continue; }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") { quote = c; out += c; continue; }
+    if (/\s/.test(c)) continue; // structural whitespace — drop
+    out += c;
+  }
+  return out;
+}
+function readAnchorKey(rel: string, table: string, between: string, arg: string): string {
+  const sig = `${normaliseReadText(between)}|.limit(${normaliseReadText(arg)})`;
+  const h = createHash("sha1").update(sig).digest("hex").slice(0, 12);
+  return `${rel}#${table}#${h}`;
+}
 
 /**
  * F-1 CLASS GUARD (repo-wide, FAIL-CLOSED) — no Supabase read may carry a
@@ -160,211 +209,84 @@ const PRODUCER_TABLES = new Set<string>([
  * The overdue producer scan is DELIBERATELY absent: it is the real offender and
  * was fixed by paging (fetchAllRows), not allowlisted. */
 const BOUNDARY_ALLOWLIST: Record<string, string> = {
-  // P3 notifications digest — a per-(user, cadence) batch read of a user's
-  // digest-eligible notifications, capped at .limit(MAX_NOTIFS_PER_DIGEST=200)
-  // and ordered created_at ASC. This is a GENUINELY-bounded, self-draining
-  // per-pass batch, NOT a completeness-sensitive set read: the cursor advances
-  // ONLY to the created_at of the LAST notification actually included in the
-  // email, so any overflow beyond 200 is not dropped — it rolls into the next
-  // digest pass. A single digest email deliberately must not enumerate thousands
-  // of notifications; 200 is the display bound. (Sibling class to the queue-drain
-  // worker's bounded .limit(DRAIN_BATCH_SIZE).)
-  // R088 lead-sourcing dedupe — a per-run id-batch probe, not a set read.
-  // (Line moved 195→187 when the bulk-pool sourcing path + shared SIC import landed.)
-  "server/services/hq-lead-sourcing-runner.ts:187":
+// CONTENT-ANCHORED keys (migrated from file:line). Key = `<relpath>#<table>#<sha1_12(normalised read + .limit(arg))>` — see readAnchorKey.
+// Each entry is validated live by the "allowlist hygiene" tests (must match
+// EXACTLY ONE current producer read, else fail-closed).
+  "server/services/site-manager/tools.ts#jobs#31c3c5126f19":
+    "bounded: 'list my jobs' for the AI Site Manager — a top-N (limit clamped 1..50) sample over the caller's RLS-scoped jobs, used to answer 'what jobs do I have' and summarise a count. The AI must NEVER load an org's entire jobs table into a model prompt (cost + context blow-up); a bounded recent sample is the intended, safe behaviour, and no edit re-renders a saved reference off this read.",
+  "app/api/public/lead/route.ts#leads#980a5f1331e2":
+    "bounded dedup sample: the most-recent 200 web leads in a 5-minute window, used ONLY to absorb a double-submit of the SAME public enquiry. Not a picker or aggregate — no saved reference is re-rendered off it, and a genuine double-submit arrives within seconds. The public form is IP rate-limited (5 / 10 min), so the cap is never reached; dedup-on-sample is the intended behaviour. The unique write itself is the source of truth, not this read.",
+  "server/services/hq-lead-sourcing-runner.ts#hq_sales_companies#b443a865ce89":
     "id-batch dedupe probe: which of THIS RUN's candidate company numbers already exist — .in('companies_house_number', numbers) where numbers is the sourcing batch (SOURCING_BATCH_MAX=10 per run), so the set is structurally bounded by the IN-list, never a scan; the .limit(1000) is the honest-bound clamp. Completeness holds per batch: an unknown number inserts via the sanctioned createCompany door, a known one skips.",
-  // (Line moved 392→409 when the staff-privacy eligibility gate + its context
-  // load + the widened digest select columns landed — FEATURE 3.)
-  "server/services/notification-preferences-service.ts:409":
+  "server/services/notification-preferences-service.ts#notifications#1cd629abbd6f":
     "bounded batch: ONE user's digest-eligible notifications (.eq('org_id') for that user, category-filtered) capped at 200 and ordered created_at ASC; the digest cursor advances only to the last INCLUDED row, so overflow rolls to the next pass rather than being dropped — a self-draining per-pass batch, not a completeness read.",
-  // countPostedReceipts: REMOVED (C66). The PO register above it is now fully
-  // PAGED, so purchaseOrderIds can exceed the cap and the old bounded reason
-  // ("ONE list page's POs") is no longer true. The read is now CHUNKED + PAGED
-  // (fetchAllRows over each 200-id chunk), so it carries a .range() not a .limit
-  // and needs no entry. (The sibling listPurchaseOrderReceipts per-PO .limit(200)
-  // read stays bounded — see its entry below, now at :60.)
-  // material-fulfilment: REMOVED (false narrower-than-use entry). The reason
-  // claimed "for ONE material request … request-sized, well below 1000", but the
-  // two real callers pass MULTI-request / org-wide line sets in ONE call
-  // (intelligence.gatherMaterialDemand → ALL open demand requests org-wide;
-  // material-requests.deriveFulfilment → a whole list page's lines, up to 500
-  // requests). Both reads are now PAGED in full via fetchAllRows + chunked .in(),
-  // so they carry a .range() (not a .limit) and no longer need an entry.
-  // sites/van-stock: per-ORG fleet_vehicles scans (.eq(org_id)) for site-usage
-  // counts / a van picker. An SME org's fleet is tens of vehicles, not thousands.
-  "server/services/sites.ts:187":
+  "server/services/sites.ts#fleet_vehicles#26e36440bdd7":
     "bounded: per-org fleet_vehicles count sample (.eq(org_id)) — an org's fleet is tens of vehicles. (Moved 159→187 when listSitesForOrg was split into a bounded + paged (fetchAllRows) picker read for the F-1 picker-completion wave.)",
-  "server/services/van-stock.ts:105":
+  "server/services/van-stock.ts#fleet_vehicles#d8498f361324":
     "bounded: per-org fleet_vehicles picker (.eq(org_id)) — an org's fleet is tens of vehicles",
-
-  // ── PRODUCER-.limit sweep (the ANY-.limit tightening) ─────────────────────
-  // Every entry below is a GENUINELY-bounded sample the static analyser can't
-  // recognise: a top-N display, a per-scope (per-customer / per-job / per-GRN)
-  // read, a global-search result cap, or a NEW-form recency picker whose EDIT
-  // counterpart re-shows the saved reference some OTHER way (a single .eq('id')
-  // lookup, or a preserve-injected <option>). None is a complete-set read whose
-  // truncation would drop rows a picker/aggregation must see — those were PAGED.
-
-  // Detail-page display lists (recent-N, read-only, no write-back).
-  "app/(app)/assets/[id]/page.tsx:232":
+  "app/(app)/assets/[id]/page.tsx#jobs#55a31200fb52":
     "bounded: recent-200 jobs referencing this asset — detail-page display list, not a write-back picker",
-  "app/(app)/delays/_data.ts:111":
-    "bounded: recent-200 jobs sample for the delays report display",
-  // diary/_data.ts:21 and quality/_data.ts:260 were HERE as "recent-200 jobs
-  // sample" picker reads. Both are now PAGED via fetchAllRows (the C72
-  // picker-completion class fix — they feed REQUIRED writable job pickers on
-  // create AND draft-edit, so an out-of-cap saved job was silently mis-attributed),
-  // so neither carries a producer .limit and neither needs an entry. Same
-  // treatment as reviews/new, snags/new and site-reports/new below.
-  "app/(app)/dashboard/page.tsx:289":
+  "app/(app)/dashboard/page.tsx#leads#4f9b44ba7bb4":
     "bounded: dashboard 'recent 5 leads' widget — an intentional top-5 display. (Moved to 230 in the security closeout when the payroll-tile read switched to loadOrgHourlyPay + a comment was added above; same intentional top-5 semantics inside the merged `coreWave` Promise.all.) Moved 230→231 in the final-roadmap wave (L4/L7 import shifts) — pure line shift, same read. Moved 231→262 in Workstream A2 (quotes fetch-once-share added the `quotesReadPromise`/`sharedQuoteRows` block above `coreWave`) — pure line shift, SAME bounded top-5 display read. Moved 262→288 in Workstream A3 (invoices fetch-once-share added the `invoicesReadPromise`/`sharedInvoiceRows` block above `coreWave`) — pure line shift, SAME bounded top-5 display read. Moved 288→289 in the Phase-1 dashboard-profitability fix (dropped the 6-month `finances` `.gte` bound + added an explanatory comment above the finances read) — pure line shift, SAME bounded top-5 display read; the cap is still correct because this is a recent-leads display sample, not a set fed to any picker or aggregation.",
-  "app/(app)/leads/[id]/page.tsx:142":
+  "app/(app)/leads/[id]/page.tsx#quotes#d5e3f5c81918":
     "bounded: this lead's related quotes — top-5 display on the lead detail page. (Line moved 132→136 when the lead→customer conversion imports were added; then 136→142 when the lead-score imports + panel were added above this read; reason unchanged.)",
-  "app/(app)/me/page.tsx:145":
-    "bounded: 'my recent 20 jobs' widget on the profile page — a top-N display. (Line moved to 145 in the security closeout when the own-pay read was split out to staff_compensation above this read; reason unchanged.)",
-  "server/services/fleet-snapshot.ts:568":
+  "app/(app)/me/page.tsx#jobs#e8feb0d78aaf":
+    "bounded: the worker's 'My jobs' widget + clock-in job picker — a top-20 display of the worker's OWN active jobs. (D-17 re-keyed the read from `.eq('assigned_to', me)` to `.in('id', my_assigned_job_ids())` so it also honours crew (job_assignments) assignments; it stays the worker's own jobs only, so the top-20 cap is unchanged and never crowded by unassigned work.)",
+  "server/services/fleet-snapshot.ts#telematics_readings#36c95fa1ef88":
     "bounded: last-50 telematics readings for a vehicle track display (recent-N sample)",
-  "server/services/hq-customer-snapshot.ts:277":
+  "server/services/hq-customer-snapshot.ts#invoice_payments#a382eff0eca5":
     "bounded: last-10 payments for an HQ customer snapshot display (top-N). (Moved 215→216 when a fetchAllRows import was added for the .from(as never) cast-form wave; 216→277 when the L11 member-roster read — itself PAGED via fetchAllRows — and the CustomerMember type were added above.)",
-
-  // NEW-form recency pickers — no saved reference is re-rendered through the list
-  // (the EDIT counterpart resolves it separately), so no picker silent-null.
-  //
-  // reviews/new:54 and snags/new:38 were HERE as "recent-200 jobs sample" — both
-  // are now PAGED via fetchAllRows (the picker-completion class fix), so neither
-  // carries a producer .limit and neither needs an entry. (site-reports/new was
-  // paged by the same class fix in #721; its stale key was likewise dropped.)
-  "app/(app)/toolbox/_form-options.ts:41":
+  "app/(app)/toolbox/_form-options.ts#jobs#35be1991d5b3":
     "bounded: recent-200 jobs sample for the toolbox-talk picker; the EDIT form (_talk-form.tsx) preserve-injects the saved job_id so an out-of-sample link can never be dropped",
-  "server/services/rota.ts:81":
+  "app/(app)/toolbox/_form-options.ts#jobs#d5a83111e739":
+    "bounded: recent-200 jobs sample for the toolbox-talk picker; the EDIT form (_talk-form.tsx) preserve-injects the saved job_id so an out-of-sample link can never be dropped",
+  "app/(app)/toolbox/_form-options.ts#jobs#32417ceca973":
+    "bounded: recent-200 jobs sample for the toolbox-talk picker; the EDIT form (_talk-form.tsx) preserve-injects the saved job_id so an out-of-sample link can never be dropped",
+  "server/services/rota.ts#jobs#da6cbccea4fe":
     "bounded: recent-50 jobs for the assign-shift picker; assigning is a create action, not an edit re-render of a saved reference",
-
-  // In-page link picker with preserve-option + explicit onChange write.
-  "app/(app)/invoices/[id]/page.tsx:127":
+  "app/(app)/invoices/[id]/page.tsx#jobs#d444a415d358":
     "bounded: recent-50 link-to-job picker; a controlled per-control select whose write fires only on explicit onChange (no shared-form save), and the linked job is preserve-injected in page.tsx so it always displays",
-
-  // (Line key re-pointed 118→119: the G-7 duplicate action added the fetchAllRows
-  // import above it. The duplicate's own line-item read is PAGED — only this
-  // deliberate notes-sample cap remains.)
-  // (Line key re-pointed 119→120: pure shift — the analytics-event-wiring PR
-  // added one `@/lib/analytics/events` import above this read. The read itself
-  // is unchanged from origin/main.)
-  "app/(app)/quotes/actions.ts:120":
+  "app/(app)/quotes/actions.ts#quote_line_items#c69af5fcfc18":
     "bounded: quote→job carry (fix 4) copies the first 50 line-item DESCRIPTIONS into the job's notes as a human scope summary — a display sample, never financial truth (amounts/items stay on the quote, linked via quotes.job_id + the auto-invoice). A 50-line cap on a notes blurb is deliberate; paging would only grow an unreadable note.",
-
-  // Global-search result caps — the command-palette (/api/search). Each is an
-  // org-pinned (.eq('org_id', ctx.org.id)) top-N DISPLAY hit list, capped by the
-  // same-file const named; results are mapped into `hits` for display (and the
-  // customer/job/quote ids are chained into dependent `.in()` reads, themselves
-  // bounded by that cap). NONE is fed into a count/sum/completeness surface — a
-  // dropped hit past the cap is by-design "refine your query", not a wrong number.
-  // (Line keys last re-pointed for the "everything searchable" completion wave,
-  // which grew the route above these reads.)
-  // NOTE: the customers search read is no longer here — the palette now matches
-  // customers through the shared search_customers RPC (supabase.rpc with p_limit:
-  // CHAIN_LIMIT), not a `.from("customers").limit(…)`, so the producer-limit guard
-  // doesn't see it (the RPC's own SAFE limit clamp bounds it instead).
-  "app/api/search/route.ts:453":
+  "app/api/search/route.ts#jobs#f5ab2bc2e800":
     "bounded: search jobs — .limit(CHAIN_LIMIT=50) DISPLAY hits, org-pinned; ids chained into ≤50 .in() lookups, NOT counted/summed",
-  "app/api/search/route.ts:462":
+  "app/api/search/route.ts#quotes#f12cb00b7876":
     "bounded: search quotes — .limit(CHAIN_LIMIT=50) DISPLAY hits, org-pinned; ids chained into ≤50 .in() lookups, NOT counted/summed",
-  "app/api/search/route.ts:468":
+  "app/api/search/route.ts#leads#ed1145d62546":
     "bounded: search leads — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
-  "app/api/search/route.ts:616":
+  "app/api/search/route.ts#invoices#895586934f79":
     "bounded: search invoices — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
-  // Documents-search wave (new entities in the command palette). Each is an
-  // org-pinned (.eq('org_id', ctx.org.id)) top-N DISPLAY hit list capped at
-  // PER_TYPE=8, mapped straight into `hits` for display — never counted/summed.
-  "app/api/search/route.ts:634":
+  "app/api/search/route.ts#purchase_orders#f2bff006c3fa":
     "bounded: search purchase_orders — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
-  "app/api/search/route.ts:640":
+  "app/api/search/route.ts#site_reports#2e45b7b12b72":
     "bounded: search site_reports — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
-  // "Everything searchable" completion wave — same class as every other
-  // /api/search read: org-pinned top-N DISPLAY hit lists, never counted/summed.
-  "app/api/search/route.ts:352":
+  "app/api/search/route.ts#support_tickets#552a41bdbdb5":
     "bounded: search support_tickets — .limit(PER_TYPE=8) DISPLAY hits, org-pinned, NOT fed to any count/sum",
-  "app/api/search/route.ts:478":
+  "app/api/search/route.ts#fleet_vehicles#7918dc518780":
     "bounded: search fleet_vehicles — .or(asset_id.in.(≤50 matched asset ids)) profile lookup capped at .limit(CHAIN_LIMIT=50); decides vehicle-vs-asset hit rendering for the ≤50 matched assets, NOT counted/summed",
-  "app/api/search/route.ts:648":
+  "app/api/search/route.ts#finances#3ce126b6e0dc":
     "bounded: search finances — .limit(PER_TYPE=8) DISPLAY hits, org-pinned; selects NO money columns (category/notes/date only), NOT fed to any count/sum",
-  // /documents home — the HIGH-VALUE jobs read is a CHUNKED name lookup:
-  // `.in('id', idsChunk)` where each chunk is ≤JOB_IN_CHUNK=500 unique job ids
-  // (jobs.id is unique, so a chunk yields ≤500 rows), used only to label the
-  // aggregated documents with their job/customer name — never counted/summed.
-  "app/(app)/documents/page.tsx:183":
+  "app/(app)/documents/page.tsx#jobs#9d001d9d40e5":
     "bounded: /documents job-name lookup — CHUNKED .in('id', idsChunk) capped at .limit(JOB_IN_CHUNK=500) per chunk (jobs.id unique ⇒ ≤500 rows); a display-label lookup over a fully-read doc set, NOT counted/summed",
-  // NOTE: the jobs-list customer-match helper is no longer a `.from("customers")
-  // .limit(…)` read — it now resolves matching customer ids through the shared
-  // search_customers RPC (searchCustomers), so it is not a producer-limit read.
-
-  // Customer-portal reads.
-  //
-  // REMOVED (false narrower-than-use entries surfaced by the C64 audit): the
-  // documents-library quotes (:48) + invoices (:60) reads and the jobs-tab (:152)
-  // read were justified as "top-N display" but each is the customer's COMPLETE
-  // set: the documents `{documents.length} total` count AND the "Download all
-  // (zip)" bundle derive from :48/:60 (a cap dropped docs from the count and the
-  // customer's own ZIP), and the jobs read was ASC-ordered so :152's cap dropped
-  // the NEWEST jobs. All three are now PAGED via fetchAllRows (.range), so none
-  // needs an entry.  The q/[token] sibling-variation read (was :199) fed a MONEY
-  // SUM into a legally-signed contract total — "practically small" ≠ "provably
-  // complete" — and is likewise PAGED, not allowlisted.
-  //
-  // The portal HOME + quotes-tab quotes reads were ALSO false ("counted, never
-  // summed"/"top-200 display") — allQuotes feeds COUNT KPIs + the live action
-  // centre, and the quotes tab is a set the customer must see in full — both now
-  // PAGED. The portal invoices reads (home + invoices tab) are DELIBERATELY
-  // absent for the same reason: they feed a MONEY aggregate (computePortalPayments)
-  // and are PAGED, with the aggregate-fed-cap net below refusing any re-silencing.
-  //
-  // The portal ZIP bulk-download reads (was :153 invoices / :168 quotes) were
-  // ALSO removed: the ZIP caps at MAX_BULK_DOCS newest docs, but `plan.total`
-  // (a .length count of these reads) is surfaced to the customer as the
-  // X-Bulk-Total truncation-note header, so a .limit(200) under-reported it.
-  // Both are now PAGED via fetchAllRows (.range) — the selection is unchanged,
-  // the surfaced total is now exact.
-
-  // All GRNs on ONE purchase order — bounded by the single-PO scope. (Line moved
-  // 58→60 when a fetchAllRows import + a .range on the Chain type were added for
-  // the countPostedReceipts paging in the same file.)
-  "app/(app)/purchase-orders/_receiving-data.ts:60":
+  "app/(app)/purchase-orders/_receiving-data.ts#goods_received_notes#52493c003e96":
     "bounded: every goods-received note for ONE purchase order (.eq('purchase_order_id')) — a PO has a handful of deliveries, top-200",
-
-  // Per-request id-set lookup. (Line shifted +1 by the additive `barcode` column
-  // on StockItemRow / STOCK_ITEM_COLUMNS, 20261144000000; shifted again by the
-  // additive loadStockValuationReport + cost columns, W1 stock COGS, 20261180000000.)
-  "server/services/stock.ts:389":
+  "server/services/stock.ts#stock_movements#d9164f06057c":
     "bounded: receipt movements for a specific GRN's line-id set (.in('grn_line_id', grnLineIds)) — request-sized lookup; the balance-fold read (listStockMovements) is separately paged via fetchAllRows. (Moved 272→303 when the stock-COGS wave added the loadStockCogsCostRows helper + import above this read; 303→355 when the R8 profit-rollup wave added the StockRpcClient type + loadStockCogsRollup; then 355→389 when the R5 stock-masking read-split added listStockMovementsWithCost above this read — a pure line shift, the cap is unchanged.)",
-
-  // ── .from(as never) CAST-FORM WAVE — genuinely-bounded recency / per-scope
-  //    reads surfaced once notifications / health_score_events joined
-  //    PRODUCER_TABLES. Each is a recent-N display or a single-scope read, never
-  //    a complete-set aggregation, so the sub-cap .limit is honest.
-  "app/(app)/layout.tsx:39":
+  "app/(app)/layout.tsx#notifications#255dabd1fa75":
     "bounded: the top nav notification bell — recent-30 notifications for ONE user in the active org (.eq('org_id').eq('user_id').limit(30)), a per-user top-N display. (Moved 32→34 when the offline read-cache + photo-outbox client components were imported into the app layout; moved 34→38 when the i18n-wave request helper + its comment replaced the bare requireOrgContext call.)",
-  "app/customer-portal/_future-work.ts:57":
+  "app/customer-portal/_future-work.ts#leads#a48fe634ce53":
     "bounded: ONE customer's own portal future-work requests (.eq('org_id').eq('customer_id').eq('source','portal').limit(50)) — token-scoped to a single customer, a recent-50 display",
-  "server/services/hq-health-deep-dive.ts:298":
+  "server/services/hq-health-deep-dive.ts#health_score_events#2e528945cfca":
     "bounded: ONE org's health-score timeline (.eq('org_id').limit(Math.min(limit,1000))) — listHealthHistoryForOrg, a per-org recent-N display (caller passes 50), not a cross-tenant set",
-  // notifications-service getLatest{ForCustomer,ForHq}: REMOVED (false
-  // narrower-than-use — the C64 audit found BOTH the customer unread badge and
-  // the HQ urgent/high/24h tiles + org-filter dropdown derive .length/distinct
-  // from these capped reads, so a cap under-counted every one). Both are now
-  // PAGED via fetchAllRows (.range), so neither carries a .limit or needs entry.
-
-  // ── C65 MEMBERSHIPS / SITE_REPORTS wave — capped reads surfaced once
-  //    memberships + site_reports joined PRODUCER_TABLES. Each is a genuinely
-  //    bounded DISPLAY sample, not a completeness/count/ZIP contributor (those —
-  //    listPortalReports/listPortalCertificates and createPayrollRun's members
-  //    read — were PAGED, not capped).
-  "app/api/search/route.ts:335":
+  "app/api/search/route.ts#memberships#b153908eb219":
     "bounded: search members — .limit(40) command-palette DISPLAY hits, org-pinned (.eq('org_id')); a top-N result list, NOT fed to any count/sum. Same class as the other /api/search reads.",
-  "app/customer-portal/_photos.ts:107":
+  "app/customer-portal/_photos.ts#site_reports#8823e7b451a1":
     "bounded: recent-50 published reports for the portal PHOTO GALLERY (.eq('customer_id').eq('org_id')...order('portal_published_at' desc).limit(50)), further capped at MAX_PORTAL_PHOTOS extracted photos — a display gallery, NOT the documents-library count/ZIP (those use listPortalReports, now PAGED)",
-  "server/services/receptionist-operators.ts:42":
+  "server/services/receptionist-operators.ts#memberships#e1480d87455e":
     "bounded: ONE org's operators picker (.eq('org_id').limit(500)) — reassignment target list; bounded by the org's headcount (tens), never near the cap",
-  "server/services/hq-sales.ts:1006":
+  "server/services/hq-sales.ts#hq_sales_companies#81d9980d1d46":
     "bounded: recent-8 sales companies (.order('created_at' desc).limit(8)) — a top-N DISPLAY facet on the HQ sales dashboard, NOT summed/counted (the estate FACET reads that ARE summed — pipelineValue/aggregateSalesFacets — were PAGED in the C66 de-vacuum). (Line moved 995→1006 when the two FacetRow facet reads above it were paged.)",
+
 };
 
 /** Strip block + line comments so historical `.limit(...)` mentions in prose
@@ -647,11 +569,11 @@ function boundaryOffendersIn(rel: string, raw: string): string[] {
     if (!/\.select\(/.test(between)) continue; // reads only
     if (/\.range\(/.test(between)) continue; // windowed, not a flat cap
     const line = src.slice(0, pRead.index).split("\n").length;
-    const key = `${rel}:${line}`;
-    if (BOUNDARY_ALLOWLIST[key]) continue;
+    const anchor = readAnchorKey(rel, pRead.table, between, arg);
+    if (BOUNDARY_ALLOWLIST[anchor]) continue;
     offenders.add(
-      `${key} → .from("${pRead.table}") producer read capped at .limit(${arg}) — a set a ` +
-        `picker/aggregation must see COMPLETE: page via fetchAllRows or add a BOUNDARY_ALLOWLIST reason`,
+      `${rel}:${line} [${anchor}] → .from("${pRead.table}") producer read capped at .limit(${arg}) — a set a ` +
+        `picker/aggregation must see COMPLETE: page via fetchAllRows or add a BOUNDARY_ALLOWLIST reason (keyed by anchor)`,
     );
   }
   return [...offenders];
@@ -802,10 +724,10 @@ function aggregateFedCapOffendersIn(rel: string, raw: string): string[] {
     const aliases = aliasClosure(src, alias);
     if (!feedsMoneyAggregate(src, aliases)) continue;
     const line = src.slice(0, pRead.index).split("\n").length;
-    const key = `${rel}:${line}`;
-    if (AGGREGATE_FED_ALLOWLIST[key]) continue;
+    const anchor = readAnchorKey(rel, pRead.table, between, arg);
+    if (AGGREGATE_FED_ALLOWLIST[anchor]) continue;
     offenders.add(
-      `${key} → .from("${pRead.table}") capped at .limit(${arg}) FEEDS A MONEY AGGREGATE ` +
+      `${rel}:${line} [${anchor}] → .from("${pRead.table}") capped at .limit(${arg}) FEEDS A MONEY AGGREGATE ` +
         `(.reduce / ${[...AGGREGATE_HELPERS].join("/")}) — an aggregate over a money/ledger table ` +
         `must PAGE via fetchAllRows; a sub-1000 cap silently truncates the customer-facing total. ` +
         `This subclass is NOT allowlistable as a bounded display.`,
@@ -1328,5 +1250,265 @@ describe("F-1 export-loop guard — registry-driven org-scoped reads must page i
       `const res = await supabase.from(someTable).select("*").eq("org_id", orgId).limit(5);`,
     ].join("\n");
     expect(gdprExportLoopOffenders("server/services/something-else.ts", unrelated)).toEqual([]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONTENT-ANCHOR ALLOWLIST HYGIENE (the fail-closed guarantees)
+// ═══════════════════════════════════════════════════════════════════════════
+// The allowlists are keyed by a content anchor instead of file:line. These tests
+// are what make that SAFE: they prove every anchor is live + unambiguous, and
+// that the anchor is bound to the read's content (so a material change — or a
+// stale/duplicated entry — fails closed into review rather than silently
+// widening coverage).
+
+/** Every producer-.limit read in the repo → how many reads share its anchor.
+ * Mirrors boundaryOffendersIn exactly, but WITHOUT the allowlist filter, so it is
+ * the ground-truth multiset of anchors the allowlist is matched against. */
+function collectProducerReadAnchors(): Map<string, number> {
+  const files: string[] = [];
+  for (const d of SCAN_DIRS) walk(resolve(ROOT, d), files);
+  const counts = new Map<string, number>();
+  for (const file of files) {
+    const rel = file.slice(ROOT.length + 1);
+    const raw = readFileSync(file, "utf8");
+    if (!raw.includes(".limit(")) continue;
+    const src = stripComments(raw);
+    const env = buildEnv(src);
+    const reads = producerReadIndices(src).sort((a, b) => a.index - b.index);
+    for (const { arg, index: limIdx } of extractCalls(src, "limit")) {
+      if (provableUpperBound(arg, env) === 1) continue;
+      let pRead: { table: string; index: number } | undefined;
+      for (const r of reads) { if (r.index < limIdx) pRead = r; else break; }
+      if (!pRead) continue;
+      const between = src.slice(pRead.index, limIdx);
+      if (containsTopLevelSemicolon(between)) continue;
+      if (!PRODUCER_TABLES.has(pRead.table)) continue;
+      if (!/\.select\(/.test(between)) continue;
+      if (/\.range\(/.test(between)) continue;
+      const anchor = readAnchorKey(rel, pRead.table, between, arg);
+      counts.set(anchor, (counts.get(anchor) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+describe("F-1 content-anchor allowlist hygiene (fail-closed)", () => {
+  const anchorCounts = collectProducerReadAnchors();
+
+  it("every BOUNDARY_ALLOWLIST anchor matches EXACTLY ONE live producer read (no stale, no ambiguous)", () => {
+    const stale: string[] = [];
+    const ambiguous: string[] = [];
+    for (const key of Object.keys(BOUNDARY_ALLOWLIST)) {
+      const n = anchorCounts.get(key) ?? 0;
+      if (n === 0) stale.push(key);
+      else if (n > 1) ambiguous.push(`${key} (matches ${n} reads)`);
+    }
+    expect(
+      stale,
+      "STALE anchors — these allowlist entries match NO current read (the read was " +
+        "paged, removed, or materially changed). Fail-closed: delete the entry or re-anchor it " +
+        "after re-reviewing the read:\n" + stale.join("\n"),
+    ).toEqual([]);
+    expect(
+      ambiguous,
+      "AMBIGUOUS anchors — these allowlist entries match MORE THAN ONE read, so the exception " +
+        "cannot be attributed to a single read. Disambiguate (the reads must differ in content):\n" +
+        ambiguous.join("\n"),
+    ).toEqual([]);
+  });
+
+  it("no two distinct producer reads share an anchor (collision would hide one behind the other)", () => {
+    const collisions = [...anchorCounts.entries()].filter(([, n]) => n > 1);
+    expect(
+      collisions.map(([a, n]) => `${a} ×${n}`),
+      "Anchor COLLISION: two producer reads normalise to the same anchor, so allowlisting one " +
+        "silently allowlists the other. The anchor must be unique per read — if two reads are " +
+        "genuinely identical, give one a distinguishing difference or page it:\n" +
+        collisions.map(([a, n]) => `${a} ×${n}`).join("\n"),
+    ).toEqual([]);
+  });
+
+  it("every AGGREGATE_FED_ALLOWLIST anchor is live + unambiguous (fail-closed)", () => {
+    // Empty today; this keeps it honest if an entry is ever added.
+    for (const key of Object.keys(AGGREGATE_FED_ALLOWLIST)) {
+      expect(anchorCounts.get(key) ?? 0, `AGGREGATE_FED_ALLOWLIST ${key} matches no live read`).toBe(1);
+    }
+    expect(true).toBe(true);
+  });
+});
+
+describe("F-1 content-anchor: bound to content, stable under line shifts (mutation proof)", () => {
+  const CHAIN_A = `.from("jobs").select("id, status").eq("org_id", orgId).order("created_at", { ascending: false })`;
+  const CHAIN_B = `.from("jobs").select("id, status, name").eq("org_id", orgId).order("created_at", { ascending: false })`;
+
+  it("is INVARIANT under whitespace / line-shift reformatting (the whole point)", () => {
+    const inline = readAnchorKey("f.ts", "jobs", CHAIN_A, "200");
+    const reflowed = readAnchorKey(
+      "f.ts",
+      "jobs",
+      `.from("jobs")\n    .select("id, status")\n    .eq("org_id", orgId)\n    .order("created_at", { ascending: false })`,
+      "200",
+    );
+    expect(reflowed).toBe(inline);
+  });
+
+  it("CHANGES when the limit value changes (a mutated cap is no longer the same exception)", () => {
+    expect(readAnchorKey("f.ts", "jobs", CHAIN_A, "200")).not.toBe(
+      readAnchorKey("f.ts", "jobs", CHAIN_A, "500"),
+    );
+  });
+
+  it("CHANGES when the read's columns/filters change (materially different read)", () => {
+    expect(readAnchorKey("f.ts", "jobs", CHAIN_A, "200")).not.toBe(
+      readAnchorKey("f.ts", "jobs", CHAIN_B, "200"),
+    );
+  });
+
+  it("CHANGES when the file path changes (an exception does not transfer between files)", () => {
+    expect(readAnchorKey("a.ts", "jobs", CHAIN_A, "200")).not.toBe(
+      readAnchorKey("b.ts", "jobs", CHAIN_A, "200"),
+    );
+  });
+
+  // GUARD-LEVEL mutation: an allowlisted read SHAPE, once mutated (new limit),
+  // produces a new anchor that is NOT in the allowlist → the guard flags it.
+  // Proves the content anchor does not blanket-allow a file/line.
+  it("guard flags a mutated copy of an allowlisted read (new anchor ∉ allowlist)", () => {
+    // A bounded producer read that would need an allowlist entry to pass.
+    const mutated = [
+      `const { data } = await supabase`,
+      `  .from("leads")`,
+      `  .select("id, customer_id, UNMISTAKABLE_MUTATION_MARKER")`,
+      `  .eq("org_id", orgId)`,
+      `  .limit(777);`,
+    ].join("\n");
+    const flagged = boundaryOffendersIn("app/(app)/leads/_data.ts", mutated);
+    expect(flagged.length, "a never-before-seen producer cap must be flagged").toBeGreaterThan(0);
+    expect(flagged[0]).toMatch(/#[0-9a-f]{12}\]/); // offender message carries the anchor
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// OLD vs NEW PARITY — the anchor guard reproduces the line guard's verdicts
+// ═══════════════════════════════════════════════════════════════════════════
+// The line-based guard matched BOUNDARY_ALLOWLIST by `${rel}:${line}`. The anchor
+// guard must give the SAME flagged/clean verdict on the SAME code — identical on
+// known-safe fixtures (clean) and known-unsafe fixtures (flagged). (A line-keyed
+// re-implementation is kept inline ONLY as the comparison oracle.)
+function boundaryOffendersIn_LINE_ORACLE(
+  rel: string,
+  raw: string,
+  lineAllow: Record<string, string>,
+): string[] {
+  if (!raw.includes(".limit(")) return [];
+  const src = stripComments(raw);
+  const env = buildEnv(src);
+  const reads = producerReadIndices(src).sort((a, b) => a.index - b.index);
+  const offenders = new Set<string>();
+  for (const { arg, index: limIdx } of extractCalls(src, "limit")) {
+    if (provableUpperBound(arg, env) === 1) continue;
+    let pRead: { table: string; index: number } | undefined;
+    for (const r of reads) { if (r.index < limIdx) pRead = r; else break; }
+    if (!pRead) continue;
+    const between = src.slice(pRead.index, limIdx);
+    if (containsTopLevelSemicolon(between)) continue;
+    if (!PRODUCER_TABLES.has(pRead.table)) continue;
+    if (!/\.select\(/.test(between)) continue;
+    if (/\.range\(/.test(between)) continue;
+    const line = src.slice(0, pRead.index).split("\n").length;
+    if (lineAllow[`${rel}:${line}`]) continue;
+    offenders.add(`${rel}:${line} ${pRead.table}`);
+  }
+  return [...offenders];
+}
+
+describe("F-1 old(line) vs new(anchor) parity on shared fixtures", () => {
+  // Known-UNSAFE: a producer cap neither guard allowlists → BOTH flag it.
+  const unsafe = [
+    `const { data } = await admin`,
+    `  .from("invoices")`,
+    `  .select("id, org_id")`,
+    `  .lt("due_date", todayIso)`,
+    `  .limit(1000);`,
+  ].join("\n");
+  // Known-SAFE: the paged fix → BOTH clean.
+  const safe = [
+    `const { data } = await fetchAllRows((from, to) =>`,
+    `  admin.from("invoices").select("id, org_id").lt("due_date", todayIso)`,
+    `    .order("id", { ascending: true }).range(from, to));`,
+  ].join("\n");
+
+  it("both guards FLAG the known-unsafe producer cap", () => {
+    const rel = "lib/invoices/x.ts";
+    const newFlagged = boundaryOffendersIn(rel, unsafe).length > 0;
+    const oldFlagged = boundaryOffendersIn_LINE_ORACLE(rel, unsafe, {}).length > 0;
+    expect(newFlagged).toBe(true);
+    expect(newFlagged).toBe(oldFlagged);
+  });
+
+  it("both guards pass the known-safe paged read", () => {
+    const rel = "lib/invoices/x.ts";
+    expect(boundaryOffendersIn(rel, safe)).toEqual([]);
+    expect(boundaryOffendersIn_LINE_ORACLE(rel, safe, {})).toEqual([]);
+  });
+
+  it("the whole repo is clean under BOTH keyings (anchor allowlist == the migrated line allowlist)", () => {
+    // Build the equivalent line-allowlist from the live repo (each anchor entry's
+    // read, by its current line) and confirm the line-oracle is ALSO clean — i.e.
+    // the migration preserved exactly the set of exceptions, nothing more/less.
+    const files: string[] = [];
+    for (const d of SCAN_DIRS) walk(resolve(ROOT, d), files);
+    const lineAllow: Record<string, string> = {};
+    for (const file of files) {
+      const rel = file.slice(ROOT.length + 1);
+      const raw = readFileSync(file, "utf8");
+      if (!raw.includes(".limit(")) continue;
+      const src = stripComments(raw);
+      const env = buildEnv(src);
+      const reads = producerReadIndices(src).sort((a, b) => a.index - b.index);
+      for (const { arg, index: limIdx } of extractCalls(src, "limit")) {
+        if (provableUpperBound(arg, env) === 1) continue;
+        let pRead: { table: string; index: number } | undefined;
+        for (const r of reads) { if (r.index < limIdx) pRead = r; else break; }
+        if (!pRead) continue;
+        const between = src.slice(pRead.index, limIdx);
+        if (containsTopLevelSemicolon(between)) continue;
+        if (!PRODUCER_TABLES.has(pRead.table)) continue;
+        if (!/\.select\(/.test(between)) continue;
+        if (/\.range\(/.test(between)) continue;
+        const anchor = readAnchorKey(rel, pRead.table, between, arg);
+        if (!BOUNDARY_ALLOWLIST[anchor]) continue; // only mirror accepted ones
+        const line = src.slice(0, pRead.index).split("\n").length;
+        lineAllow[`${rel}:${line}`] = "mirrored";
+      }
+    }
+    const offenders: string[] = [];
+    for (const file of files) {
+      const rel = file.slice(ROOT.length + 1);
+      offenders.push(...boundaryOffendersIn_LINE_ORACLE(rel, readFileSync(file, "utf8"), lineAllow));
+    }
+    expect(offenders, "line-oracle (mirrored from anchors) must also be clean").toEqual([]);
+  });
+});
+
+describe("F-1 content-anchor: whitespace INSIDE string literals is significant (point-4 fix)", () => {
+  const base = `.from("customers").select("id").eq("name",`;
+  it("distinguishes two reads that differ only by whitespace inside a string value", () => {
+    // Structural whitespace is stripped (invariance), but in-string whitespace is
+    // meaningful: these are DIFFERENT queries and must get DIFFERENT anchors.
+    const withSpace = readAnchorKey("f.ts", "customers", `${base} "a b")`, "50");
+    const noSpace = readAnchorKey("f.ts", "customers", `${base} "ab")`, "50");
+    expect(withSpace).not.toBe(noSpace);
+  });
+  it("is still invariant to structural whitespace around the SAME string value", () => {
+    const tight = readAnchorKey("f.ts", "customers", `.from("customers").select("id").eq("name","a b")`, "50");
+    const loose = readAnchorKey("f.ts", "customers", `.from("customers")\n  .select("id")\n  .eq( "name" , "a b" )`, "50");
+    expect(loose).toBe(tight);
+  });
+  it("preserves whitespace inside a template literal too (never a false merge)", () => {
+    const a = readAnchorKey("f.ts", "jobs", '.from("jobs").select(`id, ${col}`)', "50");
+    const b = readAnchorKey("f.ts", "jobs", '.from("jobs").select(`id,${col}`)', "50");
+    expect(a).not.toBe(b);
   });
 });

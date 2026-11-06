@@ -235,10 +235,12 @@
     "whatsapp_number_routes",
     "whatsapp_optouts",
     "whatsapp_webhook_events",
+    "tenant_search_documents",
     "worker_acknowledgements",
     "worker_signoff_tokens"
   ],
   "excluded": {
+    "tenant_search_documents": "derived search index: a denormalized, rebuildable copy of the org's OWN records (job/customer/etc. text chunks + opaque embedding vectors) built solely to serve semantic search. Every piece of subject-access-relevant content is the source record's, exported via its own table (jobs, customers, …); including this index would duplicate that content (and leak raw embeddings) without adding subject-access value. Rebuilt from source on demand — not a primary record.",
     "membership_permissions": "access-control configuration: per-admin module×action permission grants (authorization metadata, not data-subject personal data); keyed by membership and cascades on membership delete",
     "permission_audit": "security accountability trail: append-only log of permission/admin/ownership changes (actor + target references, module/action, no tenant business data) — authorization audit metadata, not data-subject personal data",
     "accounting_connections": "credentials: OAuth access/refresh tokens",

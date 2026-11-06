@@ -196,6 +196,9 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       "app/(app)/quotes/layout.tsx",
       "app/(app)/quotes/page.tsx",
       "app/(app)/quotes/actions.ts",
+      // #1035 extracted the variation/EoT management actions here; same reviewed
+      // R4-quote capability surface as actions.ts (requireCapabilityFor-gated).
+      "app/(app)/quotes/variation-actions.ts",
       "app/api/quotes/[id]/pdf/route.ts",
       "app/api/quotes/[id]/send/route.ts",
       // R4 — customers module. Layout + list page gate customers:view; 5 actions
@@ -268,6 +271,13 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       // guards (requireCapabilityFor / hasCapability / canManageStaff) only in
       // its explanatory comments; it calls nothing.
       "lib/imports/autofill/registry.ts",
+      // Auto-rota persistence — "Approve & save" the generated plan. The write
+      // action (persistGeneratedRota, in staff/actions.ts above) gates on
+      // rota:create via requireCapabilityFor; the generate page uses hasCapability
+      // only to SHOW/HIDE the approve panel (nav-hiding is never the boundary —
+      // the server action + RLS admin WITH CHECK are). Legitimate owner/admin
+      // write gating, not early adoption of a dark module surface.
+      "app/(app)/staff/rota/generate/page.tsx",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|requireCapabilityFor|hasCapability|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;

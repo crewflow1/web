@@ -25,6 +25,8 @@ import { JobSnagsSection } from "./_job-snags";
 import { VariationRequestPanel } from "./_variation-request-panel";
 import { JobMaterialsSection } from "./_job-materials";
 import { SiteTimelineSection } from "./_site-timeline";
+import { SiteManagerPanel } from "./_site-manager";
+import { roleCanViewPrivate } from "@/server/auth/financial-visibility";
 import { JobDocumentsPanel } from "./_job-documents";
 import { JobBlueprintsPanel } from "./_blueprints";
 import { JobAssignmentsSection } from "./_assignments";
@@ -119,8 +121,7 @@ export default async function EditJobPage({
   // Private job documents are owner/admin only. We compute this here and pass
   // it down so the panel can gate the private-area FETCH (not just the render),
   // keeping private rows out of a staff member's RSC payload.
-  const canViewPrivate =
-    ctx.membership.role === "owner" || ctx.membership.role === "admin";
+  const canViewPrivate = roleCanViewPrivate(ctx.membership.role);
   // The site's calendar day (Europe/London), computed once so every panel on
   // this render agrees on what "overdue" means.
   const todayIso = formatDayKeyUK(new Date());
@@ -465,12 +466,18 @@ export default async function EditJobPage({
 
       {/* H2-CASH — get-paid billing plan (deposit / staged invoicing). */}
       <div className="flex flex-wrap gap-2 text-sm">
-        <Link
-          href={`/jobs/${job.id}/billing`}
-          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
-        >
-          Get paid — billing plan
-        </Link>
+        {/* Billing plan is commercial (deposits / staged invoicing) — owner/admin
+            only, matching the admin-gated /jobs/[id]/billing + /commercial pages.
+            Without this gate an assigned staff member saw the billing entry point
+            on the job Overview. Site timeline stays visible to everyone. */}
+        {canViewPrivate ? (
+          <Link
+            href={`/jobs/${job.id}/billing`}
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Get paid — billing plan
+          </Link>
+        ) : null}
         <Link
           href={`/jobs/${job.id}/timeline`}
           className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
@@ -480,8 +487,12 @@ export default async function EditJobPage({
       </div>
 
       {/* Programme D — cash-first commercial strip (ledger-truthful). Links to
-          the full unified commercial position + lifecycle timeline. */}
-      {(commercialCash.billed > 0 || commercialCash.revised > 0) ? (
+          the full unified commercial position + lifecycle timeline.
+          Owner/admin ONLY: this strip exposes contract value, amount billed,
+          received and outstanding. The dedicated /commercial page already
+          redirects non-admins; without this gate the same figures leaked onto
+          the job Overview, which assigned staff can open (R5 financial boundary). */}
+      {canViewPrivate && (commercialCash.billed > 0 || commercialCash.revised > 0) ? (
         <Link
           href={`/jobs/${job.id}/commercial`}
           className="block rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-slate-300"
@@ -1052,6 +1063,8 @@ export default async function EditJobPage({
       <AttachmentsPanel targetTable="jobs" targetId={job.id} />
 
       <SiteTimelineSection jobId={job.id} orgId={ctx.membership.org_id} />
+
+      <SiteManagerPanel jobId={job.id} />
         </div>
       </Suspense>
 
