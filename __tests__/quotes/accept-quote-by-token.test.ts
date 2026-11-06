@@ -336,6 +336,57 @@ describe("acceptQuoteByToken", () => {
     expect(mockAdmin.inserts).toHaveLength(0);
     expect(sendInvoiceEmailMock).not.toHaveBeenCalled();
   });
+
+  // REGRESSION — the public quote page only renders an accept form for
+  // approved/sent/viewed, but the bound server action stays POST-able with a
+  // known token after an edit reverts a sent quote to pending_approval, or a
+  // reviewer rejects it (both keep the same public_token). The action MUST
+  // re-check the status and fail closed, or the service-role UPDATE drives the
+  // quote to 'accepted' and auto-creates an invoice + job — bypassing approval.
+  it.each(["pending_approval", "draft", "rejected"])(
+    "refuses to accept a %s quote (no state change, no invoice, no job)",
+    async (status) => {
+      mockAdmin.enqueue("maybeSingle", {
+        data: { ...SAMPLE_QUOTE, status },
+        error: null,
+      });
+
+      const res = await actions.acceptQuoteByToken("public-token-1", "Customer", null);
+
+      expect(res).toEqual({
+        ok: false,
+        error: "This quote isn't available to accept.",
+      });
+      // Fail closed: nothing written — no status UPDATE, no invoice/job INSERT.
+      expect(mockAdmin.updates).toHaveLength(0);
+      expect(mockAdmin.inserts).toHaveLength(0);
+      expect(sendInvoiceEmailMock).not.toHaveBeenCalled();
+    },
+  );
+
+  // The actionable set is honoured positively: an 'approved' (gate-cleared but
+  // not-yet-"sent") quote the operator shared early is still acceptable.
+  it("accepts an 'approved' quote (the gate-cleared, pre-send state)", async () => {
+    mockAdmin.enqueue("maybeSingle", {
+      data: { ...SAMPLE_QUOTE, status: "approved" },
+      error: null,
+    });
+    mockAdmin.enqueue("update", { data: null, error: null }); // → accepted
+    mockAdmin.enqueue("insert", { data: null, error: null }); // signatures
+    mockAdmin.enqueue("insert", { data: { id: "job-uuid-a" }, error: null }); // job
+    mockAdmin.enqueue("update", { data: null, error: null }); // backlink job_id
+    mockAdmin.enqueue("rpc", { data: "INV-0003", error: null });
+    mockAdmin.enqueue("insert", { data: { id: "invoice-uuid-a" }, error: null });
+
+    const res = await actions.acceptQuoteByToken("public-token-1", "Customer", null);
+
+    expect(res).toEqual({ ok: true, quoteId: SAMPLE_QUOTE.id });
+    const invoiceInserts = mockAdmin.inserts.filter(
+      (p): p is { quote_id: string } =>
+        typeof p === "object" && p !== null && "quote_id" in p,
+    );
+    expect(invoiceInserts).toHaveLength(1);
+  });
 });
 
 describe("acceptQuoteAsOwner", () => {
@@ -509,4 +560,24 @@ describe("declineQuoteByToken", () => {
     expect(mockAdmin.inserts).toHaveLength(0);
     expect(sendInvoiceEmailMock).not.toHaveBeenCalled();
   });
+
+  // REGRESSION — same stale-token surface as accept: a non-actionable quote
+  // must not be respondable through the token. No status UPDATE is written.
+  it.each(["pending_approval", "draft", "rejected", "expired"])(
+    "refuses to decline a %s quote (fails closed, no update)",
+    async (status) => {
+      mockAdmin.enqueue("maybeSingle", {
+        data: { ...SAMPLE_QUOTE, status },
+        error: null,
+      });
+
+      const res = await actions.declineQuoteByToken("public-token-1", "nope");
+
+      expect(res).toEqual({
+        ok: false,
+        error: "This quote isn't available to respond to.",
+      });
+      expect(mockAdmin.updates).toHaveLength(0);
+    },
+  );
 });
