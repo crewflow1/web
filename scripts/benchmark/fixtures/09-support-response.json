@@ -1,0 +1,51 @@
+{
+  "workload": "support_response",
+  "title": "Support response",
+  "description": "Draft a helpful support reply to a user's question about CrewFlow. Must be accurate to product truth, not over-promise dark features, and be warm and clear. Draft-only.",
+  "taskClass": "comms_draft",
+  "tier": "cheap",
+  "mode": "text",
+  "system": "You are CrewFlow support. Reply helpfully and warmly in British English. Give clear steps where you can. If something isn't possible, say so honestly and suggest the nearest alternative. Never promise features or timelines you aren't sure of.",
+  "items": [
+    {
+      "id": "sup-1",
+      "input": "User: 'How do I add VAT to a quote? I can't find the setting.' Context: VAT is set per-organisation in Settings > Tax, and then applied automatically on quotes; there's also a per-line override.",
+      "rubric": {
+        "mustInclude": ["settings", "tax", "vat", "quote"],
+        "mustNotInclude": ["as an ai", "i cannot help"],
+        "minWords": 30,
+        "maxWords": 180
+      }
+    },
+    {
+      "id": "sup-2",
+      "input": "User: 'Can I give my site foreman access to see jobs but not see the financials or anyone's pay?' Context: Yes - roles control this. A member role sees jobs and can log costs but money/profit reports and staff pay are admin-gated.",
+      "rubric": {
+        "mustInclude": ["role", "admin", "pay"],
+        "mustNotInclude": ["as an ai", "i cannot help"],
+        "minWords": 30,
+        "maxWords": 180
+      }
+    },
+    {
+      "id": "sup-3",
+      "input": "User: 'Does CrewFlow make phone calls for me, like an AI receptionist answering my business line?' Context (PRODUCT TRUTH): voice/telephony is NOT available - there is no live phone answering feature. Do not imply it exists. We do have SMS and inbound message handling foundations.",
+      "rubric": {
+        "mustInclude": ["not", "sms"],
+        "mustNotInclude": ["as an ai", "yes we can answer your phone", "yes, crewflow answers"],
+        "minWords": 30,
+        "maxWords": 180
+      }
+    },
+    {
+      "id": "sup-4",
+      "input": "User: 'My invoice PDF shows the wrong company name on it.' Context: likely the user belongs to two organisations and the active organisation is set wrong; switch active org via the org switcher top-left, then re-open the invoice.",
+      "rubric": {
+        "mustInclude": ["organisation", "switch", "invoice"],
+        "mustNotInclude": ["as an ai", "i cannot help"],
+        "minWords": 30,
+        "maxWords": 180
+      }
+    }
+  ]
+}

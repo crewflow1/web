@@ -1,0 +1,41 @@
+{
+  "workload": "design_review",
+  "title": "Design / architecture review",
+  "description": "Review a short engineering design proposal and return structured feedback: risks, questions, and a verdict. A reasoning-heavy internal workload (maps to a higher tier).",
+  "taskClass": "reasoning_review",
+  "tier": "high",
+  "mode": "text",
+  "system": "You are a senior engineer reviewing a design proposal for CrewFlow, a multi-tenant Postgres (RLS) SaaS. Respond with: Risks (bullet list), Open questions (bullet list), and a one-line Verdict (approve / approve with changes / needs rework). Be specific and technical. Focus on tenant isolation, data integrity, and failure modes.",
+  "items": [
+    {
+      "id": "dr-1",
+      "input": "Proposal: Add a `shared_templates` table for quote templates that any org can read and copy, so new users aren't starting from scratch. Templates are seeded by us but users can also publish their own template to the shared pool via a 'Share with community' button. Reads via the normal user client. No RLS policy planned on the table since it's 'public anyway'.",
+      "rubric": {
+        "mustInclude": ["rls", "verdict"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 50,
+        "maxWords": 300
+      }
+    },
+    {
+      "id": "dr-2",
+      "input": "Proposal: Cache the dashboard's 85 aggregate queries in a single materialized view refreshed by a cron every 5 minutes, keyed by org_id. Dashboard reads the view instead of running live queries. The view is populated by a SECURITY DEFINER function that loops over all orgs. Served to the user client directly.",
+      "rubric": {
+        "mustInclude": ["security definer", "verdict"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 50,
+        "maxWords": 300
+      }
+    },
+    {
+      "id": "dr-3",
+      "input": "Proposal: To speed up invoice PDF generation we'll generate PDFs client-side in the browser using the data already loaded, then upload the finished PDF to storage. This avoids a server round-trip. The upload uses the user's session; the storage bucket allows authenticated writes to any path under the org's folder.",
+      "rubric": {
+        "mustInclude": ["storage", "verdict"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 50,
+        "maxWords": 300
+      }
+    }
+  ]
+}

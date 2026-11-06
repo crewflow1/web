@@ -1,0 +1,41 @@
+{
+  "workload": "memory_summarisation",
+  "title": "Memory / notes summarisation",
+  "description": "Condense a long stream of operational notes into a compact, faithful summary that preserves the load-bearing facts (decisions, blockers, numbers). Tests compression without hallucination.",
+  "taskClass": "insight_narrative",
+  "tier": "cheap",
+  "mode": "text",
+  "system": "You are CrewFlow condensing working notes into a compact summary. Preserve every decision, blocker, deadline, and figure. Drop chatter. British English. Do NOT add facts that are not in the notes.",
+  "items": [
+    {
+      "id": "mem-1",
+      "input": "Notes: Called supplier re plasterboard, back-ordered until Mon. Rebooked first-fix to Tue, told Mr Dunn, he's fine. Electrician confirmed Thu. Need to order 3 more sheets of ply, forgot last time. Skip is full, book collection. Invoice QU-1042 accepted by Mrs Patel, deposit due. Weather looks dry all week. Van needs MOT by end of month. Chase building control on the Wakefield steel calc, still nothing after 5 days.",
+      "rubric": {
+        "mustInclude": ["plasterboard", "tuesday", "building control", "mot"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 30,
+        "maxWords": 160
+      }
+    },
+    {
+      "id": "mem-2",
+      "input": "Notes from site meeting: client wants to change the kitchen layout, moving the sink to the island - needs new plumbing run, approx GBP 600 extra, client verbally agreed, get it in writing. Tiler available week of 12th only. Underfloor heating manifold arrived damaged, replacement 7-10 days. Decision: proceed with screed now, UFH connect later. Budget now GBP 41,200 (was 40,600). Snagging list started: 2 items.",
+      "rubric": {
+        "mustInclude": ["sink", "600", "underfloor", "41,200"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 30,
+        "maxWords": 170
+      }
+    },
+    {
+      "id": "mem-3",
+      "input": "Week recap: 3 quotes sent (total GBP 48k pipeline), 1 accepted. Two jobs completed and handed over, both paid. One overdue invoice chased twice, client promised payment Friday. Hired a new labourer, starts Monday, needs CSCS card checked and added to insurance. Diesel costs up again. Considering switching merchant from Buildbase to Jewson, 8% cheaper on key lines. Accountant wants Q1 figures by the 20th.",
+      "rubric": {
+        "mustInclude": ["quote", "labourer", "cscs", "accountant"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 30,
+        "maxWords": 170
+      }
+    }
+  ]
+}

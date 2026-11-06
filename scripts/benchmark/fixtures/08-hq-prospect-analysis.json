@@ -1,0 +1,41 @@
+{
+  "workload": "hq_prospect_analysis",
+  "title": "HQ prospect analysis",
+  "description": "Analyse a sales prospect (CrewFlow's own HQ sales workflow) and return a qualification read: fit, likely objections, recommended next step. Reasoning-leaning.",
+  "taskClass": "reasoning_review",
+  "tier": "high",
+  "mode": "text",
+  "system": "You are CrewFlow HQ's sales analyst. Given a prospect profile, assess fit for CrewFlow (a construction/trades ERP for UK SMBs), the two most likely objections, and the single recommended next step. Be concise and realistic; do not overstate fit.",
+  "items": [
+    {
+      "id": "pros-1",
+      "input": "Prospect: Hartley & Sons Roofing. 11 staff, ~GBP 1.4M turnover. Currently use paper job sheets + QuickBooks + a WhatsApp group. Pain: losing track of which jobs are invoiced, VAT returns are a scramble, owner works evenings doing admin. Found us via a Google search for 'job management for roofers'. Budget unknown. Owner is 58, not very technical.",
+      "rubric": {
+        "mustInclude": ["fit", "objection", "next step"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 50,
+        "maxWords": 260
+      }
+    },
+    {
+      "id": "pros-2",
+      "input": "Prospect: Verdant Facilities Group. 120 staff, GBP 18M turnover, national commercial maintenance. Already run a bespoke in-house system + SAP for finance. Enquiry came from a middle manager wanting 'mobile job tracking for field teams'. Procurement-heavy, security questionnaire likely, wants SSO and an API.",
+      "rubric": {
+        "mustInclude": ["fit", "objection", "next step"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 50,
+        "maxWords": 260
+      }
+    },
+    {
+      "id": "pros-3",
+      "input": "Prospect: sole trader plumber, just gone self-employed, no staff. Wants 'an app to send quotes and invoices'. Price-sensitive, mentioned a free competitor. Comfortable with tech. Expects to grow to 2-3 staff next year.",
+      "rubric": {
+        "mustInclude": ["fit", "objection", "next step"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 45,
+        "maxWords": 240
+      }
+    }
+  ]
+}
