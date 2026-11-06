@@ -123,7 +123,7 @@ function NotificationRow({ n, close }: { n: Notification; close: () => void }) {
           {n.body ? (
             <div className="mt-0.5 truncate text-xs text-slate-500">{n.body}</div>
           ) : null}
-          <div className="mt-0.5 text-[11px] text-slate-500">
+          <div className="mt-0.5 text-[11px] text-slate-500" suppressHydrationWarning>
             {relativeTime(n.created_at, RELATIVE_TIME_PRESETS.notification)}
           </div>
         </div>
