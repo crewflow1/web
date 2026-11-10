@@ -128,6 +128,7 @@ export const PRIMARY_NAV: NavArea[] = [
     children: [
       { label: "Jobs", labelKey: "nav.jobs", href: "/jobs", keywords: ["project", "work"] },
       { label: "Calendar", labelKey: "nav.calendar", href: "/jobs/calendar", roles: ALL_ROLES, keywords: ["schedule", "diary"] },
+      { label: "Variations", labelKey: "nav.variations", href: "/variations", roles: ADMIN_ROLES, keywords: ["variation order", "vo", "change", "scope change", "extra"] },
       { label: "Job templates", labelKey: "nav.job_templates", href: "/jobs/templates", roles: ADMIN_ROLES },
     ],
   },
@@ -190,6 +191,7 @@ export const PRIMARY_NAV: NavArea[] = [
       { label: "CIS", labelKey: "nav.cis", href: "/cis", keywords: ["subcontractor", "deductions", "rct"] },
       { label: "Tax", labelKey: "nav.tax", href: "/tax", keywords: ["vat", "paye", "mtd", "hmrc"] },
       { label: "Reports", labelKey: "nav.reports", href: "/reports", keywords: ["profit", "cashflow", "ageing", "pipeline"] },
+      { label: "Retentions", labelKey: "nav.retention", href: "/reports/retention", roles: ADMIN_ROLES, keywords: ["retention", "held back", "release", "defects liability"] },
       { label: "AI insights", labelKey: "nav.ai_insights", href: "/insights", keywords: ["intelligence", "company health"] },
     ],
   },
