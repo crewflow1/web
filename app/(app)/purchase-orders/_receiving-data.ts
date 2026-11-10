@@ -57,7 +57,7 @@ export async function listPurchaseOrderReceipts(
   orgId: string,
   purchaseOrderId: string,
 ): Promise<{ notes: GrnRow[]; postedLines: ReceivedQty[] }> {
-  const { data } = await table<GrnRow>(supabase, "goods_received_notes")
+  const { data, error } = await table<GrnRow>(supabase, "goods_received_notes")
     .select(
       "id, number, status, delivery_date, delivery_note_reference, delivery_location, notes, void_reason, posted_at, created_at, " +
         "received_by_user:users!goods_received_notes_received_by_fkey ( full_name, email ), " +
@@ -67,6 +67,11 @@ export async function listPurchaseOrderReceipts(
     .eq("org_id", orgId) // ACTIVE-ORG PIN
     .order("created_at", { ascending: false })
     .limit(200);
+
+  // Fail loud: a swallowed read would show the order as fully un-received and
+  // re-offer the receive form, inviting a DUPLICATE goods receipt. Matches the
+  // sibling countPostedReceipts below.
+  if (error) throw new Error(error.message ?? "goods_received_notes: receipts read failed");
 
   const notes = data ?? [];
 
@@ -139,10 +144,13 @@ export async function purchaseOrderHasReceipts(
   orgId: string,
   purchaseOrderId: string,
 ): Promise<boolean> {
-  const { data } = await table<{ id: string }>(supabase, "goods_received_notes")
+  const { data, error } = await table<{ id: string }>(supabase, "goods_received_notes")
     .select("id")
     .eq("purchase_order_id", purchaseOrderId)
     .eq("org_id", orgId) // ACTIVE-ORG PIN
     .limit(1);
+  // Fail loud: a swallowed read returns false ("no receipts"), which would let
+  // an edit/delete/cancel proceed into a DB FK refusal the user can't explain.
+  if (error) throw new Error(error.message ?? "goods_received_notes: receipts probe failed");
   return (data ?? []).length > 0;
 }

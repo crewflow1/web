@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/paginate";
-import { readFailure } from "@/lib/supabase/read-failure";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { QuoteBuilder } from "../_builder";
 import {
@@ -282,6 +282,7 @@ export default async function EditQuotePage({
             eq: (k: string, v: unknown) => {
               order: (col: string, opts: { ascending: boolean }) => Promise<{
                 data: SignatureRow[] | null;
+                error: SupabaseReadError | null;
               }>;
             };
           };
@@ -295,6 +296,7 @@ export default async function EditQuotePage({
       .eq("target_id", id)
       .order("signed_at", { ascending: false }),
   ]);
+  if (signaturesRes.error) throw readFailure("quote detail: signatures", signaturesRes.error);
   const signatures = signaturesRes.data ?? [];
   // Mint short-lived signed URLs for any drawn-signature images, org-scoped.
   const signatureImageUrls = new Map<string, string>();

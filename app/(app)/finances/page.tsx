@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireCapability } from "@/server/auth/capabilities";
 import {
   FINANCE_CATEGORIES,
@@ -95,7 +96,11 @@ export default async function FinancesPage({
     q = q.lte("created_at", `${to}T23:59:59Z`);
   }
 
-  const { data: rows, count } = await q;
+  const { data: rows, count, error } = await q;
+  // Fail loud: a rejected ledger read must not render the "No costs yet" empty
+  // state and a "0 entries" header as though the ledger were genuinely empty.
+  // Mirrors invoices/page.tsx. See lib/supabase/read-failure.ts.
+  if (error) throw readFailure("finances: ledger", error);
 
   // Monthly summary. We render the most recent 6 months (see the slice below),
   // so we only need rows from that window — and we page through it in chunks
