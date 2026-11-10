@@ -32,7 +32,13 @@ test.describe("operative sign-off — authenticated register", () => {
     const db = svc() as unknown as { from: (t: string) => any };
     const orgId = (await db.from("organizations").select("id").eq("slug", SLUG).maybeSingle()).data?.id;
     if (!orgId) throw new Error("seeded org not found — did globalSetup run?");
-    const owner = (await db.from("memberships").select("user_id").eq("org_id", orgId).limit(1).maybeSingle()).data?.user_id;
+    // Must be the OWNER's membership specifically — the test signs in as owner.json
+    // and asserts "You acknowledged this on …", which renders only for the signed-in
+    // user's own ack. A bare limit(1) returns an arbitrary member (the org also has
+    // staff members), so on some row orderings the ack was attributed to a non-owner
+    // and the owner's acknowledgement never rendered. Pin to role='owner'.
+    const owner = (await db.from("memberships").select("user_id").eq("org_id", orgId).eq("role", "owner").limit(1).maybeSingle()).data?.user_id;
+    if (!owner) throw new Error("seeded owner membership not found — did globalSetup run?");
     const ra = await db.from("risk_assessments").insert({ org_id: orgId, title: TITLE, activity: "x" }).select("id").single();
     raId = String(ra.data?.id);
     await db.from("risk_assessments").update({ status: "issued", reference: REF, issued_at: new Date().toISOString() }).eq("id", raId);
