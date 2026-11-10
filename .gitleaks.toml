@@ -57,4 +57,14 @@ regexes = [
   # the service_role key is never committed. gitleaks flags any JWT by shape.
   # Allowlisted by the anon token's unique signature tail (surgical).
   '''qoRrOsCJYmdr9yUc6idY''',
+  # docs/hardening/STREAM-PR-MERGE-READINESS.md (a status doc DELETED at HEAD but
+  # present in history, commit 8c216488): it QUOTES the placeholder token patterns
+  # from __tests__/stripe/sandbox-gate.test.ts / health route-shape fixtures while
+  # describing a prior gitleaks finding. These are short, low-entropy word-based
+  # placeholders (not real Stripe keys — bodies 9-10 chars, entropy <3, one is
+  # literally *LEAKCHECK*); allowlisted by exact value so the push-to-main
+  # full-history scan is green. Surgical — a real key on that path would still trip.
+  '''rk_live_restricted''',
+  '''sk_live_realmoney''',
+  '''sk_test_LEAKCHECK''',
 ]
