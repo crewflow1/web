@@ -964,6 +964,9 @@ export const FEATURES: FeaturePage[] = [
       "subcontractor compliance software",
       "subcontractor payment software",
       "manage subcontractors construction",
+      "subcontractor insurance tracking",
+      "subcontractor certification tracking software",
+      "SSIP evidence management",
     ],
     name: "Subcontractors",
     navLabel: "Subcontractors",
@@ -990,6 +993,15 @@ export const FEATURES: FeaturePage[] = [
         body: "Keep a record for each subcontractor with their insurance and certificate expiries tracked, so you know at a glance whose public liability or qualification is about to lapse, before it costs you a place on a site.",
       },
       {
+        h2: "Insurance, accreditations and SSIP evidence, centralised",
+        body: "Store each subcontractor's documents against their record and track the expiries in one place: public and employers' liability insurance, trade qualifications, and the accreditation certificates principal contractors ask for, including SSIP schemes like CHAS, SMAS and SafeContractor. When someone asks for a subbie's current evidence, it's there across every job and site instead of scattered through inboxes, and you're warned before anything lapses rather than finding out on the gate.",
+        bullets: [
+          "Insurance, qualification and SSIP/accreditation certificates per subcontractor",
+          "Expiry tracking so nothing lapses unnoticed",
+          "One record that holds across every job and site",
+        ],
+      },
+      {
         h2: "Orders, bills and payments against the subbie",
         body: "Raise purchase orders and record bills against the subcontractor, and track what you've paid them, so the commercial relationship is as organised as the compliance side. No more reconstructing what a subbie was owed from a pile of texts.",
       },
@@ -1006,6 +1018,7 @@ export const FEATURES: FeaturePage[] = [
     faqs: [
       { q: "What does CrewFlow manage for subcontractors?", a: "A record per subcontractor with insurance and certificate expiries, purchase orders and bills raised against them, payments tracked, and CIS deductions applied, the whole relationship in one place." },
       { q: "Does it track subcontractor insurance and certificates?", a: "Yes. Each subcontractor's insurance and certificate expiries are tracked, so you can prove a subbie is current before you put them on a principal contractor's site." },
+      { q: "Can CrewFlow centralise SSIP and accreditation evidence for subcontractors?", a: "Yes. Alongside public and employers' liability insurance and trade qualifications, you store each subcontractor's accreditation certificates, including SSIP schemes like CHAS, SMAS and SafeContractor, against their record, with expiry tracking. The evidence stays in one place across every job and site, so you can produce a subbie's current paperwork whenever a principal contractor asks and get warned before any of it lapses." },
       { q: "How does CIS fit with subcontractor management?", a: "They're the same flow. Because you pay subcontractors through CrewFlow, the right CIS deduction is applied as you pay and the statements and monthly totals are produced, with the detail on the CIS page." },
     ],
     related: ["cis-software", "job-costing-software", "expense-tracking", "invoicing-software"],
