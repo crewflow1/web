@@ -4,6 +4,8 @@
     "deploymentEnabled": {
       "feat/launch-variations-retentions-nav": false,
       "fix/e2e-asset-inspections-activate-race": false,
+      "fix/gitleaks-benign-fixture-allowlist": false,
+      "fix/launch-loud-read-hardening": false,
       "fix/launch-field-signoff-signature": false
     }
   },
