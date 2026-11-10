@@ -440,7 +440,7 @@ const RATCHET: Array<{
     // in either degrades to "no legacy assignee" / "id-only labels" and must NEVER
     // blank the crew panel that already loaded; both are non-authority, per-parent
     // reads. Deliberate +2; see docs/loud-read-failures.md.
-    discard: 57 /* 58 → 55 (operator Migration OS): insertOne + the parent resolvers (resolveCustomerByName/resolveInvoiceByNumber) were extracted verbatim from imports/actions.ts to lib/imports/commit.ts so the operator path reuses them — 3 pre-existing discard-shaped reads (the two resolvers + the lead-branch inline customer insert) RELOCATED to the server+lib bucket (+3 there), net zero. +4 inherited from Trains 24-26; +2 first-customer fix 4: buildJobCarryFromQuote's two best-effort enrichment reads (properties + quote_line_items) — job creation must NEVER fail because the carry couldn't load; see docs/loud-read-failures.md */,
+    discard: 55 /* 58 → 55 (operator Migration OS): insertOne + the parent resolvers (resolveCustomerByName/resolveInvoiceByNumber) were extracted verbatim from imports/actions.ts to lib/imports/commit.ts so the operator path reuses them — 3 pre-existing discard-shaped reads (the two resolvers + the lead-branch inline customer insert) RELOCATED to the server+lib bucket (+3 there), net zero. +4 inherited from Trains 24-26; +2 first-customer fix 4: buildJobCarryFromQuote's two best-effort enrichment reads (properties + quote_line_items) — job creation must NEVER fail because the carry couldn't load; see docs/loud-read-failures.md. 57 → 55 (launch loud-read hardening, PR #1067): two app/(app) discard-shaped reads now throw readFailure (reviews register + a reviews/new picker; and the purchase-order-receiving / finances / quote-signatures fixes) — debt REDUCED. */,
     // 52 → 49: the job hub's H&S panel (_job-safety.tsx) bound `error` on all
     // three of its reads (RAMS, permits, toolbox talks), so their `?? []` now
     // sits behind a real check and stops counting as debt. A SAFETY control
@@ -489,7 +489,12 @@ const RATCHET: Array<{
     // bound error is now dropped; it is the same best-effort invoices read, now
     // derived in one place instead of re-fetched 5×. See docs/loud-read-failures.md
     // (C ledger).
-    softData: 35,
+    // 35 → 31 (launch loud-read hardening, PR #1067): four app/(app) soft-data
+    // reads that were tolerating a rejected read (rendering partial/empty instead
+    // of throwing) now bind `error` and throw readFailure(...) — reviews register,
+    // a reviews/new picker, the quote signatures legal record, and the finances
+    // summary. Debt REDUCED, not relocated.
+    softData: 31,
     // 5 → 4: train "offl" moved createSiteReport's cosmetic report-number count
     // (`nextReportNumber`, a head:true count read) OUT of the action and INTO the
     // shared write core (server/services/site-report-writes.ts), so the online
@@ -582,7 +587,7 @@ const RATCHET: Array<{
     // `error` — a transient storage hiccup hides ONE "Open" link, never blanks the
     // inbox. Same best-effort shape as getPaymentProofSignedUrl. See
     // docs/loud-read-failures.md (C ledger).
-    discard: 42 /* 38 → 41 (operator Migration OS): the 3 discard-shaped reads in lib/imports/commit.ts (resolveCustomerByName/resolveInvoiceByNumber + the lead-branch inline customer insert) RELOCATED here from app/(app)/imports/actions.ts (−3 there) when insertOne + resolvers were extracted for reuse by the operator surface — same pre-existing debt, new bucket, net zero. 41 → 42 (tenant semantic search): server/services/tenant-search-embedder.ts isTenantSearchWorkerEnabled() fails DARK (returns false on any error) — identical best-effort shape to memory-embedder.ts's gate read; a gate hiccup leaves the worker disabled for the tick, never throws into the cron. See docs/loud-read-failures.md (C ledger) */,
+    discard: 39 /* 38 → 41 (operator Migration OS): the 3 discard-shaped reads in lib/imports/commit.ts (resolveCustomerByName/resolveInvoiceByNumber + the lead-branch inline customer insert) RELOCATED here from app/(app)/imports/actions.ts (−3 there) when insertOne + resolvers were extracted for reuse by the operator surface — same pre-existing debt, new bucket, net zero. 41 → 42 (tenant semantic search): server/services/tenant-search-embedder.ts isTenantSearchWorkerEnabled() fails DARK (returns false on any error) — identical best-effort shape to memory-embedder.ts's gate read; a gate hiccup leaves the worker disabled for the tick, never throws into the cron. 42 → 39 (launch loud-read hardening, PR #1067): server/services/sites.ts had three discard-shaped reads now binding `error` and throwing readFailure(...). Debt REDUCED. (The duplicate goods-receipt risk fixed in the same PR lives in app/(app)/purchase-orders and is counted in the app/(app) bucket, not here.) See docs/loud-read-failures.md (C ledger) */,
     // 61 → 62: server/services/hq-support-snapshot.ts `listSupportTicketRowsForHq`
     // is the lean, message-free board reader (HQ Support AI) — it degrades to `[]`
     // exactly like its sibling `listSupportTicketsForHq` in the same file, and the
