@@ -3,7 +3,8 @@
   "git": {
     "deploymentEnabled": {
       "feat/launch-variations-retentions-nav": false,
-      "fix/e2e-asset-inspections-activate-race": false
+      "fix/e2e-asset-inspections-activate-race": false,
+      "fix/gitleaks-benign-fixture-allowlist": false
     }
   },
   "crons": [

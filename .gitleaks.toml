@@ -41,4 +41,20 @@ regexes = [
   # /auth/callback?token_hash=… URL. 56-char hex (URL-safe) trips generic-api-key
   # on entropy; carries no real secret. Allowlisted by exact value (surgical).
   '''fb9202308f44aabbccddeeff00112233445566778899aabbccddeeff''',
+  # __tests__/lib/destructive-db-guard.test.ts: two FAKE fixtures the prod-guard
+  # unit test embeds as inputs. The JWT's signature segment is the literal
+  # "SIGNATUREMATERIAL" (a hand-written placeholder, not a signed token), and the
+  # DB password is leet-shaped "sup3r-s3cret-db-passw0rd" — both obvious non-secrets
+  # used to prove the guard's detection. Allowlisted by their unique literals.
+  # (Re-surfaced on main's full-history scan after the #1063 release rewrote the
+  # commits these live in, invalidating the prior .gitleaksignore fingerprints —
+  # a regex allowlist is stable across such rewrites.)
+  '''SIGNATUREMATERIAL''',
+  '''sup3r-s3cret-db-passw0rd''',
+  # scripts/war-test-seed.mjs: the project's PUBLISHABLE anon key (role=anon,
+  # ref=jzntbskdqdopzwdqwvkp) used to seed a local/CI test database. An anon key is
+  # designed to ship in client bundles (it is NOT a secret — RLS is the boundary);
+  # the service_role key is never committed. gitleaks flags any JWT by shape.
+  # Allowlisted by the anon token's unique signature tail (surgical).
+  '''qoRrOsCJYmdr9yUc6idY''',
 ]
