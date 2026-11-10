@@ -171,6 +171,15 @@ test.describe("asset inspections — authenticated M4 journey lands every naviga
     await expect(page).toHaveURL(new RegExp(`/assets/${asset.id}\\?saved=status`), {
       timeout: 20_000,
     });
+    // The retire step already left the URL at ?saved=status, so the toHaveURL
+    // above is satisfied the instant activate is clicked — it does NOT wait for
+    // activate's full-document reload (window.location.assign to the same URL).
+    // Gate on the reload actually COMMITTING: every status button renders, and
+    // the current status's button is disabled, so once the reload lands with
+    // status=active the Activate button we just clicked becomes disabled. Waiting
+    // for that settles the in-flight reload before the start step — otherwise it
+    // clobbers the start navigation (a bare goto here races it → ERR_ABORTED).
+    await expect(activateBtn).toBeDisabled({ timeout: 20_000 });
 
     // START an inspection from the asset page (mounts the deep subtree). Two
     // template selects exist (start-inspection + schedule creation) — scope to
