@@ -3,7 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
-import { aiReceptionistSetupSchema } from "@/lib/ai-receptionist/schema";
+import {
+  aiReceptionistSetupSchema,
+  parseClosureDates,
+  parseStaffNumbers,
+  parseWeeklyHours,
+} from "@/lib/ai-receptionist/schema";
 import {
   type FormState,
   formError,
@@ -41,6 +46,32 @@ export async function saveAiReceptionistSetup(
   const result = validateFormData(formData, aiReceptionistSetupSchema);
   if (!result.ok) return result.state as FormState<AiReceptionistValues>;
 
+  const data = result.data;
+
+  // Parse the STRUCTURED answering-policy fields from the flat form (the nested
+  // weekly hours, staff numbers and closures are not expressible as Zod scalars).
+  // Surface precise per-field errors rather than silently dropping bad input.
+  const staff = parseStaffNumbers(formData.get("staff_numbers")?.toString() ?? "");
+  const closures = parseClosureDates(formData.get("closures")?.toString() ?? "");
+  const weekly = parseWeeklyHours((name) => formData.get(name)?.toString() ?? null);
+
+  const fieldErrors: Record<string, string> = { ...weekly.errors };
+  if (staff.invalid.length > 0) {
+    fieldErrors.staff_numbers = `Not valid phone numbers: ${staff.invalid.join(", ")}. Use international format, e.g. +447700900123.`;
+  }
+  if (closures.invalid.length > 0) {
+    fieldErrors.closures = `Not valid dates: ${closures.invalid.join(", ")}. Use YYYY-MM-DD.`;
+  }
+  if (Object.keys(fieldErrors).length > 0) {
+    return {
+      ok: false,
+      error: "Please fix the highlighted fields.",
+      fieldErrors,
+      values: data as AiReceptionistValues,
+      submittedAt: Date.now(),
+    };
+  }
+
   const supabase = await createClient();
 
   // Check if a row already exists so we know whether this is the first
@@ -60,7 +91,6 @@ export async function saveAiReceptionistSetup(
     .eq("org_id", ctx.org.id)
     .maybeSingle();
 
-  const data = result.data;
   const payload = {
     org_id: ctx.org.id,
     enabled: data.enabled,
@@ -71,6 +101,22 @@ export async function saveAiReceptionistSetup(
     preferred_voice: data.preferred_voice ?? null,
     business_hours: data.business_hours ?? null,
     trade_type: data.trade_type ?? null,
+    // Structured answering policy (Twilio receptionist PR 2/3).
+    answering_mode: data.answering_mode,
+    timezone: data.timezone,
+    weekly_hours: weekly.weekly,
+    closures: closures.dates,
+    ring_timeout_seconds: data.ring_timeout_seconds,
+    staff_numbers: staff.numbers,
+    fallback_number: data.fallback_number ?? null,
+    urgent_escalation_number: data.urgent_escalation_number ?? null,
+    greeting: data.greeting ?? null,
+    service_areas: data.service_areas ?? null,
+    recording_enabled: data.recording_enabled,
+    transcription_enabled: data.transcription_enabled,
+    recording_consent_message: data.recording_consent_message ?? null,
+    notify_email: data.notify_email,
+    notify_sms: data.notify_sms,
   };
 
   let setupId: string | null = null;

@@ -35,6 +35,21 @@ type SetupRow = {
   preferred_voice: string | null;
   business_hours: string | null;
   trade_type: string | null;
+  answering_mode: string | null;
+  timezone: string | null;
+  weekly_hours: Record<string, { open: string; close: string } | null> | null;
+  closures: string[] | null;
+  ring_timeout_seconds: number | null;
+  staff_numbers: string[] | null;
+  fallback_number: string | null;
+  urgent_escalation_number: string | null;
+  greeting: string | null;
+  service_areas: string | null;
+  recording_enabled: boolean | null;
+  transcription_enabled: boolean | null;
+  recording_consent_message: string | null;
+  notify_email: boolean | null;
+  notify_sms: boolean | null;
   status: string;
   test_call_at: string | null;
   test_sms_at: string | null;
@@ -60,7 +75,7 @@ export default async function AiReceptionistSettingsPage() {
     }
   )
     .select(
-      "id, enabled, business_phone, whatsapp_number, facebook_page, instagram_handle, preferred_voice, business_hours, trade_type, status, test_call_at, test_sms_at, test_whatsapp_at, test_meta_at, test_voice_at, test_lead_at, configured_at",
+      "id, enabled, business_phone, whatsapp_number, facebook_page, instagram_handle, preferred_voice, business_hours, trade_type, answering_mode, timezone, weekly_hours, closures, ring_timeout_seconds, staff_numbers, fallback_number, urgent_escalation_number, greeting, service_areas, recording_enabled, transcription_enabled, recording_consent_message, notify_email, notify_sms, status, test_call_at, test_sms_at, test_whatsapp_at, test_meta_at, test_voice_at, test_lead_at, configured_at",
     )
     .eq("org_id", ctx.org.id)
     .maybeSingle();
@@ -171,6 +186,21 @@ export default async function AiReceptionistSettingsPage() {
           preferred_voice: row?.preferred_voice ?? "",
           business_hours: row?.business_hours ?? "",
           trade_type: row?.trade_type ?? "",
+          answering_mode: row?.answering_mode ?? "both",
+          timezone: row?.timezone ?? "Europe/London",
+          weekly_hours: row?.weekly_hours ?? null,
+          closures: (row?.closures ?? []).join("\n"),
+          ring_timeout_seconds: row?.ring_timeout_seconds ?? 20,
+          staff_numbers: (row?.staff_numbers ?? []).join("\n"),
+          fallback_number: row?.fallback_number ?? "",
+          urgent_escalation_number: row?.urgent_escalation_number ?? "",
+          greeting: row?.greeting ?? "",
+          service_areas: row?.service_areas ?? "",
+          recording_enabled: row?.recording_enabled ?? false,
+          transcription_enabled: row?.transcription_enabled ?? false,
+          recording_consent_message: row?.recording_consent_message ?? "",
+          notify_email: row?.notify_email ?? true,
+          notify_sms: row?.notify_sms ?? false,
         }}
       />
     </div>
