@@ -3,7 +3,8 @@
   "git": {
     "deploymentEnabled": {
       "feat/telephony-answering-policy": false,
-      "feat/telephony-staff-first": false
+      "feat/telephony-staff-first": false,
+      "feat/telephony-recording-transfer": false
     }
   },
   "crons": [

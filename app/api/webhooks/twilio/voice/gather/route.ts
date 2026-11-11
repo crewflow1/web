@@ -4,10 +4,18 @@ import { isMaintenanceMode } from "@/lib/maintenance";
 import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
 import { getVoiceProvider, isVoiceConfigured } from "@/lib/telephony";
 import { resolveOrgForDialedNumber } from "@/lib/telephony/router";
-import { buildAckDropTwiml, buildGatherTwiml, buildInboundTwiml } from "@/lib/telephony/providers/twilio";
+import {
+  buildAckDropTwiml,
+  buildGatherTwiml,
+  buildInboundTwiml,
+  buildTransferTwiml,
+} from "@/lib/telephony/providers/twilio";
 import { maybeGenerateVoiceTurn, type VoiceTurnHistoryEntry } from "@/lib/telephony/ai-turn";
 import { loadReceptionistProfile } from "@/lib/telephony/receptionist-profile";
+import { loadAnsweringPolicy } from "@/lib/telephony/answering-config";
+import { isUrgentTranscript } from "@/lib/telephony/urgent";
 import {
+  appendCallEvent,
   countSpokenTurns,
   loadRecentSpokenTurns,
   persistSpokenTurn,
@@ -132,6 +140,35 @@ export async function POST(request: Request): Promise<NextResponse> {
       tags: { route: "webhooks/twilio/voice/gather", stage: "load" },
     });
     console.error("[twilio-voice-gather] call resolve / history load failed", e);
+  }
+
+  // URGENT ESCALATION (PR 6): if the caller's words signal a genuine emergency and
+  // the org has configured an escalation number, hand straight to a human instead
+  // of continuing the AI loop. Conservative + fail-safe — it only ever dials the
+  // org's OWN configured number, and a non-match simply continues to the AI turn.
+  if (transcript.trim() && isUrgentTranscript(transcript)) {
+    const policy = await loadAnsweringPolicy(orgId);
+    if (policy.urgentNumber) {
+      const transfer = buildTransferTwiml({ number: policy.urgentNumber, callerId: call.to });
+      if (transfer) {
+        if (callId) {
+          try {
+            await appendCallEvent(orgId, callId, {
+              type: "transferred",
+              providerEventId: `transfer:${call.providerCallId}`,
+              payload: { ...call.raw, _urgent_transfer: true },
+              occurredAt: call.occurredAt,
+            });
+          } catch (e) {
+            Sentry.captureException(e, {
+              tags: { route: "webhooks/twilio/voice/gather", stage: "urgent_transfer" },
+            });
+            console.error("[twilio-voice-gather] urgent-transfer event persistence failed", e);
+          }
+        }
+        return new NextResponse(transfer, { status: 200, headers: TWIML_HEADERS });
+      }
+    }
   }
 
   const spokenTurn = await maybeGenerateVoiceTurn({

@@ -230,6 +230,32 @@ export function buildDialTwiml(opts: {
   );
 }
 
+/**
+ * Build a human-TRANSFER TwiML (Twilio receptionist PR 6): say a brief handover
+ * line then <Dial> a single human escalation number. Used when an urgent caller
+ * must reach a person immediately. The number is E.164-validated; returns null for
+ * a bad number so the caller falls back to the AI loop rather than an empty <Dial>.
+ */
+export function buildTransferTwiml(opts: {
+  number: string;
+  message?: string;
+  callerId?: string | null;
+  timeoutSeconds?: number;
+}): string | null {
+  if (!DIAL_E164.test(opts.number)) return null;
+  const say = opts.message?.trim() || "One moment — I'm connecting you to someone who can help.";
+  const timeout = Math.max(5, Math.min(120, Math.trunc(opts.timeoutSeconds ?? 30) || 30));
+  const callerId =
+    opts.callerId && DIAL_E164.test(opts.callerId) ? ` callerId="${escapeXml(opts.callerId)}"` : "";
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<Response>` +
+    `<Say>${escapeXml(say)}</Say>` +
+    `<Dial timeout="${timeout}"${callerId}><Number>${escapeXml(opts.number)}</Number></Dial>` +
+    `</Response>`
+  );
+}
+
 export function createTwilioVoiceProvider(): VoiceProvider {
   return {
     id: "twilio",
