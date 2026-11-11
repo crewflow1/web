@@ -4,7 +4,8 @@
     "deploymentEnabled": {
       "feat/telephony-answering-policy": false,
       "feat/telephony-staff-first": false,
-      "feat/telephony-provisioning": false
+      "feat/telephony-provisioning": false,
+      "feat/telephony-onboarding-ui": false
     }
   },
   "crons": [
