@@ -46,6 +46,13 @@ import {
   type QuoteVersionSnapshot,
 } from "@/lib/quotes/version-diff";
 
+// The AI quote writer (draftQuoteAction → generateQuoteDraft) is a one-shot,
+// user-initiated generation of a large structured draft that can run ~30-45s on
+// claude-sonnet-5. Server Actions invoked from this page inherit the segment's
+// maxDuration, so without this the platform would abort a valid in-progress draft
+// before it returns. 60s matches the provider's per-call budget in ai-quote-writer.
+export const maxDuration = 60;
+
 /**
  * Quote edit + lifecycle actions page.
  *
