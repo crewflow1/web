@@ -42,6 +42,14 @@ export type StaffOutcome = "no_attempt_yet" | "answered" | "no_answer" | "busy" 
 export type AnsweringDecision =
   | { action: "ring_staff"; ringSeconds: number; reason: string }
   | { action: "ai_answer"; reason: string }
+  /**
+   * Nobody should be answered LIVE on this call, but the caller must not be
+   * dropped: take a message deterministically (no AI turn) and let the
+   * missed-call text-back engine follow up. This is the `out_of_hours`-mode
+   * edge where staff missed the call DURING open hours — the AI is scoped to
+   * out-of-hours only, so it must stay out, yet a lead must still be captured.
+   */
+  | { action: "take_message"; reason: string }
   | { action: "human_handled"; reason: string }
   | { action: "disabled"; reason: string };
 
@@ -102,26 +110,38 @@ export function decideAnswering(cfg: AnsweringConfig, now: Date, staff: StaffOut
 
   const open = isWithinBusinessHours(cfg, now);
 
-  // Should staff be rung first on THIS call?
+  // Should staff be rung first on THIS call? `missed_only` always tries staff
+  // first (its whole purpose is "AI only takes what we miss"); `both` and
+  // `out_of_hours` ring staff during OPEN hours (outside hours there is no point
+  // ringing a closed office — the AI / message path takes it directly).
   const ringsStaffFirst =
-    cfg.hasStaffNumbers &&
-    (cfg.mode === "missed_only" || (cfg.mode === "both" && open));
+    cfg.hasStaffNumbers && (cfg.mode === "missed_only" || open);
 
   if (staff === "no_attempt_yet" && ringsStaffFirst) {
-    return { action: "ring_staff", ringSeconds: Math.max(5, cfg.ringTimeoutSeconds | 0), reason: `mode=${cfg.mode}, ${open ? "within" : "outside"} hours → ring staff first` };
+    return {
+      action: "ring_staff",
+      ringSeconds: Math.max(5, cfg.ringTimeoutSeconds | 0),
+      reason: `mode=${cfg.mode}, ${open ? "within" : "outside"} hours → ring staff first`,
+    };
   }
 
-  // No staff leg (or it already missed/was busy/failed) — decide the AI's role by mode.
+  // From here: either there is no staff leg to ring, or the staff leg already
+  // missed / was busy / failed. Decide the AI's role by mode.
   switch (cfg.mode) {
-    case "out_of_hours":
-      // AI only covers the closed office; inside hours with no staff leg, let it ring on through.
-      return open
-        ? { action: "human_handled", reason: "out_of_hours mode and within hours → staff handle" }
-        : { action: "ai_answer", reason: "out_of_hours mode and outside hours → AI answers" };
     case "missed_only":
+      // AI covers EVERY unanswered call, in or out of hours.
       return { action: "ai_answer", reason: `missed_only mode, staff ${staff} → AI answers` };
     case "both":
+      // AI covers both the miss AND the closed office.
       return { action: "ai_answer", reason: `both mode, ${open ? `staff ${staff}` : "outside hours"} → AI answers` };
+    case "out_of_hours":
+      // AI is scoped to the CLOSED office only. Outside hours it answers; inside
+      // hours (staff missed, or no staff at all) it must stay out — but the
+      // caller is not dropped: take a message deterministically and let the
+      // missed-call text-back follow up.
+      return open
+        ? { action: "take_message", reason: `out_of_hours mode, within hours, staff ${staff} → take a message (AI stays out)` }
+        : { action: "ai_answer", reason: "out_of_hours mode and outside hours → AI answers" };
     default:
       return { action: "ai_answer", reason: "unknown mode → fail safe to AI capture" };
   }
