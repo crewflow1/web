@@ -60,7 +60,7 @@ export const FEATURES: FeaturePage[] = [
       { q: "Do field staff need a separate app?", a: "No. Field staff get a mobile-first dashboard built for someone standing in a van, today's jobs, clock-in, and the ability to attach photos to the right job." },
       { q: "Does the job link to the quote and invoice?", a: "Yes, that's the point. A job is created from an accepted quote and becomes an invoice when the work is done, with the same customer, value and line items flowing through." },
     ],
-    related: ["construction-crm", "quoting-software", "invoicing-software", "scheduling-software", "rams-software"],
+    related: ["construction-crm", "quoting-software", "invoicing-software", "scheduling-software", "subcontractor-management", "rams-software"],
     industries: ["builders", "electricians", "plumbers", "roofers"],
   },
   {
@@ -369,7 +369,7 @@ export const FEATURES: FeaturePage[] = [
       { q: "Where do the hours come from?", a: "Straight from clocked timesheets. Because time tracking and payroll are one system, you're never re-keying paper timesheets into separate payroll software." },
       { q: "Can my accountant get the data?", a: "Yes. Every pay run exports to CSV, so handing off to your accountant or bookkeeper is a clean export rather than a manual rebuild." },
     ],
-    related: ["timesheet-software", "cis-software", "scheduling-software", "tax-software", "job-costing-software"],
+    related: ["timesheet-software", "cis-software", "subcontractor-management", "scheduling-software", "tax-software", "job-costing-software"],
     industries: ["builders", "groundworks", "electricians"],
   },
   {
@@ -419,7 +419,7 @@ export const FEATURES: FeaturePage[] = [
       { q: "Does it update as the job runs?", a: "Yes. As hours are clocked and materials are logged, the job's margin updates, so you're not waiting until the job's finished to find out it lost money." },
       { q: "How do the colour bands work?", a: "Each job shows a green, amber or red margin band so you can scan a list of jobs and instantly see which are healthy and which need attention." },
     ],
-    related: ["timesheet-software", "invoicing-software", "quoting-software", "expense-tracking", "tax-software"],
+    related: ["timesheet-software", "invoicing-software", "quoting-software", "subcontractor-management", "expense-tracking", "tax-software"],
     industries: ["builders", "groundworks", "roofers"],
   },
   {
@@ -680,7 +680,7 @@ export const FEATURES: FeaturePage[] = [
       { q: "Can CrewFlow run CIS and payroll together?", a: "Yes. CrewFlow handles CIS deductions and statements for your subcontractors and PAYE payroll for the employees on your books, in one system, so you're not reconciling CIS in one tool and payroll in another every month." },
       { q: "Is there free CIS software?", a: "HMRC offers a free online tool for filing the monthly CIS300 return, but it won't verify subcontractors as you go, work out and log deductions on every payment, produce payment and deduction statements, or connect to how you pay your own team. CrewFlow isn't free, but it does the work around the filing so the return is a quick check." },
     ],
-    related: ["invoicing-software", "payroll-software", "tax-software", "expense-tracking", "job-costing-software"],
+    related: ["invoicing-software", "payroll-software", "subcontractor-management", "tax-software", "expense-tracking", "job-costing-software"],
     industries: ["builders", "groundworks", "scaffolding", "roofers"],
   },
   {
@@ -900,7 +900,7 @@ export const FEATURES: FeaturePage[] = [
       { q: "Why does retention get lost without this?", a: "Because the release date lands months after the job's finished, when attention has moved on. Tracked against the job with its release date, it stays visible until it's paid instead of quietly being written off." },
       { q: "Can I see all my retention at once?", a: "Yes. CrewFlow shows total retention outstanding across the business alongside aged debt, so the whole picture of money owed is in one place." },
     ],
-    related: ["invoicing-software", "cis-software", "job-costing-software", "payments-reconciliation"],
+    related: ["invoicing-software", "cis-software", "subcontractor-management", "job-costing-software", "payments-reconciliation"],
     industries: ["builders", "groundworks", "scaffolding", "electricians"],
   },
   {

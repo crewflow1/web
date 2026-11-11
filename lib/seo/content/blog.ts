@@ -129,7 +129,7 @@ export const POSTS: BlogPost[] = [
       { q: "Should I send an estimate or a quote?", a: "If the scope is still uncertain, give an estimate or budget figure and say clearly that it may change. Once the work is defined well enough to price properly, send a fixed quote. Being explicit about which one you're giving, and exactly what's included, avoids arguments later." },
     ],
     related: ["best-construction-software-uk", "how-to-get-paid-faster-in-construction"],
-    relatedFeatures: ["quoting-software", "job-costing-software", "timesheet-software", "invoicing-software"],
+    relatedFeatures: ["quoting-software", "job-costing-software", "subcontractor-management", "timesheet-software", "invoicing-software"],
   },
   {
     slug: "how-to-get-paid-faster-in-construction",
