@@ -123,12 +123,13 @@ export const POSTS: BlogPost[] = [
     faqs: [
       { q: "What should a construction quote include?", a: "A proper construction quote breaks down labour, materials and plant as line items, applies VAT correctly, and adds your margin deliberately. Sending it as a clean branded PDF the customer can accept makes you look professional and creates a clear record of what was agreed." },
       { q: "How do I work out labour cost on a job?", a: "Use the real hours each person spends on the job multiplied by what they actually cost you (including on-costs like NI and holiday). Tracking real clocked hours rather than estimating is the single biggest improvement most firms can make to pricing accuracy." },
+      { q: "How do I cost a construction job as a contractor?", a: "Costing a job and pricing it are the same exercise. Add up the real labour (hours at what each person actually costs you, including on-costs), materials from current supplier quotes with a waste allowance, and any plant or subcontractor costs, then add a deliberate margin on top. Cost up from those real figures rather than working back from what you think the customer will pay, and compare the finished job's actual cost against the quote so your next price is sharper." },
       { q: "How much margin should I add to a construction job?", a: "Enough to cover your overheads and make a profit, which means knowing your overheads first. There's no universal number, though many UK contractors on residential work aim for roughly 15 to 25%. Pricing up from cost and adding a deliberate margin beats working back from what you hope the customer will pay." },
       { q: "What's the difference between margin and markup?", a: "Markup is the amount you add on top of your cost; margin is your profit as a share of the final price. They're easy to confuse: a 20% markup is only about a 16.7% margin. To hit a target margin, divide the cost by (1 minus the margin) rather than multiplying, so a 20% margin on a £40,000 job means pricing at £50,000 (£40,000 / 0.8)." },
       { q: "Should I send an estimate or a quote?", a: "If the scope is still uncertain, give an estimate or budget figure and say clearly that it may change. Once the work is defined well enough to price properly, send a fixed quote. Being explicit about which one you're giving, and exactly what's included, avoids arguments later." },
     ],
     related: ["best-construction-software-uk", "how-to-get-paid-faster-in-construction"],
-    relatedFeatures: ["quoting-software", "job-costing-software", "timesheet-software", "invoicing-software"],
+    relatedFeatures: ["quoting-software", "job-costing-software", "subcontractor-management", "timesheet-software", "invoicing-software"],
   },
   {
     slug: "how-to-get-paid-faster-in-construction",
