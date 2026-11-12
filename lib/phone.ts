@@ -180,3 +180,74 @@ export function isValidPhoneForRegion(
   const parsed = parsePhoneNumberFromString(input, normalizeRegion(region));
   return Boolean(parsed && parsed.isValid());
 }
+
+// ---------------------------------------------------------------------------
+// Caller-matching helpers (inbound recognition)
+// ---------------------------------------------------------------------------
+
+/**
+ * The "significant digits" signature of a phone number, for EXACT caller
+ * matching against `customers.phone_sig` / `leads.contact_phone_sig`.
+ *
+ * It MUST stay byte-identical to the SQL `generated always as` expression that
+ * populates those columns (supabase/migrations/20261261000000_customer_search.sql
+ * and the leads mirror), or a match computed here will never equal the stored
+ * value. The rule: strip to digits, then drop a leading UK country code ("44") or
+ * a national trunk "0", so "+44 7700 900123", "07700 900123" and "447700900123"
+ * all reduce to the same "7700900123".
+ *
+ *   "+44 7700 900123" -> "7700900123"
+ *   "07700 900123"    -> "7700900123"
+ *   "447700900123"    -> "7700900123"
+ *   "+1 415 555 0123" -> "14155550123"  (no UK prefix to strip)
+ *   "anonymous" / ""  -> null
+ */
+export function phoneSignificantDigits(
+  input: string | null | undefined,
+): string | null {
+  if (input == null) return null;
+  const digits = String(input).replace(/[^0-9]/g, "");
+  if (!digits) return null;
+  let sig: string;
+  if (digits.startsWith("44")) sig = digits.slice(2);
+  else if (digits.startsWith("0")) sig = digits.slice(1);
+  else sig = digits;
+  return sig || null;
+}
+
+/**
+ * Tokens Twilio (and other carriers) place in the `From` field when the caller
+ * has WITHHELD their caller ID. These are NOT dial-able numbers and must never be
+ * treated as a matchable identity. "266696687" / "7378742833" are the keypad
+ * spellings of "anonymous" / "restricted" some carriers send as a numeric From.
+ */
+const WITHHELD_CALLER_TOKENS = new Set([
+  "anonymous",
+  "restricted",
+  "unavailable",
+  "unknown",
+  "private",
+  "blocked",
+  "266696687",
+  "7378742833",
+]);
+
+/**
+ * True when the inbound caller ID is withheld / anonymous / unusable, so caller
+ * recognition must NOT guess an identity (it requests clarification instead).
+ * Fail-safe: anything that does not reduce to a plausible (>= 7 digit) signature
+ * is treated as withheld.
+ */
+export function isWithheldCallerId(from: string | null | undefined): boolean {
+  if (from == null) return true;
+  const trimmed = String(from).trim();
+  if (!trimmed) return true;
+  const lowered = trimmed.toLowerCase().replace(/[\s+()-]/g, "");
+  if (WITHHELD_CALLER_TOKENS.has(lowered)) return true;
+  // Non-numeric caller id (letters) ⇒ a carrier label, not a number.
+  if (!/[0-9]/.test(trimmed)) return true;
+  const sig = phoneSignificantDigits(trimmed);
+  if (!sig || sig.length < 7) return true;
+  if (WITHHELD_CALLER_TOKENS.has(sig)) return true;
+  return false;
+}
