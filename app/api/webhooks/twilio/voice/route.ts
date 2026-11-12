@@ -56,6 +56,18 @@ function callbackUrl(request: Request): string {
   return `${proto}://${host}${parsed.pathname}${parsed.search}`;
 }
 
+/** The recording-status callback URL, on the same public host Twilio reached. */
+function recordingStatusUrl(request: Request): string {
+  const parsed = new URL(request.url);
+  const proto = request.headers.get("x-forwarded-proto") ?? parsed.protocol.replace(/:$/, "");
+  const host =
+    request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? parsed.host;
+  return `${proto}://${host}/api/webhooks/twilio/voice/recording-status`;
+}
+
+/** The default spoken consent line when recording is on but none is configured. */
+const DEFAULT_CONSENT = "Please note, this call may be recorded for quality and training purposes.";
+
 export async function POST(request: Request): Promise<NextResponse> {
   if (isMaintenanceMode()) {
     return NextResponse.json(
@@ -140,14 +152,20 @@ export async function POST(request: Request): Promise<NextResponse> {
     const decision = decideAnswering(policy.config, new Date(), "no_attempt_yet");
 
     if (decision.action === "ring_staff") {
+      // When recording is enabled the caller must hear a consent line BEFORE the
+      // recorded leg begins (UK disclosure); it replaces the greeting on this path.
+      const greeting = policy.recordingEnabled
+        ? (policy.consentMessage ?? DEFAULT_CONSENT)
+        : policy.greeting;
       const dial = buildDialTwiml({
         numbers: policy.staffNumbers,
         timeoutSeconds: decision.ringSeconds,
         // callerId MUST be a Twilio-owned number — the DIALED number is guaranteed
         // owned, so staff reliably see the business line.
         callerId: call.to,
-        greeting: policy.greeting,
+        greeting,
         record: policy.recordingEnabled,
+        recordingStatusCallback: policy.recordingEnabled ? recordingStatusUrl(request) : null,
       });
       // Ring staff; the <Dial> action (dial-status) owns the AI / message
       // fallthrough and creates the lead only if the AI ends up answering. NO
