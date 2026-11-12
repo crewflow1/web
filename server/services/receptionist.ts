@@ -24,7 +24,7 @@ import {
 } from "@/server/services/receptionist-draft";
 import { RECEPTIONIST_EMPLOYEE_SLUG } from "@/lib/receptionist/types";
 import { recogniseCaller } from "@/server/services/caller-recognition";
-import type { RecognitionDecision } from "@/lib/telephony/caller-recognition";
+import { selectReusableLead, type RecognitionDecision } from "@/lib/telephony/caller-recognition";
 import {
   resolveConversation,
   appendConversationMessage,
@@ -2513,7 +2513,7 @@ export async function processInboundEnquiry(
   let recognition: RecognitionDecision = {
     status: "no_match",
     customer: null,
-    reuseLeadId: null,
+    candidateLeads: [],
     ambiguous: false,
   };
   if (input.channel === "phone") {
@@ -2524,27 +2524,28 @@ export async function processInboundEnquiry(
     }
   }
 
+  // Same-project reuse decision — EVIDENCE-BASED, never on the phone match alone. We
+  // reuse an existing OPEN lead only when THIS enquiry's extracted project (service +
+  // postcode) matches exactly one of the matched customer's open leads. An ambiguous or
+  // sparse enquiry — including a voice origination whose transcript is not yet extracted,
+  // which carries NO service — yields null ⇒ a NEW lead linked to the existing customer.
+  const reuseLeadId = recognition.candidateLeads.length
+    ? selectReusableLead(
+        { service: extraction.job_type, postcode: extraction.postcode },
+        recognition.candidateLeads,
+      )
+    : null;
+
   // Step 3 — create OR link the lead. We do NOT create a customer row (the directive's
   // "AI NEVER commits work" rule); when the caller IS a known customer we link the new
-  // lead to that existing customer, and when the same matter is already open we reuse
-  // it rather than creating a duplicate.
+  // lead to that existing customer, and only when the SAME project is already open do we
+  // reuse it rather than creating a duplicate.
   let leadId: string | null = null;
-  if (recognition.reuseLeadId) {
-    // (4) Same ongoing matter / repeat caller ⇒ LINK to the existing open lead rather
-    // than creating a duplicate. (3) If we confidently matched a customer, ensure the
-    // lead carries that link. Idempotent + oldest-first selection, so a redelivered or
-    // concurrent origination folds onto the SAME lead. Best-effort: a backfill failure
-    // must not strand the enquiry — the link below still happens.
-    leadId = recognition.reuseLeadId;
-    if (recognition.customer) {
-      const { error: linkErr } = await admin
-        .from("leads")
-        .update({ customer_id: recognition.customer.id })
-        .eq("id", leadId)
-        .eq("org_id", input.org_id);
-      if (linkErr)
-        console.error("[receptionist] reuse-lead customer link failed (continuing)", linkErr);
-    }
+  if (reuseLeadId) {
+    // (4) Same project, confidently matched ⇒ LINK to that existing open lead rather than
+    // duplicating. The lead already belongs to this customer (candidates come only from
+    // the single matched customer's open leads), so no customer re-link is needed.
+    leadId = reuseLeadId;
   } else {
     // (5) Known customer enquiring about NEW work ⇒ a new lead LINKED to that customer.
     // (6) No match ⇒ a brand-new unlinked lead, exactly as before this feature.

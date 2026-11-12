@@ -3,6 +3,8 @@ import { phoneSignificantDigits, isWithheldCallerId } from "@/lib/phone";
 import {
   decideRecognition,
   buildRecognitionContext,
+  selectReusableLead,
+  type CandidateLead,
   type RecognitionDecision,
 } from "@/lib/telephony/caller-recognition";
 
@@ -58,18 +60,18 @@ describe("isWithheldCallerId", () => {
   });
 });
 
-describe("decideRecognition (the never-guess decision table)", () => {
-  const base = { withheld: false, customerMatches: [], customerOpenLeadId: null, phoneOpenLeadId: null };
+describe("decideRecognition (identity — never guess)", () => {
+  const base = { withheld: false, customerMatches: [], candidateLeads: [] as CandidateLead[] };
 
-  it("(7) withheld ⇒ ambiguous, link nothing", () => {
+  it("(7) withheld ⇒ ambiguous, no candidates", () => {
     const d = decideRecognition({ ...base, withheld: true });
     expect(d.status).toBe("withheld");
     expect(d.ambiguous).toBe(true);
     expect(d.customer).toBeNull();
-    expect(d.reuseLeadId).toBeNull();
+    expect(d.candidateLeads).toEqual([]);
   });
 
-  it("(7) multiple customers ⇒ ambiguous, link nothing", () => {
+  it("(7) multiple customers ⇒ ambiguous, no candidates", () => {
     const d = decideRecognition({
       ...base,
       customerMatches: [{ id: "c1", name: "A" }, { id: "c2", name: "B" }],
@@ -77,42 +79,64 @@ describe("decideRecognition (the never-guess decision table)", () => {
     expect(d.status).toBe("multiple_customers");
     expect(d.ambiguous).toBe(true);
     expect(d.customer).toBeNull();
-    expect(d.reuseLeadId).toBeNull();
+    expect(d.candidateLeads).toEqual([]);
   });
 
-  it("(3,5) single customer, no open matter ⇒ link customer, new lead (no reuse)", () => {
-    const d = decideRecognition({ ...base, customerMatches: [{ id: "c1", name: "John Smith" }] });
+  it("(3) single customer ⇒ link + expose their open leads as reuse candidates", () => {
+    const candidateLeads: CandidateLead[] = [{ id: "lead-open", service: "kitchen", postcode: "BT1 1AA" }];
+    const d = decideRecognition({ ...base, customerMatches: [{ id: "c1", name: "John Smith" }], candidateLeads });
     expect(d.status).toBe("single_customer");
     expect(d.customer?.id).toBe("c1");
-    expect(d.reuseLeadId).toBeNull();
+    expect(d.candidateLeads).toEqual(candidateLeads);
     expect(d.ambiguous).toBe(false);
   });
 
-  it("(4) single customer with an open matter ⇒ reuse that lead", () => {
-    const d = decideRecognition({
-      ...base,
-      customerMatches: [{ id: "c1", name: "John" }],
-      customerOpenLeadId: "lead-open",
-    });
-    expect(d.status).toBe("single_customer");
-    expect(d.customer?.id).toBe("c1");
-    expect(d.reuseLeadId).toBe("lead-open");
-  });
-
-  it("(4,6) no customer but an open lead on the number ⇒ reuse it, no customer link", () => {
-    const d = decideRecognition({ ...base, phoneOpenLeadId: "lead-x" });
-    expect(d.status).toBe("no_match");
-    expect(d.customer).toBeNull();
-    expect(d.reuseLeadId).toBe("lead-x");
-    expect(d.ambiguous).toBe(false);
-  });
-
-  it("(6) genuinely new caller ⇒ no_match, new lead", () => {
+  it("(6) genuinely new caller ⇒ no_match, no candidates", () => {
     const d = decideRecognition(base);
     expect(d.status).toBe("no_match");
     expect(d.customer).toBeNull();
-    expect(d.reuseLeadId).toBeNull();
+    expect(d.candidateLeads).toEqual([]);
     expect(d.ambiguous).toBe(false);
+  });
+});
+
+describe("selectReusableLead (reuse ONLY on same-project evidence)", () => {
+  const kitchenBT1: CandidateLead = { id: "L-kitchen", service: "Kitchen extension", postcode: "BT1 1AA" };
+  const bathBT9: CandidateLead = { id: "L-bath", service: "Bathroom refit", postcode: "BT9 5XY" };
+
+  it("(4) confident single match on service + postcode ⇒ reuse that lead", () => {
+    const id = selectReusableLead({ service: "kitchen extension", postcode: "bt11aa" }, [kitchenBT1, bathBT9]);
+    expect(id).toBe("L-kitchen"); // case/format-insensitive, picks the right project
+  });
+
+  it("(5) a DIFFERENT project for the same customer ⇒ no reuse (new lead)", () => {
+    expect(
+      selectReusableLead({ service: "Driveway", postcode: "BT1 1AA" }, [kitchenBT1, bathBT9]),
+    ).toBeNull();
+  });
+
+  it("multiple open projects — matches the right one, not the oldest", () => {
+    // kitchen is listed AFTER bathroom; a phone-only 'oldest' rule would pick bathroom.
+    expect(selectReusableLead({ service: "kitchen extension", postcode: "BT1 1AA" }, [bathBT9, kitchenBT1])).toBe("L-kitchen");
+  });
+
+  it("ambiguous evidence: no service ⇒ no reuse (the voice-origination default)", () => {
+    expect(selectReusableLead({ service: null, postcode: "BT1 1AA" }, [kitchenBT1])).toBeNull();
+    expect(selectReusableLead({ service: "", postcode: "BT1 1AA" }, [kitchenBT1])).toBeNull();
+  });
+
+  it("ambiguous evidence: no postcode ⇒ no reuse (insufficient to confirm same site)", () => {
+    expect(selectReusableLead({ service: "kitchen extension", postcode: null }, [kitchenBT1])).toBeNull();
+  });
+
+  it("two candidates both matching service + postcode ⇒ ambiguous ⇒ no reuse", () => {
+    const dupA: CandidateLead = { id: "L-a", service: "kitchen", postcode: "BT1 1AA" };
+    const dupB: CandidateLead = { id: "L-b", service: "kitchen", postcode: "BT1 1AA" };
+    expect(selectReusableLead({ service: "kitchen", postcode: "BT1 1AA" }, [dupA, dupB])).toBeNull();
+  });
+
+  it("no candidates ⇒ no reuse", () => {
+    expect(selectReusableLead({ service: "kitchen", postcode: "BT1 1AA" }, [])).toBeNull();
   });
 });
 
@@ -120,7 +144,7 @@ describe("buildRecognitionContext (safe personalisation, no data leakage)", () =
   const single = (name: string | null): RecognitionDecision => ({
     status: "single_customer",
     customer: { id: "c1", name },
-    reuseLeadId: null,
+    candidateLeads: [],
     ambiguous: false,
   });
 
@@ -144,17 +168,17 @@ describe("buildRecognitionContext (safe personalisation, no data leakage)", () =
   });
 
   it("ambiguous / withheld ⇒ ask to identify, reveal nothing", () => {
-    const multi = buildRecognitionContext({ status: "multiple_customers", customer: null, reuseLeadId: null, ambiguous: true })!;
+    const multi = buildRecognitionContext({ status: "multiple_customers", customer: null, candidateLeads: [], ambiguous: true })!;
     expect(multi.toLowerCase()).toContain("more than one");
     expect(multi.toLowerCase()).toMatch(/ask for|name/);
 
-    const withheld = buildRecognitionContext({ status: "withheld", customer: null, reuseLeadId: null, ambiguous: true })!;
+    const withheld = buildRecognitionContext({ status: "withheld", customer: null, candidateLeads: [], ambiguous: true })!;
     expect(withheld.toLowerCase()).toContain("withheld");
   });
 
   it("no_match ⇒ no hint", () => {
     expect(
-      buildRecognitionContext({ status: "no_match", customer: null, reuseLeadId: null, ambiguous: false }),
+      buildRecognitionContext({ status: "no_match", customer: null, candidateLeads: [], ambiguous: false }),
     ).toBeNull();
   });
 });

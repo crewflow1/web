@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { describeIntegration, serviceClient } from "../_harness";
 import { recogniseCaller } from "@/server/services/caller-recognition";
+import { selectReusableLead } from "@/lib/telephony/caller-recognition";
 import { processInboundEnquiry } from "@/server/services/receptionist";
 
 /**
@@ -94,39 +95,38 @@ describeIntegration("telephony · caller recognition (tenant-isolated, real PG)"
     expect(r.status).toBe("multiple_customers");
     expect(r.ambiguous).toBe(true);
     expect(r.customer).toBeNull();
-    expect(r.reuseLeadId).toBeNull();
+    expect(r.candidateLeads).toEqual([]);
   });
 
-  it("5. (4) single customer with an OPEN lead ⇒ reuse it; a CLOSED lead ⇒ new lead", async () => {
-    const openPhone = "+447700900555";
-    const openCust = await mkCustomer(orgA, "Fin Open", openPhone);
-    const openLead = await mkLead(orgA, { customer_id: openCust, status: "qualified" });
-    const rOpen = await recogniseCaller({ orgId: orgA, callerId: openPhone });
-    expect(rOpen.status).toBe("single_customer");
-    expect(rOpen.reuseLeadId).toBe(openLead);
-
-    const closedPhone = "+447700900556";
-    const closedCust = await mkCustomer(orgA, "Gus Closed", closedPhone);
-    await mkLead(orgA, { customer_id: closedCust, status: "won" });
-    const rClosed = await recogniseCaller({ orgId: orgA, callerId: closedPhone });
-    expect(rClosed.status).toBe("single_customer");
-    expect(rClosed.reuseLeadId).toBeNull(); // won is closed ⇒ not reused
+  it("5. single customer's OPEN leads are the reuse CANDIDATES (closed excluded); the matcher picks by project, not age", async () => {
+    const phone = "+447700900555";
+    const cust = await mkCustomer(orgA, "Fin Open", phone);
+    const bath = await mkLead(orgA, { customer_id: cust, status: "new", service: "Bathroom refit", postcode: "BT9 5XY" });
+    const kitchen = await mkLead(orgA, { customer_id: cust, status: "qualified", service: "Kitchen extension", postcode: "BT1 1AA" });
+    await mkLead(orgA, { customer_id: cust, status: "won", service: "Old job", postcode: "BT1 1AA" }); // closed ⇒ excluded
+    const r = await recogniseCaller({ orgId: orgA, callerId: phone });
+    expect(r.status).toBe("single_customer");
+    expect(r.candidateLeads.map((c) => c.id).sort()).toEqual([bath, kitchen].sort()); // open only
+    // EVIDENCE-BASED reuse over the REAL candidate rows: same project ⇒ the right lead
+    // (kitchen), NOT the oldest (bathroom); a different project ⇒ no reuse.
+    expect(selectReusableLead({ service: "kitchen extension", postcode: "BT1 1AA" }, r.candidateLeads)).toBe(kitchen);
+    expect(selectReusableLead({ service: "Driveway", postcode: "BT4 2AA" }, r.candidateLeads)).toBeNull();
   });
 
-  it("6. (4,6) no customer but an OPEN lead on the number ⇒ reuse that lead", async () => {
+  it("6. a NON-customer caller gets NO reuse candidates (a phone match alone never reuses)", async () => {
     const phone = "+447700900666";
-    const lead = await mkLead(orgA, { contact_phone: phone, status: "new" });
+    await mkLead(orgA, { contact_phone: phone, status: "new", service: "Fencing", postcode: "BT2 2BB" });
     const r = await recogniseCaller({ orgId: orgA, callerId: phone });
     expect(r.status).toBe("no_match");
     expect(r.customer).toBeNull();
-    expect(r.reuseLeadId).toBe(lead);
+    expect(r.candidateLeads).toEqual([]);
   });
 
   it("7. (7) withheld caller id ⇒ withheld, link nothing", async () => {
     const r = await recogniseCaller({ orgId: orgA, callerId: "anonymous" });
     expect(r.status).toBe("withheld");
     expect(r.ambiguous).toBe(true);
-    expect(r.reuseLeadId).toBeNull();
+    expect(r.candidateLeads).toEqual([]);
   });
 
   it("8. PIPELINE — a known customer's call creates a lead LINKED to that customer", async () => {
@@ -185,5 +185,35 @@ describeIntegration("telephony · caller recognition (tenant-isolated, real PG)"
     const lead = await svc().from("leads").select("id, customer_id").eq("id", res.lead_id).single();
     expect(lead.error, lead.error?.message).toBeNull();
     expect(lead.data.customer_id, "must not link to another tenant's customer").toBeNull();
+  });
+
+  it("12. REPEAT CALL — a known customer with an existing open lead gets a NEW lead, NOT the oldest reused", async () => {
+    const phone = "+447700901212";
+    const cust = await mkCustomer(orgA, "Liam Repeat", phone);
+    // A pre-existing open matter for this customer.
+    const existing = await mkLead(orgA, { customer_id: cust, status: "qualified", service: "Kitchen", postcode: "BT1 1AA" });
+    // A fresh voice call (no transcript ⇒ no project evidence) must NOT fold into it.
+    const res = await processInboundEnquiry(
+      { org_id: orgA, channel: "phone", caller: phone, dedup_key: `${TOKEN}-CA12`, provider_message_id: `${TOKEN}-CA12` },
+      { textback: "defer" },
+    );
+    expect(res.lead_id).toBeTruthy();
+    expect(res.lead_id).not.toBe(existing); // the key fix: no phone-only reuse
+    const leads = await leadsForCustomer(orgA, cust);
+    expect(leads.length).toBe(2); // existing matter preserved + a new lead, both linked to the customer
+  });
+
+  it("13. MULTIPLE OPEN PROJECTS — an evidence-less repeat call creates a new lead, reusing NEITHER project", async () => {
+    const phone = "+447700901313";
+    const cust = await mkCustomer(orgA, "Mia Multi", phone);
+    const p1 = await mkLead(orgA, { customer_id: cust, status: "new", service: "Kitchen", postcode: "BT1 1AA" });
+    const p2 = await mkLead(orgA, { customer_id: cust, status: "quoted", service: "Bathroom", postcode: "BT9 5XY" });
+    const res = await processInboundEnquiry(
+      { org_id: orgA, channel: "phone", caller: phone, dedup_key: `${TOKEN}-CA13`, provider_message_id: `${TOKEN}-CA13` },
+      { textback: "defer" },
+    );
+    expect(res.lead_id).not.toBe(p1);
+    expect(res.lead_id).not.toBe(p2);
+    expect((await leadsForCustomer(orgA, cust)).length).toBe(3); // both projects untouched + new lead
   });
 });
