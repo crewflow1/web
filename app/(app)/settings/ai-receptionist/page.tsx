@@ -4,7 +4,13 @@ import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure
 import { requireOrgContext } from "@/server/auth/session";
 import { AiReceptionistForm } from "./_form";
 import { VoiceStatus } from "./_voice-status";
+import { NumberOnboarding, type CurrentNumber } from "./_number-onboarding";
 import { saveAiReceptionistSetup } from "./actions";
+import {
+  requestNewNumberAction,
+  searchNumbersAction,
+  setupForwardingAction,
+} from "./number-actions";
 import {
   AI_RECEPTIONIST_STATUS_LABELS,
   AI_RECEPTIONIST_STATUS_STYLES,
@@ -35,6 +41,21 @@ type SetupRow = {
   preferred_voice: string | null;
   business_hours: string | null;
   trade_type: string | null;
+  answering_mode: string | null;
+  timezone: string | null;
+  weekly_hours: Record<string, { open: string; close: string } | null> | null;
+  closures: string[] | null;
+  ring_timeout_seconds: number | null;
+  staff_numbers: string[] | null;
+  fallback_number: string | null;
+  urgent_escalation_number: string | null;
+  greeting: string | null;
+  service_areas: string | null;
+  recording_enabled: boolean | null;
+  transcription_enabled: boolean | null;
+  recording_consent_message: string | null;
+  notify_email: boolean | null;
+  notify_sms: boolean | null;
   status: string;
   test_call_at: string | null;
   test_sms_at: string | null;
@@ -60,13 +81,36 @@ export default async function AiReceptionistSettingsPage() {
     }
   )
     .select(
-      "id, enabled, business_phone, whatsapp_number, facebook_page, instagram_handle, preferred_voice, business_hours, trade_type, status, test_call_at, test_sms_at, test_whatsapp_at, test_meta_at, test_voice_at, test_lead_at, configured_at",
+      "id, enabled, business_phone, whatsapp_number, facebook_page, instagram_handle, preferred_voice, business_hours, trade_type, answering_mode, timezone, weekly_hours, closures, ring_timeout_seconds, staff_numbers, fallback_number, urgent_escalation_number, greeting, service_areas, recording_enabled, transcription_enabled, recording_consent_message, notify_email, notify_sms, status, test_call_at, test_sms_at, test_whatsapp_at, test_meta_at, test_voice_at, test_lead_at, configured_at",
     )
     .eq("org_id", ctx.org.id)
     .maybeSingle();
   // A failed read would render the blank "not started" form over an existing
   // setup — and a save from it would clobber the real config. Fail loud.
   if (error) throw readFailure("ai receptionist settings: setup", error);
+
+  // The org's active CrewFlow phone number (if any) — drives the onboarding card.
+  // Org-pinned; members may SELECT their org's numbers per RLS. Fail loud on error.
+  const { data: numberRows, error: numberError } = await (
+    supabase.from("phone_numbers" as never) as unknown as {
+      select: (cols: string) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            order: (c: string, o: { ascending: boolean }) => {
+              limit: (n: number) => Promise<{ data: CurrentNumber[] | null; error: SupabaseReadError | null }>;
+            };
+          };
+        };
+      };
+    }
+  )
+    .select("e164, number_type, active, onboarding_mode, forwarding_from, monthly_cost_pence")
+    .eq("org_id", ctx.org.id)
+    .eq("active", true)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (numberError) throw readFailure("ai receptionist settings: phone number", numberError);
+  const currentNumber: CurrentNumber | null = numberRows?.[0] ?? null;
 
   const status = (row?.status as AiReceptionistStatus | undefined) ?? "not_started";
   const customerBadge =
@@ -159,6 +203,14 @@ export default async function AiReceptionistSettingsPage() {
 
       <VoiceStatus orgId={ctx.org.id} />
 
+      <NumberOnboarding
+        currentNumber={currentNumber}
+        isAdmin={isAdmin}
+        searchAction={searchNumbersAction}
+        requestNewNumberAction={requestNewNumberAction}
+        setupForwardingAction={setupForwardingAction}
+      />
+
       <AiReceptionistForm
         action={saveAiReceptionistSetup}
         isAdmin={isAdmin}
@@ -171,6 +223,21 @@ export default async function AiReceptionistSettingsPage() {
           preferred_voice: row?.preferred_voice ?? "",
           business_hours: row?.business_hours ?? "",
           trade_type: row?.trade_type ?? "",
+          answering_mode: row?.answering_mode ?? "both",
+          timezone: row?.timezone ?? "Europe/London",
+          weekly_hours: row?.weekly_hours ?? null,
+          closures: (row?.closures ?? []).join("\n"),
+          ring_timeout_seconds: row?.ring_timeout_seconds ?? 20,
+          staff_numbers: (row?.staff_numbers ?? []).join("\n"),
+          fallback_number: row?.fallback_number ?? "",
+          urgent_escalation_number: row?.urgent_escalation_number ?? "",
+          greeting: row?.greeting ?? "",
+          service_areas: row?.service_areas ?? "",
+          recording_enabled: row?.recording_enabled ?? false,
+          transcription_enabled: row?.transcription_enabled ?? false,
+          recording_consent_message: row?.recording_consent_message ?? "",
+          notify_email: row?.notify_email ?? true,
+          notify_sms: row?.notify_sms ?? false,
         }}
       />
     </div>

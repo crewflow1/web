@@ -23,6 +23,9 @@ import {
   type GeneratedReplyDraft,
 } from "@/server/services/receptionist-draft";
 import { RECEPTIONIST_EMPLOYEE_SLUG } from "@/lib/receptionist/types";
+import { recogniseCaller } from "@/server/services/caller-recognition";
+import { selectReusableLead, type RecognitionDecision } from "@/lib/telephony/caller-recognition";
+import { LEAD_STAGES_OPEN } from "@/lib/leads/schema";
 import {
   resolveConversation,
   appendConversationMessage,
@@ -2503,23 +2506,58 @@ export async function processInboundEnquiry(
   // Step 2 — AI extraction (or deterministic fallback), under the cost governor.
   const extraction = await extractFields(input.raw_text ?? "", input.org_id);
 
-  // Step 3 — create the lead. We do NOT create a customer row yet
-  // (the directive's "AI NEVER commits work" rule). The owner can
-  // promote the lead to a customer manually.
+  // Step 2b — CALLER RECOGNITION (phone only). Match the caller's number, ORG-SCOPED,
+  // against existing customers / open leads so we can LINK (not duplicate) the matter
+  // and later personalise safely. BEST-EFFORT: any failure degrades to `no_match`, i.e.
+  // the exact pre-feature behaviour (a brand-new lead). Runs no model, spends no AI
+  // budget. Gated to `phone` so WhatsApp/SMS/email ingestion is byte-unchanged.
+  let recognition: RecognitionDecision = {
+    status: "no_match",
+    customer: null,
+    candidateLeads: [],
+    ambiguous: false,
+  };
+  if (input.channel === "phone") {
+    try {
+      recognition = await recogniseCaller({ orgId: input.org_id, callerId: input.caller });
+    } catch (e) {
+      console.error("[receptionist] caller recognition failed (continuing)", e);
+    }
+  }
+
+  // Same-project reuse decision — EVIDENCE-BASED, never on the phone match alone. We
+  // reuse an existing OPEN lead only when THIS enquiry's extracted project (service +
+  // postcode) matches exactly one of the matched customer's open leads. An ambiguous or
+  // sparse enquiry — including a voice origination whose transcript is not yet extracted,
+  // which carries NO service — yields null ⇒ a NEW lead linked to the existing customer.
+  const reuseLeadId = recognition.candidateLeads.length
+    ? selectReusableLead(
+        { service: extraction.job_type, postcode: extraction.postcode },
+        recognition.candidateLeads,
+      )
+    : null;
+
+  // Step 3 — create OR link the lead. We do NOT create a customer row (the directive's
+  // "AI NEVER commits work" rule); when the caller IS a known customer we link the new
+  // lead to that existing customer, and only when the SAME project is already open do we
+  // reuse it rather than creating a duplicate.
   let leadId: string | null = null;
-  {
-    // PostgREST errors RETURN, they don't throw — a try/catch alone is dead
-    // code here, and it let a failed insert mark the enquiry "processed" with
-    // no lead.
+  if (reuseLeadId) {
+    // (4) Same project, confidently matched ⇒ LINK to that existing open lead rather than
+    // duplicating. The lead already belongs to this customer (candidates come only from
+    // the single matched customer's open leads), so no customer re-link is needed.
+    leadId = reuseLeadId;
+  } else {
+    // (5) Known customer enquiring about NEW work ⇒ a new lead LINKED to that customer.
+    // (6) No match ⇒ a brand-new unlinked lead, exactly as before this feature.
+    // (7) Ambiguous (multiple matches / withheld) ⇒ a new lead, deliberately UNLINKED —
+    //     we never guess which customer a number belongs to.
     //
-    // Loud fail: the route 500s. Note precisely what that does and does NOT
-    // buy. The enquiry row is ALREADY committed (step 1), so the throw does not
-    // roll ingestion back — the customer's message is durably recorded either
-    // way. What redelivery gets us is a second attempt at the LEAD, and only
-    // because the 23505 dedup path above now resumes an enquiry that has no
-    // lead instead of returning lead_id:null forever. If the provider never
-    // redelivers, the enquiry stays lead-less and visible as such; it is not
-    // silently marked qualified.
+    // PostgREST errors RETURN, they don't throw — a try/catch alone is dead code here,
+    // and it let a failed insert mark the enquiry "processed" with no lead. Loud fail:
+    // the route 500s. The enquiry row is ALREADY committed (step 1), so the throw does
+    // not roll ingestion back — the message is durably recorded either way; redelivery
+    // gets a second attempt at the lead via the 23505 resume path above.
     const { data: leadRow, error: leadError } = await admin
       .from("leads")
       .insert({
@@ -2530,11 +2568,81 @@ export async function processInboundEnquiry(
         urgency: extraction.urgency,
         postcode: extraction.postcode,
         ai_summary: extraction.summary,
+        // Link to the existing customer ONLY on an unambiguous single match (null for
+        // no_match / multiple / withheld — never a guessed identity).
+        customer_id: recognition.customer?.id ?? null,
+        // Persist the caller number so this lead is itself matchable on a future call
+        // (populates the generated contact_phone_sig). Phone channel only.
+        contact_phone: input.channel === "phone" ? (input.caller ?? null) : null,
       })
       .select("id")
       .single();
     if (leadError) throw readFailure("receptionist: inbound lead insert", leadError);
-    leadId = (leadRow as { id?: string } | null)?.id ?? null;
+    const newLeadId = (leadRow as { id?: string } | null)?.id ?? null;
+
+    // ATOMIC CLAIM — exactly ONE lead per enquiry, even under CONCURRENT or DUPLICATE
+    // originations. The (org, provider_message_id) unique index already guarantees one
+    // enquiry; this compare-and-swap on enquiry.lead_id (set only while still null)
+    // guarantees one lead wins. A simultaneous call that passed the null-lead resume
+    // check above and also inserted a lead will LOSE the swap here, drop its orphan,
+    // and adopt the winner's lead — so a race can never leave two leads for one call.
+    if (newLeadId && enquiryId) {
+      const claim = await (
+        admin.from("inbound_enquiries" as never) as unknown as {
+          update: (row: unknown) => {
+            eq: (k: string, v: unknown) => {
+              is: (k: string, v: unknown) => {
+                select: (
+                  c: string,
+                ) => Promise<{ data: { id: string }[] | null; error: { message: string } | null }>;
+              };
+            };
+          };
+        }
+      )
+        .update({ lead_id: newLeadId })
+        .eq("id", enquiryId)
+        .is("lead_id", null)
+        .select("id");
+      const won = !claim.error && Array.isArray(claim.data) && claim.data.length > 0;
+      if (won) {
+        leadId = newLeadId;
+      } else {
+        // Lost (or the claim read failed): adopt whatever lead the enquiry now carries,
+        // and delete our orphaned lead so no duplicate survives. Best-effort cleanup.
+        const existing = await (
+          admin.from("inbound_enquiries" as never) as unknown as {
+            select: (c: string) => {
+              eq: (k: string, v: unknown) => {
+                maybeSingle: () => Promise<{
+                  data: { lead_id: string | null } | null;
+                  error: { message: string } | null;
+                }>;
+              };
+            };
+          }
+        )
+          .select("lead_id")
+          .eq("id", enquiryId)
+          .maybeSingle();
+        const winner = existing.data?.lead_id ?? null;
+        if (winner && winner !== newLeadId) {
+          leadId = winner;
+          const del = await admin
+            .from("leads")
+            .delete()
+            .eq("id", newLeadId)
+            .eq("org_id", input.org_id);
+          if (del.error)
+            console.error("[receptionist] orphan lead cleanup failed (continuing)", del.error);
+        } else {
+          // No competing winner recorded (e.g. a transient claim read error) — keep ours.
+          leadId = newLeadId;
+        }
+      }
+    } else {
+      leadId = newLeadId;
+    }
   }
 
   // Step 4 — update enquiry with extraction + lead link.
@@ -3045,6 +3153,20 @@ export async function refreshVoiceExtractionFromTranscript(args: {
   // column mapping mirrors the origination insert: summary→ai_summary,
   // job_type→service, urgency→urgency, postcode→postcode.
   if (leadId) {
+    // COMPLETION-TIME RECONCILIATION (same-project). The origination lead is PROVISIONAL —
+    // created before the caller spoke, so it carried no project. Now that the transcript is
+    // extracted, reconcile it against the customer's OTHER open leads; a confident same-project
+    // match is MERGED (re-link + remove the duplicate), otherwise the provisional lead stays
+    // and is simply refreshed. Best-effort inside the helper.
+    const { mergedInto } = await reconcileProvisionalLead({
+      orgId: args.orgId,
+      providerCallId: args.providerCallId,
+      enquiryId,
+      provisionalLeadId: leadId,
+      project: { service: extraction.job_type, postcode: extraction.postcode },
+      confidence: extraction.confidence,
+    });
+
     const { error: leadError } = await admin
       .from("leads")
       .update({
@@ -3053,12 +3175,104 @@ export async function refreshVoiceExtractionFromTranscript(args: {
         service: extraction.job_type,
         postcode: extraction.postcode,
       })
-      .eq("id", leadId)
+      .eq("id", mergedInto ?? leadId)
       .eq("org_id", args.orgId);
     if (leadError) throw readFailure("receptionist: voice re-extract lead update", leadError);
   }
 
   return { refreshed: true };
+}
+
+/**
+ * COMPLETION-TIME RECONCILIATION of a provisional inbound lead against the same
+ * customer's other open leads (requirement: repeat calls about the SAME project must not
+ * leave duplicate leads once the transcript is known).
+ *
+ * The merge is EVIDENCE-GATED, never on the customer link alone, because it DELETES the
+ * provisional row:
+ *   - the proven project needs BOTH a service AND a postcode, and the extraction
+ *     confidence must clear `MERGE_MIN_CONFIDENCE` (a sparse/low-confidence transcript ⇒
+ *     no merge, the provisional lead simply stays);
+ *   - it must match EXACTLY ONE of the customer's OTHER open leads (selectReusableLead ⇒
+ *     zero = genuinely new project, >1 = ambiguous ⇒ no merge). So a customer's DIFFERENT
+ *     jobs never collapse into one.
+ *
+ * On a confident match it re-points the call + enquiry to the existing lead FIRST (their
+ * FKs are ON DELETE SET NULL) then deletes the provisional lead (lead_followup_state
+ * CASCADEs off it) and best-effort removes its origination notification. Returns the id it
+ * merged into, or null. ORG-PINNED on every statement; FAIL-SAFE — any error returns null
+ * so the caller keeps (and refreshes) the provisional lead: the worst case is a harmless
+ * duplicate, never a lost or mis-linked call.
+ */
+export async function reconcileProvisionalLead(args: {
+  orgId: string;
+  providerCallId: string;
+  enquiryId: string;
+  provisionalLeadId: string;
+  project: { service: string | null; postcode: string | null };
+  confidence: number | null;
+}): Promise<{ mergedInto: string | null }> {
+  const MERGE_MIN_CONFIDENCE = 70;
+  if (!args.project.service || !args.project.postcode) return { mergedInto: null };
+  if ((args.confidence ?? 0) < MERGE_MIN_CONFIDENCE) return { mergedInto: null };
+
+  const admin = createAdminClient();
+  try {
+    const prov = await admin
+      .from("leads")
+      .select("customer_id")
+      .eq("id", args.provisionalLeadId)
+      .eq("org_id", args.orgId)
+      .maybeSingle();
+    const customerId = (prov.data as { customer_id?: string | null } | null)?.customer_id ?? null;
+    if (!customerId) return { mergedInto: null }; // only a customer-linked provisional reconciles
+
+    const siblings = await admin
+      .from("leads")
+      .select("id, service, postcode")
+      .eq("org_id", args.orgId)
+      .eq("customer_id", customerId)
+      .in("status", LEAD_STAGES_OPEN as unknown as string[])
+      .neq("id", args.provisionalLeadId)
+      .limit(50);
+    if (siblings.error) {
+      console.error("[receptionist] reconciliation sibling lookup failed (continuing)", siblings.error);
+      return { mergedInto: null };
+    }
+    const candidates = (siblings.data ?? []).map((r) => ({
+      id: r.id as string,
+      service: (r.service as string | null) ?? null,
+      postcode: (r.postcode as string | null) ?? null,
+    }));
+    const match = selectReusableLead(args.project, candidates);
+    if (!match || match === args.provisionalLeadId) return { mergedInto: null };
+
+    // ATOMIC MERGE via the service-role-only SECURITY DEFINER function. It migrates EVERY
+    // reference (call, enquiry, quotes, ai_quote_drafts, conversations), folds notes, clears
+    // the origination notification, and deletes the provisional lead — all in ONE
+    // transaction, so a partial failure rolls the whole merge back (no data loss, no
+    // orphaned call, no split state) and a concurrent redelivery is a no-op (the provisional
+    // is already gone). Returns true only when the provisional was actually removed.
+    const rpc = admin.rpc.bind(admin) as unknown as (
+      name: string,
+      params: Record<string, unknown>,
+    ) => Promise<{ data: boolean | null; error: { message: string } | null }>;
+    const { data: merged, error: rpcError } = await rpc("reconcile_provisional_voice_lead", {
+      p_org_id: args.orgId,
+      p_provider_call_id: args.providerCallId,
+      p_enquiry_id: args.enquiryId,
+      p_provisional_lead_id: args.provisionalLeadId,
+      p_target_lead_id: match,
+    });
+    if (rpcError) {
+      console.error("[receptionist] reconciliation RPC failed (keeping provisional)", rpcError);
+      return { mergedInto: null };
+    }
+    return { mergedInto: merged === true ? match : null };
+  } catch (e) {
+    console.error("[receptionist] voice completion reconciliation failed (continuing)", e);
+    return { mergedInto: null };
+  }
 }
 
 /**

@@ -2,7 +2,13 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "git": {
     "deploymentEnabled": {
-      "fix/ai-quote-writer-provenance-draft": false
+      "feat/telephony-answering-policy": false,
+      "feat/telephony-staff-first": false,
+      "feat/telephony-settings-ui": false,
+      "feat/telephony-provisioning": false,
+      "feat/telephony-recording-transfer": false,
+      "feat/telephony-onboarding-ui": false,
+      "integration/telephony-receptionist": false
     }
   },
   "crons": [

@@ -122,6 +122,16 @@ function escapeXml(s: string): string {
 export const TWILIO_VOICE_GATHER_ACTION = "/api/webhooks/twilio/voice/gather";
 
 /**
+ * The <Dial> action callback the staff-first flow POSTs the dial OUTCOME to
+ * (DialCallStatus = completed / no-answer / busy / failed). Twilio ALWAYS
+ * requests this URL after the staff leg finishes — answered or not — and the
+ * call continues with the TwiML it returns, which is where the AI / message
+ * fallback is decided. Kept relative so it is signed/reconstructed against
+ * whatever public host Twilio reached (behind Vercel's proxy).
+ */
+export const TWILIO_VOICE_DIAL_STATUS_ACTION = "/api/webhooks/twilio/voice/dial-status";
+
+/**
  * Build a fixed, deterministic acknowledgement TwiML — a bare <Say> with no
  * <Gather>, so the call ENDS after it plays. Used for the ack-drop (unrouted)
  * and for the graceful "leave it with us" fallback when the AI turn is dark: a
@@ -165,6 +175,85 @@ export function buildGatherTwiml(opts?: {
 /** The TwiML returned when a call cannot be attributed to an org (ack-drop). */
 export function buildAckDropTwiml(): string {
   return buildInboundTwiml("Sorry, this number is not currently in service. Goodbye.");
+}
+
+/** A UK E.164 validator — the only number shape the <Dial> builder will emit. */
+const DIAL_E164 = /^\+[1-9]\d{6,14}$/;
+
+/**
+ * Build the STAFF-FIRST <Dial> TwiML: ring the org's own staff numbers (all at
+ * once — multiple <Number> nouns in one <Dial> ring SIMULTANEOUSLY, first to
+ * answer wins), for `timeoutSeconds`, then hand control to the dial-status action
+ * which decides the AI / message fallback. The `callerId` MUST be a Twilio-owned
+ * number — we pass the DIALED number (guaranteed owned), so staff reliably see
+ * the business line. Optionally records from answer (PR 6 recording controls).
+ *
+ * Returns `null` when there is no valid staff number to ring, so the caller can
+ * fall back to AI rather than emit an empty, hanging <Dial>. Every number + the
+ * callerId is E.164-validated and XML-escaped; a greeting <Say> can precede the
+ * dial so the caller is not met with silence while staff phones ring.
+ */
+export function buildDialTwiml(opts: {
+  numbers: readonly string[];
+  timeoutSeconds: number;
+  callerId?: string | null;
+  action?: string;
+  greeting?: string | null;
+  record?: boolean;
+  recordingStatusCallback?: string | null;
+}): string | null {
+  const numbers = opts.numbers.filter((n) => typeof n === "string" && DIAL_E164.test(n));
+  if (numbers.length === 0) return null;
+
+  const timeout = Math.max(5, Math.min(120, Math.trunc(opts.timeoutSeconds) || 20));
+  const action = opts.action?.trim() || TWILIO_VOICE_DIAL_STATUS_ACTION;
+  const callerId =
+    opts.callerId && DIAL_E164.test(opts.callerId) ? ` callerId="${escapeXml(opts.callerId)}"` : "";
+  const record = opts.record ? ` record="record-from-answer-dual"` : "";
+  const recordCb =
+    opts.record && opts.recordingStatusCallback?.trim()
+      ? ` recordingStatusCallback="${escapeXml(opts.recordingStatusCallback.trim())}" recordingStatusCallbackMethod="POST"`
+      : "";
+  const greeting = opts.greeting?.trim()
+    ? `<Say>${escapeXml(opts.greeting.trim())}</Say>`
+    : "";
+  const numberNouns = numbers.map((n) => `<Number>${escapeXml(n)}</Number>`).join("");
+
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<Response>` +
+    greeting +
+    `<Dial action="${escapeXml(action)}" method="POST" timeout="${timeout}"${callerId}${record}${recordCb} answerOnBridge="true">` +
+    numberNouns +
+    `</Dial>` +
+    `</Response>`
+  );
+}
+
+/**
+ * Build a human-TRANSFER TwiML (Twilio receptionist PR 6): say a brief handover
+ * line then <Dial> a single human escalation number. Used when an urgent caller
+ * must reach a person immediately. The number is E.164-validated; returns null for
+ * a bad number so the caller falls back to the AI loop rather than an empty <Dial>.
+ */
+export function buildTransferTwiml(opts: {
+  number: string;
+  message?: string;
+  callerId?: string | null;
+  timeoutSeconds?: number;
+}): string | null {
+  if (!DIAL_E164.test(opts.number)) return null;
+  const say = opts.message?.trim() || "One moment — I'm connecting you to someone who can help.";
+  const timeout = Math.max(5, Math.min(120, Math.trunc(opts.timeoutSeconds ?? 30) || 30));
+  const callerId =
+    opts.callerId && DIAL_E164.test(opts.callerId) ? ` callerId="${escapeXml(opts.callerId)}"` : "";
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<Response>` +
+    `<Say>${escapeXml(say)}</Say>` +
+    `<Dial timeout="${timeout}"${callerId}><Number>${escapeXml(opts.number)}</Number></Dial>` +
+    `</Response>`
+  );
 }
 
 export function createTwilioVoiceProvider(): VoiceProvider {
