@@ -4,7 +4,13 @@ import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure
 import { requireOrgContext } from "@/server/auth/session";
 import { AiReceptionistForm } from "./_form";
 import { VoiceStatus } from "./_voice-status";
+import { NumberOnboarding, type CurrentNumber } from "./_number-onboarding";
 import { saveAiReceptionistSetup } from "./actions";
+import {
+  requestNewNumberAction,
+  searchNumbersAction,
+  setupForwardingAction,
+} from "./number-actions";
 import {
   AI_RECEPTIONIST_STATUS_LABELS,
   AI_RECEPTIONIST_STATUS_STYLES,
@@ -82,6 +88,29 @@ export default async function AiReceptionistSettingsPage() {
   // A failed read would render the blank "not started" form over an existing
   // setup — and a save from it would clobber the real config. Fail loud.
   if (error) throw readFailure("ai receptionist settings: setup", error);
+
+  // The org's active CrewFlow phone number (if any) — drives the onboarding card.
+  // Org-pinned; members may SELECT their org's numbers per RLS. Fail loud on error.
+  const { data: numberRows, error: numberError } = await (
+    supabase.from("phone_numbers" as never) as unknown as {
+      select: (cols: string) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            order: (c: string, o: { ascending: boolean }) => {
+              limit: (n: number) => Promise<{ data: CurrentNumber[] | null; error: SupabaseReadError | null }>;
+            };
+          };
+        };
+      };
+    }
+  )
+    .select("e164, number_type, active, onboarding_mode, forwarding_from, monthly_cost_pence")
+    .eq("org_id", ctx.org.id)
+    .eq("active", true)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (numberError) throw readFailure("ai receptionist settings: phone number", numberError);
+  const currentNumber: CurrentNumber | null = numberRows?.[0] ?? null;
 
   const status = (row?.status as AiReceptionistStatus | undefined) ?? "not_started";
   const customerBadge =
@@ -173,6 +202,14 @@ export default async function AiReceptionistSettingsPage() {
       ) : null}
 
       <VoiceStatus orgId={ctx.org.id} />
+
+      <NumberOnboarding
+        currentNumber={currentNumber}
+        isAdmin={isAdmin}
+        searchAction={searchNumbersAction}
+        requestNewNumberAction={requestNewNumberAction}
+        setupForwardingAction={setupForwardingAction}
+      />
 
       <AiReceptionistForm
         action={saveAiReceptionistSetup}
