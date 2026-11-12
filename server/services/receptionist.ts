@@ -25,6 +25,7 @@ import {
 import { RECEPTIONIST_EMPLOYEE_SLUG } from "@/lib/receptionist/types";
 import { recogniseCaller } from "@/server/services/caller-recognition";
 import { selectReusableLead, type RecognitionDecision } from "@/lib/telephony/caller-recognition";
+import { LEAD_STAGES_OPEN } from "@/lib/leads/schema";
 import {
   resolveConversation,
   appendConversationMessage,
@@ -3152,6 +3153,20 @@ export async function refreshVoiceExtractionFromTranscript(args: {
   // column mapping mirrors the origination insert: summary→ai_summary,
   // job_type→service, urgency→urgency, postcode→postcode.
   if (leadId) {
+    // COMPLETION-TIME RECONCILIATION (same-project). The origination lead is PROVISIONAL —
+    // created before the caller spoke, so it carried no project. Now that the transcript is
+    // extracted, reconcile it against the customer's OTHER open leads; a confident same-project
+    // match is MERGED (re-link + remove the duplicate), otherwise the provisional lead stays
+    // and is simply refreshed. Best-effort inside the helper.
+    const { mergedInto } = await reconcileProvisionalLead({
+      orgId: args.orgId,
+      providerCallId: args.providerCallId,
+      enquiryId,
+      provisionalLeadId: leadId,
+      project: { service: extraction.job_type, postcode: extraction.postcode },
+      confidence: extraction.confidence,
+    });
+
     const { error: leadError } = await admin
       .from("leads")
       .update({
@@ -3160,12 +3175,118 @@ export async function refreshVoiceExtractionFromTranscript(args: {
         service: extraction.job_type,
         postcode: extraction.postcode,
       })
-      .eq("id", leadId)
+      .eq("id", mergedInto ?? leadId)
       .eq("org_id", args.orgId);
     if (leadError) throw readFailure("receptionist: voice re-extract lead update", leadError);
   }
 
   return { refreshed: true };
+}
+
+/**
+ * COMPLETION-TIME RECONCILIATION of a provisional inbound lead against the same
+ * customer's other open leads (requirement: repeat calls about the SAME project must not
+ * leave duplicate leads once the transcript is known).
+ *
+ * The merge is EVIDENCE-GATED, never on the customer link alone, because it DELETES the
+ * provisional row:
+ *   - the proven project needs BOTH a service AND a postcode, and the extraction
+ *     confidence must clear `MERGE_MIN_CONFIDENCE` (a sparse/low-confidence transcript ⇒
+ *     no merge, the provisional lead simply stays);
+ *   - it must match EXACTLY ONE of the customer's OTHER open leads (selectReusableLead ⇒
+ *     zero = genuinely new project, >1 = ambiguous ⇒ no merge). So a customer's DIFFERENT
+ *     jobs never collapse into one.
+ *
+ * On a confident match it re-points the call + enquiry to the existing lead FIRST (their
+ * FKs are ON DELETE SET NULL) then deletes the provisional lead (lead_followup_state
+ * CASCADEs off it) and best-effort removes its origination notification. Returns the id it
+ * merged into, or null. ORG-PINNED on every statement; FAIL-SAFE — any error returns null
+ * so the caller keeps (and refreshes) the provisional lead: the worst case is a harmless
+ * duplicate, never a lost or mis-linked call.
+ */
+export async function reconcileProvisionalLead(args: {
+  orgId: string;
+  providerCallId: string;
+  enquiryId: string;
+  provisionalLeadId: string;
+  project: { service: string | null; postcode: string | null };
+  confidence: number | null;
+}): Promise<{ mergedInto: string | null }> {
+  const MERGE_MIN_CONFIDENCE = 70;
+  if (!args.project.service || !args.project.postcode) return { mergedInto: null };
+  if ((args.confidence ?? 0) < MERGE_MIN_CONFIDENCE) return { mergedInto: null };
+
+  const admin = createAdminClient();
+  try {
+    const prov = await admin
+      .from("leads")
+      .select("customer_id")
+      .eq("id", args.provisionalLeadId)
+      .eq("org_id", args.orgId)
+      .maybeSingle();
+    const customerId = (prov.data as { customer_id?: string | null } | null)?.customer_id ?? null;
+    if (!customerId) return { mergedInto: null }; // only a customer-linked provisional reconciles
+
+    const siblings = await admin
+      .from("leads")
+      .select("id, service, postcode")
+      .eq("org_id", args.orgId)
+      .eq("customer_id", customerId)
+      .in("status", LEAD_STAGES_OPEN as unknown as string[])
+      .neq("id", args.provisionalLeadId)
+      .limit(50);
+    if (siblings.error) {
+      console.error("[receptionist] reconciliation sibling lookup failed (continuing)", siblings.error);
+      return { mergedInto: null };
+    }
+    const candidates = (siblings.data ?? []).map((r) => ({
+      id: r.id as string,
+      service: (r.service as string | null) ?? null,
+      postcode: (r.postcode as string | null) ?? null,
+    }));
+    const match = selectReusableLead(args.project, candidates);
+    if (!match || match === args.provisionalLeadId) return { mergedInto: null };
+
+    // Re-point references FIRST, then delete the provisional (SET NULL FKs demand it).
+    await admin
+      .from("calls")
+      .update({ lead_id: match })
+      .eq("org_id", args.orgId)
+      .eq("provider_call_id", args.providerCallId);
+    await (
+      admin.from("inbound_enquiries" as never) as unknown as {
+        update: (row: unknown) => {
+          eq: (k: string, v: unknown) => {
+            eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
+          };
+        };
+      }
+    )
+      .update({ lead_id: match })
+      .eq("id", args.enquiryId)
+      .eq("org_id", args.orgId);
+    const del = await admin
+      .from("leads")
+      .delete()
+      .eq("id", args.provisionalLeadId)
+      .eq("org_id", args.orgId);
+    if (del.error) {
+      console.error("[receptionist] provisional lead delete failed (continuing)", del.error);
+      return { mergedInto: null };
+    }
+    // Best-effort: drop the provisional lead's origination notification so no card points
+    // at a now-merged lead.
+    await admin
+      .from("notifications")
+      .delete()
+      .eq("org_id", args.orgId)
+      .eq("source_module", "receptionist")
+      .eq("source_id", args.provisionalLeadId);
+    return { mergedInto: match };
+  } catch (e) {
+    console.error("[receptionist] voice completion reconciliation failed (continuing)", e);
+    return { mergedInto: null };
+  }
 }
 
 /**

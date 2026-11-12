@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { describeIntegration, serviceClient } from "../_harness";
 import { recogniseCaller } from "@/server/services/caller-recognition";
 import { selectReusableLead } from "@/lib/telephony/caller-recognition";
-import { processInboundEnquiry } from "@/server/services/receptionist";
+import { processInboundEnquiry, reconcileProvisionalLead } from "@/server/services/receptionist";
 
 /**
  * Caller recognition against REAL Postgres — the security-critical surface.
@@ -45,6 +45,33 @@ async function leadsForCustomer(org: string, customerId: string): Promise<Row[]>
   const r = await svc().from("leads").select("id, customer_id, contact_phone").eq("org_id", org).eq("customer_id", customerId);
   expect(r.error, r.error?.message).toBeNull();
   return (r.data ?? []) as Row[];
+}
+async function mkEnquiry(org: string, sid: string, leadId: string): Promise<string> {
+  const r = await svc()
+    .from("inbound_enquiries")
+    .insert({ org_id: org, channel: "phone", provider_message_id: sid, lead_id: leadId, status: "qualified" })
+    .select("id")
+    .single();
+  expect(r.error, r.error?.message).toBeNull();
+  return String(r.data.id);
+}
+async function mkCall(org: string, sid: string, leadId: string): Promise<string> {
+  const r = await svc()
+    .from("calls")
+    .insert({ org_id: org, direction: "inbound", status: "completed", provider: "twilio", provider_call_id: sid, lead_id: leadId })
+    .select("id")
+    .single();
+  expect(r.error, r.error?.message).toBeNull();
+  return String(r.data.id);
+}
+async function leadExists(id: string): Promise<boolean> {
+  const r = await svc().from("leads").select("id").eq("id", id).maybeSingle();
+  return Boolean(r.data?.id);
+}
+async function callLeadId(id: string): Promise<string | null> {
+  const r = await svc().from("calls").select("lead_id").eq("id", id).single();
+  expect(r.error, r.error?.message).toBeNull();
+  return (r.data.lead_id as string | null) ?? null;
 }
 
 describeIntegration("telephony · caller recognition (tenant-isolated, real PG)", () => {
@@ -215,5 +242,93 @@ describeIntegration("telephony · caller recognition (tenant-isolated, real PG)"
     expect(res.lead_id).not.toBe(p1);
     expect(res.lead_id).not.toBe(p2);
     expect((await leadsForCustomer(orgA, cust)).length).toBe(3); // both projects untouched + new lead
+  });
+
+  // ── Completion-time reconciliation (transcript processed) ────────────────────
+  // Seed the shape the voice completion path reaches: an existing open lead for the
+  // customer, plus a PROVISIONAL lead created this call with its enquiry + call row.
+  async function seedProvisional(tag: string, existing: { service: string; postcode: string }) {
+    const phone = `+4477009030${tag}`;
+    const cust = await mkCustomer(orgA, `Recon ${tag}`, phone);
+    const existingLead = await mkLead(orgA, { customer_id: cust, status: "qualified", ...existing });
+    const provisional = await mkLead(orgA, { customer_id: cust, status: "new" }); // no project yet
+    const sid = `${TOKEN}-RC${tag}`;
+    const enquiryId = await mkEnquiry(orgA, sid, provisional);
+    const callRow = await mkCall(orgA, sid, provisional);
+    return { cust, existingLead, provisional, sid, enquiryId, callRow };
+  }
+
+  it("14. MERGE — confident same-project transcript folds the provisional lead into the existing one", async () => {
+    const s = await seedProvisional("14", { service: "Kitchen extension", postcode: "BT1 1AA" });
+    const r = await reconcileProvisionalLead({
+      orgId: orgA,
+      providerCallId: s.sid,
+      enquiryId: s.enquiryId,
+      provisionalLeadId: s.provisional,
+      project: { service: "kitchen extension", postcode: "BT1 1AA" }, // matches, case/format-insensitive
+      confidence: 90,
+    });
+    expect(r.mergedInto).toBe(s.existingLead);
+    expect(await leadExists(s.provisional)).toBe(false); // duplicate removed
+    expect(await callLeadId(s.callRow)).toBe(s.existingLead); // call re-linked
+    expect((await leadsForCustomer(orgA, s.cust)).length).toBe(1); // one lead remains
+  });
+
+  it("15. NO MERGE — a DIFFERENT project keeps the provisional lead (two distinct jobs)", async () => {
+    const s = await seedProvisional("15", { service: "Kitchen extension", postcode: "BT1 1AA" });
+    const r = await reconcileProvisionalLead({
+      orgId: orgA,
+      providerCallId: s.sid,
+      enquiryId: s.enquiryId,
+      provisionalLeadId: s.provisional,
+      project: { service: "Bathroom refit", postcode: "BT9 5XY" },
+      confidence: 95,
+    });
+    expect(r.mergedInto).toBeNull();
+    expect(await leadExists(s.provisional)).toBe(true);
+    expect((await leadsForCustomer(orgA, s.cust)).length).toBe(2); // both kept
+  });
+
+  it("16. NO MERGE — a LOW-confidence transcript never merges (destructive op needs proof)", async () => {
+    const s = await seedProvisional("16", { service: "Kitchen extension", postcode: "BT1 1AA" });
+    const r = await reconcileProvisionalLead({
+      orgId: orgA,
+      providerCallId: s.sid,
+      enquiryId: s.enquiryId,
+      provisionalLeadId: s.provisional,
+      project: { service: "kitchen extension", postcode: "BT1 1AA" },
+      confidence: 40, // below the merge floor
+    });
+    expect(r.mergedInto).toBeNull();
+    expect(await leadExists(s.provisional)).toBe(true);
+  });
+
+  it("17. NO MERGE — ambiguous (two existing open leads match the same project)", async () => {
+    const s = await seedProvisional("17", { service: "Kitchen extension", postcode: "BT1 1AA" });
+    await mkLead(orgA, { customer_id: s.cust, status: "quoted", service: "Kitchen extension", postcode: "BT1 1AA" }); // 2nd match
+    const r = await reconcileProvisionalLead({
+      orgId: orgA,
+      providerCallId: s.sid,
+      enquiryId: s.enquiryId,
+      provisionalLeadId: s.provisional,
+      project: { service: "kitchen extension", postcode: "BT1 1AA" },
+      confidence: 95,
+    });
+    expect(r.mergedInto).toBeNull(); // don't guess between two matching projects
+    expect(await leadExists(s.provisional)).toBe(true);
+  });
+
+  it("18. NO MERGE — a transcript without a postcode is insufficient evidence", async () => {
+    const s = await seedProvisional("18", { service: "Kitchen extension", postcode: "BT1 1AA" });
+    const r = await reconcileProvisionalLead({
+      orgId: orgA,
+      providerCallId: s.sid,
+      enquiryId: s.enquiryId,
+      provisionalLeadId: s.provisional,
+      project: { service: "kitchen extension", postcode: null },
+      confidence: 95,
+    });
+    expect(r.mergedInto).toBeNull();
+    expect(await leadExists(s.provisional)).toBe(true);
   });
 });
