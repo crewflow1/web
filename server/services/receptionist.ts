@@ -3247,42 +3247,28 @@ export async function reconcileProvisionalLead(args: {
     const match = selectReusableLead(args.project, candidates);
     if (!match || match === args.provisionalLeadId) return { mergedInto: null };
 
-    // Re-point references FIRST, then delete the provisional (SET NULL FKs demand it).
-    await admin
-      .from("calls")
-      .update({ lead_id: match })
-      .eq("org_id", args.orgId)
-      .eq("provider_call_id", args.providerCallId);
-    await (
-      admin.from("inbound_enquiries" as never) as unknown as {
-        update: (row: unknown) => {
-          eq: (k: string, v: unknown) => {
-            eq: (k: string, v: unknown) => Promise<{ error: { message: string } | null }>;
-          };
-        };
-      }
-    )
-      .update({ lead_id: match })
-      .eq("id", args.enquiryId)
-      .eq("org_id", args.orgId);
-    const del = await admin
-      .from("leads")
-      .delete()
-      .eq("id", args.provisionalLeadId)
-      .eq("org_id", args.orgId);
-    if (del.error) {
-      console.error("[receptionist] provisional lead delete failed (continuing)", del.error);
+    // ATOMIC MERGE via the service-role-only SECURITY DEFINER function. It migrates EVERY
+    // reference (call, enquiry, quotes, ai_quote_drafts, conversations), folds notes, clears
+    // the origination notification, and deletes the provisional lead — all in ONE
+    // transaction, so a partial failure rolls the whole merge back (no data loss, no
+    // orphaned call, no split state) and a concurrent redelivery is a no-op (the provisional
+    // is already gone). Returns true only when the provisional was actually removed.
+    const rpc = admin.rpc.bind(admin) as unknown as (
+      name: string,
+      params: Record<string, unknown>,
+    ) => Promise<{ data: boolean | null; error: { message: string } | null }>;
+    const { data: merged, error: rpcError } = await rpc("reconcile_provisional_voice_lead", {
+      p_org_id: args.orgId,
+      p_provider_call_id: args.providerCallId,
+      p_enquiry_id: args.enquiryId,
+      p_provisional_lead_id: args.provisionalLeadId,
+      p_target_lead_id: match,
+    });
+    if (rpcError) {
+      console.error("[receptionist] reconciliation RPC failed (keeping provisional)", rpcError);
       return { mergedInto: null };
     }
-    // Best-effort: drop the provisional lead's origination notification so no card points
-    // at a now-merged lead.
-    await admin
-      .from("notifications")
-      .delete()
-      .eq("org_id", args.orgId)
-      .eq("source_module", "receptionist")
-      .eq("source_id", args.provisionalLeadId);
-    return { mergedInto: match };
+    return { mergedInto: merged === true ? match : null };
   } catch (e) {
     console.error("[receptionist] voice completion reconciliation failed (continuing)", e);
     return { mergedInto: null };

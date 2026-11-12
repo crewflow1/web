@@ -331,4 +331,41 @@ describeIntegration("telephony · caller recognition (tenant-isolated, real PG)"
     expect(r.mergedInto).toBeNull();
     expect(await leadExists(s.provisional)).toBe(true);
   });
+
+  it("19. MERGE preserves data — notes folded, conversation + call history re-pointed, nothing orphaned", async () => {
+    const s = await seedProvisional("19", { service: "Kitchen extension", postcode: "BT1 1AA" });
+    // Put data ON the provisional + its call that must survive the merge.
+    await svc().from("leads").update({ notes: "Caller prefers mornings" }).eq("id", s.provisional);
+    const conv = await svc().from("conversations").insert({ org_id: orgA, channel: "voice", lead_id: s.provisional }).select("id").single();
+    expect(conv.error, conv.error?.message).toBeNull();
+    const convId = String(conv.data.id);
+    const evt = await svc()
+      .from("call_events")
+      .insert({ org_id: orgA, call_id: s.callRow, event_type: "ringing", occurred_at: new Date().toISOString() })
+      .select("id")
+      .single();
+    expect(evt.error, evt.error?.message).toBeNull();
+
+    const r = await reconcileProvisionalLead({
+      orgId: orgA,
+      providerCallId: s.sid,
+      enquiryId: s.enquiryId,
+      provisionalLeadId: s.provisional,
+      project: { service: "kitchen extension", postcode: "BT1 1AA" },
+      confidence: 90,
+    });
+    expect(r.mergedInto).toBe(s.existingLead);
+    expect(await leadExists(s.provisional)).toBe(false);
+
+    // notes folded into the surviving lead (not lost):
+    const tgt = await svc().from("leads").select("notes").eq("id", s.existingLead).single();
+    expect(String(tgt.data.notes ?? "")).toContain("Caller prefers mornings");
+    // conversation re-pointed, not orphaned (would be SET NULL under a naive delete):
+    const convAfter = await svc().from("conversations").select("lead_id").eq("id", convId).single();
+    expect(convAfter.data.lead_id).toBe(s.existingLead);
+    // call re-pointed + its history (call_events) survives on the call:
+    expect(await callLeadId(s.callRow)).toBe(s.existingLead);
+    const evtAfter = await svc().from("call_events").select("id").eq("id", String(evt.data.id)).maybeSingle();
+    expect(evtAfter.data?.id).toBeTruthy();
+  });
 });
