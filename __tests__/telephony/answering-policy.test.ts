@@ -91,10 +91,18 @@ describe("decideAnswering — mode: missed_only", () => {
 
 describe("decideAnswering — mode: out_of_hours", () => {
   const cfg = base({ mode: "out_of_hours" });
-  it("within hours → staff handle, AI stays out", () => {
-    expect(decideAnswering(cfg, new Date("2026-01-05T10:00:00Z"), "no_attempt_yet").action).toBe("human_handled");
+  it("within hours, first leg → rings staff (the open office gets the call)", () => {
+    expect(decideAnswering(cfg, new Date("2026-01-05T10:00:00Z"), "no_attempt_yet").action).toBe("ring_staff");
   });
-  it("outside hours → AI answers", () => {
+  it("within hours, staff missed → take a message (AI stays out, not dropped)", () => {
+    expect(decideAnswering(cfg, new Date("2026-01-05T10:00:00Z"), "no_answer").action).toBe("take_message");
+    expect(decideAnswering(cfg, new Date("2026-01-05T10:00:00Z"), "busy").action).toBe("take_message");
+  });
+  it("within hours, no staff numbers → take a message (AI stays out)", () => {
+    const noStaff = base({ mode: "out_of_hours", hasStaffNumbers: false });
+    expect(decideAnswering(noStaff, new Date("2026-01-05T10:00:00Z"), "no_attempt_yet").action).toBe("take_message");
+  });
+  it("outside hours → AI answers directly", () => {
     expect(decideAnswering(cfg, new Date("2026-01-05T20:00:00Z"), "no_attempt_yet").action).toBe("ai_answer");
   });
 });
