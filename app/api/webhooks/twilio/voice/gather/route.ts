@@ -14,6 +14,8 @@ import { maybeGenerateVoiceTurn, type VoiceTurnHistoryEntry } from "@/lib/teleph
 import { loadReceptionistProfile } from "@/lib/telephony/receptionist-profile";
 import { loadAnsweringPolicy } from "@/lib/telephony/answering-config";
 import { isUrgentTranscript } from "@/lib/telephony/urgent";
+import { recogniseCaller } from "@/server/services/caller-recognition";
+import { buildRecognitionContext } from "@/lib/telephony/caller-recognition";
 import {
   appendCallEvent,
   countSpokenTurns,
@@ -171,6 +173,20 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
   }
 
+  // SAFE PERSONALISATION (caller recognition): match the caller's number ORG-SCOPED and
+  // fold a SAFE hint into the turn's `context` (reference data, never instructions) — a
+  // first name for a confident single match, or an ask-to-identify for a withheld /
+  // ambiguous caller. The hint NEVER carries stored account data and always forbids the
+  // model from disclosing details on a caller-id match alone (caller ID is not proof of
+  // identity). Best-effort + no AI spend: a lookup failure simply yields no hint.
+  let callerContext: string | null = null;
+  try {
+    const recognition = await recogniseCaller({ orgId, callerId: call.from });
+    callerContext = buildRecognitionContext(recognition);
+  } catch (e) {
+    console.error("[twilio-voice-gather] caller recognition failed (continuing)", e);
+  }
+
   const spokenTurn = await maybeGenerateVoiceTurn({
     orgId,
     transcript,
@@ -182,6 +198,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     ordinal: turnOrdinal,
     business: profile,
     history: priorTurns,
+    // Injection-safe reference data only (see above); null ⇒ unchanged generic prompt.
+    context: callerContext,
   });
 
   // 8b. Persist the turn — the caller's SpeechResult + the reply — to the
