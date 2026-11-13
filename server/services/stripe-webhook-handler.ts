@@ -527,15 +527,25 @@ async function handleSubscriptionDeleted(
   const orgId = await orgIdByCustomer(customerId);
   if (!orgId) return ["skipped:no_org_for_customer"];
 
-  // Don't auto-cancel the org — that's a high-blast-radius decision.
-  // Record the event and let the operator decide via /admin/customers.
+  // REVOKE ACCESS on a deleted subscription. The access gate (requireOrgContext →
+  // orgHasActiveAccess) authorises only on `organizations.status` (active/trial), so
+  // leaving it untouched here let a churned/cancelled tenant keep full product access
+  // (and incur compute) until a human noticed the HQ alert — a revenue leak. A deleted
+  // subscription is a terminal cancel, so we set `cancelled` exactly as the
+  // `subscription.updated → canceled` path (handleSubscriptionUpsert) already does. This
+  // only GATES access (→ /access-pending); it never deletes tenant data, and an operator
+  // can reactivate (or a new checkout re-activates) via /admin/customers.
+  await adminTable("organizations")
+    .update({ status: "cancelled", stripe_subscription_id: sub.id })
+    .eq("id", orgId);
+
   await recordAdminActivity({
     actorId: null,
     actorEmail: null,
     action: "stripe.subscription_deleted",
     targetTable: "organizations",
     targetId: orgId,
-    metadata: { stripe_subscription_id: sub.id, status: sub.status },
+    metadata: { stripe_subscription_id: sub.id, status: sub.status, org_status: "cancelled" },
   });
 
   // P3W2: mirror the terminal status onto the org_subscriptions projection
@@ -549,7 +559,7 @@ async function handleSubscriptionDeleted(
       stripe_subscription_id: sub.id,
     }),
   );
-  return ["subscription_deleted_recorded"];
+  return ["subscription_deleted:org_cancelled"];
 }
 
 async function handleInvoicePaid(event: Stripe.Event): Promise<string[]> {
