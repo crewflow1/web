@@ -8,7 +8,7 @@
     "build": "NODE_OPTIONS=--max-old-space-size=6144 next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "NODE_OPTIONS=--max-old-space-size=6144 tsc --noEmit",
     "format": "prettier --write .",
     "db:seed": "tsx scripts/seed.ts",
     "email": "email dev --dir emails --port 3001",
