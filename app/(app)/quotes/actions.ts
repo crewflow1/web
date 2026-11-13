@@ -1304,6 +1304,100 @@ export async function declineQuoteAsOwner(id: string) {
  * Exposed via separate file at /q/[token]/actions.ts so this module
  * keeps user-context only.
  */
+/** The quote fields the accept artifacts (job + invoice) are built from. */
+type AcceptedQuote = {
+  id: string;
+  org_id: string;
+  subtotal: number;
+  vat_total: number;
+  job_id: string | null;
+  customer_id: string | null;
+  property_id?: string | null;
+  variation_number?: number | null;
+  number: string;
+  notes: string | null;
+};
+
+/**
+ * Ensure the job + draft invoice that an accepted quote implies EXIST, idempotently.
+ *
+ * IDEMPOTENT + HEALING: reuses the quote's existing job (variations carry the parent's
+ * job_id) and ANY invoice already linked to the quote (org-scoped) rather than creating
+ * duplicates. This is both the in-code half of the partial unique index on
+ * invoices(quote_id) — so a concurrent double-accept can't double-bill — and the backfill
+ * that heals a partial first accept (status set to 'accepted' but the invoice insert
+ * failed, which the old blanket early-return left broken forever). Best-effort: a failure
+ * is logged and surfaced via the returned flags, never thrown — acceptance already
+ * succeeded. Used by both acceptQuoteByToken paths (first accept + re-accept backfill).
+ */
+async function ensureJobAndInvoiceForAcceptedQuote(
+  admin: ReturnType<typeof createAdminClient>,
+  quote: AcceptedQuote,
+  now: string,
+): Promise<{ jobId: string | null; invoiceId: string | null; createdInvoice: boolean }> {
+  // JOB — reuse the quote's job (variations already carry it); else create for a customer.
+  let jobId = quote.job_id ?? null;
+  if (!jobId && quote.customer_id) {
+    const carry = await buildJobCarryFromQuote(admin, quote.org_id, quote);
+    const { data: newJob, error: jobErr } = await admin
+      .from("jobs")
+      .insert({
+        org_id: quote.org_id,
+        customer_id: quote.customer_id,
+        status: "new",
+        site_address_line1: carry.site_address_line1,
+        notes: carry.notes,
+      })
+      .select("id")
+      .single();
+    if (jobErr) console.error("[quotes] auto-job failed", jobErr);
+    else if (newJob?.id) {
+      jobId = newJob.id;
+      await admin.from("quotes").update({ job_id: jobId }).eq("id", quote.id);
+    }
+  }
+
+  // INVOICE — reuse any invoice already linked to this quote (idempotency + backfill);
+  // only allocate a number + insert when none exists, so we never double-bill.
+  const { data: existingInvoice } = await admin
+    .from("invoices")
+    .select("id")
+    .eq("quote_id", quote.id)
+    .eq("org_id", quote.org_id)
+    .limit(1)
+    .maybeSingle();
+  let invoiceId = (existingInvoice as { id?: string } | null)?.id ?? null;
+  let createdInvoice = false;
+  if (!invoiceId) {
+    const { data: invNumber } = await admin.rpc("next_invoice_number", {
+      target_org: quote.org_id,
+    });
+    if (invNumber) {
+      const { data: newInvoice, error: invErr } = await admin
+        .from("invoices")
+        .insert({
+          org_id: quote.org_id,
+          quote_id: quote.id,
+          customer_id: quote.customer_id,
+          number: invNumber as unknown as string,
+          amount: quote.subtotal,
+          vat_total: quote.vat_total,
+          status: "draft",
+          job_id: jobId,
+          due_date: invoiceDueDate(now),
+        })
+        .select("id")
+        .single();
+      if (invErr) console.error("[quotes] auto-invoice failed", invErr);
+      else {
+        invoiceId = newInvoice?.id ?? null;
+        createdInvoice = Boolean(invoiceId);
+      }
+    }
+  }
+  return { jobId, invoiceId, createdInvoice };
+}
+
 export async function acceptQuoteByToken(
   token: string,
   signerName: string,
@@ -1324,9 +1418,19 @@ export async function acceptQuoteByToken(
     .maybeSingle();
 
   if (lookupErr || !quote) return { ok: false, error: "Quote not found" };
-  // Idempotency: a re-accept is a no-op. The first accept already created
-  // (or linked) the invoice + job, so nothing to redo.
-  if (quote.status === "accepted") return { ok: true, quoteId: quote.id };
+  // A re-accept is idempotent, but must still HEAL a partial first accept: if the first
+  // accept set status='accepted' then its invoice insert failed, the old blanket
+  // early-return left the quote with NO invoice forever. So on a re-accept we skip the
+  // one-time signature/status writes but still run the idempotent job+invoice ensure
+  // (which reuses any linked invoice — no double-bill — and backfills a missing one).
+  if (quote.status === "accepted") {
+    const healed = await ensureJobAndInvoiceForAcceptedQuote(admin, quote, now);
+    if (healed.createdInvoice && healed.invoiceId) {
+      const emailRes = await sendInvoiceEmail(admin, healed.invoiceId);
+      if (!emailRes.sent) console.warn("[quotes] backfilled-invoice email skipped", emailRes);
+    }
+    return { ok: true, quoteId: quote.id };
+  }
   if (quote.status === "declined") return { ok: false, error: "Quote already declined" };
   if (quote.status === "expired") return { ok: false, error: "Quote has expired" };
   if (quote.valid_until && quote.valid_until < now.slice(0, 10)) {
@@ -1403,75 +1507,21 @@ export async function acceptQuoteByToken(
       }
     });
 
-  // Auto-create a job (status=new) from the accepted quote — but only when
-  // the quote isn't a variation against an existing job. Variations
-  // already carry the parent's job_id; using it preserves the revenue
-  // rollup on /jobs profitability.
-  let newJobId: string | null = quote.job_id;
-  let createdJob = false;
-  if (!quote.job_id && quote.customer_id) {
-    // Carry the quote's site + scope onto the job (first-customer fix 4).
-    // org-pinned reads on the admin client; best-effort (see the helper).
-    const carry = await buildJobCarryFromQuote(admin, quote.org_id, quote);
-    const { data: newJob, error: jobErr } = await admin
-      .from("jobs")
-      .insert({
-        org_id: quote.org_id,
-        customer_id: quote.customer_id,
-        status: "new",
-        site_address_line1: carry.site_address_line1,
-        notes: carry.notes,
-      })
-      .select("id")
-      .single();
-    if (jobErr) {
-      console.error("[quotes] public auto-job failed", jobErr);
-    } else if (newJob?.id) {
-      newJobId = newJob.id;
-      createdJob = true;
-      // Backlink so the quote knows which job it spawned.
-      await admin.from("quotes").update({ job_id: newJobId }).eq("id", quote.id);
-    }
-  }
+  // Auto-create the job (status=new, variation-aware) + draft invoice from the accepted
+  // quote, via the shared idempotent ensure-helper. It reuses any invoice already linked
+  // to the quote (no double-bill on a concurrent double-accept) and backfills a missing
+  // one — the same path the re-accept heal above uses. Revenue rolls up to the job on the
+  // profitability dashboard via the invoice's job_id.
+  const { invoiceId: newInvoiceId, createdInvoice } = await ensureJobAndInvoiceForAcceptedQuote(
+    admin,
+    quote,
+    now,
+  );
 
-  // Auto-create invoice (draft) from the accepted quote. Picks up the
-  // job_id we just resolved so revenue rolls up to the job on the
-  // profitability dashboard.
-  const { data: invNumber } = await admin.rpc("next_invoice_number", {
-    target_org: quote.org_id,
-  });
-  let newInvoiceId: string | null = null;
-  if (invNumber) {
-    const { data: newInvoice, error: invErr } = await admin
-      .from("invoices")
-      .insert({
-        org_id: quote.org_id,
-        quote_id: quote.id,
-        // Denormalised customer anchor (Issue #349 Phase 1) — see the owner
-        // auto-invoice path above. Same composite-FK guarantee.
-        customer_id: quote.customer_id,
-        number: invNumber as unknown as string,
-        amount: quote.subtotal,
-        vat_total: quote.vat_total,
-        status: "draft",
-        job_id: newJobId,
-        due_date: invoiceDueDate(now),
-      })
-      .select("id")
-      .single();
-    if (invErr) {
-      console.error("[quotes] public auto-invoice failed", invErr);
-    } else {
-      newInvoiceId = newInvoice?.id ?? null;
-    }
-  }
-
-  void createdJob;
-
-  // Auto-email the invoice PDF to the customer. Best-effort — accept must
-  // succeed even if Resend rejects, the customer email is missing, or
-  // RESEND_API_KEY is not configured yet.
-  if (newInvoiceId) {
+  // Auto-email the invoice PDF to the customer — only a FRESHLY created invoice (reusing
+  // an existing one means the customer was already emailed). Best-effort: accept must
+  // succeed even if Resend rejects, the customer email is missing, or the key is absent.
+  if (newInvoiceId && createdInvoice) {
     const emailRes = await sendInvoiceEmail(admin, newInvoiceId);
     if (!emailRes.sent) {
       console.warn("[quotes] public auto-email after accept skipped", emailRes);
