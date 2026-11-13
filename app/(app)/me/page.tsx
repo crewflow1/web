@@ -135,7 +135,7 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
       supabase
         .from("time_entries")
         .select(
-          "id, user_id, job_id, started_at, ended_at, breaks, gps_lat, gps_lng, note",
+          "id, user_id, job_id, started_at, ended_at, breaks, note",
         )
         .eq("org_id", ctx.org.id)
         .eq("user_id", user.id)

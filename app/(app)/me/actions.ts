@@ -24,12 +24,13 @@ export async function clockIn(formData: FormData) {
   const jobIdRaw = (formData.get("job_id") as string) ?? "";
   const jobId = uuidOpt.safeParse(jobIdRaw).success && jobIdRaw ? jobIdRaw : null;
   const note = ((formData.get("note") as string) ?? "").slice(0, 500) || null;
-  const gpsLatRaw = (formData.get("gps_lat") as string) ?? "";
-  const gpsLngRaw = (formData.get("gps_lng") as string) ?? "";
-  const gpsLat =
-    gpsLatRaw && Number.isFinite(Number(gpsLatRaw)) ? Number(gpsLatRaw) : null;
-  const gpsLng =
-    gpsLngRaw && Number.isFinite(Number(gpsLngRaw)) ? Number(gpsLngRaw) : null;
+  // DATA MINIMISATION: clock-in records NO location. `time_entries` still has
+  // legacy gps_lat/gps_lng columns, but no screen ever captured a position and
+  // the app's Permissions-Policy denies geolocation outright, so the only way a
+  // coordinate could arrive was a hand-crafted form post. This action therefore
+  // ignores those fields entirely (pinned by
+  // __tests__/security/clock-in-no-location.test.ts). Precise worker location
+  // must not come back without a DPIA and an explicit product decision.
 
   // Block if there's already an open entry.
   const { data: existing } = await supabase
@@ -63,8 +64,6 @@ export async function clockIn(formData: FormData) {
     user_id: user.id,
     job_id: jobId,
     note,
-    gps_lat: gpsLat,
-    gps_lng: gpsLng,
   });
   if (error) {
     console.error("[clock-in] insert failed", error);
