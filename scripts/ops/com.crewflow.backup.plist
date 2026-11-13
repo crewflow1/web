@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  CrewFlow off-platform encrypted backup — weekly launchd agent.
+  CrewFlow off-platform encrypted backup — DAILY launchd agent.
 
   The scheduler is ONLY an execution mechanism. Backup health is judged by the
   validated heartbeat in ops_backup_runs (surfaced in /admin/ops), NOT by whether
@@ -29,11 +29,11 @@
     <string>/Users/moetalibi/.local/bin/crewflow-off-platform-backup.sh</string>
   </array>
 
-  <!-- Weekly: Sunday 03:17 local. A missed run (Mac asleep/off) fires on next wake. -->
+  <!-- DAILY: every day 03:17 local (no Weekday key = fires daily). A missed run
+       (Mac asleep/off) fires once on next wake; the script's own retries absorb
+       transient Supabase/pooler blips so a daily run doesn't fail spuriously. -->
   <key>StartCalendarInterval</key>
   <dict>
-    <key>Weekday</key>
-    <integer>0</integer>
     <key>Hour</key>
     <integer>3</integer>
     <key>Minute</key>
