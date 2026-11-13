@@ -173,9 +173,18 @@ describe("processStripeEvent handler", () => {
     expect(HANDLER).toMatch(/handleSubscriptionUpsert/);
   });
 
-  it("does NOT auto-cancel the org on customer.subscription.deleted (high-blast operator decision)", () => {
+  it("REVOKES org access on customer.subscription.deleted (sets status=cancelled) + still alerts HQ", () => {
+    // A deleted subscription is a terminal cancel; the access gate authorises only on
+    // organizations.status, so the handler must flip it to 'cancelled' (not merely record
+    // the event) or a churned tenant keeps full access. It must also still notify HQ.
     expect(HANDLER).toMatch(/handleSubscriptionDeleted/);
-    expect(HANDLER).toMatch(/subscription_deleted_recorded/);
+    expect(HANDLER).toMatch(/subscription_deleted:org_cancelled/);
+    // the revoke write + the HQ alert both present in the deleted handler
+    const delIdx = HANDLER.indexOf("async function handleSubscriptionDeleted");
+    const nextFnIdx = HANDLER.indexOf("async function handleInvoicePaid");
+    const body = HANDLER.slice(delIdx, nextFnIdx);
+    expect(body).toMatch(/status: "cancelled"/);
+    expect(body).toMatch(/notifyOnSubscriptionCancelled/);
   });
 
   it("GATES paid-access provisioning on confirmed payment (never provision an 'unpaid' checkout)", () => {
