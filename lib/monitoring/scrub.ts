@@ -102,14 +102,33 @@ const isSensitiveKey = (key: string): boolean =>
  *
  * The prefix must START the path — string start, after whitespace/quote, or
  * directly after a URL origin — so a filesystem path in a stack message
- * (`/Users/a/b`) or a deeper route (`/api/v1/q/x`) is left alone.
+ * (`/Users/a/b`) or a deeper route (`/api/v1/q/x`) is left alone. A
+ * parameterised route NAME (`/q/[token]`, `/q/:token`) is not a secret and is
+ * what Sentry groups on, so it is left alone too.
  */
 const PATH_TOKEN_RE =
-  /((?:^|[\s"'(=]|https?:\/\/[^/\s"']+)\/(?:customer-portal|worker-portal|q|a)\/)([^/?#\s"'<>]+)/g;
+  /((?:^|[\s"'(=]|https?:\/\/[^/\s"']+)\/(?:customer-portal|worker-portal|q|a)\/)(?![[:])([^/?#\s"'<>)]+)/g;
 
 /** Redact capability tokens carried as path segments. Exported for tests + reuse. */
 export function redactPathTokens(value: string): string {
   return value.replace(PATH_TOKEN_RE, `$1${REDACTED}`);
+}
+
+/** An email address anywhere in free text. */
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
+/** An international-format phone number (E.164: `+` then 8–15 digits). */
+const PHONE_RE = /\+\d{8,15}\b/g;
+
+/**
+ * Scrub free text that a human or a database wrote and that Sentry carries
+ * verbatim: exception messages (`duplicate key … (email)=(a@b.com)`), console
+ * breadcrumbs, log messages. Key-name redaction cannot see inside a string, so
+ * the identifiers are masked by SHAPE instead. Deliberately narrow — email
+ * addresses, `+`-prefixed phone numbers and capability-token paths only — so
+ * stack traces, ids and timings stay intact and an error remains diagnosable.
+ */
+export function scrubText(value: string): string {
+  return redactPathTokens(value).replace(EMAIL_RE, "[email]").replace(PHONE_RE, "[phone]");
 }
 
 /** Redact every value under a sensitive key, at any depth, without following cycles. */
@@ -175,10 +194,24 @@ function redactUrlFields(obj: Record<string, unknown>): void {
   }
 }
 
-/** Strip path tokens from a free-text field (a message, a transaction name). */
+/** Strip path tokens from a route-name field (a transaction / culprit, a span description). */
 function redactTextField(holder: Record<string, unknown>, key: string): void {
   const v = holder[key];
   if (typeof v === "string") holder[key] = redactPathTokens(v);
+}
+
+/** Full free-text scrub (path tokens + emails + phone numbers) of a message field. */
+function scrubTextField(holder: Record<string, unknown>, key: string): void {
+  const v = holder[key];
+  if (typeof v === "string") holder[key] = scrubText(v);
+}
+
+/** scrubText over every string value of a shallow record (breadcrumb `data`). */
+function scrubStringValues(obj: Record<string, unknown>): void {
+  for (const key of Object.keys(obj)) {
+    const v = obj[key];
+    if (typeof v === "string") obj[key] = scrubText(v);
+  }
 }
 
 /**
@@ -231,7 +264,11 @@ export function scrubEvent<T extends object>(event: T): T | null {
     // an un-parameterised one carries the token itself.
     redactTextField(e as Record<string, unknown>, "transaction");
     redactTextField(e as Record<string, unknown>, "culprit");
-    redactTextField(e as Record<string, unknown>, "message");
+    // The event message and structured log message are free text that a
+    // database or our own logging wrote — emails / phone numbers ride in it.
+    scrubTextField(e as Record<string, unknown>, "message");
+    const logentry = (e as { logentry?: unknown }).logentry;
+    if (logentry && typeof logentry === "object") scrubTextField(logentry as Record<string, unknown>, "message");
 
     // Breadcrumbs: navigation + fetch/xhr crumbs record URLs (and sometimes
     // request data) for the minutes BEFORE the error — untouched until now.
@@ -244,19 +281,21 @@ export function scrubEvent<T extends object>(event: T): T | null {
     for (const crumb of crumbList) {
       if (!crumb || typeof crumb !== "object") continue;
       const c = crumb as Record<string, unknown>;
-      redactTextField(c, "message");
+      scrubTextField(c, "message");
       if (c.data && typeof c.data === "object") {
         redactObject(c.data, seen);
         redactUrlFields(c.data as Record<string, unknown>);
+        scrubStringValues(c.data as Record<string, unknown>);
       }
     }
 
     // Exception messages + span descriptions are free text that routinely embed
-    // the failing URL ("GET /customer-portal/<token>/invoices 500").
+    // the failing URL ("GET /customer-portal/<token>/invoices 500"); exception
+    // values also carry the offending value Postgres echoes ("Key (email)=(…)").
     const exc = (e as { exception?: { values?: unknown } }).exception;
     if (exc && Array.isArray(exc.values)) {
       for (const v of exc.values) {
-        if (v && typeof v === "object") redactTextField(v as Record<string, unknown>, "value");
+        if (v && typeof v === "object") scrubTextField(v as Record<string, unknown>, "value");
       }
     }
     if (Array.isArray(spans)) {
