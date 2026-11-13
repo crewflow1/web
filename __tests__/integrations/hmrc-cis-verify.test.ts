@@ -507,14 +507,26 @@ describe("requestHmrcCisVerification — records through recordVerification with
   });
 
   it("when HMRC reports no date, verified_at is the OBSERVED request day (today)", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => okResponse({ verificationNumber: "V1234567890", taxTreatment: "gross" })),
-    );
-    const res = await requestHmrcCisVerification(orchestratorParams);
-    expect(res.ok).toBe(true);
-    const input = h.recordVerification.mock.calls[0]![2] as unknown as { verified_at: string };
-    expect(input.verified_at).toBe(new Date().toISOString().slice(0, 10));
+    // Pin the clock: the orchestrator stamps `verified_at` from its OWN
+    // `new Date()`, and the assertion below reads the clock a second time. Left
+    // on the real wall clock, the two reads can straddle UTC midnight and the
+    // date-only strings disagree by a day — a genuine midnight-boundary flake.
+    // Freezing `now` ties both reads to the same day and lets us assert exactly.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-29T23:59:30.000Z"));
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => okResponse({ verificationNumber: "V1234567890", taxTreatment: "gross" })),
+      );
+      const res = await requestHmrcCisVerification(orchestratorParams);
+      expect(res.ok).toBe(true);
+      const input = h.recordVerification.mock.calls[0]![2] as unknown as { verified_at: string };
+      expect(input.verified_at).toBe("2026-08-29");
+      expect(input.verified_at).toBe(new Date().toISOString().slice(0, 10));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("an HMRC rejection records NOTHING", async () => {
