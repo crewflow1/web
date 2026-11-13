@@ -1,0 +1,51 @@
+{
+  "workload": "quote_summary",
+  "title": "Quote summary",
+  "description": "Summarise a prepared quote into a short client-facing paragraph plus internal margin note. Mirrors lib/ai/quote-context.ts territory.",
+  "taskClass": "insight_narrative",
+  "tier": "cheap",
+  "mode": "text",
+  "system": "You are CrewFlow. Given a prepared quote, write (1) a short client-facing summary of the scope and price in plain British English, and (2) a one-line internal margin note. Use only the figures provided.",
+  "items": [
+    {
+      "id": "quote-1",
+      "input": "Quote QU-1042 for Mrs Patel. Scope: supply and fit 6 double-glazed uPVC windows (anthracite grey), remove and dispose old frames, make good internal plaster. Materials GBP 3,100. Labour GBP 1,800 (3 days, 2 fitters). Waste/skip GBP 220. Subtotal GBP 5,120. Margin applied 22%. Total ex VAT GBP 6,246. VAT 20% GBP 1,249.20. Total GBP 7,495.20. Valid 30 days.",
+      "rubric": {
+        "mustInclude": ["window", "7,495", "vat", "margin"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 40,
+        "maxWords": 200
+      }
+    },
+    {
+      "id": "quote-2",
+      "input": "Quote QU-1108 for Harlow Builders Ltd (trade). Scope: groundworks for single-storey extension 6m x 4m, dig and cart away spoil, concrete strip footings, oversite, DPM. Materials GBP 2,650. Labour GBP 3,400. Plant hire (mini-digger 2 days) GBP 480. Subtotal GBP 6,530. Trade margin 12%. Total ex VAT GBP 7,314. Reverse-charge VAT applies (CIS). Payment: 50% on start.",
+      "rubric": {
+        "mustInclude": ["groundwork", "7,314", "reverse-charge", "50%"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 40,
+        "maxWords": 200
+      }
+    },
+    {
+      "id": "quote-3",
+      "input": "Quote QU-1201 for Mr Osei. Scope: full rewire of 3-bed semi, 18th edition consumer unit, 24 points, 8 lighting circuits, EICR on completion. Materials GBP 1,450. Labour GBP 2,900 (5 days). Building control notification GBP 180. Subtotal GBP 4,530. Margin 18%. Total ex VAT GBP 5,345.40. VAT 20% GBP 1,069.08. Total GBP 6,414.48. Note: client mentioned budget was 'around 5k'.",
+      "rubric": {
+        "mustInclude": ["rewire", "6,414", "margin", "5k"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 40,
+        "maxWords": 210
+      }
+    },
+    {
+      "id": "quote-4",
+      "input": "Quote QU-1255 for Greenfield Care Home. Scope: annual gutter clearance and minor repair across 4 blocks, cherry-picker access, replace 12m of leaking guttering. Materials GBP 340. Labour GBP 760. Access equipment GBP 650. Subtotal GBP 1,750. Margin 25%. Total ex VAT GBP 2,187.50. VAT 20% GBP 437.50. Total GBP 2,625.",
+      "rubric": {
+        "mustInclude": ["gutter", "2,625", "access", "margin"],
+        "mustNotInclude": ["as an ai", "i cannot"],
+        "minWords": 35,
+        "maxWords": 180
+      }
+    }
+  ]
+}

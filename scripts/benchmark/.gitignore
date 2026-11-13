@@ -1,0 +1,14 @@
+# Keep model weights, audio, caches, venvs and raw results OUT of git.
+# This is a research harness; only source + the committed REPORT/snapshot belong in the repo.
+.venv/
+audio/
+models/
+*.wav
+*.aiff
+*.gguf
+*.bin
+*.ggml
+# Raw per-run results are reproducible; a committed snapshot lives in results/snapshot-*.json
+results/latest.json
+results/stt-latest.json
+__pycache__/
