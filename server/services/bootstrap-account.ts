@@ -17,7 +17,6 @@ export async function ensureUserRow(input: {
   id: string;
   email: string;
   fullName?: string | null;
-  avatarUrl?: string | null;
   phone?: string | null;
 }): Promise<void> {
   const supabase = createAdminClient();
@@ -29,7 +28,14 @@ export async function ensureUserRow(input: {
         id: input.id,
         email: input.email,
         full_name: input.fullName ?? null,
-        avatar_url: input.avatarUrl ?? null,
+        // DATA MINIMISATION: `users.avatar_url` is deliberately NOT written.
+        // The OAuth provider's profile-picture URL (a link to an image of the
+        // person's face) used to be copied here on every sign-in, yet no screen,
+        // export or email ever read it. Leaving the key out of the upsert means
+        // new users never get one and existing values are not refreshed (the
+        // staged, approval-required clean-up of old values lives in
+        // docs/programme/privacy/staged-migrations/). Pinned by
+        // __tests__/security/no-avatar-collection.test.ts.
         phone: input.phone ?? null,
       },
       { onConflict: "id" },

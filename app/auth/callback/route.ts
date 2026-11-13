@@ -175,10 +175,6 @@ export async function GET(request: NextRequest) {
     (typeof meta.name === "string" && meta.name) ||
     (typeof meta.invited_full_name === "string" && meta.invited_full_name) ||
     null;
-  const avatarUrl =
-    (typeof meta.avatar_url === "string" && meta.avatar_url) ||
-    (typeof meta.picture === "string" && meta.picture) ||
-    null;
   const phone =
     (typeof meta.phone === "string" && meta.phone) ||
     (typeof meta.invited_phone === "string" && meta.invited_phone) ||
@@ -189,7 +185,6 @@ export async function GET(request: NextRequest) {
       id: userPayload.id,
       email: userPayload.email ?? "",
       fullName,
-      avatarUrl,
       phone,
     });
   } catch (e) {
