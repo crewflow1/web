@@ -29,6 +29,8 @@ import {
   enforcePersistent,
   identifyHeaders,
   identifyRequest,
+  durableKey,
+  sweepExpiredCounters,
   DEFAULT_LIMITS,
   _resetForTests,
   type RateLimitConfig,
@@ -89,11 +91,54 @@ describe("persistent limiter (checkPersistent → rate_limit_hit RPC)", () => {
     const r = await checkPersistent("auth", "user@x.com", DEFAULT_LIMITS.auth);
     expect(r.allowed).toBe(true);
     expect(r.remaining).toBe(4);
+    // The durable key is the route + a keyed digest of the identifier — the
+    // raw identifier (here an email address) must never reach the table.
     expect(rpcMock).toHaveBeenCalledWith("rate_limit_hit", {
-      p_key: "auth:user@x.com",
+      p_key: durableKey("auth", "user@x.com"),
       p_limit: DEFAULT_LIMITS.auth.limit,
       p_window_seconds: DEFAULT_LIMITS.auth.windowSeconds,
     });
+  });
+
+  it("never persists the raw identifier (IP / email / portal token) in the durable key", async () => {
+    const identifiers = [
+      "203.0.113.42", // visitor IP (public forms, quote links)
+      "someone@example.com", // sign-in email (auth)
+      "portal-token-0123456789abcdef0123456789abcdef", // customer-portal bearer token
+      "token-id:203.0.113.42", // worker-portal compound key
+    ];
+    for (const identifier of identifiers) {
+      rpcMock.mockResolvedValueOnce({
+        data: [{ allowed: true, remaining: 1, reset_at: isoInFuture(60) }],
+        error: null,
+      });
+      await checkPersistent("portal_write", identifier, CFG);
+      const args = rpcMock.mock.calls.at(-1)?.[1] as { p_key: string };
+      expect(args.p_key).toMatch(/^portal_write:h1_[0-9a-f]{40}$/);
+      expect(args.p_key).not.toContain(identifier);
+      for (const part of identifier.split(/[:@]/)) {
+        expect(args.p_key).not.toContain(part);
+      }
+    }
+  });
+
+  it("durableKey is deterministic per (route, identifier) and distinct across both", () => {
+    expect(durableKey("auth", "a@x.com")).toBe(durableKey("auth", "a@x.com"));
+    expect(durableKey("auth", "a@x.com")).not.toBe(durableKey("auth", "b@x.com"));
+    expect(durableKey("auth", "a@x.com")).not.toBe(durableKey("portal_write", "a@x.com"));
+    // Keyed (HMAC) when the server secret is present: the digest must differ
+    // from the bare, brute-forceable SHA-256 of the identifier.
+    const prev = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "unit-test-secret";
+    try {
+      const keyed = durableKey("auth", "203.0.113.42");
+      delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const unkeyed = durableKey("auth", "203.0.113.42");
+      expect(keyed).not.toBe(unkeyed);
+    } finally {
+      if (prev === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+      else process.env.SUPABASE_SERVICE_ROLE_KEY = prev;
+    }
   });
 
   it("honours a 'blocked' verdict", async () => {
@@ -122,6 +167,31 @@ describe("persistent limiter (checkPersistent → rate_limit_hit RPC)", () => {
     rpcMock.mockResolvedValueOnce({ data: [], error: null });
     const r = await checkPersistent("auth", "user@x.com", DEFAULT_LIMITS.auth);
     expect(r.allowed).toBe(true);
+  });
+});
+
+describe("sweepExpiredCounters (retention of closed windows)", () => {
+  it("calls the service-role rate_limit_sweep() function", async () => {
+    rpcMock.mockResolvedValueOnce({ data: null, error: null });
+    await expect(sweepExpiredCounters()).resolves.toEqual({ ok: true });
+    expect(rpcMock).toHaveBeenCalledWith("rate_limit_sweep");
+  });
+
+  it("is fail-soft: an RPC error or a throw is reported, never raised", async () => {
+    rpcMock.mockResolvedValueOnce({ data: null, error: { message: "boom" } });
+    await expect(sweepExpiredCounters()).resolves.toEqual({ ok: false, error: "boom" });
+    rpcMock.mockRejectedValueOnce(new Error("network down"));
+    await expect(sweepExpiredCounters()).resolves.toEqual({ ok: false, error: "network down" });
+  });
+
+  it("the daily ops-housekeeping cron invokes the sweep", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const src = readFileSync(
+      join(process.cwd(), "app/api/cron/cron-runs-prune/route.ts"),
+      "utf8",
+    );
+    expect(src).toMatch(/await sweepExpiredCounters\(\)/);
   });
 });
 
