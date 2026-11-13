@@ -90,3 +90,43 @@ describe("INJ-09 an AI-drafted reply carrying a link never auto-sends (SIMULATED
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Model output is untrusted when RENDERED: an AI answer's `sources` are rebuilt
+// field by field, and a model-supplied href survives only as a same-origin path.
+// ---------------------------------------------------------------------------
+import { validateAiResponse } from "@/lib/ai/safety";
+
+describe("INJ-09 model-supplied AI sources cannot carry an off-origin or script link (SIMULATED-ONLY)", () => {
+  const mocked = (sources: unknown) =>
+    validateAiResponse({ answer: "You have 3 overdue invoices.", confidence: "high", sources, generated_by: "anthropic" });
+
+  it("drops javascript:/absolute/protocol-relative/backslash hrefs but keeps the label", () => {
+    for (const href of [
+      "https://evil.example/login",
+      "//evil.example",
+      "/\\evil.example",
+      "javascript:alert(1)",
+      "data:text/html,x",
+      "@evil.example",
+      "/ok\npath",
+      42,
+      { toString: () => "/x" },
+    ]) {
+      const r = mocked([{ label: "Invoices", href }]);
+      expect(r, String(href)).not.toBeNull();
+      expect(r!.sources).toEqual([{ label: "Invoices" }]);
+    }
+  });
+
+  it("keeps a same-origin relative deep link", () => {
+    expect(mocked([{ label: "Overdue", href: "/invoices?status=overdue" }])!.sources).toEqual([
+      { label: "Overdue", href: "/invoices?status=overdue" },
+    ]);
+  });
+
+  it("never passes unknown model-supplied properties through", () => {
+    const r = mocked([{ label: "X", href: "/x", onClick: "alert(1)", dangerouslySetInnerHTML: { __html: "<b>" } }]);
+    expect(Object.keys(r!.sources[0]!).sort()).toEqual(["href", "label"]);
+  });
+});
