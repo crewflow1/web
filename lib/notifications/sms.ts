@@ -10,6 +10,7 @@ import {
   loadNotificationEligibilityContext,
 } from "./recipient-eligibility";
 import type { NotificationRow } from "./types";
+import { safeActionPath } from "./action-url";
 
 /**
  * CrewFlow — SMS notification channel (IO half). Twilio-gated, refuse-before-send.
@@ -97,8 +98,8 @@ export function buildSmsText(n: {
   const body = (n.body ?? "").trim();
   let text = body ? `${title} — ${body}` : title;
 
-  const rawUrl = typeof n.action_url === "string" ? n.action_url.trim() : "";
-  if (rawUrl.startsWith("/") && !rawUrl.startsWith("//")) {
+  const rawUrl = safeActionPath(n.action_url);
+  if (rawUrl) {
     const link = `https://crewflow.uk${rawUrl}`;
     // Only append the link if the whole message still fits; a link is optional,
     // the message text is not.
