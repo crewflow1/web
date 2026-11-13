@@ -541,26 +541,25 @@ export async function updateQuote(
   const supabase = await createClient();
   const totals = computeTotals(parsed.data.line_items);
 
-  // Wave 2 — if the quote is past the approval gate (approved/sent/viewed),
-  // editing reverts it to pending_approval so the approver re-confirms the
-  // new numbers. The trigger emits quote.changed_after_approval.
-  const { data: existing } = await supabase
+  // Resolve the quote in the ACTIVE org first — for the friendly "accepted"
+  // refusal below, and so a quote we cannot resolve here never reaches a write.
+  const { data: existing, error: existingError } = await supabase
     .from("quotes")
     .select("status")
     .eq("id", id)
     // ACTIVE-ORG SCOPE. RLS's `current_org_ids()` spans EVERY org the caller
     // belongs to, so without this a dual-org user working in org A reads org
-    // B's quote here — and then every write below lands on B's row. A foreign
-    // quote reads as absent, and the UPDATE's own predicate makes it a no-op.
+    // B's quote here — and then the write below lands on B's row. A foreign
+    // quote reads as absent; the write is pinned to the same org again.
     .eq("org_id", ctx.org.id)
     .maybeSingle();
 
-  // Not in the active org (or gone). Bail BEFORE the destructive line-item
-  // replacement below — that delete is keyed on quote_id, so proceeding on a
-  // quote we could not resolve in this org would wipe another org's priced
-  // line items and leave the quote a shell. Same wording as the later
-  // load-failure branch: a foreign quote is indistinguishable from a missing one.
-  if (!existing) {
+  // Not in the active org (or gone), or the read itself failed. Bail BEFORE the
+  // replacement below. Same wording for all three: a foreign quote is
+  // indistinguishable from a missing one, and a failed read must never be
+  // treated as licence to write.
+  if (existingError || !existing) {
+    if (existingError) console.error("[quotes] update: quote read failed", existingError);
     return formError(
       "Couldn't load the quote. Try again.",
       echoValuesFromForm(formData),
@@ -568,21 +567,17 @@ export async function updateQuote(
   }
 
   // Commercial integrity: an accepted quote/variation is a firm agreement — its
-  // amounts and scope are frozen (the DB enforces this too, via triggers
-  // quotes_freeze_accepted / quote_line_items_freeze_accepted). Refuse the edit
-  // up front rather than let the DB reject the line-item re-insert mid-write.
-  // To change agreed scope, the operator raises a variation.
+  // amounts and scope are frozen (the DB enforces this too: triggers
+  // quotes_freeze_accepted / quote_line_items_freeze_accepted, and
+  // replace_quote_content refuses it under the row lock). Refuse the edit up
+  // front with the actionable message. To change agreed scope, the operator
+  // raises a variation.
   if (existing?.status === "accepted") {
     return formError(
       "This quote has been accepted and can't be edited. Raise a variation to change the agreed scope.",
       echoValuesFromForm(formData),
     );
   }
-
-  const revertToPending =
-    existing?.status === "approved" ||
-    existing?.status === "sent" ||
-    existing?.status === "viewed";
 
   // Cross-tenant reference integrity — see createQuote. Verified before the
   // write so a forged customer_id / property_id / lead_id is a clean validation
@@ -594,10 +589,37 @@ export async function updateQuote(
   });
   if (!refs.ok) return formError(refs.message, echoValuesFromForm(formData));
 
-  // Update parent row.
-  const { error: qErr } = await supabase
-    .from("quotes")
-    .update({
+  // ONE ATOMIC WRITE (migration 20261325000000, `replace_quote_content`): the
+  // header update, the line-item delete and the line-item insert run in a single
+  // transaction under a lock on the quote row.
+  //
+  // This used to be three separate statements (update header → delete lines →
+  // insert lines). If the insert failed after the delete had committed — a
+  // dropped connection, a timeout, the freeze trigger firing because the
+  // customer accepted in the gap — the quote kept its NEW totals and had NO line
+  // items: the saved, priced scope was destroyed and the only copy of the
+  // replacement was this form's echo in one browser tab. Now a failure leaves
+  // the previous header and lines exactly as they were.
+  //
+  // Also moved inside the lock: the Wave 2 rule that editing a quote past the
+  // approval gate (approved/sent/viewed) reverts it to pending_approval — it is
+  // decided on the locked row, not on the read above (the trigger still emits
+  // quote.changed_after_approval).
+  //
+  // Lines are stamped with the ACTIVE org inside the function (p_org_id), never
+  // from a row re-read by id — the retention-ledger shape fixed in #456.
+  const { error: saveErr } = await (
+    supabase.rpc as unknown as (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => PromiseLike<{
+      data: { status?: string; line_count?: number } | null;
+      error: { message: string; code?: string; details?: string; hint?: string } | null;
+    }>
+  )("replace_quote_content", {
+    p_org_id: ctx.org.id,
+    p_quote_id: id,
+    p_header: {
       customer_id: parsed.data.customer_id,
       property_id: parsed.data.property_id ?? null,
       lead_id: parsed.data.lead_id ?? null,
@@ -607,61 +629,34 @@ export async function updateQuote(
       notes: parsed.data.notes ?? null,
       terms: parsed.data.terms ?? null,
       valid_until: parsed.data.valid_until ?? null,
-      ...(revertToPending
-        ? {
-            status: "pending_approval" as const,
-            approved_by: null,
-            approved_at: null,
-            // Keep the prior approval_comment as context — operator can
-            // see why it had been approved before.
-          }
-        : {}),
-    })
-    .eq("id", id)
-    .eq("org_id", ctx.org.id);
-  if (qErr) {
-    console.error("[quotes] update failed", qErr);
+    },
+    p_lines: parsed.data.line_items.map((li, idx) => ({
+      description: li.description,
+      qty: li.qty,
+      unit: li.unit,
+      unit_price: li.unit_price,
+      vat_rate: li.vat_rate,
+      line_total: totals.lines[idx]?.line_total ?? 0,
+      sort_order: idx,
+    })),
+  });
+  if (saveErr) {
+    console.error("[quotes] update failed (rolled back — nothing was changed)", {
+      quoteId: id,
+      code: saveErr.code,
+      message: saveErr.message,
+      details: saveErr.details,
+      hint: saveErr.hint,
+    });
+    // The customer accepted while this edit was open: say so, don't invite a retry.
+    if (saveErr.message?.includes("has been accepted")) {
+      return formError(
+        "This quote has been accepted and can't be edited. Raise a variation to change the agreed scope.",
+        echoValuesFromForm(formData),
+      );
+    }
     return formError(
-      "Couldn't save changes. Try again.",
-      echoValuesFromForm(formData),
-    );
-  }
-
-  // Replace line items (delete + insert is simpler than diffing for v1).
-  const { error: delErr } = await supabase
-    .from("quote_line_items")
-    .delete()
-    .eq("quote_id", id)
-    .eq("org_id", ctx.org.id);
-  if (delErr) {
-    console.error("[quotes] line items delete failed", delErr);
-    return formError(
-      "Couldn't save line items. Try again.",
-      echoValuesFromForm(formData),
-    );
-  }
-
-  const rows: LineItemInsert[] = parsed.data.line_items.map((li, idx) => ({
-    quote_id: id,
-    // Stamp from the ACTIVE org, never from a row re-read by id. Re-reading
-    // the parent's own org_id was the same shape as the retention-ledger bug
-    // fixed in #456: it faithfully copies whichever org the row turned out to
-    // belong to, so an unscoped resolve silently writes into that org instead
-    // of refusing. The quote itself is proven in-org above.
-    org_id: ctx.org.id,
-    description: li.description,
-    qty: li.qty,
-    unit: li.unit,
-    unit_price: li.unit_price,
-    vat_rate: li.vat_rate,
-    line_total: totals.lines[idx]?.line_total ?? 0,
-    sort_order: idx,
-  }));
-  const { error: insErr } = await supabase.from("quote_line_items").insert(rows);
-  if (insErr) {
-    console.error("[quotes] line items re-insert failed", insErr);
-    return formError(
-      "Couldn't save line items. Try again.",
+      "Couldn't save changes — nothing was changed. Try again.",
       echoValuesFromForm(formData),
     );
   }

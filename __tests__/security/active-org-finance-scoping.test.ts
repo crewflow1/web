@@ -212,23 +212,41 @@ describe("quotes actions — reads and writes pinned to the active org", () => {
   }
 
   it("updateQuote bails when the quote is not resolvable in the active org", () => {
-    // The line-item replacement below it is a DELETE keyed on quote_id, so
-    // proceeding past an unresolvable quote would wipe another org's lines.
+    // The replacement below it deletes the quote's line items, so proceeding
+    // past an unresolvable quote would wipe another org's lines. Since migration
+    // 20261325000000 the replacement is ONE atomic database function
+    // (replace_quote_content) rather than a hand-rolled DELETE + INSERT, so the
+    // guard must precede THAT call — and there must be no direct line-item
+    // statement left in the action to slip past it.
     const F = fn(ACTIONS, "updateQuote");
-    const guard = F.indexOf("if (!existing)");
-    const del = F.indexOf('from("quote_line_items")');
+    const guard = F.indexOf("!existing)");
+    const write = F.indexOf('"replace_quote_content"');
     expect(guard, "must refuse before the destructive replacement").toBeGreaterThan(-1);
-    expect(del).toBeGreaterThan(-1);
-    expect(guard).toBeLessThan(del);
+    expect(write).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(write);
+    expect(F).not.toMatch(/from\("quote_line_items"\)/);
+    // The resolve itself is pinned to the active org.
+    expect(F).toMatch(/from\("quotes"\)[\s\S]*?\.eq\("id", id\)[\s\S]*?\.eq\("org_id", ctx\.org\.id\)/);
   });
 
   it("updateQuote scopes the line-item delete and stamps lines from ctx, not a re-read row", () => {
     const F = fn(ACTIONS, "updateQuote");
-    expect(F).toMatch(/from\("quote_line_items"\)[\s\S]*?\.eq\("quote_id", id\)[\s\S]*?\.eq\("org_id", ctx\.org\.id\)/);
-    expect(F).toMatch(/org_id: ctx\.org\.id/);
+    // The action hands the function the ACTIVE org as its pin…
+    expect(F).toMatch(/"replace_quote_content"[\s\S]{0,80}?p_org_id: ctx\.org\.id/);
     // The retention-ledger shape from #456: copying a row's own org_id
     // faithfully writes into whichever org it belonged to.
     expect(F).not.toMatch(/org_id: parent\.org_id/);
+    expect(F).not.toMatch(/p_org_id: existing\.org_id/);
+    // …and the function resolves the quote ONLY inside that org, scopes the
+    // line-item DELETE to (quote, org), and stamps every inserted line from the
+    // pin — never from the row it read.
+    const SQL = src("supabase/migrations/20261325000000_quote_content_replace_atomic.sql");
+    expect(SQL).toMatch(/from public\.quotes\s+where id = p_quote_id and org_id = p_org_id\s+for update/);
+    expect(SQL).toMatch(/delete from public\.quote_line_items\s+where quote_id = p_quote_id and org_id = p_org_id/);
+    expect(SQL).toMatch(/insert into public\.quote_line_items[\s\S]*?select p_quote_id, p_org_id,/);
+    expect(SQL).not.toMatch(/v_quote\.org_id/);
+    expect(SQL).toMatch(/security invoker/);
+    expect(SQL).toMatch(/p_org_id not in \(select public\.current_org_ids\(\)\)/);
   });
 
   it("deleteQuote scopes the DELETE to match its org-scoped dependency guard", () => {
