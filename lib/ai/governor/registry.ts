@@ -200,9 +200,16 @@ export const TIER_MODEL: Readonly<Record<AiTier, AiModelBinding | null>> = {
     usdPerMTokIn: 2,
     usdPerMTokOut: 10,
     // Worst case = quote.writer_draft: system + 60-entry price book +
-    // 12k-char untrusted budget (~7.3k in) and its 2,000-token output cap.
+    // 12k-char untrusted budget (~7.3k in) and its 4,000-token output cap
+    // (MAX_OUTPUT_TOKENS in server/services/ai-quote-writer.ts). #1070 raised
+    // that cap 2,000 -> 4,000 and left this envelope at 2,000, so every quote
+    // draft was admitted on a claim smaller than its own worst case — the
+    // documented "residue", turned from an edge into the normal case for the
+    // most expensive mid call. The envelope must be >= the largest max-output
+    // any call site of the tier can request; that is now a ratchet, not a
+    // comment (__tests__/security/ai-reservation-envelope.test.ts).
     reserveInputTokens: 8_000,
-    reserveOutputTokens: 2_000,
+    reserveOutputTokens: 4_000,
   },
   high: {
     provider: "anthropic",
