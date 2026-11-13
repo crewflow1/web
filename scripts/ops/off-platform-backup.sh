@@ -86,9 +86,34 @@ retry_capture(){ # retry_capture <varname> <desc> <cmd...> — captures stdout i
   done
 }
 # Thin wrappers (consistent cd into the linked dir) so the retry calls stay readable.
+# NOTE: `supabase db query` defaults to a PRETTY ASCII TABLE and only emits that table
+# under a non-interactive/minimal environment (e.g. launchd), which broke the old
+# grep-for-'"rows"' parsing and failed every scheduled run. `--output-format json` forces
+# a deterministic JSON ARRAY ([{...}]) regardless of TTY/env — the key reliability fix.
 _db_dump(){ ( cd "$LINK_DIR" && supabase db dump --linked "$@" ) >>"$LOG_FILE" 2>&1; }
-_db_query(){ ( cd "$LINK_DIR" && supabase db query --linked "$1" ); }
+_db_query(){ ( cd "$LINK_DIR" && supabase db query --linked --output-format json "$1" ); }
 _storage_cp(){ ( cd "$LINK_DIR" && supabase storage cp --experimental --recursive "$1" "$2" ) >>"$LOG_FILE" 2>&1; }
+
+# query_json <desc> <sql> -> prints a JSON array to stdout, retried until the CLI returns
+# VALID JSON (so a transient blip OR a stray non-JSON line can never be mis-parsed as data).
+query_json(){
+  local desc="$1" sql="$2" n=1 delay=5 out=""
+  while :; do
+    out="$( _db_query "$sql" 2>>"$LOG_FILE" )"
+    if printf '%s' "$out" | python3 -c 'import sys,json; sys.exit(0 if isinstance(json.load(sys.stdin),list) else 1)' 2>/dev/null; then
+      printf '%s' "$out"; return 0
+    fi
+    if [ "$n" -ge "$RETRY_TRIES" ]; then log "query_json GAVE UP after $n attempts: $desc"; return 1; fi
+    log "query_json $n/$RETRY_TRIES invalid-json ($desc) — backoff ${delay}s"; sleep "$delay"; n=$((n+1)); delay=$((delay*2))
+  done
+}
+# json_field <json> <python-expr over variable d (the parsed array)> -> prints result or empty
+json_field(){ printf '%s' "$1" | python3 -c "import sys,json
+d=json.load(sys.stdin)
+try:
+    print($2)
+except Exception:
+    pass" 2>/dev/null; }
 
 # --- heartbeat: write start/finish rows to prod ops_backup_runs (best-effort; no creds logged) ---
 RUN_ID="$(date -u +%Y%m%d%H%M%S)-${HOST_TAG}"
@@ -117,7 +142,7 @@ print(f"""insert into public.ops_backup_runs
    error=excluded.error, file_manifest=excluded.file_manifest;""")
 PY
 )"
-  ( cd "$LINK_DIR" && supabase db query --linked "$sql" ) >/dev/null 2>&1 \
+  ( cd "$LINK_DIR" && supabase db query --linked --output-format json "$sql" ) >/dev/null 2>&1 \
     && log "heartbeat[$st] recorded" \
     || log "heartbeat[$st] skipped (ops_backup_runs unavailable or not yet deployed)"
 }
@@ -141,14 +166,32 @@ on_error(){
 }
 trap on_error ERR
 
+# --- single-instance lock: a scheduled run must never overlap a manual (or catch-up) run.
+#     mkdir is atomic; a stale lock whose owner PID is dead is reclaimed. A live concurrent
+#     run causes a CLEAN no-op exit (0) — not a failure, and it must NOT remove the holder's lock.
+LOCK_DIR="$BACKUP_ROOT/.backup.lock"
+I_OWN_LOCK=0
+if mkdir "$LOCK_DIR" 2>/dev/null; then
+  I_OWN_LOCK=1; echo $$ > "$LOCK_DIR/pid"
+else
+  _opid="$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "")"
+  if [ -n "$_opid" ] && kill -0 "$_opid" 2>/dev/null; then
+    log "another backup is already running (pid $_opid) — exiting without error"; exit 0
+  fi
+  log "reclaiming stale lock (owner pid ${_opid:-unknown} not alive)"
+  rm -rf "$LOCK_DIR"
+  mkdir "$LOCK_DIR" 2>/dev/null && { I_OWN_LOCK=1; echo $$ > "$LOCK_DIR/pid"; } || { log "FATAL: cannot acquire backup lock"; exit 1; }
+fi
+cleanup_lock(){ [ "$I_OWN_LOCK" = "1" ] && rm -rf "$LOCK_DIR" 2>/dev/null || true; }
+trap cleanup_lock EXIT
+
 log "CrewFlow off-platform backup starting (run_id=$RUN_ID, dir=$BK)"
 write_heartbeat "running" ""
 
 # === Stage 1: migration tip (currency marker) ===
 STAGE="migration_tip"
-MIG_TIP_RAW=""
-retry_capture MIG_TIP_RAW "migration tip query" _db_query "select max(version) tip from supabase_migrations.schema_migrations;" || true
-MIG_TIP="$(printf '%s' "$MIG_TIP_RAW" | grep -oE '"tip": "[0-9]+"' | grep -oE '[0-9]+' | head -1 || true)"
+MIG_JSON="$(query_json "migration tip" "select max(version) as tip from supabase_migrations.schema_migrations;" || true)"
+MIG_TIP="$(json_field "$MIG_JSON" 'd[0].get("tip") or ""')"
 [ -n "$MIG_TIP" ] && log "prod migration tip: $MIG_TIP" || log "WARN: could not read migration tip"
 
 # === Stage 2: database dumps (schema / public data / auth data) ===
@@ -165,18 +208,15 @@ STORAGE_OK=1
 # Authoritative object count from the DB is the cross-check that makes a SILENT
 # storage-skip impossible: enumeration failure (empty-vs-error ambiguity) is treated
 # as FATAL, and the captured count must equal storage.objects at validate time.
-BUCKETS_JSON=""
-# retry_capture already requires a NON-EMPTY success; the grep below is the second guard
-# (a well-formed response always contains "rows"). This is the proven intermittent
-# failure mode ("no rows in response"), so the retry is what restores reliability.
-retry_capture BUCKETS_JSON "bucket enumeration" _db_query "select id from storage.buckets order by id;" \
-  || { ERR="bucket enumeration failed after retries (no rows in response)"; log "FATAL: $ERR"; false; }
-echo "$BUCKETS_JSON" | grep -q '"rows"' || { ERR="bucket enumeration malformed (no rows key)"; log "FATAL: $ERR"; false; }
-BUCKETS="$(echo "$BUCKETS_JSON" | grep -oE '"id": "[^"]+"' | sed 's/.*: "//; s/"$//')"
-EXPECTED_OBJ_RAW=""
-retry_capture EXPECTED_OBJ_RAW "storage object count" _db_query "select count(*) n from storage.objects;" \
+# Deterministic JSON reads (query_json retries until the CLI returns a valid JSON array).
+# The authoritative storage.objects count is cross-checked against the files actually
+# downloaded (at validate time), so a silent storage-skip remains impossible.
+BUCKETS_JSON="$(query_json "bucket enumeration" "select id from storage.buckets order by id;")" \
+  || { ERR="bucket enumeration failed after retries (no valid JSON from db query)"; log "FATAL: $ERR"; false; }
+BUCKETS="$(json_field "$BUCKETS_JSON" 'chr(10).join(r["id"] for r in d)')"
+OBJ_JSON="$(query_json "storage object count" "select count(*) as n from storage.objects;")" \
   || { ERR="could not read authoritative storage.objects count after retries"; log "FATAL: $ERR"; false; }
-EXPECTED_OBJ="$(printf '%s' "$EXPECTED_OBJ_RAW" | grep -oE '"n": [0-9]+' | grep -oE '[0-9]+' | head -1)"
+EXPECTED_OBJ="$(json_field "$OBJ_JSON" 'd[0]["n"]')"
 [ -n "$EXPECTED_OBJ" ] || { ERR="could not parse authoritative storage.objects count"; log "FATAL: $ERR"; false; }
 STORAGE_OBJ_COUNT=0
 for b in $BUCKETS; do
