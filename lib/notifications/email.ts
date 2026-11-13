@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/email/send";
 import { env } from "@/lib/env";
 import type { NotificationRow } from "./types";
+import { safeActionPath } from "./action-url";
 
 /**
  * CrewFlow — Notification email queue + sender (HQ-8 + phase-2).
@@ -386,8 +387,12 @@ function buildPlainBody(n: NotificationRow): string {
   const parts: string[] = [];
   parts.push(n.title);
   if (n.body) parts.push("\n" + n.body);
-  if (n.action_url) {
-    parts.push("\n\nLink: https://crewflow.uk" + n.action_url);
+  // Stored deep link = untrusted data: only a same-origin relative path is ever
+  // appended to our origin ("https://crewflow.uk" + "@evil.example/x" would be a
+  // link to evil.example). See lib/notifications/action-url.ts.
+  const actionPath = safeActionPath(n.action_url);
+  if (actionPath) {
+    parts.push("\n\nLink: https://crewflow.uk" + actionPath);
   }
   parts.push(
     "\n\n— CrewFlow\nManage notifications: https://crewflow.uk/notifications",
