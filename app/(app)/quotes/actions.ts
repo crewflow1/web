@@ -24,6 +24,7 @@ import { verifyQuoteReferences } from "@/lib/crm/reference-integrity";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { storeSignatureImage } from "@/server/services/signature-capture";
 import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
+import * as Sentry from "@sentry/nextjs";
 import type { Database } from "@/lib/supabase/types";
 import {
   type FormState,
@@ -1046,23 +1047,57 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
   const supabase = await createClient();
   const now = new Date().toISOString();
 
-  // IDEMPOTENCY: re-accepting an already-accepted quote must NOT post a
+  // IDEMPOTENCY + HEAL: re-accepting an already-accepted quote must NOT post a
   // second invoice (or re-create the job). This button is double-submittable,
   // and an owner may "confirm by phone" a quote the customer already accepted
-  // via the public portal. acceptQuoteByToken guards this with a status
-  // precondition (see below) — mirror it here: read first, and short-circuit
-  // as an idempotent success when the quote is already accepted. RLS scopes
-  // this read to the caller's org; a wrong-org/unknown id returns null and
-  // falls through to the UPDATE, which no-ops and redirects accept_failed
-  // exactly as before.
-  const { data: preExisting } = await supabase
+  // via the public portal. So read first — and when the quote is already
+  // accepted, run ONLY the idempotent job+invoice ensure, exactly as the public
+  // path does on a re-accept.
+  //
+  // That heal is the point. This branch used to redirect `saved=accepted`
+  // unconditionally: if the first accept had recorded the status and then
+  // failed to create the invoice (the owner was shown `warn=invoice_skipped`),
+  // pressing Accept again reported plain success while still creating nothing —
+  // a quiet lie on the retry, and an accepted quote stuck invoice-less. Now the
+  // retry creates what is missing, and keeps warning if it still cannot.
+  //
+  // Active-org pinned: a wrong-org/unknown id returns null and falls through to
+  // the UPDATE, which matches nothing and redirects accept_failed as before.
+  // LOUD: this read gates a write, so a failed read must not be mistaken for
+  // "not accepted yet".
+  const { data: preExisting, error: preExistingError } = await supabase
     .from("quotes")
-    .select("status")
+    .select(
+      "id, org_id, status, subtotal, vat_total, job_id, variation_number, customer_id, property_id, number, notes",
+    )
     .eq("id", id)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (preExistingError) throw readFailure("quote accept: quote", preExistingError);
   if (preExisting?.status === "accepted") {
-    redirect(`/quotes/${id}?saved=accepted`);
+    const healed = await ensureJobAndInvoiceForAcceptedQuote(
+      supabase,
+      ctx.org.id,
+      preExisting,
+      now,
+    );
+    // Only a FRESHLY created invoice is emailed — reusing one means the
+    // customer was already sent it on the first accept.
+    if (healed.createdInvoice && healed.invoiceId) {
+      const emailRes = await sendInvoiceEmail(supabase, healed.invoiceId, {
+        orgId: ctx.org.id,
+      });
+      if (!emailRes.sent) {
+        console.warn("[quotes] backfilled-invoice email skipped (owner re-accept)", emailRes);
+      }
+    }
+    revalidatePath("/quotes");
+    revalidatePath(`/quotes/${id}`);
+    redirect(
+      healed.invoiceId
+        ? `/quotes/${id}?saved=accepted`
+        : `/quotes/${id}?saved=accepted&warn=invoice_skipped`,
+    );
   }
 
   // ACTIVE-ORG SCOPE — the single most consequential predicate in this file.
@@ -1108,107 +1143,27 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
     channel: "owner",
   });
 
-  // Auto-create a job (status=new) from the accepted quote — mirrors the
-  // public-portal path so an owner-accepted quote produces the same
-  // job → invoice chain. Skipped for variations (they already carry the
-  // parent's job_id) and for quotes with no customer to attach the job to.
-  let jobId: string | null = quote.job_id;
-  if (!quote.job_id && quote.customer_id) {
-    // Carry the quote's site + scope onto the job (first-customer fix 4) —
-    // best-effort; a failed enrichment degrades to the bare provenance note.
-    const carry = await buildJobCarryFromQuote(supabase, ctx.org.id, quote);
-    const { data: newJob, error: jobErr } = await supabase
-      .from("jobs")
-      .insert({
-        // Stamp from the ACTIVE org, not from the row we just read. The quote
-        // is proven in-org above, so these are now the same value — saying
-        // ctx.org.id keeps it that way if the resolve is ever loosened again.
-        org_id: ctx.org.id,
-        customer_id: quote.customer_id,
-        status: "new",
-        site_address_line1: carry.site_address_line1,
-        notes: carry.notes,
-      })
-      .select("id")
-      .single();
-    if (jobErr) {
-      console.error("[quotes] owner auto-job failed", jobErr);
-    } else if (newJob?.id) {
-      jobId = newJob.id;
-      // Backlink so the quote knows which job it spawned.
-      await supabase
-        .from("quotes")
-        .update({ job_id: jobId })
-        .eq("id", quote.id)
-        .eq("org_id", ctx.org.id);
-    }
-  }
-
-  // Auto-create invoice using the next_invoice_number RPC (mirrors what
-  // /api/invoices POST does — duplicated here so the owner gets one
-  // round trip).
+  // Auto-create the job (status=new; skipped for variations, which already
+  // carry the parent's job_id, and for quotes with no customer) + the draft
+  // invoice, as ONE atomic, idempotent step — the same helper the public-portal
+  // path uses, so an owner-accepted quote produces the same job → invoice chain.
   //
-  // IDEMPOTENCY: reuse any invoice already linked to this quote instead of
-  // posting a second one. The status precondition above stops the common
-  // double-submit before we reach here; this is the belt-and-braces guard
-  // for the degenerate "accepted-but-no-invoice retried" / concurrent-submit
-  // race, and is the in-code half of the partial unique index on
-  // invoices(quote_id). Without it a re-run allocates a fresh number and
-  // INSERTs a duplicate draft invoice for the same quote, double-billing the
-  // customer. limit(1) keeps maybeSingle safe even if pre-fix duplicates
-  // already exist.
-  const { data: existingInvoice } = await supabase
-    .from("invoices")
-    .select("id")
-    .eq("quote_id", quote.id)
-    // Org-scoped so the idempotency check answers a question about THIS org's
-    // books — an invoice found in another org must not suppress this one.
-    .eq("org_id", ctx.org.id)
-    .limit(1)
-    .maybeSingle();
-
-  let invoiceId: string | null = existingInvoice?.id ?? null;
-  let createdInvoice = false;
-  if (!invoiceId) {
-    // Number allocation MUTATES a per-org sequence, so the target org must be
-    // the active one — an unscoped accept burned a number out of another org's
-    // invoice series, permanently leaving a gap in their numbering.
-    const { data: invNumber, error: numErr } = await supabase.rpc(
-      "next_invoice_number",
-      { target_org: ctx.org.id },
-    );
-    if (numErr || !invNumber) {
-      console.error("[quotes] invoice number alloc failed", numErr);
-      redirect(`/quotes/${id}?saved=accepted&warn=invoice_skipped`);
-    }
-    // Pass job_id through so revenue from accepted quotes (including
-    // variations) rolls up on the dashboard. due_date defaults to net-14
-    // so the customer always sees a concrete payment deadline.
-    const { data: newInvoice, error: invErr } = await supabase
-      .from("invoices")
-      .insert({
-        org_id: ctx.org.id,
-        quote_id: quote.id,
-        // Denormalised customer anchor (Issue #349 Phase 1) — stamped from the
-        // quote at creation so the invoice keeps its customer identity if the
-        // quote is later deleted. Composite FK guarantees same-org.
-        customer_id: quote.customer_id,
-        number: invNumber as unknown as string,
-        amount: quote.subtotal,
-        vat_total: quote.vat_total,
-        status: "draft",
-        job_id: jobId,
-        due_date: invoiceDueDate(now),
-      })
-      .select("id")
-      .single();
-    if (invErr || !newInvoice) {
-      console.error("[quotes] auto-invoice failed", invErr);
-      redirect(`/quotes/${id}?saved=accepted&warn=invoice_skipped`);
-    }
-    invoiceId = newInvoice.id;
-    createdInvoice = true;
-  }
+  // This used to be hand-rolled here as separate statements (insert job, update
+  // backlink, read invoice, allocate number, insert invoice). Any of them could
+  // fail after the earlier ones had committed, and an invoice failure redirected
+  // away BEFORE the lead was advanced and `quote.accepted` was dispatched — so a
+  // number-allocation blip also silently dropped the automation and left the
+  // pipeline stale. The step is now all-or-nothing, and the rest of the accept
+  // runs regardless; only the final redirect carries the warning.
+  //
+  // The org passed is the ACTIVE org (never the fetched row's): the function
+  // pins the quote to it, so nothing here can land in another tenant.
+  const artifacts = await ensureJobAndInvoiceForAcceptedQuote(
+    supabase,
+    ctx.org.id,
+    quote,
+    now,
+  );
 
   // Auto-email the invoice PDF to the customer. Best-effort: a send
   // failure (missing key, customer has no email, Resend rejection) does
@@ -1216,8 +1171,8 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
   // owner can manually re-send from /invoices/[id]. Only email a freshly
   // created invoice — reusing an existing one means the customer was
   // already sent it on the first accept.
-  if (createdInvoice && invoiceId) {
-    const emailRes = await sendInvoiceEmail(supabase, invoiceId, {
+  if (artifacts.createdInvoice && artifacts.invoiceId) {
+    const emailRes = await sendInvoiceEmail(supabase, artifacts.invoiceId, {
       orgId: ctx.org.id,
     });
     if (!emailRes.sent) {
@@ -1261,7 +1216,13 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
   revalidatePath("/quotes");
   revalidatePath(`/quotes/${id}`);
   revalidatePath("/leads");
-  redirect(`/quotes/${id}?saved=accepted`);
+  // Tell the truth: the quote IS accepted, but if the job+invoice step failed
+  // (it rolled back as a unit) say so — pressing Accept again retries it.
+  redirect(
+    artifacts.invoiceId
+      ? `/quotes/${id}?saved=accepted`
+      : `/quotes/${id}?saved=accepted&warn=invoice_skipped`,
+  );
 }
 
 export async function declineQuoteAsOwner(id: string) {
@@ -1319,83 +1280,101 @@ type AcceptedQuote = {
 };
 
 /**
- * Ensure the job + draft invoice that an accepted quote implies EXIST, idempotently.
+ * Ensure the job + draft invoice that an accepted quote implies EXIST —
+ * ATOMICALLY and EXACTLY ONCE.
  *
- * IDEMPOTENT + HEALING: reuses the quote's existing job (variations carry the parent's
- * job_id) and ANY invoice already linked to the quote (org-scoped) rather than creating
- * duplicates. This is both the in-code half of the partial unique index on
- * invoices(quote_id) — so a concurrent double-accept can't double-bill — and the backfill
- * that heals a partial first accept (status set to 'accepted' but the invoice insert
- * failed, which the old blanket early-return left broken forever). Best-effort: a failure
- * is logged and surfaced via the returned flags, never thrown — acceptance already
- * succeeded. Used by both acceptQuoteByToken paths (first accept + re-accept backfill).
+ * The whole step is ONE database transaction (`ensure_accepted_quote_artifacts`,
+ * migration 20261324000000): it locks the quote row, creates the job + backlink
+ * only if the quote has none, and reuses-or-creates the invoice under a per-org
+ * number lock. It used to be five separate PostgREST statements, which left
+ * three reachable bad states (all reproduced on real Postgres —
+ * __tests__/integration/resilience/quote-accept-atomic.test.ts):
+ *
+ *   • concurrent accepts each read `job_id IS NULL` and each inserted a JOB;
+ *   • two quotes accepted at the same moment were handed the same invoice
+ *     number, and the loser was left accepted-but-INVOICE-LESS with only a log;
+ *   • a failed invoice step left the job (and backlink) committed without it.
+ *
+ * IDEMPOTENT + HEALING: a second call reuses what exists and creates only what
+ * is missing, so BOTH accept paths call it on a re-accept of an
+ * already-accepted quote to heal a partial first accept.
+ *
+ * Never throws: acceptance has already been recorded by the caller, and a
+ * failure here rolls the artifacts back as a unit (nothing half-written). The
+ * failure is reported (Sentry + log) and returned as `ok: false` so the caller
+ * can tell the user the truth instead of implying an invoice exists.
+ *
+ * `client` is the tenant client on the owner path (the function is SECURITY
+ * INVOKER — the caller's RLS applies) and the admin client on the public token
+ * path. `orgId` is the ACTIVE org on the owner path; a quote in another org is
+ * "not found" inside the function, never acted on.
  */
 async function ensureJobAndInvoiceForAcceptedQuote(
-  admin: ReturnType<typeof createAdminClient>,
+  client: Pick<Awaited<ReturnType<typeof createClient>>, "from" | "rpc">,
+  orgId: string,
   quote: AcceptedQuote,
   now: string,
-): Promise<{ jobId: string | null; invoiceId: string | null; createdInvoice: boolean }> {
-  // JOB — reuse the quote's job (variations already carry it); else create for a customer.
-  let jobId = quote.job_id ?? null;
-  if (!jobId && quote.customer_id) {
-    const carry = await buildJobCarryFromQuote(admin, quote.org_id, quote);
-    const { data: newJob, error: jobErr } = await admin
-      .from("jobs")
-      .insert({
-        org_id: quote.org_id,
-        customer_id: quote.customer_id,
-        status: "new",
-        site_address_line1: carry.site_address_line1,
-        notes: carry.notes,
-      })
-      .select("id")
-      .single();
-    if (jobErr) console.error("[quotes] auto-job failed", jobErr);
-    else if (newJob?.id) {
-      jobId = newJob.id;
-      await admin.from("quotes").update({ job_id: jobId }).eq("id", quote.id);
-    }
+): Promise<{
+  ok: boolean;
+  jobId: string | null;
+  invoiceId: string | null;
+  createdInvoice: boolean;
+}> {
+  // The job carry (site address + scope notes) is only needed when a job will
+  // be created; it is best-effort enrichment and never blocks the step.
+  const carry =
+    !quote.job_id && quote.customer_id
+      ? await buildJobCarryFromQuote(client, orgId, quote)
+      : null;
+
+  // `ensure_accepted_quote_artifacts` is not in the generated Supabase types
+  // yet — the established cast idiom (see payments/allocate-actions.ts).
+  const { data, error } = await (
+    client.rpc as unknown as (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => PromiseLike<{
+      data: {
+        job_id?: string | null;
+        invoice_id?: string | null;
+        created_invoice?: boolean;
+      } | null;
+      error: { message: string; code?: string; details?: string; hint?: string } | null;
+    }>
+  )("ensure_accepted_quote_artifacts", {
+    p_org_id: orgId,
+    p_quote_id: quote.id,
+    p_job_site_address: carry?.site_address_line1 ?? null,
+    p_job_notes: carry?.notes ?? null,
+    p_due_date: invoiceDueDate(now),
+  });
+
+  if (error || !data) {
+    // LOUD. The quote is accepted and has no invoice; nothing else will tell a
+    // human. The transaction rolled back, so there is no orphan job to clean up
+    // and the next accept (either path) retries the whole step.
+    const failure = new Error(
+      `quote accept: job+invoice step failed for quote ${quote.id}: ` +
+        `${error?.code ? `[${error.code}] ` : ""}${error?.message ?? "no result"}`,
+    );
+    Sentry.captureException(failure);
+    console.error("[quotes] accepted quote left without job/invoice (rolled back, will heal on re-accept)", {
+      quoteId: quote.id,
+      orgId,
+      code: error?.code,
+      message: error?.message,
+      details: error?.details,
+      hint: error?.hint,
+    });
+    return { ok: false, jobId: quote.job_id ?? null, invoiceId: null, createdInvoice: false };
   }
 
-  // INVOICE — reuse any invoice already linked to this quote (idempotency + backfill);
-  // only allocate a number + insert when none exists, so we never double-bill.
-  const { data: existingInvoice } = await admin
-    .from("invoices")
-    .select("id")
-    .eq("quote_id", quote.id)
-    .eq("org_id", quote.org_id)
-    .limit(1)
-    .maybeSingle();
-  let invoiceId = (existingInvoice as { id?: string } | null)?.id ?? null;
-  let createdInvoice = false;
-  if (!invoiceId) {
-    const { data: invNumber } = await admin.rpc("next_invoice_number", {
-      target_org: quote.org_id,
-    });
-    if (invNumber) {
-      const { data: newInvoice, error: invErr } = await admin
-        .from("invoices")
-        .insert({
-          org_id: quote.org_id,
-          quote_id: quote.id,
-          customer_id: quote.customer_id,
-          number: invNumber as unknown as string,
-          amount: quote.subtotal,
-          vat_total: quote.vat_total,
-          status: "draft",
-          job_id: jobId,
-          due_date: invoiceDueDate(now),
-        })
-        .select("id")
-        .single();
-      if (invErr) console.error("[quotes] auto-invoice failed", invErr);
-      else {
-        invoiceId = newInvoice?.id ?? null;
-        createdInvoice = Boolean(invoiceId);
-      }
-    }
-  }
-  return { jobId, invoiceId, createdInvoice };
+  return {
+    ok: true,
+    jobId: data.job_id ?? null,
+    invoiceId: data.invoice_id ?? null,
+    createdInvoice: Boolean(data.created_invoice && data.invoice_id),
+  };
 }
 
 export async function acceptQuoteByToken(
@@ -1424,7 +1403,7 @@ export async function acceptQuoteByToken(
   // one-time signature/status writes but still run the idempotent job+invoice ensure
   // (which reuses any linked invoice — no double-bill — and backfills a missing one).
   if (quote.status === "accepted") {
-    const healed = await ensureJobAndInvoiceForAcceptedQuote(admin, quote, now);
+    const healed = await ensureJobAndInvoiceForAcceptedQuote(admin, quote.org_id, quote, now);
     if (healed.createdInvoice && healed.invoiceId) {
       const emailRes = await sendInvoiceEmail(admin, healed.invoiceId);
       if (!emailRes.sent) console.warn("[quotes] backfilled-invoice email skipped", emailRes);
@@ -1514,6 +1493,7 @@ export async function acceptQuoteByToken(
   // profitability dashboard via the invoice's job_id.
   const { invoiceId: newInvoiceId, createdInvoice } = await ensureJobAndInvoiceForAcceptedQuote(
     admin,
+    quote.org_id,
     quote,
     now,
   );

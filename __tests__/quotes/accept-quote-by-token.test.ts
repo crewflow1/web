@@ -6,10 +6,23 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  *
  * Mocks the Supabase admin client and the sendInvoiceEmail helper so the
  * tests stay fast and pure (no DB, no PDF, no network). What we verify:
- *   1. accept once → invoice INSERT called with correct totals
- *   2. accept twice → second call exits early, no second invoice insert
- *   3. decline → no invoice insert
- *   4. invoice payload amount == quote.subtotal AND vat_total == quote.vat_total
+ *   1. accept once → the atomic job+invoice step runs ONCE, pinned to the
+ *      quote's org, with the net-14 due date; a fresh invoice is emailed
+ *   2. accept twice → the step is re-run (it is idempotent and HEALS a partial
+ *      first accept) but nothing is re-emailed when the invoice is reused
+ *   3. decline → no job/invoice step at all
+ *   4. a FAILED step is reported, never silently treated as success
+ *
+ * WHAT MOVED TO THE DATABASE. The job + invoice are no longer separate
+ * PostgREST inserts made from this file — they are one transaction inside
+ * `ensure_accepted_quote_artifacts` (migration 20261324000000). So the
+ * assertions that used to inspect the INSERT payloads ("amount == subtotal",
+ * "invoice carries the job id", "no second job for a variation", "no duplicate
+ * invoice") cannot be made against a mock any more, and are made against REAL
+ * Postgres instead, where they are stronger:
+ * __tests__/integration/resilience/quote-accept-atomic.test.ts. What stays here
+ * is the part that IS application logic: which path calls the step, with what
+ * arguments, and what the user is told when it fails.
  */
 
 // -- Mock factory --------------------------------------------------------
@@ -40,6 +53,7 @@ function makeMockSupabase() {
   };
   const inserts: unknown[] = [];
   const updates: unknown[] = [];
+  const rpcCalls: { fn: string; args: Record<string, unknown> }[] = [];
 
   function pop(key: keyof Queues): QueueEntry {
     const entry = queue[key].shift();
@@ -103,7 +117,10 @@ function makeMockSupabase() {
 
   const client = {
     from: () => makeChain(),
-    rpc: async () => pop("rpc"),
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      rpcCalls.push({ fn, args });
+      return pop("rpc");
+    },
   };
 
   return {
@@ -111,6 +128,7 @@ function makeMockSupabase() {
     queue,
     inserts,
     updates,
+    rpcCalls,
     enqueue(key: keyof Queues, entry: QueueEntry) {
       queue[key].push(entry);
     },
@@ -139,8 +157,12 @@ vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
 }));
 
+// redirect() THROWS in production (it never returns). Mirror that, so a test
+// can assert exactly where the action sent the user and nothing runs past it.
 vi.mock("next/navigation", () => ({
-  redirect: vi.fn(),
+  redirect: vi.fn((url: string) => {
+    throw new Error(`REDIRECT:${url}`);
+  }),
 }));
 
 // requireOrgContext is only used by owner-path; stub it too.
@@ -211,154 +233,150 @@ beforeEach(() => {
   mockAdmin.queue.select.length = 0;
   mockAdmin.inserts.length = 0;
   mockAdmin.updates.length = 0;
+  mockAdmin.rpcCalls.length = 0;
   sendInvoiceEmailMock.mockClear();
 });
+
+/** The atomic job+invoice step's calls (there must never be more than one per accept). */
+const ensureCalls = () =>
+  mockAdmin.rpcCalls.filter((c) => c.fn === "ensure_accepted_quote_artifacts");
+
+/** No job or invoice is ever written from application code any more. */
+function expectNoDirectJobOrInvoiceInsert() {
+  const direct = mockAdmin.inserts.filter(
+    (p) =>
+      typeof p === "object" &&
+      p !== null &&
+      ("quote_id" in p || ("customer_id" in p && "status" in p)),
+  );
+  expect(direct, "job/invoice must only be created inside the atomic RPC").toHaveLength(0);
+  expect(mockAdmin.rpcCalls.some((c) => c.fn === "next_invoice_number")).toBe(false);
+}
 
 // ------------------------------------------------------------------------
 
 describe("acceptQuoteByToken", () => {
-  it("creates exactly one invoice + one job on first accept, copying totals + linking them", async () => {
+  it("first accept runs the atomic job+invoice step ONCE (org-pinned, net-14) and emails the fresh invoice", async () => {
     // 1. lookup quote by token
     mockAdmin.enqueue("maybeSingle", { data: SAMPLE_QUOTE, error: null });
     // 2. update quote → accepted
     mockAdmin.enqueue("update", { data: null, error: null });
     // 3. insert into signatures polymorphic table (Phase G)
     mockAdmin.enqueue("insert", { data: null, error: null });
-    // 4. insert job (auto-create, returns id via .select().single())
-    mockAdmin.enqueue("insert", { data: { id: "job-uuid-1" }, error: null });
-    // 5. update quote with job_id
-    mockAdmin.enqueue("update", { data: null, error: null });
-    // 5b. invoice-reuse idempotency check — none linked yet
-    mockAdmin.enqueue("maybeSingle", { data: null, error: null });
-    // 6. next_invoice_number rpc
-    mockAdmin.enqueue("rpc", { data: "INV-0001", error: null });
-    // 7. insert invoice
-    mockAdmin.enqueue("insert", { data: { id: "invoice-uuid-1" }, error: null });
+    // 4. the ONE atomic job+invoice step
+    mockAdmin.enqueue("rpc", {
+      data: { job_id: "job-uuid-1", invoice_id: "invoice-uuid-1", created_job: true, created_invoice: true },
+      error: null,
+    });
 
     const res = await actions.acceptQuoteByToken("public-token-1", "Customer Name", "iphash");
 
     expect(res).toEqual({ ok: true, quoteId: "quote-uuid-1" });
 
-    // Exactly one invoice INSERT was attempted with the new job_id
-    const invoiceInserts = mockAdmin.inserts.filter(
-      (p): p is { quote_id: string; amount: number; vat_total: number; status: string; job_id: string | null } =>
-        typeof p === "object" && p !== null && "quote_id" in p,
-    );
-    expect(invoiceInserts).toHaveLength(1);
-    const insertedInvoice = invoiceInserts[0];
-    if (!insertedInvoice) throw new Error("unreachable — already asserted length");
-
-    expect(insertedInvoice).toMatchObject({
-      org_id: SAMPLE_QUOTE.org_id,
-      quote_id: SAMPLE_QUOTE.id,
-      number: "INV-0001",
-      amount: SAMPLE_QUOTE.subtotal,
-      vat_total: SAMPLE_QUOTE.vat_total,
-      status: "draft",
-      job_id: "job-uuid-1",
+    expect(ensureCalls()).toHaveLength(1);
+    expect(ensureCalls()[0]!.args).toMatchObject({
+      // Pinned to the quote's OWN org — the token path has no session org.
+      p_org_id: SAMPLE_QUOTE.org_id,
+      p_quote_id: SAMPLE_QUOTE.id,
       // BUG-03: auto-created invoice carries a net-14 due date, not null.
-      due_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      p_due_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      // The job carry: provenance note for the job the step will create.
+      p_job_notes: expect.stringContaining("Auto-created from accepted quote Q-0001"),
     });
-
-    // Exactly one job INSERT was attempted
-    const jobInserts = mockAdmin.inserts.filter(
-      (p): p is { customer_id: string; status: string } =>
-        typeof p === "object" && p !== null && "customer_id" in p && "status" in p && !("quote_id" in p),
-    );
-    expect(jobInserts).toHaveLength(1);
-    expect(jobInserts[0]).toMatchObject({
-      org_id: SAMPLE_QUOTE.org_id,
-      customer_id: SAMPLE_QUOTE.customer_id,
-      status: "new",
-    });
+    expectNoDirectJobOrInvoiceInsert();
 
     // Auto-email was attempted (no key → no_resend_key, but the call happens)
     expect(sendInvoiceEmailMock).toHaveBeenCalledTimes(1);
-    expect(sendInvoiceEmailMock).toHaveBeenCalledWith(
-      mockAdmin.client,
-      "invoice-uuid-1",
-    );
+    expect(sendInvoiceEmailMock).toHaveBeenCalledWith(mockAdmin.client, "invoice-uuid-1");
   });
 
-  it("does NOT create a second job when the quote is a variation (job_id already set)", async () => {
+  it("a variation (job_id already set) sends NO job carry — the step reuses the parent job", async () => {
     mockAdmin.enqueue("maybeSingle", {
       data: { ...SAMPLE_QUOTE, job_id: "existing-job-uuid", variation_number: 2 },
       error: null,
     });
     mockAdmin.enqueue("update", { data: null, error: null });
-    // Phase G signatures insert
-    mockAdmin.enqueue("insert", { data: null, error: null });
-    // No job-insert queued — variations skip auto-job creation.
-    // invoice-reuse idempotency check — none linked yet
-    mockAdmin.enqueue("maybeSingle", { data: null, error: null });
-    mockAdmin.enqueue("rpc", { data: "INV-0002", error: null });
-    mockAdmin.enqueue("insert", { data: { id: "invoice-uuid-2" }, error: null });
+    mockAdmin.enqueue("insert", { data: null, error: null }); // signatures
+    mockAdmin.enqueue("rpc", {
+      data: { job_id: "existing-job-uuid", invoice_id: "invoice-uuid-2", created_job: false, created_invoice: true },
+      error: null,
+    });
 
     const res = await actions.acceptQuoteByToken("public-token-2", "Customer Name", null);
     expect(res).toEqual({ ok: true, quoteId: "quote-uuid-1" });
 
-    const jobInserts = mockAdmin.inserts.filter(
-      (p): p is { status: string } =>
-        typeof p === "object" && p !== null && "status" in p && p.status === "new" && !("quote_id" in p),
-    );
-    expect(jobInserts).toHaveLength(0);
-
-    // Invoice still carries the existing job_id.
-    const invoiceInserts = mockAdmin.inserts.filter(
-      (p): p is { job_id: string | null } =>
-        typeof p === "object" && p !== null && "quote_id" in p,
-    );
-    expect(invoiceInserts[0]).toMatchObject({ job_id: "existing-job-uuid" });
+    expect(ensureCalls()).toHaveLength(1);
+    expect(ensureCalls()[0]!.args).toMatchObject({ p_job_notes: null, p_job_site_address: null });
+    expectNoDirectJobOrInvoiceInsert();
   });
 
-  it("does NOT create a duplicate invoice when accept is called a second time (reuses existing)", async () => {
+  it("re-accept of a COMPLETE quote re-runs the idempotent step but re-emails nothing", async () => {
     // Lookup returns a quote already 'accepted' with its job + invoice from the first accept.
     mockAdmin.enqueue("maybeSingle", {
       data: { ...SAMPLE_QUOTE, status: "accepted", job_id: "existing-job" },
       error: null,
     });
-    // invoice-reuse check FINDS the invoice the first accept created → no insert, no email.
-    mockAdmin.enqueue("maybeSingle", { data: { id: "invoice-uuid-1" }, error: null });
+    // The step FINDS the invoice the first accept created → reuse, nothing created.
+    mockAdmin.enqueue("rpc", {
+      data: { job_id: "existing-job", invoice_id: "invoice-uuid-1", created_job: false, created_invoice: false },
+      error: null,
+    });
 
     const res = await actions.acceptQuoteByToken("public-token-1", "Customer Name", null);
 
     // Returns ok with the existing quoteId — idempotent
     expect(res).toEqual({ ok: true, quoteId: SAMPLE_QUOTE.id });
 
-    // Critically: no invoice insert, no email send
+    // Critically: no status/signature re-write, no insert of any kind, no email.
+    expect(mockAdmin.updates).toHaveLength(0);
     expect(mockAdmin.inserts).toHaveLength(0);
     expect(sendInvoiceEmailMock).not.toHaveBeenCalled();
   });
 
-  it("BACKFILLS a missing invoice on re-accept (heals a partial first accept)", async () => {
-    // Already 'accepted' (status was set) BUT the first accept's invoice insert had failed,
-    // so NO invoice is linked. The old blanket early-return left this broken forever; the
-    // re-accept must now create the missing invoice (and email it), not no-op.
+  it("BACKFILLS a missing invoice on re-accept (heals a partial first accept) and emails it", async () => {
+    // Already 'accepted' BUT the first accept's job+invoice step had failed, so NO
+    // invoice is linked. The re-accept must run the step again (and email the
+    // invoice it creates), not no-op.
     mockAdmin.enqueue("maybeSingle", {
       data: { ...SAMPLE_QUOTE, status: "accepted", job_id: "existing-job" },
       error: null,
     });
-    mockAdmin.enqueue("maybeSingle", { data: null, error: null }); // no invoice linked yet
-    mockAdmin.enqueue("rpc", { data: "INV-0009", error: null });
-    mockAdmin.enqueue("insert", { data: { id: "invoice-backfilled" }, error: null });
+    mockAdmin.enqueue("rpc", {
+      data: { job_id: "existing-job", invoice_id: "invoice-backfilled", created_job: false, created_invoice: true },
+      error: null,
+    });
 
     const res = await actions.acceptQuoteByToken("public-token-1", "Customer Name", null);
     expect(res).toEqual({ ok: true, quoteId: SAMPLE_QUOTE.id });
 
-    const invoiceInserts = mockAdmin.inserts.filter(
-      (p): p is { quote_id: string; job_id: string | null; status: string } =>
-        typeof p === "object" && p !== null && "quote_id" in p,
-    );
-    expect(invoiceInserts).toHaveLength(1);
-    expect(invoiceInserts[0]).toMatchObject({
-      quote_id: SAMPLE_QUOTE.id,
-      job_id: "existing-job",
-      status: "draft",
-    });
+    expect(ensureCalls()).toHaveLength(1);
     expect(sendInvoiceEmailMock).toHaveBeenCalledWith(mockAdmin.client, "invoice-backfilled");
   });
 
-  it("returns error and does NOT insert invoice when quote is already declined", async () => {
+  it("FAULT: the job+invoice step fails → acceptance stands, nothing is emailed, the failure is logged loudly", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockAdmin.enqueue("maybeSingle", { data: SAMPLE_QUOTE, error: null });
+    mockAdmin.enqueue("update", { data: null, error: null });
+    mockAdmin.enqueue("insert", { data: null, error: null }); // signatures
+    // The database is unavailable / the transaction aborted and rolled back.
+    mockAdmin.enqueue("rpc", { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } });
+
+    const res = await actions.acceptQuoteByToken("public-token-1", "Customer Name", null);
+
+    // The customer's decision was recorded and is not thrown away…
+    expect(res).toEqual({ ok: true, quoteId: SAMPLE_QUOTE.id });
+    // …but no invoice exists, so none may be emailed, and nothing was written
+    // piecemeal from here (the DB rolled the step back as a unit).
+    expect(sendInvoiceEmailMock).not.toHaveBeenCalled();
+    expectNoDirectJobOrInvoiceInsert();
+    expect(
+      errorSpy.mock.calls.some((c) => String(c[0]).includes("accepted quote left without job/invoice")),
+      "the invoice-less state must be loud, not a silent log line",
+    ).toBe(true);
+    errorSpy.mockRestore();
+  });
+
+  it("returns error and does NOT run the job+invoice step when quote is already declined", async () => {
     mockAdmin.enqueue("maybeSingle", {
       data: { ...SAMPLE_QUOTE, status: "declined" },
       error: null,
@@ -368,70 +386,42 @@ describe("acceptQuoteByToken", () => {
 
     expect(res).toEqual({ ok: false, error: "Quote already declined" });
     expect(mockAdmin.inserts).toHaveLength(0);
+    expect(ensureCalls()).toHaveLength(0);
     expect(sendInvoiceEmailMock).not.toHaveBeenCalled();
   });
 });
 
 describe("acceptQuoteAsOwner", () => {
   // Owner accepts "on the customer's behalf" (e.g. confirmed by phone).
-  // redirect() is mocked as a no-op so the action runs to completion and we
-  // can inspect the inserts/updates it performed.
+  // redirect() throws (as in production), so each test asserts the destination.
   const ownerFormData = {
     get: (k: string) => (k === "signer_name" ? "Owner Test" : null),
   } as unknown as FormData;
 
-  it("creates a job, links the invoice to it, and sets a net-14 due date (BUG-03 + BUG-04)", async () => {
+  it("accepts, runs the atomic job+invoice step in the ACTIVE org, emails the fresh invoice, redirects saved=accepted", async () => {
     // 1. idempotency pre-read: quote not yet accepted → no short-circuit
-    mockAdmin.enqueue("maybeSingle", { data: { status: "sent" }, error: null });
+    mockAdmin.enqueue("maybeSingle", { data: { ...SAMPLE_QUOTE, status: "sent" }, error: null });
     // 2. update quote → accepted (returns the quote row via .select().single())
     mockAdmin.enqueue("update", { data: SAMPLE_QUOTE, error: null });
-    // 3. insert job (auto-create, returns id via .select().single())
-    mockAdmin.enqueue("insert", { data: { id: "owner-job-1" }, error: null });
-    // 4. update quote with the new job_id (backlink)
-    mockAdmin.enqueue("update", { data: null, error: null });
-    // 5. existing-invoice lookup for this quote → none yet
-    mockAdmin.enqueue("maybeSingle", { data: null, error: null });
-    // 6. next_invoice_number rpc
-    mockAdmin.enqueue("rpc", { data: "INV-0009", error: null });
-    // 7. insert invoice
-    mockAdmin.enqueue("insert", { data: { id: "owner-invoice-1" }, error: null });
-    // 8. lead lookup (no linked lead)
+    // 3. the ONE atomic job+invoice step
+    mockAdmin.enqueue("rpc", {
+      data: { job_id: "owner-job-1", invoice_id: "owner-invoice-1", created_job: true, created_invoice: true },
+      error: null,
+    });
+    // 4. lead lookup (no linked lead)
     mockAdmin.enqueue("maybeSingle", { data: { lead_id: null }, error: null });
 
-    await actions.acceptQuoteAsOwner("quote-uuid-1", ownerFormData);
-
-    // Exactly one job was created from the accepted quote.
-    const jobInserts = mockAdmin.inserts.filter(
-      (p): p is { org_id: string; customer_id: string; status: string } =>
-        typeof p === "object" &&
-        p !== null &&
-        "customer_id" in p &&
-        "status" in p &&
-        !("quote_id" in p),
+    await expect(actions.acceptQuoteAsOwner("quote-uuid-1", ownerFormData)).rejects.toThrow(
+      "REDIRECT:/quotes/quote-uuid-1?saved=accepted",
     );
-    expect(jobInserts).toHaveLength(1);
-    expect(jobInserts[0]).toMatchObject({
-      org_id: SAMPLE_QUOTE.org_id,
-      customer_id: SAMPLE_QUOTE.customer_id,
-      status: "new",
-    });
 
-    // Exactly one invoice, linked to that job, with a net-14 due date.
-    const invoiceInserts = mockAdmin.inserts.filter(
-      (p): p is { quote_id: string; job_id: string | null; due_date: string } =>
-        typeof p === "object" && p !== null && "quote_id" in p,
-    );
-    expect(invoiceInserts).toHaveLength(1);
-    expect(invoiceInserts[0]).toMatchObject({
-      org_id: SAMPLE_QUOTE.org_id,
-      quote_id: SAMPLE_QUOTE.id,
-      number: "INV-0009",
-      amount: SAMPLE_QUOTE.subtotal,
-      vat_total: SAMPLE_QUOTE.vat_total,
-      status: "draft",
-      job_id: "owner-job-1",
-      due_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    expect(ensureCalls()).toHaveLength(1);
+    expect(ensureCalls()[0]!.args).toMatchObject({
+      p_org_id: "org-uuid-1", // the ACTIVE org from the session, never the row's
+      p_quote_id: SAMPLE_QUOTE.id,
+      p_due_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
     });
+    expectNoDirectJobOrInvoiceInsert();
 
     // Invoice email send was attempted against the new invoice, carrying the
     // ACTIVE org so the helper re-applies the scope to its own load — this
@@ -445,88 +435,91 @@ describe("acceptQuoteAsOwner", () => {
     );
   });
 
-  it("does NOT create a second job for a variation, but still links the invoice to the existing job", async () => {
-    // idempotency pre-read: not yet accepted → no short-circuit
-    mockAdmin.enqueue("maybeSingle", { data: { status: "sent" }, error: null });
-    mockAdmin.enqueue("update", {
-      data: { ...SAMPLE_QUOTE, job_id: "existing-job-9", variation_number: 2 },
-      error: null,
-    });
-    // No job insert queued — variations reuse the parent job.
-    // existing-invoice lookup → none yet
-    mockAdmin.enqueue("maybeSingle", { data: null, error: null });
-    mockAdmin.enqueue("rpc", { data: "INV-0010", error: null });
-    mockAdmin.enqueue("insert", { data: { id: "owner-invoice-2" }, error: null });
-    mockAdmin.enqueue("maybeSingle", { data: { lead_id: null }, error: null });
+  it("FAULT: the job+invoice step fails → STILL advances the lead, then redirects with warn=invoice_skipped (never plain success)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockAdmin.enqueue("maybeSingle", { data: { ...SAMPLE_QUOTE, status: "sent" }, error: null });
+    mockAdmin.enqueue("update", { data: SAMPLE_QUOTE, error: null });
+    mockAdmin.enqueue("rpc", { data: null, error: { code: "40001", message: "could not serialize access" } });
+    // The accept continues: lead lookup finds a linked lead → advanced to won.
+    mockAdmin.enqueue("maybeSingle", { data: { lead_id: "lead-uuid-1" }, error: null });
+    mockAdmin.enqueue("update", { data: null, error: null });
 
-    await actions.acceptQuoteAsOwner("quote-uuid-1", ownerFormData);
-
-    const jobInserts = mockAdmin.inserts.filter(
-      (p): p is { status: string } =>
-        typeof p === "object" &&
-        p !== null &&
-        "status" in p &&
-        p.status === "new" &&
-        !("quote_id" in p),
+    await expect(actions.acceptQuoteAsOwner("quote-uuid-1", ownerFormData)).rejects.toThrow(
+      "REDIRECT:/quotes/quote-uuid-1?saved=accepted&warn=invoice_skipped",
     );
-    expect(jobInserts).toHaveLength(0);
 
-    const invoiceInserts = mockAdmin.inserts.filter(
-      (p): p is { job_id: string | null } =>
-        typeof p === "object" && p !== null && "quote_id" in p,
-    );
-    expect(invoiceInserts).toHaveLength(1);
-    expect(invoiceInserts[0]).toMatchObject({ job_id: "existing-job-9" });
+    // Before the fix an invoice failure redirected away BEFORE this write.
+    expect(mockAdmin.updates).toContainEqual(expect.objectContaining({ status: "won" }));
+    expect(sendInvoiceEmailMock).not.toHaveBeenCalled();
+    expectNoDirectJobOrInvoiceInsert();
+    errorSpy.mockRestore();
   });
 
-  it("is idempotent: re-accepting an already-accepted quote posts NO second invoice, job, or email", async () => {
-    // Owner clicks accept again (or accepts a quote the customer already
-    // accepted via the portal). The pre-read sees status=accepted.
-    mockAdmin.enqueue("maybeSingle", { data: { status: "accepted" }, error: null });
-    // In production redirect() throws here and we stop. The test mock makes
-    // redirect a no-op, so execution falls through — which lets us prove the
-    // SECOND line of defence (the existing-invoice guard) also holds: the
-    // re-stamp UPDATE returns a quote that already has a job + invoice.
-    mockAdmin.enqueue("update", {
+  it("re-accept of an already-accepted quote HEALS: runs only the idempotent step, never re-stamps the acceptance", async () => {
+    // Owner clicks accept again after a `warn=invoice_skipped`. The pre-read sees
+    // status=accepted with no job. This used to redirect saved=accepted having
+    // created nothing — the quote stayed invoice-less and the retry said "done".
+    mockAdmin.enqueue("maybeSingle", {
+      data: { ...SAMPLE_QUOTE, status: "accepted" },
+      error: null,
+    });
+    mockAdmin.enqueue("rpc", {
+      data: { job_id: "healed-job", invoice_id: "healed-invoice", created_job: true, created_invoice: true },
+      error: null,
+    });
+
+    await expect(actions.acceptQuoteAsOwner("quote-uuid-1", ownerFormData)).rejects.toThrow(
+      "REDIRECT:/quotes/quote-uuid-1?saved=accepted",
+    );
+
+    expect(ensureCalls()).toHaveLength(1);
+    // The acceptance itself (status / accepted_at / signature) is NOT rewritten.
+    expect(mockAdmin.updates).toHaveLength(0);
+    // The backfilled invoice is new to the customer → emailed once.
+    expect(sendInvoiceEmailMock).toHaveBeenCalledTimes(1);
+    expect(sendInvoiceEmailMock).toHaveBeenCalledWith(mockAdmin.client, "healed-invoice", { orgId: "org-uuid-1" });
+  });
+
+  it("re-accept of a COMPLETE quote is a clean no-op: nothing created, nothing emailed", async () => {
+    mockAdmin.enqueue("maybeSingle", {
       data: { ...SAMPLE_QUOTE, status: "accepted", job_id: "existing-job-x" },
       error: null,
     });
-    // existing-invoice lookup → an invoice already exists for this quote
-    mockAdmin.enqueue("maybeSingle", { data: { id: "existing-inv-x" }, error: null });
-    // lead lookup
-    mockAdmin.enqueue("maybeSingle", { data: { lead_id: null }, error: null });
+    mockAdmin.enqueue("rpc", {
+      data: { job_id: "existing-job-x", invoice_id: "existing-inv-x", created_job: false, created_invoice: false },
+      error: null,
+    });
 
-    await actions.acceptQuoteAsOwner("quote-uuid-1", ownerFormData);
+    await expect(actions.acceptQuoteAsOwner("quote-uuid-1", ownerFormData)).rejects.toThrow(
+      "REDIRECT:/quotes/quote-uuid-1?saved=accepted",
+    );
 
-    // No job insert (job_id already set) AND no invoice insert (reused).
     expect(mockAdmin.inserts).toHaveLength(0);
+    expect(mockAdmin.updates).toHaveLength(0);
     // No duplicate email — the customer already got the invoice on first accept.
     expect(sendInvoiceEmailMock).not.toHaveBeenCalled();
   });
 
-  it("reuses an existing invoice for the quote rather than inserting a duplicate", async () => {
-    // Status guard bypassed (quote not flagged accepted yet) but an invoice
-    // already exists — e.g. a concurrent submit that raced past the pre-read.
-    // The existing-invoice guard must still prevent a duplicate insert.
-    mockAdmin.enqueue("maybeSingle", { data: { status: "sent" }, error: null });
-    mockAdmin.enqueue("update", {
-      data: { ...SAMPLE_QUOTE, job_id: "existing-job-y" },
-      error: null,
-    });
-    // existing-invoice lookup → found
-    mockAdmin.enqueue("maybeSingle", { data: { id: "existing-inv-y" }, error: null });
-    // lead lookup
-    mockAdmin.enqueue("maybeSingle", { data: { lead_id: null }, error: null });
+  it("FAULT: re-accept heal that STILL cannot create the invoice keeps the warning up (no false success)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockAdmin.enqueue("maybeSingle", { data: { ...SAMPLE_QUOTE, status: "accepted" }, error: null });
+    mockAdmin.enqueue("rpc", { data: null, error: { code: "53300", message: "too many connections" } });
 
-    await actions.acceptQuoteAsOwner("quote-uuid-1", ownerFormData);
-
-    const invoiceInserts = mockAdmin.inserts.filter(
-      (p): p is { quote_id: string } =>
-        typeof p === "object" && p !== null && "quote_id" in p,
+    await expect(actions.acceptQuoteAsOwner("quote-uuid-1", ownerFormData)).rejects.toThrow(
+      "REDIRECT:/quotes/quote-uuid-1?saved=accepted&warn=invoice_skipped",
     );
-    expect(invoiceInserts).toHaveLength(0);
-    // No re-email when an invoice is reused.
     expect(sendInvoiceEmailMock).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("FAULT: the pre-read itself fails → throws loudly, writes NOTHING (a failed read is not 'not accepted yet')", async () => {
+    mockAdmin.enqueue("maybeSingle", { data: null, error: { code: "PGRST000", message: "connection refused" } });
+
+    await expect(actions.acceptQuoteAsOwner("quote-uuid-1", ownerFormData)).rejects.toThrow(
+      /quote accept: quote read failed/,
+    );
+    expect(mockAdmin.updates).toHaveLength(0);
+    expect(ensureCalls()).toHaveLength(0);
   });
 });
 

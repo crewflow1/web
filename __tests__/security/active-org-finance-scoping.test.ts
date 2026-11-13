@@ -246,17 +246,65 @@ describe("quotes actions — reads and writes pinned to the active org", () => {
     // job and an invoice, and emailed it, in THAT org.
     expect(F).not.toMatch(/org_id: quote\.org_id/);
     expect(F).not.toMatch(/target_org: quote\.org_id/);
-    expect(F).toMatch(/target_org: ctx\.org\.id/);
     expect(F).toMatch(/org_id: ctx\.org\.id/);
+
+    // The job + invoice (and the number allocation) are no longer hand-rolled
+    // statements in this function: since migration 20261324000000 they are ONE
+    // atomic database function, reached through the shared helper. The invariant
+    // is unchanged and is pinned at every link of the new chain:
+    //
+    //   (1) every helper call in the OWNER path passes the ACTIVE org
+    //       (ctx.org.id) — never an org read off the quote row;
+    const calls = [...F.matchAll(/ensureJobAndInvoiceForAcceptedQuote\(\s*([^,]+),\s*([^,]+),/g)];
+    expect(calls.length, "first accept + re-accept heal").toBe(2);
+    for (const c of calls) {
+      expect(c[1]!.trim()).toBe("supabase"); // the tenant (RLS) client, not service-role
+      expect(c[2]!.trim()).toBe("ctx.org.id");
+    }
+    //   (2) the helper forwards exactly that org as the function's pin;
+    // (module-private, so sliced by hand: fn() resolves exported actions only)
+    const hStart = ACTIONS.indexOf("async function ensureJobAndInvoiceForAcceptedQuote(");
+    const hEnd = ACTIONS.indexOf("export async function acceptQuoteByToken(");
+    expect(hStart).toBeGreaterThan(-1);
+    expect(hEnd).toBeGreaterThan(hStart);
+    const H = ACTIONS.slice(hStart, hEnd);
+    expect(H).toMatch(/p_org_id: orgId/);
+    expect(H).not.toMatch(/p_org_id: quote\.org_id/);
+    //   (3) the function resolves the quote ONLY inside that org, and stamps the
+    //       job, the backlink, the invoice and the number allocation from the
+    //       pin — never from the row it read.
+    const SQL = src("supabase/migrations/20261324000000_quote_acceptance_artifacts_atomic.sql");
+    expect(SQL).toMatch(/from public\.quotes\s+where id = p_quote_id and org_id = p_org_id\s+for update/);
+    expect(SQL).toMatch(/insert into public\.jobs \(org_id,[^)]*\)\s*values \(p_org_id,/);
+    expect(SQL).toMatch(/insert into public\.invoices\s*\(org_id,[^)]*\)\s*values\s*\(p_org_id,/);
+    expect(SQL).toMatch(/next_invoice_number\(p_org_id\)/);
+    expect(SQL).not.toMatch(/v_quote\.org_id/);
+    //   (4) and it is SECURITY INVOKER with a membership fence, so it adds no
+    //       privilege over the hand-rolled statements it replaced.
+    expect(SQL).toMatch(/security invoker/);
+    expect(SQL).toMatch(/p_org_id not in \(select public\.current_org_ids\(\)\)/);
+    expect(SQL).toMatch(/errcode = '42501'/);
   });
 
   it("acceptQuoteAsOwner scopes the accepting UPDATE before anything downstream runs", () => {
     const F = fn(ACTIONS, "acceptQuoteAsOwner");
+    // The very first org scope (the pre-read) precedes every downstream step…
     const scope = F.indexOf('.eq("org_id", ctx.org.id)');
-    const job = F.indexOf('from("jobs")');
+    const firstStep = F.indexOf("ensureJobAndInvoiceForAcceptedQuote(");
     expect(scope).toBeGreaterThan(-1);
-    expect(job).toBeGreaterThan(-1);
-    expect(scope).toBeLessThan(job);
+    expect(firstStep).toBeGreaterThan(-1);
+    expect(scope).toBeLessThan(firstStep);
+    // …and the accepting UPDATE carries its own org scope, which precedes the
+    // job+invoice step that follows it (the step is the only thing that creates
+    // a job or an invoice — there is no from("jobs") left in this function).
+    const update = F.indexOf('status: "accepted"');
+    const updateScope = F.indexOf('.eq("org_id", ctx.org.id)', update);
+    const stepAfterUpdate = F.indexOf("ensureJobAndInvoiceForAcceptedQuote(", update);
+    expect(update).toBeGreaterThan(-1);
+    expect(updateScope).toBeGreaterThan(update);
+    expect(stepAfterUpdate).toBeGreaterThan(updateScope);
+    expect(F).not.toMatch(/from\("jobs"\)/);
+    expect(F).not.toMatch(/from\("invoices"\)/);
   });
 
   it("acceptQuoteAsOwner passes the active org into the auto-email", () => {
