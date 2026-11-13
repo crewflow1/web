@@ -228,6 +228,8 @@ describe("acceptQuoteByToken", () => {
     mockAdmin.enqueue("insert", { data: { id: "job-uuid-1" }, error: null });
     // 5. update quote with job_id
     mockAdmin.enqueue("update", { data: null, error: null });
+    // 5b. invoice-reuse idempotency check — none linked yet
+    mockAdmin.enqueue("maybeSingle", { data: null, error: null });
     // 6. next_invoice_number rpc
     mockAdmin.enqueue("rpc", { data: "INV-0001", error: null });
     // 7. insert invoice
@@ -287,6 +289,8 @@ describe("acceptQuoteByToken", () => {
     // Phase G signatures insert
     mockAdmin.enqueue("insert", { data: null, error: null });
     // No job-insert queued — variations skip auto-job creation.
+    // invoice-reuse idempotency check — none linked yet
+    mockAdmin.enqueue("maybeSingle", { data: null, error: null });
     mockAdmin.enqueue("rpc", { data: "INV-0002", error: null });
     mockAdmin.enqueue("insert", { data: { id: "invoice-uuid-2" }, error: null });
 
@@ -307,12 +311,14 @@ describe("acceptQuoteByToken", () => {
     expect(invoiceInserts[0]).toMatchObject({ job_id: "existing-job-uuid" });
   });
 
-  it("does NOT create a duplicate invoice when accept is called a second time", async () => {
-    // Lookup returns a quote that's already in 'accepted' status
+  it("does NOT create a duplicate invoice when accept is called a second time (reuses existing)", async () => {
+    // Lookup returns a quote already 'accepted' with its job + invoice from the first accept.
     mockAdmin.enqueue("maybeSingle", {
-      data: { ...SAMPLE_QUOTE, status: "accepted" },
+      data: { ...SAMPLE_QUOTE, status: "accepted", job_id: "existing-job" },
       error: null,
     });
+    // invoice-reuse check FINDS the invoice the first accept created → no insert, no email.
+    mockAdmin.enqueue("maybeSingle", { data: { id: "invoice-uuid-1" }, error: null });
 
     const res = await actions.acceptQuoteByToken("public-token-1", "Customer Name", null);
 
@@ -322,6 +328,34 @@ describe("acceptQuoteByToken", () => {
     // Critically: no invoice insert, no email send
     expect(mockAdmin.inserts).toHaveLength(0);
     expect(sendInvoiceEmailMock).not.toHaveBeenCalled();
+  });
+
+  it("BACKFILLS a missing invoice on re-accept (heals a partial first accept)", async () => {
+    // Already 'accepted' (status was set) BUT the first accept's invoice insert had failed,
+    // so NO invoice is linked. The old blanket early-return left this broken forever; the
+    // re-accept must now create the missing invoice (and email it), not no-op.
+    mockAdmin.enqueue("maybeSingle", {
+      data: { ...SAMPLE_QUOTE, status: "accepted", job_id: "existing-job" },
+      error: null,
+    });
+    mockAdmin.enqueue("maybeSingle", { data: null, error: null }); // no invoice linked yet
+    mockAdmin.enqueue("rpc", { data: "INV-0009", error: null });
+    mockAdmin.enqueue("insert", { data: { id: "invoice-backfilled" }, error: null });
+
+    const res = await actions.acceptQuoteByToken("public-token-1", "Customer Name", null);
+    expect(res).toEqual({ ok: true, quoteId: SAMPLE_QUOTE.id });
+
+    const invoiceInserts = mockAdmin.inserts.filter(
+      (p): p is { quote_id: string; job_id: string | null; status: string } =>
+        typeof p === "object" && p !== null && "quote_id" in p,
+    );
+    expect(invoiceInserts).toHaveLength(1);
+    expect(invoiceInserts[0]).toMatchObject({
+      quote_id: SAMPLE_QUOTE.id,
+      job_id: "existing-job",
+      status: "draft",
+    });
+    expect(sendInvoiceEmailMock).toHaveBeenCalledWith(mockAdmin.client, "invoice-backfilled");
   });
 
   it("returns error and does NOT insert invoice when quote is already declined", async () => {
