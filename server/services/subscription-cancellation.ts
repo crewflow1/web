@@ -78,6 +78,15 @@ export type CancellationOrg = {
 
 export type CancelActor = { userId: string; email: string | null };
 
+/**
+ * Who started the cancellation. `owner` = the org's owner, self-serve. `hq` = a
+ * CrewFlow operator using the HQ "Cancel" lifecycle action. Same Stripe call,
+ * same ledger, same refund-review flag; they differ only in: the kill switch
+ * (self-serve only), the audit action name, and the confirmation email (an HQ
+ * operator is not sent "you cancelled").
+ */
+export type CancelInitiator = "owner" | "hq";
+
 /** The subset of a Stripe Subscription this module reasons about. */
 export type SubscriptionSnapshot = {
   id: string;
@@ -130,6 +139,7 @@ export type CancellationDeps = {
     subscriptionId: string | null;
     actor: CancelActor;
     reason: string | null;
+    source: CancelInitiator;
   }) => Promise<{ outcome: ClaimOutcome; cancellationId: string | null }>;
   confirm: (args: {
     orgId: string;
@@ -278,9 +288,17 @@ async function resolveTargets(
 
 export async function cancelOrgSubscription(
   deps: CancellationDeps,
-  args: { orgId: string; actor: CancelActor; reason?: string | null },
+  args: {
+    orgId: string;
+    actor: CancelActor;
+    reason?: string | null;
+    initiator?: CancelInitiator;
+  },
 ): Promise<CancelResult> {
-  if (deps.isDisabled()) return fail("disabled");
+  const initiator: CancelInitiator = args.initiator ?? "owner";
+  // The kill switch turns off SELF-SERVE cancellation. HQ must still be able to
+  // stop a customer's billing during the very incident it exists for.
+  if (initiator === "owner" && deps.isDisabled()) return fail("disabled");
 
   const org = await deps.loadOrg(args.orgId);
   if (!org) return fail("org_not_found");
@@ -358,6 +376,7 @@ export async function cancelOrgSubscription(
         subscriptionId: recordedDead.id,
         actor: args.actor,
         reason,
+        source: initiator,
       });
       if (claim.outcome === "org_not_found") return fail("org_not_found");
       if (claim.outcome === "in_flight") return fail("in_progress");
@@ -373,7 +392,7 @@ export async function cancelOrgSubscription(
         // The org was already cancelled: this only recorded what was already
         // true. No alert, no email — nothing happened that anyone needs telling.
         if (org.status === "cancelled") return alreadyCancelled;
-        return finish(deps, org, args.actor, reason, {
+        return finish(deps, org, args.actor, reason, initiator, {
           confirms: [confirmed],
           subscriptionsCancelled: [],
           refund: null,
@@ -394,6 +413,7 @@ export async function cancelOrgSubscription(
       subscriptionId: null,
       actor: args.actor,
       reason,
+      source: initiator,
     });
     if (claim.outcome === "org_not_found") return fail("org_not_found");
     if (claim.outcome === "in_flight") return fail("in_progress");
@@ -407,7 +427,7 @@ export async function cancelOrgSubscription(
       refundReview: "not_applicable",
       details: { note: "no live Stripe subscription", linked_to_stripe: linkedToStripe },
     });
-    return finish(deps, org, args.actor, reason, {
+    return finish(deps, org, args.actor, reason, initiator, {
       confirms: [confirmed],
       subscriptionsCancelled: [],
       refund: null,
@@ -431,6 +451,7 @@ export async function cancelOrgSubscription(
       subscriptionId: sub.id,
       actor: args.actor,
       reason,
+      source: initiator,
     });
     if (claim.outcome === "org_not_found") return fail("org_not_found");
     if (claim.outcome === "in_flight") return fail("in_progress");
@@ -585,7 +606,7 @@ export async function cancelOrgSubscription(
     }
   }
 
-  return finish(deps, org, args.actor, reason, {
+  return finish(deps, org, args.actor, reason, initiator, {
     confirms,
     subscriptionsCancelled: cancelledIds,
     refund,
@@ -602,6 +623,7 @@ async function finish(
   org: CancellationOrg,
   actor: CancelActor,
   reason: string | null,
+  initiator: CancelInitiator,
   r: {
     confirms: ConfirmResult[];
     subscriptionsCancelled: string[];
@@ -621,7 +643,10 @@ async function finish(
   const actedOnStripe = r.subscriptionsCancelled.length > 0;
   if (newly || revoked || actedOnStripe) {
     await deps.recordAudit({
-      action: "billing.subscription_cancelled_by_owner",
+      action:
+        initiator === "hq"
+          ? "billing.subscription_cancelled_by_hq"
+          : "billing.subscription_cancelled_by_owner",
       orgId: org.id,
       actor,
       metadata: {
@@ -645,10 +670,14 @@ async function finish(
   // HQ always hears from the caller that terminated the subscription, because
   // only it knows the refund review and which invoices it stopped collecting.
   if (newly || revoked || actedOnStripe) {
+    const who =
+      initiator === "hq"
+        ? `HQ (${actor.email ?? "unknown operator"}) cancelled this workspace.`
+        : "The owner cancelled in-app.";
     const lines: string[] = [
       r.hadSubscription
-        ? `The owner cancelled in-app. Stripe subscription terminated immediately; workspace access ${revoked ? "revoked" : "was already revoked"}.`
-        : `The owner cancelled in-app. There was no live Stripe subscription; workspace access ${revoked ? "revoked" : "was already revoked"}. Check for any manual billing arrangement.`,
+        ? `${who} Stripe subscription terminated immediately; workspace access ${revoked ? "revoked" : "was already revoked"}.`
+        : `${who} There was no live Stripe subscription; workspace access ${revoked ? "revoked" : "was already revoked"}. Check for any manual billing arrangement.`,
     ];
     if (refundReview === "pending") {
       lines.push(
@@ -676,7 +705,7 @@ async function finish(
         org,
         "stripe.subscription_cancelled",
         "urgent",
-        "Subscription cancelled by owner",
+        initiator === "hq" ? "Subscription cancelled by HQ" : "Subscription cancelled by owner",
         lines.join(" "),
         r.subscriptionsCancelled[0] ?? null,
         {
@@ -690,7 +719,9 @@ async function finish(
 
   // The owner's email is keyed on `newly` alone: if the webhook confirmed first
   // it has already sent it (see confirmSubscriptionTerminated).
-  if (newly && actor.email) {
+  // …and it goes to an OWNER who cancelled. An HQ operator is the actor on an
+  // HQ cancel; they must not be emailed "your subscription is cancelled".
+  if (newly && initiator === "owner" && actor.email) {
     try {
       const sent = await deps.sendOwnerEmail({
         to: actor.email,
@@ -714,6 +745,79 @@ async function finish(
     refundReview,
     emailSent,
   };
+}
+
+// ---------------------------------------------------------------------------
+// HQ-initiated cancellation — stop billing BEFORE the org is marked cancelled
+// ---------------------------------------------------------------------------
+
+/**
+ * What an HQ operator is told when billing could NOT be stopped. In every one
+ * of these cases the organisation is LEFT AS IT WAS.
+ */
+export const HQ_CANCEL_ERROR_COPY: Record<CancelFailureReason, string> = {
+  disabled: "Cancellation is switched off.",
+  org_not_found: "That organisation no longer exists.",
+  in_progress:
+    "A cancellation for this customer is already in flight (the owner may have just clicked cancel). Reload in a moment — nothing was changed by this click.",
+  billing_unavailable:
+    "NOT cancelled. Stripe could not be reached (or the Stripe key is not set in this environment), so billing could not be stopped. Try again, or cancel the subscription in the Stripe dashboard — the workspace is marked cancelled automatically when Stripe confirms.",
+  billing_mismatch:
+    "NOT cancelled. The subscription id recorded for this organisation could not be matched to its Stripe customer, so nothing was touched. Check the customer in the Stripe dashboard and cancel the subscription there.",
+  stripe_timeout:
+    "NOT cancelled. Stripe did not confirm the cancellation in time. Try again — it is safe to repeat. If Stripe did accept it, the workspace is marked cancelled automatically when the webhook arrives.",
+  stripe_error:
+    "NOT cancelled. Stripe refused to cancel the subscription, so billing is still active. Check the customer in the Stripe dashboard.",
+};
+
+export type HqCancelResult =
+  | { ok: true; result: Extract<CancelResult, { ok: true }> }
+  | { ok: false; reason: CancelFailureReason; message: string };
+
+/**
+ * The gate every HQ "mark cancelled" action must pass FIRST.
+ *
+ * Before this existed, HQ's cancel flipped organizations.status to 'cancelled'
+ * and never touched Stripe: the customer was locked out of the product and
+ * still charged every month.
+ *
+ * It runs the SAME path as the owner's self-serve cancel — every live
+ * subscription terminated immediately, invoice collection stopped, the refund
+ * review flagged, the ledger tombstoned, the org revoked by
+ * confirm_subscription_cancellation. On success the org is ALREADY 'cancelled'
+ * when this returns.
+ *
+ * ON FAILURE THE ORG IS NOT MARKED CANCELLED. That is the safer of the two
+ * options ("refuse" vs "cancel but flag billing-still-active"), because
+ * 'cancelled' is the state that locks the customer out: locked-out-and-billed
+ * is exactly the harm being closed, and a flag on a cancelled org is something
+ * an operator can miss, whereas an org that is visibly still active with an
+ * error on screen is not. The operator retries or cancels in Stripe; the
+ * webhook then revokes access on its own.
+ */
+export async function stopBillingForHqCancellation(
+  deps: CancellationDeps,
+  args: { orgId: string; actor: CancelActor; reason?: string | null },
+): Promise<HqCancelResult> {
+  let result: CancelResult;
+  try {
+    result = await cancelOrgSubscription(deps, { ...args, initiator: "hq" });
+  } catch (e) {
+    console.error("[subscription-cancellation] HQ cancel threw", {
+      org_id: args.orgId,
+      error: errText(e),
+    });
+    return {
+      ok: false,
+      reason: "stripe_error",
+      message:
+        "NOT cancelled. Something failed while stopping billing; check the customer in the Stripe dashboard and reload this page before trying again.",
+    };
+  }
+  if (!result.ok) {
+    return { ok: false, reason: result.reason, message: HQ_CANCEL_ERROR_COPY[result.reason] };
+  }
+  return { ok: true, result };
 }
 
 // ---------------------------------------------------------------------------
@@ -1062,13 +1166,14 @@ export function wireCancellationDeps(): CancellationDeps {
     now: () => Math.floor(Date.now() / 1000),
     loadOrg: loadCancellationOrg,
 
-    claim: async ({ orgId, subscriptionId, actor, reason }) => {
+    claim: async ({ orgId, subscriptionId, actor, reason, source }) => {
       const res = await rpcClient().rpc("claim_subscription_cancellation", {
         p_org_id: orgId,
         p_subscription_id: subscriptionId,
         p_user_id: actor.userId,
         p_user_email: actor.email,
         p_reason: reason,
+        p_source: source,
       });
       if (res.error) {
         throw new Error(`claim_subscription_cancellation failed: ${res.error.message ?? "unknown"}`);

@@ -14,6 +14,10 @@ import {
   notifyOnMigrationProgress,
 } from "@/lib/notifications/events";
 import { SETUP_FEE_STATUSES } from "@/lib/hq/customer-financials";
+import {
+  stopBillingForHqCancellation,
+  wireCancellationDeps,
+} from "@/server/services/subscription-cancellation";
 
 /**
  * Customers OS — server actions.
@@ -343,6 +347,33 @@ export async function setCustomerLifecycle(formData: FormData): Promise<void> {
   });
   if (!parsed.success) {
     redirect(`/admin/customers?error=${encodeURIComponent("Invalid lifecycle input")}`);
+  }
+
+  // CANCELLED means "stop billing", not just "lock them out". Terminate the
+  // Stripe subscription FIRST, through the same path as the owner's self-serve
+  // cancel; if billing cannot be stopped the org is NOT marked cancelled (see
+  // stopBillingForHqCancellation for why refusing is the safer option).
+  // `suspended` deliberately does NOT touch the subscription: a suspension is
+  // reversible, and Stripe keeps dunning / the customer can still pay.
+  if (parsed.data.status === "cancelled") {
+    const stopped = await stopBillingForHqCancellation(wireCancellationDeps(), {
+      orgId: parsed.data.org_id,
+      actor: { userId: admin.id, email: admin.email },
+      reason: parsed.data.reason ?? null,
+    });
+    if (!stopped.ok) {
+      await recordAdminActivity({
+        actorId: admin.id,
+        actorEmail: admin.email,
+        action: "customer.lifecycle_cancel_blocked",
+        targetTable: "organizations",
+        targetId: parsed.data.org_id,
+        metadata: { reason: stopped.reason },
+      });
+      redirect(
+        `/admin/customers/${parsed.data.org_id}?error=${encodeURIComponent(stopped.message)}`,
+      );
+    }
   }
 
   const supabase = createAdminClient();

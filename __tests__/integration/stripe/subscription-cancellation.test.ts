@@ -788,6 +788,79 @@ describeIntegration("stripe · subscription cancellation → entitlement state",
   });
 
   // ══════════════════════════════════════════════════════════════════════════
+  // 4b. HQ-initiated cancellation (F2) — same path, source 'hq'
+  // ══════════════════════════════════════════════════════════════════════════
+
+  it("HQ CANCEL: billing stopped through the same path → ledger source 'hq', refund review, audited as HQ, org cancelled; NO 'you cancelled' email", async () => {
+    const o = await mkOrg("active");
+    const stripe = fakeStripe(o.customer!, [{ id: o.sub!, status: "active" }]);
+    const r = await m.svcMod.stopBillingForHqCancellation(depsWith(stripe), {
+      orgId: o.id,
+      actor: actor(),
+      reason: "non-payment",
+    });
+    expect(r.ok).toBe(true);
+    expect(stripe.calls.cancel).toEqual([o.sub]);
+    expect(stripe.state.get(o.sub!)).toBe("canceled");
+    expect(await status(o.id)).toBe("cancelled");
+    expect((await ledger(o.id))[0]).toMatchObject({
+      state: "confirmed",
+      source: "hq",
+      confirmed_via: "action",
+      access_revoked: true,
+      refund_review: "pending",
+      requested_by: owner.id,
+    });
+    expect(await audit(o.id, "billing.subscription_cancelled_by_hq")).toHaveLength(1);
+    expect(await audit(o.id, "billing.subscription_cancelled_by_owner")).toHaveLength(0);
+    expect(email.sendEmail).not.toHaveBeenCalled();
+    // The webhook that follows is a no-op, as for an owner cancel.
+    const wh = await m.processStripeEvent(subEvent("customer.subscription.deleted", o.customer!, o.sub!, "canceled"));
+    expect(wh).toMatchObject({ actions: ["subscription_deleted:already_confirmed"] });
+  });
+
+  it("HQ CANCEL, Stripe refuses → FAILS LOUDLY: org stays ACTIVE (never locked-out-and-billed), claim released", async () => {
+    const o = await mkOrg("active");
+    const stripe = fakeStripe(o.customer!, [{ id: o.sub!, status: "active" }], {
+      fail: Object.assign(new Error("nope"), { type: "StripeInvalidRequestError" }),
+    });
+    const r = await m.svcMod.stopBillingForHqCancellation(depsWith(stripe), { orgId: o.id, actor: actor() });
+    expect(r).toMatchObject({ ok: false, reason: "stripe_error" });
+    expect(!r.ok && r.message).toMatch(/^NOT cancelled\./);
+    expect(await status(o.id)).toBe("active");
+    expect((await org(o.id)).cancelled_at).toBeNull();
+    expect((await ledger(o.id)).map((x) => [x.state, x.source])).toEqual([["failed", "hq"]]);
+  });
+
+  it("HQ CANCEL times out, Stripe had accepted it → the webhook revokes; the HQ operator is NOT emailed a customer confirmation", async () => {
+    const o = await mkOrg("active");
+    const stripe = fakeStripe(o.customer!, [{ id: o.sub!, status: "active" }], {
+      fail: Object.assign(new Error("Request timed out"), { type: "StripeConnectionError" }),
+    });
+    const r = await m.svcMod.stopBillingForHqCancellation(depsWith(stripe), { orgId: o.id, actor: actor() });
+    expect(r).toMatchObject({ ok: false, reason: "stripe_timeout" });
+    expect(await status(o.id)).toBe("active");
+    await m.processStripeEvent(subEvent("customer.subscription.deleted", o.customer!, o.sub!, "canceled"));
+    expect(await status(o.id)).toBe("cancelled");
+    expect((await ledger(o.id))[0]).toMatchObject({ source: "hq", confirmed_via: "webhook" });
+    expect(email.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("the ledger rejects an unknown initiator (claim p_source is a closed set)", async () => {
+    const o = await mkOrg("active");
+    const r = (await svc().rpc("claim_subscription_cancellation", {
+      p_org_id: o.id,
+      p_subscription_id: o.sub,
+      p_user_id: owner.id,
+      p_user_email: owner.email,
+      p_reason: null,
+      p_source: "stripe_webhook",
+    })) as Res<unknown>;
+    expect(r.error).not.toBeNull();
+    expect(await ledger(o.id)).toEqual([]);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
   // 5. After cancellation: billing history + reactivation
   // ══════════════════════════════════════════════════════════════════════════
 

@@ -29,6 +29,8 @@ vi.mock("@/server/services/self-serve-billing", () => ({
 const {
   cancelOrgSubscription,
   requestReactivation,
+  stopBillingForHqCancellation,
+  HQ_CANCEL_ERROR_COPY,
   REACTIVATION_REQUEST_DEDUPE_SECONDS,
 } = await import("@/server/services/subscription-cancellation");
 type Deps = import("@/server/services/subscription-cancellation").CancellationDeps;
@@ -73,6 +75,7 @@ type World = {
     emails: Array<{ to: string; orgName: string; hadSubscription: boolean }>;
     projected: string[];
     confirms: Array<Record<string, unknown>>;
+    claimSources: string[];
   };
 };
 
@@ -86,7 +89,8 @@ function makeDeps(): Deps {
     stripeAvailable: () => w.stripeAvailable,
     now: () => NOW,
     loadOrg: async () => w.org,
-    claim: async ({ subscriptionId }) => {
+    claim: async ({ subscriptionId, source }) => {
+      w.calls.claimSources.push(source);
       if (!w.org) return { outcome: "org_not_found", cancellationId: null };
       if (subscriptionId === null) {
         if (w.org.status === "cancelled") return { outcome: "already_confirmed", cancellationId: null };
@@ -200,6 +204,7 @@ beforeEach(() => {
       emails: [],
       projected: [],
       confirms: [],
+      claimSources: [],
     },
   };
 });
@@ -573,6 +578,84 @@ describe("kill switch + missing org", () => {
   it("org not found", async () => {
     w.org = null;
     expect(await run()).toEqual({ ok: false, reason: "org_not_found" });
+  });
+});
+
+describe("HQ-INITIATED cancellation (the HQ 'Cancel' lifecycle action) — F2", () => {
+  const HQ = { userId: "33333333-3333-4333-8333-333333333333", email: "ops@hq.example.test" };
+  const asHq = (deps = makeDeps()) =>
+    stopBillingForHqCancellation(deps, { orgId: ORG_ID, actor: HQ, reason: "non-payment" });
+
+  it("terminates the Stripe subscription through the SAME path, recorded as source 'hq', with the refund-review flag", async () => {
+    const r = await asHq();
+    expect(r.ok).toBe(true);
+    expect(w.calls.cancel).toEqual([{ id: "sub_1", idempotencyKey: `crewflow-cancel:${ORG_ID}:sub_1` }]);
+    expect(w.stripeSubs.get("sub_1")?.status).toBe("canceled");
+    expect(w.org?.status).toBe("cancelled");
+    expect(w.calls.claimSources).toEqual(["hq"]);
+    expect(w.calls.confirms[0]!.refundReview).toBe("pending");
+    expect(w.calls.stopCollection).toEqual(["sub_1"]);
+    expect(w.calls.audits.map((a) => a.action)).toEqual(["billing.subscription_cancelled_by_hq"]);
+    expect(w.calls.notices[0]!.title).toBe("Subscription cancelled by HQ");
+    expect(w.calls.notices[0]!.body).toMatch(/REFUND REVIEW DUE/);
+  });
+
+  it("does NOT send the 'your subscription is cancelled' email to the HQ operator", async () => {
+    await asHq();
+    expect(w.calls.emails).toEqual([]);
+  });
+
+  it("the self-serve kill switch does not stop HQ from stopping a customer's billing", async () => {
+    w.disabled = true;
+    const r = await asHq();
+    expect(r.ok).toBe(true);
+    expect(w.calls.cancel).toHaveLength(1);
+  });
+
+  it.each([
+    ["Stripe refuses", () => Object.assign(new Error("no"), { type: "StripeInvalidRequestError" }), "stripe_error"],
+    ["Stripe times out", () => Object.assign(new Error("timed out"), { type: "StripeConnectionError" }), "stripe_timeout"],
+  ] as const)("%s → FAILS LOUDLY and the org is NOT marked cancelled", async (_n, err, reason) => {
+    w.cancelImpl = async () => {
+      throw err();
+    };
+    const r = await asHq();
+    expect(r).toMatchObject({ ok: false, reason });
+    expect(!r.ok && r.message).toMatch(/^NOT cancelled\./);
+    expect(w.org?.status).toBe("active");
+    expect(w.stripeSubs.get("sub_1")?.status).toBe("active");
+  });
+
+  it("org linked to Stripe but Stripe unavailable → refused, org untouched", async () => {
+    w.stripeAvailable = false;
+    const r = await asHq();
+    expect(r).toMatchObject({ ok: false, reason: "billing_unavailable" });
+    expect(w.org?.status).toBe("active");
+  });
+
+  it("an unexpected throw is a refusal too, never a silent success", async () => {
+    const deps = makeDeps();
+    deps.loadOrg = async () => {
+      throw new Error("db down");
+    };
+    const r = await asHq(deps);
+    expect(r).toMatchObject({ ok: false });
+    expect(!r.ok && r.message).toMatch(/^NOT cancelled\./);
+  });
+
+  it("org with no Stripe subscription → cancelled locally (nothing to bill)", async () => {
+    w.org = { ...w.org!, stripe_customer_id: null, stripe_subscription_id: null };
+    w.stripeSubs.clear();
+    w.stripeAvailable = false;
+    const r = await asHq();
+    expect(r.ok).toBe(true);
+    expect(w.org?.status).toBe("cancelled");
+  });
+
+  it("every billing-failure message tells the operator the org was NOT cancelled", () => {
+    for (const code of ["billing_unavailable", "billing_mismatch", "stripe_timeout", "stripe_error"] as const) {
+      expect(HQ_CANCEL_ERROR_COPY[code], code).toMatch(/^NOT cancelled\./);
+    }
   });
 });
 
