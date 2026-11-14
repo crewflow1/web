@@ -1,7 +1,7 @@
 # Self-serve subscription cancellation — design
 
-Branch `billing/self-serve-cancellation` · migrations `20261316000000`, `20261317000000`
-(`20261318000000` reserved, unused) · evidence: `CANCELLATION-EVIDENCE.md`.
+Branch `billing/self-serve-cancellation` · migrations `20261316000000`,
+`20261317000000`, `20261318000000` · evidence: `CANCELLATION-EVIDENCE.md`.
 
 Evidence labels follow AGENT-RULES §5. Nothing here has been run against Stripe:
 this workstream had no Stripe key by design, so every statement about Stripe's
@@ -217,12 +217,12 @@ founder's call (Q1).
 | # | Sev | Finding | Evidence | Status |
 |---|---|---|---|---|
 | F1 | P1 | Terms promise a pro-rata refund; founder's default assumed none. | `app/terms/page.tsx` "Billing" | NEEDS-FOUNDER (Q1). Handled as a manual review. |
-| F2 | P1 | HQ "Cancel" (`setCustomerLifecycle`) sets the org `cancelled` but does not cancel the Stripe subscription. The customer is locked out and still billed; before this change the next `subscription.updated(active)` would also have re-opened the workspace. | `app/admin/customers/actions.ts:337-380` | NOT-IMPLEMENTED here (HQ action unchanged). Mitigation built: `/account/billing` shows such an owner "we haven't been able to confirm your card subscription has been stopped" with a button that runs the same cancel. Proposed fix: route HQ cancel through `cancelOrgSubscription`. |
+| F2 | P1 | HQ "Cancel" set the org `cancelled` without cancelling the Stripe subscription: the customer was locked out and still billed. Two actions had it: `setCustomerLifecycle` (`app/admin/customers/actions.ts`) and `setOrganizationStatus` (`app/admin/actions.ts`). | pre-change source of both files | **Fixed** (§12). The `/account/billing` "Check and stop billing" notice remains as a net for orgs cancelled by hand before this change. |
 | F3 | P1 | Terms: "We won't lock you out of your data if a payment fails, your workspace becomes read-only first, and you have 30 days to pay or export before access is suspended." Code: `past_due → suspended` immediately, full lock-out. There is no read-only mode. | `server/services/stripe-webhook-handler.ts` (status mapping), `server/auth/session.ts` `orgHasActiveAccess` | Partly mitigated: a suspended owner can now export and see invoices. Read-only mode NOT-IMPLEMENTED. |
 | F4 | P2 | Terms said cancel "from the settings page"; no such control existed for provisioned customers. | `app/terms/page.tsx` "Termination" | Fixed by this change. |
 | F5 | P2 | `/access-pending` labelled a cancelled workspace "Pending approval" and gave the owner no route to invoices or data. | `app/access-pending/page.tsx` (pre-change) | Fixed. |
 | F6 | P2 | `billing_invoices` and `subscription_cancellations` cascade on organisation delete. If account deletion hard-deletes the org row, CrewFlow's own billing records go with it. | `\d billing_invoices` (`ON DELETE CASCADE`) | For the deletion workstream. Not changed here. |
-| F7 | P3 | Subscription status events are applied in arrival order, not `event.created` order. A late `past_due` after `active` for a live subscription suspends wrongly until the next event. Only the cancelled case is closed here. | `handleSubscriptionUpsert` | NOT-IMPLEMENTED. |
+| F7 | P3 | Subscription status events for a LIVE subscription are applied in arrival order, not `event.created` order. A late `past_due` after `active` suspends wrongly until the next event. The cancelled case (the failure-drill item ST-04) is closed by the tombstone; this one is not. | `handleSubscriptionUpsert` | **Still open.** NOT-IMPLEMENTED. Fix would compare `event.created` against a stored last-applied timestamp. |
 | F9 | P2 | A trial has no automatic end (Q7). | `server/auth/session.ts` `orgHasActiveAccess`; no cron reads `trial_ends_at` | NEEDS-FOUNDER. Not built. |
 | F8 | P3 | `/api/account/export` duplicates the ZIP assembly of `/api/gdpr/export` (that route's source is test-pinned, so it was left alone). | both route files | Follow-up. |
 
@@ -240,12 +240,58 @@ Stripe subscription, and webhook status writes go through new SQL functions.
    ```sql
    drop function public.apply_stripe_subscription_state(uuid, text, text, text, timestamptz);
    drop function public.confirm_subscription_cancellation(uuid, text, text, jsonb, uuid, boolean, text);
-   drop function public.claim_subscription_cancellation(uuid, text, uuid, text, text, integer);
+   drop function public.claim_subscription_cancellation(uuid, text, uuid, text, text, integer, text);
    drop table public.subscription_cancellations;
    ```
-3. **Order on the way in:** apply both migrations **before** the code deploys.
+3. **Order on the way in:** apply all three migrations **before** the code deploys.
    The new webhook handler calls the functions on every subscription event; if
    they are missing the event fails, is recorded with `error_message`, and Stripe
    retries it — nothing is lost, but nothing is applied until the migration is in.
 4. A cancellation that has already happened cannot be rolled back: a cancelled
    Stripe subscription is terminal. Reactivation is a new subscription (§7).
+
+## 12. HQ-initiated cancellation (F2)
+
+Both HQ actions that can set an org to `cancelled` now call
+`stopBillingForHqCancellation` **first**. It runs the same path as the owner's
+cancel (every live subscription terminated, invoice collection stopped, refund
+review flagged, ledger tombstoned, org revoked by
+`confirm_subscription_cancellation`), with `initiator: "hq"`:
+
+- ledger `source = 'hq'` (migration `20261318000000`); audit action
+  `billing.subscription_cancelled_by_hq`; HQ notification titled "Subscription
+  cancelled by HQ";
+- no "your subscription is cancelled" email to the operator, from the action or
+  from the webhook (the webhook only emails when `source = 'owner'`);
+- the self-serve kill switch does not apply to HQ.
+
+**If billing cannot be stopped the org is NOT marked cancelled.** The operator
+is redirected with a message beginning "NOT cancelled." and, on the customers
+page, the attempt is audited as `customer.lifecycle_cancel_blocked`. Refusing
+was chosen over "cancel but flag billing-still-active" because `cancelled` is
+the state that locks the customer out: locked-out-and-billed is the harm, and a
+flag on a cancelled org can be missed where a still-active org with an error on
+screen cannot. If the operator then cancels in the Stripe dashboard, the webhook
+revokes access on its own.
+
+`suspended` (and `active` / `trial`) never touch the subscription.
+
+Consequence to know: in an environment with no Stripe key, HQ cannot mark a
+Stripe-linked org `cancelled` — it gets `billing_unavailable`. An org with no
+Stripe link cancels normally.
+
+## 13. Webhook hardening brought in from the failure-drill branch
+
+Commit `fe8c5d2f` (`ops/independent-backup-and-failure-drills`) is cherry-picked
+here as `f72249f7`, so this branch is the single home for Stripe-handler
+changes. Conflicts were resolved keeping both behaviours:
+
+- its `mustWrite` (every handler write checked), loud `orgIdByCustomer`, and
+  `in_flight` → 409 for a live claim are all present;
+- the three access-controlling organisation writes it wrapped in `mustWrite`
+  (activate on checkout, subscription status, revoke on deleted) are the ones
+  this branch had already moved into SQL functions. They stay as RPC calls; the
+  RPC wrappers throw on a database error, which is the same "failed write keeps
+  the event retryable" guarantee;
+- `invoice.payment_failed` has both: the tombstone check that suppresses the
+  customer notice, and `mustWrite` on its two `billing_invoices` writes.

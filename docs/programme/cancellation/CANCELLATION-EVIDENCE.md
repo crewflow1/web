@@ -88,3 +88,91 @@ Integration tests delete the orgs, users and `billing_events` they create.
 `admin_activity_log` is append-only, so rows with target ids of deleted test
 orgs remain. `subscription_cancellations` and the three functions exist in the
 shared local DB (applied by `psql`, not recorded in `schema_migrations`).
+
+## 6. Follow-up round (2026-11-14, later)
+
+Three items requested by the lead, plus the registry check.
+
+### Commands re-run after all three
+
+| Command | Result |
+|---|---|
+| `heavy.sh npm run typecheck` | exit 0 |
+| `heavy.sh npx vitest run --config vitest.security.config.ts` (full tier) | 345 files, 8649 tests passed |
+| `npx vitest run __tests__/billing __tests__/stripe __tests__/hq __tests__/admin __tests__/access-gate __tests__/sprint-a-friction` | 102 files, 1980 tests passed |
+| `npx vitest run --config vitest.integration.config.ts __tests__/integration/stripe` + `rls/{gdpr-export,secdef-org-rpc-guard,least-privilege-grants,audit-log-grant-lockdown}` | 7 files, 97 tests passed (stripe: 40 + 19 + 6) |
+| `CANCEL_E2E_SCREENSHOTS=1 PLAYWRIGHT_BASE_URL=http://localhost:3107 heavy.sh npx playwright test e2e/billing-cancellation.spec.ts` against `PORT=3107 npm run dev` | 5 of 5 passed (second run; see below) |
+
+### 1. F2 — HQ cancel stops billing (commit `1bc3ee17`)
+
+| Claim | Where | Label |
+|---|---|---|
+| HQ cancel terminates the Stripe subscription via the same path, source `hq`, refund review flagged | `__tests__/billing/subscription-cancellation.test.ts` "HQ-INITIATED"; IT "HQ CANCEL: billing stopped through the same path" | Stripe SIMULATED-ONLY; ledger, audit, org state VERIFIED on real Postgres |
+| Billing cannot be stopped → org NOT marked cancelled, operator told | unit (refuse, timeout, unavailable, unexpected throw); IT "HQ CANCEL, Stripe refuses → FAILS LOUDLY" | same |
+| Both HQ actions call the gate first and write the org only on success | `__tests__/billing/hq-cancel-actions.test.ts` (real actions, service spied) | VERIFIED |
+| `suspended`, `active`, `trial` never touch the subscription | same file | VERIFIED |
+| HQ operator is never emailed a customer confirmation, including when the webhook confirms after a timeout | unit; IT "HQ CANCEL times out … webhook revokes" | VERIFIED on the email abstraction |
+| Ledger rejects an unknown initiator | IT "the ledger rejects an unknown initiator" | VERIFIED |
+
+Not exercised: the two HQ pages in a browser (the error banner rendering is
+existing code; no HQ E2E was run).
+
+### 2. Failure-drill webhook hardening (commits `f72249f7`, `462bd25d`)
+
+`fe8c5d2f` cherry-picked with four conflict hunks in
+`server/services/stripe-webhook-handler.ts`, resolved keeping both behaviours
+(CANCELLATION-DESIGN.md §13). Its own tests pass unchanged here:
+`__tests__/stripe/webhook-retry.test.ts` and
+`__tests__/integration/stripe/webhook-claim-concurrency.test.ts` (19 tests).
+
+**ST-04** (late `subscription.updated(active)` after `deleted` re-activating an
+org): closed by the tombstone guard. Named test: IT "ST-04 (failure-drill open
+item): …" — VERIFIED on real Postgres. **F7** (arrival order for a LIVE
+subscription) remains open.
+
+### 3. Playwright, for real (commit after `462bd25d`)
+
+First run: 1 passed, 1 failed, 3 not run. The failure was the axe scan on
+Settings → Billing: plan features not included in the current plan were
+`text-slate-400` on white, contrast 2.56:1. That markup pre-dates this branch.
+Fixed to `text-slate-500` (4.76:1). No selector needed changing.
+
+Second run: 5 of 5 passed — staff cannot reach the control; the dialog's content,
+focus on "Keep subscription" and axe scan; cancel → `/account/billing` →
+lock screen → export 200 (zip) → reactivation request persists across reload;
+staff get 403 on the export; anonymous is redirected.
+
+This is the LOCAL-ONLY path (no Stripe key, org with no subscription). It was
+run against `next dev`, not the production build CI uses.
+
+Screenshots (`docs/programme/cancellation/screens/`):
+`settings-billing-cancel-dialog-desktop.png`, `settings-billing-cancel-dialog-390.png`,
+`account-billing-cancelled-desktop.png`, `account-billing-cancelled-390.png`.
+In the full-page desktop capture the dialog's dimmed backdrop covers only the
+first viewport height; that is how a fixed overlay appears in a full-page
+screenshot, not how it looks on screen.
+
+### 4. GDPR registry
+
+`subscription_cancellations` has been classified in `lib/gdpr/org-tables.json`
+since commit `0d5fcb8d`: `known`, `excluded` from export (platform billing), and
+`erasure_anonymise` (row kept; `requested_by_email` and `reason` scrubbed). It is
+also in the retention exclusion census (`lib/retention/policy.ts`).
+`__tests__/integration/rls/gdpr-export.test.ts` passes on this branch (11 of 11,
+including the live-catalogue case).
+
+It still fails for OTHER workstreams, and cannot be fixed from here: the table
+exists in the shared local database, but their branches do not carry this
+branch's registry entry. It clears for each when this branch's
+`lib/gdpr/org-tables.json` change is merged or cherry-picked into theirs.
+
+### Supersedes §4 above
+
+- Playwright spec and the UI in a browser: now VERIFIED (local-only path, dev
+  server). Still not checked: the Stripe-linked variant of the dialog (it shows
+  two more paragraphs), the suspended-owner view of `/account/billing`, and the
+  HQ pages.
+- HQ cancel (F2): fixed.
+- Production migrations: three to apply, in order, before the code deploys.
+- Unchanged: no Stripe call has been made; full unit suite, full integration
+  suite and `npm run build` not run.
