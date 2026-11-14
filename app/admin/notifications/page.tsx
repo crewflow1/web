@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getLatestNotificationsForHq } from "@/server/services/notifications-service";
 import { getEmailQueueStats } from "@/server/services/notification-email-queue-stats";
+import { safeActionPath } from "@/lib/notifications/action-url";
 import {
   NOTIFICATION_CATEGORIES,
   NOTIFICATION_CATEGORY_LABEL,
@@ -368,8 +369,8 @@ export default async function HqNotificationsPage({
                       </span>
                     </p>
                     <p className="mt-1 text-sm font-semibold text-slate-900">
-                      {n.action_url ? (
-                        <Link href={n.action_url} className="hover:underline">
+                      {safeActionPath(n.action_url) ? (
+                        <Link href={safeActionPath(n.action_url) ?? "/admin/notifications"} className="hover:underline">
                           {n.title}
                         </Link>
                       ) : (
@@ -385,9 +386,9 @@ export default async function HqNotificationsPage({
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    {n.action_url ? (
+                    {safeActionPath(n.action_url) ? (
                       <Link
-                        href={n.action_url}
+                        href={safeActionPath(n.action_url) ?? "/admin/notifications"}
                         className="rounded-md border border-indigo-300 bg-indigo-50 px-2 py-1 text-[11px] font-medium text-indigo-900 hover:bg-indigo-100"
                       >
                         Open source
