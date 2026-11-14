@@ -330,9 +330,9 @@ export function CalendarClient({
       >
         <input type="hidden" name="d" value={weekStart} />
         <div>
-          <label className="block text-xs font-medium text-slate-700">Status</label>
+          <label className="block text-xs font-medium text-slate-700" htmlFor="filter-status">Status</label>
           <select
-            name="status"
+            id="filter-status" name="status"
             defaultValue={statusFilter}
             className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           >
@@ -345,9 +345,9 @@ export function CalendarClient({
           </select>
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-700">Staff</label>
+          <label className="block text-xs font-medium text-slate-700" htmlFor="filter-staff">Staff</label>
           <select
-            name="staff"
+            id="filter-staff" name="staff"
             defaultValue={staffFilter}
             className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           >

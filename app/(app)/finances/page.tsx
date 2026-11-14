@@ -234,9 +234,9 @@ export default async function FinancesPage({
         className="flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
       >
         <div>
-          <label className="block text-xs font-medium text-slate-700">Category</label>
+          <label className="block text-xs font-medium text-slate-700" htmlFor="filter-category">Category</label>
           <select
-            name="category"
+            id="filter-category" name="category"
             defaultValue={category ?? ""}
             className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           >
@@ -249,9 +249,9 @@ export default async function FinancesPage({
           </select>
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-700">VAT %</label>
+          <label className="block text-xs font-medium text-slate-700" htmlFor="filter-vat_rate">VAT %</label>
           <select
-            name="vat_rate"
+            id="filter-vat_rate" name="vat_rate"
             defaultValue={vatRate ?? ""}
             className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           >
@@ -264,19 +264,19 @@ export default async function FinancesPage({
           </select>
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-700">From</label>
+          <label className="block text-xs font-medium text-slate-700" htmlFor="filter-from">From</label>
           <input
             type="date"
-            name="from"
+            id="filter-from" name="from"
             defaultValue={from ?? ""}
             className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-700">To</label>
+          <label className="block text-xs font-medium text-slate-700" htmlFor="filter-to">To</label>
           <input
             type="date"
-            name="to"
+            id="filter-to" name="to"
             defaultValue={to ?? ""}
             className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           />

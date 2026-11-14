@@ -185,7 +185,7 @@ export async function listVariationOptionsForJob(
 ): Promise<Array<{ id: string; label: string }>> {
   const supabase = await createClient();
   const { data, error } = await tbl(supabase)("quotes")
-    .select("id, variation_number, title, eot_requested_completion_date")
+    .select("id, variation_number, number, eot_requested_completion_date") // NOT `title`: quotes has no such column (42703 → draft delay page crashed)
     .eq("org_id", orgId)
     .eq("job_id", jobId)
     .not("variation_number", "is", null)
@@ -195,12 +195,12 @@ export async function listVariationOptionsForJob(
   return ((data ?? []) as Array<{
     id: string;
     variation_number: number | null;
-    title: string | null;
+    number: string | null;
     eot_requested_completion_date: string | null;
   }>).map((v) => ({
     id: v.id,
     label: `Variation #${String(v.variation_number ?? 0).padStart(3, "0")}${
-      v.title ? ` — ${v.title}` : ""
+      v.number ? ` — ${v.number}` : ""
     }${v.eot_requested_completion_date ? " (EoT requested)" : ""}`,
   }));
 }
