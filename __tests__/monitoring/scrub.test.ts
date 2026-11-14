@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scrubEvent, REDACTED, type MinimalEvent } from "@/lib/monitoring/scrub";
+import { scrubEvent, redactPathTokens, REDACTED, type MinimalEvent } from "@/lib/monitoring/scrub";
 
 /**
  * Error-monitoring event scrubbing. The one thing that MUST run before any
@@ -100,5 +100,110 @@ describe("scrubEvent — secret/PII redaction on captured events", () => {
     expect(spans[0]!.data["http.method"]).toBe("GET");
     expect(spans[1]!.data.access_token).toBe(REDACTED);
     expect(spans[1]!.data["db.system"]).toBe("postgresql");
+  });
+  // ── Secrets/AI-spend audit: the gaps the exact-name list left open ──────────
+
+  it("redacts provider webhook-signature and shared-secret headers by SHAPE", () => {
+    const out = scrubEvent({
+      request: {
+        headers: {
+          "stripe-signature": "t=1,v1=abc",
+          "X-Twilio-Signature": "sig",
+          "x-hub-signature-256": "sha256=abc",
+          "svix-signature": "v1,abc",
+          "x-webhook-secret": "s",
+          "x-channel-secret": "s",
+          "x-csrf-token": "c",
+          "user-agent": "curl/8",
+          "content-length": "12",
+        },
+      },
+    } as MinimalEvent)!;
+    const h = out.request!.headers!;
+    for (const k of [
+      "stripe-signature",
+      "X-Twilio-Signature",
+      "x-hub-signature-256",
+      "svix-signature",
+      "x-webhook-secret",
+      "x-channel-secret",
+      "x-csrf-token",
+    ]) {
+      expect(h[k], k).toBe(REDACTED);
+    }
+    expect(h["user-agent"]).toBe("curl/8");
+    expect(h["content-length"]).toBe("12");
+  });
+
+  it("redacts credential-shaped keys in bodies but KEEPS token COUNTS and benign ids", () => {
+    const out = scrubEvent({
+      extra: {
+        service_role_key: "k",
+        client_secret: "s",
+        stripe_api_key: "k",
+        private_key: "k",
+        encryption_key: "k",
+        input_tokens: 1200,
+        output_tokens: 300,
+        max_tokens: 4000,
+        idempotency_key: "idem-1",
+        job_id: "j1",
+      },
+    } as MinimalEvent)!;
+    const x = out.extra!;
+    for (const k of ["service_role_key", "client_secret", "stripe_api_key", "private_key", "encryption_key"]) {
+      expect(x[k], k).toBe(REDACTED);
+    }
+    // Counts and identifiers are triage data, not secrets — a bare substring
+    // match on "token"/"key" would have destroyed them.
+    expect(x.input_tokens).toBe(1200);
+    expect(x.output_tokens).toBe(300);
+    expect(x.max_tokens).toBe(4000);
+    expect(x.idempotency_key).toBe("idem-1");
+    expect(x.job_id).toBe("j1");
+  });
+
+  it("redacts capability tokens carried as PATH segments (portal / quote / worker / asset)", () => {
+    expect(redactPathTokens("https://crewflow.uk/customer-portal/TOK3N-abc/invoices/9/pdf")).toBe(
+      "https://crewflow.uk/customer-portal/[redacted]/invoices/9/pdf",
+    );
+    expect(redactPathTokens("/worker-portal/w0rk-er_T0ken")).toBe("/worker-portal/[redacted]");
+    expect(redactPathTokens("https://crewflow.uk/q/0b6f8a1e-2d3c-4e5f-8a9b-0c1d2e3f4a5b/pdf?x=1")).toBe(
+      "https://crewflow.uk/q/[redacted]/pdf?x=1",
+    );
+    expect(redactPathTokens("/a/asset-token")).toBe("/a/[redacted]");
+    // Not a token route: untouched. Neither is a filesystem path or a deeper route.
+    expect(redactPathTokens("https://crewflow.uk/jobs/123")).toBe("https://crewflow.uk/jobs/123");
+    expect(redactPathTokens("ENOENT /Users/a/b/c.ts")).toBe("ENOENT /Users/a/b/c.ts");
+    expect(redactPathTokens("https://crewflow.uk/api/v1/q/x")).toBe("https://crewflow.uk/api/v1/q/x");
+  });
+
+  it("a portal error ships NO working portal link: url, transaction, breadcrumbs, exception text, spans", () => {
+    const TOKEN = "s3cr3t-portal-token";
+    const out = scrubEvent({
+      transaction: `GET /customer-portal/${TOKEN}/invoices`,
+      request: { url: `https://crewflow.uk/customer-portal/${TOKEN}/invoices?token=abc&page=2` },
+      breadcrumbs: [
+        { category: "navigation", data: { from: `/customer-portal/${TOKEN}`, to: `/customer-portal/${TOKEN}/chat` } },
+        { category: "fetch", data: { url: `https://crewflow.uk/customer-portal/${TOKEN}/chat/poll`, authorization: "Bearer x" } },
+        { category: "console", message: `failed GET /q/${TOKEN}/pdf` },
+      ],
+      exception: { values: [{ type: "Error", value: `GET /worker-portal/${TOKEN} 500` }] },
+      spans: [{ description: `GET https://crewflow.uk/customer-portal/${TOKEN}/photos`, data: {} }],
+      tags: { url: `https://crewflow.uk/customer-portal/${TOKEN}` },
+    } as unknown as MinimalEvent)!;
+    const serialised = JSON.stringify(out);
+    expect(serialised).not.toContain(TOKEN);
+    expect(serialised).not.toContain("Bearer x");
+    // …while the triage-relevant shape survives.
+    expect(out.request!.url).toBe("https://crewflow.uk/customer-portal/[redacted]/invoices?token=[redacted]&page=2");
+    expect((out as { transaction?: string }).transaction).toBe("GET /customer-portal/[redacted]/invoices");
+  });
+
+  it("handles the { values: [...] } breadcrumb envelope too", () => {
+    const out = scrubEvent({
+      breadcrumbs: { values: [{ data: { url: "https://crewflow.uk/q/tok/pdf" } }] },
+    } as unknown as MinimalEvent)!;
+    expect(JSON.stringify(out)).not.toContain("/q/tok");
   });
 });

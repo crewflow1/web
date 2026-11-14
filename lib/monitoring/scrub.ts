@@ -73,8 +73,44 @@ export type MinimalEvent = {
   [key: string]: unknown;
 };
 
+/**
+ * Key SHAPES whose values are secret, beyond the exact names above. The exact
+ * list alone missed every provider's webhook-signature and shared-secret header
+ * this app actually receives — `stripe-signature`, `x-twilio-signature`,
+ * `x-hub-signature-256`, `svix-signature`, `x-webhook-secret`, and the Bearer on
+ * the cron routes is only caught because it rides `authorization`.
+ *
+ * Anchored on word boundaries (`-`, `_`, `.`, start, end) on purpose: a bare
+ * substring match on "token" would redact `input_tokens` / `max_tokens`, which
+ * are counts we want when triaging an AI failure, and "key" would redact
+ * `idempotency_key`-style identifiers wholesale.
+ */
+const SENSITIVE_KEY_SHAPE =
+  /(^|[-_.])(secret|password|passwd|authorization|cookie|signature|credentials?|apikey|bearer)([-_.0-9]|$)|api[-_]key|(^|[-_.])(access|refresh|id|auth|csrf|session|verify|bypass)[-_]token($|[-_.])|[-_]token$|private[-_]key|service[-_]role|encryption[-_]key/i;
+
 const isSensitiveKey = (key: string): boolean =>
-  SENSITIVE_KEYS.includes(key.toLowerCase());
+  SENSITIVE_KEYS.includes(key.toLowerCase()) || SENSITIVE_KEY_SHAPE.test(key);
+
+/**
+ * CAPABILITY TOKENS IN THE URL PATH. Four public surfaces authenticate with a
+ * bearer token that IS a path segment — the customer portal, the worker portal,
+ * the public quote page and the asset-label scan. Query-string redaction never
+ * sees them, so every error raised on those routes used to ship a working
+ * portal link to the monitoring vendor in `request.url`, the transaction name
+ * and navigation breadcrumbs. The segment after the prefix is replaced; the
+ * rest of the path (which page of the portal) is kept for triage.
+ *
+ * The prefix must START the path — string start, after whitespace/quote, or
+ * directly after a URL origin — so a filesystem path in a stack message
+ * (`/Users/a/b`) or a deeper route (`/api/v1/q/x`) is left alone.
+ */
+const PATH_TOKEN_RE =
+  /((?:^|[\s"'(=]|https?:\/\/[^/\s"']+)\/(?:customer-portal|worker-portal|q|a)\/)([^/?#\s"'<>]+)/g;
+
+/** Redact capability tokens carried as path segments. Exported for tests + reuse. */
+export function redactPathTokens(value: string): string {
+  return value.replace(PATH_TOKEN_RE, `$1${REDACTED}`);
+}
 
 /** Redact every value under a sensitive key, at any depth, without following cycles. */
 function redactObject(value: unknown, seen: WeakSet<object>): unknown {
@@ -101,7 +137,9 @@ function redactObject(value: unknown, seen: WeakSet<object>): unknown {
 }
 
 /** Strip the values of sensitive query params out of a URL (or raw query string). */
-function redactUrl(raw: string): string {
+function redactUrl(input: string): string {
+  // Path-borne capability tokens first, then sensitive query params.
+  const raw = redactPathTokens(input);
   // Handle both a full URL and a bare "a=1&b=2" query string.
   const [path, query] = raw.includes("?") ? splitOnce(raw, "?") : ["", raw];
   if (!query) return raw;
@@ -132,8 +170,15 @@ function splitOnce(s: string, sep: string): [string, string] {
 function redactUrlFields(obj: Record<string, unknown>): void {
   for (const key of Object.keys(obj)) {
     const v = obj[key];
-    if (typeof v === "string" && /url/i.test(key)) obj[key] = redactUrl(v);
+    // `to` / `from` are how navigation breadcrumbs carry the route.
+    if (typeof v === "string" && /url|^to$|^from$|^target$|href/i.test(key)) obj[key] = redactUrl(v);
   }
+}
+
+/** Strip path tokens from a free-text field (a message, a transaction name). */
+function redactTextField(holder: Record<string, unknown>, key: string): void {
+  const v = holder[key];
+  if (typeof v === "string") holder[key] = redactPathTokens(v);
 }
 
 /**
@@ -181,6 +226,45 @@ export function scrubEvent<T extends object>(event: T): T | null {
         }
       }
     }
+
+    // The transaction / culprit name is the route — on a token-in-path surface
+    // an un-parameterised one carries the token itself.
+    redactTextField(e as Record<string, unknown>, "transaction");
+    redactTextField(e as Record<string, unknown>, "culprit");
+    redactTextField(e as Record<string, unknown>, "message");
+
+    // Breadcrumbs: navigation + fetch/xhr crumbs record URLs (and sometimes
+    // request data) for the minutes BEFORE the error — untouched until now.
+    const crumbs = (e as { breadcrumbs?: unknown }).breadcrumbs;
+    const crumbList = Array.isArray(crumbs)
+      ? crumbs
+      : crumbs && typeof crumbs === "object" && Array.isArray((crumbs as { values?: unknown }).values)
+        ? ((crumbs as { values: unknown[] }).values)
+        : [];
+    for (const crumb of crumbList) {
+      if (!crumb || typeof crumb !== "object") continue;
+      const c = crumb as Record<string, unknown>;
+      redactTextField(c, "message");
+      if (c.data && typeof c.data === "object") {
+        redactObject(c.data, seen);
+        redactUrlFields(c.data as Record<string, unknown>);
+      }
+    }
+
+    // Exception messages + span descriptions are free text that routinely embed
+    // the failing URL ("GET /customer-portal/<token>/invoices 500").
+    const exc = (e as { exception?: { values?: unknown } }).exception;
+    if (exc && Array.isArray(exc.values)) {
+      for (const v of exc.values) {
+        if (v && typeof v === "object") redactTextField(v as Record<string, unknown>, "value");
+      }
+    }
+    if (Array.isArray(spans)) {
+      for (const span of spans) {
+        if (span && typeof span === "object") redactTextField(span as Record<string, unknown>, "description");
+      }
+    }
+    if (e.tags) redactUrlFields(e.tags);
 
     // Drop user PII we never need to triage an error: keep only a stable id.
     if (e.user && typeof e.user === "object") {
