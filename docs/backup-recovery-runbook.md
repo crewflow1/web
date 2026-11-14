@@ -13,11 +13,188 @@ procedure.
 > scope for autonomous execution and are documented here for a human operator
 > with Owner + billing access to perform.
 
+> **Currency note (2026-11-14):** the authoritative description of today's
+> backup model, restore procedures, key-loss scenario and restore drill is
+> **[Current model — 2026-11-14](#current-model--2026-11-14-read-this-first-it-supersedes-every-dated-section-below)**.
+> Everything from "What's verified in production — 2026-06 snapshot" downward is
+> dated history kept for context.
+>
 > **Currency note (2026-08-29):** the snapshot section immediately below is the
 > original **2026-06 snapshot (STALE)** — its figures (25 MB, 98 tables,
 > `max_connections=60`) no longer describe production. For today's posture see
 > **[Current state 2026-08-29](#current-state-2026-08-29)** at the bottom of
 > this file. The restore *procedure* (Steps 1–3) remains correct.
+
+## Current model — 2026-11-14 (read this first; it supersedes every dated section below)
+
+Evidence labels: **VERIFIED** = run and observed (where, is stated) · **IMPLEMENTED-UNTESTED** ·
+**NEEDS-FOUNDER** · **NOT-IMPLEMENTED**. Audit and design:
+`docs/programme/backup/BACKUP-AUDIT.md`, `INDEPENDENT-RUNNER-DESIGN.md`, `FOUNDER-CHECKLIST.md`,
+`E2E-EVIDENCE.md`.
+
+### The layers
+
+| | Layer 1 — Supabase managed | Layer 2 — founder Mac | Layer 3 — independent runner |
+|---|---|---|---|
+| What | Daily physical database backup, 7 days | `scripts/ops/off-platform-backup.sh`, launchd **daily 03:17** | `.github/workflows/offsite-backup.yml` → `scripts/ops/offsite-backup.sh`, **daily 02:23 UTC** |
+| Database | Yes | Yes | Yes (one consistent snapshot) |
+| Storage objects | **No** | Yes | Yes |
+| Survives loss of the Supabase account | No | Yes (Backblaze B2) | Yes (separate B2 bucket, Object Lock) |
+| Depends on | Supabase | The Mac being awake; a key file on the Mac | GitHub Actions; nothing on the Mac |
+| Who can decrypt | n/a | Whoever holds the Mac's key file | Only the holder of the **offline** `age` private key — not the runner |
+| Retention | 7 days | Last 8 artefacts (count) | daily 14 d · weekly 8 wk · monthly 12 mo (bucket lifecycle) |
+| Restore proven | Not on this project | Decrypt + checksum per run; manual restores 2026-08-29 / 2026-10-20 | Restored into a throwaway Postgres on **every run** |
+| Status | Live | Live | **Built, inert** until the founder completes `FOUNDER-CHECKLIST.md` |
+
+PITR remains **off** (cost decision). Nothing here changes that.
+
+### Recovery objectives (honest numbers)
+
+| Scenario | Use | RPO (data lost) | RTO (time to recover) |
+|---|---|---|---|
+| Bad write / bad migration, noticed ≤ 7 days | Layer 1, in-place dashboard restore | ≤ 24 h | Minutes–hours. **Not measured on production** (a restore is destructive) |
+| Same, noticed later | Layer 3 weekly/monthly artefact | Up to the age of the chosen artefact | As the row below |
+| Supabase project/account lost | Layer 3 (or Layer 2) onto a new project | ≤ 24 h once Layer 3 is active; today up to the last time the Mac ran (gaps of 12 days observed) | Estimated 1–3 h, dominated by creating the project and re-pointing the app. **Not measured.** The database restore step itself took 3–6 s for a 53 MB synthetic database (VERIFIED locally); production is ~535 MB |
+| Storage objects lost | Layer 3 (or Layer 2) | as above | Minutes at today's 7 objects |
+
+### Restore — database, from a Layer 3 artefact
+
+You need: the offline `age` private key; a Backblaze key that can **read** (create a temporary
+read-only application key in the B2 console for the occasion and delete it afterwards — no automated
+credential can read backups); Docker; `age`; `rclone`.
+
+1. **Download** one artefact and its sidecar from the same tier:
+   `daily/crewflow-offsite-<stamp>.tar.age` and `…tar.age.json`.
+   Prefer one whose `…verify.json` says `"restore_verify":"passed"`.
+2. **Prove it restores before relying on it** (throwaway container, no network, prints counts and
+   PASS/FAIL only):
+   `bash scripts/ops/restore-verify.sh --artefact <file>.tar.age --identity <private-key-file> --sidecar <file>.tar.age.json`
+   Exit 0 = every check passed. Any `FAIL` = do not use this artefact; take the previous one.
+   **VERIFIED on synthetic local data** (good artefact passes; truncated, bit-flipped, wrong-key,
+   truncated-dump, missing-rows and orphaned-key cases all fail). **Never run against production data
+   without the approval gate below.**
+3. **Decrypt and unpack** onto an encrypted disk:
+   `age -d -i <private-key-file> <file>.tar.age | tar -xf -` → `crewflow-offsite-<stamp>/` containing
+   `db/db.dump` (pg_dump custom format), `storage/<bucket>/…`, `MANIFEST.json`, `SHA256SUMS`.
+4. **Restore into a new Supabase project** (same region, Postgres 17).
+   **IMPLEMENTED-UNTESTED against a real Supabase project** — the first drill onto a scratch project is
+   its acceptance test. The platform already owns the `auth` and `storage` table definitions, so restore
+   their **data** only, and everything for the application schemas:
+   ```
+   # a. enable the extensions named in MANIFEST.json → facts.extensions (citext, pg_trgm, vector, …)
+   # b. application schemas: definitions first
+   pg_restore -d "$NEW_DB_URL" --section=pre-data -n public -n _backup -n supabase_migrations db/db.dump
+   # c. all data, with triggers/FK checks deferred for the load
+   pg_restore -l db/db.dump | grep 'TABLE DATA' \
+     | grep -v -E ' (auth schema_migrations|storage migrations) ' > data.list
+   PGOPTIONS='-c session_replication_role=replica' pg_restore -d "$NEW_DB_URL" --data-only -L data.list db/db.dump
+   # d. indexes, constraints, triggers, policies, grants
+   pg_restore -d "$NEW_DB_URL" --section=post-data -n public -n _backup -n supabase_migrations db/db.dump
+   ```
+   The dump **keeps ownership and grants**, so the Data-API grants come back with it (VERIFIED: the
+   `data_api_grants` and `column_acl_entries` counters are identical after a restore). The manual
+   re-grant block further down this file applies only to Layer 2 artefacts rebuilt from migrations.
+5. **Check the result** with the same facts the verification uses: migration tip and count equal
+   `MANIFEST.json`; a login works; a spot read returns rows.
+6. **Re-apply deletion tombstones** (next section) **before** reopening the application.
+7. Re-point the application (Vercel env) at the new project; tell affected customers the recovery point.
+
+For an in-place rollback of the existing project use Layer 1 (Step 3 below) — and still do step 6.
+
+### Restore — Storage objects
+
+From the unpacked bundle, one bucket at a time, to the target project's S3 endpoint:
+`rclone copy crewflow-offsite-<stamp>/storage/<bucket> <target-remote>:<bucket>` then
+`rclone check crewflow-offsite-<stamp>/storage/<bucket> <target-remote>:<bucket>`.
+**VERIFIED on synthetic local data** (restored bucket identical to source). The `storage.objects` rows
+arrive with the database restore; object keys are unchanged, so rows and files line up
+(the verification asserts exactly that pairing).
+
+### Re-apply deletion tombstones after ANY restore — HOOK (deletion workstream)
+
+A backup taken before a company or person was deleted still contains them. Restoring it — from any
+layer, including a Supabase in-place restore — would bring erased data back. So:
+
+- Each Layer 3 run exports the cumulative list of completed deletions to its own object,
+  `tombstones/crewflow-tombstones-<stamp>.jsonl.age` — **beside, never inside, the dump** — one JSON
+  object per line (opaque ids, kind, timestamps). The export hook is optional by construction: it is
+  active only where `public.privacy_tombstone_export(timestamptz)` exists and the backup role may
+  execute it; otherwise the run logs that the hook is inactive and carries on.
+  Capture of the export: **VERIFIED on synthetic local data** (function present locally).
+- **After every restore, before reopening:** take the **newest** tombstone object in the bucket (not
+  the one next to the dump you restored — the newest lists every deletion to date), decrypt it, and
+  feed each line to `public.privacy_tombstone_reapply(jsonb)` as the service role, then let the normal
+  deletion executor run:
+  ```
+  age -d -i <private-key-file> crewflow-tombstones-<newest>.jsonl.age > tombstones.jsonl
+  psql "$RESTORED_DB_URL" -v ON_ERROR_STOP=1 <<'SQL'
+  set request.jwt.claims = '{"role":"service_role"}';
+  create temp table _t (j jsonb);
+  \copy _t from 'tombstones.jsonl'
+  select public.privacy_tombstone_reapply(j) from _t;
+  SQL
+  ```
+  This step is **documentation of that workstream's contract** (their functions and tests live on
+  branch `privacy/account-deletion`); it has **not** been executed by the backup workstream. If those
+  functions are not yet in production there are no tombstones and the step is a no-op.
+- Deletions completed after the newest tombstone export and before the incident are not in any export:
+  compare against the deletion request log/emails for that window.
+
+### If the decryption key is lost
+
+| Lost | Consequence | What still works |
+|---|---|---|
+| The Mac (Layer 2 key file on it), no off-machine copy | Every Layer 2 artefact in B2 is permanently unreadable | Layer 1 (database, 7 days); Layer 3 once active |
+| The founder's `age` private key | Use the **escrow** key — every artefact is sealed to both | Everything |
+| Both `age` private keys | Every Layer 3 artefact is permanently unreadable. Nobody — not Backblaze, not GitHub, not Anthropic, not Supabase — can recover them | Layer 1; Layer 2 if its key survives. Generate a new keypair immediately and replace `OFFSITE_BACKUP_AGE_RECIPIENTS`; history restarts from that day |
+| The Supabase account **and** every key | Total loss | Nothing. This is why there are two recipients and a paper copy |
+
+Check you still hold a working key at any time, without opening customer data: decrypt the latest
+`…keycheck.age` and compare its SHA-256 with `keycheck_plaintext_sha256` in the sidecar
+(`FOUNDER-CHECKLIST.md` §7).
+
+### Production restore drill — APPROVAL GATE
+
+**Status: not performed.** The pipeline is VERIFIED on synthetic local data only. A drill decrypts real
+customer data, so it is a founder-approved, founder-present step — never run by an agent on its own.
+
+Before starting, the founder records (date, name) in `docs/programme/backup/` that they approve this
+drill, and confirms:
+
+- [ ] FileVault is **on** for the machine used (`fdesetup status`).
+- [ ] The private key is typed/loaded from the password manager into a file under a `chmod 700`
+      directory and deleted afterwards.
+- [ ] Nobody else is using the machine; screen sharing/recording is off.
+
+Procedure (about 15 minutes, quarterly):
+
+1. In the B2 console create a **temporary read-only** application key for the off-site bucket.
+2. Download the newest `daily/…tar.age` and its `.tar.age.json` into a private directory.
+3. `bash scripts/ops/restore-verify.sh --artefact … --identity … --sidecar … --redact`
+   It restores into a container with no network, prints PASS/FAIL (counts withheld with `--redact`),
+   and removes the container and every plaintext file on exit.
+4. Record in `docs/programme/backup/` : date, artefact stamp, exit code, the `pg_restore … Ns` line
+   (that is the measured database RTO), nothing else.
+5. Delete the downloaded artefact, the key file, and the temporary B2 key.
+6. Optional, once: steps 3–5 of "Restore — database" onto a **scratch** Supabase project to validate
+   the real-platform path, then delete the project.
+
+Pass = exit 0. Any failure = open an incident, keep the artefact, do not delete older tiers.
+
+### When a Layer 3 run fails
+
+The public run log shows the stage only; the reason is in `ops_backup_runs.error` (`/admin/ops`).
+
+| Stage | Usual cause |
+|---|---|
+| `recipients` | `OFFSITE_BACKUP_AGE_RECIPIENTS` is not an `age1…` public key (or a private key was pasted — rotate it) |
+| `tools` | Image pull failed (registry) — re-run |
+| `capture` | Pooler string wrong (use the **session** pooler, port 5432, user `crewflow_backup.<ref>`), password rotated, role lacks `pg_read_all_data`/`BYPASSRLS` |
+| `storage` | S3 keys revoked, S3 connection disabled, or endpoint/region wrong |
+| `manifest` | Storage objects recorded in the database are missing from the download — investigate, do not ignore |
+| `upload` | B2 key revoked or lacks `writeFiles`; bucket name wrong |
+| `restore_verify` | **Serious** if the log shows `FAIL` lines: the backup does not restore — open an incident. If it says the verification "could not run", it is an environment fault — re-run |
+| `heartbeat` | Role lacks `insert, update` on `ops_backup_runs` |
 
 ## What's verified in production — 2026-06 snapshot (STALE)
 
@@ -166,7 +343,7 @@ runbook's checklist — not here.
 
 The 52-day silent lapse (Aug 29 → Oct 20 2026) is fixed by an automated, validated,
 **encrypted** off-platform backup with a **loud** health monitor:
-- `scripts/ops/off-platform-backup.sh` (weekly via `scripts/ops/com.crewflow.backup.plist`)
+- `scripts/ops/off-platform-backup.sh` (originally weekly; **daily 03:17 since 2026-11-13** via `scripts/ops/com.crewflow.backup.plist`)
   dumps DB (schema + public + auth) **and all Supabase Storage objects**, generates + verifies
   checksums, **validates fail-loud** (pg_dump completeness/truncation), **encrypts locally**
   (AES-256), ships ONLY the encrypted artifact **off-machine to a private Backblaze B2 bucket**
