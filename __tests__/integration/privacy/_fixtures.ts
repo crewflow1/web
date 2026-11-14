@@ -9,9 +9,10 @@
  */
 import { expect } from "vitest";
 import { anonClient, serviceClient } from "../_harness";
-import type {
-  DeletionAdminClient,
-  StripeSubscriptionsApi,
+import {
+  runDeletionRequest,
+  type DeletionAdminClient,
+  type StripeSubscriptionsApi,
 } from "@/server/services/privacy-deletion";
 
 type Res<T = Record<string, unknown>> = { data: T | null; error: { message: string; code?: string } | null };
@@ -407,8 +408,16 @@ export async function cleanup(orgIds: string[], userIds: string[]): Promise<void
       const paths = await walk(orgId);
       if (paths.length) await svc.storage.from(bucket).remove(paths);
     }
-    await db().from("billing_events").delete().eq("org_id", orgId);
-    await db().from("organizations").delete().eq("id", orgId);
+    // An org holding append-only evidence (comms events, receptionist ledgers)
+    // can only be removed by a sanctioned teardown, so leftovers go through the
+    // operator re-application path — the same engine, no shortcuts.
+    const still = await db().from("organizations").select("id").eq("id", orgId);
+    if ((still.data ?? []).length === 0) continue;
+    const re = await db().rpc("privacy_tombstone_reapply", {
+      p_tombstone: { id: crypto.randomUUID(), kind: "org", target_org_id: orgId, target_user_id: null },
+    });
+    const requestId = (re.data as { request_id?: string } | null)?.request_id;
+    if (requestId) await runDeletionRequest(requestId, { admin: admin(), stripe: stripeMock() });
   }
   for (const id of userIds) {
     await db().from("staff_compensation").delete().eq("user_id", id);

@@ -17,7 +17,8 @@
 --     organisation row is already gone" (the 20261052 teardown rule).
 -- It is left in place, untouched and DARK. Company deletion here goes with the
 -- grain of the schema instead: it removes the ORGANISATION ROW and lets the
--- teardown cascade — the path every guard was written to allow — do the work.
+-- teardown cascade — the path most guards were written to allow — do the work,
+-- then sweeps the few ledgers that carry an org id with no foreign key.
 --
 -- A processor has no statutory duty to keep a former customer's ledgers (the
 -- customer does, and is offered an export first), so nothing tenant-side is
@@ -27,17 +28,37 @@
 -- that position is called out in DELETION-DESIGN.md §8.)
 --
 -- ═════════════════════════════════════════════════════════════════════════════
--- PART A — MAKE THE REMAINING APPEND-ONLY GUARDS TEARDOWN-SAFE
+-- PART A — LET A *SANCTIONED* TEARDOWN THROUGH THE REMAINING APPEND-ONLY GUARDS
 -- ═════════════════════════════════════════════════════════════════════════════
--- 19 guard functions raised UNCONDITIONALLY on DELETE, so `delete from
--- organizations` failed outright for any org holding one row in any of these
--- tables ("comm_events is append-only — DELETE is not permitted"): a tenant with
--- a single logged communication could never be deleted at all. Each gains the
--- SAME escape every other evidence guard already has — a DELETE is let through
--- only when the row's organisation no longer exists, i.e. only inside a teardown
--- cascade. While the organisation exists the tables are exactly as append-only
--- as before, for every role including service_role; UPDATE is never permitted.
+-- 19 guard functions raise UNCONDITIONALLY on DELETE: comm_events (which made
+-- `delete from organizations` fail outright for any org holding one row —
+-- "comm_events is append-only — DELETE is not permitted"), 15 receptionist
+-- ledgers and 3 AI-reply ledgers.
+--
+-- The 20261052 idiom other guards use ("the organisation row is already gone")
+-- is NOT sufficient here, and is deliberately NOT what these guards get. Most of
+-- these ledgers carry `org_id` with NO foreign key, so a row can legitimately
+-- hold an org id that matches no organisation (the receptionist suites do
+-- exactly that) — under an "org row absent" test every such row would become
+-- freely deletable and the ledger would stop being append-only.
+--
+-- The escape added here is therefore UNAMBIGUOUS and unavailable to an ordinary
+-- caller. A DELETE is let through only when ALL of these hold for the row's org:
+--   1. the transaction-local marker `crewflow.privacy_teardown_org` equals that
+--      org id — it is set in exactly one place, inside privacy_org_teardown
+--      (service_role-only, SECURITY DEFINER), and dies with that transaction;
+--   2. the caller is service_role;
+--   3. the organisation row no longer exists; and
+--   4. a company-deletion request for that org is RUNNING in the ledger — a row
+--      only privacy_request_create / privacy_request_claim can produce.
+-- Nothing else changes: with no sanctioned teardown in progress these tables are
+-- exactly as append-only as before for every role including service_role, an
+-- orphan row is as undeletable as any other, and UPDATE is never permitted.
 -- Messages and SQLSTATEs are preserved verbatim.
+--
+-- The nested `if` is deliberate: the ledger is consulted ONLY once the marker
+-- matches, so a caller with no rights on the ledger still gets the append-only
+-- error, never a permission error.
 do $patch$
 declare
   v_tbl text;
@@ -68,11 +89,17 @@ begin
       create or replace function public.%I() returns trigger
       language plpgsql as $body$
       begin
-        -- Teardown escape (the 20261052 rule): a tenant-teardown cascade removes
-        -- the organisation row FIRST; only then may its append-only children go.
+        -- Sanctioned-teardown escape — see the header of 20261312000000.
         if tg_op = 'DELETE'
-           and not exists (select 1 from public.organizations where id = old.org_id) then
-          return old;
+           and coalesce(current_setting('crewflow.privacy_teardown_org', true), '') = old.org_id::text then
+          if auth.role() = 'service_role'
+             and not exists (select 1 from public.organizations where id = old.org_id)
+             and exists (
+               select 1 from public.privacy_deletion_requests r
+               where r.kind = 'org' and r.target_org_id = old.org_id and r.status = 'running'
+             ) then
+            return old;
+          end if;
         end if;
         raise exception '%s is append-only; %% is not permitted', tg_op
           using errcode = 'restrict_violation';
@@ -85,10 +112,17 @@ end $patch$;
 create or replace function public.tg_comm_events_frozen() returns trigger
 language plpgsql set search_path = public as $$
 begin
-  -- Teardown escape (the 20261052 rule) — see the header of 20261312000000.
+  -- Sanctioned-teardown escape — see the header of 20261312000000.
   if tg_op = 'DELETE'
-     and not exists (select 1 from public.organizations where id = old.org_id) then
-    return old;
+     and coalesce(current_setting('crewflow.privacy_teardown_org', true), '') = old.org_id::text then
+    if auth.role() = 'service_role'
+       and not exists (select 1 from public.organizations where id = old.org_id)
+       and exists (
+         select 1 from public.privacy_deletion_requests r
+         where r.kind = 'org' and r.target_org_id = old.org_id and r.status = 'running'
+       ) then
+      return old;
+    end if;
   end if;
   raise exception 'comm_events is append-only — % is not permitted', tg_op
     using errcode = 'check_violation';
@@ -190,11 +224,17 @@ $$;
 --      ON DELETE SET NULL — left alone they would survive as org-less rows still
 --      holding the payload. demo_requests (the sales record that became this
 --      customer) is scrubbed in place, keeping only its funnel facts.
---   e. `delete from organizations` — the teardown cascade.
---   f. VERIFY against the live catalogue: no public table may still hold a row
+--   e. raise the transaction-local teardown marker, then `delete from
+--      organizations` — the teardown cascade.
+--   f. SWEEP: some ledgers (the receptionist and AI-reply trails) carry `org_id`
+--      with NO foreign key, so no cascade reaches them. Every table the
+--      catalogue shows still holding this org's id is deleted explicitly, in an
+--      FK-retry loop. Their append-only guards admit this — and only this — via
+--      the sanctioned-teardown escape (Part A).
+--   g. VERIFY against the live catalogue: no public table may still hold a row
 --      with this org_id. Anything left RAISES and the whole transaction rolls
---      back — a new table that neither cascades nor is handled here cannot be
---      silently skipped.
+--      back — a table that neither cascades nor can be swept is never silently
+--      skipped.
 create or replace function public.privacy_org_teardown(
   p_request_id      uuid,
   p_retention_until date
@@ -222,6 +262,10 @@ declare
   v_archived integer := 0;
   v_rc       integer;
   v_left     text[] := '{}';
+  v_sweep    text[];
+  v_next     text[];
+  v_progress boolean;
+  v_swept    integer := 0;
   v_detail   jsonb;
 begin
   perform public._privacy_require_service_role('privacy_org_teardown');
@@ -329,11 +373,41 @@ begin
       end if;
     end loop;
 
-    -- e. The teardown cascade.
+    -- e. The teardown cascade, under the transaction-local marker the
+    --    append-only guards recognise (Part A). `true` = local to THIS
+    --    transaction: it cannot leak to another statement, session or tenant.
+    perform set_config('crewflow.privacy_teardown_org', v_org::text, true);
     delete from public.organizations where id = v_org;
   end if;
 
-  -- f. Catalogue-wide verification — nothing may still carry this org id.
+  -- f. Sweep the org-id tables no cascade reaches (no FK on org_id).
+  perform set_config('crewflow.privacy_teardown_org', v_org::text, true);
+  v_sweep := array(
+    select c.relname::text
+    from pg_class c
+    join pg_attribute a on a.attrelid = c.oid and a.attname = 'org_id' and not a.attisdropped
+    where c.relnamespace = 'public'::regnamespace and c.relkind = 'r' and a.atttypid = 'uuid'::regtype
+    order by c.relname);
+  loop
+    v_progress := false;
+    v_next := '{}';
+    foreach v_tbl in array v_sweep loop
+      execute format('select count(*) from public.%I where org_id = $1', v_tbl) into v_n using v_org;
+      continue when v_n = 0;
+      begin
+        execute format('delete from public.%I where org_id = $1', v_tbl) using v_org;
+        v_progress := true;
+        v_swept := v_swept + 1;
+      exception when foreign_key_violation then
+        v_next := array_append(v_next, v_tbl);
+      end;
+    end loop;
+    exit when array_length(v_next, 1) is null or not v_progress;
+    v_sweep := v_next;
+  end loop;
+  perform set_config('crewflow.privacy_teardown_org', '', true);
+
+  -- g. Catalogue-wide verification — nothing may still carry this org id.
   for v_tbl in
     select c.relname
     from pg_class c
@@ -352,7 +426,8 @@ begin
   end if;
 
   v_detail := jsonb_build_object(
-    'tables', v_tables, 'rows', v_rows, 'billing_records_archived', v_archived, 'done_at', now());
+    'tables', v_tables, 'rows', v_rows, 'billing_records_archived', v_archived,
+    'tables_swept_without_fk', v_swept, 'done_at', now());
   update public.privacy_deletion_requests
      set steps = steps || jsonb_build_object('teardown', v_detail),
          counts = counts || jsonb_build_object('org_tables', v_counts),

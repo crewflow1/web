@@ -31,6 +31,33 @@ import {
   type DeletionAdminClient,
 } from "@/server/services/privacy-deletion";
 import { buildOrgExport } from "@/server/services/gdpr-export";
+import { recordConversationExecution } from "@/server/services/receptionist-execution";
+import { resolveExecution, isExecutionDecided } from "@/lib/receptionist/conversation-execution";
+
+/**
+ * One row in an append-only receptionist ledger for `orgId`. That ledger carries
+ * org_id with NO foreign key, so no cascade reaches it: it exercises both the
+ * teardown sweep and the sanctioned-teardown escape on its append-only guard.
+ */
+async function seedReceptionistLedgerRow(orgId: string): Promise<string> {
+  const decision = resolveExecution(
+    { kind: "prepare_booking", job_type: "plumbing", postcode: "SW1A 1AA", phone_number: "+447700900123" } as const,
+    "allow",
+    { liveExecutionEnabled: true },
+  );
+  if (!isExecutionDecided(decision)) throw new Error("test setup: expected a decided execution");
+  const correlationId = crypto.randomUUID();
+  const rec = await recordConversationExecution({
+    org_id: orgId,
+    conversation_id: crypto.randomUUID(),
+    correlation_id: correlationId,
+    decision,
+    policy_verdict: "allow",
+    live_execution: true,
+  });
+  expect(rec, "receptionist execution ledger row recorded").not.toBeNull();
+  return correlationId;
+}
 
 /**
  * COMPANY DELETION — real Postgres, real Storage, real Supabase Auth; Stripe is
@@ -111,6 +138,8 @@ describeIntegration("privacy · company deletion", () => {
   it("deletes the whole company: rows, files, memberships, identities — no residue, bystander untouched", async () => {
     const w = await buildWorld("full", orgB, { subscription: true });
     const stripe = stripeMock();
+    await seedReceptionistLedgerRow(w.org.id);
+    expect(await countRows("receptionist_conversation_executions", { org_id: w.org.id })).toBe(1);
     const before = await snapshotOrg(orgB.id, [bOwner.id, w.shared.id]);
     const baseline = await residue(w.m);
     expect(baseline.length, "markers must be present before deletion or the scan proves nothing").toBeGreaterThan(15);
@@ -170,6 +199,8 @@ describeIntegration("privacy · company deletion", () => {
       expect(await countRows(t, { org_id: w.org.id }), t).toBe(0);
     }
     expect(await countOrgObjects(w.org.id), "storage objects").toBe(0);
+    // The append-only ledger with no FK on org_id was swept by the teardown.
+    expect(await countRows("receptionist_conversation_executions", { org_id: w.org.id })).toBe(0);
 
     // Sole-company members: identity destroyed, session dead.
     for (const u of [w.owner, w.adminUser, w.staff]) {
@@ -234,6 +265,55 @@ describeIntegration("privacy · company deletion", () => {
     expect(stripe.calls.length).toBe(2);
     expect(await ledger(req.requestId)).toEqual(tomb);
   }, 180_000);
+
+  it("append-only evidence stays append-only: the teardown escape is unusable outside a sanctioned teardown", async () => {
+    const w = await buildWorld("escape", orgB, { shareWithBystander: false });
+    const correlationId = await seedReceptionistLedgerRow(w.org.id);
+    // An ORPHAN row (org id matching no organisation) — the case a bare
+    // "organisation row is absent" escape would have made freely deletable.
+    const orphanOrg = crypto.randomUUID();
+    const orphan = await seedReceptionistLedgerRow(orphanOrg);
+
+    const tryDelete = async (table: string, col: string, val: string) =>
+      (await db().from(table).delete().eq(col, val).select("id")).error?.message ?? "";
+
+    // 1. No deletion request at all → refused for the live org AND for the orphan.
+    expect(await tryDelete("receptionist_conversation_executions", "correlation_id", correlationId)).toMatch(/append-only/);
+    expect(await tryDelete("receptionist_conversation_executions", "correlation_id", orphan)).toMatch(/append-only/);
+    expect(await tryDelete("comm_events", "org_id", w.org.id)).toMatch(/append-only/);
+
+    // 2. Even with a company deletion RUNNING for that org, a direct service-role
+    //    delete is still refused: the marker exists only inside the teardown
+    //    transaction, and the organisation row is still there.
+    const req = await requestOrgDeletion(
+      { orgId: w.org.id, actorUserId: w.owner.id, confirmName: w.org.name },
+      { admin: admin() },
+    );
+    expect(req.ok).toBe(true);
+    if (!req.ok) return;
+    await makeDue(req.requestId);
+    const claim = await db().rpc("privacy_request_claim", { p_request_id: req.requestId, p_lease_seconds: 5 });
+    expect((claim.data as { claimed?: boolean } | null)?.claimed).toBe(true);
+    expect(await tryDelete("receptionist_conversation_executions", "correlation_id", correlationId)).toMatch(/append-only/);
+    expect(await tryDelete("comm_events", "org_id", w.org.id)).toMatch(/append-only/);
+    // A plain `delete from organizations` by service_role is refused too: only
+    // the sanctioned teardown may remove a company that holds evidence.
+    const bare = await db().from("organizations").delete().eq("id", w.org.id).select("id");
+    expect(bare.error?.message ?? "").toMatch(/append-only/);
+    expect(await countRows("organizations", { id: w.org.id })).toBe(1);
+
+    // 3. The sanctioned teardown removes the org's rows — and ONLY that org's:
+    //    the orphan row, which no request names, is still there afterwards.
+    await db().rpc("privacy_request_fail", { p_request_id: req.requestId, p_error_code: "test:release" });
+    const run = await runDeletionRequest(req.requestId, { admin: admin(), stripe: stripeMock() });
+    expect(run.status).toBe("completed");
+    expect(await countRows("receptionist_conversation_executions", { org_id: w.org.id })).toBe(0);
+    expect(await countRows("comm_events", { org_id: w.org.id })).toBe(0);
+    expect(await countRows("receptionist_conversation_executions", { org_id: orphanOrg })).toBe(1);
+    expect(await tryDelete("receptionist_conversation_executions", "correlation_id", orphan)).toMatch(/append-only/);
+    const tomb = await ledger(req.requestId);
+    expect((tomb.steps as { teardown: { tables_swept_without_fk: number } }).teardown.tables_swept_without_fk).toBeGreaterThanOrEqual(1);
+  }, 120_000);
 
   it("a sealed tombstone cannot be edited or deleted", async () => {
     const done = await db().from("privacy_deletion_requests").select("id").eq("status", "completed").limit(1);
@@ -399,9 +479,15 @@ describeIntegration("privacy · company deletion", () => {
     expect(await countRows("organizations", { id: w.org.id })).toBe(0);
   }, 180_000);
 
-  it("interrupted at EVERY step boundary, then resumed: finishes exactly once, bystander untouched", async () => {
-    const before = await snapshotOrg(orgB.id, [bOwner.id]);
-    for (const dieAfter of ["stripe_cancel", "lockout", "storage", "teardown", "identities"]) {
+  // One case PER step boundary (previously a single test looped over all five and
+  // rebuilt a full synthetic company each time, so its runtime was 5× a normal
+  // case and it could approach the timeout when the shared database was busy).
+  // Nothing is asserted less: each boundary still gets its own company, its own
+  // crash, its own resume, a full residue scan and a bystander snapshot.
+  it.each(["stripe_cancel", "lockout", "storage", "teardown", "identities"] as const)(
+    "interrupted right after `%s`, then resumed: finishes exactly once, bystander untouched",
+    async (dieAfter) => {
+      const before = await snapshotOrg(orgB.id, [bOwner.id]);
       const w = await buildWorld(`die${dieAfter.slice(0, 3)}`, orgB, {
         subscription: true,
         shareWithBystander: false,
@@ -422,9 +508,9 @@ describeIntegration("privacy · company deletion", () => {
           if (s === dieAfter) throw new Error("simulated crash");
         },
       });
-      expect(crashed.status, dieAfter).toBe("failed");
+      expect(crashed.status).toBe("failed");
       const mid = await ledger(req.requestId);
-      expect(Object.keys(mid.steps as object), dieAfter).toContain(dieAfter);
+      expect(Object.keys(mid.steps as object)).toContain(dieAfter);
       expect(mid.status).toBe("failed");
 
       const seen: string[] = [];
@@ -435,24 +521,25 @@ describeIntegration("privacy · company deletion", () => {
           seen.push(s);
         },
       });
-      expect(resumed.status, dieAfter).toBe("completed");
+      expect(resumed.status).toBe("completed");
       expect(seen, `no recorded step is repeated after dying at ${dieAfter}`).not.toContain(dieAfter);
       expect(stripe.calls.filter((c) => c.startsWith("cancel:")).length, "Stripe cancelled exactly once").toBe(1);
 
       expect(await countRows("organizations", { id: w.org.id })).toBe(0);
       expect(await countOrgObjects(w.org.id)).toBe(0);
       for (const u of [w.owner, w.adminUser, w.staff, w.shared]) {
-        expect((await serviceClient().auth.admin.getUserById(u.id)).data.user, dieAfter).toBeNull();
+        expect((await serviceClient().auth.admin.getUserById(u.id)).data.user).toBeNull();
       }
       const tomb = await ledger(req.requestId);
       expect(tomb.status).toBe("completed");
       expect(tomb.attempts).toBe(2);
       // Every member belonged only to this company, so NOTHING may remain anywhere.
       const left = await residue(w.m);
-      expect(left, `${dieAfter}: ${JSON.stringify(left)}`).toEqual([]);
-    }
-    expect(await snapshotOrg(orgB.id, [bOwner.id])).toBe(before);
-  }, 600_000);
+      expect(left, JSON.stringify(left)).toEqual([]);
+      expect(await snapshotOrg(orgB.id, [bOwner.id])).toBe(before);
+    },
+    120_000,
+  );
 
   it("a hard crash (no failure recorded) holds the lease; two runners never both work; the next claim resumes", async () => {
     const w = await buildWorld("lease", orgB);
