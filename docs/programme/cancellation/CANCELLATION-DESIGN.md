@@ -183,6 +183,12 @@ founder's call (Q1).
 - **Q5 Setup fee.** Not refunded by anything here. Confirm.
 - **Q6 Who may cancel.** Owner only, as briefed. Should an admin with
   `settings:manage` also be allowed?
+- **Q7 Trials never end by themselves.** `organizations.trial_ends_at` is
+  display-only: `orgHasActiveAccess` (`server/auth/session.ts`) passes any
+  `trial` org regardless of the date, and no route under `app/api/cron`
+  references the column (grep, 2026-11-14). A `trial` org keeps access until HQ
+  changes its status by hand. Not built here. Decide: automatic expiry (and to
+  which state), or keep it manual.
 
 **Stripe Dashboard — confirm before merge**
 
@@ -217,6 +223,7 @@ founder's call (Q1).
 | F5 | P2 | `/access-pending` labelled a cancelled workspace "Pending approval" and gave the owner no route to invoices or data. | `app/access-pending/page.tsx` (pre-change) | Fixed. |
 | F6 | P2 | `billing_invoices` and `subscription_cancellations` cascade on organisation delete. If account deletion hard-deletes the org row, CrewFlow's own billing records go with it. | `\d billing_invoices` (`ON DELETE CASCADE`) | For the deletion workstream. Not changed here. |
 | F7 | P3 | Subscription status events are applied in arrival order, not `event.created` order. A late `past_due` after `active` for a live subscription suspends wrongly until the next event. Only the cancelled case is closed here. | `handleSubscriptionUpsert` | NOT-IMPLEMENTED. |
+| F9 | P2 | A trial has no automatic end (Q7). | `server/auth/session.ts` `orgHasActiveAccess`; no cron reads `trial_ends_at` | NEEDS-FOUNDER. Not built. |
 | F8 | P3 | `/api/account/export` duplicates the ZIP assembly of `/api/gdpr/export` (that route's source is test-pinned, so it was left alone). | both route files | Follow-up. |
 
 ## 11. Rollback
