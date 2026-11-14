@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireOrgContext } from "@/server/auth/session";
 import { answerSiteManager } from "@/server/services/site-manager/orchestrator";
-import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
+import { DEFAULT_LIMITS, enforceIdentifiedStrict } from "@/lib/security/rate-limit";
 
 /**
  * POST /api/ai/site-manager
@@ -46,9 +46,17 @@ export async function POST(request: Request): Promise<NextResponse> {
   // middleware guards /api/ai/* (not in its exclusion matcher).
   const { user, ctx } = await requireOrgContext();
 
-  // Rate limit: reuse the ai_question shape (20/hr) under its own bucket key so
-  // the two AI surfaces don't share a budget. Caps LLM cost on abuse.
-  const rl = enforce(request, "ai_site_manager", DEFAULT_LIMITS.ai_question);
+  // Rate limit: the ai_question shape (20/hr) under its own bucket key so the two
+  // AI surfaces don't share an allowance — per USER, in the durable shared store,
+  // FAIL-CLOSED. This route is open to ANY authenticated member and runs the
+  // `high` (most expensive) tier, so the old per-IP, per-lambda-instance counter
+  // let one staff account burn the org's monthly AI ceiling. See
+  // app/api/ai/question/route.ts for the full rationale.
+  const rl = await enforceIdentifiedStrict(
+    "ai_site_manager",
+    `${ctx.org.id}:${user.id}`,
+    DEFAULT_LIMITS.ai_question,
+  );
   if (rl) return rl as unknown as NextResponse;
 
   let body: unknown;

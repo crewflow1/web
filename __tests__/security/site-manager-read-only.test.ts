@@ -73,7 +73,12 @@ describe("site-manager route: authenticated, rate-limited, validated", () => {
     expect(ROUTE).toMatch(/requireOrgContext/);
   });
   it("enforces a rate limit under its own bucket key", () => {
-    expect(ROUTE).toMatch(/enforce\(\s*request\s*,\s*"ai_site_manager"/);
+    // Re-keyed by the secrets/AI-spend audit: per-IP in-memory `enforce(request, …)`
+    // became the DURABLE, per-USER, FAIL-CLOSED limiter. Strictly stronger; the
+    // pin now refuses a regression back to the per-instance counter.
+    expect(ROUTE).toMatch(/enforceIdentifiedStrict\(\s*"ai_site_manager"/);
+    expect(ROUTE).toMatch(/`\$\{ctx\.org\.id\}:\$\{user\.id\}`/);
+    expect(ROUTE).not.toMatch(/\benforce\(\s*request/);
   });
   it("validates the body with zod (question + optional jobId)", () => {
     expect(ROUTE).toMatch(/z\.object/);
