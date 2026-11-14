@@ -202,8 +202,9 @@ export async function deviceState(page: Page): Promise<DeviceState> {
 /**
  * Keys written by `next dev` tooling (HMR / dev overlay), present only because
  * the armed run uses the dev server. They do not exist in a production build
- * and are excluded from the cookie register. Kept as an explicit, reviewed
- * list — never a wildcard — so a new unknown key still fails the spec.
+ * and are excluded from the cookie register. Kept as a short, explicit list of
+ * Next.js-owned prefixes — nothing broader — so any other unknown key still
+ * fails the spec.
  */
 const DEV_TOOLING_KEYS: readonly RegExp[] = [
   /^__next_hmr_refresh_hash__$/,
