@@ -29,10 +29,24 @@ export const ARMED_TRACKER_ENV: Record<string, string> = {
   // name is what arms it. Server/edge Sentry key off VERCEL_ENV/NODE_ENV and so
   // stay silent — only the browser side is under test here.
   NEXT_PUBLIC_VERCEL_ENV: "preview",
+  // Sentry discards session envelopes when no release is set. Production always
+  // has one (the commit SHA), which is exactly why production sends a session
+  // ping on every page load — so the armed run needs one to reproduce that.
+  NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA: "e2e-consent-armed",
 };
 
-/** True when the spec is running against a server started with the dummy IDs. */
-export const ARMED = process.env.E2E_CONSENT_ARMED === "1";
+/**
+ * True when the spec is running against a server started with the dummy IDs.
+ *
+ * A FUNCTION, read at call time — never a module-level constant. This module is
+ * imported by playwright.consent.config.ts, and imports are evaluated before
+ * the config body sets E2E_CONSENT_ARMED, so a constant here is computed too
+ * early in any process that loads the config first (it silently turned the
+ * armed matrix into skips in a restarted worker).
+ */
+export function isArmed(): boolean {
+  return process.env.E2E_CONSENT_ARMED === "1";
+}
 
 export type TrackerHit = {
   /** Which consent category the request belongs to, or why it is allowed. */

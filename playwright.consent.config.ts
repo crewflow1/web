@@ -51,14 +51,25 @@ export default defineConfig({
     video: "off",
     serviceWorkers: "block",
     navigationTimeout: 120_000,
+    /**
+     * posthog-js refuses to capture events when `navigator.webdriver` is true
+     * (its bot filter), which would leave the "tracking really starts / really
+     * stops" assertions looking only at its config fetches. Dropping the
+     * automation flag makes the SDK behave exactly as it does for a real
+     * visitor, so real `$pageview` batches are what the spec sees gated.
+     */
+    launchOptions: { args: ["--disable-blink-features=AutomationControlled"] },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
     command: `npm run dev -- -p ${PORT}`,
     url: baseURL,
-    // Never reuse: a server already on this port may have been started WITHOUT
-    // the dummy tracker IDs, which would turn the proof into a no-op.
-    reuseExistingServer: false,
+    // Never reuse by default: a server already on this port may have been
+    // started WITHOUT the dummy tracker IDs, which would turn the proof into a
+    // no-op. CONSENT_E2E_REUSE_SERVER=1 is for local iteration against a server
+    // you started yourself with ARMED_TRACKER_ENV; the spec still fails loudly
+    // if the banner (i.e. the armed env) is missing.
+    reuseExistingServer: process.env.CONSENT_E2E_REUSE_SERVER === "1",
     timeout: 240_000,
     env: { ...(process.env as Record<string, string>), ...ARMED_TRACKER_ENV },
   },

@@ -1,7 +1,7 @@
 import { test, expect, type BrowserContext, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import {
-  ARMED,
+  isArmed,
   EMPTY_STATE,
   deviceState,
   nonEssential,
@@ -80,7 +80,7 @@ async function settle(page: Page): Promise<void> {
 /** Load a page and wait until the consent UI has made its decision. */
 async function open(page: Page, path: string): Promise<void> {
   await page.goto(path);
-  if (ARMED) await expect(banner(page)).toBeVisible();
+  if (isArmed()) await expect(banner(page)).toBeVisible();
   await settle(page);
 }
 
@@ -107,6 +107,23 @@ async function seedConsent(
   ]);
 }
 
+/**
+ * Print one machine-readable evidence line per phase (and attach it to the
+ * report), so docs/programme/consent/CONSENT-EVIDENCE.md can be regenerated
+ * from a run log instead of being taken on trust.
+ */
+async function evidence(label: string, page: Page, watch: NetworkWatch): Promise<void> {
+  const state = withoutDevTooling(await deviceState(page));
+  const requests: Record<string, number> = {};
+  for (const h of watch.hits) {
+    const key = `${h.kind} ${h.host}${h.itemTypes?.length ? ` [${h.itemTypes.join(",")}]` : ""}`;
+    requests[key] = (requests[key] ?? 0) + 1;
+  }
+  const line = JSON.stringify({ phase: label, path: new URL(page.url()).pathname, thirdPartyRequests: requests, device: state });
+  console.log(`[consent-evidence] ${line}`);
+  await test.info().attach(`evidence: ${label}`, { body: line, contentType: "application/json" });
+}
+
 const now = () => Math.floor(Date.now() / 1000);
 const record = (analytics: 0 | 1, performance: 0 | 1) =>
   `v2.t${now()}.analytics${analytics}.performance${performance}`;
@@ -124,6 +141,7 @@ test.describe("consent — nothing non-essential before any interaction", () => 
     }) => {
       const watch = await watchNetwork(context, appOrigin(baseURL));
       await open(page, path);
+      await evidence("before-interaction (anonymous)", page, watch);
 
       expect(watch.consentRequired(), "consent-required requests").toEqual([]);
       const state = await deviceState(page);
@@ -131,7 +149,7 @@ test.describe("consent — nothing non-essential before any interaction", () => 
       // NOTHING to the device at all.
       expect(withoutDevTooling(state)).toEqual(EMPTY_STATE);
       expect(nonEssential(state)).toEqual(EMPTY_STATE);
-      if (ARMED) {
+      if (isArmed()) {
         await expect(banner(page)).toBeVisible();
       } else {
         await expect(banner(page)).toHaveCount(0);
@@ -150,6 +168,7 @@ test.describe("consent — nothing non-essential before any interaction", () => 
       const watch = await watchNetwork(context, appOrigin(baseURL));
       await open(page, IN_APP);
       await expect(page).toHaveURL(new RegExp(`${IN_APP}(\\?|$)`));
+      await evidence("before-interaction (signed-in)", page, watch);
 
       expect(watch.consentRequired(), "consent-required requests").toEqual([]);
       const state = await deviceState(page);
@@ -164,7 +183,7 @@ test.describe("consent — nothing non-essential before any interaction", () => 
       await waitForHydrated(settingsButton(page));
       // While the first-visit banner is up it carries its own "Customise"; the
       // footer link is the entry point for afterwards, so answer the banner first.
-      if (ARMED) await banner(page).getByRole("button", { name: "Reject all" }).click();
+      if (isArmed()) await banner(page).getByRole("button", { name: "Reject all" }).click();
       await settingsButton(page).click();
       await expect(dialog(page)).toBeVisible();
     });
@@ -176,7 +195,7 @@ test.describe("consent — nothing non-essential before any interaction", () => 
 // ---------------------------------------------------------------------------
 
 test.describe("consent — settings entry point with nothing optional configured", () => {
-  test.skip(ARMED, "covered by the armed matrix below");
+  test.skip(() => isArmed(), "covered by the armed matrix below");
 
   test("Cookie settings opens and says only strictly-necessary cookies are used", async ({
     page,
@@ -199,7 +218,7 @@ test.describe("consent — settings entry point with nothing optional configured
 // ---------------------------------------------------------------------------
 
 test.describe("consent — armed matrix (dummy trackers configured)", () => {
-  test.skip(!ARMED, "needs dummy tracker IDs: run with playwright.consent.config.ts");
+  test.skip(() => !isArmed(), "needs dummy tracker IDs: run with playwright.consent.config.ts");
 
   let watch: NetworkWatch;
   test.beforeEach(async ({ context, baseURL }) => {
@@ -236,6 +255,7 @@ test.describe("consent — armed matrix (dummy trackers configured)", () => {
     await settle(page);
     expect(watch.consentRequired()).toEqual([]);
     // The ONLY thing a rejection leaves on the device is the record of it.
+    await evidence("after Reject all", page, watch);
     expect(withoutDevTooling(await deviceState(page))).toEqual({
       ...EMPTY_STATE,
       cookies: [CONSENT_COOKIE],
@@ -248,6 +268,7 @@ test.describe("consent — armed matrix (dummy trackers configured)", () => {
     await page.goto(MARKETING_DEEP);
     await settle(page);
     await expect(banner(page)).toHaveCount(0);
+    await evidence("after Reject all + reload + navigation", page, watch);
 
     expect(watch.consentRequired()).toEqual([]);
     expect(withoutDevTooling(await deviceState(page))).toEqual({
@@ -272,12 +293,14 @@ test.describe("consent — armed matrix (dummy trackers configured)", () => {
     await expect.poll(() => watch.byKind("analytics").length).toBeGreaterThan(0);
     // …and only now does the vendor write to the device.
     await expect.poll(() => vendorKeys(page).then((k) => k.length)).toBeGreaterThan(0);
+    await evidence("after Accept all (same page)", page, watch);
 
     // Performance monitoring: Sentry's session ping fires on page load, so it
     // shows on the next one — and it is a `session`, not an error report.
     await page.reload();
     await expect.poll(() => watch.byKind("performance").length).toBeGreaterThan(0);
     expect(watch.byKind("performance").flatMap((h) => h.itemTypes ?? [])).toContain("session");
+    await evidence("after Accept all + reload", page, watch);
     await expect(banner(page)).toHaveCount(0);
     // Nothing went anywhere the harness does not recognise.
     expect(watch.byKind("unknown-third-party")).toEqual([]);
@@ -320,6 +343,7 @@ test.describe("consent — armed matrix (dummy trackers configured)", () => {
     await settle(page);
     await page.reload();
     await settle(page);
+    await evidence("after withdrawal + activity + navigation + reload", page, watch);
 
     expect(watch.consentRequired()).toEqual([]);
     expect(await vendorKeys(page)).toEqual([]);
@@ -355,6 +379,7 @@ test.describe("consent — armed matrix (dummy trackers configured)", () => {
     await expect.poll(() => watch.byKind("analytics").length).toBeGreaterThan(0);
     await settle(page);
     expect(watch.byKind("performance"), "Sentry session/trace envelopes").toEqual([]);
+    await evidence("customise: analytics only, after reload", page, watch);
     expect(watch.byKind("unknown-third-party")).toEqual([]);
   });
 
@@ -373,6 +398,7 @@ test.describe("consent — armed matrix (dummy trackers configured)", () => {
     await expect.poll(() => watch.byKind("performance").length).toBeGreaterThan(0);
     await settle(page);
     expect(watch.byKind("analytics"), "PostHog requests").toEqual([]);
+    await evidence("customise: performance only, after reload", page, watch);
     expect(await vendorKeys(page)).toEqual([]);
     expect(watch.byKind("unknown-third-party")).toEqual([]);
   });
