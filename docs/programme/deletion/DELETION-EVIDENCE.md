@@ -270,7 +270,16 @@ an erasure panel on the staff page; a link from Settings.
 **Browser run** (Playwright, Chromium, against `next dev` on port 3106 started with
 `FEATURE_ACCOUNT_DELETION=true`, local stack, synthetic people):
 
-PLAYWRIGHT_RESULT_PLACEHOLDER
+| Mode | Test | Result |
+|---|---|---|
+| Capability **on** (`E2E_ACCOUNT_DELETION=1`) | A staff member deletes their OWN account | **passed** — button disabled until the email matches; after submit the browser lands on `/login`; auth user gone, membership and pay / emergency-contact rows gone; the company and its 3 other members intact; the company section was never offered to a non-owner. |
+| | An admin removes a staff member and erases their personal data | **passed** — lands on `/staff?saved=erased`; membership, notifications and pay / emergency-contact rows gone; **the person's login still exists**. |
+| | The owner schedules deletion of the company, sees the cooling-off, and cancels it | **passed** — sole-owner notice shown for their own account; button disabled until box ticked and exact name typed; "scheduled for deletion" banner appears; ledger row `scheduled` ≈ 7 days out; company row still present; "Cancel the deletion" → banner gone, ledger `cancelled / requester_cancelled`. |
+| Capability **off** (server restarted without the flag) | Dark by default | **passed** — support-assisted panel shown; no "Delete my account" or "Schedule deletion" control rendered. |
+
+`3 passed, 1 skipped` (on) and `1 passed, 3 skipped` (off). **VERIFIED** on `next dev`. The first on-run had
+one failure that was the spec's own mistake (its ledger query did not filter `kind = 'org'` and so also
+counted the staff-erasure row); the query was corrected, nothing in the product changed.
 
 The spec has two modes: with the capability off (CI's default, and production today) it asserts the dark
 state — support-assisted panel, no deletion control; with `E2E_ACCOUNT_DELETION=1` it runs the three flows.
@@ -290,7 +299,7 @@ is covered by the two reauth suites; the Google and magic-link sign-ins themselv
 | Unit: `__tests__/ui` (reachability, design-system adoption, tokens), `permission-editor`, `polish-batch`, `logo-wiring`, `hq-logout`, `sprint-a`, `gdpr-*-registry` | **all passed** (15 files / 285 tests; registry 23 tests) |
 | Integration: `audit-log-grant-lockdown`, `audit-log-immutability`, `least-privilege-grants`, `org-teardown-cascade`, `secdef-org-rpc-guard`, `slice15-pr1-privilege-holes`, `slice15-pr2-cclass-least-privilege` | **all passed (67 tests)** |
 | Integration: `rls/gdpr-export` | **10 / 11.** Case *5b REVERSE* fails on `subscription_cancellations` — a table created concurrently in the shared database by **another workstream**, not classified in `lib/gdpr/org-tables.json`. Not caused by this branch (its own tables use `target_org_id` and stay out of that census). To be classified by the lead when the branches meet. |
-| `heavy.sh npm run typecheck` | **exit 0** (at `566c7dbe`; re-run after the last change — see the final report) |
+| `heavy.sh npm run typecheck` | **exit 0**, 0 errors (at `a8c6b549`, after the last TypeScript change) |
 
 ## 10. Migrations — apply order and production preconditions
 
@@ -326,7 +335,7 @@ order by 1;
 | Item | Label | Exact next step |
 |---|---|---|
 | Real Stripe cancellation | **SIMULATED-ONLY** | Exercise once in Stripe **test mode** with a founder-supplied test key. |
-| Browser test on a production build; passwordless re-auth in a browser | **IMPLEMENTED-UNTESTED** in a browser (logic unit- and integration-tested) | Run `e2e/account-deletion.spec.ts` in CI with the flag on in a dedicated job. |
+| Browser flows on a **production build**; passwordless re-auth in a browser | Flows **VERIFIED on `next dev` only**; passwordless path **IMPLEMENTED-UNTESTED** in a browser (logic unit- and integration-tested) | Add a CI job that builds and starts the app with `FEATURE_ACCOUNT_DELETION=true` and runs `e2e/account-deletion.spec.ts` with `E2E_ACCOUNT_DELETION=1`. The default CI run exercises only the dark-state test. |
 | Users with **no company** cannot open Settings → Account (the app shell requires an org) | **NOT-IMPLEMENTED** | Give `/settings/account` a route outside the org-gated shell, or handle via support. Affects someone erased from their only company who then wants their login deleted. |
 | Erasing a person **already removed** from the team | **NOT-IMPLEMENTED** (no entry point; `privacy_request_create` requires a current membership) | Add an owner action that targets a former member by id, authorised by the org holding rows for them. |
 | Notifying the other owners / admins when a company deletion is scheduled | **NOT-IMPLEMENTED** | The pending banner on Settings → Account is the only signal today; add an in-app notification (email is a customer communication and needs sign-off). |
