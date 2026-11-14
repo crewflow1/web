@@ -21,7 +21,9 @@ import { join } from "node:path";
  */
 
 const { insertMock, redirectMock } = vi.hoisted(() => ({
-  insertMock: vi.fn(async (_row: Record<string, unknown>) => ({ error: null })),
+  insertMock: vi.fn<(row: Record<string, unknown>) => Promise<{ error: null }>>(async () => ({
+    error: null,
+  })),
   redirectMock: vi.fn((url: string) => {
     throw new Error(`REDIRECT:${url}`);
   }),

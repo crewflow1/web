@@ -20,12 +20,14 @@ import { join } from "node:path";
  */
 
 const { upsertMock } = vi.hoisted(() => ({
-  upsertMock: vi.fn(async (_row: Record<string, unknown>, _opts?: unknown) => ({ error: null })),
+  upsertMock: vi.fn<(row: Record<string, unknown>, opts?: unknown) => Promise<{ error: null }>>(
+    async () => ({ error: null }),
+  ),
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => ({
-    from: (_table: string) => ({
+    from: () => ({
       upsert: (row: Record<string, unknown>, opts?: unknown) => upsertMock(row, opts),
     }),
   }),
