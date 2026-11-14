@@ -8,9 +8,11 @@ import { RefreshStatusButton } from "./_refresh-button";
  * Lock screen for orgs that aren't active yet.
  *
  * Reached by `requireOrgContext()` when the user's org is in any of
- * the non-access states (pending / suspended / rejected). Each state
- * gets its own headline + body so the customer knows what's happening
- * and what to do.
+ * the non-access states (pending / suspended / rejected / cancelled). Each
+ * state gets its own headline + body so the customer knows what's happening
+ * and what to do. For a cancelled or suspended workspace the OWNER is pointed
+ * at /account/billing (invoices, data export, cancel / reactivate) — the lock
+ * screen is not a dead end for the person who is still entitled to those.
  *
  * Friction-removal pass (Sprint A): explicit signup timestamp, hours-
  * elapsed counter, "we'll email you when approved" promise, and a
@@ -40,8 +42,22 @@ const COPY: Record<
   },
   cancelled: {
     title: "This CrewFlow workspace has been cancelled.",
-    body: "Your subscription was cancelled. Your data is retained for 30 days in case you change your mind — email us and we'll reactivate the workspace.",
+    // Matches the terms ("When you cancel, we delete it within 30 days, except
+    // where tax law obliges us to retain it") — not a promise to KEEP it 30 days.
+    body: "The subscription for this company was cancelled, so the workspace is closed. Under our terms the data is deleted within 30 days of cancellation, except records tax law requires us to keep.",
   },
+};
+
+/** What each role can do next from a cancelled / suspended workspace. */
+const OWNER_NEXT: Record<string, string> = {
+  cancelled:
+    "As the account owner you can still download your invoices and a full export of your data, and ask us to reactivate.",
+  suspended:
+    "As the account owner you can still see your invoices, download a full export of your data, and cancel your subscription.",
+};
+const MEMBER_NEXT: Record<string, string> = {
+  cancelled: "If you think this is a mistake, speak to your company's account owner.",
+  suspended: "Your company's account owner can sort this out from their billing page.",
 };
 
 function hoursAgo(iso: string): number {
@@ -74,6 +90,16 @@ export default async function AccessPendingPage() {
   // COPY.pending is statically present — non-null assertion is safe.
   const copy = COPY[ctx.org.status] ?? COPY.pending!;
 
+  // A cancelled or suspended workspace is not a dead end for its OWNER: billing
+  // history, the data export, cancelling and reactivation live on
+  // /account/billing, which does not require active access. `ctx` here comes
+  // from the caller's own membership row (no impersonation).
+  const lapsed = ctx.org.status === "cancelled" || ctx.org.status === "suspended";
+  const isOwner = ctx.membership.role === "owner";
+  const nextStep = lapsed
+    ? (isOwner ? OWNER_NEXT : MEMBER_NEXT)[ctx.org.status]
+    : null;
+
   // Created-at on organizations is the closest thing to a "submitted at"
   // for pending review. We don't expose the exact timestamp (avoid
   // implying SLA), just an integer hours count so the user knows
@@ -92,7 +118,9 @@ export default async function AccessPendingPage() {
                 ? "Signup rejected"
                 : ctx.org.status === "suspended"
                   ? "Access paused"
-                  : "Pending approval"}
+                  : ctx.org.status === "cancelled"
+                    ? "Subscription cancelled"
+                    : "Pending approval"}
             </p>
             <h1 className="mt-1 text-xl font-bold text-slate-900">
               {copy.title}
@@ -100,6 +128,7 @@ export default async function AccessPendingPage() {
           </div>
           <div className="space-y-4 px-6 py-6 text-sm text-slate-700">
             <p>{copy.body}</p>
+            {nextStep ? <p>{nextStep}</p> : null}
             {copy.action ? (
               <p className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
                 {copy.action}
@@ -130,6 +159,16 @@ export default async function AccessPendingPage() {
             <div className="flex flex-wrap gap-2 pt-1">
               {ctx.org.status === "pending" ? (
                 <RefreshStatusButton />
+              ) : null}
+              {lapsed && isOwner ? (
+                <Link
+                  href="/account/billing"
+                  className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+                >
+                  {ctx.org.status === "cancelled"
+                    ? "Invoices, data export & reactivation"
+                    : "Billing, data export & cancellation"}
+                </Link>
               ) : null}
               <a
                 href="mailto:hello@crewflow.uk?subject=Access%20pending%20-%20CrewFlow"

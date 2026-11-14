@@ -7,20 +7,33 @@ import { planHasFeature } from "@/lib/billing/entitlements";
 import { resolveOrgPlanKey } from "@/server/services/entitlements";
 import {
   wireSelfServeBillingDeps,
-  listOrgSaasInvoices,
-  type SaasInvoice,
   type SubscriptionRow,
 } from "@/server/services/self-serve-billing";
+import { isSuperAdminEmail } from "@/server/auth/superadmin";
+import { loadBillingHistory, wireBillingHistoryDeps } from "@/server/services/billing-history";
+import { loadCancellationOrg } from "@/server/services/subscription-cancellation";
+import { isSelfServeCancellationDisabled } from "@/lib/billing/cancellation";
+import { InvoiceHistory } from "@/components/billing/invoice-history";
+import { CancelSubscription } from "@/components/billing/cancel-subscription.client";
 import { openBillingPortal, changePlan } from "./actions";
 
 /**
  * Settings → Billing — self-serve tenant plan management (DARK).
  *
- * DARK CONTRACT: while self-serve billing is not configured (the two-switch gate
- * is off — ALWAYS today), this page shows the plan catalogue read-only + the
- * existing "email us to change plan" fallback, and NO server action can reach
- * Stripe. When configured + admin, it surfaces the manage-billing portal, plan
- * upgrade/downgrade, and the org's CrewFlow invoices read from Stripe.
+ * DARK CONTRACT (plan management): while self-serve billing is not configured
+ * (the two-switch gate is off — ALWAYS today), this page shows the plan
+ * catalogue read-only + the "email us to change plan" fallback, and neither
+ * plan-management action (portal / change plan) can reach Stripe. When
+ * configured + admin, it surfaces the manage-billing portal and plan
+ * upgrade/downgrade.
+ *
+ * NOT behind that gate — available to founder-provisioned customers today:
+ *   • Invoices & receipts (server/services/billing-history.ts): a read-only
+ *     list, from Stripe when the SaaS key is present, else CrewFlow's records.
+ *   • Cancel subscription (OWNER only): the terms promise "cancel at any time
+ *     from the settings page". The action lives in app/account/billing/actions
+ *     and re-derives owner + org from the session; hiding the control here is
+ *     presentation, not the boundary.
  */
 
 const FEATURE_LABELS: Record<FeatureKey, string> = {
@@ -54,7 +67,7 @@ export default async function BillingSettingsPage({
   // staff member never sees the org's subscription status or SaaS invoice list
   // (even once self-serve billing is configured). The manage controls below are
   // gated on settings:manage. Owner always; admin with the grant; staff denied.
-  const { ctx, grants } = await requireCapability("settings", "view");
+  const { ctx, grants, user } = await requireCapability("settings", "view");
   const sp = await searchParams;
   const canManage = canWith(ctx.membership.role, grants, "settings", "manage");
   const configured = isSelfServeBillingConfigured();
@@ -62,15 +75,26 @@ export default async function BillingSettingsPage({
   const currentPlanKey = await resolveOrgPlanKey(ctx.org.id);
   const currentPlan = getPlan(currentPlanKey) ?? getPlan("trial")!;
 
-  // Subscription projection + invoices — only read Stripe when configured.
+  // Subscription projection — only read when plan management is configured.
   let subscription: SubscriptionRow | null = null;
-  let invoices: SaasInvoice[] = [];
   if (configured) {
-    const deps = wireSelfServeBillingDeps();
-    subscription = await deps.loadSubscription(ctx.org.id);
-    const inv = await listOrgSaasInvoices(deps, { orgId: ctx.org.id });
-    if (inv.ok) invoices = inv.invoices;
+    subscription = await wireSelfServeBillingDeps().loadSubscription(ctx.org.id);
   }
+
+  // Billing history + cancellation: NOT behind the self-serve gate (see header).
+  const [history, billingOrg] = await Promise.all([
+    loadBillingHistory(wireBillingHistoryDeps(), ctx.org.id),
+    loadCancellationOrg(ctx.org.id),
+  ]);
+  // The REAL owner only. An impersonating HQ operator is presented with a
+  // synthetic `owner` role; they must not be offered the customer's cancel
+  // button (and the action refuses them regardless).
+  const isAccountOwner =
+    ctx.membership.role === "owner" && !isSuperAdminEmail(user.email);
+  const cancelDisabled = isSelfServeCancellationDisabled();
+  const hasCardSubscription = Boolean(
+    billingOrg?.stripe_customer_id || billingOrg?.stripe_subscription_id,
+  );
 
   const errorMsg = sp.error ? (ERROR_COPY[sp.error] ?? "Something went wrong.") : null;
 
@@ -128,7 +152,7 @@ export default async function BillingSettingsPage({
             return (
               <li
                 key={f}
-                className={`flex items-center gap-2 text-sm ${included ? "text-slate-800" : "text-slate-400"}`}
+                className={`flex items-center gap-2 text-sm ${included ? "text-slate-800" : "text-slate-500"}`}
               >
                 <span aria-hidden>{included ? "✓" : "○"}</span>
                 {FEATURE_LABELS[f]}
@@ -206,43 +230,41 @@ export default async function BillingSettingsPage({
         </div>
       </section>
 
-      {/* Invoices ------------------------------------------------------- */}
-      {configured ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="text-base font-semibold text-slate-900">Invoices &amp; receipts</h2>
-          {invoices.length === 0 ? (
-            <p className="mt-2 text-sm text-slate-500">No invoices yet.</p>
+      <InvoiceHistory history={history} />
+
+      {/* Cancel --------------------------------------------------------- */}
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-base font-semibold text-slate-900">Cancel subscription</h2>
+        <p className="mt-1 text-sm text-slate-600">
+          Cancelling takes effect immediately: your company loses access straight away and no
+          further payments are taken. You&apos;ll see exactly what happens before you confirm.
+        </p>
+        <div className="mt-4">
+          {!isAccountOwner ? (
+            <p className="text-sm text-slate-600">
+              Only the account owner can cancel the subscription.
+            </p>
+          ) : cancelDisabled ? (
+            <p className="text-sm text-slate-700">
+              Cancelling online is temporarily unavailable. Email{" "}
+              <a
+                href={`mailto:hello@crewflow.uk?subject=${encodeURIComponent(`Cancel subscription — ${ctx.org.name}`)}`}
+                className="font-medium text-slate-900 underline"
+              >
+                hello@crewflow.uk
+              </a>{" "}
+              and we&apos;ll cancel it for you today.
+            </p>
           ) : (
-            <ul className="mt-4 divide-y divide-slate-100">
-              {invoices.map((inv) => (
-                <li key={inv.id} className="flex items-center justify-between py-2.5 text-sm">
-                  <div className="min-w-0">
-                    <div className="font-medium text-slate-900">{inv.number ?? inv.id}</div>
-                    <div className="text-xs text-slate-500">
-                      {inv.created?.slice(0, 10) ?? ""} · {inv.status ?? ""}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="font-semibold text-slate-900">
-                      {inv.currency} {inv.amount_paid.toFixed(2)}
-                    </span>
-                    {inv.hosted_invoice_url ? (
-                      <a
-                        href={inv.hosted_invoice_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs font-medium text-blue-600 hover:text-blue-700"
-                      >
-                        View
-                      </a>
-                    ) : null}
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <CancelSubscription
+              orgId={ctx.org.id}
+              orgName={ctx.org.name}
+              hasSubscription={hasCardSubscription}
+              dataExportHref="/api/gdpr/export"
+            />
           )}
-        </section>
-      ) : null}
+        </div>
+      </section>
     </div>
   );
 }

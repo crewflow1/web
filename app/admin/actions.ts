@@ -9,6 +9,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { sendEmail } from "@/lib/email/send";
 import { env } from "@/lib/env";
+import {
+  stopBillingForHqCancellation,
+  wireCancellationDeps,
+} from "@/server/services/subscription-cancellation";
 
 /**
  * Super-admin organisation moderation actions.
@@ -66,6 +70,21 @@ export async function setOrganizationStatus(formData: FormData): Promise<void> {
   });
   if (!parsed.success) {
     redirect("/admin/organizations?error=invalid_input");
+  }
+
+  // CANCELLED must stop billing, not merely lock the customer out: terminate
+  // the Stripe subscription FIRST (same path as the owner's self-serve cancel).
+  // If billing cannot be stopped the org is NOT marked cancelled. `suspended`
+  // never touches the subscription.
+  if (parsed.data.status === "cancelled") {
+    const stopped = await stopBillingForHqCancellation(wireCancellationDeps(), {
+      orgId: parsed.data.org_id,
+      actor: { userId: admin.id, email: admin.email },
+      reason: parsed.data.reason ?? null,
+    });
+    if (!stopped.ok) {
+      redirect(`/admin/organizations?error=${encodeURIComponent(stopped.message)}`);
+    }
   }
 
   const supabase = createAdminClient();

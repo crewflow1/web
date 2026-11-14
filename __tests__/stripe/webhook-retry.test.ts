@@ -48,15 +48,50 @@ const h = vi.hoisted(() => {
     reclaimReturns: Array<{ id: string }>;
     reclaimError: { message: string } | null;
     dispatchThrows: boolean;
+    /**
+     * The dispatch write RETURNS an error instead of throwing — which is how the
+     * Supabase client actually fails (PostgREST errors are returned). The
+     * `dispatchThrows` switch above models a rejected promise, which a real
+     * write failure never produces; this is the realistic fault.
+     */
+    orgWriteReturnsError: { message: string; code?: string } | null;
+    /** What the billing_events `processed_at` state read resolves to. */
+    eventState: { data: { processed_at: string | null } | null; error: { message: string } | null };
+    /** What the organizations-by-stripe-customer lookup resolves to. */
+    orgLookup: { data: { id: string } | null; error: { message: string } | null };
   } = {
     insertError: null,
     reclaimReturns: [],
     reclaimError: null,
     dispatchThrows: false,
+    orgWriteReturnsError: null,
+    eventState: { data: { processed_at: null }, error: null },
+    orgLookup: { data: { id: "org-1" }, error: null },
   };
 
   function from(table: string) {
     return {
+      select: () => {
+        const rec: Op = { table, op: "select", eqs: [] };
+        ops.push(rec);
+        const result = () =>
+          Promise.resolve(
+            table === "billing_events"
+              ? cfg.eventState
+              : table === "organizations"
+                ? cfg.orgLookup
+                : { data: null, error: null },
+          );
+        const q = {
+          eq: (k: string, v: unknown) => {
+            rec.eqs.push([k, v]);
+            return q;
+          },
+          limit: () => Promise.resolve({ data: [], error: null }),
+          maybeSingle: result,
+        };
+        return q;
+      },
       insert: (payload: Record<string, unknown>) => {
         ops.push({ table, op: "insert", payload, eqs: [] });
         return Promise.resolve({ data: null, error: cfg.insertError });
@@ -86,6 +121,10 @@ const h = vi.hoisted(() => {
                   }),
               };
               return reclaimChain;
+            }
+            if (table === "organizations" && cfg.orgWriteReturnsError) {
+              // The realistic failure: resolved, with an error member.
+              return Promise.resolve({ error: cfg.orgWriteReturnsError });
             }
             // markProcessed / markFailed terminal update.
             return Promise.resolve({ error: null });
@@ -148,6 +187,9 @@ beforeEach(() => {
   h.cfg.reclaimReturns = [];
   h.cfg.reclaimError = null;
   h.cfg.dispatchThrows = false;
+  h.cfg.orgWriteReturnsError = null;
+  h.cfg.eventState = { data: { processed_at: null }, error: null };
+  h.cfg.orgLookup = { data: { id: "org-1" }, error: null };
 });
 
 // =====================================================================
@@ -237,11 +279,11 @@ describe("retried / orphaned event — reclaimed and processed again", () => {
 });
 
 describe("concurrent loser / completed event — stays idempotent", () => {
-  it("short-circuits and does NOT run business logic when the reclaim loses", async () => {
-    // Reclaim returns NO row → completed, or an active lease is held by a
-    // concurrent winner. Either way the loser must run nothing.
+  it("COMPLETED event: short-circuits as 'duplicate' and does NOT run business logic", async () => {
+    // Reclaim returns NO row and the event is stamped processed.
     h.cfg.insertError = { message: "duplicate key value", code: "23505" };
     h.cfg.reclaimReturns = [];
+    h.cfg.eventState = { data: { processed_at: "2026-11-01T10:00:00Z" }, error: null };
 
     const res = await processStripeEvent(customerEvent());
 
@@ -249,6 +291,83 @@ describe("concurrent loser / completed event — stays idempotent", () => {
     expect(dispatched()).toBe(false); // handlers must not re-run
     // Only the reclaim attempt itself; no terminal stamp.
     expect(billingUpdates().filter((o) => o !== reclaimUpdate())).toHaveLength(0);
+  });
+
+  it("LIVE CLAIM held by another delivery: runs nothing, but answers 'in_flight' — NOT 'duplicate'", async () => {
+    // Reclaim returns NO row and the event is NOT processed: another delivery
+    // holds an active lease. Acking this as "duplicate" (HTTP 200) told Stripe
+    // the event was delivered; if the in-flight attempt was then killed before
+    // it could record a failure, nothing ever retried it — permanently stuck.
+    h.cfg.insertError = { message: "duplicate key value", code: "23505" };
+    h.cfg.reclaimReturns = [];
+    h.cfg.eventState = { data: { processed_at: null }, error: null };
+
+    const res = await processStripeEvent(customerEvent());
+
+    expect(res.status).toBe("in_flight");
+    expect(dispatched()).toBe(false); // still runs NOTHING — the concurrency guarantee is intact
+    expect(billingUpdates().filter((o) => o !== reclaimUpdate())).toHaveLength(0);
+  });
+
+  it("cannot tell completed from in-flight (state read fails) → throws, never a false 'delivered'", async () => {
+    h.cfg.insertError = { message: "duplicate key value", code: "23505" };
+    h.cfg.reclaimReturns = [];
+    h.cfg.eventState = { data: null, error: { message: "connection reset" } };
+
+    await expect(processStripeEvent(customerEvent())).rejects.toThrow(/state read failed/);
+    expect(dispatched()).toBe(false);
+  });
+});
+
+describe("FAULT INJECTION — a handler write that fails the way Supabase really fails", () => {
+  it("a RETURNED write error (not a throw) leaves the event retryable — it is NOT stamped processed", async () => {
+    // PostgREST returns { error }; it does not reject. The handlers used to
+    // discard that result, so this exact fault ended with processed_at stamped
+    // and a 200 to Stripe: the org was never updated and the event never retried.
+    h.cfg.orgWriteReturnsError = { code: "57014", message: "canceling statement due to statement timeout" };
+
+    await expect(processStripeEvent(customerEvent())).rejects.toThrow(
+      /organizations customer-sync update failed: canceling statement due to statement timeout/,
+    );
+
+    const upd = terminalBillingUpdate();
+    expect(upd.payload?.processed_at, "must NOT look done").toBeUndefined();
+    expect(String(upd.payload?.error_message)).toContain("statement timeout");
+  });
+
+  it("the org lookup FAILING is not 'no org for this customer' — the event is not dropped", async () => {
+    // customer.subscription.deleted resolves its org by stripe_customer_id. A
+    // failed read used to return null → "skipped:no_org_for_customer" → stamped
+    // processed → the cancellation was lost and the tenant kept access.
+    h.cfg.orgLookup = { data: null, error: { message: "upstream connect error" } };
+    const deleted = {
+      id: "evt_sub_deleted_1",
+      type: "customer.subscription.deleted",
+      created: 1_800_000_000,
+      data: { object: { id: "sub_1", customer: "cus_123", status: "canceled" } },
+    } as unknown as Stripe.Event;
+
+    await expect(processStripeEvent(deleted)).rejects.toThrow(
+      /organizations lookup by stripe_customer_id failed/,
+    );
+    // Nothing was stamped terminal anywhere.
+    expect(
+      billingUpdates().some((o) => o.payload && "processed_at" in o.payload),
+    ).toBe(false);
+  });
+
+  it("a lookup that SUCCEEDS and finds no org is still a deliberate skip (processed)", async () => {
+    h.cfg.orgLookup = { data: null, error: null };
+    const deleted = {
+      id: "evt_sub_deleted_2",
+      type: "customer.subscription.deleted",
+      created: 1_800_000_000,
+      data: { object: { id: "sub_1", customer: "cus_unknown", status: "canceled" } },
+    } as unknown as Stripe.Event;
+
+    const res = await processStripeEvent(deleted);
+    expect(res.status).toBe("processed");
+    expect(res).toMatchObject({ actions: ["skipped:no_org_for_customer"] });
   });
 });
 

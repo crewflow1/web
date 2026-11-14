@@ -215,6 +215,7 @@
     "stock_movements",
     "stocktake_lines",
     "stocktake_sessions",
+    "subscription_cancellations",
     "supplier_payment_allocations",
     "supplier_payments",
     "suppliers",
@@ -293,7 +294,8 @@
     "webhook_endpoints": "credentials: webhook signing secret",
     "whatsapp_number_routes": "credentials/provider routing + secrets",
     "whatsapp_webhook_events": "provider webhook payloads/secrets (service-internal)",
-    "worker_signoff_tokens": "credentials: hashed external-worker sign-off link tokens (access-token material) + issuance metadata; the resulting H&S evidence is exported via worker_acknowledgements"
+    "worker_signoff_tokens": "credentials: hashed external-worker sign-off link tokens (access-token material) + issuance metadata; the resulting H&S evidence is exported via worker_acknowledgements",
+    "subscription_cancellations": "platform billing (CrewFlow-side record of a SaaS subscription cancellation: claim, tombstone, refund-review flag); not tenant business data"
   },
   "_service_side_export_comment": "Org-scoped tables that ARE subject-access-relevant but are service-role-only (RLS on, no authenticated client grant), so the normal user-JWT export loop cannot read them. They are NOT excluded from the DSAR — they are read via a SEPARATE service-role (admin-client) lane in server/services/gdpr-export.ts that is MANDATORILY pinned to the caller's authorised active org (the route gates owner/admin of that org; the pin is the only tenant boundary once RLS is bypassed) and passes through the same redactRow. Keeps a dark table from being permanently invisible to legitimate data-subject access. ORG_EXPORT_TABLES = KNOWN − EXCLUDED − SERVICE_SIDE; the hermetic invariant is EXPORT ∪ SERVICE_SIDE ∪ EXCLUDED === KNOWN.",
   "service_side_export": {
@@ -351,7 +353,8 @@
     "cis_payment_snapshots": "statutory CIS payment snapshot (HMRC) — keep amounts/period, scrub UTR/verification PII",
     "cis_monthly_returns": "statutory CIS300 monthly return (HMRC) — keep period/status, scrub PII",
     "cis_monthly_return_lines": "part of the statutory CIS300 return — keep amounts, scrub PII",
-    "cis_bill_details": "CIS labour/materials split on a bill (feeds the statutory deduction) — keep amounts, scrub PII"
+    "cis_bill_details": "CIS labour/materials split on a bill (feeds the statutory deduction) — keep amounts, scrub PII",
+    "subscription_cancellations": "CrewFlow platform billing record of a cancellation — the ROW is kept (state, timestamps, Stripe subscription handle, refund-review flag: CrewFlow accounting + the tombstone that stops a dead subscription re-granting access); the PII columns requested_by_email and reason are scrubbed"
   },
   "erasure_retain": {
     "accounting_export_log": "integration bookkeeping (accounting push high-water-mark) — service-internal, no tenant PII; left intact",

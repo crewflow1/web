@@ -183,7 +183,27 @@ describe("processStripeEvent handler", () => {
     const delIdx = HANDLER.indexOf("async function handleSubscriptionDeleted");
     const nextFnIdx = HANDLER.indexOf("async function handleInvoicePaid");
     const body = HANDLER.slice(delIdx, nextFnIdx);
-    expect(body).toMatch(/status: "cancelled"/);
+    // The revoke moved (billing/self-serve-cancellation) from an inline
+    // `.update({ status: "cancelled" })` to confirm_subscription_cancellation,
+    // so that it is atomic with the cancellation tombstone and happens exactly
+    // once whether the owner's in-app cancel or this webhook gets there first.
+    // The old pin here — /status: "cancelled"/ — was also satisfied by the audit
+    // metadata `org_status: "cancelled"`, so it never proved the write existed.
+    // Pin the real thing instead: the handler calls the confirm function, and
+    // that function is what sets organizations.status. The BEHAVIOUR is proved
+    // against real Postgres in
+    // __tests__/integration/stripe/subscription-lifecycle.test.ts and
+    // __tests__/integration/stripe/subscription-cancellation.test.ts.
+    expect(body).toMatch(/return confirmSubscriptionTerminated\(event, orgId, sub\)/);
+    expect(body).toMatch(/confirmCancellationRpc\(\{[\s\S]*?via: "webhook"/);
+    const CONFIRM_SQL = read(
+      "supabase/migrations/20261317000000_subscription_cancellation_state_functions.sql",
+    );
+    const confirmFn = CONFIRM_SQL.slice(
+      CONFIRM_SQL.indexOf("create or replace function public.confirm_subscription_cancellation"),
+      CONFIRM_SQL.indexOf("create or replace function public.apply_stripe_subscription_state"),
+    );
+    expect(confirmFn).toMatch(/update public\.organizations o\s+set status = 'cancelled'/);
     expect(body).toMatch(/notifyOnSubscriptionCancelled/);
   });
 

@@ -76,6 +76,18 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   try {
     const result = await processStripeEvent(event);
+    if (result.status === "in_flight") {
+      // Another delivery of this event is still being processed. Answering 2xx
+      // would tell Stripe "delivered" on the strength of an attempt that has not
+      // succeeded — and if that attempt is killed mid-flight the event is never
+      // retried and stays unprocessed for good. A non-2xx keeps Stripe's retry
+      // schedule alive; the next delivery finds the event completed (→ 200
+      // duplicate) or reclaims it. Nothing was run on this request.
+      return NextResponse.json(
+        { ok: false, event_id: event.id, event_type: event.type, status: "in_flight" },
+        { status: 409, headers: { "retry-after": "60", "cache-control": "no-store" } },
+      );
+    }
     return NextResponse.json({
       ok: true,
       event_type: event.type,

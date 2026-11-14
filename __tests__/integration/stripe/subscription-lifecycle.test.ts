@@ -30,6 +30,20 @@ describeIntegration("stripe · subscription lifecycle → org access", () => {
   let processStripeEvent: typeof import("@/server/services/stripe-webhook-handler").processStripeEvent;
   const freshId = () => `evt_${TOKEN}_${Math.random().toString(36).slice(2, 10)}`;
   const periodEnd = Math.floor(Date.now() / 1000) + 20 * 86400;
+  /**
+   * The subscription each test drives. FRESH PER TEST (set in beforeEach).
+   *
+   * These tests used to share one id (`sub_${TOKEN}`) and reset org.status to
+   * "active" between cases, so a later test would deliver `updated → active` for
+   * a subscription an earlier test had already DELETED. Stripe cannot produce
+   * that sequence — `canceled` is terminal; coming back is a NEW subscription —
+   * and since the cancellation tombstone (migration 20261317000000) the handler
+   * correctly refuses it. Each case below is an independent scenario, so each
+   * gets its own subscription, exactly as it would in Stripe. No assertion
+   * changed. The resurrect-a-dead-subscription sequence is asserted, as a thing
+   * that must NOT happen, in subscription-cancellation.test.ts.
+   */
+  let subId = "";
 
   const subEvent = (
     type: "customer.subscription.updated" | "customer.subscription.created" | "customer.subscription.deleted",
@@ -41,7 +55,7 @@ describeIntegration("stripe · subscription lifecycle → org access", () => {
       type,
       data: {
         object: {
-          id: `sub_${TOKEN}`,
+          id: subId,
           customer: CUSTOMER,
           status,
           current_period_end: periodEnd,
@@ -81,7 +95,15 @@ describeIntegration("stripe · subscription lifecycle → org access", () => {
     if (orgId) await svc().from("organizations").delete().eq("id", orgId);
   });
   beforeEach(async () => {
+    subId = `sub_${TOKEN}_${Math.random().toString(36).slice(2, 10)}`;
     await setStatus("active");
+    // …and the org starts each scenario not yet linked to any subscription, as
+    // it did when every case shared one id. Without this the org would still be
+    // pointing at the PREVIOUS test's (live) subscription, and a `deleted` for
+    // this test's id would rightly be treated as a stale event for some other
+    // subscription and leave access alone (the stale-subscription guard).
+    const r = await svc().from("organizations").update({ stripe_subscription_id: null }).eq("id", orgId);
+    expect(r.error, r.error?.message).toBeNull();
   });
 
   it("PAID-THROUGH: cancel-at-period-end keeps the subscription active ⇒ access RETAINED (never revoke paid time)", async () => {

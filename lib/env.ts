@@ -618,6 +618,17 @@ const envSchema = z.object({
   // before the plan prices exist in Stripe.
   NEXT_PUBLIC_FEATURE_SELF_SERVE_BILLING: z.enum(["true", "false"]).default("false"),
 
+  // Self-serve subscription CANCELLATION kill switch (20261316). DEFAULTS OFF =
+  // cancellation is AVAILABLE. An owner can cancel from Settings → Billing whenever
+  // this is unset/"false" — deliberately NOT tied to the self-serve-billing flag
+  // above, because the published terms promise "cancel at any time from the
+  // settings page" to founder-provisioned customers too. Set to "true" ONLY as an
+  // incident rollback lever: the control is hidden and the server action refuses
+  // BEFORE any Stripe call, and the surface falls back to "email us to cancel".
+  // Read from process.env at request time (lib/billing/cancellation.ts), so the
+  // flip needs a redeploy/restart of the serving runtime but no code change.
+  BILLING_SELF_SERVE_CANCELLATION_DISABLED: z.enum(["true", "false"]).default("false"),
+
   // Builders' merchant connect surface (20261124). DEFAULTS OFF. Switch 1 of two:
   // while off, isMerchantConnectable() returns false regardless of credentials and
   // the settings panel renders "not configured". The SECOND switch is per-merchant
