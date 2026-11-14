@@ -23,7 +23,9 @@ The six `pre-*` directories are point-in-time snapshots taken by hand before pas
 
 ## 2. Today's state
 
-Filled in by the lead after today's backup run completes (see the release report).
+- Last night's scheduled run (03:19 UTC) FAILED: the Mac cycled in and out of sleep, `pg_dump` lost its connection four times over two hours (`SSL SYSCALL error: EOF`, host-name resolution failures) and the run aborted. The failure marker and the `/admin/ops` heartbeat both recorded it. This is the "only works while the Mac is awake" limitation, not a script defect.
+- A manual run at 21:40 UTC with the Mac held awake SUCCEEDED: `2026-11-14.tar.enc` (216 MB), decrypt + checksum self-test passed, Backblaze upload byte-matched, heartbeat `success` at migration tip `20261295000000`. This is the pre-migration recovery point for the 2026-11-14 security release.
+- `2026-11-13` and `2026-11-14` were then verified with the same five checks as the others: **VERIFIED** recoverable.
 
 ## 3. Cleanup — NOT RUN; run only after you approve
 
