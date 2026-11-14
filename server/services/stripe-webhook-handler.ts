@@ -21,6 +21,13 @@ import {
   syncOrgSubscriptionFromStripe,
 } from "@/server/services/self-serve-billing";
 import type { StripeSubscriptionShape } from "@/lib/billing/subscription-state";
+import {
+  applyStripeSubscriptionState,
+  confirmCancellationRpc,
+  isSubscriptionTombstoned,
+  loadCancellationOrg,
+  sendCancellationConfirmationEmail,
+} from "@/server/services/subscription-cancellation";
 
 /**
  * Best-effort projection of a Stripe subscription onto the org_subscriptions
@@ -431,22 +438,31 @@ async function handleCheckoutCompleted(
         ? session.subscription
         : (session.subscription?.id ?? null);
     if (subId) {
-      await adminTable("organizations")
-        .update({
-          stripe_subscription_id: subId,
-          status: "active",
-        })
-        .eq("id", meta.org_id);
-      out.push(`subscription_started:${subId}`);
+      // Atomic with the cancellation tombstone check: a checkout.session
+      // .completed delivered AFTER the owner already cancelled that same
+      // subscription (cancel-just-after-signup, out-of-order delivery) must not
+      // re-activate the org. A NEW subscription id (a reactivation) applies.
+      const applied = await applyStripeSubscriptionState({
+        orgId: meta.org_id,
+        subscriptionId: subId,
+        customerId,
+        status: "active",
+        nextRenewalAt: null,
+      });
+      if (applied === "ignored_cancelled_subscription") {
+        out.push(`subscription_start_ignored:cancelled:${subId}`);
+      } else {
+        out.push(`subscription_started:${subId}`);
 
-      // Notify customer + HQ that the subscription is active.
-      await emitNotifications(
-        notifyOnSubscriptionStarted({
-          org_id: meta.org_id,
-          stripe_subscription_id: subId,
-          next_renewal_at: null,
-        }),
-      );
+        // Notify customer + HQ that the subscription is active.
+        await emitNotifications(
+          notifyOnSubscriptionStarted({
+            org_id: meta.org_id,
+            stripe_subscription_id: subId,
+            next_renewal_at: null,
+          }),
+        );
+      }
     }
   }
 
@@ -477,26 +493,54 @@ async function handleSubscriptionUpsert(
   const orgId = await orgIdByCustomer(customerId);
   if (!orgId) return ["skipped:no_org_for_customer"];
 
+  // A subscription reported "canceled" is TERMINAL. It takes the same
+  // exactly-once revocation path as customer.subscription.deleted.
+  if (sub.status === "canceled") {
+    return confirmSubscriptionTerminated(event, orgId, sub);
+  }
+
   const nextRenewalRaw = (sub as unknown as { current_period_end?: number })
     .current_period_end;
   const nextRenewal =
     typeof nextRenewalRaw === "number" && nextRenewalRaw > 0
       ? new Date(nextRenewalRaw * 1000).toISOString()
       : null;
-  await adminTable("organizations")
-    .update({
-      stripe_subscription_id: sub.id,
-      stripe_customer_id: customerId,
-      next_renewal_at: nextRenewal,
-      status: sub.status === "active" || sub.status === "trialing"
+
+  // The org-status write is atomic with the cancellation TOMBSTONE check
+  // (apply_stripe_subscription_state, migration 20261317000000). Stripe delivers
+  // at-least-once and out of order: an `updated` (active / past_due) created
+  // just before a cancel can land long after it. Applying it would lift a
+  // cancelled org back to active — free access forever — so an event for a
+  // subscription id already confirmed cancelled writes NOTHING.
+  const applied = await applyStripeSubscriptionState({
+    orgId,
+    subscriptionId: sub.id,
+    customerId,
+    status:
+      sub.status === "active" || sub.status === "trialing"
         ? "active"
-        : sub.status === "canceled"
-          ? "cancelled"
-          : sub.status === "past_due" || sub.status === "unpaid"
-            ? "suspended"
-            : undefined,
-    })
-    .eq("id", orgId);
+        : sub.status === "past_due" || sub.status === "unpaid"
+          ? "suspended"
+          : null,
+    nextRenewalAt: nextRenewal,
+  });
+
+  if (applied !== "applied") {
+    await recordAdminActivity({
+      actorId: null,
+      actorEmail: null,
+      action: "stripe.subscription_upsert_ignored",
+      targetTable: "organizations",
+      targetId: orgId,
+      metadata: {
+        stripe_subscription_id: sub.id,
+        status: sub.status,
+        outcome: applied,
+        event_type: event.type,
+      },
+    });
+    return [`subscription_ignored:${applied}:${sub.status}`];
+  }
 
   await recordAdminActivity({
     actorId: null,
@@ -526,18 +570,46 @@ async function handleSubscriptionDeleted(
     typeof sub.customer === "string" ? sub.customer : sub.customer.id;
   const orgId = await orgIdByCustomer(customerId);
   if (!orgId) return ["skipped:no_org_for_customer"];
+  return confirmSubscriptionTerminated(event, orgId, sub);
+}
 
-  // REVOKE ACCESS on a deleted subscription. The access gate (requireOrgContext →
-  // orgHasActiveAccess) authorises only on `organizations.status` (active/trial), so
-  // leaving it untouched here let a churned/cancelled tenant keep full product access
-  // (and incur compute) until a human noticed the HQ alert — a revenue leak. A deleted
-  // subscription is a terminal cancel, so we set `cancelled` exactly as the
-  // `subscription.updated → canceled` path (handleSubscriptionUpsert) already does. This
-  // only GATES access (→ /access-pending); it never deletes tenant data, and an operator
-  // can reactivate (or a new checkout re-activates) via /admin/customers.
-  await adminTable("organizations")
-    .update({ status: "cancelled", stripe_subscription_id: sub.id })
-    .eq("id", orgId);
+/**
+ * A Stripe subscription has TERMINATED (customer.subscription.deleted, or an
+ * `updated` carrying status "canceled").
+ *
+ * REVOKE ACCESS — exactly once. The access gate (requireOrgContext →
+ * orgHasActiveAccess) authorises only on `organizations.status` (active/trial),
+ * so a terminated subscription must flip it to `cancelled` or a churned tenant
+ * keeps full product access. The flip is done by
+ * confirm_subscription_cancellation (migration 20261317000000), under the org
+ * row lock, and only for the FIRST confirmation of this subscription id:
+ *
+ *   • the owner cancelled in-app and the action already confirmed → this is a
+ *     no-op (no second revoke, no second HQ alert, no second email);
+ *   • this webhook arrives first (dashboard cancel, dunning exhausted, or the
+ *     action timed out after Stripe accepted it) → it revokes, and the action,
+ *     if still running, becomes the no-op;
+ *   • the same event redelivered → already deduped by billing_events, and a
+ *     no-op here regardless;
+ *   • the org has since moved to a NEW live subscription (reactivated) → the
+ *     old id is tombstoned but the new access is left alone.
+ *
+ * It also writes the TOMBSTONE that stops a late/out-of-order
+ * customer.subscription.updated resurrecting this subscription (see
+ * handleSubscriptionUpsert). This only GATES access (→ /access-pending and the
+ * owner's /account/billing); it never deletes tenant data.
+ */
+async function confirmSubscriptionTerminated(
+  event: Stripe.Event,
+  orgId: string,
+  sub: Stripe.Subscription,
+): Promise<string[]> {
+  const confirmed = await confirmCancellationRpc({
+    orgId,
+    subscriptionId: sub.id,
+    via: "webhook",
+    details: { stripe_event_type: event.type, stripe_status: sub.status },
+  });
 
   await recordAdminActivity({
     actorId: null,
@@ -545,21 +617,58 @@ async function handleSubscriptionDeleted(
     action: "stripe.subscription_deleted",
     targetTable: "organizations",
     targetId: orgId,
-    metadata: { stripe_subscription_id: sub.id, status: sub.status, org_status: "cancelled" },
+    metadata: {
+      stripe_subscription_id: sub.id,
+      status: sub.status,
+      event_type: event.type,
+      newly_confirmed: confirmed.newlyConfirmed,
+      access_revoked: confirmed.accessRevoked,
+      cancellation_source: confirmed.source,
+    },
   });
 
   // P3W2: mirror the terminal status onto the org_subscriptions projection
   // (best-effort, additive) so the tenant billing surface reflects the cancel.
   await projectOrgSubscription(orgId, sub);
 
-  // Loud HQ notification — urgent decision needed.
+  if (!confirmed.newlyConfirmed) {
+    return ["subscription_deleted:already_confirmed"];
+  }
+
+  // Loud HQ notification — first confirmation only.
   await emitNotifications(
     notifyOnSubscriptionCancelled({
       org_id: orgId,
       stripe_subscription_id: sub.id,
     }),
   );
-  return ["subscription_deleted:org_cancelled"];
+
+  // The owner cancelled in-app but the action never got to confirm (it timed
+  // out after Stripe accepted the cancel, or lost the race to this webhook):
+  // this is where they get their confirmation email — once.
+  if (confirmed.source === "owner" && confirmed.requestedByEmail) {
+    try {
+      const org = await loadCancellationOrg(orgId);
+      await sendCancellationConfirmationEmail({
+        to: confirmed.requestedByEmail,
+        orgName: org?.name ?? "your company",
+        hadSubscription: true,
+      });
+    } catch (e) {
+      console.error("[stripe-webhook] cancellation confirmation email failed", {
+        org_id: orgId,
+        subscription_id: sub.id,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  await recomputeHealthForOrg(orgId, "payment_change", null);
+  return [
+    confirmed.accessRevoked
+      ? "subscription_deleted:org_cancelled"
+      : "subscription_deleted:tombstoned_stale_subscription",
+  ];
 }
 
 async function handleInvoicePaid(event: Stripe.Event): Promise<string[]> {
@@ -638,6 +747,16 @@ async function handleInvoiceFailed(event: Stripe.Event): Promise<string[]> {
     (inv as unknown as { last_finalization_error?: { message?: string } })
       .last_finalization_error?.message ?? "Stripe reported payment_failed";
 
+  // A payment failure for a subscription the customer has ALREADY CANCELLED
+  // (a late/out-of-order event, or a final dunning attempt Stripe had queued)
+  // must not tell them to "update your payment method to avoid service
+  // interruption" — they cancelled, and we promised not to collect. The
+  // accounting row and the HQ alert are still written.
+  const failedSubId = invoiceSubscriptionId(inv);
+  const afterCancellation = failedSubId
+    ? await isSubscriptionTombstoned(orgId, failedSubId)
+    : false;
+
   await adminTable("billing_invoices")
     .update({
       status: "failed",
@@ -659,13 +778,16 @@ async function handleInvoiceFailed(event: Stripe.Event): Promise<string[]> {
 
   // Notify both customer + HQ urgently — the customer needs to fix
   // their card, HQ needs to chase if it doesn't get resolved.
+  const failedPaymentNotices = notifyOnFailedPayment({
+    org_id: orgId,
+    amount_gbp: amount,
+    stripe_invoice_id: inv.id,
+    reason: failureReason,
+  });
   await emitNotifications(
-    notifyOnFailedPayment({
-      org_id: orgId,
-      amount_gbp: amount,
-      stripe_invoice_id: inv.id,
-      reason: failureReason,
-    }),
+    afterCancellation
+      ? failedPaymentNotices.filter((n) => n.audience === "hq")
+      : failedPaymentNotices,
   );
 
   await recordAdminActivity({
@@ -678,11 +800,16 @@ async function handleInvoiceFailed(event: Stripe.Event): Promise<string[]> {
       stripe_invoice_id: inv.id,
       amount_gbp: amount,
       reason: failureReason,
+      after_cancellation: afterCancellation,
     },
   });
 
   await recomputeHealthForOrg(orgId, "payment_change", null);
-  return [`invoice_failed:${inv.id}`];
+  return [
+    afterCancellation
+      ? `invoice_failed_after_cancellation:${inv.id}`
+      : `invoice_failed:${inv.id}`,
+  ];
 }
 
 async function handleInvoiceStatusChange(
