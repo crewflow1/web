@@ -88,13 +88,24 @@ export class ZipLimitError extends Error {
   }
 }
 
+type InflateStream = {
+  on(event: "data", cb: (chunk: Uint8Array) => void): InflateStream;
+  on(event: "error", cb: (e: Error) => void): InflateStream;
+  on(event: "end", cb: () => void): InflateStream;
+  resume(): InflateStream;
+  pause(): InflateStream;
+};
+type InternalStreamable = { internalStream(type: "uint8array"): InflateStream };
+
 /** Inflate one entry, aborting the moment it exceeds `cap` bytes. */
 function inflateCapped(entry: JSZip.JSZipObject, cap: number): Promise<Uint8Array> {
   return new Promise<Uint8Array>((resolve, reject) => {
     const chunks: Uint8Array[] = [];
     let total = 0;
     let done = false;
-    const stream = entry.internalStream("uint8array");
+    // `internalStream` is JSZip's documented streaming reader; its typings omit
+    // it from JSZipObject (only `nodeStream` is declared), hence the narrow cast.
+    const stream = (entry as unknown as InternalStreamable).internalStream("uint8array");
     stream
       .on("data", (chunk: Uint8Array) => {
         if (done) return;
