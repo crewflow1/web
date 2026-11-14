@@ -1,0 +1,45 @@
+{
+  "_comment": "PER-PERSON erasure classification (account deletion + staff erasure), consumed by lib/gdpr/user-erasure.ts and handed as arrays to public.privacy_user_erase_in_org / privacy_user_identity_scrub (20261313). Keys are 'table.column' where the column references a user. Every HARD link (NOT NULL column, or ON DELETE CASCADE/RESTRICT) on an org-scoped table MUST appear in exactly one of delete / scrub / conditional / retain — the SQL primitive raises on an unclassified one and the integration drift guard fails CI. Every OTHER (nullable, ON DELETE SET NULL) reference is PSEUDONYMISED by default: the company's record is left intact and stops identifying the person because the identity it points at is destroyed or replaced by a placeholder. Held as JSON (not .ts) for the same reason as org-tables.json: the table-name census scans walk only .ts/.tsx.",
+  "delete": {
+    "memberships.user_id": "access grant — the membership itself; cascades membership_permissions + staff_qualifications",
+    "job_assignments.user_id": "worker-to-job assignment graph — operational, exists only for the person",
+    "rota_entries.user_id": "shift schedule for the person — operational planning, not the working-time record (time_entries is)",
+    "notifications.user_id": "in-app notifications addressed to the person",
+    "notification_preferences.user_id": "the person's own notification settings",
+    "notification_digest_cursors.user_id": "per-person digest delivery cursor",
+    "notification_email_queue.user_id": "queued outbound email carrying the person's address",
+    "push_subscriptions.user_id": "the person's browser/device push endpoints and keys",
+    "push_deliveries.user_id": "queued push sends to the person's devices",
+    "sms_deliveries.user_id": "queued SMS sends carrying the person's number",
+    "briefing_dismissals.user_id": "per-person UI state",
+    "ai_employee_budget_limits.user_id": "per-person AI spend cap (configuration about the person)",
+    "form_import_drafts.created_by": "document-import drafts the person uploaded (CVs, certificates) — the stored file is removed through the Storage API first",
+    "ai_quote_drafts.created_by": "AI drafting history the person generated (prompt-derived content)"
+  },
+  "scrub": {
+    "time_entries.user_id": "RETAIN ROW: working-time record (Working Time Regulations 1998 reg. 9 — 2 years) and the basis of pay; SCRUB the free-text note and GPS coordinates. Needs legal confirmation of the period.",
+    "leave_requests.user_id": "RETAIN ROW: annual-leave / absence record (WTR; SSP records 3 years); SCRUB the free-text reason and review note, which can hold health information. Needs legal confirmation.",
+    "activity_log.actor_id": "RETAIN ROW: the company's audit trail of what happened; SCRUB the denormalised actor name + metadata (the only update shape the append-only guard permits)"
+  },
+  "conditional": {
+    "payroll_tax_profiles.user_id": "DATE OF BIRTH, NI category, student-loan plan — the payroll set-up for the person. DELETED unless a payroll line for this person exists in this company — then RETAINED as the basis of that statutory payroll record (reg. 97). Needs legal confirmation.",
+    "staff_secrets.user_id": "National Insurance number. DELETED unless a payroll line for this person exists in this company — then RETAINED with the payroll record (PAYE records: 3 years after the end of the tax year, Income Tax (PAYE) Regulations 2003 reg. 97). Needs legal confirmation."
+  },
+  "retain": {
+    "payroll_lines.user_id": "statutory payroll record — PAYE, 3 years after the tax year end (reg. 97); HMRC may extend to 6. Needs legal confirmation.",
+    "pension_enrolments.user_id": "auto-enrolment record — 6 years (opt-out notices 4), Employers' Duties (Registration and Compliance) Regulations 2010. Needs legal confirmation.",
+    "holiday_entitlements.user_id": "statutory leave entitlement record (WTR 1998). Needs legal confirmation.",
+    "safety_acknowledgements.user_id": "signed H&S acknowledgement (RAMS / toolbox talk) — immutable evidence the company relies on to show it discharged its HSWA 1974 / CDM 2015 duties; civil-claim limitation 3–6 years. Needs legal confirmation.",
+    "site_inductions.user_id": "signed site-induction record — H&S evidence (CDM 2015 reg. 13). Needs legal confirmation.",
+    "inspection_signoffs.inspected_by": "quality inspection sign-off — immutable construction-quality evidence (latent-defect limitation up to 15 years, Limitation Act 1980 s.14B). Needs legal confirmation.",
+    "non_conformance_reports.raised_by": "non-conformance report — immutable quality evidence. Needs legal confirmation.",
+    "non_conformance_reports.responsible_user_id": "non-conformance report — immutable quality evidence. Needs legal confirmation."
+  },
+  "employer_global": {
+    "staff_compensation.user_id": "pay rate + EMERGENCY CONTACT (a third party's personal data), keyed by user with no org. Removed on staff erasure only when the person belongs to no other company; always removed on account deletion."
+  },
+  "account_global": {
+    "staff_compensation.user_id": "pay rate + emergency contact — removed with the account",
+    "mfa_recovery_codes.user_id": "MFA recovery code hashes — account security material"
+  }
+}
