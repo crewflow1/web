@@ -40,7 +40,7 @@ const db = () => svc as unknown as { from: (t: string) => any; rpc: (f: string, 
 
 test.beforeAll(async () => {
   assertLocalE2eTarget("account-deletion.spec.ts");
-  svc = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
+  svc = createClient(assertLocalE2eTarget("account-deletion.spec.ts"), process.env.SUPABASE_SERVICE_ROLE_KEY!, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   const org = await db()
