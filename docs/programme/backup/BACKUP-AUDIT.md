@@ -203,3 +203,19 @@ is the Mac. With the runner there are two independent copies. PITR would not cha
 
 Honest limits that remain: RPO stays ≤ 24 h (only PITR improves that — a paid, founder decision);
 the production restore drill has **not** been performed; the runner has **not** run against production.
+
+## 5. Not done in this workstream — exact next step for each
+
+| Item | Label | Next step |
+|---|---|---|
+| Independent runner active in production | NEEDS-FOUNDER | Complete `FOUNDER-CHECKLIST.md` §0–7; the first manual dispatch is the acceptance test for the pooler, Storage S3 and Backblaze paths |
+| Production restore drill | NEEDS-FOUNDER (not performed) | Runbook → "Production restore drill — APPROVAL GATE" |
+| `/admin/ops` tile split per layer + tighter thresholds (F-8) | NOT-IMPLEMENTED | In `server/services/ops-snapshot.ts` `readBackupHealth`, group rows by `host` (`github-actions` vs other), evaluate each layer, amber > 48 h / red > 96 h for the runner. Until then the tile blends both layers |
+| Delete plaintext dumps on the Mac after the artefact verifies (F-1) | NOT-IMPLEMENTED (must not change the installed script) | PR: in `off-platform-backup.sh`, after the decrypt self-test and manifest/heartbeat, `rm -rf "$BK"`; drop the plaintext retention loop; founder re-copies the script and enables FileVault |
+| Restore verification of Layer 2 (`.tar.enc`) artefacts (F-4) | NOT-IMPLEMENTED | Move the Mac job onto `offsite-backup.sh` (same engine, same artefact format) rather than teaching the verifier a second format |
+| Dedicated role `crewflow_backup` exercised end to end | IMPLEMENTED-UNTESTED | Founder creates it (checklist §2); if `capture` fails with a privilege error, fall back to the `postgres` user and report |
+| Upload with a strictly write-only B2 key (acknowledgement-only mode) | IMPLEMENTED-UNTESTED | First manual dispatch; if it fails at `upload`, add `listFiles` to the key |
+| Restore onto a real (scratch) Supabase project | IMPLEMENTED-UNTESTED | Runbook drill step 6 |
+| Email/push when the backup tile goes red (F-7) | NOT-IMPLEMENTED | Small Vercel cron reading `ops_backup_runs`, sending via the existing Resend path |
+| TLS `verify-full` to the pooler | NOT-IMPLEMENTED (P3) | Ship Supabase's root certificate with the scripts and set `sslrootcert` |
+| Tombstone re-apply executed after a restore | Documented hook only | Owned by the account-deletion workstream; rehearse in the first drill once their migration is live |

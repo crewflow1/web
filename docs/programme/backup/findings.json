@@ -1,0 +1,26 @@
+{
+  "workstream": "backup",
+  "audit_date": "2026-11-13",
+  "baseline": { "prod_commit": "8cec66a7", "migration_tip": "20261295000000", "postgres": "17.6", "db_size_mb": 535, "storage_buckets": 13, "storage_objects": 7 },
+  "findings": [
+    { "id": "F-1", "severity": "P1", "label": "VERIFIED", "title": "Plaintext production dumps kept on the founder's laptop; FileVault is off", "fix": "proposed", "evidence": "fdesetup status; ls ~/CrewFlow-backups (names only); off-platform-backup.sh:341" },
+    { "id": "F-2", "severity": "P1", "label": "VERIFIED", "title": "Off-platform layer runs only when one Mac is awake (12-day gap observed)", "fix": "implemented-inert", "evidence": "artefact dates in ~/CrewFlow-backups; ops_backup_runs 11 success / 5 failed" },
+    { "id": "F-3", "severity": "P1", "label": "NEEDS-FOUNDER", "title": "Key custody single point of failure for Layer 2 artefacts", "fix": "designed (age public-key, two recipients, key-check canary)", "evidence": "off-platform-backup.sh:269" },
+    { "id": "F-4", "severity": "P1", "label": "VERIFIED", "title": "No routine restore test", "fix": "implemented (restore-verify.sh; verified on synthetic data)", "evidence": "docs/programme/backup/E2E-EVIDENCE.md" },
+    { "id": "F-5", "severity": "P2", "label": "VERIFIED", "title": "Off-site copies deletable; no Object Lock", "fix": "designed (new locked bucket, upload-only key)", "evidence": "off-platform-backup.sh:344" },
+    { "id": "F-6", "severity": "P2", "label": "VERIFIED", "title": "Retention is count-based (last 8 = ~8 days on a daily schedule)", "fix": "designed (daily/weekly/monthly tiers by lifecycle)", "evidence": "off-platform-backup.sh:43" },
+    { "id": "F-7", "severity": "P2", "label": "VERIFIED", "title": "Backup failure/silence alerts nobody unless they look", "fix": "implemented-inert (failed run, issue, dead-man's switch)", "evidence": "off-platform-backup.sh:163" },
+    { "id": "F-8", "severity": "P2", "label": "VERIFIED", "title": "/admin/ops thresholds still weekly-era (7d/10d); tile does not separate layers", "fix": "not-implemented", "evidence": "server/services/ops-snapshot.ts:443,448" },
+    { "id": "F-9", "severity": "P2", "label": "VERIFIED", "title": "Storage objects have exactly one backup layer", "fix": "implemented-inert", "evidence": "Layer 1 excludes Storage" },
+    { "id": "F-10", "severity": "P3", "label": "VERIFIED", "title": "Layer 2 encryption is unauthenticated AES-256-CBC", "fix": "runner uses age", "evidence": "off-platform-backup.sh:273" },
+    { "id": "F-11", "severity": "P3", "label": "VERIFIED", "title": "Mac concentrates Supabase token, B2 read/write key and encryption key", "fix": "runner uses a read-only DB role", "evidence": "off-platform-backup.sh" },
+    { "id": "F-12", "severity": "P3", "label": "VERIFIED", "title": "Docs said weekly; job is daily", "fix": "done", "evidence": "docs/ops/off-platform-backup-automation.md" },
+    { "id": "F-13", "severity": "P2", "label": "VERIFIED", "title": "Repository is public and main is unprotected", "fix": "designed for (redaction, main-only environment); branch protection needs founder", "evidence": "gh repo view; branch protection API 404" }
+  ],
+  "pipeline_status": {
+    "synthetic_local_e2e": "VERIFIED (13/13 expectations, 2026-11-14)",
+    "production_backup_by_runner": "not performed",
+    "production_restore": "not performed",
+    "github_workflow_executed": false
+  }
+}
