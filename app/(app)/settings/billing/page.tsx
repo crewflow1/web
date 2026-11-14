@@ -152,7 +152,7 @@ export default async function BillingSettingsPage({
             return (
               <li
                 key={f}
-                className={`flex items-center gap-2 text-sm ${included ? "text-slate-800" : "text-slate-400"}`}
+                className={`flex items-center gap-2 text-sm ${included ? "text-slate-800" : "text-slate-500"}`}
               >
                 <span aria-hidden>{included ? "✓" : "○"}</span>
                 {FEATURE_LABELS[f]}

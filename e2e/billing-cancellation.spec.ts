@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { createClient } from "@supabase/supabase-js";
 import { rmSync } from "node:fs";
@@ -45,6 +45,22 @@ const loose = (c: unknown) => c as { from(t: string): any };
 
 let orgId = "";
 const userIds: string[] = [];
+
+/**
+ * Review screenshots (desktop + 390px) — written ONLY when
+ * CANCEL_E2E_SCREENSHOTS=1, so a normal/CI run leaves the tree untouched.
+ */
+const SHOTS = process.env.CANCEL_E2E_SCREENSHOTS === "1";
+async function shots(page: Page, name: string): Promise<void> {
+  if (!SHOTS) return;
+  const dir = "docs/programme/cancellation/screens";
+  const original = page.viewportSize() ?? { width: 1280, height: 720 };
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.screenshot({ path: `${dir}/${name}-desktop.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: `${dir}/${name}-390.png`, fullPage: true });
+  await page.setViewportSize(original);
+}
 
 async function orgStatus(): Promise<string> {
   const { data, error } = await loose(service()).from("organizations").select("status").eq("id", orgId).single();
@@ -128,6 +144,8 @@ test("owner: the confirmation step is honest, and 'Keep subscription' changes no
     const axe = await new AxeBuilder({ page }).withTags(WCAG).analyze();
     expect(axe.violations, axe.violations.map((v) => `${v.id}: ${v.help}`).join("\n")).toEqual([]);
 
+    await shots(page, "settings-billing-cancel-dialog");
+
     await dialog.getByRole("button", { name: "Keep subscription" }).click();
     await expect(dialog).toBeHidden();
   });
@@ -155,6 +173,8 @@ test("owner: cancel in three clicks → confirmation, then invoices, export and 
     await settleForAxe(page);
     const axe = await new AxeBuilder({ page }).withTags(WCAG).analyze();
     expect(axe.violations, axe.violations.map((v) => `${v.id}: ${v.help}`).join("\n")).toEqual([]);
+
+    await shots(page, "account-billing-cancelled");
 
     // Entitlement is really revoked…
     expect(await orgStatus()).toBe("cancelled");
