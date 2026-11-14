@@ -36,10 +36,15 @@ const SECRET_NAMES = [
 
 /** Run the engine's config gate with ONLY the given CF_OFFSITE_* variables. */
 function checkConfig(vars: Record<string, string>) {
-  const res = spawnSync("bash", [ENGINE, "--check-config"], {
-    env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...vars },
-    encoding: "utf8",
-  });
+  // A CLEAN environment: nothing inherited except PATH, so an ambient
+  // CF_OFFSITE_* variable can never make this pass. (NODE_ENV is required by the
+  // project's ProcessEnv typing and is irrelevant to the bash script.)
+  const env: NodeJS.ProcessEnv = {
+    NODE_ENV: "test",
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    ...vars,
+  };
+  const res = spawnSync("bash", [ENGINE, "--check-config"], { env, encoding: "utf8" });
   return { status: res.status, out: `${res.stdout}${res.stderr}`.trim() };
 }
 
