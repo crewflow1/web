@@ -71,6 +71,12 @@ export function isFirstPartySurface(pathname: string): boolean {
   if (pathname === "/q" || pathname.startsWith("/q/")) return false;
   if (pathname === "/customer-portal" || pathname.startsWith("/customer-portal/"))
     return false;
+  // The worker portal is the same kind of surface: a tokenised link opened by a
+  // third party (a subcontractor) who has no account with us. Its bearer token
+  // is a path segment, so a pageview captured there would ship a working portal
+  // link to the analytics vendor ($current_url) — the UUID mask does not cover
+  // it (the token is base64url, not a UUID). No banner, no analytics.
+  if (pathname === "/worker-portal" || pathname.startsWith("/worker-portal/")) return false;
   return true;
 }
 
