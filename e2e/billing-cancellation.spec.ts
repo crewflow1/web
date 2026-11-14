@@ -34,8 +34,9 @@ const OWNER_STATE = `e2e/.auth/${TAG}-owner.json`;
 const STAFF_STATE = `e2e/.auth/${TAG}-staff.json`;
 
 function service() {
-  assertLocalE2eTarget("billing-cancellation.spec.ts");
-  return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
+  // The URL comes FROM the guard: it refuses anything but a local database.
+  const url = assertLocalE2eTarget("billing-cancellation.spec.ts");
+  return createClient(url, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }

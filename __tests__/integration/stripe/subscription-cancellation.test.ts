@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import type Stripe from "stripe";
-import { createClient } from "@supabase/supabase-js";
 import { anonClient, describeIntegration, serviceClient, userClient } from "../_harness";
 
 /**
@@ -30,7 +29,9 @@ import { anonClient, describeIntegration, serviceClient, userClient } from "../_
 
 // The owner's confirmation email goes through the email abstraction; spy on it
 // so nothing is sent and so "sent once" is assertable.
-const email = vi.hoisted(() => ({ sendEmail: vi.fn(async () => ({ sent: true as const, id: "msg_test" })) }));
+const email = vi.hoisted(() => ({
+  sendEmail: vi.fn(async (_input: { to: string | string[] }) => ({ sent: true as const, id: "msg_test" })),
+}));
 vi.mock("@/lib/email/send", () => ({ sendEmail: email.sendEmail }));
 
 type Res<T> = { data: T | null; error: { message: string; code?: string } | null };
@@ -460,9 +461,10 @@ describeIntegration("stripe · subscription cancellation → entitlement state",
     await claim(o.id, o.sub);
     await svc().from("memberships").insert({ org_id: o.id, user_id: owner.id, role: "owner" });
 
-    const signIn = await createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    }).auth.signInWithPassword({ email: owner.email, password: owner.password });
+    const signIn = await anonClient().auth.signInWithPassword({
+      email: owner.email,
+      password: owner.password,
+    });
     expect(signIn.error, signIn.error?.message).toBeNull();
     const asOwner = db(userClient(signIn.data.session!.access_token));
 
@@ -547,7 +549,7 @@ describeIntegration("stripe · subscription cancellation → entitlement state",
     await m.processStripeEvent(subEvent("customer.subscription.deleted", o.customer!, o.sub!, "canceled"));
     const r = await m.processStripeEvent(invoiceEvent("invoice.payment_failed", o.customer!, o.sub!));
     expect(r.status).toBe("processed");
-    expect((r as { actions: string[] }).actions[0]).toMatch(/^invoice_failed_after_cancellation:/);
+    expect((r as unknown as { actions: string[] }).actions[0]).toMatch(/^invoice_failed_after_cancellation:/);
     expect(await status(o.id)).toBe("cancelled");
     const n = (await notices(o.id)).filter((x) => x.type === "stripe.payment_failed");
     expect(n.map((x) => x.audience)).toEqual(["hq"]);
@@ -576,12 +578,12 @@ describeIntegration("stripe · subscription cancellation → entitlement state",
     const o = await mkOrg("active");
     await m.processStripeEvent(subEvent("customer.subscription.deleted", o.customer!, o.sub!, "canceled"));
     const late = await m.processStripeEvent(checkoutEvent(o.id, o.customer!, o.sub!));
-    expect((late as { actions: string[] }).actions).toContain(`subscription_start_ignored:cancelled:${o.sub}`);
+    expect((late as unknown as { actions: string[] }).actions).toContain(`subscription_start_ignored:cancelled:${o.sub}`);
     expect(await status(o.id)).toBe("cancelled");
 
     const fresh = `sub_${TOKEN}_react_${rand()}`;
     const react = await m.processStripeEvent(checkoutEvent(o.id, o.customer!, fresh));
-    expect((react as { actions: string[] }).actions).toContain(`subscription_started:${fresh}`);
+    expect((react as unknown as { actions: string[] }).actions).toContain(`subscription_started:${fresh}`);
     expect(await status(o.id)).toBe("active");
 
     // A late 'deleted' redelivery for the OLD subscription cannot take the

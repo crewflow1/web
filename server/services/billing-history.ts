@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
+import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { getStripe } from "@/lib/stripe/client";
 import { wireSelfServeBillingDeps } from "@/server/services/self-serve-billing";
 
@@ -124,34 +125,42 @@ export function wireBillingHistoryDeps(): BillingHistoryDeps {
         paid_at: string | null;
         created_at: string;
       };
-      const { data, error } = await (
-        admin.from("billing_invoices" as never) as unknown as {
-          select: (cols: string) => {
-            eq: (k: string, v: unknown) => {
-              in: (k: string, v: string[]) => {
+      // The COMPLETE history, paged (F-1): a customer asking for their
+      // invoices must never be shown a silently capped list.
+      const table = admin.from("billing_invoices" as never) as unknown as {
+        select: (cols: string) => {
+          eq: (k: string, v: unknown) => {
+            in: (k: string, v: string[]) => {
+              order: (
+                k: string,
+                o: { ascending: boolean },
+              ) => {
                 order: (
                   k: string,
                   o: { ascending: boolean },
-                ) => {
-                  limit: (n: number) => Promise<{
-                    data: Row[] | null;
-                    error: { message?: string | null; code?: string | null } | null;
-                  }>;
-                };
+                ) => { range: (from: number, to: number) => PromiseLike<PageResult<Row>> };
               };
             };
           };
-        }
-      )
-        .select("id, status, amount_gbp, currency, paid_at, created_at")
-        .eq("org_id", orgId)
-        .in("status", RECORDED_VISIBLE)
-        .order("created_at", { ascending: false })
-        // The most recent 60 — five years of monthly billing — is the whole
-        // history for any real account; this is a display list, not a ledger sum.
-        .limit(60);
-      if (error) throw readFailure("billing-history: billing_invoices", error);
-      return (data ?? []).map((r) => ({
+        };
+      };
+      const { data, error } = await fetchAllRows<Row>((from, to) =>
+        table
+          .select("id, status, amount_gbp, currency, paid_at, created_at")
+          .eq("org_id", orgId)
+          .in("status", RECORDED_VISIBLE)
+          .order("created_at", { ascending: false })
+          // id tiebreak: a stable, unique order so pages never overlap or skip.
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+      if (error) {
+        throw readFailure(
+          "billing-history: billing_invoices",
+          error as { message?: string | null; code?: string | null },
+        );
+      }
+      return data.map((r) => ({
         id: r.id,
         number: null,
         date: r.paid_at ?? r.created_at,
