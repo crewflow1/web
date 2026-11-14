@@ -292,6 +292,11 @@ describeIntegration("active-org scoping · multi-org user (finance/commercial)",
     idA: () => string,
     idB: () => string,
     originalB: string,
+    // `false` when the proving column is NOT client-writable at all (column-level
+    // grant). The scoping question is then moot for that column: the write cases
+    // are replaced by a stronger assertion that the Data API refuses the write in
+    // BOTH orgs. Scoping of the columns a user MAY write is proven separately.
+    clientWritable = true,
   ) {
     it(`${label}: PREMISE — the UNSCOPED read really does return org B's row`, async () => {
       const r = await db(userClient(dualToken))
@@ -307,60 +312,80 @@ describeIntegration("active-org scoping · multi-org user (finance/commercial)",
       ).toBe(idB());
     });
 
-    it(`${label}: a write SCOPED to the active org cannot touch org B's row`, async () => {
-      const r = await db(userClient(dualToken))
-        .from(table)
-        .update({ [column]: "written from org A" }, { count: "exact" })
-        .eq("id", idB())
-        .eq("org_id", orgA);
-      expect(r.error, r.error?.message).toBeNull();
-      expect(r.count, "zero rows must be affected").toBe(0);
-      expect(await truth(table, idB(), column), "org B's row must be untouched").toBe(
-        originalB,
-      );
-    });
+    if (!clientWritable) {
+      it(`${label}: the proving column is NOT client-writable — the Data API refuses the write in either org`, async () => {
+        for (const [id, org] of [
+          [idA(), orgA],
+          [idB(), orgB],
+        ] as const) {
+          const r = await db(userClient(dualToken))
+            .from(table)
+            .update({ [column]: "tenant-authored content" }, { count: "exact" })
+            .eq("id", id)
+            .eq("org_id", org);
+          expect(r.error?.code, "column-level grant must deny the write").toBe("42501");
+        }
+        expect(await truth(table, idB(), column), "org B's row must be untouched").toBe(
+          originalB,
+        );
+      });
+    } else {
+      it(`${label}: a write SCOPED to the active org cannot touch org B's row`, async () => {
+        const r = await db(userClient(dualToken))
+          .from(table)
+          .update({ [column]: "written from org A" }, { count: "exact" })
+          .eq("id", idB())
+          .eq("org_id", orgA);
+        expect(r.error, r.error?.message).toBeNull();
+        expect(r.count, "zero rows must be affected").toBe(0);
+        expect(await truth(table, idB(), column), "org B's row must be untouched").toBe(
+          originalB,
+        );
+      });
 
-    it(`${label}: WITHOUT the predicate that same write DOES hit org B (the defect)`, async () => {
-      const r = await db(userClient(dualToken))
-        .from(table)
-        .update({ [column]: "cross-org write" }, { count: "exact" })
-        .eq("id", idB());
-      expect(r.error, r.error?.message).toBeNull();
-      expect(r.count, "this is precisely what the fix prevents").toBe(1);
-      // Restore so later assertions are not confused by it.
-      await db(serviceClient())
-        .from(table)
-        .update({ [column]: originalB })
-        .eq("id", idB());
-    });
+      it(`${label}: WITHOUT the predicate that same write DOES hit org B (the defect)`, async () => {
+        const r = await db(userClient(dualToken))
+          .from(table)
+          .update({ [column]: "cross-org write" }, { count: "exact" })
+          .eq("id", idB());
+        expect(r.error, r.error?.message).toBeNull();
+        expect(r.count, "this is precisely what the fix prevents").toBe(1);
+        // Restore so later assertions are not confused by it.
+        await db(serviceClient())
+          .from(table)
+          .update({ [column]: originalB })
+          .eq("id", idB());
+      });
 
-    it(`${label}: the scoped write STILL WORKS on org A's own row (no over-scoping)`, async () => {
-      const r = await db(userClient(dualToken))
-        .from(table)
-        .update({ [column]: "legitimate org A write" }, { count: "exact" })
-        .eq("id", idA())
-        .eq("org_id", orgA);
-      expect(r.error, r.error?.message).toBeNull();
-      expect(r.count, "the normal single-org write path must keep working").toBe(1);
-    });
+      it(`${label}: the scoped write STILL WORKS on org A's own row (no over-scoping)`, async () => {
+        const r = await db(userClient(dualToken))
+          .from(table)
+          .update({ [column]: "legitimate org A write" }, { count: "exact" })
+          .eq("id", idA())
+          .eq("org_id", orgA);
+        expect(r.error, r.error?.message).toBeNull();
+        expect(r.count, "the normal single-org write path must keep working").toBe(1);
+      });
 
-    it(`${label}: switching the active org to B makes B writable and A not (org switcher still works)`, async () => {
-      const bWhileActiveB = await db(userClient(dualToken))
-        .from(table)
-        .update({ [column]: originalB }, { count: "exact" })
-        .eq("id", idB())
-        .eq("org_id", orgB);
-      const aWhileActiveB = await db(userClient(dualToken))
-        .from(table)
-        .update({ [column]: "should not land" }, { count: "exact" })
-        .eq("id", idA())
-        .eq("org_id", orgB);
-      expect(bWhileActiveB.count).toBe(1);
-      expect(
-        aWhileActiveB.count,
-        "the predicate must track the ACTIVE org, not hide org B for ever",
-      ).toBe(0);
-    });
+      it(`${label}: switching the active org to B makes B writable and A not (org switcher still works)`, async () => {
+        const bWhileActiveB = await db(userClient(dualToken))
+          .from(table)
+          .update({ [column]: originalB }, { count: "exact" })
+          .eq("id", idB())
+          .eq("org_id", orgB);
+        const aWhileActiveB = await db(userClient(dualToken))
+          .from(table)
+          .update({ [column]: "should not land" }, { count: "exact" })
+          .eq("id", idA())
+          .eq("org_id", orgB);
+        expect(bWhileActiveB.count).toBe(1);
+        expect(
+          aWhileActiveB.count,
+          "the predicate must track the ACTIVE org, not hide org B for ever",
+        ).toBe(0);
+      });
+
+    }
 
     it(`${label}: RLS untouched — a non-member's scoped read finds nothing`, async () => {
       const r = await db(userClient(outsiderToken))
@@ -414,6 +439,10 @@ describeIntegration("active-org scoping · multi-org user (finance/commercial)",
     () => A.note!,
     () => B.note!,
     "notification in org B",
+    // INJ-01 (migration 20261305000000): notification content is immutable to
+    // tenant users; only read_at / dismissed_at are client-writable. Active-org
+    // scoping of those writes is proven by the 'mark all read' cases below.
+    false,
   );
 
   // ------------------------------------------- destructive paths (DELETE)
