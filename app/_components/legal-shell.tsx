@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { type ReactNode } from "react";
 import { clashDisplay, satoshi } from "@/app/_marketing/fonts";
+import { CookieSettingsButton } from "@/app/_components/cookie-settings-button";
 
 /**
  * Shared shell for /privacy and /terms, dark "Setting-Out" system so the legal
@@ -72,7 +73,8 @@ export function LegalShell({
           >
             hello@crewflow.uk
           </a>{" "}
-          and we&apos;ll get back to you.
+          and we&apos;ll get back to you.{" "}
+          <CookieSettingsButton className="rounded font-medium text-gold-500 transition-colors hover:text-gold-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100" />
         </footer>
       </main>
     </div>

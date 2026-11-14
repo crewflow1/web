@@ -3,3 +3,7 @@
 # no secret body. Renamed METRIC_ID at HEAD (ddb4d5b0); this fingerprint keeps
 # the historic commit in the PR scan range passing.
 78464a4700b8400d209d8a0603f9b10b9f3799db:lib/hq/finance.ts:generic-api-key:432
+
+# e2e/_consent-harness.ts — DUMMY PostHog project key for the consent network proof.
+# Synthetic, points at a reserved .invalid host, never a real credential.
+0b2fb6f696ce46632b62607856eed517b439f5d8:e2e/_consent-harness.ts:generic-api-key:18

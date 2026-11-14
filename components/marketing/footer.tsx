@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { PILLARS } from "@/lib/marketing/pillars";
 import { WordmarkDark } from "@/components/marketing/logo";
+import { CookieSettingsButton } from "@/app/_components/cookie-settings-button";
 
 const COLS = [
   {
@@ -71,9 +72,13 @@ export function SiteFooterDark({
         </div>
         <div className="mt-12 flex flex-col gap-3 border-t border-white/10 pt-6 text-xs text-ink-dim sm:flex-row sm:items-center sm:justify-between">
           <p>© {year} CrewFlow. All rights reserved.</p>
-          <a href="mailto:hello@crewflow.uk" className="transition-colors hover:text-ink">
-            hello@crewflow.uk
-          </a>
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            {/* Review, change or withdraw the cookie choice at any time. */}
+            <CookieSettingsButton className="rounded transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-100" />
+            <a href="mailto:hello@crewflow.uk" className="transition-colors hover:text-ink">
+              hello@crewflow.uk
+            </a>
+          </div>
         </div>
       </div>
     </footer>

@@ -1,0 +1,218 @@
+{
+  "generated": "2026-11-14",
+  "consentVersion": 2,
+  "optionalCategories": [
+    "analytics",
+    "performance"
+  ],
+  "note": "performance (Sentry session/trace telemetry) uses no device storage",
+  "entries": [
+    {
+      "kind": "cookie",
+      "name": "sb-<project-ref>-auth-token[.n]",
+      "purpose": "Supabase Auth session",
+      "lifetime": "400 days rolling; cleared on sign-out",
+      "category": "strictly-necessary",
+      "surfaces": "auth, app, hq",
+      "established": "runtime"
+    },
+    {
+      "kind": "cookie",
+      "name": "sb-<project-ref>-auth-token-code-verifier",
+      "purpose": "PKCE verifier during sign-in",
+      "lifetime": "minutes",
+      "category": "strictly-necessary",
+      "surfaces": "auth",
+      "established": "code"
+    },
+    {
+      "kind": "cookie",
+      "name": "active_org_id",
+      "purpose": "active workspace",
+      "lifetime": "1 year",
+      "category": "strictly-necessary",
+      "surfaces": "app",
+      "established": "code"
+    },
+    {
+      "kind": "cookie",
+      "name": "cf_impersonation_session",
+      "purpose": "HQ support-access session (staff only)",
+      "lifetime": "24 hours",
+      "category": "strictly-necessary",
+      "surfaces": "hq",
+      "established": "code"
+    },
+    {
+      "kind": "cookie",
+      "name": "cf_cookie_consent",
+      "purpose": "consent record: version, timestamp, per-category choice",
+      "lifetime": "1 year",
+      "category": "strictly-necessary",
+      "surfaces": "marketing, auth, app",
+      "established": "runtime"
+    },
+    {
+      "kind": "cookie",
+      "name": "{acct,cal,telem,bank,hmrc}_oauth_{state,verifier,vrn}_<id>",
+      "purpose": "CSRF/PKCE state for a user-started integration connect (dark integrations)",
+      "lifetime": "10 minutes",
+      "category": "strictly-necessary",
+      "surfaces": "app",
+      "established": "code"
+    },
+    {
+      "kind": "cookie",
+      "name": "cf_oidc_{state,nonce,verifier}_<org>",
+      "purpose": "CSRF/nonce/PKCE for enterprise SSO sign-in",
+      "lifetime": "10 minutes",
+      "category": "strictly-necessary",
+      "surfaces": "auth",
+      "established": "code"
+    },
+    {
+      "kind": "cookie",
+      "name": "ph_<key>_posthog",
+      "purpose": "PostHog visitor id + session state",
+      "lifetime": "365 days; deleted on withdrawal",
+      "category": "analytics",
+      "surfaces": "marketing, auth, app",
+      "established": "runtime"
+    },
+    {
+      "kind": "localStorage",
+      "name": "crewflow-offline-identity",
+      "purpose": "owner of offline data on this device",
+      "lifetime": "until sign-out",
+      "category": "strictly-necessary",
+      "surfaces": "app",
+      "established": "runtime"
+    },
+    {
+      "kind": "localStorage",
+      "name": "cf-nav-expanded",
+      "purpose": "expanded sidebar groups",
+      "lifetime": "until cleared",
+      "category": "functional-exempt-user-initiated",
+      "surfaces": "app",
+      "established": "code"
+    },
+    {
+      "kind": "localStorage",
+      "name": "cf-hq-nav-expanded",
+      "purpose": "expanded HQ sidebar groups",
+      "lifetime": "until cleared",
+      "category": "functional-exempt-user-initiated",
+      "surfaces": "hq",
+      "established": "code"
+    },
+    {
+      "kind": "localStorage",
+      "name": "cf-cmd-recents",
+      "purpose": "last six command-palette destinations (label + URL; may contain record names)",
+      "lifetime": "until cleared (not cleared on sign-out: finding C-6)",
+      "category": "functional-exempt-user-initiated",
+      "surfaces": "app",
+      "established": "code"
+    },
+    {
+      "kind": "localStorage",
+      "name": "ph_<key>_posthog",
+      "purpose": "PostHog state mirror",
+      "lifetime": "persistent; deleted on withdrawal",
+      "category": "analytics",
+      "surfaces": "marketing, auth, app",
+      "established": "runtime"
+    },
+    {
+      "kind": "localStorage",
+      "name": "__ph_opt_in_out_<key>",
+      "purpose": "PostHog SDK opt-in flag",
+      "lifetime": "persistent; deleted on withdrawal",
+      "category": "analytics",
+      "surfaces": "marketing, auth, app",
+      "established": "runtime"
+    },
+    {
+      "kind": "sessionStorage",
+      "name": "ph_<key>_{posthog,window_id,primary_window_exists,session_registered_properties}",
+      "purpose": "PostHog per-tab session bookkeeping",
+      "lifetime": "tab lifetime; deleted on withdrawal",
+      "category": "analytics",
+      "surfaces": "marketing, auth, app",
+      "established": "runtime"
+    },
+    {
+      "kind": "indexedDB",
+      "name": "crewflow-offline-reads",
+      "purpose": "offline read cache",
+      "lifetime": "until sign-out",
+      "category": "strictly-necessary",
+      "surfaces": "app",
+      "established": "runtime"
+    },
+    {
+      "kind": "indexedDB",
+      "name": "crewflow-offline-writes",
+      "purpose": "offline write outbox",
+      "lifetime": "until synced or sign-out",
+      "category": "strictly-necessary",
+      "surfaces": "app",
+      "established": "runtime"
+    },
+    {
+      "kind": "indexedDB",
+      "name": "crewflow-offline-photos",
+      "purpose": "offline photo/file outbox",
+      "lifetime": "until uploaded or sign-out",
+      "category": "strictly-necessary",
+      "surfaces": "app",
+      "established": "runtime"
+    },
+    {
+      "kind": "indexedDB",
+      "name": "crewflow-blueprints-offline",
+      "purpose": "drawings saved for offline use",
+      "lifetime": "until removed or sign-out",
+      "category": "strictly-necessary",
+      "surfaces": "app",
+      "established": "code"
+    },
+    {
+      "kind": "cacheStorage",
+      "name": "crewflow-pwa-static-v1",
+      "purpose": "hashed static assets",
+      "lifetime": "until next worker version",
+      "category": "strictly-necessary",
+      "surfaces": "app",
+      "established": "code"
+    },
+    {
+      "kind": "cacheStorage",
+      "name": "crewflow-pwa-shell-v1",
+      "purpose": "public offline shell + icons",
+      "lifetime": "until next worker version",
+      "category": "strictly-necessary",
+      "surfaces": "app",
+      "established": "code"
+    },
+    {
+      "kind": "serviceWorker",
+      "name": "/sw.js",
+      "purpose": "offline shell; web push display (dark)",
+      "lifetime": "until unregistered",
+      "category": "strictly-necessary",
+      "surfaces": "app",
+      "established": "code"
+    },
+    {
+      "kind": "third-party cookie",
+      "name": "__cf_bm (.supabase.co)",
+      "purpose": "Cloudflare bot management on the file host",
+      "lifetime": "30 minutes",
+      "category": "strictly-necessary",
+      "surfaces": "app, customer portal (signed file URLs)",
+      "established": "runtime (response header)"
+    }
+  ]
+}
