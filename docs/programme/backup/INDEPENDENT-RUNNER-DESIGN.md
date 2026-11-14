@@ -144,10 +144,12 @@ Files: `.github/workflows/offsite-backup.yml` → `scripts/ops/offsite-backup.sh
 - Application key: restricted to that bucket, capabilities `listBuckets, listFiles, writeFiles` — no
   `readFiles`, no `deleteFiles`. With `listFiles` the script confirms the stored size; with a strictly
   write-only key it falls back to the upload API's acknowledgement (B2 verifies the SHA-1 it is sent).
-  **IMPLEMENTED-UNTESTED against Backblaze** (no credentials, no provisioning allowed); the upload path
-  itself is VERIFIED against rclone's local backend, in both verification modes.
-- Capacity: B2 gives 10 GB free. The Mac layer uses ~1.5 GB. At the measured dump compression the runner's
-  34 retained artefacts fit; beyond 10 GB the price is about $6 per TB per month (pennies at this size).
+  **IMPLEMENTED-UNTESTED against Backblaze** (no credentials, no provisioning allowed). The upload and
+  size-confirmation path is VERIFIED against rclone's local backend; the acknowledgement-only fallback
+  for a strictly write-only key is IMPLEMENTED-UNTESTED.
+- Capacity: B2 gives 10 GB free. The Mac layer uses ~1.5 GB. Estimate, not a measurement: the synthetic
+  53 MB database produced a 10 MB artefact, so production's 535 MB should give roughly 100 MB, and the 34
+  retained artefacts about 3.5 GB. Beyond 10 GB the price is about $6 per TB per month (pennies here).
 
 ### Restore verification (VERIFIED on synthetic local data, including failure cases)
 
@@ -157,6 +159,19 @@ Files: `.github/workflows/offsite-backup.yml` → `scripts/ops/offsite-backup.sh
 - The runner cannot decrypt, so it cannot re-verify a stored artefact. That gap is closed two ways:
   `age` authentication (intact ciphertext + right key ⇒ identical plaintext) and the founder's periodic
   drill (`docs/backup-recovery-runbook.md`), which runs the same script against a downloaded artefact.
+
+### Deletion tombstones (hook for the account-deletion workstream)
+
+A backup taken before a deletion still contains the deleted company or person, so a restore must be
+followed by re-applying every deletion completed since. The runner therefore carries, **beside and never
+inside the dump**, the cumulative tombstone export as its own encrypted object under `tombstones/`
+(lifecycle 400 days, longer than any dump tier; each export is cumulative, so the newest is the one a
+restore uses). It is a hook, not a dependency: it activates only if
+`public.privacy_tombstone_export(timestamptz)` exists and the backup role may execute it, and it fails
+the run if the export returns fewer rows than there are completed deletions (the function returns
+nothing without the service-role claim — a silently empty export must not pass).
+Capture: VERIFIED on synthetic local data. Re-application is a documented restore step in the runbook
+using that workstream's `privacy_tombstone_reapply(jsonb)`; not executed here.
 
 ### Heartbeat and alerting
 
