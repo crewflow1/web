@@ -425,7 +425,6 @@ declare
   v_deleted   jsonb := '{}'::jsonb;
   v_footprint jsonb := '{}'::jsonb;
   v_total     bigint := 0;
-  v_audit     bigint := 0;
   r           record;
 begin
   perform public._privacy_require_service_role('privacy_user_identity_scrub');
@@ -507,28 +506,70 @@ begin
     end if;
   end loop;
 
-  -- GoTrue's in-database audit trail (empty on hosted Supabase, where auth
-  -- events go to the platform log pipeline; populated on self-hosted/local).
+  return jsonb_build_object(
+    'outcome', 'scrubbed',
+    'global_deleted', v_deleted,
+    'footprint', v_footprint,
+    'footprint_total', v_total
+  );
+end;
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 4. AUTH AUDIT PURGE — after the auth user is gone
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Deleting a user makes GoTrue write one more `user_deleted` entry to its
+-- in-database audit trail, quoting the email it just deleted. This is called
+-- AFTER the Auth delete to remove that entry too. Hosted Supabase keeps auth
+-- events in the platform log pipeline instead (the table is empty there), so on
+-- production this is a no-op; it matters for self-hosted / local stacks and for
+-- an honest residue scan. Same authority rule as the identity scrub.
+create or replace function public.privacy_user_auth_audit_purge(
+  p_request_id uuid,
+  p_user_id    uuid
+)
+returns bigint
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_row public.privacy_deletion_requests%rowtype;
+  v_n   bigint := 0;
+begin
+  perform public._privacy_require_service_role('privacy_user_auth_audit_purge');
+  select * into v_row from public.privacy_deletion_requests where id = p_request_id;
+  if not found or v_row.status <> 'running' then
+    raise exception 'privacy_user_auth_audit_purge: request is not running' using errcode = 'check_violation';
+  end if;
+  if not (
+       (v_row.kind = 'user_account' and p_user_id = v_row.target_user_id)
+    or (v_row.kind = 'org' and coalesce(v_row.work -> 'member_ids', '[]'::jsonb) @> to_jsonb(array[p_user_id::text]))
+  ) then
+    raise exception 'privacy_user_auth_audit_purge: user is not a target of this request' using errcode = '42501';
+  end if;
+  -- Never purge the trail of an account that still exists and is in use.
+  if exists (select 1 from auth.users where id = p_user_id and deleted_at is null) then
+    return 0;
+  end if;
   if to_regclass('auth.audit_log_entries') is not null then
     begin
       delete from auth.audit_log_entries
        where payload ->> 'actor_id' = p_user_id::text
           or payload -> 'traits' ->> 'user_id' = p_user_id::text;
-      get diagnostics v_audit = row_count;
+      get diagnostics v_n = row_count;
     exception when insufficient_privilege or undefined_column then
-      v_audit := -1; -- not ours to clean on this platform; reported, not hidden
+      v_n := -1;
     end;
   end if;
-
-  return jsonb_build_object(
-    'outcome', 'scrubbed',
-    'global_deleted', v_deleted,
-    'footprint', v_footprint,
-    'footprint_total', v_total,
-    'auth_audit_rows_deleted', v_audit
-  );
+  return v_n;
 end;
 $$;
+
+revoke all on function public.privacy_user_auth_audit_purge(uuid, uuid) from public;
+revoke execute on function public.privacy_user_auth_audit_purge(uuid, uuid) from anon, authenticated;
+grant  execute on function public.privacy_user_auth_audit_purge(uuid, uuid) to service_role;
 
 -- ── PRIVILEGE LOCKDOWN (service_role only) ───────────────────────────────────
 revoke all on function public.privacy_user_lockout(uuid) from public;

@@ -486,6 +486,14 @@ async function runOrgDeletion(
 
   // 4. The teardown cascade (archives minimal billing first; catalogue-verified).
   if (!done("teardown")) {
+    // Sweep Storage once more immediately before the teardown: the primitive
+    // refuses while any object remains, and an upload that slipped in after the
+    // storage step must not leave the job permanently stuck. Normally removes 0.
+    try {
+      await cleanupOrgStorage(admin.storage, orgId);
+    } catch (e) {
+      throw new DeletionStepError("storage", "storage_error", e instanceof Error ? e.message : undefined);
+    }
     await rpc(admin, "teardown", "privacy_org_teardown", {
       p_request_id: requestId,
       p_retention_until: billingRetentionUntil(deps?.now?.() ?? new Date()),
@@ -616,6 +624,11 @@ async function eraseIdentity(
   }
   const hard = Number(scrub.footprint_total ?? 0) === 0;
   await deleteAuthUser(admin, userId, !hard);
+  // GoTrue logs the delete itself (quoting the email) — purge that too.
+  await rpc(admin, "identity", "privacy_user_auth_audit_purge", {
+    p_request_id: requestId,
+    p_user_id: userId,
+  });
   return hard ? "hard_deleted" : "anonymised_placeholder";
 }
 

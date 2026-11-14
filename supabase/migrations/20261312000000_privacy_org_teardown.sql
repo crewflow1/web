@@ -206,6 +206,11 @@ security definer
 set search_path = pg_catalog, public
 as $$
 declare
+  -- MINIMISATION, ENFORCED: only values shaped like an opaque provider handle
+  -- (`cus_…`, `sub_…`, `in_…`, `pi_…`) or a short code are carried into the
+  -- retained archive. Anything else — free text someone typed into one of these
+  -- columns — is dropped, so the archive can never hold a name or an address.
+  c_handle_rx constant text := '^[a-z]{2,6}_[A-Za-z0-9]{6,80}$';
   v_row      public.privacy_deletion_requests%rowtype;
   v_org      uuid;
   v_tbl      text;
@@ -264,8 +269,11 @@ begin
     insert into public.privacy_retained_billing_records
       (request_id, former_org_id, record_kind, source_id, plan,
        stripe_customer_id, stripe_subscription_id, source_created_at, retention_until)
-    select p_request_id, o.id, 'org_account', o.id, o.plan,
-           o.stripe_customer_id, o.stripe_subscription_id, o.created_at, p_retention_until
+    select p_request_id, o.id, 'org_account', o.id,
+           case when o.plan ~ '^[a-z0-9_-]{1,40}$' then o.plan end,
+           case when o.stripe_customer_id ~ c_handle_rx then o.stripe_customer_id end,
+           case when o.stripe_subscription_id ~ c_handle_rx then o.stripe_subscription_id end,
+           o.created_at, p_retention_until
     from public.organizations o where o.id = v_org
     on conflict (request_id, record_kind, source_id) do nothing;
     get diagnostics v_rc = row_count;
@@ -277,8 +285,13 @@ begin
        amount_gbp, currency, period_start, period_end, due_date, paid_at,
        source_created_at, retention_until)
     select p_request_id, b.org_id, 'billing_invoice', b.id,
-           b.stripe_invoice_id, b.stripe_payment_intent_id, b.kind, b.status,
-           b.amount_gbp, b.currency, b.period_start, b.period_end, b.due_date, b.paid_at,
+           case when b.stripe_invoice_id ~ c_handle_rx then b.stripe_invoice_id end,
+           case when b.stripe_payment_intent_id ~ c_handle_rx then b.stripe_payment_intent_id end,
+           case when b.kind ~ '^[a-z0-9_-]{1,40}$' then b.kind end,
+           case when b.status ~ '^[a-z0-9_-]{1,40}$' then b.status end,
+           b.amount_gbp,
+           case when b.currency ~ '^[A-Za-z]{3}$' then upper(b.currency) end,
+           b.period_start, b.period_end, b.due_date, b.paid_at,
            b.created_at, p_retention_until
     from public.billing_invoices b where b.org_id = v_org
     on conflict (request_id, record_kind, source_id) do nothing;
