@@ -221,7 +221,7 @@ describeIntegration("privacy · company deletion", () => {
     const counts = (tomb.counts as { org_tables: Record<string, number> }).org_tables;
     expect(counts.customers).toBe(1);
     expect(counts.comm_events).toBe(1);
-    expect((tomb.steps as Record<string, { objects?: number }>).storage.objects).toBe(4);
+    expect((tomb.steps as Record<string, { objects?: number }>).storage?.objects).toBe(4);
     const text = JSON.stringify(tomb);
     for (const s of [w.m.name, w.m.email, w.m.phone, w.org.slug]) expect(text).not.toContain(s);
 

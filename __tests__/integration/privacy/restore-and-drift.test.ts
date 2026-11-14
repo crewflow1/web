@@ -57,10 +57,12 @@ describeIntegration("privacy · backup restore re-applies tombstones", () => {
     // The tombstone as the off-platform backup would carry it: opaque only.
     const tombstones = (await exportTombstones(null, { admin: admin() })).filter((t) => t.id === req.requestId);
     expect(tombstones.length).toBe(1);
-    expect(Object.keys(tombstones[0]).sort()).toEqual(
+    const original = tombstones[0];
+    if (!original) return;
+    expect(Object.keys(original).sort()).toEqual(
       ["completed_at", "id", "kind", "retention_until", "target_org_id", "target_user_id"],
     );
-    expect(JSON.stringify(tombstones[0])).not.toContain(m.name);
+    expect(JSON.stringify(original)).not.toContain(m.name);
 
     // With the tombstone still honoured, re-applying is a no-op.
     expect(await reapplyTombstones(tombstones, { admin: admin() })).toEqual([
@@ -80,7 +82,7 @@ describeIntegration("privacy · backup restore re-applies tombstones", () => {
     await db().from("memberships").insert({ org_id: org.id, user_id: owner2.id, role: "owner" });
     await db().from("customers").insert({ org_id: org.id, name: `${m.name} Restored Customer` });
     await uploadOrgObjects(org.id, m);
-    const lost = { ...tombstones[0], id: crypto.randomUUID() };
+    const lost = { ...original, id: crypto.randomUUID() };
 
     const out = await reapplyTombstones([lost], { admin: admin(), stripe: stripeMock() });
     expect(out).toEqual([{ tombstoneId: lost.id, outcome: "reapply_scheduled", run: "completed" }]);
@@ -101,7 +103,7 @@ describeIntegration("privacy · backup restore re-applies tombstones", () => {
       { tombstoneId: lost.id, outcome: "already_applied" },
     ]);
     // A tombstone whose target never came back needs nothing.
-    const absent = { ...tombstones[0], id: crypto.randomUUID(), target_org_id: crypto.randomUUID() };
+    const absent = { ...original, id: crypto.randomUUID(), target_org_id: crypto.randomUUID() };
     expect(await reapplyTombstones([absent], { admin: admin() })).toEqual([
       { tombstoneId: absent.id, outcome: "nothing_to_reapply" },
     ]);
@@ -125,6 +127,8 @@ describeIntegration("privacy · backup restore re-applies tombstones", () => {
     expect(r.ok && r.run?.status === "completed").toBe(true);
     if (!r.ok) return;
     const [tomb] = (await exportTombstones(null, { admin: admin() })).filter((t) => t.id === r.requestId);
+    expect(tomb, "the completed account deletion is exported as a tombstone").toBeDefined();
+    if (!tomb) return;
     expect(tomb.kind).toBe("user_account");
     expect(await residue(m)).toEqual([]);
 

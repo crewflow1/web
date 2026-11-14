@@ -148,7 +148,7 @@ describeIntegration("privacy · staff erasure by an admin", () => {
     // this company, so it is LEFT and reported.
     expect(await countRows("staff_compensation", { user_id: w.subject.id })).toBe(1);
     const step = (await ledger(r.requestId)).steps as Record<string, { retained: Record<string, number> }>;
-    expect(step[`erase_org:${w.org.id}`].retained["staff_compensation.user_id:other_membership"]).toBe(1);
+    expect(step[`erase_org:${w.org.id}`]?.retained["staff_compensation.user_id:other_membership"]).toBe(1);
     // The OTHER company's data about the same person is byte-for-byte unchanged.
     expect(await snapshotOrg(org2.id, [owner2.id])).toBe(before2);
     expect(await countRows("memberships", { org_id: org2.id, user_id: w.subject.id })).toBe(1);

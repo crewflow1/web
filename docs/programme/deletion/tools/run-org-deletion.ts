@@ -12,8 +12,11 @@ const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 if (!/^http:\/\/(127\.0\.0\.1|localhost):/.test(url)) {
   throw new Error("refusing: not a local Supabase target");
 }
-const [orgId, ownerId, name] = process.argv.slice(2);
-if (!orgId || !ownerId || !name) throw new Error("usage: <org-id> <owner-user-id> <company-name>");
+const [argOrg, argOwner, argName] = process.argv.slice(2);
+if (!argOrg || !argOwner || !argName) throw new Error("usage: <org-id> <owner-user-id> <company-name>");
+const orgId: string = argOrg;
+const ownerId: string = argOwner;
+const name: string = argName;
 
 async function main() {
   const created = await requestOrgDeletion({ orgId, actorUserId: ownerId, confirmName: name });

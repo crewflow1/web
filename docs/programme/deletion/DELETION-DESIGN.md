@@ -3,10 +3,13 @@
 Workstream: `privacy/account-deletion` · worktree `cf-wt/deletion` · migrations `20261311000000`–`20261314000000`.
 Evidence for every claim marked VERIFIED is in [`DELETION-EVIDENCE.md`](./DELETION-EVIDENCE.md).
 
-> **Status of the capability: built DARK.** Everything here sits behind the server-only flag
-> `FEATURE_ACCOUNT_DELETION` (default off). While it is off the UI shows a "contact us" panel, the server
-> actions refuse before any auth or DB work, and the cron drain is inert. Turning it on is a founder
-> decision (§9). Nothing in this workstream has run, or may run, against production.
+> **Status of the capability: backend built and tested, DARK; request layer not built.**
+> **Built and VERIFIED on real Postgres:** the ledger / tombstone, the three deletion engines, the cron drain,
+> restore re-application, and 31 integration tests. All of it sits behind the server-only flag
+> `FEATURE_ACCOUNT_DELETION` (default off); while off the drain is inert.
+> **NOT-IMPLEMENTED:** the re-authentication helper, the server actions and the settings / staff UI described
+> in §3 and §5 (marked ◻ below). Until they exist nothing a user can click reaches the engine. Exact next steps
+> are in EVIDENCE §9. Nothing in this workstream has run, or may run, against production.
 
 Items needing a **legal judgement** are tagged **[LEGAL]** inline and collected in §8.
 
@@ -50,7 +53,8 @@ rolls back** — and has already deleted the org's files by then.
    single `activity_log` row. The "erase" suites in `__tests__/security/` assert on the **source text** of the
    migration and service, not on behaviour.
 
-Because the flag is off in production these are **latent**, not live. But the existing path is not a base to
+Because the flag is off in production — and, per the privacy workstream's production aggregates, the route
+has never run there (0 exports, 0 erasures) — these are **latent**, not live. But the existing path is not a base to
 build on: it is left in place, untouched and dark, and should be retired once this workstream is accepted
 (§10). What *is* reused: the storage cleanup (`cleanupOrgStorage`, now exported), the bucket census
 (`ERASE_STORAGE_BUCKETS`), the registry pattern (classification in JSON, passed to SQL as arrays, drift-guarded
@@ -83,9 +87,9 @@ All three are rows in **one ledger**, `privacy_deletion_requests`, executed by *
 
 ### 3.1 Self-service account deletion (`user_account`) — runs immediately
 
-Settings → Account → "Delete my account".
+Settings → Account → "Delete my account" (◻ UI and action not built; `requestAccountDeletion()` is).
 
-1. Flag on → session → **re-authentication** (§5) → typed confirmation = the account **email**.
+1. ◻ Flag on → session → **re-authentication** (§5) → typed confirmation = the account **email**.
 2. `privacy_request_create` (service-role, row-locked): actor must equal target; email must match; **refused
    while the user is the sole owner of any company** (`sole_owner`) — they must delete that company first, or
    have another owner. (There is no ownership-transfer feature today: `updateStaffRole` refuses
@@ -115,9 +119,10 @@ Settings → Account → "Delete my account".
 
 ### 3.2 Company deletion (`org`) — owner only, 7-day cooling-off
 
-Settings → Account → "Delete company" (rendered for owners only; enforced server-side regardless).
+Settings → Account → "Delete company" (◻ UI and action not built; `requestOrgDeletion()` /
+`cancelOrgDeletion()` are). Rendered for owners only; enforced server-side regardless.
 
-Request time: flag → session → `role === 'owner'` → **re-authentication** → typed confirmation = the exact
+Request time: ◻ flag → session → `role === 'owner'` → **re-authentication** → typed confirmation = the exact
 **company name** → consequences acknowledged → `privacy_request_create`, which **re-proves ownership and the
 name against the database** under `FOR UPDATE` locks. The request is recorded `scheduled` for now + 7 days.
 Nothing is destroyed. Any owner can cancel until it starts.
@@ -160,7 +165,8 @@ up to ~3 weeks stays inside one month.)
 
 ### 3.3 Staff erasure (`staff_erasure`) — owner/admin, runs immediately
 
-Staff → person → "Remove and erase personal data". Distinct from the existing "Remove from team"
+Staff → person → "Remove and erase personal data" (◻ UI and action not built; `requestStaffErasure()` is).
+Distinct from the existing "Remove from team"
 (`removeStaff`), which deletes only the membership row and is unchanged.
 
 Authority (`privacy_request_create`, row-locked): actor is owner or admin of the org; target is a member and
@@ -178,17 +184,23 @@ is left and reported, because it cannot be attributed to this employer.
 
 Registry: `lib/gdpr/user-erasure.json` → passed as arrays → validated against the live catalogue by the SQL
 primitive, which **raises on any unclassified hard link** (NOT NULL, or `ON DELETE CASCADE/RESTRICT`) to a
-user on an org-scoped table. 255 foreign keys reference a user; 27 are hard links and are all classified.
+user on an org-scoped table. 254 foreign keys reference a user; 26 are hard links (24 on org-scoped tables,
+2 user-keyed) and are all classified.
 
 | Class | Tables (`table.column`) | Action | Reasoning |
 |---|---|---|---|
 | **Delete** — exists only *for* the person | `memberships`, `job_assignments`, `rota_entries`, `notifications`, `notification_preferences`, `notification_digest_cursors`, `notification_email_queue`, `push_subscriptions`, `push_deliveries`, `sms_deliveries`, `briefing_dismissals`, `ai_employee_budget_limits`, `form_import_drafts` (+ the stored file), `ai_quote_drafts` | Rows removed | No retention duty; personal by nature. `ai_quote_drafts` is the AI drafting history the person generated. |
 | **Scrub** — company must keep the row | `time_entries` (note, GPS), `leave_requests` (reason, review note), `activity_log` (actor name, metadata) | Row kept, PII-named columns blanked | Working-time records: WTR 1998 reg. 9, 2 years. Leave reasons can hold health data. `activity_log` accepts exactly one update shape (the 20261214 guard) — that shape is used. **[LEGAL]** periods. |
-| **Conditional** | `staff_secrets` (NI number) | Deleted unless a payroll line for the person exists in that company | PAYE records: 3 years after the tax year end (SI 2003/2682 reg. 97). **[LEGAL]** |
-| **Retain** — statutory / evidential | `payroll_lines`, `payroll_tax_profiles`, `pension_enrolments`, `holiday_entitlements`, `safety_acknowledgements`, `site_inductions`, `inspection_signoffs`, `non_conformance_reports` | Untouched, counted in the tombstone | Payroll 3–6 y; auto-enrolment 6 y; signed H&S and quality evidence the company relies on (HSWA 1974 / CDM 2015; limitation periods to 15 y). These rows carry a **signed-name snapshot** that stays. **[LEGAL]** |
-| **Pseudonymise** (derived default — the other 228 nullable "who did this" references) | `created_by`, `approved_by`, `uploaded_by`, `messages.created_by`, `voice_notes.recorded_by`, `site_diary_entries.created_by`, photos / attachments `uploaded_by`, … | Reference kept | The record is the company's. It stops identifying the person because the identity behind the id is destroyed or replaced by "Deleted user" (account deletion), or is no longer readable by that company (staff erasure: RLS shows a profile only to co-members). **[LEGAL]** — in particular voice notes and photos, whose *content* may identify the person. |
+| **Conditional** | `staff_secrets` (NI number), `payroll_tax_profiles` (**date of birth**, NI category, student-loan plan) | Deleted unless a payroll line for the person exists in that company | PAYE records: 3 years after the tax year end (SI 2003/2682 reg. 97). Without a payroll line there is nothing for them to support. **[LEGAL]** |
+| **Retain** — statutory / evidential | `payroll_lines`, `pension_enrolments`, `holiday_entitlements`, `safety_acknowledgements`, `site_inductions`, `inspection_signoffs`, `non_conformance_reports` | Untouched, counted in the tombstone | Payroll 3–6 y; auto-enrolment 6 y; signed H&S and quality evidence the company relies on (HSWA 1974 / CDM 2015; limitation periods to 15 y). These rows carry a **signed-name snapshot** that stays. **[LEGAL]** |
+| **Pseudonymise** (derived default — the other 226 nullable "who did this" references) | `created_by`, `approved_by`, `uploaded_by`, `messages.created_by`, `voice_notes.recorded_by`, `site_diary_entries.created_by`, photos / attachments `uploaded_by`, … | Reference kept | The record is the company's. It stops identifying the person because the identity behind the id is destroyed or replaced by "Deleted user" (account deletion), or is no longer readable by that company (staff erasure: RLS shows a profile only to co-members). **[LEGAL]** — in particular voice notes and photos, whose *content* may identify the person. |
 | **User-keyed, no org** | `staff_compensation`, `mfa_recovery_codes` | Removed with the account; `staff_compensation` on staff erasure only if no other membership | Emergency contact is a third party's personal data. |
 | **Identity** | `public.users`, `auth.users`, `auth.identities`, `auth.sessions`, `auth.refresh_tokens`, `auth.mfa_factors` | Hard-deleted, or anonymised placeholder when retained rows still reference it | §3.1. |
+
+**`activity_log`** (append-only; its triggers copy the actor's name and, for some actions, customer details
+into `actor_name` / `metadata`): a company deletion removes every row with the organisation; a per-person
+flow scrubs the rows where the person is the *actor*; rows *about a customer* written by others are the
+company's audit trail and are untouched until the company is deleted (EVIDENCE §6).
 
 What an erasure **cannot** reach, stated plainly: free text written *by other people* that happens to name
 the person (a diary entry saying "Dave was late"), and the content of files. Neither is addressable by
@@ -202,10 +214,10 @@ Company deletion needs no class table: every org-scoped row goes, verified again
 
 | Property | How it is enforced |
 |---|---|
-| **Owner-only, server-side** | Three layers: the action checks `ctx.membership.role`; `privacy_request_create` re-reads the membership `FOR UPDATE` and raises `42501`; the claim re-verifies at run time. The UI hides the control from non-owners but is not relied on. |
-| **Re-authentication** | `server/auth/reauth.ts`: either the account password is verified now against Supabase Auth with a throw-away, non-persisting client, **or** — for magic-link / Google accounts with no password — the session's most recent authentication (`amr` timestamp in the validated access token) must be ≤ 10 minutes old. A stale session cannot delete anything. |
-| **CSRF** | Mutations are Next.js **server actions** (Origin/Host checked by the framework; not reachable as a simple cross-site form post) and additionally require the password or a just-established session plus a typed confirmation an attacker cannot know. No deletion is reachable by GET. |
-| **Cross-tenant** | The org id is taken from the caller's own session context, never from a form field; `privacy_request_create` requires the actor to be a member of that org; the engine takes only a **request id** and every primitive reads its target **from the ledger row**. |
+| **Owner-only, server-side** | Three layers: ◻ the action checks `ctx.membership.role` (not built); `privacy_request_create` re-reads the membership `FOR UPDATE` and raises `42501`; the claim re-verifies at run time. The UI hides the control from non-owners but is not relied on. |
+| ◻ **Re-authentication** (NOT-IMPLEMENTED — design) | `server/auth/reauth.ts`: either the account password is verified now against Supabase Auth with a throw-away, non-persisting client, **or** — for magic-link / Google accounts with no password — the session's most recent authentication (`amr` timestamp in the validated access token) must be ≤ 10 minutes old. A stale session cannot delete anything. |
+| ◻ **CSRF** (NOT-IMPLEMENTED — design) | Mutations are to be Next.js **server actions** (Origin/Host checked by the framework; not reachable as a simple cross-site form post) and additionally require the password or a just-established session plus a typed confirmation an attacker cannot know. No deletion is reachable by GET. |
+| **Cross-tenant** | ◻ The org id is to be taken from the caller's own session context, never from a form field (action not built); `privacy_request_create` requires the actor to be a member of that org; the engine takes only a **request id** and every primitive reads its target **from the ledger row**. |
 | **Not reachable with the anon / user key** | Every function is `SECURITY DEFINER`, `revoke`d from `public, anon, authenticated`, granted to `service_role`, and re-checks `auth.role() = 'service_role'` in the body. None takes an org id from an untrusted caller, so the `current_org_ids()` rule for client-reachable RPCs is not engaged — and they are deliberately *not* client-reachable. |
 | **New tables** | `privacy_deletion_requests`, `privacy_retained_billing_records`: RLS on, no policy, no client grant, `data-api:exempt:` markers. |
 | **Idempotent / resumable** | Steps recorded in the ledger; SQL steps record themselves in the same transaction as their work; external steps are idempotent by construction (§3.2 table). |
@@ -292,7 +304,7 @@ a one-line registry or constant change if counsel decides otherwise.
 | L11 | **Security logs** (`admin_activity_log` is immutable; `actor_email` / metadata cannot be scrubbed). Retention period and lawful basis. | Retained; `actor_id` detached. | A sanctioned audit-retention primitive (reserved hook exists). |
 | L12 | CrewFlow's **own sales records** about the person who became the customer (`demo_requests` scrubbed; `hq_sales_*`, `hq_memories`, `waitlist` not linked by key). | `demo_requests` scrubbed automatically; the rest manual. | §10. |
 | L13 | **Sub-processor retention** (Resend, Anthropic, Vercel, Supabase logs) that CrewFlow cannot shorten — disclosed? | Documented here; disclosure is a notice edit. | Privacy notice / DPA. |
-| L14 | The **event spine** (`hq_events`, append-only, partition-retained) holds business-event payloads keyed by entity id. Is partition expiry sufficient? | Left; ages out by partition retention. | A producer-payload audit (§10). |
+| L14 | The **event spine** (`hq_events`, append-only, partition-retained) holds business-event payloads keyed by entity id and, for human actions, the actor's opaque user id. The activity dual-write copies a **whitelist** only (status, quote / invoice number, total, changed-field names — read from `hq_emit_from_activity`), no name / email / phone. Is partition expiry sufficient? | Left; ages out by partition retention. | Audit the other producers (§10). |
 
 ---
 
@@ -301,7 +313,8 @@ a one-line registry or constant change if counsel decides otherwise.
 1. Counsel reviews §8.
 2. Apply migrations `20261311`–`20261314` (additive; the only change to existing objects is the teardown
    escape added to 19 guard functions — listed in `20261312`).
-3. Set `FEATURE_ACCOUNT_DELETION=true`. The daily `retention-purge` cron then also drains due requests.
+3. Build and review the request layer (EVIDENCE §9), then set `FEATURE_ACCOUNT_DELETION=true`. The daily
+   `retention-purge` cron then also drains due requests.
 4. Update the privacy notice (backups, sub-processors, cooling-off) and the restore runbook (§7.3).
 5. Approve the staged backup-script change (§10).
 
@@ -316,7 +329,9 @@ a one-line registry or constant change if counsel decides otherwise.
 | No **ownership transfer** — a sole owner can only delete the company. | P2 | A new authorisation feature; out of scope. |
 | `staff_compensation` has no `org_id`: a person in two companies has one shared pay / emergency-contact row. | P2 (0 multi-org users in prod per programme notes) | Pre-existing schema issue; reported, not changed. |
 | `hq_memories` / `hq_sales_*` / `waitlist` rows about a deleted customer. | P2 | No reliable key; manual purge. |
-| `hq_events` payload audit for incidental personal data. | P3 | Requires reviewing every producer. |
+| `hq_events` payload audit for incidental personal data (the activity dual-write is whitelisted; the domain producers were not reviewed). | P3 | Requires reviewing every producer. |
+| Re-authentication, server actions, settings / staff UI. | P1 before activation | Cut for budget; backend first. Next steps: EVIDENCE §9. |
+| No admin entry point to erase a person **already removed** from the team. | P2 | Needs the UI; the engine's org discovery is already catalogue-driven. |
 | Purge of `privacy_retained_billing_records` after `retention_until`. | P3 (first due 2032) | Irreversible; staged for approval. |
 | Twilio / Meta provider deletion step. | Pre-activation condition | Integrations are dark and must stay dark. |
 | Coordination: another workstream added `subscription_cancellations` concurrently. The teardown verifier is catalogue-driven, so it will **refuse** to complete if that table neither cascades from `organizations` nor is handled — by design. Reconcile at merge. | Note | Not this workstream's table. |

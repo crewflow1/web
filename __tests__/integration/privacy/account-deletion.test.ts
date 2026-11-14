@@ -179,6 +179,8 @@ describeIntegration("privacy · self-service account deletion", () => {
     const step = (tomb.steps as Record<string, { retained: Record<string, number>; scrubbed: Record<string, number>; deleted: Record<string, number> }>)[
       `erase_org:${w.org.id}`
     ];
+    expect(step, "the per-org erasure step is recorded").toBeDefined();
+    if (!step) return;
     expect(step.retained["payroll_lines.user_id"]).toBe(1);
     expect(step.retained["staff_secrets.user_id"]).toBe(1);
     expect(step.scrubbed.time_entries).toBe(1);
@@ -365,7 +367,7 @@ describeIntegration("privacy · self-service account deletion", () => {
     expect(await countRows("privacy_deletion_requests", { target_user_id: w.subject.id })).toBe(1);
     const statuses = oks.map((r) => (r.ok ? r.run?.status : "")).sort();
     expect(statuses).toContain("completed");
-    expect((await ledger([...ids][0])).status).toBe("completed");
+    expect((await ledger(String([...ids][0]))).status).toBe("completed");
     expect(await countRows("payroll_lines", { org_id: w.org.id, user_id: w.subject.id })).toBe(1);
     expect(await residue(w.m)).toEqual([]);
   }, 120_000);
