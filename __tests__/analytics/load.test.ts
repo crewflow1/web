@@ -168,6 +168,29 @@ describe("loadAnalyticsIfAllowed", () => {
     );
   });
 
+  it("pins every optional PostHog product off and forbids remote script loading", async () => {
+    // Consent is given for usage statistics only. PostHog's remote project
+    // config can enable these server-side unless the init config says no, so
+    // each one is asserted explicitly: removing a line here is a privacy change.
+    consentMock.analyticsConfigured.mockReturnValue(true);
+    consentMock.analyticsAllowed.mockReturnValue(true);
+    await (await freshLoad())();
+    const opts = posthogInit.mock.calls[0]![1] as Record<string, unknown>;
+    expect(opts).toMatchObject({
+      autocapture: false,
+      disable_session_recording: true,
+      disable_surveys: true,
+      disable_product_tours: true,
+      disable_conversations: true,
+      capture_heatmaps: false,
+      capture_dead_clicks: false,
+      capture_performance: false,
+      capture_exceptions: false,
+      rageclick: false,
+      disable_external_dependency_loading: true,
+    });
+  });
+
   it("does nothing on an external surface (portal / quote / worker / enquiry)", async () => {
     consentMock.analyticsConfigured.mockReturnValue(true);
     consentMock.analyticsAllowed.mockReturnValue(true);

@@ -133,6 +133,26 @@ export async function loadAnalyticsIfAllowed(): Promise<void> {
       autocapture: false,
       disable_session_recording: true,
       person_profiles: "identified_only",
+      // Consent covers "usage statistics" and nothing more, so every optional
+      // PostHog product is pinned OFF here rather than left to the project's
+      // remote config (which can otherwise switch them on server-side, with no
+      // code change and no new consent): no surveys, product tours or in-app
+      // conversations (they render remote HTML and can collect free text), no
+      // heatmaps / dead-click / rage-click capture, no web-vitals or exception
+      // autocapture.
+      disable_surveys: true,
+      disable_product_tours: true,
+      disable_conversations: true,
+      capture_heatmaps: false,
+      capture_dead_clicks: false,
+      capture_performance: false,
+      capture_exceptions: false,
+      rageclick: false,
+      // …and the SDK may never fetch + execute a script from PostHog's CDN. All
+      // of the above (and session replay) ship as lazily-loaded remote bundles;
+      // with this on, the only PostHog code that can run is the reviewed,
+      // version-pinned npm module in our own build.
+      disable_external_dependency_loading: true,
     });
     client = posthog as unknown as AnalyticsClient;
     // Consent may have been withdrawn while the SDK was downloading.
