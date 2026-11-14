@@ -135,10 +135,26 @@ Read at the call site; the transactional property is the database's. Not re-prov
 | PW-13 | Job billing: generate stage invoice | Atomic RPC, but the action discards its result and returns `void` (`jobs/[id]/billing/actions.ts:129`) | DEGRADED, silent UI: a refused/failed generation shows nothing. No data damage. | P3 | NOT-IMPLEMENTED | Return a FormState; show the refusal. |
 | PW-14 | Invoice numbering allocator | `next_invoice_number` = `max(cast(substring(number from 'INV-(\d+)') as int))+1`: (a) no lock → concurrent callers get the same number (loser fails on `invoices_org_number_key` — loud on `/api/invoices`, was silent on accept before PW-02); (b) the `int` cast **overflows** for any stored `INV-<≥10 digits>` (e.g. a date-style legacy number brought in by the importer, which takes the file's number verbatim — `lib/imports/commit.ts:113-117`), after which *every* allocation for that org raises; (c) numbers are re-issued after the highest invoice is deleted. | (a) SAFE-but-degraded; (b) STUCK for that org's invoicing — loud on manual create, and after PW-02 loud + self-healing on accept; (c) compliance risk (UK VAT numbering should be unique and gap-explainable). | P2 | VERIFIED for (a),(b) — `quote-accept-atomic.test.ts` uses (b) as its fault and proves (a) is closed for accept; NOT-IMPLEMENTED for (c) | Per-org counter row (`SELECT … FOR UPDATE`) allocated in the same transaction as the insert; `bigint` cast. Changes an existing function + numbering policy → proposed, NEEDS-FOUNDER on (c). |
 
-## D. Not yet examined in depth
+## D. Not examined in depth (BLOCKED on budget — money paths were prioritised)
 
-Imports commit/rollback (`app/(app)/imports/actions.ts` — 20 discarded-result writes, mostly
-status stamps), onboarding/provisioning (`app/onboarding/**`, `server/services/bootstrap-account.ts`),
-purchase orders, materials requests (header+lines has a documented key-first replay
-protocol), admin customer provisioning, demo lifecycle. The discarded-result inventory is
-in the matrix appendix; entries will be promoted to §B or §C as they are read.
+- Imports commit / rollback (`app/(app)/imports/actions.ts`, `lib/imports/commit.ts`,
+  `lib/admin/operator-imports.ts`) — ~27 discarded-result writes, mostly status stamps on
+  the import session; row inserts themselves are checked per row.
+- Onboarding / provisioning (`app/onboarding/**`, `server/services/bootstrap-account.ts`,
+  `app/admin/customers/actions.ts`) and invitations beyond PW-12.
+- Purchase orders (`app/(app)/purchase-orders/actions.ts`), materials requests (header +
+  lines has a documented key-first replay protocol and a unique `(request, sort_order)`
+  index), demo lifecycle, HMRC submit (dark).
+
+The mechanical inventory that seeded this audit — every statement-level
+`await <client>…insert/update/delete/upsert/rpc` whose result is discarded — found **108
+sites**: 79 updates, 12 deletes, 8 RPCs, 7 inserts, 2 upserts. Of those, this branch
+removed or bound the ones in `quotes/actions.ts` (accept, edit), `payments/actions.ts`
+(bank match), `payroll/actions.ts` (finalise, delete), `stripe-webhook-handler.ts` (10
+sites) and `lib/notifications/email.ts` (post-send stamp). The rest are unreviewed and
+should be treated as candidates, not as cleared.
+
+## E. Billing (CrewFlow's own Stripe state) — not tenant business records
+
+Covered in `FAILURE-MODE-MATRIX.md` §3 (ST-01..04): the webhook handler's writes were
+unchecked multi-step sequences of exactly this class, fixed in `fe8c5d2f`.
