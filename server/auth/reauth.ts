@@ -123,7 +123,10 @@ async function defaultVerifyPassword(email: string, password: string): Promise<b
 
 async function defaultCurrentAccessToken(): Promise<string | null> {
   const supabase = await createClient();
-  const { data } = await supabase.auth.getSession();
+  const { data, error } = await supabase.auth.getSession();
+  // A failed session read is NOT "no session": surface it so the caller fails
+  // closed with `unavailable` rather than telling the user to sign in again.
+  if (error) throw new Error(`reauth: session read failed: ${error.message}`);
   return data.session?.access_token ?? null;
 }
 

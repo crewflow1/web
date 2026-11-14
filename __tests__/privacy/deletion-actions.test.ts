@@ -99,7 +99,7 @@ describe("dark by default: the flag is consulted FIRST and nothing else runs", (
   it.each([
     ["deleteMyAccountAction", () => deleteMyAccountAction(INITIAL_FORM_STATE, form({ confirm_email: SESSION_USER.email, password: "pw" }))],
     ["requestCompanyDeletionAction", () => requestCompanyDeletionAction(INITIAL_FORM_STATE, form({ confirm_name: SESSION_ORG.name, acknowledge: "on", password: "pw" }))],
-    ["cancelCompanyDeletionAction", () => cancelCompanyDeletionAction(INITIAL_FORM_STATE, form({}))],
+    ["cancelCompanyDeletionAction", () => cancelCompanyDeletionAction()],
     ["eraseStaffMemberAction", () => eraseStaffMemberAction(STAFF, INITIAL_FORM_STATE, form({ confirm_email: "s@example.test", password: "pw" }))],
   ])("%s", async (_name, run) => {
     h.enabled = false;
@@ -163,9 +163,10 @@ describe("company deletion — owner only, re-authenticated, org from the sessio
 });
 
 describe("cancelling — the request is looked up for the SESSION org, never taken from the form", () => {
-  it("cancels the session org's live request and ignores a posted request id", async () => {
+  it("cancels the session org's live request — the action accepts no input at all", async () => {
     h.live = { requestId: "live-request-for-session-org", status: "scheduled", scheduledFor: "x", createdAt: "x" };
-    const state = await cancelCompanyDeletionAction(INITIAL_FORM_STATE, form(FORGED));
+    expect(cancelCompanyDeletionAction.length, "no parameters → nothing to forge").toBe(0);
+    const state = await cancelCompanyDeletionAction();
     expect(state.ok).toBe(true);
     expect(h.order).toEqual(["flag", "session", `live:${SESSION_ORG.id}`, "service"]);
     expect(h.cancelOrgDeletion).toHaveBeenCalledWith({
@@ -176,10 +177,10 @@ describe("cancelling — the request is looked up for the SESSION org, never tak
 
   it("a non-owner cannot cancel; nothing pending → nothing to cancel", async () => {
     h.role = "admin";
-    expect((await cancelCompanyDeletionAction(INITIAL_FORM_STATE, form({}))).error).toMatch(/only an owner/i);
+    expect((await cancelCompanyDeletionAction()).error).toMatch(/only an owner/i);
     expect(h.cancelOrgDeletion).not.toHaveBeenCalled();
     h.role = "owner";
-    expect((await cancelCompanyDeletionAction(INITIAL_FORM_STATE, form({}))).error).toMatch(/no pending deletion/i);
+    expect((await cancelCompanyDeletionAction()).error).toMatch(/no pending deletion/i);
     expect(h.cancelOrgDeletion).not.toHaveBeenCalled();
   });
 });

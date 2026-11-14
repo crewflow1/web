@@ -121,10 +121,8 @@ export async function requestCompanyDeletionAction(
   });
 }
 
-export async function cancelCompanyDeletionAction(
-  _prev: FormState,
-  _formData: FormData,
-): Promise<FormState> {
+// Takes NOTHING from the client: there is no field to forge.
+export async function cancelCompanyDeletionAction(): Promise<FormState> {
   if (!accountDeletionEnabled()) return formError(DARK);
   const { ctx, user } = await requireOrgContext();
   if (ctx.membership.role !== "owner") {
