@@ -239,7 +239,7 @@ export function CustomRuleBuilder({
         <div className="mb-2 flex items-center gap-2 text-xs text-slate-600">
           Match
           <select
-            value={combinator}
+            aria-label="Match all or any condition" value={combinator}
             onChange={(e) => setCombinator(e.target.value as "and" | "or")}
             className={inputCls}
           >
@@ -260,7 +260,7 @@ export function CustomRuleBuilder({
                   className={`${inputCls} w-48 font-mono`}
                 />
                 <select
-                  value={c.operator}
+                  aria-label="Condition operator" value={c.operator}
                   onChange={(e) =>
                     updateCondition(i, {
                       operator: e.target.value as ConditionOperator,
@@ -319,7 +319,7 @@ export function CustomRuleBuilder({
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs text-slate-400">#{i + 1}</span>
                   <select
-                    value={a.type}
+                    aria-label={`Action ${i + 1} type`} value={a.type}
                     onChange={(e) => updateAction(i, { type: e.target.value, params: {} })}
                     className={inputCls}
                   >
@@ -450,7 +450,7 @@ export function CustomRuleBuilder({
           <div className="mt-2 flex items-center gap-2 text-xs text-slate-600">
             Run the first
             <select
-              value={approvalPosition}
+              aria-label="Number of actions to run before approval" value={approvalPosition}
               onChange={(e) => setApprovalPosition(Number(e.target.value))}
               className={inputCls}
             >

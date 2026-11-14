@@ -173,7 +173,7 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
           >
             <input
               type="file"
-              name="file"
+              name="file" aria-label="Bank statement CSV file"
               accept=".csv,text/csv"
               required
               className="block text-sm text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-slate-800"

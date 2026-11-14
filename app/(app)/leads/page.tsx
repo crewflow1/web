@@ -246,18 +246,18 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
         className="flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
       >
         <div className="grow">
-          <label className="block text-xs font-medium text-slate-700">Search</label>
+          <label className="block text-xs font-medium text-slate-700" htmlFor="filter-q">Search</label>
           <input
-            name="q"
+            id="filter-q" name="q"
             defaultValue={q ?? ""}
             placeholder="Postcode, name, or service"
             className="mt-1 block w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-700">Source</label>
+          <label className="block text-xs font-medium text-slate-700" htmlFor="filter-source">Source</label>
           <select
-            name="source"
+            id="filter-source" name="source"
             defaultValue={sp.source ?? ""}
             className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           >
@@ -270,9 +270,9 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
           </select>
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-700">Score</label>
+          <label className="block text-xs font-medium text-slate-700" htmlFor="filter-band">Score</label>
           <select
-            name="band"
+            id="filter-band" name="band"
             defaultValue={bandFilter ?? ""}
             className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           >
@@ -285,9 +285,9 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
           </select>
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-700">Urgency</label>
+          <label className="block text-xs font-medium text-slate-700" htmlFor="filter-urgency">Urgency</label>
           <select
-            name="urgency"
+            id="filter-urgency" name="urgency"
             defaultValue={sp.urgency ?? ""}
             className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           >
@@ -300,9 +300,9 @@ export default async function LeadsPage({ searchParams }: { searchParams: SP }) 
           </select>
         </div>
         <div>
-          <label className="block text-xs font-medium text-slate-700">Assigned</label>
+          <label className="block text-xs font-medium text-slate-700" htmlFor="filter-assigned">Assigned</label>
           <select
-            name="assigned"
+            id="filter-assigned" name="assigned"
             defaultValue={sp.assigned ?? ""}
             className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           >
