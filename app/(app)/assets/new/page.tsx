@@ -54,7 +54,7 @@ export default async function NewAssetPage({ searchParams }: { searchParams: SP 
   const suppliers = suppliersRaw ?? [];
 
   const errorMessage = sp.error
-    ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
+    ? (ERROR_MAP[sp.error] ?? sp.error)
     : null;
 
   const field =
