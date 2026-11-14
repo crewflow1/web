@@ -2,6 +2,13 @@
 
 Migration `20261070000000`. Seam: `lib/ai/governor.ts`. Surface: `/admin/ai-costs`.
 
+> **STATUS CORRECTION (2026-11-14, secrets/AI-spend audit).** The paragraph below
+> describes the wave that introduced the reservation. It is no longer true: all
+> five tiers were bound in `lib/ai/governor/registry.ts` between 2026-09-10 and
+> 2026-09-13, and the production ledger holds real invocations. Read "dark" below
+> as history. See **ADDENDUM — VELOCITY, ENVELOPE, TIMEOUTS** at the end of this
+> file and `docs/programme/security-secrets/AI-SPEND-GOVERNANCE.md`.
+
 **The governor is still DARK.** Every cost tier maps to no model
 (`lib/ai/governor/registry.ts`), so on production this wave creates a correct and
 permanently **empty** `ai_cost_reservations` table and changes nothing a user or
@@ -519,3 +526,31 @@ surfaces as `failed`/DLQ — honest, visible — and any model/format change is 
 for `whatsapp_inbound_media` transcripts still awaits a column-scrub mode in
 the retention policy layer (the purge primitive is DELETE-only); RAMS-style
 erasure decisions stay with product/legal.
+
+
+## ADDENDUM — VELOCITY, ENVELOPE, TIMEOUTS (2026-11-14)
+
+Three changes from the secrets/AI-spend audit. Full reasoning, evidence and the
+provider-side settings only the founder can make:
+`docs/programme/security-secrets/AI-SPEND-GOVERNANCE.md`.
+
+1. **A velocity limit sits in front of the reservation**
+   (`lib/ai/governor/velocity.ts`). The reservation decides how MUCH; this decides
+   how FAST. Per org per feature always, per user per feature when the call is
+   attributed; durable (`rate_limit_hit`) and fail-closed; derived from money
+   (25 % / 10 % of the default ceiling per hour, in the call's own claim). A
+   refused call returns `blocked` with reason `rate_limited`, takes no claim and
+   writes no ledger row. Order in `invokeWithGovernor` is now: registry checks →
+   deterministic refusal → dark short-circuit → **velocity** → reserve → run →
+   settle/release.
+2. **The envelope must cover every call site's output cap.** The mid envelope is
+   4,000 output tokens (the quote writer's real cap), and
+   `__tests__/security/ai-reservation-envelope.test.ts` derives the rule from
+   source for every governed site. Raise the envelope in the same diff that
+   raises a cap.
+3. **"Failed calls settle at 1p" has one exception.** A failure that is OUR
+   timeout/abort is settled at the full CLAIM: we stopped waiting, the vendor did
+   not stop working. Every other failure keeps the 1p floor described above.
+
+None of this is a provider-side cap. An application budget protects nothing
+against a leaked key; the vendor consoles do.
