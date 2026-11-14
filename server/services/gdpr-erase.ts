@@ -54,7 +54,7 @@ export type ErasureSummary = {
 };
 
 type StorageListItem = { name: string; id: string | null };
-type StorageApi = {
+export type StorageApi = {
   from(bucket: string): {
     list(
       path: string,
@@ -118,7 +118,7 @@ async function listAllObjectPaths(
  * Loud + idempotent: re-running after a partial run simply removes whatever
  * remains (0 if already clean).
  */
-async function cleanupOrgStorage(
+export async function cleanupOrgStorage(
   storage: StorageApi,
   orgId: string,
 ): Promise<number> {
