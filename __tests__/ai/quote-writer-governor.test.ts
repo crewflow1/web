@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { _resetForTests as resetRateLimitStore } from "@/lib/security/rate-limit";
 import {
   AI_MONTHLY_CEILING_PENCE,
   FAILURE_FLOOR_PENCE,
@@ -446,6 +447,12 @@ const okCall = async () => ({ value: "a draft", usage: USAGE });
 beforeEach(() => {
   ledger.length = 0;
   reservations.length = 0;
+  // The velocity limiter (lib/ai/governor/velocity.ts) keeps a per-org/per-user
+  // window in the in-process store outside production. Like the fake ledger
+  // above it is per-TEST state: without this reset the window filled by one
+  // test's traffic would refuse the next test's. Isolation only — the limiter
+  // itself is proven in __tests__/ai/governor-velocity.test.ts.
+  resetRateLimitStore();
   H.seq.res = 0;
   H.seq.inv = 0;
   stats.budgetReads = 0;

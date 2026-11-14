@@ -107,6 +107,7 @@ import * as Sentry from "@sentry/nextjs";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { limitSubjectUserId } from "./governor/attribution";
 import { resolveEffectiveCeiling } from "./governor/limits";
+import { consumeAiVelocity } from "./governor/velocity";
 import {
   featureDefinition,
   reservationEnvelopeOf,
@@ -172,6 +173,12 @@ export {
   isTierActivated,
 } from "./governor/readiness";
 export { hqBudgetOrgId, limitSubjectUserId } from "./governor/attribution";
+export {
+  AI_VELOCITY_ORG_SHARE,
+  AI_VELOCITY_USER_SHARE,
+  AI_VELOCITY_WINDOW_SECONDS,
+  velocityLimitsFor,
+} from "./governor/velocity";
 
 const LEDGER = "ai_invocations";
 const RESERVE_FN = "ai_reserve_invocation";
@@ -526,7 +533,16 @@ export type BlockReason =
    * own-tier gate. Genuinely dark (no provider for the modality) still runs the
    * caller's degraded path — see the dark short-circuit.
    */
-  | "tier_dark_provider_live";
+  | "tier_dark_provider_live"
+  /**
+   * The call was refused by the VELOCITY limiter (./governor/velocity.ts) before
+   * any budget was claimed: this org — or this one user — has issued too many
+   * calls to this feature inside the current window. Money may well remain; the
+   * refusal is about SPEED, so that a loop cannot take an org from zero to its
+   * ceiling in minutes. Identically degraded for the caller; kept distinct so
+   * the logs say a rate limit refused, not the ceiling.
+   */
+  | "rate_limited";
 
 export type ReservationResult =
   | {
@@ -888,6 +904,9 @@ export type InvokeWithGovernorInput = {
  *      was the estate-wide state before the 2026-09-10 activation — why wiring
  *      the dark seams changed nothing — and remains the path for any tier that
  *      is unbound or credential-less in a given deploy.
+ *   3b. VELOCITY — a durable, fail-closed rate limit (./governor/velocity.ts):
+ *      per org, and per user when there is one, per feature. Refuses BEFORE any
+ *      budget is claimed, so a loop cannot burn the ceiling in minutes.
  *   4. RESERVE — ONE atomic SQL call that decides the ceiling AND the duplicate
  *      question together, under a lock, and claims the budget if it fits. Both
  *      refusals happen WITHOUT calling the function. The whole point, and the
@@ -997,6 +1016,34 @@ export async function invokeWithGovernor<T>(
   // attributed in the ledger, normalised so a blank becomes a true null (a
   // system / HQ job with no employee to limit; see limitSubjectUserId).
   const employeeId = limitSubjectUserId(input.userId);
+
+  // 3b. THE VELOCITY LIMIT — how FAST, where the reservation below decides how
+  //     MUCH. Deliberately BEFORE the reservation: a refused call takes no claim
+  //     and writes no ledger row. Durable (shared Postgres counter) and
+  //     fail-closed; per org always, per user when there is one. Behind the dark
+  //     short-circuit above, so a dark tier still costs zero round trips.
+  const velocity = await consumeAiVelocity({
+    orgId: input.orgId,
+    userId: employeeId,
+    feature,
+    claimPence,
+  });
+  if (!velocity.allowed) {
+    console.warn(
+      `[ai/governor] RATE-LIMITED ${feature} for org ${input.orgId} ` +
+        `(${velocity.scope} window: ${velocity.limit} calls/h, claim ${claimPence}p) — refusing ` +
+        `before any budget is claimed.`,
+    );
+    return {
+      status: "blocked",
+      budget: "blocked",
+      // No ledger read was made on this path; zero is "not consulted", exactly
+      // as on `reservation_unavailable`. `reason` is what distinguishes it.
+      spentPence: 0,
+      ceilingPence: AI_MONTHLY_CEILING_PENCE,
+      reason: "rate_limited",
+    };
+  }
 
   const reservation = await reserveBudget({
     orgId: input.orgId,
