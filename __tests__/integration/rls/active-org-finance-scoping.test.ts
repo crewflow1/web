@@ -323,7 +323,10 @@ describeIntegration("active-org scoping · multi-org user (finance/commercial)",
             .update({ [column]: "tenant-authored content" }, { count: "exact" })
             .eq("id", id)
             .eq("org_id", org);
-          expect(r.error?.code, "column-level grant must deny the write").toBe("42501");
+          expect(
+            (r.error as { code?: string } | null)?.code,
+            "column-level grant must deny the write",
+          ).toBe("42501");
         }
         expect(await truth(table, idB(), column), "org B's row must be untouched").toBe(
           originalB,
