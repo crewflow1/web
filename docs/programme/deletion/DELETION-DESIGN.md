@@ -37,7 +37,7 @@ rolls back** — and has already deleted the org's files by then.
    (`cis_subcontractors_outcome_dated` — reproduced with a *default, unverified* subcontractor row — and
    `supplier_payments_void_evidenced`). One transaction ⇒ the whole erasure rolls back.
 2. **Its deletes are refused by the schema's own evidence guards** (`comm_events`, `job_milestones`,
-   `job_programme_baselines`, `asset_inspections.template_id`, …). ~55 delete guards exist; most permit exactly
+   `job_programme_baselines`, `asset_inspections.template_id`, …). 53 row-level delete guards exist on tenant tables; most permit exactly
    one delete path — the tenant-teardown cascade, recognised by "the organisation row is already gone".
    `gdpr_erase_org` keeps the organisation row, so it can never use that path.
 3. **Storage-first is not atomic with the DB.** After the failed run the org's 17 stored objects were gone and
