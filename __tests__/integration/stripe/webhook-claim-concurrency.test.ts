@@ -144,8 +144,13 @@ describeIntegration("stripe webhook · in-flight concurrency claim", () => {
       processStripeEvent(checkoutEvent(id)),
     ]);
     const statuses = [a.status, b.status].sort();
-    // Exactly one processed; the other acked as duplicate.
-    expect(statuses).toEqual(["duplicate", "processed"]);
+    // Exactly one processed. The loser ran NOTHING; what it ANSWERS depends on
+    // whether the winner had finished when it looked: "in_flight" (winner still
+    // working — a retryable answer, so a winner that dies is retried, not
+    // stranded) or "duplicate" (winner already completed). It is never a second
+    // "processed". See the stuck-claim cases at the end of this file.
+    expect(statuses[1]).toBe("processed");
+    expect(["duplicate", "in_flight"]).toContain(statuses[0]);
   });
 
   it("…the loser creates NO duplicate billing row (activation ran once)", async () => {
@@ -221,7 +226,10 @@ describeIntegration("stripe webhook · in-flight concurrency claim", () => {
     });
 
     const res = await processStripeEvent(checkoutEvent(id));
-    expect(res.status).toBe("duplicate");
+    // The lease is honoured (nothing runs) — and the answer is the RETRYABLE
+    // "in_flight", not "duplicate": this event is not done, and acking it as
+    // delivered is what stranded an event whose winner then died.
+    expect(res.status).toBe("in_flight");
     expect(await billingInvoiceCount()).toBe(0); // no activation
   });
 
@@ -293,6 +301,65 @@ describeIntegration("stripe webhook · in-flight concurrency claim", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.processed_at).toBeTruthy();
     expect(rows[0]?.error_message).toBeNull();
+  });
+
+  // -------------------------------------------------------------------
+  // The stuck-claim story, end to end (resilience ST-03 / ST-01)
+  // -------------------------------------------------------------------
+
+  it("a handler KILLED mid-flight is not stranded: the in-lease retry is refused retryably, the post-lease retry processes it", async () => {
+    const id = freshEventId();
+    // Attempt 1 claimed the event and then the function was killed — it never
+    // reached markProcessed or markFailed. Exactly that row shape:
+    const seeded = await db(serviceClient())
+      .from("billing_events")
+      .insert({
+        event_id: id,
+        event_type: "checkout.session.completed",
+        org_id: orgId,
+        payload: {},
+        claimed_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+    expect(seeded.error, seeded.error?.message).toBeNull();
+
+    // Stripe's retry lands INSIDE the lease. It must run nothing — and must NOT
+    // be acked as delivered (that 200 is what used to end Stripe's retries with
+    // the event still unprocessed, forever).
+    const inLease = await processStripeEvent(checkoutEvent(id));
+    expect(inLease.status).toBe("in_flight");
+    expect(await billingInvoiceCount()).toBe(0);
+    expect((await eventRow(id))[0]?.processed_at).toBeNull();
+
+    // Because that answer was retryable, Stripe retries again. Once the dead
+    // attempt's lease has lapsed, the retry reclaims and completes the event.
+    await setEventRow(id, { claimed_at: new Date(Date.now() - LEASE_MS - 60_000).toISOString() });
+    const afterLease = await processStripeEvent(checkoutEvent(id));
+    expect(afterLease.status).toBe("processed");
+    expect(await billingInvoiceCount()).toBe(1);
+    expect((await eventRow(id))[0]?.processed_at).toBeTruthy();
+  });
+
+  it("re-running a setup-fee checkout (retry after a partial failure) records the fee ONCE", async () => {
+    const id = freshEventId();
+    // A real paid checkout carries its payment intent — the key the re-run
+    // guard dedupes on.
+    const withIntent = (): Stripe.Event => {
+      const e = checkoutEvent(id) as unknown as { data: { object: Record<string, unknown> } };
+      e.data.object.payment_intent = `pi_${id}`;
+      e.data.object.amount_total = 100000;
+      return e as unknown as Stripe.Event;
+    };
+    expect((await processStripeEvent(withIntent())).status).toBe("processed");
+    expect(await billingInvoiceCount()).toBe(1);
+
+    // The first attempt wrote the billing row and THEN failed (so the event was
+    // released, not completed) — Stripe retries and the whole handler runs again.
+    await setEventRow(id, { processed_at: null, error_message: "probe: failed after the billing insert" });
+    expect((await processStripeEvent(withIntent())).status).toBe("processed");
+
+    expect(await billingInvoiceCount(), "the same setup fee must not be recorded twice").toBe(1);
   });
 
   // -------------------------------------------------------------------

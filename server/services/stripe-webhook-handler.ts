@@ -138,12 +138,59 @@ function adminTable(name: string) {
   };
 }
 
+/**
+ * A handler write MUST be checked.
+ *
+ * PostgREST RETURNS errors — it does not throw. Every `await adminTable(...)
+ * .update(...)` in the handlers below used to discard its result, so a write
+ * that failed (statement timeout, pool exhaustion, a dropped connection) was
+ * invisible: the handler carried on, `markProcessed` stamped the event
+ * terminal, and Stripe was told 200. The event could never be retried, and the
+ * state it was supposed to produce did not exist:
+ *
+ *   • a PAID checkout whose `organizations.status = 'active'` write failed left
+ *     a paying tenant locked out, permanently;
+ *   • a `customer.subscription.deleted` whose revoke write failed left a churned
+ *     tenant with full access, permanently.
+ *
+ * The existing retry test simulated an in-handler failure with a REJECTED
+ * promise, which is not how the Supabase client fails — so the suite was green
+ * while every real write failure was swallowed.
+ *
+ * `mustWrite` turns a returned error into a throw. That reaches the catch in
+ * processStripeEvent → markFailed (processed_at stays NULL) → the route 500s →
+ * Stripe retries. Handlers are written to be safely re-run (idempotent updates;
+ * inserts fenced by a unique index or an existence check).
+ */
+function mustWrite(
+  res: { error: { message: string; code?: string } | null },
+  what: string,
+  opts: { ignoreUniqueViolation?: boolean } = {},
+): void {
+  if (!res.error) return;
+  if (
+    opts.ignoreUniqueViolation &&
+    (res.error.code === "23505" || /duplicate key/i.test(res.error.message))
+  ) {
+    // The row a sibling event / an earlier attempt already wrote. That is the
+    // idempotent outcome, not a failure.
+    return;
+  }
+  throw new Error(`${what} failed: ${res.error.message}`);
+}
+
 // ---------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------
 
 export type ProcessResult =
   | { status: "duplicate"; event_id: string }
+  /**
+   * Another delivery of this event holds a LIVE claim and has not finished.
+   * Nothing was run here. The route must answer with a RETRYABLE status so
+   * Stripe delivers again later — see the in-flight note in processStripeEvent.
+   */
+  | { status: "in_flight"; event_id: string }
   | { status: "skipped"; event_id: string; reason: string }
   | { status: "processed"; event_id: string; actions: ReadonlyArray<string> };
 
@@ -231,10 +278,41 @@ export async function processStripeEvent(
       );
     }
     if ((reclaimRes.data?.length ?? 0) === 0) {
-      // Completed, or an active lease is held by a concurrent winner. Either
-      // way: ack and run NOTHING. This is the idempotency + concurrency
-      // guarantee — business logic below does not run twice.
-      return { status: "duplicate", event_id: event.id };
+      // Nothing reclaimable: the event is either COMPLETED, or an active lease is
+      // held by another delivery that has not finished. Either way business
+      // logic does NOT run here — that is the idempotency + concurrency
+      // guarantee. But the two cases must not get the same ANSWER.
+      //
+      // Both used to return "duplicate" → HTTP 200. For a completed event that is
+      // right. For a live claim it tells Stripe "delivered — stop retrying" on
+      // the strength of an attempt that has not succeeded yet. If that attempt
+      // then dies WITHOUT reaching markFailed (the function is killed at its
+      // time limit, the instance is recycled, the process OOMs), the row is left
+      // processed_at NULL / error_message NULL — reclaimable after the lease,
+      // except that nothing will ever try: Stripe's retry was acked away, and no
+      // sweeper re-drives billing_events. The event is permanently stuck.
+      //
+      // So read which case this is, and for a live claim answer "in_flight" (the
+      // route turns that into a retryable 409). Stripe then retries on its
+      // backoff: by then the first attempt has either completed (→ duplicate,
+      // 200) or its lease has lapsed / it recorded a failure (→ reclaimed and
+      // processed). The read is of a single column on a unique key and decides
+      // only the RESPONSE — no business logic is gated on it, so it reopens no
+      // read-then-act window.
+      const stateRes = await adminTable("billing_events")
+        .select("processed_at")
+        .eq("event_id", event.id)
+        .maybeSingle();
+      if (stateRes.error) {
+        // Cannot tell → retryable, never a false "delivered".
+        throw new Error(
+          `billing_events state read failed: ${stateRes.error.message}`,
+        );
+      }
+      const processedAt = (stateRes.data as { processed_at?: string | null } | null)
+        ?.processed_at;
+      if (processedAt) return { status: "duplicate", event_id: event.id };
+      return { status: "in_flight", event_id: event.id };
     }
     // Reclaimed an orphaned/failed row → fall through and dispatch (the retry).
   }
@@ -389,20 +467,26 @@ async function handleCheckoutCompleted(
       ? session.customer
       : (session.customer?.id ?? null);
   if (customerId) {
-    await adminTable("organizations")
-      .update({ stripe_customer_id: customerId })
-      .eq("id", meta.org_id);
+    mustWrite(
+      await adminTable("organizations")
+        .update({ stripe_customer_id: customerId })
+        .eq("id", meta.org_id),
+      "organizations.stripe_customer_id update",
+    );
     out.push(`stripe_customer_id_set:${customerId}`);
   }
 
   if (meta.kind === "setup_fee") {
     // One-off — record paid setup fee on the org.
-    await adminTable("organizations")
-      .update({
-        setup_fee_status: "paid",
-        setup_fee_paid_at: new Date().toISOString(),
-      })
-      .eq("id", meta.org_id);
+    mustWrite(
+      await adminTable("organizations")
+        .update({
+          setup_fee_status: "paid",
+          setup_fee_paid_at: new Date().toISOString(),
+        })
+        .eq("id", meta.org_id),
+      "organizations.setup_fee_status update",
+    );
     out.push("setup_fee_paid");
 
     // Insert a billing_invoices row capturing the payment if not
@@ -411,17 +495,47 @@ async function handleCheckoutCompleted(
       typeof session.payment_intent === "string"
         ? session.payment_intent
         : (session.payment_intent?.id ?? null);
-    await adminTable("billing_invoices").insert({
-      org_id: meta.org_id,
-      kind: "setup_fee",
-      status: "paid",
-      amount_gbp: ((session.amount_total ?? 0) / 100).toFixed(2),
-      currency: (session.currency ?? "gbp").toUpperCase(),
-      paid_at: new Date().toISOString(),
-      stripe_payment_intent_id: paymentIntentId,
-      notes: "Auto-created from Stripe checkout.session.completed (setup_fee)",
-    });
-    out.push("billing_invoice_inserted:setup_fee");
+    //
+    // RE-RUN SAFE. Now that a failed write makes the event retryable (mustWrite),
+    // this handler can legitimately run more than once for one checkout — and
+    // this row has no unique key behind it (the partial unique index is on
+    // stripe_invoice_id, which a setup-fee checkout does not carry). So look for
+    // the row an earlier attempt already wrote, keyed on the payment intent, and
+    // only insert when there is none. The read FAILS LOUD: guessing "not there"
+    // on a failed read would record the same setup fee twice.
+    let setupFeeRecorded = false;
+    if (paymentIntentId) {
+      const existing = await adminTable("billing_invoices")
+        .select("id")
+        .eq("org_id", meta.org_id)
+        .eq("kind", "setup_fee")
+        .eq("stripe_payment_intent_id", paymentIntentId)
+        .limit(1);
+      if (existing.error) {
+        throw new Error(
+          `billing_invoices setup-fee lookup failed: ${existing.error.message}`,
+        );
+      }
+      setupFeeRecorded = (existing.data ?? []).length > 0;
+    }
+    if (setupFeeRecorded) {
+      out.push("billing_invoice_exists:setup_fee");
+    } else {
+      mustWrite(
+        await adminTable("billing_invoices").insert({
+          org_id: meta.org_id,
+          kind: "setup_fee",
+          status: "paid",
+          amount_gbp: ((session.amount_total ?? 0) / 100).toFixed(2),
+          currency: (session.currency ?? "gbp").toUpperCase(),
+          paid_at: new Date().toISOString(),
+          stripe_payment_intent_id: paymentIntentId,
+          notes: "Auto-created from Stripe checkout.session.completed (setup_fee)",
+        }),
+        "billing_invoices setup-fee insert",
+      );
+      out.push("billing_invoice_inserted:setup_fee");
+    }
 
     // Notify customer + HQ that the setup fee landed.
     await emitNotifications(
@@ -438,6 +552,9 @@ async function handleCheckoutCompleted(
         ? session.subscription
         : (session.subscription?.id ?? null);
     if (subId) {
+      // ACCESS-CONTROLLING WRITE: this is what lets a paying tenant in. It goes
+      // through apply_stripe_subscription_state, which THROWS on a database
+      // error (so a failed activation is retried, never stamped processed).
       // Atomic with the cancellation tombstone check: a checkout.session
       // .completed delivered AFTER the owner already cancelled that same
       // subscription (cancel-just-after-signup, out-of-order delivery) must not
@@ -506,6 +623,8 @@ async function handleSubscriptionUpsert(
       ? new Date(nextRenewalRaw * 1000).toISOString()
       : null;
 
+  // ACCESS-CONTROLLING WRITE (activates / suspends the tenant). The RPC wrapper
+  // THROWS on a database error, so a failed write leaves the event retryable.
   // The org-status write is atomic with the cancellation TOMBSTONE check
   // (apply_stripe_subscription_state, migration 20261317000000). Stripe delivers
   // at-least-once and out of order: an `updated` (active / past_due) created
@@ -596,7 +715,9 @@ async function handleSubscriptionDeleted(
  *
  * It also writes the TOMBSTONE that stops a late/out-of-order
  * customer.subscription.updated resurrecting this subscription (see
- * handleSubscriptionUpsert). This only GATES access (→ /access-pending and the
+ * handleSubscriptionUpsert). ACCESS-CONTROLLING WRITE: confirmCancellationRpc
+ * THROWS on a database error — if the revoke failed silently a churned tenant
+ * would keep access for good, so the event must stay retryable. This only GATES access (→ /access-pending and the
  * owner's /account/billing); it never deletes tenant data.
  */
 async function confirmSubscriptionTerminated(
@@ -697,6 +818,7 @@ async function handleInvoicePaid(event: Stripe.Event): Promise<string[]> {
       amount_gbp: amount.toFixed(2),
     })
     .eq("stripe_invoice_id", stripeInvId);
+  mustWrite(updRes, "billing_invoices paid update");
   // We can't easily get rowcount from the typed cast, so insert
   // protected by the unique partial index — if it collides, ignore.
   const insertRes = await adminTable("billing_invoices").insert({
@@ -712,9 +834,10 @@ async function handleInvoicePaid(event: Stripe.Event): Promise<string[]> {
       : null,
     notes: "Auto-created from Stripe invoice.paid",
   });
-  // Suppress unused expression warnings on the awaited results.
-  void updRes;
-  void insertRes;
+  // A collision on the stripe_invoice_id unique index is the expected
+  // "row already exists" outcome (the update above carried the change); any
+  // other error means the payment was NOT recorded and the event must retry.
+  mustWrite(insertRes, "billing_invoices paid insert", { ignoreUniqueViolation: true });
 
   await recordAdminActivity({
     actorId: null,
@@ -757,24 +880,31 @@ async function handleInvoiceFailed(event: Stripe.Event): Promise<string[]> {
     ? await isSubscriptionTombstoned(orgId, failedSubId)
     : false;
 
-  await adminTable("billing_invoices")
-    .update({
+  mustWrite(
+    await adminTable("billing_invoices")
+      .update({
+        status: "failed",
+        failed_at: failedAt,
+        failure_reason: failureReason,
+      })
+      .eq("stripe_invoice_id", inv.id),
+    "billing_invoices failed update",
+  );
+  mustWrite(
+    await adminTable("billing_invoices").insert({
+      org_id: orgId,
+      kind: invoiceSubscriptionId(inv) ? "subscription" : "setup_fee",
       status: "failed",
+      amount_gbp: amount.toFixed(2),
+      currency: (inv.currency ?? "gbp").toUpperCase(),
       failed_at: failedAt,
       failure_reason: failureReason,
-    })
-    .eq("stripe_invoice_id", inv.id);
-  await adminTable("billing_invoices").insert({
-    org_id: orgId,
-    kind: invoiceSubscriptionId(inv) ? "subscription" : "setup_fee",
-    status: "failed",
-    amount_gbp: amount.toFixed(2),
-    currency: (inv.currency ?? "gbp").toUpperCase(),
-    failed_at: failedAt,
-    failure_reason: failureReason,
-    stripe_invoice_id: inv.id,
-    notes: "Auto-created from Stripe invoice.payment_failed",
-  });
+      stripe_invoice_id: inv.id,
+      notes: "Auto-created from Stripe invoice.payment_failed",
+    }),
+    "billing_invoices failed insert",
+    { ignoreUniqueViolation: true },
+  );
 
   // Notify both customer + HQ urgently — the customer needs to fix
   // their card, HQ needs to chase if it doesn't get resolved.
@@ -817,9 +947,12 @@ async function handleInvoiceStatusChange(
 ): Promise<string[]> {
   const inv = event.data.object as Stripe.Invoice;
   const newStatus = event.type === "invoice.voided" ? "void" : "sent";
-  await adminTable("billing_invoices")
-    .update({ status: newStatus })
-    .eq("stripe_invoice_id", inv.id);
+  mustWrite(
+    await adminTable("billing_invoices")
+      .update({ status: newStatus })
+      .eq("stripe_invoice_id", inv.id),
+    "billing_invoices status update",
+  );
   return [`invoice_status_${newStatus}:${inv.id}`];
 }
 
@@ -852,12 +985,15 @@ async function handleCustomerUpsert(event: Stripe.Event): Promise<string[]> {
   // the link fresh in case it was missed.
   const orgId = c.metadata?.org_id;
   if (!orgId) return ["skipped:no_org_id_metadata"];
-  await adminTable("organizations")
-    .update({
-      stripe_customer_id: c.id,
-      billing_email: c.email ?? undefined,
-    })
-    .eq("id", orgId);
+  mustWrite(
+    await adminTable("organizations")
+      .update({
+        stripe_customer_id: c.id,
+        billing_email: c.email ?? undefined,
+      })
+      .eq("id", orgId),
+    "organizations customer-sync update",
+  );
   return [`customer_synced:${c.id}`];
 }
 
@@ -893,6 +1029,19 @@ async function orgIdByCustomer(customerId: string): Promise<string | null> {
     .select("id")
     .eq("stripe_customer_id", customerId)
     .maybeSingle();
+  // LOUD (the loud-reads doctrine, lib/supabase/read-failure.ts). This used to
+  // discard `res.error`, so a transient read failure was indistinguishable from
+  // "no org has this Stripe customer": every handler then returned
+  // `skipped:no_org_for_customer`, the event was stamped PROCESSED, and it could
+  // never be retried — a subscription cancellation, a renewal payment or a
+  // failed-payment alert dropped for good by one flaky SELECT. Throwing makes
+  // the route 500 so Stripe retries; "no org" is reserved for a read that
+  // SUCCEEDED and found none.
+  if (res.error) {
+    throw new Error(
+      `organizations lookup by stripe_customer_id failed: ${res.error.message}`,
+    );
+  }
   if (!res.data) return null;
   return (res.data as { id: string }).id;
 }
