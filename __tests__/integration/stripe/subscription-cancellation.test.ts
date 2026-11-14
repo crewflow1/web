@@ -537,6 +537,27 @@ describeIntegration("stripe · subscription cancellation → entitlement state",
     expect(proj.data?.status).toBe("canceled");
   });
 
+  it("ST-04 (failure-drill open item): a late customer.subscription.updated(active) delivered AFTER customer.subscription.deleted does NOT re-activate the org", async () => {
+    // The failure-drill workstream recorded this as open: Stripe delivers
+    // out of order, and the old handler applied `updated(active)` unconditionally,
+    // so a cancelled tenant came back to life with a dead subscription. The
+    // cancellation tombstone (apply_stripe_subscription_state) closes it.
+    const o = await mkOrg("active");
+    const deleted = await m.processStripeEvent(subEvent("customer.subscription.deleted", o.customer!, o.sub!, "canceled"));
+    expect(deleted).toMatchObject({ status: "processed", actions: ["subscription_deleted:org_cancelled"] });
+    const cancelledAt = (await org(o.id)).cancelled_at;
+    expect(cancelledAt).not.toBeNull();
+
+    const late = await m.processStripeEvent(subEvent("customer.subscription.updated", o.customer!, o.sub!, "active"));
+    expect(late.status).toBe("processed"); // acked — Stripe must not retry it forever
+    const after = await org(o.id);
+    expect(after.status, "ST-04: the late active must not re-activate").toBe("cancelled");
+    expect(after.cancelled_at).toBe(cancelledAt);
+    // …and delivering it again, or as a brand-new event id, changes nothing.
+    await m.processStripeEvent(subEvent("customer.subscription.updated", o.customer!, o.sub!, "active"));
+    expect(await status(o.id)).toBe("cancelled");
+  });
+
   it("OUT OF ORDER: 'updated → canceled' (no deleted event) is terminal and revokes", async () => {
     const o = await mkOrg("active");
     const r = await m.processStripeEvent(subEvent("customer.subscription.updated", o.customer!, o.sub!, "canceled"));
