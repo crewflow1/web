@@ -121,15 +121,13 @@ describeIntegration("bank reconciliation · a bank line pays an invoice exactly 
     const ok = results.filter((r) => !r.error);
     const refused = results.filter((r) => r.error);
     expect(ok, "exactly one writer wins").toHaveLength(1);
-    // Every loser is REFUSED WITH AN ERROR (never a silent second row). Which
-    // error depends on scheduling, and both are honest refusals the action
-    // handles: 23505 from this index, or 40P01 when Postgres breaks the lock
-    // cycle between the invoice FOR SHARE taken by tg_invoice_payments_refuse_void
-    // and the status-sync UPDATE (a pre-existing property of concurrent payment
-    // inserts on one invoice — failure-mode matrix CC-05). The invariant is the
-    // count, not the code.
+    // Every loser is REFUSED WITH AN ERROR (never a silent second row), and the
+    // refusal is the unique index, deterministically: payment inserts on one
+    // invoice queue on the invoice row (migration 20261327000000 — FOR NO KEY
+    // UPDATE in tg_invoice_payments_refuse_void), so there is no lock-upgrade
+    // deadlock left to produce a 40P01. A 40P01 here means that ordering regressed.
     expect(refused).toHaveLength(4);
-    for (const r of refused) expect(["23505", "40P01"]).toContain(r.error?.code);
+    for (const r of refused) expect(r.error?.code).toBe("23505");
     expect(await paymentsFor(invoice), "one bank transfer, one payment").toHaveLength(1);
   });
 
@@ -155,5 +153,21 @@ describeIntegration("bank reconciliation · a bank line pays an invoice exactly 
     expect((await payFromLine(l1, invoice)).error).toBeNull();
     expect((await payFromLine(l2, invoice)).error).toBeNull();
     expect(await paymentsFor(invoice)).toHaveLength(4);
+  });
+
+  it("CONCURRENCY: simultaneous genuine part-payments on one invoice ALL land — no deadlock (CC-05)", async () => {
+    // Before migration 20261327000000 these inserts took FOR SHARE on the invoice
+    // and then upgraded for the status sync: all but one died with 40P01 and the
+    // user was told to try again. They now queue on the invoice row.
+    const invoice = await makeInvoice();
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        svc()
+          .from("invoice_payments")
+          .insert({ org_id: orgId, invoice_id: invoice, amount: 10, paid_at: "2026-11-02", source: "manual" }),
+      ),
+    );
+    for (const r of results) expect(r.error, r.error?.message).toBeNull();
+    expect(await paymentsFor(invoice)).toHaveLength(5);
   });
 });
