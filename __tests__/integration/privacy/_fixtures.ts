@@ -49,7 +49,12 @@ export function newMarkers(prefix: string): Markers {
     tag,
     name: `Zqdel${tag}`,
     email: `zqdel${tag}@deletion-ws.invalid`,
-    phone: `+44770090${digits}`.slice(0, 13),
+    // Collision-proof: the UK drama range (+44 7700 900xxx) leaves only three free
+    // digits and other suites write fixed numbers from it into immutable, non-tenant
+    // tables (e.g. admin_activity_log.actor_email), which a residue scan for this
+    // marker would then "find". +999 is an unassigned country code, so nothing else
+    // in the database can contain this value.
+    phone: `+999${digits}${Math.floor(Math.random() * 1e6).toString().padStart(6, "0")}`.slice(0, 15),
   };
 }
 
