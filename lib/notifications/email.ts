@@ -165,18 +165,51 @@ export async function sendNotificationEmail(input: {
 }> {
   const admin = createAdminClient();
 
-  // Fetch the row.
-  const { data: rowRaw, error: fetchErr } = await admin
+  // ATOMIC CLAIM — the exactly-once guarantee for this queue.
+  //
+  // The drain used to SELECT `status='queued'` rows and send each with no claim,
+  // and this function sent whatever row id it was handed without even looking at
+  // its status. Two drains in flight at once (the platform delivers cron events
+  // at-least-once; the notifications-drain cron and the HQ cadence clock both
+  // call the drain; one slow provider call stretches a pass) therefore each read
+  // the same rows and each sent them — every email in the batch went out twice.
+  // Proved on real Postgres: five overlapping sends of one row → five provider
+  // calls (__tests__/integration/resilience/email-drain-claim.test.ts).
+  //
+  // The claim is ONE conditional UPDATE … RETURNING that only matches a row
+  // that is still queued AND due, and pushes its `scheduled_for` a lease into
+  // the future. Postgres serialises concurrent updaters on the row; the second
+  // re-checks the predicate against the committed row, finds it no longer due,
+  // and matches nothing. Exactly one caller gets the row back.
+  //
+  // It is a visibility-timeout lease, chosen because it needs NO schema change
+  // (the status CHECK admits only queued/sent/failed/skipped, so there is no
+  // 'sending' state to park a row in) and because it cannot strand a row: if
+  // this process dies after claiming, the row is simply 'queued' with a
+  // scheduled_for a few minutes ahead and the next drain after that picks it up.
+  const nowIso = new Date().toISOString();
+  const leaseUntil = new Date(Date.now() + EMAIL_CLAIM_LEASE_MS).toISOString();
+  const { data: claimedRaw, error: claimErr } = await admin
     .from("notification_email_queue" as never)
+    .update({ scheduled_for: leaseUntil } as never)
+    .eq("id" as never, input.queue_row_id)
+    .eq("status" as never, "queued")
+    .lte("scheduled_for" as never, nowIso)
     .select(
       "id, notification_id, org_id, user_id, to_email, reply_to_email, subject, body_text, body_html, status, retry_count" as never,
-    )
-    .eq("id" as never, input.queue_row_id)
-    .maybeSingle();
-  if (fetchErr || !rowRaw) {
-    return { status: "failed", reason: "row_not_found" };
+    );
+  if (claimErr) {
+    // Could not claim → we do not hold the row → we must not send it. It is
+    // untouched (still queued, still due), so the next drain retries.
+    return { status: "failed", reason: `claim_failed: ${claimErr.message}` };
   }
-  const row = rowRaw as unknown as EmailQueueRow;
+  const claimed = (claimedRaw ?? []) as unknown as EmailQueueRow[];
+  if (claimed.length === 0) {
+    // Not ours: another drain holds it, it is not due yet, it is no longer
+    // queued, or it does not exist. Send NOTHING.
+    return { status: "queued", reason: "not_claimable" };
+  }
+  const row = claimed[0] as EmailQueueRow;
 
   // No key? Mark skipped + remember so the cron stops cycling it.
   if (!env.RESEND_API_KEY) {
@@ -210,7 +243,7 @@ export async function sendNotificationEmail(input: {
   const now = new Date().toISOString();
 
   if (result.sent) {
-    await admin
+    const { error: sentErr } = await admin
       .from("notification_email_queue" as never)
       .update({
         status: "sent",
@@ -220,6 +253,35 @@ export async function sendNotificationEmail(input: {
         last_error: null,
       } as never)
       .eq("id" as never, input.queue_row_id);
+    if (sentErr) {
+      // The provider ACCEPTED the email but we could not record it. The row is
+      // still 'queued' behind our lease, so it WILL be sent again once the
+      // lease lapses — an at-least-once duplicate we cannot prevent from here
+      // (it would need a provider idempotency key). This used to be silent;
+      // make the one remaining duplicate window loud and traceable to a
+      // provider message id, and try once more before giving up.
+      const { error: retryErr } = await admin
+        .from("notification_email_queue" as never)
+        .update({
+          status: "sent",
+          sent_at: now,
+          provider: "resend",
+          provider_message_id: result.id,
+          last_error: null,
+        } as never)
+        .eq("id" as never, input.queue_row_id);
+      if (retryErr) {
+        console.error(
+          "[notification-email] SENT but could not be recorded — this row will be re-sent after its lease",
+          {
+            queue_row_id: input.queue_row_id,
+            provider_message_id: result.id,
+            lease_until: leaseUntil,
+            error: retryErr.message,
+          },
+        );
+      }
+    }
     return { status: "sent" };
   }
 
@@ -276,6 +338,16 @@ export type DrainResult = {
 
 const DRAIN_BATCH_SIZE = 50;
 const MAX_RETRIES = 6;
+
+/**
+ * How long a claimed row is hidden from other drains (see the ATOMIC CLAIM note
+ * in sendNotificationEmail). It must comfortably exceed one provider call — a
+ * single send, not the whole batch, since each row is claimed immediately before
+ * it is sent — and is the delay before a row whose drain DIED is retried. Ten
+ * minutes: far above any send, and below the 15-minute cron cadence so a
+ * crashed claim is picked up by the very next scheduled drain.
+ */
+export const EMAIL_CLAIM_LEASE_MS = 10 * 60 * 1000;
 
 /**
  * Pull up to DRAIN_BATCH_SIZE queued rows whose scheduled_for is in

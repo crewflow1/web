@@ -8,7 +8,7 @@ import { requireCapabilityFor } from "@/server/auth/capabilities";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { addPaymentSchema } from "@/lib/payments/schema";
 import { z } from "zod";
-import { readFailure } from "@/lib/supabase/read-failure";
+import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
 import {
   type FormState,
   formError,
@@ -92,7 +92,22 @@ export async function addInvoicePayment(
   dupQuery = result.data.reference
     ? dupQuery.eq("reference", result.data.reference)
     : dupQuery.is("reference", null);
-  const { data: existing } = await dupQuery.maybeSingle();
+  // FAIL CLOSED — same reasoning as recordAllocatedPayment's probe. This lookup
+  // is the ONLY thing between a re-POSTed request and a second payment row
+  // (there is no unique index behind a manual payment: two genuine part-payments
+  // of the same amount on the same day are legitimate). It used to discard its
+  // error, so when the database rejected the probe — exactly the "transient
+  // blip, browser retries" situation the guard exists for — `existing` came back
+  // null, read as "no recent duplicate", and the retried request recorded the
+  // customer's money twice. Refusing costs the operator one retry.
+  const { data: existing, error: dupError } = await dupQuery.maybeSingle();
+  if (dupError) {
+    reportReadFailure("invoice payment: duplicate probe", dupError);
+    return formError(
+      "We couldn't safely check whether this payment was already recorded, so nothing was saved. Try again.",
+      result.data as PaymentValues,
+    );
+  }
   if (existing) {
     console.warn("[invoice-payment] duplicate submit suppressed", {
       invoiceId,

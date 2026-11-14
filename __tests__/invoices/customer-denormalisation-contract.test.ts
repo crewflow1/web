@@ -60,12 +60,32 @@ describe("every invoice writer stamps customer_id", () => {
   });
 
   it("both quote-acceptance auto-invoice paths set customer_id", () => {
-    const src = read("app/(app)/quotes/actions.ts");
-    const inserts = [...src.matchAll(/\.from\("invoices"\)\s*\.insert\(\{[\s\S]*?\}\)/g)];
-    expect(inserts.length).toBeGreaterThanOrEqual(2);
-    for (const m of inserts) {
-      expect(m[0]).toMatch(/customer_id: quote\.customer_id/);
-    }
+    // The two acceptance paths (owner + public token) no longer INSERT the
+    // invoice from application code: since migration 20261324000000 they both
+    // call ONE atomic database function, `ensure_accepted_quote_artifacts`
+    // (the hand-rolled inserts could leave a job without an invoice, or two
+    // jobs). So the contract is pinned where the writer now lives:
+    //   (a) quotes/actions.ts contains NO direct invoices insert — a new
+    //       hand-rolled writer that forgot customer_id cannot slip back in;
+    //   (b) both paths route through the function;
+    //   (c) the function's invoice INSERT stamps customer_id from the locked
+    //       quote row.
+    // The behaviour is proved on real Postgres in
+    // __tests__/integration/resilience/quote-accept-atomic.test.ts.
+    const code = readCode("app/(app)/quotes/actions.ts");
+    expect(code).not.toMatch(/\.from\("invoices"\)\s*\.insert\(/);
+    const calls = [...code.matchAll(/ensureJobAndInvoiceForAcceptedQuote\(/g)];
+    // 1 definition + owner first-accept + owner re-accept heal + public first-accept + public re-accept heal.
+    expect(calls.length).toBeGreaterThanOrEqual(5);
+    expect(code).toMatch(/"ensure_accepted_quote_artifacts"/);
+
+    const sql = read("supabase/migrations/20261324000000_quote_acceptance_artifacts_atomic.sql");
+    const insert = sql.match(/insert into public\.invoices\s*\(([^)]*)\)\s*values\s*\(([\s\S]*?)\)\s*returning/);
+    expect(insert, "the function's invoice insert").not.toBeNull();
+    const cols = insert![1]!.split(",").map((c) => c.trim());
+    const vals = insert![2]!;
+    expect(cols).toContain("customer_id");
+    expect(vals).toMatch(/v_quote\.customer_id/);
   });
 });
 
