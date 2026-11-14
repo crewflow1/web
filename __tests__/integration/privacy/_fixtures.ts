@@ -276,6 +276,11 @@ export async function seedMemberFootprint(
   // CONDITIONAL class (NI number) — format-constrained, so it cannot carry a marker.
   const ni = await db().from("staff_secrets").insert({ org_id: org.id, user_id: user.id, ni_number: "AB123456C" });
   expect(ni.error, ni.error?.message).toBeNull();
+  // CONDITIONAL class (date of birth lives on the payroll tax profile).
+  const tax = await db()
+    .from("payroll_tax_profiles")
+    .insert({ org_id: org.id, user_id: user.id, date_of_birth: "1988-04-12" });
+  expect(tax.error, tax.error?.message).toBeNull();
   // RETAIN class
   if (opts.withPayroll) {
     await ins("payroll_lines", { org_id: org.id, payroll_run_id: seed.payrollRun, user_id: user.id });

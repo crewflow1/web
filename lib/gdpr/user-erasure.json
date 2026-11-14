@@ -22,11 +22,11 @@
     "activity_log.actor_id": "RETAIN ROW: the company's audit trail of what happened; SCRUB the denormalised actor name + metadata (the only update shape the append-only guard permits)"
   },
   "conditional": {
+    "payroll_tax_profiles.user_id": "DATE OF BIRTH, NI category, student-loan plan — the payroll set-up for the person. DELETED unless a payroll line for this person exists in this company — then RETAINED as the basis of that statutory payroll record (reg. 97). Needs legal confirmation.",
     "staff_secrets.user_id": "National Insurance number. DELETED unless a payroll line for this person exists in this company — then RETAINED with the payroll record (PAYE records: 3 years after the end of the tax year, Income Tax (PAYE) Regulations 2003 reg. 97). Needs legal confirmation."
   },
   "retain": {
     "payroll_lines.user_id": "statutory payroll record — PAYE, 3 years after the tax year end (reg. 97); HMRC may extend to 6. Needs legal confirmation.",
-    "payroll_tax_profiles.user_id": "statutory payroll record (tax code basis for the retained payroll lines). Needs legal confirmation.",
     "pension_enrolments.user_id": "auto-enrolment record — 6 years (opt-out notices 4), Employers' Duties (Registration and Compliance) Regulations 2010. Needs legal confirmation.",
     "holiday_entitlements.user_id": "statutory leave entitlement record (WTR 1998). Needs legal confirmation.",
     "safety_acknowledgements.user_id": "signed H&S acknowledgement (RAMS / toolbox talk) — immutable evidence the company relies on to show it discharged its HSWA 1974 / CDM 2015 duties; civil-claim limitation 3–6 years. Needs legal confirmation.",

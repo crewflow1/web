@@ -96,8 +96,9 @@ describeIntegration("privacy · self-service account deletion", () => {
 
     // NO residue anywhere in the database.
     expect(await residue(w.m)).toEqual([]);
-    // NI number had no payroll line to justify it → deleted.
+    // NI number and date of birth had no payroll line to justify them → deleted.
     expect(await countRows("staff_secrets", { org_id: w.org.id, user_id: w.subject.id })).toBe(0);
+    expect(await countRows("payroll_tax_profiles", { org_id: w.org.id, user_id: w.subject.id })).toBe(0);
 
     const tomb = await ledger(r.requestId);
     expect(tomb.status).toBe("completed");

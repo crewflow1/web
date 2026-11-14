@@ -86,6 +86,7 @@ describeIntegration("privacy · staff erasure by an admin", () => {
     // Retained with reason; scrubbed where the row must stay.
     expect(await countRows("payroll_lines", { org_id: w.org.id, user_id: w.subject.id })).toBe(1);
     expect(await countRows("staff_secrets", { org_id: w.org.id, user_id: w.subject.id })).toBe(1);
+    expect(await countRows("payroll_tax_profiles", { org_id: w.org.id, user_id: w.subject.id })).toBe(1);
     const te = await db().from("time_entries").select("note, gps_lat, started_at").eq("org_id", w.org.id).eq("user_id", w.subject.id).single();
     expect(te.data).toMatchObject({ note: null, gps_lat: null });
     expect((te.data as { started_at: string }).started_at).toBeTruthy();
@@ -139,7 +140,10 @@ describeIntegration("privacy · staff erasure by an admin", () => {
     const r = await erase(w, w.owner, w.subject);
     expect(r.ok && r.run?.status === "completed").toBe(true);
     if (!r.ok) return;
+    // No payroll line → NI number AND date of birth are gone (the gap where
+    // "remove from team" left both behind indefinitely).
     expect(await countRows("staff_secrets", { org_id: w.org.id, user_id: w.subject.id })).toBe(0);
+    expect(await countRows("payroll_tax_profiles", { org_id: w.org.id, user_id: w.subject.id })).toBe(0);
     // Still employed by org 2 → the shared, org-less row cannot be attributed to
     // this company, so it is LEFT and reported.
     expect(await countRows("staff_compensation", { user_id: w.subject.id })).toBe(1);
