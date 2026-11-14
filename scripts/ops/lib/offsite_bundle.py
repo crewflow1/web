@@ -160,6 +160,33 @@ def cmd_write_sums(a):
     return 0
 
 
+def cmd_pack(a):
+    """Write the bundle as a plain tar with Python's tarfile rather than the
+    system `tar`: identical on Linux and macOS (bsdtar would add AppleDouble
+    `._*` members for extended attributes), sorted, and owner-neutral."""
+    root = os.path.abspath(a.bundle)
+    top = os.path.basename(root)
+
+    def neutral(info):
+        info.uid = info.gid = 0
+        info.uname = info.gname = ""
+        return info
+
+    with tarfile.open(a.out, "w", format=tarfile.PAX_FORMAT) as tf:
+        tf.add(root, arcname=top, recursive=False, filter=neutral)
+        for base, dirs, names in os.walk(root):
+            dirs.sort()
+            for d in dirs:
+                full = os.path.join(base, d)
+                tf.add(full, arcname=os.path.join(top, os.path.relpath(full, root)), recursive=False, filter=neutral)
+            for name in sorted(names):
+                full = os.path.join(base, name)
+                if os.path.isfile(full) and not os.path.islink(full):
+                    tf.add(full, arcname=os.path.join(top, os.path.relpath(full, root)), recursive=False, filter=neutral)
+    print(sha256_file(a.out))
+    return 0
+
+
 def cmd_sidecar(a):
     """Small NON-SENSITIVE JSON uploaded next to the artefact (and mirrored in
     the heartbeat row). No table names, no row counts, no object keys."""
@@ -380,6 +407,11 @@ def main():
     s = sub.add_parser("write-sums")
     s.add_argument("--bundle", required=True)
     s.set_defaults(fn=cmd_write_sums)
+
+    s = sub.add_parser("pack")
+    s.add_argument("--bundle", required=True)
+    s.add_argument("--out", required=True)
+    s.set_defaults(fn=cmd_pack)
 
     s = sub.add_parser("sidecar")
     s.add_argument("--bundle", required=True)

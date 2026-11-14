@@ -27,6 +27,9 @@
 #                  script never deletes anything and its key cannot.
 #   restore_verify the SAME tar is restored into a throwaway Postgres and proven
 #                  identical to the manifest (scripts/ops/restore-verify.sh).
+#   tombstones     OPTIONAL hook: if the deletion workstream's export function exists,
+#                  the cumulative deletion-tombstone list is uploaded as a separate
+#                  encrypted object under tombstones/ (re-applied after any restore).
 #   heartbeat      a row in public.ops_backup_runs tagged with the runner name, so
 #                  /admin/ops can tell this layer from the Mac layer.
 #
@@ -55,6 +58,7 @@
 #   CF_OFFSITE_UPLOAD_VERIFY             auto|list|ack                   (default auto)
 #   CF_OFFSITE_PGSSLMODE                 libpq sslmode default           (default require)
 #   CF_PG_IMAGE                          Postgres tools/restore image    (default: pinned digest)
+#   CF_OFFSITE_DEBUG_LOG_DIR             LOCAL troubleshooting only: keep raw tool logs here
 #
 # Exit: 0 success · 1 backup failed · 2 configuration/usage error.
 #
@@ -189,6 +193,11 @@ cleanup(){
     ping_hc "/fail"
   fi
   docker rm -f -v "$TOOLS" >/dev/null 2>&1 || true
+  # LOCAL TROUBLESHOOTING ONLY: keep the raw tool logs (they can name Storage
+  # objects). Never set this in CI — the workflow does not, and a test pins that.
+  if [ -n "${CF_OFFSITE_DEBUG_LOG_DIR:-}" ]; then
+    mkdir -p "$CF_OFFSITE_DEBUG_LOG_DIR" && cp -R "$LOGS/." "$CF_OFFSITE_DEBUG_LOG_DIR/" 2>/dev/null || true
+  fi
   # The work dir holds PLAINTEXT production data until this line. Always remove it.
   rm -rf "$WORK" 2>/dev/null || true
   exit "$rc"
@@ -230,7 +239,7 @@ heartbeat "running" "" || { HB_FAILED=1; log "WARN: could not write the 'running
 # === capture: snapshot-consistent dump + facts ===============================
 STAGE="capture"
 capture_once(){
-  docker exec "$TOOLS" sh -c 'rm -f /cfwork/db/db.dump /cfwork/db/facts.json /cfwork/db/pg_dump.rc' || return 1
+  docker exec "$TOOLS" sh -c 'rm -f /cfwork/db/db.dump /cfwork/db/facts.json /cfwork/db/pg_dump.rc /cfwork/db/privacy-tombstones.*' || return 1
   docker exec -e CF_DB_URL -e PGSSLMODE -e PGCONNECT_TIMEOUT -e PGAPPNAME "$TOOLS" \
     sh -c 'exec psql "$CF_DB_URL" -X -q -v managed="$1" -f /cflib/offsite-capture.psql' sh "$MANAGED_SCHEMAS" \
     >>"$LOGS/capture.log" 2>&1 || return 1
@@ -249,6 +258,29 @@ N_TABLES="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))[
 BUCKETS="$(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["storage_buckets"]))' "$WORK/facts.json")"
 log "captured: $N_TABLES tables, $TOC_N TOC entries, migration tip $MIG_TIP, $(( $(date +%s) - C0 ))s"
 
+# --- HOOK: privacy tombstone export (see lib/offsite-capture.psql) -------------
+# Kept OUTSIDE the bundle and uploaded as its own object under tombstones/, so a
+# restore of ANY older dump can be followed by re-applying every later deletion.
+TOMB_STATE="$(docker exec "$TOOLS" cat /cfwork/db/privacy-tombstones.state 2>/dev/null | tr -d '[:space:]' || true)"
+TOMB_FILE=""; TOMB_N=0
+case "$TOMB_STATE" in
+  exported)
+    docker cp -q "$TOOLS:/cfwork/db/privacy-tombstones.jsonl" "$WORK/tombstones.jsonl" \
+      || abort "tombstone export exists in the database but could not be copied out"
+    TOMB_WANT="$(docker exec "$TOOLS" cat /cfwork/db/privacy-tombstones.expected 2>/dev/null | tr -d '[:space:]' || true)"
+    TOMB_N="$(grep -c . "$WORK/tombstones.jsonl" || true)"
+    # A silently EMPTY export would let erased people come back after a restore.
+    [ -n "$TOMB_WANT" ] && [ "$TOMB_N" = "$TOMB_WANT" ] \
+      || abort "tombstone export is incomplete (rows exported differ from completed deletions on record)"
+    TOMB_FILE="$WORK/tombstones.jsonl"
+    log "privacy tombstones: exported (count $(num "$TOMB_N"))" ;;
+  no_privilege)
+    log "WARN: privacy tombstone export exists but this role may not execute it — NOT exported (grant EXECUTE to the backup role; see FOUNDER-CHECKLIST)" ;;
+  *)
+    TOMB_STATE="absent"
+    log "privacy tombstone export: function not present in this database — hook inactive" ;;
+esac
+
 # === storage: every bucket, verified against the source ======================
 STAGE="storage"
 export RCLONE_CONFIG_CFSRC_TYPE=s3
@@ -260,14 +292,17 @@ export RCLONE_CONFIG_CFSRC_SECRET_ACCESS_KEY="$CF_OFFSITE_S3_SECRET_ACCESS_KEY"
 export RCLONE_CONFIG_CFSRC_FORCE_PATH_STYLE=true
 copy_bucket(){ rclone copy "cfsrc:$1" "$BUNDLE/storage/$1" --transfers 4 --checkers 8 --retries 2 --low-level-retries 5 >>"$LOGS/rclone-src.log" 2>&1; }
 check_bucket(){ rclone check "cfsrc:$1" "$BUNDLE/storage/$1" --one-way >>"$LOGS/rclone-src.log" 2>&1; }
+copy_and_check_bucket(){ copy_bucket "$1" && check_bucket "$1"; }
 N_BUCKETS=0
 while IFS= read -r b; do
   [ -n "$b" ] || continue
   N_BUCKETS=$((N_BUCKETS+1))
   mkdir -p "$BUNDLE/storage/$b"
-  retry "storage copy (bucket $N_BUCKETS)" copy_bucket "$b" || abort "Storage copy failed for a bucket (S3 endpoint, key or network)"
-  # Independent integrity pass: rclone re-reads sizes + hashes from the source.
-  retry "storage check (bucket $N_BUCKETS)" check_bucket "$b" || abort "Storage objects differ from the source after download"
+  # Copy, then an independent integrity pass (rclone re-reads sizes + hashes from
+  # the source). Retried as ONE unit: an object uploaded between the two steps
+  # makes the check fail, and the retry's copy then picks it up.
+  retry "storage copy + check (bucket $N_BUCKETS)" copy_and_check_bucket "$b" \
+    || abort "Storage copy failed or differs from the source for a bucket (S3 endpoint, key, network)"
 done <<EOF
 $BUCKETS
 EOF
@@ -293,8 +328,9 @@ log "storage: $N_BUCKETS buckets, objects: $(num "$N_OBJECTS"); manifest + check
 # === package + encrypt (public-key only) =====================================
 STAGE="package"
 TAR="$WORK/$NAME.tar"
-tar -cf "$TAR" -C "$WORK" "$NAME" 2>>"$LOGS/tar.log" || abort "could not create the bundle tar"
-TAR_SHA="$(sha256_of "$TAR")"
+# Python tarfile, not the system tar: byte-for-byte the same layout on Linux and
+# macOS (bsdtar adds AppleDouble members), sorted and owner-neutral.
+TAR_SHA="$(python3 "$BUNDLE_PY" pack --bundle "$BUNDLE" --out "$TAR" 2>>"$LOGS/tar.log")" || abort "could not create the bundle tar"
 
 STAGE="encrypt"
 ART="$WORK/$NAME.tar.age"
@@ -317,6 +353,12 @@ rm -f "$WORK/selftest.key" "$WORK/selftest.txt" "$WORK/selftest.age" "$WORK/self
 CANARY_TXT="crewflow-offsite-keycheck ${STAMP} $(python3 -c 'import secrets; print(secrets.token_hex(16))')"
 CANARY_SHA="$(printf '%s' "$CANARY_TXT" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
 printf '%s' "$CANARY_TXT" | age --encrypt "${RECIPIENT_ARGS[@]}" --output "$WORK/$NAME.keycheck.age" 2>>"$LOGS/age.log" || abort "could not seal the key-check canary"
+
+TOMB_ART=""
+if [ -n "$TOMB_FILE" ]; then
+  TOMB_ART="$WORK/crewflow-tombstones-${STAMP}.jsonl.age"
+  age --encrypt "${RECIPIENT_ARGS[@]}" --output "$TOMB_ART" "$TOMB_FILE" 2>>"$LOGS/age.log" || abort "could not encrypt the tombstone export"
+fi
 
 SIDECAR="$WORK/$NAME.tar.age.json"
 FP_ARGS=(); for fp in "${RECIPIENT_FPS[@]}"; do FP_ARGS+=(--recipient-fp "$fp"); done
@@ -372,6 +414,12 @@ except Exception: print("")' 2>/dev/null || true)"
     fi
   fi
 done
+if [ -n "$TOMB_ART" ]; then
+  # Own prefix, own (longer) lifecycle: each export is cumulative, so the NEWEST
+  # one is what a restore re-applies — whichever dump is being restored.
+  retry "upload tombstone export" put "$TOMB_ART" "$DEST/tombstones/$(basename "$TOMB_ART")" \
+    || { UPLOAD_STATUS="upload_failed"; abort "off-site upload of the tombstone export failed"; }
+fi
 UPLOAD_STATUS="uploaded"
 log "uploaded to tier(s): $TIERS (verification: $UPLOAD_MODE)"
 
@@ -400,7 +448,7 @@ fi
 
 # === success: only now =======================================================
 STAGE="done"
-HB_MANIFEST="$(python3 - "$NAME.tar.age" "$ART_BYTES" "$ART_SHA" "$TAR_SHA" "$TIERS" "$N_TABLES" "$N_OBJECTS" "$VERIFY_RESULT" "$UPLOAD_MODE" "$RUNNER_TAG" "${RECIPIENT_FPS[*]}" <<'PY'
+HB_MANIFEST="$(python3 - "$NAME.tar.age" "$ART_BYTES" "$ART_SHA" "$TAR_SHA" "$TIERS" "$N_TABLES" "$N_OBJECTS" "$VERIFY_RESULT" "$UPLOAD_MODE" "$RUNNER_TAG" "${RECIPIENT_FPS[*]}" "$TOMB_STATE" "$TOMB_N" <<'PY'
 import json, sys
 a = sys.argv[1:]
 print(json.dumps({
@@ -409,6 +457,7 @@ print(json.dumps({
   "plaintext_tar_sha256": a[3], "tiers": a[4].split(), "tables": int(a[5]),
   "storage_object_count": int(a[6]), "restore_verify": a[7], "upload_verify": a[8],
   "encryption": "age", "recipient_fingerprints": a[10].split(),
+  "privacy_tombstones": {"state": a[11], "count": int(a[12])},
 }))
 PY
 )"

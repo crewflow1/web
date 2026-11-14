@@ -13,7 +13,8 @@
 --
 -- Inputs : psql variable `managed` (comma list of platform-managed schemas to
 --          leave out); env CF_DB_URL (connection string — never printed).
--- Outputs: /cfwork/db/facts.json, /cfwork/db/db.dump, /cfwork/db/pg_dump.rc
+-- Outputs: /cfwork/db/facts.json, /cfwork/db/db.dump, /cfwork/db/pg_dump.rc,
+--          /cfwork/db/privacy-tombstones.{state,jsonl,expected} (optional hook)
 
 \set ON_ERROR_STOP on
 \pset tuples_only on
@@ -47,5 +48,39 @@ where nspname !~ '^pg_'
 \o
 
 \! sh /cflib/offsite-pgdump.sh
+
+-- ── HOOK: privacy tombstone export (deletion workstream) ─────────────────────
+-- A backup taken BEFORE an account/company deletion still contains the erased
+-- data. Restoring it must be followed by RE-APPLYING every deletion completed
+-- since (runbook: "Re-apply deletion tombstones"). This hook exports the
+-- cumulative tombstone list, at the SAME snapshot as the dump, into a file that
+-- is uploaded as a SEPARATE object beside (never inside) the dump.
+--
+-- It is OPTIONAL by construction and does not depend on that workstream's
+-- migration being present:
+--   absent       the export function does not exist            -> nothing written
+--   no_privilege it exists but this role may not execute it    -> nothing written (logged)
+--   exported     rows written, plus the expected row count so a silently empty
+--                export (the function filters on the service-role claim) is caught.
+select case
+         when to_regprocedure('public.privacy_tombstone_export(timestamp with time zone)') is null then 'absent'
+         when not has_function_privilege(
+                to_regprocedure('public.privacy_tombstone_export(timestamp with time zone)')::oid, 'execute')
+           then 'no_privilege'
+         else 'exported'
+       end as tomb_state \gset
+select (:'tomb_state' = 'exported') as tomb_do \gset
+\o /cfwork/db/privacy-tombstones.state
+select :'tomb_state';
+\o
+\if :tomb_do
+  -- The function returns rows only to the service-role claim (its own guard).
+  set local request.jwt.claims = '{"role":"service_role"}';
+  \o /cfwork/db/privacy-tombstones.jsonl
+  select t::text from public.privacy_tombstone_export(null) as t;
+  \o /cfwork/db/privacy-tombstones.expected
+  select count(*) from public.privacy_deletion_requests where status = 'completed';
+  \o
+\endif
 
 commit;
