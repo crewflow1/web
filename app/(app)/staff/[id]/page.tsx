@@ -25,6 +25,8 @@ import { ImportButton } from "@/components/import/import-button";
 import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
 import { loadImportDraftDefaults } from "@/server/services/document-autofill";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
+import { accountDeletionEnabled } from "@/server/services/privacy-deletion";
+import { EraseStaffForm } from "./_erase-staff.client";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { getHolidayBalanceForUser } from "@/server/services/holiday-balance";
@@ -55,7 +57,7 @@ export default async function StaffDetailPage({
 }) {
   const { id } = await params;
   const sp = await searchParams;
-  const { ctx } = await requireOrgContext();
+  const { ctx, user: viewer } = await requireOrgContext();
   const supabase = await createClient();
 
   // (Read deleted upstream — #480's loud-read guard here is obsolete, not lost.)
@@ -569,6 +571,36 @@ export default async function StaffDetailPage({
               Remove
             </button>
           </ConfirmForm>
+        </section>
+      ) : null}
+
+      {/* Erasure is a separate, explicit act from "Remove": it also deletes the
+          personal data the company holds about the person. Dark by default. */}
+      {isAdmin && row.role !== "owner" && viewer.id !== id && accountDeletionEnabled() ? (
+        <section
+          aria-labelledby="erase-staff-heading"
+          className="rounded-xl border border-red-200 bg-white p-4"
+        >
+          <h2 id="erase-staff-heading" className="text-sm font-semibold text-slate-900">
+            Remove and erase personal data
+          </h2>
+          <p className="mt-1 text-sm text-slate-700">
+            Use this when the person has left and asks for their data to be erased. It removes their
+            access <strong>and</strong> deletes what this company holds about them: notifications
+            and device settings, rota and job assignments, drafts, and — unless payroll has been
+            run for them — their National Insurance number, date of birth, pay rate and emergency
+            contact.
+          </p>
+          <p className="mt-2 text-sm text-slate-700">
+            Records you must keep are kept: payroll, pension and holiday records, timesheets (notes
+            and location removed), and signed health &amp; safety and quality records. Their own
+            CrewFlow login is theirs and is not deleted. This cannot be undone.
+          </p>
+          <EraseStaffForm
+            staffUserId={id}
+            staffEmail={row.user?.email ?? ""}
+            staffLabel={row.user?.full_name ?? row.user?.email ?? "this person"}
+          />
         </section>
       ) : null}
     </div>
