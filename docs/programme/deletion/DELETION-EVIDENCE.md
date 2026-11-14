@@ -96,7 +96,7 @@ These are pinned as characterisation tests (`existing-erase-baseline.test.ts`, 3
 
 ## 2. Company deletion (owner) — VERIFIED
 
-`company-deletion.test.ts` — 10 cases, all passing. Stripe is a recording stand-in (**SIMULATED-ONLY**: no
+`company-deletion.test.ts` — 15 cases, all passing. Stripe is a recording stand-in (**SIMULATED-ONLY**: no
 call to Stripe was made; the *ordering, idempotency key and fail-closed behaviour* are what is proved).
 
 | # | Requirement | Case | Key assertions |
@@ -108,7 +108,7 @@ call to Stripe was made; the *ordering, idempotency key and fail-closed behaviou
 | 5 | Retained records | same | `privacy_retained_billing_records` holds exactly `org_account` + `billing_invoice`: Stripe handles, amount 99, `GBP`, `retention_until` = 31 Dec six years on; contains **no marker** although the source invoice's `notes` did. |
 | 6 | Tombstone | same + *sealed tombstone* | status `completed`, `actor_role='owner'`, per-table counts, `work = {}`; JSON contains none of name / email / phone / slug; UPDATE and DELETE of a sealed row are refused. |
 | 7 | Idempotency | same | second run → `not_claimed`, no further Stripe call, ledger row byte-identical. |
-| 8 | Interrupted then resumed | *interrupted at EVERY step boundary* | For each of the 5 steps: die immediately after it is recorded → status `failed`; resume → `completed`; the recorded step is **not** repeated; Stripe cancelled exactly once; **residue scan returns nothing at all**; attempts = 2. |
+| 8 | Interrupted then resumed | *interrupted right after `<step>`* — **5 separate cases**, one per boundary | Die immediately after the step is recorded → status `failed`; resume → `completed`; the recorded step is **not** repeated; Stripe cancelled exactly once; **residue scan returns nothing at all**; attempts = 2; bystander snapshot identical. (Was one looped test taking ~10 s of a 30 s budget; under load from another workstream's suite it failed once for the lead. Split so each case is ~5 s (measured while another workstream's Playwright sweep was running) with its own 120 s budget — same assertions, plus the bystander snapshot now per boundary.) |
 | 9 | Concurrency | *hard crash … two runners* | A runner killed so hard it cannot record failure leaves `running` + a lease; a second runner gets `not_claimed`; after lease expiry two simultaneous runners yield exactly one `completed` and one `not_claimed`. |
 | 10 | Double submit | *double submit…* | 3 concurrent submits → 1 request id, `created` true once, 1 ledger row. |
 | 11 | Authorisation | *authorisation…* | admin, staff, and the owner of another company are each refused `forbidden`; wrong / blank / slug / other-company name refused `confirmation`; no ledger row, no data change. |
@@ -139,13 +139,41 @@ changed-field *names*), and the fuzzer wrote the name marker into `invoices.numb
 sequence codes. No name, email or phone column is in the whitelist (read from the function source). The table
 is append-only and partition-retained.
 
-### 2.2 What had to change in existing objects
+### 2.2 What had to change in existing objects — and the escape that was wrong first time
 
 `20261312` re-creates **19** guard functions (`tg_comm_events_frozen`, 15 `receptionist_*_block_mutation`,
-3 `ai_reply_*_block_mutation`) to add the teardown escape every other evidence guard already has. With the
-organisation present they behave exactly as before. Drift guard: of **53** row-level delete guards on tenant
-tables, **49** carry the organisation escape and the other **4** test their parent row instead (reviewed and
-allow-listed by name); a new unconditional one fails CI.
+3 `ai_reply_*_block_mutation`) so that a company holding their rows can be deleted at all.
+
+**First version (withdrawn).** It gave them the existing 20261052 idiom — "let the DELETE through when the
+organisation row is absent". That was wrong for these tables: 18 of the 19 carry `org_id` with **no foreign
+key**, so a row can hold an org id that matches no organisation, and every such row became deletable by
+anyone with DELETE rights. The tenant-isolation workstream caught it: **17 existing receptionist append-only
+tests failed** (they write rows with a random org id and expect DELETE to be refused).
+
+**Current version.** A DELETE is admitted only when **all four** hold for the row's org: (1) the
+transaction-local setting `crewflow.privacy_teardown_org` equals that org id — set in one place, inside
+`privacy_org_teardown`, and gone when that transaction ends; (2) the caller is `service_role`; (3) the
+organisation row no longer exists; (4) a company-deletion request for that org is `running` in the ledger.
+With no sanctioned teardown in progress the tables are exactly as append-only as before, orphan rows included.
+
+| Check | Result |
+|---|---|
+| `__tests__/integration/receptionist` (47 files) — **unmodified** | **all pass** (run together with the privacy suites and two RLS suites: 55 files, 411 tests, 0 failed) |
+| *append-only evidence stays append-only* (new case) | With no request: DELETE refused for the live org's ledger row, for an **orphan** row, and for `comm_events`. With a deletion **running** for that org: a direct service-role DELETE is still refused, and so is a bare `delete from organizations`. After the sanctioned teardown: the org's rows are gone, **the orphan row is still there** and still undeletable. |
+| Does the pre-existing 20261052 rule share the weakness? | **No, on the evidence available.** The 30 other tenant-table delete guards that use "organisation absent" all sit on tables whose `org_id` is NOT NULL and participates in a foreign key (catalogue query, 30 / 30), so an orphan row cannot exist there. The transitive chain of each composite FK was not walked. Nothing was changed in those guards. |
+
+**The sweep.** Because those ledgers have no FK on `org_id`, no cascade reaches them. After removing the
+organisation row the teardown now deletes, explicitly, from every table the catalogue shows still holding the
+org's id (FK-retry loop), then verifies. VERIFIED: a `receptionist_conversation_executions` row for the test
+company is gone after deletion, and the tombstone records `tables_swept_without_fk ≥ 1`.
+
+Consequence, stated: a plain service-role `delete from organizations` still fails for an org with comms or
+receptionist evidence — **only the sanctioned teardown can remove such a company**. That was already true
+before this workstream; it is now deliberate.
+
+Drift guard: of **53** row-level delete guards on tenant tables, 49 reference `organizations` (30 pre-existing
++ these 19) and the other 4 test their parent row instead (reviewed, allow-listed by name); a new
+unconditional guard fails CI.
 
 ### 2.3 Why unseeded tables are still covered
 
@@ -226,22 +254,83 @@ details, into `actor_name` / `metadata`.
 | Event spine | `hq_events_*` | Whitelisted business events, no identifiers | Partition retention |
 | Backups | Supabase 7 daily; off-platform last 8 | Cannot be rewritten; beyond use **[LEGAL]** | ≤ ~8 weeks |
 
-## 8. Regression and guard suites
+## 8. The user-facing flow
+
+Built behind `FEATURE_ACCOUNT_DELETION` (default off): `server/auth/reauth.ts`; actions in
+`app/(app)/settings/account/actions.ts` and `app/(app)/staff/erasure-actions.ts`; Settings → Account page;
+an erasure panel on the staff page; a link from Settings.
+
+| What | Test | Result |
+|---|---|---|
+| Re-authentication logic | `__tests__/privacy/reauth.test.ts` (9) | **VERIFIED.** Newest `amr` entry wins, `token_refresh` ignored; 10 malformed tokens all read as not-fresh; window edge exact (600 s ok, 601 s not); future timestamps rejected; another user's fresh token rejected; a **wrong password never falls back** to a fresh session; errors fail **closed** (`unavailable`). |
+| Re-authentication against real GoTrue | `__tests__/integration/privacy/reauth.test.ts` (2) | **VERIFIED.** Real password accepted; wrong password and another account's password refused; the throw-away check session is discarded **without ending the user's own session**; a real access token carries an `amr` timestamp within seconds of now and reads fresh; the same token 11 minutes later does not. |
+| Action-level authorisation | `__tests__/privacy/deletion-actions.test.ts` (23) | **VERIFIED** (service layer mocked — its behaviour is §2–§4). Flag off → each of the 4 actions returns before any session read. Company deletion: admin / staff refused before re-auth; consequences box required; failed re-auth → service never called; **forged `org_id` / `user_id` / `request_id` form fields are ignored** — the service receives the session's org and user. Cancel: takes **no input** (function arity 0); request resolved from the session org. Account: always the session user; sole-owner refusal (at create and at run) reported, no sign-out. Staff erasure: staff refused; self / non-uuid / empty target refused before re-auth; owner and admin allowed for the session org only. |
+| Browser happy paths | `e2e/account-deletion.spec.ts` | see below |
+
+**Browser run** (Playwright, Chromium, against `next dev` on port 3106 started with
+`FEATURE_ACCOUNT_DELETION=true`, local stack, synthetic people):
+
+PLAYWRIGHT_RESULT_PLACEHOLDER
+
+The spec has two modes: with the capability off (CI's default, and production today) it asserts the dark
+state — support-assisted panel, no deletion control; with `E2E_ACCOUNT_DELETION=1` it runs the three flows.
+
+Not verified in a browser: the passwordless path (sign out / sign in / return within 10 minutes) — its logic
+is covered by the two reauth suites; the Google and magic-link sign-ins themselves cannot be driven locally.
+`next dev` rather than a production build was used (a build was not affordable on the shared machine).
+
+## 9. Regression and guard suites
 
 | Suite | Result |
 |---|---|
-| `__tests__/integration/privacy` (6 files) | **31 / 31 passed** |
-| Security tier: `gdpr-erase`, `gdpr-export`, `migration-data-api-grant-guard`, `loud-read-failures`, `f1-bare-select-guard`, `f1-limit-clamp-guard`, `f1-pagination-guard`, `cron-fairness-guard`, `env-contract-census`, `retention-purge-primitive`, `retention-policy-exclusions` | **201 / 201 passed** (the env census failed until `FEATURE_ACCOUNT_DELETION` was declared in `lib/env.ts` — it now is) |
+| `__tests__/integration/privacy` (7 files) | **38 / 38 passed** |
+| `__tests__/privacy` unit (reauth, deletion-actions; plus the pre-existing consent test) | **45 / 45 passed** |
+| `__tests__/integration/receptionist` (47 files, unmodified) + privacy + `org-teardown-cascade` + `audit-log-immutability`, under `heavy.sh` | **55 files, 411 / 411 passed** |
+| Security tier: `gdpr-erase`, `gdpr-export`, `migration-data-api-grant-guard`, `loud-read-failures`, `f1-bare-select-guard`, `f1-limit-clamp-guard`, `f1-pagination-guard`, `cron-fairness-guard`, `env-contract-census`, `retention-purge-primitive`, `retention-policy-exclusions`, `membership-role-derivation`, `staff-competencies` | **all passed.** Two guards fired during the work and were satisfied, not loosened: the env census (until `FEATURE_ACCOUNT_DELETION` was declared in `lib/env.ts`) and the loud-read shape ledger (a discarded `getSession` error in `reauth.ts`, now bound and thrown). |
+| Unit: `__tests__/ui` (reachability, design-system adoption, tokens), `permission-editor`, `polish-batch`, `logo-wiring`, `hq-logout`, `sprint-a`, `gdpr-*-registry` | **all passed** (15 files / 285 tests; registry 23 tests) |
 | Integration: `audit-log-grant-lockdown`, `audit-log-immutability`, `least-privilege-grants`, `org-teardown-cascade`, `secdef-org-rpc-guard`, `slice15-pr1-privilege-holes`, `slice15-pr2-cclass-least-privilege` | **all passed (67 tests)** |
-| Integration: `rls/gdpr-export` | **10 / 11.** Case *5b REVERSE* fails on `subscription_cancellations` — a table created concurrently in the shared database by **another workstream**, not classified in `org-tables.json`. Not caused by this branch (its own tables use `target_org_id` and stay out of that census). Recorded, not "fixed". |
-| `heavy.sh npm run typecheck` | see the final report (run last) |
+| Integration: `rls/gdpr-export` | **10 / 11.** Case *5b REVERSE* fails on `subscription_cancellations` — a table created concurrently in the shared database by **another workstream**, not classified in `lib/gdpr/org-tables.json`. Not caused by this branch (its own tables use `target_org_id` and stay out of that census). To be classified by the lead when the branches meet. |
+| `heavy.sh npm run typecheck` | **exit 0** (at `566c7dbe`; re-run after the last change — see the final report) |
 
-## 9. Not done
+## 10. Migrations — apply order and production preconditions
+
+All four are additive. **None deletes or rewrites a row when applied.** They may be applied **before** the
+code deploys, and the code may deploy before them, **as long as `FEATURE_ACCOUNT_DELETION` stays off** — with
+the flag off no code path calls any of these functions (the cron drain returns before its first query; the
+account page does not read the ledger). The flag must not be turned on until all four are applied.
+Apply in numeric order (312–314 use `_privacy_require_service_role` from 311).
+
+| Migration | Changes existing objects? | Safe before code? | Precondition query (read-only, catalogue) | Expect |
+|---|---|---|---|---|
+| `20261311` ledger, tombstone, retained-billing table, request lifecycle | No | Yes | `select to_regclass('public.privacy_deletion_requests'), to_regclass('public.privacy_retained_billing_records'), (select count(*) from pg_proc where pronamespace='public'::regnamespace and (proname like 'privacy\_%' or proname like '\_privacy\_%'))` | `NULL, NULL, 0` — the names are free |
+| `20261312` teardown-safe guards, lockout, teardown | **Yes — `create or replace` of 19 guard functions** | Yes: with no marker set they behave exactly as now | `select p.proname, (p.prosrc ilike '%organizations%' or p.prosrc ilike '%current_setting%') as already_conditional, p.proconfig from pg_proc p where p.pronamespace='public'::regnamespace and (p.proname ~ '^(receptionist_.*|ai_reply_.*)_block_mutation$' or p.proname='tg_comm_events_frozen') order by 1` | 19 rows, `already_conditional = false` on every row (i.e. production still has the unconditional bodies this migration replaces — if any row is `true`, someone changed a guard since and the migration must be re-read against it); `proconfig` NULL except `{search_path=public}` on `tg_comm_events_frozen` |
+| | | | `select c.relname from pg_trigger t join pg_proc p on p.oid=t.tgfoid join pg_class c on c.oid=t.tgrelid where not t.tgisinternal and (p.proname ~ '^(receptionist_.*|ai_reply_.*)_block_mutation$' or p.proname='tg_comm_events_frozen') and ((t.tgtype & 1)=0 or not exists (select 1 from pg_attribute a where a.attrelid=c.oid and a.attname='org_id' and not a.attisdropped))` | 0 rows — every such trigger is row-level on a table that has `org_id` (the guards read `old.org_id`) |
+| `20261313` per-person erasure | No | Yes | none beyond 311 | — |
+| `20261314` residue scan, drift introspection, tombstone export / re-apply | No | Yes | none beyond 311. `privacy_residue_scan` sequentially scans every text column — an operator tool, never to be run at peak. | — |
+
+After applying, confirm the lockdown (expect every row `false, false`, and both tables RLS on / 0 policies):
+
+```sql
+select p.proname, has_function_privilege('anon', p.oid, 'execute') as anon,
+       has_function_privilege('authenticated', p.oid, 'execute') as authenticated
+from pg_proc p
+where p.pronamespace = 'public'::regnamespace
+  and (p.proname like 'privacy\_%' or p.proname like '\_privacy\_%')
+order by 1;
+```
+
+(VERIFIED locally: 20 functions, all `false / false`; both tables RLS on, 0 policies, no client privilege.)
+
+## 11. Not done
 
 | Item | Label | Exact next step |
 |---|---|---|
-| Re-authentication helper, server actions, and settings / staff UI | **NOT-IMPLEMENTED** | Add `server/auth/reauth.ts` (verify password with a non-persisting anon client, else require the access token's newest `amr` timestamp ≤ 10 min); add `app/(app)/settings/account/actions.ts` calling `requestAccountDeletion` / `requestOrgDeletion` / `cancelOrgDeletion` and a staff action calling `requestStaffErasure`, each checking `accountDeletionEnabled()` first; build the page with `components/ui` (load `crewflow-brand-design`); return `redirectTo` and use `window.location.assign` after an account deletion. Until then the engine has **no user-reachable entry point** — only the cron drain and tests call it. |
 | Real Stripe cancellation | **SIMULATED-ONLY** | Exercise once in Stripe **test mode** with a founder-supplied test key. |
-| Tombstone upload in the off-platform backup script | **NOT-IMPLEMENTED** (SQL + `exportTombstones()` are VERIFIED) | Add one `rclone` upload of the export beside the dump; add the re-apply step to the restore runbook. |
+| Browser test on a production build; passwordless re-auth in a browser | **IMPLEMENTED-UNTESTED** in a browser (logic unit- and integration-tested) | Run `e2e/account-deletion.spec.ts` in CI with the flag on in a dedicated job. |
+| Users with **no company** cannot open Settings → Account (the app shell requires an org) | **NOT-IMPLEMENTED** | Give `/settings/account` a route outside the org-gated shell, or handle via support. Affects someone erased from their only company who then wants their login deleted. |
+| Erasing a person **already removed** from the team | **NOT-IMPLEMENTED** (no entry point; `privacy_request_create` requires a current membership) | Add an owner action that targets a former member by id, authorised by the org holding rows for them. |
+| Notifying the other owners / admins when a company deletion is scheduled | **NOT-IMPLEMENTED** | The pending banner on Settings → Account is the only signal today; add an in-app notification (email is a customer communication and needs sign-off). |
+| Tombstone upload in the off-platform backup script | **NOT-IMPLEMENTED** (SQL + `exportTombstones()` are VERIFIED) | See `staged-migrations/backup-tombstone-export.md`. |
 | Provider deletion for Twilio / Meta | **NOT-IMPLEMENTED** by design | Pre-activation condition for those integrations. |
 | Retiring `POST /api/gdpr/erase` | **NOT-IMPLEMENTED** | Separate reviewed change. |
+| `privacy_tombstone_reapply` accepts any well-formed tombstone | Noted | It is service-role-only and operator-run by design (the ledger that would authenticate a tombstone is exactly what a restore loses). Never call it from a request path; consider signing the exported file. |

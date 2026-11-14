@@ -3,13 +3,11 @@
 Workstream: `privacy/account-deletion` · worktree `cf-wt/deletion` · migrations `20261311000000`–`20261314000000`.
 Evidence for every claim marked VERIFIED is in [`DELETION-EVIDENCE.md`](./DELETION-EVIDENCE.md).
 
-> **Status of the capability: backend built and tested, DARK; request layer not built.**
-> **Built and VERIFIED on real Postgres:** the ledger / tombstone, the three deletion engines, the cron drain,
-> restore re-application, and 31 integration tests. All of it sits behind the server-only flag
-> `FEATURE_ACCOUNT_DELETION` (default off); while off the drain is inert.
-> **NOT-IMPLEMENTED:** the re-authentication helper, the server actions and the settings / staff UI described
-> in §3 and §5 (marked ◻ below). Until they exist nothing a user can click reaches the engine. Exact next steps
-> are in EVIDENCE §9. Nothing in this workstream has run, or may run, against production.
+> **Status of the capability: built and tested, DARK.** The ledger / tombstone, the three deletion engines,
+> the cron drain, restore re-application, re-authentication, the server actions and the settings / staff UI
+> all exist behind the server-only flag `FEATURE_ACCOUNT_DELETION` (default off). While it is off the UI shows
+> the support-assisted path, every action returns before any auth or DB work, and the drain is inert. Turning
+> it on is a founder decision (§9). Nothing in this workstream has run, or may run, against production.
 
 Items needing a **legal judgement** are tagged **[LEGAL]** inline and collected in §8.
 
@@ -87,9 +85,9 @@ All three are rows in **one ledger**, `privacy_deletion_requests`, executed by *
 
 ### 3.1 Self-service account deletion (`user_account`) — runs immediately
 
-Settings → Account → "Delete my account" (◻ UI and action not built; `requestAccountDeletion()` is).
+Settings → Account → "Delete my account" (UI and action not built; `requestAccountDeletion()` is).
 
-1. ◻ Flag on → session → **re-authentication** (§5) → typed confirmation = the account **email**.
+1. Flag on → session → **re-authentication** (§5) → typed confirmation = the account **email**.
 2. `privacy_request_create` (service-role, row-locked): actor must equal target; email must match; **refused
    while the user is the sole owner of any company** (`sole_owner`) — they must delete that company first, or
    have another owner. (There is no ownership-transfer feature today: `updateStaffRole` refuses
@@ -119,10 +117,10 @@ Settings → Account → "Delete my account" (◻ UI and action not built; `requ
 
 ### 3.2 Company deletion (`org`) — owner only, 7-day cooling-off
 
-Settings → Account → "Delete company" (◻ UI and action not built; `requestOrgDeletion()` /
+Settings → Account → "Delete company" (UI and action not built; `requestOrgDeletion()` /
 `cancelOrgDeletion()` are). Rendered for owners only; enforced server-side regardless.
 
-Request time: ◻ flag → session → `role === 'owner'` → **re-authentication** → typed confirmation = the exact
+Request time: flag → session → `role === 'owner'` → **re-authentication** → typed confirmation = the exact
 **company name** → consequences acknowledged → `privacy_request_create`, which **re-proves ownership and the
 name against the database** under `FOR UPDATE` locks. The request is recorded `scheduled` for now + 7 days.
 Nothing is destroyed. Any owner can cancel until it starts.
@@ -135,9 +133,16 @@ Run time (daily cron once due, or operator), in this order — each step recorde
 | 1 | `stripe_cancel` | Cancel every subscription id on `organizations` / `org_subscriptions` (`invoice_now:false, prorate:false`). Fails **closed** if a subscription exists and Stripe is unconfigured. Customer object kept (§6). | Already-cancelled / missing = done; Stripe idempotency key per request+subscription. |
 | 2 | `lockout` | One transaction: capture member ids, set `status='cancelled'`, delete memberships (+ permissions, qualifications) and API keys. | Step recorded in the same transaction. |
 | 3 | `storage` | Remove every object under `<org_id>/` across the bucket census via the Storage API. | Re-listing an empty prefix removes 0. |
-| 4 | `teardown` | One transaction: refuse unless Storage is verifiably empty → count rows per table → archive minimised billing → clear non-cascading references → `delete from organizations` → **verify from the catalogue that no table still holds the org id**, else roll back. | Step recorded in the same transaction; org-absent is a no-op. |
+| 4 | `teardown` | One transaction: refuse unless Storage is verifiably empty → count rows per table → archive minimised billing → clear non-cascading references → raise the transaction-local teardown marker → `delete from organizations` → **sweep** the ledgers that carry `org_id` with no foreign key → **verify from the catalogue that no table still holds the org id**, else roll back. | Step recorded in the same transaction; org-absent is a no-op. |
 | 5 | `identities` | Each captured member with no remaining company: identity scrub + Auth delete (as §3.1 steps 5–6). Members who belong to another company are left alone. | Already-gone = done. |
 | 6 | complete | `privacy_request_complete` refuses to seal unless all five steps are recorded; clears the working set. | — |
+
+**Append-only evidence and the teardown.** 19 ledgers (comms events, receptionist and AI-reply trails) refuse
+every DELETE. They admit one only inside a *sanctioned* teardown: a transaction-local marker naming the org
+(set solely inside `privacy_org_teardown`), a service-role caller, the organisation row gone, and a
+company-deletion request for that org running in the ledger — all four. "Organisation row absent" alone is
+**not** enough: most of those tables have no foreign key on `org_id`, so orphan rows exist and must stay
+undeletable (EVIDENCE §2.2).
 
 **Why teardown, not "anonymise and keep".** The schema's evidence guards allow exactly one delete path, and
 it is this one. And it matches the processor position in §2: the company's ledgers are the company's to keep,
@@ -165,7 +170,7 @@ up to ~3 weeks stays inside one month.)
 
 ### 3.3 Staff erasure (`staff_erasure`) — owner/admin, runs immediately
 
-Staff → person → "Remove and erase personal data" (◻ UI and action not built; `requestStaffErasure()` is).
+Staff → person → "Remove and erase personal data" (UI and action not built; `requestStaffErasure()` is).
 Distinct from the existing "Remove from team"
 (`removeStaff`), which deletes only the membership row and is unchanged.
 
@@ -214,10 +219,10 @@ Company deletion needs no class table: every org-scoped row goes, verified again
 
 | Property | How it is enforced |
 |---|---|
-| **Owner-only, server-side** | Three layers: ◻ the action checks `ctx.membership.role` (not built); `privacy_request_create` re-reads the membership `FOR UPDATE` and raises `42501`; the claim re-verifies at run time. The UI hides the control from non-owners but is not relied on. |
-| ◻ **Re-authentication** (NOT-IMPLEMENTED — design) | `server/auth/reauth.ts`: either the account password is verified now against Supabase Auth with a throw-away, non-persisting client, **or** — for magic-link / Google accounts with no password — the session's most recent authentication (`amr` timestamp in the validated access token) must be ≤ 10 minutes old. A stale session cannot delete anything. |
-| ◻ **CSRF** (NOT-IMPLEMENTED — design) | Mutations are to be Next.js **server actions** (Origin/Host checked by the framework; not reachable as a simple cross-site form post) and additionally require the password or a just-established session plus a typed confirmation an attacker cannot know. No deletion is reachable by GET. |
-| **Cross-tenant** | ◻ The org id is to be taken from the caller's own session context, never from a form field (action not built); `privacy_request_create` requires the actor to be a member of that org; the engine takes only a **request id** and every primitive reads its target **from the ledger row**. |
+| **Owner-only, server-side** | Three layers: the action checks `ctx.membership.role`; `privacy_request_create` re-reads the membership `FOR UPDATE` and raises `42501`; the claim re-verifies at run time. The UI hides the control from non-owners but is not relied on. |
+| **Re-authentication** | `server/auth/reauth.ts`: either the account password is verified now against Supabase Auth with a throw-away, non-persisting client, **or** — for magic-link / Google accounts with no password — the session's most recent authentication (`amr` timestamp in the validated access token) must be ≤ 10 minutes old. A stale session cannot delete anything. |
+| **CSRF** | Mutations are Next.js **server actions** (Origin/Host checked by the framework; not reachable as a simple cross-site form post) and additionally require the password or a just-established session plus a typed confirmation an attacker cannot know. No deletion is reachable by GET. |
+| **Cross-tenant** | The org id is taken from the caller's own session context, never from a form field (tested: forged ids in the form are ignored); `privacy_request_create` requires the actor to be a member of that org; the engine takes only a **request id** and every primitive reads its target **from the ledger row**. |
 | **Not reachable with the anon / user key** | Every function is `SECURITY DEFINER`, `revoke`d from `public, anon, authenticated`, granted to `service_role`, and re-checks `auth.role() = 'service_role'` in the body. None takes an org id from an untrusted caller, so the `current_org_ids()` rule for client-reachable RPCs is not engaged — and they are deliberately *not* client-reachable. |
 | **New tables** | `privacy_deletion_requests`, `privacy_retained_billing_records`: RLS on, no policy, no client grant, `data-api:exempt:` markers. |
 | **Idempotent / resumable** | Steps recorded in the ledger; SQL steps record themselves in the same transaction as their work; external steps are idempotent by construction (§3.2 table). |
@@ -311,10 +316,10 @@ a one-line registry or constant change if counsel decides otherwise.
 ## 9. Activation (founder)
 
 1. Counsel reviews §8.
-2. Apply migrations `20261311`–`20261314` (additive; the only change to existing objects is the teardown
-   escape added to 19 guard functions — listed in `20261312`).
-3. Build and review the request layer (EVIDENCE §9), then set `FEATURE_ACCOUNT_DELETION=true`. The daily
-   `retention-purge` cron then also drains due requests.
+2. Apply migrations `20261311`–`20261314` (additive; the only change to existing objects is the
+   sanctioned-teardown escape added to 19 guard functions — listed in `20261312`; precondition queries in
+   EVIDENCE §10).
+3. Set `FEATURE_ACCOUNT_DELETION=true`. The daily `retention-purge` cron then also drains due requests.
 4. Update the privacy notice (backups, sub-processors, cooling-off) and the restore runbook (§7.3).
 5. Approve the staged backup-script change (§10).
 
@@ -330,7 +335,6 @@ a one-line registry or constant change if counsel decides otherwise.
 | `staff_compensation` has no `org_id`: a person in two companies has one shared pay / emergency-contact row. | P2 (0 multi-org users in prod per programme notes) | Pre-existing schema issue; reported, not changed. |
 | `hq_memories` / `hq_sales_*` / `waitlist` rows about a deleted customer. | P2 | No reliable key; manual purge. |
 | `hq_events` payload audit for incidental personal data (the activity dual-write is whitelisted; the domain producers were not reviewed). | P3 | Requires reviewing every producer. |
-| Re-authentication, server actions, settings / staff UI. | P1 before activation | Cut for budget; backend first. Next steps: EVIDENCE §9. |
 | No admin entry point to erase a person **already removed** from the team. | P2 | Needs the UI; the engine's org discovery is already catalogue-driven. |
 | Purge of `privacy_retained_billing_records` after `retention_until`. | P3 (first due 2032) | Irreversible; staged for approval. |
 | Twilio / Meta provider deletion step. | Pre-activation condition | Integrations are dark and must stay dark. |
