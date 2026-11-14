@@ -828,12 +828,20 @@ describe("a failed call still cost something, and the ledger says so", () => {
     // £0 would let ten thousand failures spend real money while the ceiling saw
     // nothing. The floor is one penny: the same "never round a real cost down to
     // zero" rule estimateCostPence already applies.
+    //
+    // Re-keyed by the secrets/AI-spend audit: this used to throw
+    // `new Error("timeout")`. A TIMEOUT is now the one failure that is NOT
+    // settled at the floor — the vendor finishes and bills a call we merely
+    // stopped waiting for, so it is settled at the full claim
+    // (__tests__/ai/governor-timeout-settlement.test.ts). The floor policy
+    // pinned HERE is unchanged and is for every other failure, so the fixture
+    // is now a vendor-side failure rather than a timeout.
     await expect(
       invokeWithGovernor(
         QUOTE_WRITER_FEATURE,
         QUOTE_WRITER_TASK_CLASS,
         async () => {
-          throw new Error("timeout");
+          throw new Error("provider returned 500");
         },
         { orgId: ORG_A },
       ),

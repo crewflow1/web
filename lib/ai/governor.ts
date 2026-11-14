@@ -1100,10 +1100,24 @@ export async function invokeWithGovernor<T>(
     // FAILURE_FLOOR_PENCE for why recording that as free would make a retry
     // storm invisible to the very ceiling that exists to stop one. Tokens are
     // recorded as 0 because we genuinely did not get a usage report.
+    //
+    // …EXCEPT WHEN THE FAILURE IS OUR OWN TIMEOUT. Every governed request is
+    // non-streaming and carries an AbortSignal. When that signal fires we stop
+    // WAITING; the vendor does not stop WORKING — the request was accepted, it
+    // runs to completion, and it is billed in full (input and every output
+    // token up to the cap). Recording that as the 1p floor under-counts by up
+    // to the whole claim, and a slow-provider incident is exactly when many
+    // calls time out at once. So a timed-out / aborted call is settled at the
+    // CLAIM — the worst case it was admitted on. That may over-report a call
+    // that died before reaching the vendor, by at most one claim; it can no
+    // longer under-report one that did reach it.
+    const failureCostPence = isTimeoutLike(err)
+      ? Math.max(claimPence, settlementCostPence(false, binding, { inputTokens: 0, outputTokens: 0 }))
+      : settlementCostPence(false, binding, { inputTokens: 0, outputTokens: 0 });
     await settleReservation({
       reservationId: reservation.reservationId,
       success: false,
-      costPence: settlementCostPence(false, binding, { inputTokens: 0, outputTokens: 0 }),
+      costPence: failureCostPence,
       usage: fallbackUsage,
       latencyMs,
       errorCode,
@@ -1118,10 +1132,7 @@ export async function invokeWithGovernor<T>(
         success: false,
         errorCode,
         contentHash,
-        estimatedCostPence: settlementCostPence(false, binding, {
-          inputTokens: 0,
-          outputTokens: 0,
-        }),
+        estimatedCostPence: failureCostPence,
         aiEmployeeId: input.aiEmployeeId ?? null,
       },
     });
@@ -1163,6 +1174,32 @@ export async function invokeWithGovernor<T>(
   });
 
   return { status: "ran", value: call.value, budget: budgetStatus, recorded, dark: false };
+}
+
+/**
+ * Did this failure come from a timeout / abort — i.e. did WE stop waiting,
+ * rather than the vendor refusing?
+ *
+ * Matches the shapes the runtime and both vendor SDKs produce:
+ * `AbortSignal.timeout()` rejects with a DOMException named `TimeoutError`; a
+ * manual abort is `AbortError`; the Anthropic/OpenAI SDKs raise
+ * `APIUserAbortError` ("Request was aborted.") and `APIConnectionTimeoutError`
+ * ("Request timed out."). Name first, message as the fallback for errors that
+ * were re-wrapped on the way up.
+ */
+export function isTimeoutLike(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  // The vendor SDK error classes do not set `.name` (it stays "Error"), so the
+  // CONSTRUCTOR name is checked as well as the instance name.
+  const names = [
+    String((err as { name?: unknown }).name ?? ""),
+    String((err as { constructor?: { name?: unknown } }).constructor?.name ?? ""),
+  ];
+  if (names.some((n) => /^(TimeoutError|AbortError|APIUserAbortError|APIConnectionTimeoutError)$/.test(n))) {
+    return true;
+  }
+  const message = String((err as { message?: unknown }).message ?? "");
+  return /\b(timed out|timeout|aborted)\b/i.test(message);
 }
 
 /** A short, stable, PII-free code for the ledger's `error_code`. */
