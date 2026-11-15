@@ -18,6 +18,7 @@ import {
 } from "@/lib/notifications/sort";
 import { formatDateTimeUK } from "@/lib/time/format";
 import { markRead, markAllRead, dismiss } from "./actions";
+import { safeActionPath } from "@/lib/notifications/action-url";
 
 /**
  * Customer notifications centre (HQ-8).
@@ -212,9 +213,9 @@ export default async function CustomerNotificationsPage({
                             </span>
                           </p>
                           <p className="mt-1 text-sm font-semibold text-slate-900">
-                            {n.action_url ? (
+                            {safeActionPath(n.action_url) ? (
                               <Link
-                                href={n.action_url}
+                                href={safeActionPath(n.action_url) ?? "/notifications"}
                                 className="hover:underline"
                               >
                                 {n.title}
