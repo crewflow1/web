@@ -159,8 +159,8 @@ describeIntegration("schedule integrity · real conflicts + org isolation (RLS)"
   let assetA = "";
 
   beforeAll(async () => {
-    orgA = await insId(svc, "organizations", { name: "Sched A", slug: `${TOKEN}-a` });
-    orgB = await insId(svc, "organizations", { name: "Sched B", slug: `${TOKEN}-b` });
+    orgA = await insId(svc, "organizations", { status: "active", name: "Sched A", slug: `${TOKEN}-a` });
+    orgB = await insId(svc, "organizations", { status: "active", name: "Sched B", slug: `${TOKEN}-b` });
 
     viewer = await mkUser("viewer", [orgA, orgB], `${TOKEN} Viewer`);
     dave = await mkUser("dave", [orgA, orgB], `${TOKEN} Dave Baker`);

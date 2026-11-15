@@ -41,8 +41,8 @@ describeIntegration("RAMS revisioning · DB invariants", () => {
   }
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "Rev A", slug: `${TOKEN}-a` }).select("id").single()).data?.id);
-    orgB = String((await svc().from("organizations").insert({ name: "Rev B", slug: `${TOKEN}-b` }).select("id").single()).data?.id);
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "Rev A", slug: `${TOKEN}-a` }).select("id").single()).data?.id);
+    orgB = String((await svc().from("organizations").insert({ status: "active", name: "Rev B", slug: `${TOKEN}-b` }).select("id").single()).data?.id);
   });
   afterAll(async () => {
     for (const o of [orgA, orgB]) if (o) await (svc().from("organizations") as unknown as { delete(): { eq(c: string, v: unknown): PromiseLike<unknown> } }).delete().eq("id", o);

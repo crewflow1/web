@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { supplierFormSchema } from "@/lib/suppliers/schema";
 import {
   type FormState,
@@ -29,6 +30,7 @@ export async function createSupplier(
   formData: FormData,
 ): Promise<FormState<SupplierValues>> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("suppliers", "create");
   const result = validateFormData(formData, supplierFormSchema);
   if (!result.ok) return result.state as FormState<SupplierValues>;
 
@@ -87,6 +89,7 @@ export async function updateSupplier(
   formData: FormData,
 ): Promise<FormState<SupplierValues>> {
   const { ctx } = await requireOrgContext();
+  await requireCapability("suppliers", "edit");
   if (!idSchema.safeParse(id).success) return formError("Invalid supplier id.");
 
   const result = validateFormData(formData, supplierFormSchema);
@@ -147,6 +150,7 @@ export async function updateSupplier(
 
 export async function deleteSupplier(id: string) {
   const { ctx } = await requireOrgContext();
+  await requireCapability("suppliers", "delete");
   if (!idSchema.safeParse(id).success) redirect("/suppliers?error=bad_id");
 
   const supabase = await createClient();

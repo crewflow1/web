@@ -271,6 +271,9 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       // e1: joiner is visible to the owner via the shared org -> DIRECT ADD.
       await page.getByRole("button", { name: "+ Add staff" }).first().click();
       let dialog = page.getByRole("dialog");
+      // The dialog moves focus to its first field just after it opens. Typing before that lands
+      // the text in "Full name" — wait for the focus hand-over, then fill.
+      await expect(page.getByRole("dialog").locator('input[name="full_name"]')).toBeFocused();
       await dialog.locator('input[name="full_name"]').fill("OM Joiner");
       await dialog.locator('input[name="email"]').fill(email("joiner"));
       await dialog.locator('select[name="role"]').selectOption("staff");
@@ -286,6 +289,9 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       // is emailed; crucially no membership is created for a stranger.
       await page.getByRole("button", { name: "+ Add staff" }).first().click();
       dialog = page.getByRole("dialog");
+      // The dialog moves focus to its first field just after it opens. Typing before that lands
+      // the text in "Full name" — wait for the focus hand-over, then fill.
+      await expect(page.getByRole("dialog").locator('input[name="full_name"]')).toBeFocused();
       await dialog.locator('input[name="email"]').fill(email("joiner2"));
       await dialog.locator('select[name="role"]').selectOption("staff");
       await dialog.getByRole("button", { name: "Send invite" }).click();
@@ -360,13 +366,22 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       const skip = page.getByRole("button", { name: "Skip for now" }).first();
       if (await skip.count()) {
         await skip.click();
+        // The refused action bounces staff /dashboard?error=forbidden -> /me in TWO navigations.
+        // Wait for the FINAL one to land; "networkidle" alone can fire between the two, and the
+        // next goto is then interrupted by the pending navigation to /me.
+        await page.waitForURL(/\/me(\?|$)/, { timeout: 15_000 });
         await page.waitForLoadState("networkidle");
       }
 
       await page.goto("/staff");
+      // Staff are bounced off the roster to /me through the same two-step chain; let it FINISH
+      // before the next navigation, or that goto is aborted by the in-flight redirect.
+      await page.waitForURL(/\/me(\?|$)/, { timeout: 15_000 });
+      await page.waitForLoadState("networkidle");
       await expect(page.getByRole("button", { name: "+ Add staff" })).toHaveCount(0);
 
       await page.goto(`/staff/${ids.profileTarget}`);
+      await page.waitForLoadState("networkidle");
       for (const name of ["Save profile", "Update", "Remove"]) {
         await expect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
       }
@@ -397,6 +412,9 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await page.goto("/staff");
       await page.getByRole("button", { name: "+ Add staff" }).first().click();
       const dialog = page.getByRole("dialog");
+      // The dialog moves focus to its first field just after it opens. Typing before that lands
+      // the text in "Full name" — wait for the focus hand-over, then fill.
+      await expect(page.getByRole("dialog").locator('input[name="full_name"]')).toBeFocused();
       await dialog.locator('input[name="email"]').fill(email("joiner2"));
       await dialog.locator('select[name="role"]').selectOption("staff");
       await dialog.getByRole("button", { name: "Send invite" }).click();
@@ -439,6 +457,9 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await page.goto("/staff");
       await page.getByRole("button", { name: "+ Add staff" }).first().click();
       const dialog = page.getByRole("dialog");
+      // The dialog moves focus to its first field just after it opens. Typing before that lands
+      // the text in "Full name" — wait for the focus hand-over, then fill.
+      await expect(page.getByRole("dialog").locator('input[name="full_name"]')).toBeFocused();
       await dialog.locator('input[name="email"]').fill(email("joiner2"));
       await dialog.locator('select[name="role"]').selectOption("admin");
       await dialog.getByRole("button", { name: "Send invite" }).click();

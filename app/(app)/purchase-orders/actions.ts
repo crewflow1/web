@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { computeTotals } from "@/lib/quotes/totals";
 import {
@@ -93,6 +94,7 @@ export async function createPurchaseOrder(
   formData: FormData,
 ): Promise<FormState<PurchaseOrderFormInput>> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("purchase_orders", "create");
   const parsed = parsePoForm(formData);
   if (!parsed.success) {
     return formError(parsed.error.issues[0]?.message ?? "Check the purchase order and try again.");
@@ -159,6 +161,7 @@ export async function updatePurchaseOrder(
   formData: FormData,
 ): Promise<FormState<PurchaseOrderFormInput>> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("purchase_orders", "edit");
   if (!idSchema.safeParse(id).success) return formError("Invalid purchase order id.");
 
   const parsed = parsePoForm(formData);
@@ -250,6 +253,7 @@ export async function updatePurchaseOrder(
 
 export async function setPurchaseOrderStatus(id: string, formData: FormData) {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("purchase_orders", "edit");
   if (!idSchema.safeParse(id).success) redirect("/purchase-orders");
 
   const to = String(formData.get("status") ?? "") as PurchaseOrderStatus;
@@ -329,6 +333,7 @@ export async function setPurchaseOrderStatus(id: string, formData: FormData) {
  */
 export async function submitPurchaseOrderToMerchantAction(id: string, formData: FormData) {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("purchase_orders", "approve");
   if (!idSchema.safeParse(id).success) redirect("/purchase-orders");
 
   const providerRaw = String(formData.get("provider") ?? "");
@@ -361,6 +366,7 @@ export async function submitPurchaseOrderToMerchantAction(id: string, formData: 
 
 export async function deletePurchaseOrder(id: string) {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("purchase_orders", "delete");
   if (!idSchema.safeParse(id).success) redirect("/purchase-orders");
 
   const supabase = await createClient();
@@ -444,6 +450,7 @@ export async function recordSupplierBill(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("purchase_orders", "create");
   if (!idSchema.safeParse(purchaseOrderId).success) {
     return formError("Invalid purchase order.");
   }

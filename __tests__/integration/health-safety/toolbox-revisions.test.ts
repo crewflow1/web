@@ -37,7 +37,7 @@ describeIntegration("Toolbox Talk revisions · DB invariants (20261027)", () => 
   }
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "TT-Rev", slug: `${T}-a` }).select("id").single()).data?.id);
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "TT-Rev", slug: `${T}-a` }).select("id").single()).data?.id);
     member = await mkUser("m");
     await svc().from("memberships").insert({ org_id: orgA, user_id: member, role: "staff" });
     // Rev 1: create draft, issue it (origin of the series).

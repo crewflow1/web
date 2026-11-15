@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { type FormState, formError, formSuccess } from "@/lib/forms/state";
 
@@ -104,6 +105,7 @@ export async function receiveDelivery(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("goods_receiving_field", "edit");
   if (!idSchema.safeParse(purchaseOrderId).success) {
     return formError("Invalid purchase order.");
   }
@@ -171,6 +173,7 @@ export async function voidDelivery(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("purchase_orders", "edit");
   if (!idSchema.safeParse(grnId).success) return formError("Invalid delivery.");
 
   const reason = String(formData.get("void_reason") ?? "").trim();

@@ -225,12 +225,12 @@ describeIntegration("active-org scoping · multi-org user (finance/commercial)",
 
     const a = await svc
       .from("organizations")
-      .insert({ name: "Active-Org Finance A", slug: `${TOKEN}-a` })
+      .insert({ status: "active", name: "Active-Org Finance A", slug: `${TOKEN}-a` })
       .select("id")
       .single();
     const b = await svc
       .from("organizations")
-      .insert({ name: "Active-Org Finance B", slug: `${TOKEN}-b` })
+      .insert({ status: "active", name: "Active-Org Finance B", slug: `${TOKEN}-b` })
       .select("id")
       .single();
     orgA = String(a.data?.id ?? "");

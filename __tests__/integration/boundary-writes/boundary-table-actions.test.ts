@@ -216,6 +216,27 @@ describeIntegration("BOUNDARY WRITES · organizations / memberships / users serv
     expect(state.celebrated_milestones).toEqual(["first_customer"]);
   });
 
+  it("set-up state · STAFF are refused by every writer (replayed server action) and the organisation's state is untouched", async () => {
+    const world = w!;
+    const { skipStep } = await import("@/app/(app)/onboarding/setup/actions");
+    const { dismissChecklistStep } = await import("@/app/(app)/dashboard/_dismiss-step");
+    const { dismissMilestone, dismissNudge } = await import("@/app/(app)/dashboard/_retention-actions");
+    const before = (await org(world.A.id)).onboarding_state;
+    as(world.A.staff, world.A.id, "staff");
+    for (const attempt of [
+      () => skipStep(form({ step_id: "terms" })),
+      () => dismissChecklistStep(form({ step_id: "terms" })),
+      () => dismissMilestone(form({ milestone_id: "first_quote" })),
+      () => dismissNudge(form({ nudge_id: "anything" })),
+    ]) {
+      const r = await run(attempt);
+      // the nudge id is not on the allow-list → returns before the gate; all others redirect
+      if (r.redirect !== null) expect(r.redirect).toBe("/dashboard?error=forbidden");
+    }
+    expect((await org(world.A.id)).onboarding_state).toEqual(before);
+  });
+
+  // ── company logo ────────────────────────────────────────────────────────────
   it("company logo · the owner clears the logo and it persists; staff are refused", async () => {
     const world = w!;
     const { deleteCompanyLogo } = await import("@/server/services/company-logo");
@@ -362,4 +383,58 @@ describeIntegration("BOUNDARY WRITES · organizations / memberships / users serv
   });
 
   // ── H&S quick-add actions: a staff member replays the POST for a document the page refuses ──
+  it("addHazard / addPermitCondition · staff cannot add to (or read the children of) a RAMS / permit they cannot open; the owner can; assigned staff keep authoring", async () => {
+    const world = w!;
+    const { addHazard } = await import("@/app/(app)/health-safety/actions");
+    const { addPermitCondition } = await import("@/app/(app)/health-safety/permits/actions");
+    const A = world.A.id;
+    const customer = await svc().from("customers").insert({ org_id: A, name: `HS customer ${world.tag}` }).select("id").single();
+    const job = await svc().from("jobs").insert({ org_id: A, customer_id: (customer.data as any).id, assigned_to: world.A.staff.id }).select("id").single();
+    await svc().from("job_assignments").insert({ org_id: A, job_id: (job.data as any).id, user_id: world.A.staff.id });
+    const mkRa = async (jobId: string | null) => {
+      const id = randomUUID();
+      const r = await svc().from("risk_assessments").insert({ id, root_risk_assessment_id: id, org_id: A, title: "RAMS", activity: "Roofing", job_id: jobId });
+      if (r.error) throw new Error(r.error.message);
+      return id;
+    };
+    const mkPermit = async (jobId: string | null) => {
+      const r = await svc().from("permits_to_work").insert({ org_id: A, permit_type: "hot_works", title: "Permit", scope: "Welding", job_id: jobId }).select("id").single();
+      if (r.error) throw new Error(r.error.message);
+      return (r.data as any).id as string;
+    };
+    const hiddenRa = await mkRa(null); // no job → a staff member cannot open it
+    const hiddenPermit = await mkPermit(null);
+    const ownRa = await mkRa((job.data as any).id); // on the staff member's assigned job
+    const hazards = async (ra: string) => ((await svc().from("risk_assessment_hazards").select("id").eq("risk_assessment_id", ra)).data ?? []).length;
+    const conditions = async (permit: string) => ((await svc().from("permit_conditions").select("id").eq("permit_id", permit)).data ?? []).length;
+    const hazardForm = (ra: string) => form({ riskAssessmentId: ra, hazard: "Falling from height", likelihood: "3", severity: "4", controlMeasures: "Scaffold + harness" });
+
+    // The owner authors normally (and gives the hidden documents a child each).
+    as(world.A.owner, A, "owner");
+    expect((await run(() => addHazard(hazardForm(hiddenRa)))).redirect).toBe(`/health-safety/${hiddenRa}?saved=hazard`);
+    expect(JSON.stringify((await run(() => addPermitCondition({} as never, form({ permitId: hiddenPermit, label: "Fire watch 60 min" })))).value)).toMatch(/saved=condition/);
+    expect(await hazards(hiddenRa)).toBe(1);
+    expect(await conditions(hiddenPermit)).toBe(1);
+
+    // Staff replay the server actions for documents the page answers "not found" for.
+    as(world.A.staff, A, "staff");
+    expect((await run(() => addHazard(hazardForm(hiddenRa)))).redirect).toBe("/health-safety?error=not_found");
+    expect(JSON.stringify((await run(() => addPermitCondition({} as never, form({ permitId: hiddenPermit, label: "staff-added" })))).value)).toMatch(/Permit not found/);
+    // …and go straight at the Data API: insert refused, existing children unreadable / undeletable.
+    const staff = userClient(world.A.staff.token);
+    const ins = await staff.from("risk_assessment_hazards" as never).insert({ org_id: A, risk_assessment_id: hiddenRa, hazard: "x", likelihood: 1, severity: 1, control_measures: "x" } as never);
+    expect(ins.error, "staff INSERT of a hazard on an unreadable RAMS must be refused").not.toBeNull();
+    const insC = await staff.from("permit_conditions" as never).insert({ org_id: A, permit_id: hiddenPermit, label: "x" } as never);
+    expect(insC.error).not.toBeNull();
+    expect(((await staff.from("risk_assessment_hazards" as never).select("id").eq("risk_assessment_id", hiddenRa)).data ?? []).length).toBe(0);
+    expect(((await staff.from("permit_conditions" as never).select("id").eq("permit_id", hiddenPermit)).data ?? []).length).toBe(0);
+    await staff.from("risk_assessment_hazards" as never).delete().eq("risk_assessment_id", hiddenRa);
+    await staff.from("permit_conditions" as never).delete().eq("permit_id", hiddenPermit);
+    expect(await hazards(hiddenRa)).toBe(1);
+    expect(await conditions(hiddenPermit)).toBe(1);
+
+    // KEPT: on a document of their ASSIGNED job, a member still authors (existing decision).
+    expect((await run(() => addHazard(hazardForm(ownRa)))).redirect).toBe(`/health-safety/${ownRa}?saved=hazard`);
+    expect(await hazards(ownRa)).toBe(1);
+  });
 });

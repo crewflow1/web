@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext, type OrgContext } from "@/server/auth/session";
+import { isHeldStatus } from "@/lib/auth/org-status";
 import { readFailure } from "@/lib/supabase/read-failure";
 import {
   canWith,
@@ -36,9 +37,13 @@ export {
   CAP_MODULES,
   grantAllows,
   canWith,
+  FIELD_MODULES,
+  FIELD_PARENT,
+  isFieldModule,
   OWNER_WILDCARD,
   type CapAction,
   type CapModule,
+  type FieldModule,
   type Grant,
 } from "@/lib/auth/capability-rules";
 
@@ -46,6 +51,26 @@ export {
  * Load a member's capability grants via the admin client (server-only).
  * Owner → the wildcard (not stored). Admin → their rows. Anyone else → none.
  */
+/**
+ * Held-company write guard (D-17). In a suspended / cancelled company the only things an
+ * owner may still do are READ, EXPORT, and manage SETTINGS (billing, recovery). Everything
+ * else is refused before it reaches the database (which refuses it too).
+ */
+function heldWriteRefused(ctx: OrgContext, module: string, action: CapAction): boolean {
+  if (!isHeldStatus(ctx.org?.status)) return false;
+  if (action === "view" || action === "export") return false;
+  if (module === "settings") return false;
+  return true;
+}
+
+/**
+ * Held-company write guard for server actions that write with the SERVICE ROLE (and so are
+ * not stopped by the database's read-only policies). Redirects, never throws a 500.
+ */
+export function assertOrgWritable(ctx: OrgContext): void {
+  if (isHeldStatus(ctx.org?.status)) redirect("/dashboard?error=read_only");
+}
+
 export async function loadCapabilities(
   orgId: string,
   userId: string,
@@ -61,6 +86,8 @@ export async function loadCapabilities(
   if (!mem) return [];
   const row = mem as { id: string; role: string };
   if (row.role === "owner") return [OWNER_WILDCARD];
+  // Only an ADMIN holds grants. A staff member's field baseline is role-derived
+  // (canWith); stray grant rows on a staff membership are ignored, never loaded.
   if (row.role !== "admin") return [];
 
   // membership_permissions is not in the generated Database types until the R2
@@ -120,6 +147,7 @@ export async function requireCapability(
 ): Promise<{ user: User; ctx: OrgContext; grants: Grant[] }> {
   const { user, ctx, grants, can } = await resolveCapabilityContext();
   if (!can(module, action)) redirect("/dashboard?error=forbidden");
+  if (heldWriteRefused(ctx, module, action)) redirect("/dashboard?error=read_only");
   return { user, ctx, grants };
 }
 
@@ -127,6 +155,20 @@ export async function requireCapability(
  * API / route-handler guard: the context for a permitted caller, or a
  * ready-to-return 403 JSON Response for a denied one.
  */
+/**
+ * Page/segment guard for areas shared by management and the crew (D-17): passes when the
+ * caller holds ANY of the listed capabilities — typically the management capability
+ * (`stock:view`) or the field baseline (`stock_field:view`). Sensitive child routes add
+ * their own stricter guard; a layout cannot be narrowed by a child.
+ */
+export async function requireAnyCapability(
+  pairs: ReadonlyArray<readonly [string, CapAction]>,
+): Promise<{ user: User; ctx: OrgContext; grants: Grant[] }> {
+  const { user, ctx, grants, can } = await resolveCapabilityContext();
+  if (!pairs.some(([m, a]) => can(m, a))) redirect("/dashboard?error=forbidden");
+  return { user, ctx, grants };
+}
+
 export async function requireCapabilityApi(
   module: string,
   action: CapAction,
@@ -134,6 +176,9 @@ export async function requireCapabilityApi(
   const { user, ctx, grants, can } = await resolveCapabilityContext();
   if (!can(module, action)) {
     return Response.json({ error: "forbidden" }, { status: 403 });
+  }
+  if (heldWriteRefused(ctx, module, action)) {
+    return Response.json({ error: "read_only" }, { status: 403 });
   }
   return { user, ctx, grants };
 }
@@ -151,6 +196,7 @@ export async function requireCapabilityFor(
   module: string,
   action: CapAction,
 ): Promise<void> {
+  if (heldWriteRefused(ctx, module, action)) redirect("/dashboard?error=read_only");
   if (ctx.membership.role === "owner") return;
   const grants = await loadCapabilities(ctx.org.id, user.id);
   if (!canWith(ctx.membership.role, grants, module, action)) {

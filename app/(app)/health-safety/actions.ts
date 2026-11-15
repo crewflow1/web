@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session"; import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
   createRaSchema, updateRaSchema, raIdSchema, hazardSchema, hazardIdSchema,
@@ -67,7 +67,7 @@ async function resolveOrgJobId(
 // RAMS header
 // ---------------------------------------------------------------------------
 export async function createRiskAssessment(formData: FormData): Promise<void> {
-  const { user, ctx } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext(); await requireCapability("site_safety_field", "edit");
   const parsed = createRaSchema.safeParse({
     title: formData.get("title"),
     activity: formData.get("activity"),
@@ -125,7 +125,7 @@ export async function createRiskAssessment(formData: FormData): Promise<void> {
  * leave a header stranded without its assessed hazards.
  */
 export async function generateRamsDraft(formData: FormData): Promise<void> {
-  const { user, ctx } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext(); await requireCapability("site_safety_field", "edit");
   const parsed = generateRamsSchema.safeParse({
     templateKey: formData.get("templateKey"),
     jobId: (formData.get("jobId") as string) || null,
@@ -186,7 +186,7 @@ export async function generateRamsDraft(formData: FormData): Promise<void> {
 }
 
 export async function updateRiskAssessment(formData: FormData): Promise<void> {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); await requireCapability("site_safety_field", "edit");
   const parsed = updateRaSchema.safeParse({
     id: formData.get("id"),
     title: formData.get("title"),
@@ -222,7 +222,7 @@ export async function updateRiskAssessment(formData: FormData): Promise<void> {
 // Issue / supersede / withdraw
 // ---------------------------------------------------------------------------
 export async function issueRiskAssessment(formData: FormData): Promise<void> {
-  const { user, ctx } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext(); await requireCapability("site_safety", "approve");
   const parsed = raIdSchema.safeParse({ id: formData.get("id") });
   if (!parsed.success) redirect(`/health-safety?error=bad_id`);
   const id = parsed.data.id;
@@ -261,7 +261,7 @@ export async function issueRiskAssessment(formData: FormData): Promise<void> {
 }
 
 async function transition(formData: FormData, to: "superseded" | "withdrawn"): Promise<void> {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); await requireCapability("site_safety", "approve");
   const parsed = raIdSchema.safeParse({ id: formData.get("id") });
   if (!parsed.success) redirect(`/health-safety?error=bad_id`);
   const id = parsed.data.id;
@@ -285,7 +285,7 @@ export async function withdrawRiskAssessment(formData: FormData): Promise<void> 
 // these actions validate shape and surface refusals honestly.
 // ---------------------------------------------------------------------------
 export async function createRamsRevision(formData: FormData): Promise<void> {
-  const { user, ctx } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext(); await requireCapability("site_safety_field", "edit");
   const parsed = raIdSchema.safeParse({ id: formData.get("id") });
   if (!parsed.success) redirect(`/health-safety?error=bad_id`);
   const sourceId = parsed.data.id;
@@ -348,7 +348,7 @@ export async function createRamsRevision(formData: FormData): Promise<void> {
 }
 
 export async function issueRamsRevision(formData: FormData): Promise<void> {
-  const { user, ctx } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext(); await requireCapability("site_safety", "approve");
   const parsed = raIdSchema.safeParse({ id: formData.get("id") });
   if (!parsed.success) redirect(`/health-safety?error=bad_id`);
   const id = parsed.data.id;
@@ -383,7 +383,7 @@ export async function issueRamsRevision(formData: FormData): Promise<void> {
 // Hazards (only on a draft — the DB trigger enforces it)
 // ---------------------------------------------------------------------------
 export async function addHazard(formData: FormData): Promise<void> {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); await requireCapability("site_safety_field", "edit");
   const parsed = hazardSchema.safeParse({
     riskAssessmentId: formData.get("riskAssessmentId"),
     hazard: formData.get("hazard"),
@@ -399,6 +399,14 @@ export async function addHazard(formData: FormData): Promise<void> {
   if (!parsed.success) redirect(`/health-safety/${raId}?error=${encodeURIComponent(firstError(parsed.error.issues))}`);
   const v = parsed.data;
   const supabase = await createClient();
+  // LEAST PRIVILEGE: a hazard may only be added to a risk assessment the caller
+  // can OPEN (owner/admin, or a job they are assigned to) in the ACTIVE org — the
+  // same rule the page applies. A server action is a plain POST, so the check is
+  // made here too; RLS repeats it (20261345: child rows follow the parent).
+  const { data: parentRa, error: parentRaError } = await tbl(supabase)("risk_assessments")
+    .select("id").eq("id", v.riskAssessmentId).eq("org_id", ctx.org.id).maybeSingle();
+  if (parentRaError) throw readFailure("health-safety: hazard parent", parentRaError);
+  if (!parentRa) redirect(`/health-safety?error=not_found`);
   // org_id is authoritatively derived from the parent by a DB trigger; we pass
   // the caller's org so the RLS insert-check passes for the normal (same-org) case.
   const { error } = await tbl(supabase)("risk_assessment_hazards").insert({
@@ -418,7 +426,7 @@ export async function addHazard(formData: FormData): Promise<void> {
 }
 
 export async function deleteHazard(formData: FormData): Promise<void> {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); await requireCapability("site_safety_field", "edit");
   const parsed = hazardIdSchema.safeParse({ id: formData.get("id"), riskAssessmentId: formData.get("riskAssessmentId") });
   if (!parsed.success) redirect(`/health-safety?error=bad_id`);
   const { id, riskAssessmentId } = parsed.data;

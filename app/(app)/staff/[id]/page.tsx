@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { ButtonLink } from "@/components/ui";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
+import { readMemberPrivateProfiles } from "@/server/services/private-columns";
 import { PermissionEditor } from "./_permission-editor";
 import {
   updateStaffProfile,
@@ -56,7 +57,7 @@ export default async function StaffDetailPage({
 }) {
   const { id } = await params;
   const sp = await searchParams;
-  const { ctx } = await requireOrgContext();
+  const { ctx, user: viewer } = await requireOrgContext();
   const supabase = await createClient();
 
   // (Read deleted upstream — #480's loud-read guard here is obsolete, not lost.)
@@ -65,6 +66,10 @@ export default async function StaffDetailPage({
   // errors in any org with ≥2 members.
   const isAdmin =
     ctx.membership.role === "owner" || ctx.membership.role === "admin";
+  // LEAST PRIVILEGE (decision S-2): a member may open their OWN profile; a
+  // colleague's profile (phone, employment type, start date, performance) is
+  // owner/admin only. Same treatment as every other management page.
+  if (!isAdmin && viewer.id !== id) redirect("/dashboard?error=forbidden");
   // Prefill the Add-qualification form from a certificate/CSCS-card import
   // (admin-only, mirroring addStaffQualification's requireAdmin).
   const qualPrefill =
@@ -76,7 +81,7 @@ export default async function StaffDetailPage({
     .select(
       `
         role, user_id,
-        user:users ( id, full_name, email, phone, employment_type, start_date )
+        user:users ( id, full_name, email )
       `,
     )
     .eq("org_id", ctx.org.id)
@@ -86,14 +91,19 @@ export default async function StaffDetailPage({
 
   if (!row) notFound();
 
-  const user = row.user as {
-    id: string;
-    full_name: string | null;
-    email: string;
-    phone: string | null;
-    employment_type: string | null;
-    start_date: string | null;
-  } | null;
+  // phone / employment_type / start_date are not Data-API readable (20261342).
+  // The gate above admits only an owner/admin or the member themselves, which is
+  // exactly who readMemberPrivateProfiles serves.
+  const priv = (await readMemberPrivateProfiles(ctx, viewer, [id])).get(id);
+  const userBase = row.user as { id: string; full_name: string | null; email: string } | null;
+  const user = userBase
+    ? {
+        ...userBase,
+        phone: priv?.phone ?? null,
+        employment_type: priv?.employment_type ?? null,
+        start_date: priv?.start_date ?? null,
+      }
+    : null;
 
   // Owner-facing admin permission editor (R3 UI). ONLY the owner may view/set an
   // admin's capability grants (the hard rule — an admin can never reach this, and

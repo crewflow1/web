@@ -44,8 +44,8 @@ describeIntegration("H2-CASH billing plans (real Postgres)", () => {
     String((await svc().from("job_billing_stages").insert({ org_id: org, plan_id: plan, job_id: job, sequence: seq, name: `Stage ${seq}`, kind: "stage", basis: "fixed", amount, vat_rate: 20 }).select("id").single()).data?.id);
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "BILL A", slug: `${T}-a` }).select("id").single()).data?.id);
-    orgB = String((await svc().from("organizations").insert({ name: "BILL B", slug: `${T}-b` }).select("id").single()).data?.id);
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "BILL A", slug: `${T}-a` }).select("id").single()).data?.id);
+    orgB = String((await svc().from("organizations").insert({ status: "active", name: "BILL B", slug: `${T}-b` }).select("id").single()).data?.id);
     custA = String((await svc().from("customers").insert({ org_id: orgA, name: "Cust A" }).select("id").single()).data?.id);
     jobA = String((await svc().from("jobs").insert({ org_id: orgA, status: "new", customer_id: custA }).select("id").single()).data?.id);
     jobNoCust = String((await svc().from("jobs").insert({ org_id: orgA, status: "new" }).select("id").single()).data?.id);

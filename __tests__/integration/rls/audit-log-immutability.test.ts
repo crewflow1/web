@@ -129,7 +129,7 @@ describeIntegration("A.5 audit-log immutability (20261214000000)", () => {
   }
 
   beforeAll(async () => {
-    const org = await svc().from("organizations").insert({ name: `Audit ${T}`, slug: `${T}-a` }).select("id").single();
+    const org = await svc().from("organizations").insert({ status: "active", name: `Audit ${T}`, slug: `${T}-a` }).select("id").single();
     expect(org.error, org.error?.message).toBeNull();
     orgA = String(org.data?.id ?? "");
     if (!orgA) throw new Error("failed to create probe org");
@@ -170,7 +170,7 @@ describeIntegration("A.5 audit-log immutability (20261214000000)", () => {
     // proven against exactly what gdpr_erase_org issues (actor_name → '[erased]',
     // metadata → 'null'::jsonb). A throwaway org keeps it isolated.
     const slug = `${T}-gdpr`;
-    const org = await svc().from("organizations").insert({ name: `GDPR ${T}`, slug }).select("id").single();
+    const org = await svc().from("organizations").insert({ status: "active", name: `GDPR ${T}`, slug }).select("id").single();
     expect(org.error, org.error?.message).toBeNull();
     const gorg = String(org.data?.id ?? "");
     const id = await insertActivity(gorg, { actor_id: uuid(), actor_name: "Jane Doe", metadata: { pii: "x" } });
@@ -234,7 +234,7 @@ describeIntegration("A.5 audit-log immutability (20261214000000)", () => {
   });
 
   it("org-cascade teardown deletes the feed (org gone → allowed)", async () => {
-    const doomed = await svc().from("organizations").insert({ name: `Doomed ${T}`, slug: `${T}-doomed` }).select("id").single();
+    const doomed = await svc().from("organizations").insert({ status: "active", name: `Doomed ${T}`, slug: `${T}-doomed` }).select("id").single();
     expect(doomed.error, doomed.error?.message).toBeNull();
     const doomedOrg = String(doomed.data?.id ?? "");
     await insertActivity(doomedOrg);

@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "@/lib/supabase/admin"; import { orgPublicWriteRefused } from "@/server/services/org-lifecycle"; import { PUBLIC_WRITE_REFUSED_MESSAGE } from "@/lib/auth/org-status";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
 import {
@@ -1391,7 +1391,7 @@ export async function acceptQuoteByToken(
     .eq("public_token", token)
     .maybeSingle();
 
-  if (lookupErr || !quote) return { ok: false, error: "Quote not found" };
+  if (lookupErr || !quote) return { ok: false, error: "Quote not found" }; if (await orgPublicWriteRefused(quote.org_id, "operational")) return { ok: false, error: PUBLIC_WRITE_REFUSED_MESSAGE };
   // A re-accept is idempotent, but must still HEAL a partial first accept: if the first
   // accept set status='accepted' then its invoice insert failed, the old blanket
   // early-return left the quote with NO invoice forever. So on a re-accept we skip the
@@ -1560,7 +1560,7 @@ export async function declineQuoteByToken(
     reportReadFailure("quote decline (public): quote", quoteError);
     return { ok: false, error: "Couldn't load the quote — try again." };
   }
-  if (!quote) return { ok: false, error: "Quote not found" };
+  if (!quote) return { ok: false, error: "Quote not found" }; if (await orgPublicWriteRefused(quote.org_id, "operational")) return { ok: false, error: PUBLIC_WRITE_REFUSED_MESSAGE };
   if (quote.status === "accepted") return { ok: false, error: "Quote already accepted" };
   if (quote.status === "declined") return { ok: true, quoteId: quote.id };
 

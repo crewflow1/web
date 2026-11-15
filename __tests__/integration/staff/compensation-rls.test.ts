@@ -61,8 +61,8 @@ describeIntegration("staff_compensation RLS — pay is self + admin only (real P
   }
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "CO A", slug: `${T}-a` }).select("id").single()).data?.id);
-    orgB = String((await svc().from("organizations").insert({ name: "CO B", slug: `${T}-b` }).select("id").single()).data?.id);
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "CO A", slug: `${T}-a` }).select("id").single()).data?.id);
+    orgB = String((await svc().from("organizations").insert({ status: "active", name: "CO B", slug: `${T}-b` }).select("id").single()).data?.id);
     admin = await newUser("admin", orgA, "owner");
     staff = await newUser("staff", orgA, "staff");
     outsider = await newUser("outsider", orgB, "owner");

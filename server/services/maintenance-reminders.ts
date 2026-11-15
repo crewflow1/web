@@ -1,5 +1,5 @@
 import "server-only";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "@/lib/supabase/admin"; import { loadNonActiveOrgIds } from "@/server/services/org-lifecycle";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { sendEmail } from "@/lib/email/send";
@@ -343,7 +343,7 @@ export async function drainAllDueReminders(opts?: { today?: string }): Promise<D
     { id: string }[]
   >;
   if (orgRes.error) throw readFailure("maintenance reminders: organizations", orgRes.error);
-  const orgIds = (orgRes.data ?? []).map((o) => o.id);
+  const heldOrgs = await loadNonActiveOrgIds(); const orgIds = (orgRes.data ?? []).map((o) => o.id).filter((id) => !heldOrgs.has(id)); // D-17: no service / warranty reminders from a company that is not active
 
   let created = 0;
   let sent = 0;

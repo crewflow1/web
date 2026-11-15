@@ -44,7 +44,7 @@ describeIntegration("voice-note transcription · SANDBOX VERIFIED dark tier (rea
   let orgId = "";
 
   beforeAll(async () => {
-    const o = await raw().from("organizations").insert({ name: "VN Dark", slug: `${TOKEN}-a` }).select("id").single();
+    const o = await raw().from("organizations").insert({ status: "active", name: "VN Dark", slug: `${TOKEN}-a` }).select("id").single();
     expect(o.error, o.error?.message).toBeNull();
     orgId = String(o.data.id);
   });

@@ -43,8 +43,8 @@ describeIntegration("Storage evidence security (S0/S1/S2, real Postgres)", () =>
   }
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "SEC A", slug: `${T}-a` }).select("id").single()).data?.id ?? "");
-    orgB = String((await svc().from("organizations").insert({ name: "SEC B", slug: `${T}-b` }).select("id").single()).data?.id ?? "");
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "SEC A", slug: `${T}-a` }).select("id").single()).data?.id ?? "");
+    orgB = String((await svc().from("organizations").insert({ status: "active", name: "SEC B", slug: `${T}-b` }).select("id").single()).data?.id ?? "");
     jobA = String((await svc().from("jobs").insert({ org_id: orgA, status: "new" }).select("id").single()).data?.id ?? "");
     if (!orgA || !orgB || !jobA) throw new Error("fixture setup failed");
     ({ id: memberId, token: memberTok } = await mkMember("staff", "mem"));

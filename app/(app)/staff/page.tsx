@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementContext } from "@/server/auth/session";
+import { readMemberPrivateProfiles } from "@/server/services/private-columns";
 import { AddStaffButton, InviteStaffModal } from "./_invite-modal";
 import { ImportButton } from "@/components/import/import-button";
 import { PendingInvites } from "./_pending-invites";
@@ -11,9 +12,11 @@ import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 /**
  * Staff list page.
  *
- * Lists all org members with role, name, email. Admins see an invite
- * form + role-edit shortcut. Staff users see the directory but cannot
- * change anything (RLS enforces this server-side).
+ * Lists all org members with role, name, email, phone, employment type and
+ * start date. OWNER/ADMIN ONLY (least-privilege decision S-2): the roster is
+ * other people's personal data, so a `staff` member is redirected exactly as
+ * on every other management page. A member's own details live on /settings
+ * and /staff/<their id>.
  */
 
 const ROLE_STYLES: Record<string, string> = {
@@ -42,7 +45,7 @@ export default async function StaffPage({
 }: {
   searchParams: SP;
 }) {
-  const { ctx } = await requireOrgContext();
+  const { ctx, user: viewer } = await requireManagementContext();
   const sp = await searchParams;
   const supabase = await createClient();
 
@@ -58,12 +61,19 @@ export default async function StaffPage({
     .select(
       `
         user_id, role,
-        user:users ( id, full_name, email, phone, employment_type, start_date )
+        user:users ( id, full_name, email )
       `,
     )
     .eq("org_id", ctx.org.id)
     .order("role", { ascending: true });
   if (membersError) throw readFailure("staff: members register", membersError);
+  // phone / employment_type / start_date are not Data-API readable (20261342);
+  // read for this org's members only, after the management gate above.
+  const privateByUser = await readMemberPrivateProfiles(
+    ctx,
+    viewer,
+    (membersRaw ?? []).map((m) => m.user_id),
+  );
 
   // Pay is in staff_compensation (20261218) behind self-or-admin RLS: an admin
   // reads every member's rate (full roster), a non-admin who reaches this page by
@@ -82,7 +92,22 @@ export default async function StaffPage({
     }
   }
 
-  const members = (membersRaw ?? []) as MemberRow[];
+  const members = (membersRaw ?? []).map((m) => {
+    const u = m.user as { id: string; full_name: string | null; email: string } | null;
+    const priv = privateByUser.get(m.user_id);
+    return {
+      user_id: m.user_id,
+      role: m.role,
+      user: u
+        ? {
+            ...u,
+            phone: priv?.phone ?? null,
+            employment_type: priv?.employment_type ?? null,
+            start_date: priv?.start_date ?? null,
+          }
+        : null,
+    };
+  }) as MemberRow[];
 
   // Pending invites (H2): invited-but-not-yet-accepted teammates. Only an
   // admin can act on them (and the listing uses the service-role client),

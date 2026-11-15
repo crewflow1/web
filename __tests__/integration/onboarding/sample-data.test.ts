@@ -24,7 +24,7 @@ const TOKEN = `it-seed-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const orgs: string[] = [];
 
 async function freshOrg(label: string): Promise<string> {
-  const res = await db().from("organizations").insert({ name: `Seed ${label}`, slug: `${TOKEN}-${label}` }).select("id").single();
+  const res = await db().from("organizations").insert({ status: "active", name: `Seed ${label}`, slug: `${TOKEN}-${label}` }).select("id").single();
   expect(res.error, res.error?.message).toBeNull();
   const id = String((res.data as { id: string }).id);
   orgs.push(id);

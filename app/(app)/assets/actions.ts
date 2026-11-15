@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { deleteTenantAttachment } from "@/server/services/tenant-attachments";
 import {
@@ -67,6 +68,7 @@ type AttachmentIdsChain = {
 
 export async function createAsset(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "create");
 
   const parsed = createAssetSchema.safeParse({
     name: formData.get("name") ?? "",
@@ -142,6 +144,7 @@ export async function createAsset(_prev: FormState, formData: FormData): Promise
 
 export async function updateAssetStatus(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "edit");
   const id = String(formData.get("id") ?? "");
   const status = String(formData.get("status") ?? "");
   if (!assetIdSchema.safeParse(id).success) return formError("Invalid asset.");
@@ -179,6 +182,7 @@ export async function deleteAsset(
   _prev: FormState, _formData: FormData, // eslint-disable-line @typescript-eslint/no-unused-vars
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "delete");
   if (!assetIdSchema.safeParse(id).success) return formError("Invalid asset.");
   if (ctx.membership.role !== "owner" && ctx.membership.role !== "admin") {
     return formError("Only an owner or admin can delete an asset.");

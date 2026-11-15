@@ -114,13 +114,14 @@ export interface FleetVehicle {
 
 const VEHICLE_COLS =
   "asset_id, org_id, vin, variant, year_of_manufacture, first_registered_on, fuel_type, " +
-  "vehicle_class, gross_weight_kg, mot_exempt, operational_status, finance_type, " +
-  "finance_provider_id, finance_agreement_ref, finance_monthly_payment, finance_end_date, " +
+  "vehicle_class, gross_weight_kg, mot_exempt, operational_status, " +
+  // finance_* and assets.purchase_price are NOT selectable through the Data API
+  // (20261343): the vehicle detail / edit pages overlay them via readVehicleMoney.
   "home_depot, home_site_id, odometer_miles, odometer_recorded_at, created_at";
 
 const ASSET_COLS =
   "id, name, registration, manufacturer, model, ownership, status, category, " +
-  "supplier_id, purchase_date, purchase_price, notes, created_at";
+  "supplier_id, purchase_date, notes, created_at";
 
 /**
  * Load every vehicle in the org: the `fleet_vehicles` extension rows joined to
@@ -167,7 +168,7 @@ export async function loadFleetVehicles(orgId: string): Promise<FleetVehicle[]> 
         category: (a.category as string | null) ?? null,
         supplierId: (a.supplier_id as string | null) ?? null,
         purchaseDate: (a.purchase_date as string | null) ?? null,
-        purchasePrice: numOrNull(a.purchase_price),
+        purchasePrice: null,
         notes: (a.notes as string | null) ?? null,
         operationalStatus: str(v.operational_status),
         vehicleClass: (v.vehicle_class as string | null) ?? null,
@@ -177,11 +178,11 @@ export async function loadFleetVehicles(orgId: string): Promise<FleetVehicle[]> 
         firstRegisteredOn: (v.first_registered_on as string | null) ?? null,
         grossWeightKg: numOrNull(v.gross_weight_kg),
         motExempt: v.mot_exempt === true,
-        financeType: str(v.finance_type),
-        financeProviderId: (v.finance_provider_id as string | null) ?? null,
-        financeAgreementRef: (v.finance_agreement_ref as string | null) ?? null,
-        financeMonthlyPayment: numOrNull(v.finance_monthly_payment),
-        financeEndDate: (v.finance_end_date as string | null) ?? null,
+        financeType: "none",
+        financeProviderId: null,
+        financeAgreementRef: null,
+        financeMonthlyPayment: null,
+        financeEndDate: null,
         homeDepot: (v.home_depot as string | null) ?? null,
         homeSiteId: (v.home_site_id as string | null) ?? null,
         odometerMiles: numOrNull(v.odometer_miles),

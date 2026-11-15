@@ -78,12 +78,12 @@ describeIntegration("bank connections · RLS + constraints", () => {
     const svc = db(serviceClient());
     const a = await svc
       .from("organizations")
-      .insert({ name: "BankConn A", slug: `${TOKEN}-a` })
+      .insert({ status: "active", name: "BankConn A", slug: `${TOKEN}-a` })
       .select("id")
       .single();
     const b = await svc
       .from("organizations")
-      .insert({ name: "BankConn B", slug: `${TOKEN}-b` })
+      .insert({ status: "active", name: "BankConn B", slug: `${TOKEN}-b` })
       .select("id")
       .single();
     orgA = String(a.data?.id ?? "");

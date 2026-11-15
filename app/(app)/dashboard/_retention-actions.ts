@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireManagementRole, requireOrgContext } from "@/server/auth/session";
+import { requireManagementRole, requireOrgContext } from "@/server/auth/session"; import { assertOrgWritable } from "@/server/auth/capabilities";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
@@ -41,7 +41,7 @@ export async function dismissMilestone(formData: FormData): Promise<void> {
   const id = String(formData.get("milestone_id") ?? "");
   if (!(MILESTONE_IDS as ReadonlyArray<string>).includes(id)) return;
 
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); assertOrgWritable(ctx);
   // Organisation-wide state (the owner/admin dashboard): management only.
   requireManagementRole(ctx);
   const supabase = await createClient();
@@ -89,7 +89,7 @@ export async function dismissNudge(formData: FormData): Promise<void> {
   const id = String(formData.get("nudge_id") ?? "");
   if (!(DISMISSIBLE_NUDGES as ReadonlyArray<string>).includes(id)) return;
 
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); assertOrgWritable(ctx);
   // Organisation-wide state (the owner/admin dashboard): management only.
   requireManagementRole(ctx);
   const supabase = await createClient();

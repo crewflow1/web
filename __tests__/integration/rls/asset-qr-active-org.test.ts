@@ -155,7 +155,7 @@ describeIntegration("qr scan · active-org isolation (multi-org user)", () => {
   async function mkOrg(slug: string): Promise<string> {
     const { data, error } = await db(serviceClient())
       .from("organizations")
-      .insert({ name: `QR AOS ${slug}`, slug })
+      .insert({ status: "active", name: `QR AOS ${slug}`, slug })
       .select("id")
       .single();
     expect(error, error?.message).toBeNull();

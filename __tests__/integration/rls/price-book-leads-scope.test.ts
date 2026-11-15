@@ -42,8 +42,8 @@ describeIntegration("price_book + leads · isolation", () => {
     String((await svc.from(table).insert(row).select("id").single()).data?.id ?? "");
 
   beforeAll(async () => {
-    orgA = await insId("organizations", { name: "PBL A", slug: `${TOKEN}-a` });
-    orgB = await insId("organizations", { name: "PBL B", slug: `${TOKEN}-b` });
+    orgA = await insId("organizations", { status: "active", name: "PBL A", slug: `${TOKEN}-a` });
+    orgB = await insId("organizations", { status: "active", name: "PBL B", slug: `${TOKEN}-b` });
     owner = await mkUser(`${TOKEN}-owner@example.test`, "owner", orgA);
     staff = await mkUser(`${TOKEN}-staff@example.test`, "staff", orgA);
     outsider = await mkUser(`${TOKEN}-out@example.test`, "owner", orgB);

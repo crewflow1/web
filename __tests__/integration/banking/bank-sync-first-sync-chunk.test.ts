@@ -56,7 +56,7 @@ describeIntegration("bank-feed first-sync dedupe chunking · real Postgres (414 
     const svc = db(serviceClient());
     const org = await svc
       .from("organizations")
-      .insert({ name: "Bank First-Sync Chunk", slug: `${TOKEN}-org` })
+      .insert({ status: "active", name: "Bank First-Sync Chunk", slug: `${TOKEN}-org` })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

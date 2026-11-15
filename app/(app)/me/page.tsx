@@ -117,7 +117,7 @@ export default async function MePage({ searchParams }: { searchParams: SP }) {
     await Promise.all([
       supabase
         .from("users")
-        .select("full_name, employment_type")
+        .select("full_name")
         .eq("id", user.id)
         .maybeSingle(),
       // Own pay from staff_compensation (20261218) — the self-read RLS admits the
