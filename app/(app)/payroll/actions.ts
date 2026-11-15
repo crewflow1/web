@@ -430,6 +430,29 @@ export async function finalisePayrollRun(runId: string) {
   // with every time entry left unlocked.
   if (linesError) throw readFailure("payroll finalise: lines", linesError);
 
+  // ORDER + HONESTY (resilience PW-06). Finalising is IRREVERSIBLE and it is
+  // N+1 separate statements (one timesheet lock per payroll line, then the
+  // status flip) that supabase-js cannot wrap in a transaction. Every one of
+  // their results used to be DISCARDED, so:
+  //
+  //   • a lock that failed (timeout, dropped connection) was skipped silently
+  //     and the run was finalised anyway — that worker's timesheets stayed
+  //     editable after payroll was locked, with nothing recording it;
+  //   • a status flip that failed left the run in draft while the page said
+  //     "Payroll run finalised".
+  //
+  // The sequence is now fail-stop and idempotently repairable: the run is
+  // stamped finalised ONLY after every lock has succeeded, any failure stops
+  // with an explicit error (the run stays a draft), and pressing Finalise again
+  // is safe — already-locked entries are skipped by the `payroll_line_id IS
+  // NULL` predicate, so the retry completes exactly what is missing.
+  const finaliseFailed = (what: string): never =>
+    redirect(
+      `/payroll/${runId}?error=${encodeURIComponent(
+        `Couldn't finalise the run — ${what}. Nothing was finalised; the run is still a draft. Try again.`,
+      )}`,
+    );
+
   for (const l of lines ?? []) {
     // ACTIVE-org pin. This UPDATE is scoped by user_id + a DATE WINDOW, so
     // without it finalising org A's run reached into every OTHER org that
@@ -437,7 +460,7 @@ export async function finalisePayrollRun(runId: string) {
     // org A `payroll_line_id` — freezing another company's timesheets
     // (payroll-linked entries are read-only) and attributing them to a payroll
     // line that company cannot see.
-    await supabase
+    const { error: lockError } = await supabase
       .from("time_entries")
       .update({ payroll_line_id: l.id })
       .eq("org_id", ctx.org.id)
@@ -446,13 +469,48 @@ export async function finalisePayrollRun(runId: string) {
       .lte("started_at", `${run.period_end}T23:59:59.999Z`)
       .not("ended_at", "is", null)
       .is("payroll_line_id", null);
+    if (lockError) {
+      console.error("[payroll] finalise: timesheet lock failed — run NOT finalised", {
+        runId,
+        payrollLineId: l.id,
+        code: lockError.code,
+        message: lockError.message,
+      });
+      finaliseFailed("a timesheet could not be locked");
+    }
   }
 
-  await supabase
+  // `.eq("status", "draft")` makes the flip a compare-and-set: two admins
+  // finalising at once cannot both "win", and `.select()` tells us whether THIS
+  // call changed the row (RLS / a lost race return zero rows with no error).
+  const { data: flipped, error: finaliseError } = await supabase
     .from("payroll_runs")
     .update({ status: "finalised", finalised_at: new Date().toISOString() })
     .eq("id", runId)
-    .eq("org_id", ctx.org.id);
+    .eq("org_id", ctx.org.id)
+    .eq("status", "draft")
+    .select("id");
+  if (finaliseError) {
+    console.error("[payroll] finalise: status update failed — run NOT finalised", {
+      runId,
+      code: finaliseError.code,
+      message: finaliseError.message,
+    });
+    finaliseFailed("the run could not be marked finalised");
+  }
+  if ((flipped ?? []).length === 0) {
+    // Zero rows and no error: either a concurrent finalise got there first
+    // (fine — it IS finalised) or the write was refused. Read the truth back
+    // rather than assume; never report "finalised" on a run that is not.
+    const { data: now, error: nowError } = await supabase
+      .from("payroll_runs")
+      .select("status")
+      .eq("id", runId)
+      .eq("org_id", ctx.org.id)
+      .maybeSingle();
+    if (nowError) throw readFailure("payroll finalise: confirm", nowError);
+    if (now?.status !== "finalised") finaliseFailed("the run could not be marked finalised");
+  }
 
   revalidatePath(`/payroll/${runId}`);
   revalidatePath("/payroll");
@@ -481,11 +539,18 @@ export async function deletePayrollRun(runId: string) {
   if (runError) throw readFailure("payroll delete: run", runError);
   if (!run) redirect("/payroll?error=not_found");
   if (run.status === "finalised") redirect(`/payroll/${runId}?error=cannot_delete_finalised`);
-  await supabase
+  const { error: deleteError } = await supabase
     .from("payroll_runs")
     .delete()
     .eq("id", runId)
     .eq("org_id", ctx.org.id);
+  if (deleteError) {
+    // Never report "deleted" for a run that is still there.
+    console.error("[payroll] delete failed", { runId, code: deleteError.code, message: deleteError.message });
+    redirect(
+      `/payroll/${runId}?error=${encodeURIComponent("Couldn't delete the run — nothing was changed. Try again.")}`,
+    );
+  }
   revalidatePath("/payroll");
   redirect("/payroll?saved=deleted");
 }
