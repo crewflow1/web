@@ -1,4 +1,5 @@
 import "server-only";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { seedSampleData } from "@/server/services/sample-data";
 import { readFailure } from "@/lib/supabase/read-failure";
@@ -58,19 +59,21 @@ export async function ensureUserRow(input: {
  */
 export async function ownedOrgIds(userId: string): Promise<string[]> {
   const supabase = createAdminClient();
-  const { data, error } = await supabase
-    .from("memberships")
-    .select("org_id, created_at, id")
-    .eq("user_id", userId)
-    .eq("role", "owner")
-    .order("created_at", { ascending: true })
-    .order("id", { ascending: true })
-    .limit(50);
+  const { data, error } = await fetchAllRows<{ org_id: string }>((from, to) =>
+    supabase
+      .from("memberships")
+      .select("org_id, created_at, id")
+      .eq("user_id", userId)
+      .eq("role", "owner")
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   if (error) {
     console.error("[bootstrap] ownedOrgIds failed", error);
     throw new Error("Failed to check existing companies");
   }
-  return (data ?? []).map((r) => r.org_id as string);
+  return data.map((r) => r.org_id);
 }
 
 export async function createOrgWithOwner(input: {
