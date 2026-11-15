@@ -101,3 +101,23 @@ describe("scheduled customer senders skip companies that are not active (invento
     expect(src, `${f} must actually USE the held set`).toMatch(/heldOrgs\.has\(/);
   });
 });
+
+describe("notifications for a company that is not active (D-17 follow-up)", () => {
+  it("HQ is never muted; account categories are delivered; operational ones are withheld from the tenant", async () => {
+    const { heldCompanyNotificationDisposition: d } = await import("@/lib/auth/org-status");
+    for (const c of ["system", "other", "alert", "health", "billing", "support"]) expect(d("hq", c)).toBe("send");
+    for (const c of ["billing", "stripe", "support", "onboarding", "signup", "migration", "demo"]) {
+      expect(d("customer", c)).toBe("send");
+      expect(d("both", c)).toBe("send");
+    }
+    for (const c of ["system", "other", "alert", "health"]) {
+      expect(d("customer", c)).toBe("drop");
+      expect(d("both", c)).toBe("hq_only");
+    }
+  });
+  it("the single emit chokepoint applies the rule", () => {
+    const src = read("server/services/notifications-service.ts");
+    const body = src.slice(src.indexOf("export async function emitNotifications("));
+    expect(body.slice(0, 1800)).toMatch(/heldCompanyNotificationDisposition\(n\.audience, n\.category\)/);
+  });
+});
