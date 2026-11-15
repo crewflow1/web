@@ -37,7 +37,7 @@ describeIntegration("stripe · subscription lifecycle → org access", () => {
    * "active" between cases, so a later test would deliver `updated → active` for
    * a subscription an earlier test had already DELETED. Stripe cannot produce
    * that sequence — `canceled` is terminal; coming back is a NEW subscription —
-   * and since the cancellation tombstone (migration 20261317000000) the handler
+   * and since the cancellation tombstone (migration 20261348000000) the handler
    * correctly refuses it. Each case below is an independent scenario, so each
    * gets its own subscription, exactly as it would in Stripe. No assertion
    * changed. The resurrect-a-dead-subscription sequence is asserted, as a thing

@@ -618,7 +618,7 @@ const envSchema = z.object({
   // before the plan prices exist in Stripe.
   NEXT_PUBLIC_FEATURE_SELF_SERVE_BILLING: z.enum(["true", "false"]).default("false"),
 
-  // Self-serve subscription CANCELLATION kill switch (20261316). DEFAULTS OFF =
+  // Self-serve subscription CANCELLATION kill switch (20261347). DEFAULTS OFF =
   // cancellation is AVAILABLE. An owner can cancel from Settings → Billing whenever
   // this is unset/"false" — deliberately NOT tied to the self-serve-billing flag
   // above, because the published terms promise "cancel at any time from the

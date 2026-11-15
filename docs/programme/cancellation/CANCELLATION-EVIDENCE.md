@@ -80,7 +80,7 @@ Unit files are under `__tests__/billing/`; `IT` is
 | Automatic refund | **NOT-IMPLEMENTED** by decision | Founder decision Q1. |
 | HQ "Cancel" also cancelling in Stripe (F2) | **NOT-IMPLEMENTED** | Route `setCustomerLifecycle('cancelled')` through `cancelOrgSubscription`. |
 | Read-only mode on payment failure (F3) | **NOT-IMPLEMENTED** | Out of scope; terms vs code mismatch. |
-| Production migration | NOT APPLIED (local only) | Apply `20261316000000` then `20261317000000` before the code deploys. |
+| Production migration | NOT APPLIED (local only) | Apply `20261347000000` then `20261348000000` before the code deploys. |
 
 ## 5. Residue in the shared local database
 

@@ -107,3 +107,13 @@ create trigger subscription_cancellations_set_updated_at
 alter table public.subscription_cancellations enable row level security;
 revoke all on table public.subscription_cancellations from public, anon, authenticated;
 grant all on table public.subscription_cancellations to service_role;
+
+-- D-17 (20261346) attaches the held-company write guard to every org-scoped table that existed
+-- when it ran. This table is created after it, so it carries the same guard explicitly: a member
+-- of a suspended / cancelled / pending / rejected company can never write here through a
+-- SECURITY DEFINER path. The server (service role: Stripe webhook, HQ, the cancellation service)
+-- is never blocked — the guard only refuses authenticated / anon callers.
+drop trigger if exists held_org_write_guard on public.subscription_cancellations;
+create trigger held_org_write_guard
+  before insert or update or delete on public.subscription_cancellations
+  for each row execute function public.tg_held_org_write_guard();
