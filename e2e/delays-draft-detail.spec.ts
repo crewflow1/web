@@ -26,7 +26,7 @@ test.describe("draft delay event detail", () => {
   let customerId = "";
   const db = (): { from: (t: string) => any } => {
     assertLocalE2eTarget("delays-draft-detail.spec.ts");
-    return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
+    return createClient(assertLocalE2eTarget("delays-draft-detail.spec.ts"), process.env.SUPABASE_SERVICE_ROLE_KEY!, {
       auth: { persistSession: false, autoRefreshToken: false },
     }) as unknown as { from: (t: string) => any };
   };
