@@ -17,6 +17,10 @@ describeIntegration("D-17 · scheduled customer reminders skip companies that ar
   const setStatus = async (org: string, status: string) => {
     const r = await svc().from("organizations").update({ status }).eq("id", org);
     if (r.error) throw new Error(r.error.message);
+    // emitNotifications caches the held-company list per process for 60 s; without this a notice
+    // emitted straight after re-activation is still withheld (seen in CI when another suite's
+    // emit had primed the cache between the two status changes).
+    (await import("@/server/services/org-lifecycle")).clearNonActiveOrgCache();
   };
 
   beforeAll(async () => {
