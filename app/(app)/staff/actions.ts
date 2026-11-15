@@ -73,6 +73,17 @@ import { recordPermissionEvent } from "@/server/services/permission-audit";
 
 const uuid = z.string().uuid();
 
+/**
+ * BOUNDARY-TABLE WRITES. `memberships` and `users` are tenant-boundary tables:
+ * RLS gives clients SELECT policies only and (since 20261295) no write grant, so
+ * a write through the user-JWT client can never succeed — invite (direct add),
+ * role change, profile edit and remove all used to fail for every caller.
+ * House rule: authorise on the SERVER from the session (requireOrgContext +
+ * requireAdmin / requireOwner / canManageStaff below), then write with the
+ * service role, pinned to `ctx.org.id`. A target user id from the request is
+ * only ever used together with that org pin, after a membership read proved the
+ * target belongs to the caller's active org.
+ */
 function requireAdmin(ctx: OrgContext): void {
   // ctx.membership is the caller's OWN row in the ACTIVE org, resolved by
   // requireOrgContext with a user_id filter. Don't re-query memberships
@@ -224,7 +235,9 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
     };
   }
 
-  const { data: inserted, error: memErr } = await supabase
+  // Service-role write (boundary table) — after the owner / staff:manage gate
+  // above; org from the session, user from the RLS-visible lookup above.
+  const { data: inserted, error: memErr } = await createAdminClient()
     .from("memberships")
     .insert({
       org_id: ctx.org.id,
@@ -408,6 +421,9 @@ export async function updateStaffRole(userId: string, formData: FormData) {
     .eq("user_id", userId)
     .maybeSingle();
   if (targetError) throw readFailure("staff: role-change target", targetError);
+  // The target must be a member of the caller's ACTIVE org — nothing below runs
+  // for an id that is not (the service-role write is pinned to this org anyway).
+  if (!target) redirect(`/staff?error=not_a_member`);
   if (target?.role === "owner" && (ownerCount ?? 0) <= 1) {
     redirect(`/staff/${userId}?error=last_owner_lock`);
   }
@@ -425,7 +441,9 @@ export async function updateStaffRole(userId: string, formData: FormData) {
     redirect(`/staff/${userId}?error=forbidden`);
   }
 
-  const { error, count } = await supabase
+  // Service-role write (boundary table) — after every gate above, pinned to the
+  // session's active org; `userId` was proven a member of it by the read above.
+  const { error, count } = await createAdminClient()
     .from("memberships")
     .update({ role: parsed.data.role }, { count: "exact" })
     .eq("org_id", ctx.org.id)
@@ -469,15 +487,29 @@ export async function updateStaffProfile(
   const result = validateFormData(formData, updateStaffProfileSchema);
   if (!result.ok) return result.state as FormState<Record<string, unknown>>;
 
-  // Verify the target user is actually a member of this org.
+  // Verify the target user is actually a member of this org — and learn their
+  // role, which decides who may edit them.
   const supabase = await createClient();
-  const { count: membershipCount } = await supabase
+  const { data: targetMember, error: targetMemberError } = await supabase
     .from("memberships")
-    .select("id", { count: "exact", head: true })
+    .select("role")
     .eq("org_id", ctx.org.id)
-    .eq("user_id", userId);
-  if ((membershipCount ?? 0) === 0) {
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (targetMemberError) throw readFailure("staff: profile target", targetMemberError);
+  if (!targetMember) {
     return formError("That user isn't a member of this organisation.");
+  }
+  // Same rule as role changes (R3): an OWNER's or ADMIN's record — which includes
+  // their pay — is editable by the owner only (so an admin can never set their
+  // own or a fellow admin's pay); a normal staff member's needs `staff:manage`.
+  // A member's own name/phone are edited on /settings, not here.
+  if (targetMember.role === "owner" || targetMember.role === "admin") {
+    if (ctx.membership.role !== "owner") {
+      return formError("Only the owner can edit an owner's or admin's record.");
+    }
+  } else if (!(await canManageStaff(ctx, user))) {
+    return formError("You don't have permission to edit staff records.");
   }
 
   const emergency =
@@ -491,16 +523,21 @@ export async function updateStaffProfile(
         }
       : null;
 
-  const { error } = await supabase
+  // Service-role write (boundary table) — `userId` was proven a member of the
+  // caller's active org above, and the gates above decided the caller may edit.
+  const { error, count: profileCount } = await createAdminClient()
     .from("users")
-    .update({
-      full_name: result.data.full_name ?? null,
-      phone: result.data.phone ?? null,
-      employment_type: result.data.employment_type ?? null,
-      start_date: result.data.start_date ?? null,
-    })
+    .update(
+      {
+        full_name: result.data.full_name ?? null,
+        phone: result.data.phone ?? null,
+        employment_type: result.data.employment_type ?? null,
+        start_date: result.data.start_date ?? null,
+      },
+      { count: "exact" },
+    )
     .eq("id", userId);
-  if (error) {
+  if (error || profileCount !== 1) {
     console.error("[staff] profile update failed", error);
     return formError(
       "Couldn't save changes. Try again.",
@@ -562,7 +599,12 @@ export async function removeStaff(userId: string) {
     redirect(`/staff/${userId}?error=forbidden`);
   }
 
-  const { error, count } = await supabase
+  // The target must be a member of the caller's ACTIVE org.
+  if (!target) redirect(`/staff?error=not_a_member`);
+
+  // Service-role write (boundary table) — after the gates above, pinned to the
+  // session's active org.
+  const { error, count } = await createAdminClient()
     .from("memberships")
     .delete({ count: "exact" })
     .eq("org_id", ctx.org.id)
