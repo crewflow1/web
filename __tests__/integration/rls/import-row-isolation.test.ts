@@ -54,7 +54,7 @@ describeIntegration("imports · a whole sheet, and one bad row among good ones",
   beforeAll(async () => {
     const o = await svc()
       .from("organizations")
-      .insert({ name: "Import Isolation Co", slug: TOKEN })
+      .insert({ status: "active", name: "Import Isolation Co", slug: TOKEN })
       .select("id")
       .single();
     expect(o.error, JSON.stringify(o.error)).toBeNull();

@@ -139,6 +139,16 @@ function makeMockSupabase() {
 
 const mockAdmin = makeMockSupabase();
 
+
+// D-17: the company-lifecycle gate is exercised against real Postgres in
+// __tests__/integration/adversarial/public-links-lifecycle.test.ts. These unit tests cover an
+// ACTIVE company, so the gate is stubbed open (the admin client here is a narrow mock).
+vi.mock("@/server/services/org-lifecycle", () => ({
+  orgPublicWriteRefused: vi.fn(async () => false),
+  assertOrgAcceptsPublicWrite: vi.fn(async () => {}),
+  gatePortalWrite: vi.fn(async (loaded: unknown) => loaded),
+  OrgNotAcceptingError: class OrgNotAcceptingError extends Error {},
+}));
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => mockAdmin.client,
 }));

@@ -51,8 +51,8 @@ const SEEDS: { table: string; row: (org: string, job: string) => Row }[] = [
 
 describeIntegration("rls · commercial denial (20261250 · R5 Phase 4)", () => {
   beforeAll(async () => {
-    orgA = await insId("organizations", { name: `P4 A ${TOKEN}`, slug: `${TOKEN}-a` });
-    orgB = await insId("organizations", { name: `P4 B ${TOKEN}`, slug: `${TOKEN}-b` });
+    orgA = await insId("organizations", { status: "active", name: `P4 A ${TOKEN}`, slug: `${TOKEN}-a` });
+    orgB = await insId("organizations", { status: "active", name: `P4 B ${TOKEN}`, slug: `${TOKEN}-b` });
     for (const who of ["owner", "admin", "staff", "otherOrg"]) {
       const u = await mkUser(who);
       uid[who] = u.id; tok[who] = u.token;

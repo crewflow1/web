@@ -105,7 +105,7 @@ describeIntegration("whatsapp · SANDBOX VERIFIED signed webhook edge → engine
 
   beforeAll(async () => {
     const svc = db();
-    const o = await svc.from("organizations").insert({ name: "WA Signed", slug: `${TOKEN}-a` }).select("id").single();
+    const o = await svc.from("organizations").insert({ status: "active", name: "WA Signed", slug: `${TOKEN}-a` }).select("id").single();
     expect(o.error, o.error?.message).toBeNull();
     orgA = String((o.data as { id: string }).id);
 

@@ -57,7 +57,7 @@ describeIntegration("calendar sync · pulled-event + watch-channel idempotency",
     const svc = db(serviceClient());
     const org = await svc
       .from("organizations")
-      .insert({ name: "CalSync", slug: `${TOKEN}-org` })
+      .insert({ status: "active", name: "CalSync", slug: `${TOKEN}-org` })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

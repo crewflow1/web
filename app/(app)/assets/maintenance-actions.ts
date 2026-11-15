@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
@@ -103,6 +104,7 @@ async function loadCase(orgId: string, id: string): Promise<CaseRow | null> {
 
 export async function reportMaintenanceCase(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets_field", "create");
   const parsed = reportCaseSchema.safeParse({
     asset_id: formData.get("asset_id"),
     case_type: formData.get("case_type"),
@@ -175,6 +177,7 @@ export async function reportMaintenanceCase(_prev: FormState, formData: FormData
 
 export async function transitionMaintenanceCase(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "edit");
   const caseId = String(formData.get("case_id") ?? "");
   const to = String(formData.get("to") ?? "") as MaintenanceStatus;
   const workPerformed = String(formData.get("work_performed") ?? "").trim();
@@ -289,6 +292,7 @@ export async function transitionMaintenanceCase(_prev: FormState, formData: Form
 
 export async function upsertCaseCosts(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "edit");
   const assetId = String(formData.get("asset_id") ?? "");
   // Costs are commercially sensitive: admin-only in the ACTION and at RLS.
   if (!isAdmin(ctx.membership.role)) return formError("Only an owner or admin can do that.");

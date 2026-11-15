@@ -61,7 +61,7 @@ describeIntegration("qr scan resolver · token→asset security", () => {
 
   async function mkOrg(slug: string) {
     const { data, error } = await db(serviceClient())
-      .from("organizations").insert({ name: `SCAN ${slug}`, slug }).select("id").single();
+      .from("organizations").insert({ status: "active", name: `SCAN ${slug}`, slug }).select("id").single();
     expect(error, error?.message).toBeNull();
     return String(data?.id ?? "");
   }

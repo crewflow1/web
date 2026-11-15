@@ -55,7 +55,7 @@ describeIntegration("H2-CIS G5 verification_source (real Postgres)", () => {
       (
         await svc()
           .from("organizations")
-          .insert({ name: "CIS VS", slug: `${T}-a` })
+          .insert({ status: "active", name: "CIS VS", slug: `${T}-a` })
           .select("id")
           .single()
       ).data?.id,

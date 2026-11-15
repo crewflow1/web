@@ -74,8 +74,8 @@ describeIntegration("hmrc connections · RLS + constraints", () => {
 
   beforeAll(async () => {
     const svc = db(serviceClient());
-    const a = await svc.from("organizations").insert({ name: "Hmrc A", slug: `${TOKEN}-a` }).select("id").single();
-    const b = await svc.from("organizations").insert({ name: "Hmrc B", slug: `${TOKEN}-b` }).select("id").single();
+    const a = await svc.from("organizations").insert({ status: "active", name: "Hmrc A", slug: `${TOKEN}-a` }).select("id").single();
+    const b = await svc.from("organizations").insert({ status: "active", name: "Hmrc B", slug: `${TOKEN}-b` }).select("id").single();
     orgA = String(a.data?.id ?? "");
     orgB = String(b.data?.id ?? "");
     if (!orgA || !orgB) throw new Error("failed to create probe orgs");

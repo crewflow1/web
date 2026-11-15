@@ -70,7 +70,7 @@ type Fixture = {
 async function buildOrg(label: string, userId: string): Promise<Fixture> {
   const svc = db(serviceClient());
 
-  const org = await svc.from("organizations").insert({ name: `WQ ${label}`, slug: `${TOKEN}-${label}` }).select("id").single();
+  const org = await svc.from("organizations").insert({ status: "active", name: `WQ ${label}`, slug: `${TOKEN}-${label}` }).select("id").single();
   expect(org.error, org.error?.message).toBeNull();
   const orgId = String(org.data?.id ?? "");
 

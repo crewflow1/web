@@ -37,7 +37,7 @@ const te = (p: { started_at: string; ended_at?: string | null; breaks?: Break[] 
 });
 
 beforeAll(async () => {
-  const org = await svc().from("organizations").insert({ name: `TS ${TAG}`, slug: TAG }).select("id").single();
+  const org = await svc().from("organizations").insert({ status: "active", name: `TS ${TAG}`, slug: TAG }).select("id").single();
   expect(org.error, org.error?.message).toBeNull();
   orgId = String(org.data.id);
   // public.users.id → auth.users.id, so mint a real auth user first (harness pattern).

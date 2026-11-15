@@ -51,8 +51,8 @@ describeIntegration("Toolbox Talk acknowledgement · DB invariants (20261026)", 
   }
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "TT-Ack A", slug: `${TOKEN}-a` }).select("id").single()).data?.id);
-    orgB = String((await svc().from("organizations").insert({ name: "TT-Ack B", slug: `${TOKEN}-b` }).select("id").single()).data?.id);
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "TT-Ack A", slug: `${TOKEN}-a` }).select("id").single()).data?.id);
+    orgB = String((await svc().from("organizations").insert({ status: "active", name: "TT-Ack B", slug: `${TOKEN}-b` }).select("id").single()).data?.id);
     memberA = await mkUser("m"); nonMember = await mkUser("n");
     await svc().from("memberships").insert({ org_id: orgA, user_id: memberA, role: "staff" });
     ttIssued = await mkTalk(orgA, REF_A, "issued");

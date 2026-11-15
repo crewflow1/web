@@ -80,7 +80,7 @@ describeIntegration("inbound voice · routing/idempotency/isolation", () => {
   beforeAll(async () => {
     const svc = db(serviceClient());
     for (const [label, slug] of [["A", `${TOKEN}-a`], ["B", `${TOKEN}-b`]] as const) {
-      const o = await svc.from("organizations").insert({ name: `Voice ${label}`, slug }).select("id").single();
+      const o = await svc.from("organizations").insert({ status: "active", name: `Voice ${label}`, slug }).select("id").single();
       expect(o.error, o.error?.message).toBeNull();
       if (label === "A") orgA = o.data?.id as string; else orgB = o.data?.id as string;
     }

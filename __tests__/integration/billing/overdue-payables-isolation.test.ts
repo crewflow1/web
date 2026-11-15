@@ -148,8 +148,8 @@ describeIntegration("overdue payables · dual-org isolation + terms CHECK (RLS)"
   let supB = "";
 
   beforeAll(async () => {
-    orgA = await insId(svc, "organizations", { name: "Overdue A", slug: `${T}-a` });
-    orgB = await insId(svc, "organizations", { name: "Overdue B", slug: `${T}-b` });
+    orgA = await insId(svc, "organizations", { status: "active", name: "Overdue A", slug: `${T}-a` });
+    orgB = await insId(svc, "organizations", { status: "active", name: "Overdue B", slug: `${T}-b` });
     dual = await mkUser("dual", [orgA, orgB]);
     outsider = await mkUser("outsider", [orgB]);
 

@@ -112,7 +112,7 @@ describeIntegration("automation dispatch · claim-before-action", () => {
     const svc = db(serviceClient());
     const org = await svc
       .from("organizations")
-      .insert({ name: "Claim Probe Org", slug: `${TOKEN}-org` })
+      .insert({ status: "active", name: "Claim Probe Org", slug: `${TOKEN}-org` })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

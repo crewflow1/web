@@ -57,7 +57,7 @@ const T3 = "2026-03-01T00:00:00.000Z";
 
 async function mkOrg(slug: string): Promise<string> {
   const { data, error } = await db(serviceClient())
-    .from("organizations").insert({ name: `Ovr ${slug}`, slug: `${TAG}-${slug}` }).select("id").single();
+    .from("organizations").insert({ status: "active", name: `Ovr ${slug}`, slug: `${TAG}-${slug}` }).select("id").single();
   expect(error, error?.message).toBeNull();
   return String(data?.id ?? "");
 }

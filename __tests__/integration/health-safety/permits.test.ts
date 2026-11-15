@@ -39,8 +39,8 @@ describeIntegration("Permit-to-Work · DB invariants", () => {
     const u = await serviceClient().auth.admin.createUser({ email: `${TOKEN}@example.test`, password: `Pw-${TOKEN}`, email_confirm: true });
     userA = u.data.user?.id ?? "";
     await svc.from("users").insert({ id: userA, email: `${TOKEN}@example.test`, full_name: "PTW User" });
-    orgA = String((await svc.from("organizations").insert({ name: "PTW A", slug: `${TOKEN}-a` }).select("id").single()).data?.id);
-    orgB = String((await svc.from("organizations").insert({ name: "PTW B", slug: `${TOKEN}-b` }).select("id").single()).data?.id);
+    orgA = String((await svc.from("organizations").insert({ status: "active", name: "PTW A", slug: `${TOKEN}-a` }).select("id").single()).data?.id);
+    orgB = String((await svc.from("organizations").insert({ status: "active", name: "PTW B", slug: `${TOKEN}-b` }).select("id").single()).data?.id);
     jobA = String((await svc.from("jobs").insert({ org_id: orgA }).select("id").single()).data?.id);
     jobB = String((await svc.from("jobs").insert({ org_id: orgB }).select("id").single()).data?.id);
     ramsA = String((await svc.from("risk_assessments").insert({ org_id: orgA, title: "RA A", activity: "x", job_id: jobA }).select("id").single()).data?.id);

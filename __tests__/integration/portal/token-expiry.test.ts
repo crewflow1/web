@@ -87,7 +87,7 @@ describeIntegration("customer portal token · expiry + usage", () => {
     ] as const) {
       const res = await svc
         .from("organizations")
-        .insert({ name: `PTok ${label}`, slug })
+        .insert({ status: "active", name: `PTok ${label}`, slug })
         .select("id")
         .single();
       expect(res.error, res.error?.message).toBeNull();

@@ -6,7 +6,7 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementRole, requireOrgContext } from "@/server/auth/session"; import { assertOrgWritable } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { sendEmail } from "@/lib/email/send";
 
@@ -66,7 +66,8 @@ type ReviewUpd = PromiseLike<{ error: { message: string } | null }> & {
 };
 
 export async function createReviewRequestAction(formData: FormData): Promise<void> {
-  const { ctx, user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext(); assertOrgWritable(ctx);
+  requireManagementRole(ctx); // least privilege: review requests e-mail customers — owner/admin only
   const parsed = createSchema.safeParse({
     customer_id: formData.get("customer_id") ?? "",
     job_id: formData.get("job_id") ?? "",
@@ -134,7 +135,8 @@ export async function createReviewRequestAction(formData: FormData): Promise<voi
 }
 
 export async function markReviewCompletedAction(id: string): Promise<void> {
-  const { ctx, user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext(); assertOrgWritable(ctx);
+  requireManagementRole(ctx); // least privilege: review requests e-mail customers — owner/admin only
   if (!idSchema.safeParse(id).success) redirect("/reviews?error=bad_id");
   const tenant = await createClient();
   const { error } = await (
@@ -162,7 +164,8 @@ export async function markReviewCompletedAction(id: string): Promise<void> {
 }
 
 export async function cancelReviewRequestAction(id: string): Promise<void> {
-  const { ctx, user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext(); assertOrgWritable(ctx);
+  requireManagementRole(ctx); // least privilege: review requests e-mail customers — owner/admin only
   if (!idSchema.safeParse(id).success) redirect("/reviews?error=bad_id");
   const tenant = await createClient();
   const { error } = await (
@@ -194,7 +197,8 @@ export async function cancelReviewRequestAction(id: string): Promise<void> {
  * scheduled send_at). Uses Resend when configured.
  */
 export async function emailReviewRequestNow(id: string): Promise<void> {
-  const { ctx, user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext(); assertOrgWritable(ctx);
+  requireManagementRole(ctx); // least privilege: review requests e-mail customers — owner/admin only
   if (!idSchema.safeParse(id).success) redirect("/reviews?error=bad_id");
 
   const tenant = await createClient();

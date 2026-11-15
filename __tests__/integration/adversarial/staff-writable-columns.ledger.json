@@ -1,0 +1,110 @@
+{
+ "_comment": "Reviewed ledger for __tests__/integration/adversarial/staff-column-mutation.test.ts — every (table, column) a staff JWT can change through PostgREST. It only shrinks: a new entry needs a class (INTENDED | OPEN) and a reason. 2026-11-14 least-privilege enforcement: 434 → 54 entries, 25 → 7 tables (migrations 20261340 + 20261344 + 20261345); no entry was added.",
+ "tables": {
+  "blueprints": {
+   "class": "INTENDED",
+   "note": "assigned staff maintain the drawing register (upload / re-title) through the drawings actions. status (owner/admin only in the app) was removed from this entry when 20261344 made it admin-only at the data layer.",
+   "unassigned": [],
+   "assigned": [
+    "drawing_number",
+    "title",
+    "discipline",
+    "current_version",
+    "updated_at"
+   ]
+  },
+  "delay_events": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff on a staff-allowed surface (docs/programme/security-least-privilege/STAFF-ACCESS-DECISIONS.md). created_by / created_at / actor (*_by) columns were removed from this entry when 20261344 froze them for non-admin JWTs.",
+   "unassigned": [],
+   "assigned": [
+    "category",
+    "working_days_lost",
+    "description",
+    "status",
+    "updated_at",
+    "client_write_key",
+    "offline_authored_at",
+    "last_offline_write_key"
+   ]
+  },
+  "inspection_plan_templates": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff on a staff-allowed surface (docs/programme/security-least-privilege/STAFF-ACCESS-DECISIONS.md). created_by / created_at / actor (*_by) columns were removed from this entry when 20261344 froze them for non-admin JWTs.",
+   "unassigned": [
+    "name",
+    "version",
+    "description",
+    "status",
+    "updated_at"
+   ],
+   "assigned": [
+    "updated_at"
+   ]
+  },
+  "job_checklists": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff on a staff-allowed surface (docs/programme/security-least-privilege/STAFF-ACCESS-DECISIONS.md). created_by / created_at / actor (*_by) columns were removed from this entry when 20261344 froze them for non-admin JWTs.",
+   "unassigned": [],
+   "assigned": [
+    "label",
+    "requires_photo",
+    "is_done",
+    "sort",
+    "assigned_to",
+    "due_on"
+   ]
+  },
+  "job_documents": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff on a staff-allowed surface (docs/programme/security-least-privilege/STAFF-ACCESS-DECISIONS.md). created_by / created_at / actor (*_by) columns were removed from this entry when 20261344 froze them for non-admin JWTs.",
+   "unassigned": [],
+   "assigned": [
+    "doc_type",
+    "title",
+    "status",
+    "template_id",
+    "assigned_to",
+    "external_reference",
+    "customer_shared_at",
+    "requires_staff_signature",
+    "requires_customer_signature",
+    "current_version",
+    "completed_at",
+    "updated_at"
+   ]
+  },
+  "job_progress_observations": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff on a staff-allowed surface (docs/programme/security-least-privilege/STAFF-ACCESS-DECISIONS.md). created_by / created_at / actor (*_by) columns were removed from this entry when 20261344 froze them for non-admin JWTs.",
+   "unassigned": [],
+   "assigned": [
+    "percent",
+    "note",
+    "updated_at"
+   ]
+  },
+  "site_visitors": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff on a staff-allowed surface (docs/programme/security-least-privilege/STAFF-ACCESS-DECISIONS.md). created_by / created_at / actor (*_by) columns were removed from this entry when 20261344 froze them for non-admin JWTs.",
+   "unassigned": [
+    "visitor_name",
+    "company",
+    "purpose",
+    "host_user_id",
+    "vehicle_registration",
+    "signed_out_at",
+    "updated_at"
+   ],
+   "assigned": [
+    "visitor_name",
+    "company",
+    "purpose",
+    "host_user_id",
+    "vehicle_registration",
+    "signed_out_at",
+    "updated_at"
+   ]
+  }
+ }
+}

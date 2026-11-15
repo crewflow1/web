@@ -30,7 +30,7 @@ describeIntegration("Toolbox Talk attachment freeze · DB invariants (20261028)"
     }).select("id").single();
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "TT-Att", slug: `${T}-a` }).select("id").single()).data?.id);
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "TT-Att", slug: `${T}-a` }).select("id").single()).data?.id);
     jobA = String((await svc().from("jobs").insert({ org_id: orgA, status: "new" }).select("id").single()).data?.id);
     talk = String((await svc().from("toolbox_talks").insert({ org_id: orgA, topic: "WAH", key_points: "edge protection" }).select("id").single()).data?.id);
   });

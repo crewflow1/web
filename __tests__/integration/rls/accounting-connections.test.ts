@@ -82,12 +82,12 @@ describeIntegration("accounting connections · RLS + constraints", () => {
     const svc = db(serviceClient());
     const a = await svc
       .from("organizations")
-      .insert({ name: "AcctConn A", slug: `${TOKEN}-a` })
+      .insert({ status: "active", name: "AcctConn A", slug: `${TOKEN}-a` })
       .select("id")
       .single();
     const b = await svc
       .from("organizations")
-      .insert({ name: "AcctConn B", slug: `${TOKEN}-b` })
+      .insert({ status: "active", name: "AcctConn B", slug: `${TOKEN}-b` })
       .select("id")
       .single();
     orgA = String(a.data?.id ?? "");

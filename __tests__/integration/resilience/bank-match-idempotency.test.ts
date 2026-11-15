@@ -76,7 +76,7 @@ async function paymentsFor(invoice: string): Promise<{ id: string; amount: numbe
 beforeAll(async () => {
   const org = await svc()
     .from("organizations")
-    .insert({ name: `Resilience Bank ${TOKEN}`, slug: `${TOKEN}-org` })
+    .insert({ status: "active", name: `Resilience Bank ${TOKEN}`, slug: `${TOKEN}-org` })
     .select("id")
     .single();
   expect(org.error, org.error?.message).toBeNull();

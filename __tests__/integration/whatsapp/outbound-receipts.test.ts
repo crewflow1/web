@@ -105,7 +105,7 @@ async function receiptsFor(wamid: string): Promise<Record<string, unknown>[]> {
 
 async function freshOrg(): Promise<string> {
   const slug = `${TOKEN}-org-${createdOrgs.length}`;
-  const res = await svc().from("organizations").insert({ name: "WA Outbound Org", slug }).select("id").single();
+  const res = await svc().from("organizations").insert({ status: "active", name: "WA Outbound Org", slug }).select("id").single();
   expect(res.error, res.error?.message).toBeNull();
   const id = String((res.data as { id: string }).id);
   createdOrgs.push(id);

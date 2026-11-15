@@ -7,6 +7,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { loadCustomerFinancials } from "@/lib/customers/financials";
 import { loadCustomerCommsTimeline } from "@/lib/customers/comms-timeline";
 import { requireOrgContext } from "@/server/auth/session";
+import { readCustomerPortalToken } from "@/server/services/private-columns";
 import {
   updateCustomer,
   deleteCustomer,
@@ -44,10 +45,10 @@ export default async function EditCustomerPage({
 
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
-  const { data: customer, error: customerError } = await supabase
+  const { data: customerBase, error: customerError } = await supabase
     .from("customers")
     .select(
-      "id, name, email, phone, notes, portal_token, created_at, customer_type, company_number, vat_number, parent_customer_id, address_line1, address_line2, city, county, postcode, country",
+      "id, name, email, phone, notes, created_at, customer_type, company_number, vat_number, parent_customer_id, address_line1, address_line2, city, county, postcode, country",
     )
     .eq("id", id)
     // ACTIVE-org pin. RLS admits every org the viewer belongs to, so org B's
@@ -59,7 +60,13 @@ export default async function EditCustomerPage({
     .maybeSingle();
 
   if (customerError) throw readFailure("customer detail: customer", customerError);
-  if (!customer) notFound();
+  if (!customerBase) notFound();
+  // The portal credential is not Data-API readable (20261341 — register ST-07a):
+  // it is read server-side for a `customers:view` holder only, org-pinned.
+  const customer = {
+    ...customerBase,
+    portal_token: await readCustomerPortalToken(customerBase.id),
+  };
 
   // B2B roll-up + firmographics. Business customers offered as parent options
   // (excluding self); direct children (sites/contacts) rolled up under this

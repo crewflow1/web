@@ -39,6 +39,9 @@ export async function requestVariationAsWorker(
   // 1. Resolve the link — the ONLY gate.
   const session = await loadWorkerSession(token);
   if (!session) redirect(back);
+  // D-17: no new request is filed for a company that is not active.
+  const { orgPublicWriteRefused } = await import("@/server/services/org-lifecycle");
+  if (await orgPublicWriteRefused(session!.token.org_id, "operational")) redirect(`${back}?error=read_only`);
 
   // 2. Rate-limit token+IP (portal_write: same budget as customer-portal writes).
   const h = await headers();

@@ -99,7 +99,7 @@ describeIntegration("Train A webhook reclaim · stranded 'delivering' (real Post
   beforeAll(async () => {
     const org = await svc()
       .from("organizations")
-      .insert({ name: "WH Reclaim", slug: `${T}-org` })
+      .insert({ status: "active", name: "WH Reclaim", slug: `${T}-org` })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

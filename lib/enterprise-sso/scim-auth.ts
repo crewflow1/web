@@ -28,5 +28,16 @@ export async function authenticateScim(
       ),
     };
   }
+  // D-17: provisioning is an operational write — refused for a company that is not active.
+  const { orgPublicWriteRefused } = await import("@/server/services/org-lifecycle");
+  if (await orgPublicWriteRefused(cfg.orgId, "operational")) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { schemas: [SCIM_ERROR_SCHEMA], detail: "Forbidden", status: "403" },
+        { status: 403 },
+      ),
+    };
+  }
   return { ok: true, orgId: cfg.orgId, configId: cfg.configId };
 }

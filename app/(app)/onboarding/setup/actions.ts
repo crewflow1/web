@@ -2,8 +2,9 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementContext } from "@/server/auth/session";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
 import {
   CHECKLIST_STEP_ORDER,
@@ -35,7 +36,7 @@ function isValidStepId(id: string): id is ChecklistStepId {
 }
 
 async function readState(): Promise<Record<string, unknown>> {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireManagementContext();
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("organizations")
@@ -50,15 +51,19 @@ async function readState(): Promise<Record<string, unknown>> {
 }
 
 async function writeState(next: Record<string, unknown>): Promise<void> {
-  const { ctx } = await requireOrgContext();
-  const supabase = await createClient();
+  const { ctx } = await requireManagementContext();
+  // organizations is a boundary table (clients hold SELECT only, no write grant
+  // since 20261295): service-role write AFTER the management gate, pinned to
+  // the session's active org.
+  const boundaryDb = createAdminClient();
   // The generated `Json` type doesn't accept `Record<string, unknown>`
   // directly (its union excludes wider object types). Cast through
   // `never` — the column is jsonb and accepts any object shape.
-  await supabase
+  const { error } = await boundaryDb
     .from("organizations")
     .update({ onboarding_state: next as never })
     .eq("id", ctx.org.id);
+  if (error) console.error("[onboarding setup] state write failed", error);
   revalidatePath("/onboarding/setup");
   revalidatePath("/dashboard");
 }
@@ -75,7 +80,7 @@ export async function markStarted(): Promise<void> {
   // Funnel: onboarding started (fires once per org — the guard above returns
   // early once started_at is stamped). No-op until analytics are configured +
   // consent-granted (lib/analytics/events.ts). org_id only, no PII.
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireManagementContext();
   trackEvent(ANALYTICS_EVENTS.ONBOARDING_STARTED, { org_id: ctx.org.id });
 }
 
@@ -95,7 +100,7 @@ export async function markCompleted(): Promise<void> {
   // rule. Org-pinned, keyed on the org id, idempotent via (rule_id,
   // correlation_id) in automation_runs, best-effort — a dispatch failure never
   // blocks the completion stamp.
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireManagementContext();
 
   // Funnel: onboarding completed (fires once per org — same once-per-org guard
   // as the dispatch below). No-op until analytics are configured + consent-

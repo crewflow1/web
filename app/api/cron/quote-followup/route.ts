@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "@/lib/supabase/admin"; import { loadNonActiveOrgIds } from "@/server/services/org-lifecycle";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { sendEmail } from "@/lib/email/send";
 import { buildQuoteFollowup } from "@/lib/email/templates/reminders";
@@ -99,7 +99,7 @@ async function runFollowup() {
       .order("id", { ascending: true })
       .range(from, to),
   );
-  const rows = rowsRaw as unknown as Row[] | null;
+  const heldOrgs = error ? new Set<string>() : await loadNonActiveOrgIds(); const rows = ((rowsRaw as unknown as Row[] | null) ?? null)?.filter((r) => !heldOrgs.has(r.org_id)) ?? null; // D-17: no follow-ups from a company that is not active
 
   if (error) {
     console.error("[cron/quote-followup] query failed", error);
