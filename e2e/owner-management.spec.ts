@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- seed/assert helpers: the generated
    Database types don't cover every table the spec touches, so DB access goes through a loose cast. */
+import { randomBytes } from "node:crypto";
 import { test, expect, type Page } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalE2eTarget } from "./_guard";
@@ -27,7 +28,8 @@ import { mintState, asActor } from "./_actors";
  */
 
 const sfx = `om${Date.now().toString(36)}`;
-const PASSWORD = "E2e-Owner-Mgmt-Pw-7c41d9"; // local-only synthetic credential
+// Throwaway local-stack password, generated per run (never a literal).
+const PASSWORD = `E2e-${randomBytes(12).toString("hex")}`;
 const STATE = (k: string) => `e2e/.auth/${sfx}-${k}.json`;
 const email = (k: string) => `${sfx}-${k}@crewflow.test`;
 
