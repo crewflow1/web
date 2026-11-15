@@ -50,8 +50,38 @@ export async function ensureUserRow(input: {
  *     transactions over PostgREST, so we do best-effort and roll back the
  *     org if the membership insert fails.
  */
+/**
+ * The companies a person already OWNS, oldest first. Self-signup uses it to make company
+ * creation idempotent: a second submit of the onboarding form (double click, back button,
+ * second tab, retry after a slow response) must land on the company that already exists,
+ * never create a duplicate.
+ */
+export async function ownedOrgIds(userId: string): Promise<string[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("memberships")
+    .select("org_id, created_at, id")
+    .eq("user_id", userId)
+    .eq("role", "owner")
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
+    .limit(50);
+  if (error) {
+    console.error("[bootstrap] ownedOrgIds failed", error);
+    throw new Error("Failed to check existing companies");
+  }
+  return (data ?? []).map((r) => r.org_id as string);
+}
+
 export async function createOrgWithOwner(input: {
   userId: string;
+  /**
+   * Self-signup only: one company per person. If this person already owns a company the
+   * existing one is returned and nothing is created; and if two submits race, the one that
+   * finishes second removes what it just created and returns the first. HQ provisioning does
+   * NOT set this (an operator may deliberately give an existing user a second company).
+   */
+  singleCompany?: boolean;
   /** Caller may pass the user's email so we can look up an approved demo_request. */
   userEmail?: string | null;
   name: string;
@@ -59,8 +89,13 @@ export async function createOrgWithOwner(input: {
   phone?: string | null;
   vatNumber?: string | null;
   postcode?: string | null;
-}): Promise<{ orgId: string }> {
+}): Promise<{ orgId: string; existing?: boolean }> {
   const supabase = createAdminClient();
+
+  if (input.singleCompany) {
+    const owned = await ownedOrgIds(input.userId);
+    if (owned.length > 0) return { orgId: owned[0]!, existing: true };
+  }
 
   // Auto-trial wiring (migration 20260603000000): if the signing-up
   // user's email matches an approved demo_request, the CEO has
@@ -137,6 +172,18 @@ export async function createOrgWithOwner(input: {
     // Best-effort rollback so we don't leave an orphan org.
     await supabase.from("organizations").delete().eq("id", org.id);
     throw new Error("Failed to attach owner to organisation");
+  }
+
+  // Two submits in flight at once both pass the check above. Whoever is NOT the oldest owner
+  // membership removes what it just created (nothing else references it yet — this runs before
+  // the demo link and the sample data) and hands back the first company.
+  if (input.singleCompany) {
+    const owned = await ownedOrgIds(input.userId);
+    if (owned.length > 1 && owned[0] !== org.id) {
+      await supabase.from("memberships").delete().eq("org_id", org.id).eq("user_id", input.userId);
+      await supabase.from("organizations").delete().eq("id", org.id);
+      return { orgId: owned[0]!, existing: true };
+    }
   }
 
   // If we promoted to trial via an approved demo, mark the demo_request
