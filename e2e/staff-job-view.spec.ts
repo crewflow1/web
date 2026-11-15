@@ -2,7 +2,6 @@
 import { test, expect } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalE2eTarget } from "./_guard";
-import { waitForHydrated } from "./_hydration";
 
 /**
  * A field worker opens an assigned job on a phone and reads the instructions.
@@ -41,7 +40,6 @@ test.describe("staff job view on a phone (browser)", () => {
 
   test("the assigned job shows its instructions read-only, with no edit form and no sideways scroll", async ({ page }) => {
     await page.goto(`/jobs/${jobId}`);
-    await waitForHydrated(page);
     const details = page.getByTestId("job-details-readonly");
     await expect(details).toBeVisible();
     await expect(details).toContainText(INSTRUCTIONS);
