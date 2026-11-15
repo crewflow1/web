@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/paginate";
-import { readFailure } from "@/lib/supabase/read-failure";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { QuoteBuilder } from "../_builder";
 import {
@@ -45,6 +45,13 @@ import {
   versionLabel,
   type QuoteVersionSnapshot,
 } from "@/lib/quotes/version-diff";
+
+// The AI quote writer (draftQuoteAction → generateQuoteDraft) is a one-shot,
+// user-initiated generation of a large structured draft that can run ~30-45s on
+// claude-sonnet-5. Server Actions invoked from this page inherit the segment's
+// maxDuration, so without this the platform would abort a valid in-progress draft
+// before it returns. 60s matches the provider's per-call budget in ai-quote-writer.
+export const maxDuration = 60;
 
 /**
  * Quote edit + lifecycle actions page.
@@ -282,6 +289,7 @@ export default async function EditQuotePage({
             eq: (k: string, v: unknown) => {
               order: (col: string, opts: { ascending: boolean }) => Promise<{
                 data: SignatureRow[] | null;
+                error: SupabaseReadError | null;
               }>;
             };
           };
@@ -295,6 +303,7 @@ export default async function EditQuotePage({
       .eq("target_id", id)
       .order("signed_at", { ascending: false }),
   ]);
+  if (signaturesRes.error) throw readFailure("quote detail: signatures", signaturesRes.error);
   const signatures = signaturesRes.data ?? [];
   // Mint short-lived signed URLs for any drawn-signature images, org-scoped.
   const signatureImageUrls = new Map<string, string>();
@@ -319,7 +328,7 @@ export default async function EditQuotePage({
     : null;
   const warnMessage =
     sp.warn === "invoice_skipped"
-      ? "Quote accepted, but the auto-invoice didn't create. Generate it manually from /invoices/new."
+      ? "Quote accepted, but the job and invoice didn't create — nothing was half-saved. Retry below; if it keeps failing, contact support."
       : null;
 
   const publicAbsoluteUrl = quote.public_token
@@ -396,6 +405,20 @@ export default async function EditQuotePage({
           className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
         >
           {warnMessage}
+          {/* The retry is the SAME owner-accept action: on an already-accepted
+              quote it runs only the idempotent job+invoice ensure (it can never
+              re-accept, double-bill or create a second job), and it keeps this
+              warning up if the step still cannot complete. */}
+          {status === "accepted" ? (
+            <form action={acceptQuoteAsOwner.bind(null, id)} className="mt-2">
+              <button
+                type="submit"
+                className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+              >
+                Retry creating the job and invoice
+              </button>
+            </form>
+          ) : null}
         </div>
       ) : null}
       {errorMessage ? (

@@ -131,6 +131,8 @@ export const enGB: MessageCatalogue = {
   // Second-level destinations that did not previously have a nav key.
   "nav.calendar": "Calendar",
   "nav.job_templates": "Job templates",
+  "nav.variations": "Variations",
+  "nav.retention": "Retentions",
   "nav.permits": "Permits",
   "nav.rota": "Rota",
   "nav.conversations": "Conversations",

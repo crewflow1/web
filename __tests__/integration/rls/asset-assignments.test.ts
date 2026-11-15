@@ -54,7 +54,7 @@ const TOKEN = `it-aa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 async function mkOrg(slug: string): Promise<string> {
   const { data, error } = await db(serviceClient())
     .from("organizations")
-    .insert({ name: `AA ${slug}`, slug })
+    .insert({ status: "active", name: `AA ${slug}`, slug })
     .select("id")
     .single();
   expect(error, error?.message).toBeNull();

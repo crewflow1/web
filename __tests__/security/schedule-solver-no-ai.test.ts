@@ -14,11 +14,14 @@ import { resolve, dirname } from "node:path";
  *    closure is an AI module or model SDK. Importing an innocent helper that
  *    itself reaches a model is exactly how an ungoverned call site gets added.
  *
- * 2. IT PROPOSES; IT NEVER APPLIES. The pure engine holds no client and no write
- *    verb; the generate surface renders LINKS and has no form or action; the
- *    write it leads to is the pre-existing `createRotaEntry`, gate and org pin
- *    intact. Comments are stripped before matching, so prose documenting a
- *    boundary cannot satisfy the check that enforces it.
+ * 2. THE ENGINE PROPOSES; THE WRITE IS GATED. The pure engine holds no client
+ *    and no write verb. The generate surface offers two paths to a rota entry,
+ *    both gated and both ADD-ONLY: a per-line LINK to the pre-existing
+ *    `createRotaEntry` form, and a bulk `persistGeneratedRota` approve action
+ *    that RE-DERIVES the plan server-side (nothing client-supplied) under an
+ *    owner/admin capability gate and never deletes or edits. Comments are
+ *    stripped before matching, so prose documenting a boundary cannot satisfy
+ *    the check that enforces it.
  */
 
 const ROOT = resolve(__dirname, "..", "..");
@@ -143,14 +146,22 @@ describe("the rota solver proposes — it never applies", () => {
     expect(source).toContain('.eq("org_id", orgId)');
   });
 
-  it("the generate surface has no form, no server action and no mutation", () => {
+  it("the generate surface's only write is the gated, add-only approve action", () => {
     const source = code(GENERATE_PAGE);
-    expect(source).not.toContain("<form");
-    expect(source).not.toContain("action={");
+    // It persists ONLY through the dedicated bulk-approve action, which
+    // re-derives the plan server-side and runs its own owner/admin capability
+    // gate — never the single-shift create/delete actions, and never inline.
+    expect(source).toContain("persistGeneratedRota");
     expect(source).not.toContain('"use server"');
     expect(source).not.toContain("createRotaEntry");
     expect(source).not.toContain("deleteRotaEntry");
-    // What it DOES render is a link carrying the pre-fill to the rota form.
+    // Approval only ever ADDS — the surface issues no delete/edit/upsert itself.
+    for (const verb of [".delete(", ".update(", ".upsert(", ".rpc("]) {
+      expect(source.includes(verb), `generate surface contains ${verb}`).toBe(false);
+    }
+    // The write is gated in the UI by a capability check (the server re-checks).
+    expect(source).toContain("hasCapability");
+    // It still renders the per-line manual path — a link carrying the pre-fill.
     expect(source).toContain("applyHref");
   });
 

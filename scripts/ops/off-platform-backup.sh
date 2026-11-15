@@ -62,6 +62,59 @@ LOG_FILE="$LOG_DIR/backup-${DATE}.log"
 
 log(){ printf '%s [%s] %s\n' "$(date -u +%H:%M:%S)" "$STAGE" "$*" | tee -a "$LOG_FILE" >&2; }
 
+# --- RETRY: transient Supabase CLI / pooler blips (empty "no rows" responses, SSL EOF
+#     mid-dump) are the #1 cause of SPURIOUS backup failures — a run that would have
+#     succeeded on a second try aborted and went RED. Every prod call below now retries
+#     with exponential backoff; only a PERSISTENT failure is treated as real. The
+#     validation + upload gates are unchanged, so a retry can never mask a bad backup. ---
+RETRY_TRIES="${CF_BACKUP_RETRIES:-4}"
+case "$RETRY_TRIES" in ''|*[!0-9]*) RETRY_TRIES=4 ;; esac; [ "$RETRY_TRIES" -ge 1 ] || RETRY_TRIES=1
+retry(){ # retry <desc> <cmd...> — runs cmd for its exit status, retrying on failure
+  local desc="$1"; shift; local n=1 delay=5
+  while :; do
+    if "$@"; then return 0; fi
+    if [ "$n" -ge "$RETRY_TRIES" ]; then log "retry GAVE UP after $n attempts: $desc"; return 1; fi
+    log "retry $n/$RETRY_TRIES failed ($desc) — backoff ${delay}s"; sleep "$delay"; n=$((n+1)); delay=$((delay*2))
+  done
+}
+retry_capture(){ # retry_capture <varname> <desc> <cmd...> — captures stdout into VAR, retrying until a non-empty success
+  local __var="$1" desc="$2"; shift 2; local n=1 delay=5 __out=""
+  while :; do
+    if __out="$("$@" 2>>"$LOG_FILE")" && [ -n "$__out" ]; then printf -v "$__var" '%s' "$__out"; return 0; fi
+    if [ "$n" -ge "$RETRY_TRIES" ]; then log "retry_capture GAVE UP after $n attempts: $desc"; printf -v "$__var" '%s' "$__out"; return 1; fi
+    log "retry_capture $n/$RETRY_TRIES empty/failed ($desc) — backoff ${delay}s"; sleep "$delay"; n=$((n+1)); delay=$((delay*2))
+  done
+}
+# Thin wrappers (consistent cd into the linked dir) so the retry calls stay readable.
+# NOTE: `supabase db query` defaults to a PRETTY ASCII TABLE and only emits that table
+# under a non-interactive/minimal environment (e.g. launchd), which broke the old
+# grep-for-'"rows"' parsing and failed every scheduled run. `--output-format json` forces
+# a deterministic JSON ARRAY ([{...}]) regardless of TTY/env — the key reliability fix.
+_db_dump(){ ( cd "$LINK_DIR" && supabase db dump --linked "$@" ) >>"$LOG_FILE" 2>&1; }
+_db_query(){ ( cd "$LINK_DIR" && supabase db query --linked --output-format json "$1" ); }
+_storage_cp(){ ( cd "$LINK_DIR" && supabase storage cp --experimental --recursive "$1" "$2" ) >>"$LOG_FILE" 2>&1; }
+
+# query_json <desc> <sql> -> prints a JSON array to stdout, retried until the CLI returns
+# VALID JSON (so a transient blip OR a stray non-JSON line can never be mis-parsed as data).
+query_json(){
+  local desc="$1" sql="$2" n=1 delay=5 out=""
+  while :; do
+    out="$( _db_query "$sql" 2>>"$LOG_FILE" )"
+    if printf '%s' "$out" | python3 -c 'import sys,json; sys.exit(0 if isinstance(json.load(sys.stdin),list) else 1)' 2>/dev/null; then
+      printf '%s' "$out"; return 0
+    fi
+    if [ "$n" -ge "$RETRY_TRIES" ]; then log "query_json GAVE UP after $n attempts: $desc"; return 1; fi
+    log "query_json $n/$RETRY_TRIES invalid-json ($desc) — backoff ${delay}s"; sleep "$delay"; n=$((n+1)); delay=$((delay*2))
+  done
+}
+# json_field <json> <python-expr over variable d (the parsed array)> -> prints result or empty
+json_field(){ printf '%s' "$1" | python3 -c "import sys,json
+d=json.load(sys.stdin)
+try:
+    print($2)
+except Exception:
+    pass" 2>/dev/null; }
+
 # --- heartbeat: write start/finish rows to prod ops_backup_runs (best-effort; no creds logged) ---
 RUN_ID="$(date -u +%Y%m%d%H%M%S)-${HOST_TAG}"
 write_heartbeat(){
@@ -89,7 +142,7 @@ print(f"""insert into public.ops_backup_runs
    error=excluded.error, file_manifest=excluded.file_manifest;""")
 PY
 )"
-  ( cd "$LINK_DIR" && supabase db query --linked "$sql" ) >/dev/null 2>&1 \
+  ( cd "$LINK_DIR" && supabase db query --linked --output-format json "$sql" ) >/dev/null 2>&1 \
     && log "heartbeat[$st] recorded" \
     || log "heartbeat[$st] skipped (ops_backup_runs unavailable or not yet deployed)"
 }
@@ -101,23 +154,51 @@ on_error(){
   [ -z "$ERR" ] && ERR="unexpected failure (rc=$rc) at stage=$STAGE"
   log "ABORT: $ERR"
   write_heartbeat "failed" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" || true
+  # --- ALERTING: a failed backup must never be silent, even if nobody opens /admin/ops. ---
+  # (a) Persistent marker the next run / an operator can see; (b) best-effort desktop
+  # notification on the GUI session. Both are guarded so alerting can never itself abort.
+  { printf '%s run_id=%s stage=%s error=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RUN_ID" "$STAGE" "$ERR" \
+      > "$BACKUP_ROOT/LAST_FAILURE.txt"; } 2>/dev/null || true
+  if command -v osascript >/dev/null 2>&1; then
+    osascript -e "display notification \"CrewFlow backup FAILED at stage ${STAGE}. Check /admin/ops.\" with title \"CrewFlow backup\"" >/dev/null 2>&1 || true
+  fi
   exit "$rc"
 }
 trap on_error ERR
+
+# --- single-instance lock: a scheduled run must never overlap a manual (or catch-up) run.
+#     mkdir is atomic; a stale lock whose owner PID is dead is reclaimed. A live concurrent
+#     run causes a CLEAN no-op exit (0) — not a failure, and it must NOT remove the holder's lock.
+LOCK_DIR="$BACKUP_ROOT/.backup.lock"
+I_OWN_LOCK=0
+if mkdir "$LOCK_DIR" 2>/dev/null; then
+  I_OWN_LOCK=1; echo $$ > "$LOCK_DIR/pid"
+else
+  _opid="$(cat "$LOCK_DIR/pid" 2>/dev/null || echo "")"
+  if [ -n "$_opid" ] && kill -0 "$_opid" 2>/dev/null; then
+    log "another backup is already running (pid $_opid) — exiting without error"; exit 0
+  fi
+  log "reclaiming stale lock (owner pid ${_opid:-unknown} not alive)"
+  rm -rf "$LOCK_DIR"
+  mkdir "$LOCK_DIR" 2>/dev/null && { I_OWN_LOCK=1; echo $$ > "$LOCK_DIR/pid"; } || { log "FATAL: cannot acquire backup lock"; exit 1; }
+fi
+cleanup_lock(){ [ "$I_OWN_LOCK" = "1" ] && rm -rf "$LOCK_DIR" 2>/dev/null || true; }
+trap cleanup_lock EXIT
 
 log "CrewFlow off-platform backup starting (run_id=$RUN_ID, dir=$BK)"
 write_heartbeat "running" ""
 
 # === Stage 1: migration tip (currency marker) ===
 STAGE="migration_tip"
-MIG_TIP="$( ( cd "$LINK_DIR" && supabase db query --linked "select max(version) tip from supabase_migrations.schema_migrations;" ) 2>/dev/null | grep -oE '"tip": "[0-9]+"' | grep -oE '[0-9]+' | head -1 || true)"
+MIG_JSON="$(query_json "migration tip" "select max(version) as tip from supabase_migrations.schema_migrations;" || true)"
+MIG_TIP="$(json_field "$MIG_JSON" 'd[0].get("tip") or ""')"
 [ -n "$MIG_TIP" ] && log "prod migration tip: $MIG_TIP" || log "WARN: could not read migration tip"
 
 # === Stage 2: database dumps (schema / public data / auth data) ===
 STAGE="db_dump"
-( cd "$LINK_DIR" && supabase db dump --linked -f "$BK/schema.sql" ) >>"$LOG_FILE" 2>&1
-( cd "$LINK_DIR" && supabase db dump --linked --data-only -f "$BK/data.sql" ) >>"$LOG_FILE" 2>&1
-( cd "$LINK_DIR" && supabase db dump --linked --data-only --schema auth -f "$BK/auth-data.sql" ) >>"$LOG_FILE" 2>&1
+retry "schema dump"      _db_dump -f "$BK/schema.sql"                        || { ERR="schema dump failed after retries"; log "FATAL: $ERR"; false; }
+retry "public data dump" _db_dump --data-only -f "$BK/data.sql"             || { ERR="public data dump failed after retries"; log "FATAL: $ERR"; false; }
+retry "auth data dump"   _db_dump --data-only --schema auth -f "$BK/auth-data.sql" || { ERR="auth data dump failed after retries"; log "FATAL: $ERR"; false; }
 log "db dumps complete"
 
 # === Stage 3: Supabase Storage objects (customer documents) ===
@@ -127,16 +208,21 @@ STORAGE_OK=1
 # Authoritative object count from the DB is the cross-check that makes a SILENT
 # storage-skip impossible: enumeration failure (empty-vs-error ambiguity) is treated
 # as FATAL, and the captured count must equal storage.objects at validate time.
-BUCKETS_JSON="$( ( cd "$LINK_DIR" && supabase db query --linked "select id from storage.buckets order by id;" ) 2>/dev/null )"
-echo "$BUCKETS_JSON" | grep -q '"rows"' || { ERR="bucket enumeration failed (no rows in response)"; log "FATAL: $ERR"; false; }
-BUCKETS="$(echo "$BUCKETS_JSON" | grep -oE '"id": "[^"]+"' | sed 's/.*: "//; s/"$//')"
-EXPECTED_OBJ="$( ( cd "$LINK_DIR" && supabase db query --linked "select count(*) n from storage.objects;" ) 2>/dev/null | grep -oE '"n": [0-9]+' | grep -oE '[0-9]+' | head -1)"
-[ -n "$EXPECTED_OBJ" ] || { ERR="could not read authoritative storage.objects count"; log "FATAL: $ERR"; false; }
+# Deterministic JSON reads (query_json retries until the CLI returns a valid JSON array).
+# The authoritative storage.objects count is cross-checked against the files actually
+# downloaded (at validate time), so a silent storage-skip remains impossible.
+BUCKETS_JSON="$(query_json "bucket enumeration" "select id from storage.buckets order by id;")" \
+  || { ERR="bucket enumeration failed after retries (no valid JSON from db query)"; log "FATAL: $ERR"; false; }
+BUCKETS="$(json_field "$BUCKETS_JSON" 'chr(10).join(r["id"] for r in d)')"
+OBJ_JSON="$(query_json "storage object count" "select count(*) as n from storage.objects;")" \
+  || { ERR="could not read authoritative storage.objects count after retries"; log "FATAL: $ERR"; false; }
+EXPECTED_OBJ="$(json_field "$OBJ_JSON" 'd[0]["n"]')"
+[ -n "$EXPECTED_OBJ" ] || { ERR="could not parse authoritative storage.objects count"; log "FATAL: $ERR"; false; }
 STORAGE_OBJ_COUNT=0
 for b in $BUCKETS; do
   # cp appends the bucket name to the dest, so dest is "$BK/storage" (not ".../$b")
   # to avoid a doubled "storage/<b>/<b>/..." path.
-  if ( cd "$LINK_DIR" && supabase storage cp --experimental --recursive "ss:///$b" "$BK/storage" ) >>"$LOG_FILE" 2>&1; then
+  if retry "storage cp bucket '$b'" _storage_cp "ss:///$b" "$BK/storage"; then
     n=$(find "$BK/storage/$b" -type f 2>/dev/null | wc -l | tr -d ' ')
     STORAGE_OBJ_COUNT=$((STORAGE_OBJ_COUNT + n))
     log "storage bucket '$b': $n object(s)"
@@ -264,5 +350,6 @@ STAGE="done"
 STATUS="success"
 FINISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 write_heartbeat "success" "$FINISHED_AT" || true
+rm -f "$BACKUP_ROOT/LAST_FAILURE.txt" 2>/dev/null || true  # clear any stale failure marker now that we have a verified success
 log "BACKUP SUCCESS (db+storage dumped, validated, encrypted, upload=$UPLOAD_STATUS, tip=$MIG_TIP)"
 exit 0

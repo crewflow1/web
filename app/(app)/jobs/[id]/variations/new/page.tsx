@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { loadJobForOrg } from "@/lib/jobs/load";
-import { createVariation } from "@/app/(app)/quotes/actions";
+import { createVariation } from "@/app/(app)/quotes/variation-actions";
 import { VariationForm } from "./_form";
 import { ImportButton } from "@/components/import/import-button";
 import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";

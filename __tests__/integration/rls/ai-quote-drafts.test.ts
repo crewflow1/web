@@ -103,7 +103,7 @@ describeIntegration("ai_quote_drafts · isolation + lifecycle (20261068)", () =>
   async function makeOrgWithQuote(label: string): Promise<{ org: string; quote: string }> {
     const o = await svc()
       .from("organizations")
-      .insert({ name: `Quote Writer ${label}`, slug: `${T}-${label}` })
+      .insert({ status: "active", name: `Quote Writer ${label}`, slug: `${T}-${label}` })
       .select("id")
       .single();
     expect(o.error, o.error?.message).toBeNull();

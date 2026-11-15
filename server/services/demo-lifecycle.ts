@@ -12,6 +12,7 @@ import {
   setupPaymentEmail,
 } from "@/lib/email/demo-templates";
 import { createOrReuseDemoSetupCheckout } from "@/lib/stripe/demo-checkout";
+import { buildCallbackMagicLink } from "@/lib/auth/magic-link";
 import { env } from "@/lib/env";
 
 /**
@@ -641,9 +642,19 @@ export async function promoteDemoToCustomer(args: {
         targetId: args.demo.id,
         metadata: { reason: msg, step: "generateLink" },
       });
-    } else if (linkData?.properties?.action_link) {
-      magicLinkUrl = linkData.properties.action_link;
-      done.push("magic_link_generated");
+    } else {
+      // Embed a link at OUR /auth/callback carrying token_hash + type, NOT
+      // GoTrue's hosted action_link. The hosted link returns the session in a
+      // URL hash fragment (implicit flow) the server callback can't read — it
+      // would burn the one-time token and bounce the customer to /login. The
+      // token_hash shape is what the callback's verifyOtp path exchanges
+      // cross-device. See lib/auth/magic-link.ts.
+      magicLinkUrl = buildCallbackMagicLink({
+        appUrl,
+        properties: linkData?.properties,
+        type: "magiclink",
+      });
+      if (magicLinkUrl) done.push("magic_link_generated");
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

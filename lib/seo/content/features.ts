@@ -60,7 +60,7 @@ export const FEATURES: FeaturePage[] = [
       { q: "Do field staff need a separate app?", a: "No. Field staff get a mobile-first dashboard built for someone standing in a van, today's jobs, clock-in, and the ability to attach photos to the right job." },
       { q: "Does the job link to the quote and invoice?", a: "Yes, that's the point. A job is created from an accepted quote and becomes an invoice when the work is done, with the same customer, value and line items flowing through." },
     ],
-    related: ["construction-crm", "quoting-software", "invoicing-software", "scheduling-software", "rams-software"],
+    related: ["construction-crm", "quoting-software", "invoicing-software", "scheduling-software", "subcontractor-management", "rams-software"],
     industries: ["builders", "electricians", "plumbers", "roofers"],
   },
   {
@@ -369,7 +369,7 @@ export const FEATURES: FeaturePage[] = [
       { q: "Where do the hours come from?", a: "Straight from clocked timesheets. Because time tracking and payroll are one system, you're never re-keying paper timesheets into separate payroll software." },
       { q: "Can my accountant get the data?", a: "Yes. Every pay run exports to CSV, so handing off to your accountant or bookkeeper is a clean export rather than a manual rebuild." },
     ],
-    related: ["timesheet-software", "cis-software", "scheduling-software", "tax-software", "job-costing-software"],
+    related: ["timesheet-software", "cis-software", "subcontractor-management", "scheduling-software", "tax-software", "job-costing-software"],
     industries: ["builders", "groundworks", "electricians"],
   },
   {
@@ -419,7 +419,7 @@ export const FEATURES: FeaturePage[] = [
       { q: "Does it update as the job runs?", a: "Yes. As hours are clocked and materials are logged, the job's margin updates, so you're not waiting until the job's finished to find out it lost money." },
       { q: "How do the colour bands work?", a: "Each job shows a green, amber or red margin band so you can scan a list of jobs and instantly see which are healthy and which need attention." },
     ],
-    related: ["timesheet-software", "invoicing-software", "quoting-software", "expense-tracking", "tax-software"],
+    related: ["timesheet-software", "invoicing-software", "quoting-software", "subcontractor-management", "expense-tracking", "tax-software"],
     industries: ["builders", "groundworks", "roofers"],
   },
   {
@@ -613,16 +613,22 @@ export const FEATURES: FeaturePage[] = [
     slug: "cis-software",
     keyword: "CIS software",
     secondaryKeywords: [
+      "CIS software UK",
+      "CIS payroll software UK",
       "CIS software for subcontractors",
       "construction CIS software",
       "CIS deductions software",
-      "CIS payroll software",
+      "CIS nil return software",
+      "CIS payment statement",
+      "CIS verification software",
+      "construction industry payroll software",
+      "CIS and payroll software",
     ],
     name: "CIS",
     navLabel: "CIS",
     title: "CIS Software for Construction",
     metaDescription:
-      "CIS software that works out subcontractor deductions, tracks verification, and produces monthly CIS returns and payment & deduction statements. Book a demo.",
+      "CIS software that handles subcontractor deductions, verification, monthly CIS returns and statements, alongside PAYE payroll for your own team, in one system. Book a demo.",
     eyebrow: "CIS",
     h1: "CIS software that handles the deductions, statements and returns for you",
     intro:
@@ -655,6 +661,42 @@ export const FEATURES: FeaturePage[] = [
         h2: "The monthly return, totalled and ready to file",
         body: "At month end CrewFlow totals every subcontractor, every payment and every deduction into the figures your CIS300 monthly return needs. CrewFlow produces the numbers and the statements; you or your accountant submit the return to HMRC, so filing is a five-minute check rather than a reconciliation from a shoebox of invoices.",
       },
+      {
+        h2: "CIS for subcontractors and PAYE payroll for your own team, in one system",
+        body: "Most construction firms pay two kinds of people: subcontractors under CIS and employees under PAYE. Run them in separate tools and every month end means reconciling two sets of figures. CrewFlow handles both in the same system, so the people side of the business closes together instead of in two places.",
+        bullets: [
+          "CIS deductions and statements for your subcontractors",
+          "PAYE payroll for employees, built from the hours they've clocked",
+          "One system, so you're not re-keying between CIS and payroll",
+        ],
+      },
+      {
+        h2: "What happens when you've made no CIS payments that month",
+        body: "Even in a month with no subcontractor payments, HMRC still expects a CIS300 return showing zero payments. This is a nil return, and failing to file one — even when there's nothing to report — still triggers a penalty. The deadline is the same: 19th of the month following the CIS tax month. CrewFlow's monthly return view shows you clearly when a month has no CIS payments and what a nil return means, so you're not filing or missing something blind.",
+        bullets: [
+          "Zero-payment months shown clearly: nil return required, not an oversight",
+          "Same deadline applies: 19th of the following month",
+          "You or your accountant file it; CrewFlow confirms the figures are zero",
+        ],
+      },
+      {
+        h2: "How subcontractor verification works",
+        body: "Before you pay a subcontractor under CIS for the first time, you must verify them with HMRC to confirm their registration status and the correct deduction rate. That means contacting HMRC's CIS online service with the subcontractor's name, UTR (Unique Taxpayer Reference) and national insurance number, then recording the verification number and status HMRC gives back. CrewFlow stores that verification number and status against each subcontractor record, so the right deduction rate flows automatically to every payment and you can see who's verified before you pay, not after.",
+        bullets: [
+          "Verification number and status stored per subcontractor",
+          "Deduction rate set from their verified status and applied automatically",
+          "Unverified subbies visible before payment, not after a wrong deduction",
+        ],
+      },
+      {
+        h2: "CIS payment statements: what they are and why subcontractors need them",
+        body: "Every time you pay a subcontractor under CIS, you must issue them a payment and deduction statement — sometimes called a CIS deduction voucher — showing the gross amount, the deduction taken and the net payment. The subcontractor uses this to claim credit for the tax deducted against their own tax bill. CrewFlow produces a clean PDF statement for every subcontractor payment automatically, so this admin is part of paying, not a separate job after.",
+        bullets: [
+          "PDF payment & deduction statement produced per subcontractor payment",
+          "Shows gross amount, deduction rate, deduction taken, net paid",
+          "Ready to send to the subcontractor as proof of deduction",
+        ],
+      },
     ],
     outcomes: [
       { label: "Right rate, every time", body: "20%, 30% or gross applied automatically per subcontractor." },
@@ -666,8 +708,14 @@ export const FEATURES: FeaturePage[] = [
       { q: "Does CrewFlow file the CIS300 return to HMRC?", a: "No, and like our tax figures that's deliberate. CrewFlow produces the monthly CIS300 totals and the subcontractor statements; you or your accountant submit the return to HMRC. It removes the admin, not your control over filing." },
       { q: "Can I produce subcontractor payment and deduction statements?", a: "Yes. Every subcontractor payment produces a payment & deduction statement as a PDF you can send the subcontractor as proof of the tax deducted." },
       { q: "Does it track subcontractor verification?", a: "Yes. You record each subcontractor's HMRC verification number and status, so you always know who's verified and at what rate before you pay them." },
+      { q: "Can CrewFlow run CIS and payroll together?", a: "Yes. CrewFlow handles CIS deductions and statements for your subcontractors and PAYE payroll for the employees on your books, in one system, so you're not reconciling CIS in one tool and payroll in another every month." },
+      { q: "Is there free CIS software?", a: "HMRC offers a free online tool for filing the monthly CIS300 return, but it won't verify subcontractors as you go, work out and log deductions on every payment, produce payment and deduction statements, or connect to how you pay your own team. CrewFlow isn't free, but it does the work around the filing so the return is a quick check." },
+      { q: "What is a CIS payment statement?", a: "A CIS payment statement — also called a deduction voucher or payment and deduction statement — is a document you must issue to every subcontractor each time you deduct CIS tax from their payment. It shows the gross amount paid, the amount of CIS deducted, and the net payment. The subcontractor uses it to claim credit for the tax withheld. CrewFlow produces one as a PDF for every subcontractor payment." },
+      { q: "What is a CIS nil return and do I still need to file one?", a: "A nil return is the CIS300 return you file for a month when you've made no payments to CIS subcontractors. HMRC still requires it even if there's nothing to report — failing to file a nil return triggers the same penalty structure as missing a return with actual figures. The deadline is the same: 19th of the month following the CIS tax month." },
+      { q: "How do I verify a subcontractor for CIS?", a: "Contact HMRC's CIS online service with the subcontractor's full name as registered with HMRC, their UTR (Unique Taxpayer Reference) and national insurance number. HMRC confirms whether they're registered and returns a verification number along with their deduction status: gross (no deduction), standard 20% net, or higher 30% for anyone unregistered or unverifiable. Record the verification number — you'll need it on the monthly return." },
+      { q: "What are the CIS deduction rates in 2026?", a: "There are three CIS deduction rates: gross rate (0%) for subcontractors HMRC has approved to receive payments gross; standard net rate (20%) for registered subcontractors without gross payment status; and higher rate (30%) for anyone HMRC can't verify or who isn't registered under CIS. The rate applies to the labour element of a payment — materials are excluded from the CIS deduction calculation." },
     ],
-    related: ["invoicing-software", "payroll-software", "tax-software", "expense-tracking", "job-costing-software"],
+    related: ["invoicing-software", "payroll-software", "subcontractor-management", "tax-software", "expense-tracking", "job-costing-software"],
     industries: ["builders", "groundworks", "scaffolding", "roofers"],
   },
   {
@@ -887,7 +935,7 @@ export const FEATURES: FeaturePage[] = [
       { q: "Why does retention get lost without this?", a: "Because the release date lands months after the job's finished, when attention has moved on. Tracked against the job with its release date, it stays visible until it's paid instead of quietly being written off." },
       { q: "Can I see all my retention at once?", a: "Yes. CrewFlow shows total retention outstanding across the business alongside aged debt, so the whole picture of money owed is in one place." },
     ],
-    related: ["invoicing-software", "cis-software", "job-costing-software", "payments-reconciliation"],
+    related: ["invoicing-software", "cis-software", "subcontractor-management", "job-costing-software", "payments-reconciliation"],
     industries: ["builders", "groundworks", "scaffolding", "electricians"],
   },
   {
@@ -948,21 +996,23 @@ export const FEATURES: FeaturePage[] = [
     slug: "subcontractor-management",
     keyword: "subcontractor management software",
     secondaryKeywords: [
+      "subcontractor management software UK",
       "subcontractor compliance software",
-      "subcontractor payment software",
+      "subcontractor payment software UK",
       "manage subcontractors construction",
+      "CIS subcontractor management",
     ],
     name: "Subcontractors",
     navLabel: "Subcontractors",
     title: "Subcontractor Management Software",
     metaDescription:
-      "Manage subcontractors in one place: records, insurance and certificate expiries, purchase orders and bills, payments and CIS deductions. Built for UK construction. Book a demo.",
+      "Manage subcontractors in one place: records, compliance documents, purchase orders and bills, payments and CIS deductions. Built for UK construction. Book a demo.",
     eyebrow: "Subcontractors",
     h1: "Subcontractor management software that keeps your subbies in order",
     intro:
       "On most jobs your subcontractors are most of your workforce, yet they usually live in a spreadsheet of phone numbers and a drawer of out-of-date insurance certificates. When a principal contractor asks whether your subbie's public liability is current, you shouldn't have to go hunting.\n\nCrewFlow keeps each subcontractor's records, compliance documents, purchase orders, bills, payments and CIS in one place.",
     heroBullets: [
-      "A record per subcontractor, with insurance and certificate expiries",
+      "A record per subcontractor, with their compliance documents attached",
       "Purchase orders and bills raised against the subbie",
       "Payments tracked, with CIS deductions applied",
       "The subcontractor relationship in one place, not a spreadsheet",
@@ -973,8 +1023,17 @@ export const FEATURES: FeaturePage[] = [
     },
     sections: [
       {
-        h2: "Every subcontractor, with their paperwork current",
-        body: "Keep a record for each subcontractor with their insurance and certificate expiries tracked, so you know at a glance whose public liability or qualification is about to lapse, before it costs you a place on a site.",
+        h2: "Every subcontractor, with their documents in one place",
+        body: "Keep a record for each subcontractor with their insurance certificates and qualifications attached, so when a principal contractor asks whether a subbie is compliant, the paperwork is there on their record, not buried in an inbox or scattered across WhatsApp.",
+      },
+      {
+        h2: "Compliance documents stored where the subcontractor is",
+        body: "Attach each subcontractor's documents — public and employers' liability insurance, trade qualification certificates, any paperwork a principal contractor asks for — directly to their record. When someone asks for a subbie's current evidence, it's there in one place instead of scattered through inboxes and WhatsApp threads.",
+        bullets: [
+          "Insurance and qualification certificates per subcontractor",
+          "Documents stay on the record across every job and site",
+          "One place to look, not a chain of forwarded emails",
+        ],
       },
       {
         h2: "Orders, bills and payments against the subbie",
@@ -984,16 +1043,29 @@ export const FEATURES: FeaturePage[] = [
         h2: "CIS handled where the payment happens",
         body: "Because payments to subcontractors run through CrewFlow, the right CIS deduction is applied as you pay, and the statements and monthly totals come out the other side. Subcontractor management and CIS are the same flow, not two.",
       },
+      {
+        h2: "UK payment law and what it means for subcontractor payments",
+        body: "The Housing Grants, Construction and Regeneration Act gives subcontractors legal rights over how and when they're paid. Subcontractors can submit applications for payment at agreed intervals; once a valid application lands, you have a fixed window to respond. If you're not paying the full amount, a pay-less notice must be issued in writing before a specified deadline — miss it and you lose the right to deduct, regardless of your position on the work done. Having purchase orders, bills and payment history against each subcontractor in one place gives you the paper trail to respond correctly and on time, not to reconstruct it from bank statements and messages.",
+        bullets: [
+          "Purchase orders and bills per subbie create a clear commercial record",
+          "Payment history tied to the subcontractor and the job",
+          "The documented record you need when responding to applications for payment",
+        ],
+      },
     ],
     outcomes: [
-      { label: "Compliance you can prove", body: "Insurance and certificate expiries tracked per subcontractor." },
+      { label: "Compliance you can prove", body: "Insurance and compliance documents stored per subcontractor, findable when you need them." },
       { label: "The money, organised", body: "POs, bills and payments against each subbie, not a spreadsheet." },
       { label: "CIS built in", body: "The right deduction applied where you pay, statements produced." },
     ],
     faqs: [
-      { q: "What does CrewFlow manage for subcontractors?", a: "A record per subcontractor with insurance and certificate expiries, purchase orders and bills raised against them, payments tracked, and CIS deductions applied, the whole relationship in one place." },
-      { q: "Does it track subcontractor insurance and certificates?", a: "Yes. Each subcontractor's insurance and certificate expiries are tracked, so you can prove a subbie is current before you put them on a principal contractor's site." },
+      { q: "What does CrewFlow manage for subcontractors?", a: "A record per subcontractor with their compliance documents attached, purchase orders and bills raised against them, payments tracked, and CIS deductions applied — the whole relationship in one place." },
+      { q: "Can CrewFlow store insurance and compliance documents for subcontractors?", a: "Yes. Attach each subcontractor's insurance certificates, qualification documents and any other compliance paperwork to their record. When a principal contractor asks for a subbie's current evidence, it's on their record rather than scattered through emails and WhatsApp." },
       { q: "How does CIS fit with subcontractor management?", a: "They're the same flow. Because you pay subcontractors through CrewFlow, the right CIS deduction is applied as you pay and the statements and monthly totals are produced, with the detail on the CIS page." },
+      { q: "What is an application for payment in construction?", a: "An application for payment is a subcontractor's formal request for money owed, submitted at agreed intervals or milestones set out in the contract. Under the Construction Act, once a valid application is received you have a fixed window to either pay the full amount or issue a pay-less notice setting out what you intend to pay and why. Missing that window means the full amount in the application becomes payable." },
+      { q: "What is a pay-less notice for subcontractors?", a: "A pay-less notice is a written notice issued to a subcontractor before a fixed deadline — typically the prescribed period under your contract — stating the amount you intend to pay and the basis for any difference from the application. Without a valid pay-less notice issued on time, you lose the right to pay less than the application amount, regardless of any dispute over the work." },
+      { q: "Can I manage multiple subcontractors on one job?", a: "Yes. Each subcontractor has their own record in CrewFlow, and purchase orders, bills and payments can be raised against individual subbies tied to a specific job, so you can see the full subcontractor picture across the job without piecing it together from emails and bank statements." },
+      { q: "How do I see what I've paid each subcontractor?", a: "Every payment to a subcontractor is logged against their record and the job it belongs to, with the CIS deduction broken out. You can see the payment history per subcontractor and the total subcontractor spend on a job without reconstructing it from bank statements or messages." },
     ],
     related: ["cis-software", "job-costing-software", "expense-tracking", "invoicing-software"],
     industries: ["builders", "groundworks", "scaffolding", "roofers"],

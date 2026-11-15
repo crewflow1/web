@@ -10,8 +10,17 @@ import {
   sendStaffInvite,
   type StaffInviteMetadata,
 } from "@/server/services/staff-invite";
-import { requireOrgContext, type OrgContext } from "@/server/auth/session";
-import { listUserShiftsOnDay, type RotaClient } from "@/server/services/rota";
+import { requireOrgContext, type OrgContext } from "@/server/auth/session"; import { isHeldStatus } from "@/lib/auth/org-status";
+import {
+  listUserShiftsOnDay,
+  listWeekRotaEntries,
+  insertRotaEntries,
+  type RotaClient,
+  type RotaWriteClient,
+  type RotaInsertRow,
+} from "@/server/services/rota";
+import { buildRotaPlan } from "@/server/services/schedule-integrity";
+import { planRotaPersistence } from "@/lib/schedule/persist";
 import {
   bestEffortPushRota,
   bestEffortDeleteRotaEvent,
@@ -42,7 +51,12 @@ import {
   notifyStaffOfLeaveDecision,
 } from "@/lib/email/send-leave";
 import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
-import { requireOwner, isOwner, canManageStaff } from "@/server/auth/capabilities";
+import {
+  requireOwner,
+  isOwner,
+  canManageStaff,
+  requireCapabilityFor,
+} from "@/server/auth/capabilities";
 import { recordPermissionEvent } from "@/server/services/permission-audit";
 
 /**
@@ -59,6 +73,17 @@ import { recordPermissionEvent } from "@/server/services/permission-audit";
 
 const uuid = z.string().uuid();
 
+/**
+ * BOUNDARY-TABLE WRITES. `memberships` and `users` are tenant-boundary tables:
+ * RLS gives clients SELECT policies only and (since 20261295) no write grant, so
+ * a write through the user-JWT client can never succeed — invite (direct add),
+ * role change, profile edit and remove all used to fail for every caller.
+ * House rule: authorise on the SERVER from the session (requireOrgContext +
+ * requireAdmin / requireOwner / canManageStaff below), then write with the
+ * service role, pinned to `ctx.org.id`. A target user id from the request is
+ * only ever used together with that org pin, after a membership read proved the
+ * target belongs to the caller's active org.
+ */
 function requireAdmin(ctx: OrgContext): void {
   // ctx.membership is the caller's OWN row in the ACTIVE org, resolved by
   // requireOrgContext with a user_id filter. Don't re-query memberships
@@ -69,6 +94,9 @@ function requireAdmin(ctx: OrgContext): void {
   if (role !== "owner" && role !== "admin") {
     redirect("/dashboard?error=forbidden");
   }
+  // D-17: a suspended / cancelled company is read-only — staff administration is an
+  // operational write (these writes use the service role, so RLS would not stop them).
+  if (isHeldStatus(ctx.org?.status)) redirect("/dashboard?error=read_only");
 }
 
 // -------------------------------------------------------------------------
@@ -141,7 +169,7 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
   const supabase = await createClient();
   const { data: existing } = await supabase
     .from("users")
-    .select("id, email, full_name, phone, employment_type")
+    .select("id, email, full_name")
     .eq("email", data.email)
     .maybeSingle();
 
@@ -210,7 +238,9 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
     };
   }
 
-  const { data: inserted, error: memErr } = await supabase
+  // Service-role write (boundary table) — after the owner / staff:manage gate
+  // above; org from the session, user from the RLS-visible lookup above.
+  const { data: inserted, error: memErr } = await createAdminClient()
     .from("memberships")
     .insert({
       org_id: ctx.org.id,
@@ -245,9 +275,17 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
   const admin = createAdminClient();
   type UserUpdate = { full_name?: string; phone?: string; employment_type?: string };
   const userUpdates: UserUpdate = {};
+  // phone / employment_type are not Data-API readable (20261342): read the
+  // current values with the service role (this action is admin-gated above).
+  const { data: existingPrivate, error: existingPrivateError } = await admin
+    .from("users")
+    .select("phone, employment_type")
+    .eq("id", existing.id)
+    .maybeSingle();
+  if (existingPrivateError) throw readFailure("staff invite: existing profile", existingPrivateError);
   if (!existing.full_name && data.full_name) userUpdates.full_name = data.full_name;
-  if (!existing.phone && data.phone) userUpdates.phone = data.phone;
-  if (!existing.employment_type && data.employment_type)
+  if (!existingPrivate?.phone && data.phone) userUpdates.phone = data.phone;
+  if (!existingPrivate?.employment_type && data.employment_type)
     userUpdates.employment_type = data.employment_type;
   if (Object.keys(userUpdates).length > 0) {
     await admin.from("users").update(userUpdates).eq("id", existing.id);
@@ -394,6 +432,9 @@ export async function updateStaffRole(userId: string, formData: FormData) {
     .eq("user_id", userId)
     .maybeSingle();
   if (targetError) throw readFailure("staff: role-change target", targetError);
+  // The target must be a member of the caller's ACTIVE org — nothing below runs
+  // for an id that is not (the service-role write is pinned to this org anyway).
+  if (!target) redirect(`/staff?error=not_a_member`);
   if (target?.role === "owner" && (ownerCount ?? 0) <= 1) {
     redirect(`/staff/${userId}?error=last_owner_lock`);
   }
@@ -411,7 +452,9 @@ export async function updateStaffRole(userId: string, formData: FormData) {
     redirect(`/staff/${userId}?error=forbidden`);
   }
 
-  const { error, count } = await supabase
+  // Service-role write (boundary table) — after every gate above, pinned to the
+  // session's active org; `userId` was proven a member of it by the read above.
+  const { error, count } = await createAdminClient()
     .from("memberships")
     .update({ role: parsed.data.role }, { count: "exact" })
     .eq("org_id", ctx.org.id)
@@ -436,8 +479,9 @@ export async function updateStaffRole(userId: string, formData: FormData) {
     detail: { from: target?.role ?? null, to: parsed.data.role },
   });
 
-  revalidatePath("/staff");
-  revalidatePath(`/staff/${userId}`);
+  // (no revalidatePath: the client follows the redirect with a full page load,
+  // and a revalidation payload here stalled the action response ~10 s — D-12.)
+  // -
   redirect(`/staff/${userId}?saved=role`);
 }
 
@@ -455,15 +499,29 @@ export async function updateStaffProfile(
   const result = validateFormData(formData, updateStaffProfileSchema);
   if (!result.ok) return result.state as FormState<Record<string, unknown>>;
 
-  // Verify the target user is actually a member of this org.
+  // Verify the target user is actually a member of this org — and learn their
+  // role, which decides who may edit them.
   const supabase = await createClient();
-  const { count: membershipCount } = await supabase
+  const { data: targetMember, error: targetMemberError } = await supabase
     .from("memberships")
-    .select("id", { count: "exact", head: true })
+    .select("role")
     .eq("org_id", ctx.org.id)
-    .eq("user_id", userId);
-  if ((membershipCount ?? 0) === 0) {
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (targetMemberError) throw readFailure("staff: profile target", targetMemberError);
+  if (!targetMember) {
     return formError("That user isn't a member of this organisation.");
+  }
+  // Same rule as role changes (R3): an OWNER's or ADMIN's record — which includes
+  // their pay — is editable by the owner only (so an admin can never set their
+  // own or a fellow admin's pay); a normal staff member's needs `staff:manage`.
+  // A member's own name/phone are edited on /settings, not here.
+  if (targetMember.role === "owner" || targetMember.role === "admin") {
+    if (ctx.membership.role !== "owner") {
+      return formError("Only the owner can edit an owner's or admin's record.");
+    }
+  } else if (!(await canManageStaff(ctx, user))) {
+    return formError("You don't have permission to edit staff records.");
   }
 
   const emergency =
@@ -477,16 +535,21 @@ export async function updateStaffProfile(
         }
       : null;
 
-  const { error } = await supabase
+  // Service-role write (boundary table) — `userId` was proven a member of the
+  // caller's active org above, and the gates above decided the caller may edit.
+  const { error, count: profileCount } = await createAdminClient()
     .from("users")
-    .update({
-      full_name: result.data.full_name ?? null,
-      phone: result.data.phone ?? null,
-      employment_type: result.data.employment_type ?? null,
-      start_date: result.data.start_date ?? null,
-    })
+    .update(
+      {
+        full_name: result.data.full_name ?? null,
+        phone: result.data.phone ?? null,
+        employment_type: result.data.employment_type ?? null,
+        start_date: result.data.start_date ?? null,
+      },
+      { count: "exact" },
+    )
     .eq("id", userId);
-  if (error) {
+  if (error || profileCount !== 1) {
     console.error("[staff] profile update failed", error);
     return formError(
       "Couldn't save changes. Try again.",
@@ -548,7 +611,12 @@ export async function removeStaff(userId: string) {
     redirect(`/staff/${userId}?error=forbidden`);
   }
 
-  const { error, count } = await supabase
+  // The target must be a member of the caller's ACTIVE org.
+  if (!target) redirect(`/staff?error=not_a_member`);
+
+  // Service-role write (boundary table) — after the gates above, pinned to the
+  // session's active org.
+  const { error, count } = await createAdminClient()
     .from("memberships")
     .delete({ count: "exact" })
     .eq("org_id", ctx.org.id)
@@ -683,6 +751,145 @@ export async function deleteRotaEntry(entryId: string) {
   }
   revalidatePath("/staff/rota");
   redirect("/staff/rota?saved=removed");
+}
+
+/**
+ * Approve and SAVE the generated rota — the write half of /staff/rota/generate.
+ *
+ * The generate page proposes a whole rota but writes nothing; this is where an
+ * owner turns that proposal into real `rota_entries`. It is deliberately strict:
+ *
+ *   • AUTHZ — `requireCapabilityFor(rota:create)`. Owner always; an admin only
+ *     with the grant; anyone else is redirected. RLS's admin `WITH CHECK` is the
+ *     fail-closed boundary underneath, so a non-admin can never write even if a
+ *     gate were bypassed.
+ *
+ *   • SERVER-DERIVED, NEVER CLIENT-TRUSTED — the plan is RE-GENERATED here from
+ *     the org's own rows (deterministic solver), so nothing the browser submits
+ *     can inject a row, a person or a time. The form carries no assignment data.
+ *
+ *   • IDEMPOTENT — we re-read the live rota for the window and skip any shift
+ *     that is already saved, so clicking Approve twice does not double-book. (The
+ *     solver also stops proposing a job once it is staffed, so the second run is
+ *     usually empty anyway; the dedup is the belt to that braces.)
+ *
+ *   • NEVER OVERWRITE — a proposal that clashes with a shift already on the rota
+ *     (e.g. one confirmed by hand since the plan was generated) is left out and
+ *     reported, not written over. This path only ever INSERTs.
+ *
+ *   • ALL-OR-NOTHING — the clean rows are written in one atomic insert.
+ *
+ * Returns a FormState. On a clean save it sets `redirectTo` so the client (which
+ * must use window.location.assign — this route sits at swap-depth ≥4 where Next
+ * 15.5 drops router navigations) lands on the rota with the saved shifts shown.
+ * When something was skipped it stays put and explains what and why.
+ */
+export async function persistGeneratedRota(
+  _prevState: FormState<Record<string, unknown>>,
+  _formData: FormData,
+): Promise<FormState<Record<string, unknown>>> {
+  const { ctx, user } = await requireOrgContext();
+  // Owner/admin-only write gate (R4 capability helper). Owner passes
+  // unconditionally; a denied caller is redirected to their dashboard.
+  await requireCapabilityFor(ctx, user, "rota", "create");
+
+  try {
+    const { plan, window } = await buildRotaPlan(ctx.org.id);
+    if (plan.assignments.length === 0) {
+      return formSuccess({
+        successMessage:
+          "Nothing to save — every job in the window is already staffed.",
+      });
+    }
+
+    const supabase = await createClient();
+
+    // Re-read the LIVE rota across the whole plan window (pinned to the active
+    // org, like every other rota read) so dedup + clash checks see shifts added
+    // since the plan was generated.
+    const startIso = new Date(window.interval.start).toISOString();
+    const endIso = new Date(window.interval.end).toISOString();
+    const existing = await listWeekRotaEntries(
+      supabase as unknown as RotaClient,
+      ctx.org.id,
+      startIso,
+      endIso,
+    );
+
+    const persist = planRotaPersistence(
+      plan.assignments.map((a) => ({
+        userId: a.userId,
+        jobId: a.jobId,
+        startIso: a.startIso,
+        endIso: a.endIso,
+        notes: `Auto-generated rota · ${a.explanation}`.slice(0, 1000),
+      })),
+      existing.map((e) => ({
+        user_id: e.user_id,
+        job_id: e.job_id,
+        starts_at: e.starts_at,
+        ends_at: e.ends_at,
+      })),
+    );
+
+    const rows: RotaInsertRow[] = persist.toInsert.map((a) => ({
+      org_id: ctx.org.id,
+      user_id: a.userId,
+      job_id: a.jobId,
+      starts_at: a.startIso,
+      ends_at: a.endIso,
+      notes: a.notes ?? null,
+      created_by: user.id,
+    }));
+
+    const inserted = await insertRotaEntries(
+      supabase as unknown as RotaWriteClient,
+      rows,
+    );
+
+    revalidatePath("/staff/rota");
+
+    // Best-effort one-way calendar push per saved shift. A no-op while the
+    // calendar integration is dark; never blocks or fails the save.
+    for (const r of inserted) {
+      await bestEffortPushRota(ctx.org.id, r.id);
+    }
+
+    const saved = inserted.length;
+    const skipped = persist.alreadySaved.length;
+    const clashes = persist.conflicts.length;
+
+    const parts: string[] = [];
+    parts.push(
+      saved === 0
+        ? "No new shifts were added."
+        : `Saved ${saved} ${saved === 1 ? "shift" : "shifts"} to the rota.`,
+    );
+    if (skipped > 0) {
+      parts.push(
+        `${skipped} ${skipped === 1 ? "was" : "were"} already on the rota and left as ${skipped === 1 ? "it was" : "they were"}.`,
+      );
+    }
+    if (clashes > 0) {
+      parts.push(
+        `${clashes} ${clashes === 1 ? "clashed" : "clashed"} with an existing shift and ${clashes === 1 ? "was" : "were"} left untouched — open the schedule check to resolve ${clashes === 1 ? "it" : "them"}.`,
+      );
+    }
+    const successMessage = parts.join(" ");
+
+    // Clean save (nothing left behind) → send them to the rota to see it. When
+    // something was skipped, stay here with the explanation so it is not missed.
+    const clean = clashes === 0;
+    return formSuccess({
+      successMessage,
+      redirectTo: clean && saved > 0 ? "/staff/rota?saved=generated" : undefined,
+    });
+  } catch (err) {
+    console.error("[rota] persist generated rota failed", err);
+    return formError(
+      "Couldn't save the generated rota. Nothing was changed — try again.",
+    );
+  }
 }
 
 // -------------------------------------------------------------------------

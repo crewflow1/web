@@ -188,6 +188,8 @@ const ALLOWLIST: Record<string, string> = {
     "Lease-claim queue with its OWN wall-clock budget (~50s) + spend cap; each batch is claimed under a lease (claimed_by guard), so processed memories are not re-claimed. Already budget-bounded.",
   "memory-lifecycle":
     "Bounded by p_limit RPCs and its OWN wall-clock deadline (Date.now() + maxRunMs); sweeps are terminal/idempotent, so processed rows leave the candidate set.",
+  "tenant-search-embed":
+    "Same lease-claim class as memory-embed: the embedding worker claims each batch of tenant_search_documents under a lease (claimed_by guard + FOR UPDATE SKIP LOCKED, ordered embedding_next_attempt_at ASC NULLS FIRST), with its OWN wall-clock budget (~50s) and bounded maxBatches, so a processed document leaves the pending set and overlapping passes never re-serve it. The preceding backfill is a bounded per-table upsert (perTableLimit, clamped ≤5000) whose drift trigger no-ops unchanged rows — an internal single-pass refresh, not a persistent external feed. Dark-safe: 204s before any work when no embedding provider is configured.",
   "notifications-drain":
     "LIMIT-bounded (DRAIN_BATCH_SIZE=50); a sent row leaves the queue and a failed row reschedules via backoff (scheduled_for moves forward = recency rotation) — self-draining.",
   "push-drain":

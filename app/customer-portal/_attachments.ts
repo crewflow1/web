@@ -67,16 +67,19 @@ async function flaggedFor(
   admin: ReturnType<typeof createAdminClient>,
   table: PortalTargetTable,
   targetIds: string[],
+  orgId: string,
 ): Promise<AttachmentRow[]> {
   const out: AttachmentRow[] = [];
   type Chain = {
     select: (c: string) => {
       eq: (k: string, v: unknown) => {
         eq: (k: string, v: unknown) => {
-          in: (
-            k: string,
-            v: unknown[],
-          ) => PromiseLike<{ data: AttachmentRow[] | null; error: SupabaseReadError | null }>;
+          eq: (k: string, v: unknown) => {
+            in: (
+              k: string,
+              v: unknown[],
+            ) => PromiseLike<{ data: AttachmentRow[] | null; error: SupabaseReadError | null }>;
+          };
         };
       };
     };
@@ -87,6 +90,14 @@ async function flaggedFor(
       admin.from("tenant_attachments" as never) as unknown as Chain
     )
       .select("id, target_table, target_id, filename, mime_type, size_bytes, created_at")
+      // ORG PIN (ST-02). tenant_attachments is polymorphic — (target_table,
+      // target_id) carries no foreign key — so a member of ANOTHER org can insert a
+      // row in THEIR org that names one of this customer's job/quote/invoice ids and
+      // flags it portal_visible. The admin client bypasses RLS, so without this
+      // filter that foreign row (attacker-chosen filename) was listed here. The
+      // download route was already org-pinned (verifyPortalAttachment); the list
+      // must be too.
+      .eq("org_id", orgId)
       .eq("portal_visible", true)
       .eq("target_table", table)
       .in("target_id", chunk);
@@ -106,7 +117,7 @@ export async function listPortalAttachments(
   for (const table of PORTAL_TARGET_TABLES) {
     const ids = await ownedIds(admin, table, customerId, orgId);
     if (ids.length === 0) continue;
-    rows.push(...(await flaggedFor(admin, table, ids)));
+    rows.push(...(await flaggedFor(admin, table, ids, orgId)));
   }
   return rows
     .map((r) => ({

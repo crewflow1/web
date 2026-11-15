@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { EmptyState } from "../_components/empty-state";
 import {
   cancelReviewRequestAction,
@@ -66,7 +67,7 @@ type SP = Promise<{ status?: string; saved?: string; error?: string }>;
 /** Chainable `.eq()` so the ACTIVE-org pin composes with the status filter. */
 type ReviewQuery = {
   eq: (k: string, v: unknown) => ReviewQuery;
-} & Promise<{ data: ReviewRow[] | null }>;
+} & Promise<{ data: ReviewRow[] | null; error: SupabaseReadError | null }>;
 
 export default async function ReviewsPage({ searchParams }: { searchParams: SP }) {
   const { ctx } = await requireOrgContext();
@@ -101,6 +102,10 @@ export default async function ReviewsPage({ searchParams }: { searchParams: SP }
     .eq("org_id", ctx.org.id);
 
   const result = filter ? await baseQuery.eq("status", filter) : await baseQuery;
+  // Fail loud: a rejected read (RLS/PGRST/network) must not render the "No
+  // review requests yet" empty state as though the register were genuinely
+  // empty. See lib/supabase/read-failure.ts.
+  if (result.error) throw readFailure("reviews: register", result.error);
   const rows = result.data ?? [];
 
   const savedMessage = sp.saved ? SAVED_MAP[sp.saved] ?? null : null;

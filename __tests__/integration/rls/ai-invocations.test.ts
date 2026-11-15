@@ -105,7 +105,7 @@ describeIntegration("ai_invocations · isolation, rollups, teardown (20261062)",
   async function makeOrg(label: string): Promise<string> {
     const r = await svc()
       .from("organizations")
-      .insert({ name: `AI Gov ${label}`, slug: `${T}-${label}` })
+      .insert({ status: "active", name: `AI Gov ${label}`, slug: `${T}-${label}` })
       .select("id")
       .single();
     expect(r.error, r.error?.message).toBeNull();

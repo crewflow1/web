@@ -60,7 +60,7 @@ describeIntegration("snags · tenant isolation (RLS)", () => {
 
     const org = await svc
       .from("organizations")
-      .insert({ name: "Snag RLS Probe Org", slug: TOKEN })
+      .insert({ status: "active", name: "Snag RLS Probe Org", slug: TOKEN })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

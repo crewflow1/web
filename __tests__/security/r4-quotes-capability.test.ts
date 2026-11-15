@@ -36,7 +36,14 @@ describe("quotes surfaces are capability-gated with the right action", () => {
   });
 
   it("actions.ts gates every management action via requireCapabilityFor, no residual management gate", () => {
-    const code = codeOf(read("app/(app)/quotes/actions.ts"));
+    // The quotes MANAGEMENT surface is actions.ts + variation-actions.ts (#1035
+    // extracted createVariation/recordEot/reclassify into the latter). Count the
+    // capability gates across the whole module so the assertion is stable under
+    // that split — the security intent is "every management action is gated",
+    // not "they all live in one file".
+    const code = ["app/(app)/quotes/actions.ts", "app/(app)/quotes/variation-actions.ts"]
+      .map((f) => codeOf(read(f)))
+      .join("\n");
     expect(code).not.toMatch(/requireManagement(Role|Context|Api)/);
     // create (createQuote + duplicate + createVariation) ≥ 3; edit (update, send,
     // requestApproval, recordEot, reclassify) ≥ 5; approve (review, accept,

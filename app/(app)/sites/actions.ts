@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { friendlySiteError, siteFormSchema, siteIdSchema } from "@/lib/sites/schema";
 import {
@@ -99,6 +100,7 @@ export async function createSite(
   formData: FormData,
 ): Promise<FormState<SiteValues>> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("sites", "create");
   const result = validateFormData(formData, siteFormSchema);
   if (!result.ok) return result.state as FormState<SiteValues>;
 
@@ -141,6 +143,7 @@ export async function updateSite(
   formData: FormData,
 ): Promise<FormState<SiteValues>> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("sites", "edit");
   if (!siteIdSchema.safeParse(id).success) return formError("Invalid site id.");
 
   const result = validateFormData(formData, siteFormSchema);
@@ -201,6 +204,7 @@ export async function updateSite(
  */
 export async function setSiteActive(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("sites", "edit");
   const id = String(formData.get("id") ?? "");
   if (!siteIdSchema.safeParse(id).success) redirect("/sites?error=bad_id");
   const active = String(formData.get("active") ?? "") === "true";
@@ -244,6 +248,7 @@ export async function setSiteActive(formData: FormData): Promise<void> {
  */
 export async function deleteSite(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("sites", "delete");
   const id = String(formData.get("id") ?? "");
   if (!siteIdSchema.safeParse(id).success) redirect("/sites?error=bad_id");
 

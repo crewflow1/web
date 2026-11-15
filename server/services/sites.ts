@@ -1,6 +1,7 @@
 import "server-only";
 
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { readFailure } from "@/lib/supabase/read-failure";
 
 /**
  * Sites — the read layer behind /sites, its detail route, and every site
@@ -87,12 +88,13 @@ export async function loadSiteForOrg<T = SiteRow>(
   siteId: string,
   columns: string = SITE_LIST_COLUMNS,
 ): Promise<T | null> {
-  const { data } = await db
+  const { data, error } = await db
     .from("sites")
     .select(columns)
     .eq("id", siteId)
     .eq("org_id", orgId)
     .maybeSingle();
+  if (error) throw readFailure("sites: site by id", error);
   return (data as T | null) ?? null;
 }
 
@@ -114,12 +116,13 @@ export async function listSitesForOrg<T = SiteRow>(
   // read. Cap it provably (below the PostgREST clamp) so a large `opts.limit`
   // cannot masquerade as a complete list.
   if (opts.limit !== undefined) {
-    const { data } = await db
+    const { data, error } = await db
       .from("sites")
       .select(columns)
       .eq("org_id", orgId)
       .order("name", { ascending: true })
       .limit(Math.min(opts.limit, SITE_LIST_LIMIT));
+    if (error) throw readFailure("sites: site list", error);
     return (data ?? []) as unknown as T[];
   }
 
@@ -131,7 +134,7 @@ export async function listSitesForOrg<T = SiteRow>(
   // NULLED home_site_id. Page the whole register under the cap with a STABLE
   // order (name plus a unique `id` tiebreaker) so every site is selectable and
   // the saved one is always present.
-  const { data } = await fetchAllRows<Row>((from, to) =>
+  const { data, error } = await fetchAllRows<Row>((from, to) =>
     db
       .from("sites")
       .select(columns)
@@ -140,6 +143,7 @@ export async function listSitesForOrg<T = SiteRow>(
       .order("id", { ascending: true })
       .range(from, to),
   );
+  if (error) throw readFailure("sites: site list", error);
   return (data ?? []) as unknown as T[];
 }
 

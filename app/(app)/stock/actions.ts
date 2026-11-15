@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
   adjustmentFormSchema,
@@ -156,6 +157,7 @@ export async function createStockItem(
   formData: FormData,
 ): Promise<FormState<ItemValues>> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("stock", "create");
   const result = validateFormData(formData, stockItemFormSchema);
   if (!result.ok) return result.state as FormState<ItemValues>;
 
@@ -200,6 +202,7 @@ export async function updateStockItem(
   formData: FormData,
 ): Promise<FormState<ItemValues>> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("stock", "edit");
   if (!stockIdSchema.safeParse(id).success) return formError("Invalid item.");
 
   const result = validateFormData(formData, stockItemFormSchema);
@@ -258,6 +261,7 @@ export async function updateStockItem(
  */
 export async function setStockItemActive(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("stock", "edit");
   const id = String(formData.get("id") ?? "");
   if (!stockIdSchema.safeParse(id).success) redirect("/stock/items?error=bad_id");
   const active = String(formData.get("active") ?? "") === "true";
@@ -297,6 +301,7 @@ export async function issueStock(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("stock_field", "edit");
   const parsed = issueFormSchema.safeParse({
     stock_item_id: formData.get("stock_item_id") ?? "",
     site_id: formData.get("site_id") ?? "",
@@ -352,6 +357,7 @@ export async function transferStock(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("stock_field", "edit");
   const parsed = transferFormSchema.safeParse({
     stock_item_id: formData.get("stock_item_id") ?? "",
     from_site_id: formData.get("from_site_id") ?? "",
@@ -408,6 +414,7 @@ export async function adjustStock(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("stock", "edit");
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
   if (!isAdmin) {
     return formError("Only an owner or admin can adjust stock.");
@@ -468,6 +475,7 @@ export async function correctStockMovement(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("stock", "edit");
   // ADMIN-ONLY. A correction reverses the authoritative ledger and feeds job
   // profitability, so it carries the same owner/admin gate as adjustStock. The
   // enforcing control is the RPC (record_stock_correction checks is_org_admin —
@@ -551,6 +559,7 @@ export async function receiveIntoStock(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("stock", "edit");
   const parsed = receiveIntoStockSchema.safeParse({
     grn_line_id: formData.get("grn_line_id") ?? "",
     stock_item_id: formData.get("stock_item_id") ?? "",

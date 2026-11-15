@@ -98,8 +98,8 @@ describeIntegration("merchant writers · catalogue + PO submit against real Post
     }
 
     const svc = db(serviceClient());
-    const a = await svc.from("organizations").insert({ name: "MerchWr A", slug: `${TOKEN}-a` }).select("id").single();
-    const b = await svc.from("organizations").insert({ name: "MerchWr B", slug: `${TOKEN}-b` }).select("id").single();
+    const a = await svc.from("organizations").insert({ status: "active", name: "MerchWr A", slug: `${TOKEN}-a` }).select("id").single();
+    const b = await svc.from("organizations").insert({ status: "active", name: "MerchWr B", slug: `${TOKEN}-b` }).select("id").single();
     orgA = String(a.data?.id ?? "");
     orgB = String(b.data?.id ?? "");
     if (!orgA || !orgB) throw new Error("failed to create probe orgs");

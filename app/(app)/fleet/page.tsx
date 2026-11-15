@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ImportButton } from "@/components/import/import-button";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session"; import { requireCapability } from "@/server/auth/capabilities";
 import { loadFleetOverview } from "@/server/services/fleet-snapshot";
 import { formatGbp } from "@/lib/money";
 import type { FleetComplianceType } from "@/lib/fleet/compliance";
@@ -24,7 +24,7 @@ export const dynamic = "force-dynamic";
 type SP = Promise<{ saved?: string; error?: string }>;
 
 export default async function FleetPage({ searchParams }: { searchParams: SP }) {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); await requireCapability("fleet", "view");
   const sp = await searchParams;
   const todayIso = new Date().toISOString().slice(0, 10);
   const overview = await loadFleetOverview(ctx.org.id, todayIso);

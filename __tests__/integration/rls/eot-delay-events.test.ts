@@ -79,7 +79,7 @@ describeIntegration("delay_events · org binding, lifecycle, teardown (20261084)
   const mkOrg = async (name: string) => {
     const r = await svc()
       .from("organizations")
-      .insert({ name, slug: `${TOKEN}-${name.toLowerCase().replace(/\s+/g, "-")}` })
+      .insert({ status: "active", name, slug: `${TOKEN}-${name.toLowerCase().replace(/\s+/g, "-")}` })
       .select("id")
       .single();
     expect(r.error, r.error?.message).toBeNull();
@@ -287,7 +287,12 @@ describeIntegration("delay_events · org binding, lifecycle, teardown (20261084)
       .from("delay_events")
       .update({ status: "recorded", recorded_by: "00000000-0000-0000-0000-000000000000" })
       .eq("id", forgeId);
-    expect(bad.error?.message ?? "").toMatch(/not a member of this org/i);
+    // Since 20261344 a NON-ADMIN caller is refused one step earlier by the audit-column
+    // guard ("recorded_by can only be set to the signed-in user", 42501); the
+    // membership guard still stands behind it for an owner/admin. Either way refused.
+    expect(bad.error?.message ?? "").toMatch(/not a member of this org|can only be set to the signed-in user/i);
+    const forged = await svc().from("delay_events").select("recorded_by").eq("id", forgeId);
+    expect(forged.data?.[0]?.recorded_by ?? null).not.toBe("00000000-0000-0000-0000-000000000000");
   });
 
   it("a recorded event is frozen: description, dates, category, links all refused", async () => {

@@ -619,40 +619,65 @@ export type CallAssociationFields = {
  * inherently idempotent (no insert ⇒ no duplicate). A call id that matches no row
  * updates zero rows (a benign no-op, not an error).
  *
- * THROWS LOUD on an unexpected DB error (Sentry + console.error), like its
- * sibling writers ({@link updateCallCompletion}); the webhook wraps this
- * best-effort so a linkage failure degrades gracefully rather than breaking the
- * webhook ack.
+ * INDEPENDENT WRITES — why two statements, not one. The lead link and the
+ * conversation link are applied as SEPARATE UPDATEs, lead FIRST. They used to
+ * share one statement, so a foreign-key violation on `conversation_id` rolled
+ * BOTH back and the `lead_id` link the tenant-facing /leads/[id] reader depends
+ * on was silently lost along with it. (That was the live defect: the conversation
+ * id is a `receptionist_conversations.id`, but the FK pointed at `conversations`
+ * — see migration 20261290000000.) Writing them apart means a conversation-link
+ * failure can never again strand the lead link: the lead UPDATE has already
+ * committed by the time the conversation UPDATE is attempted.
+ *
+ * THROWS LOUD on an unexpected DB error (Sentry + structured console.error),
+ * like its sibling writers ({@link updateCallCompletion}); the webhook wraps
+ * this best-effort so a linkage failure degrades gracefully rather than breaking
+ * the webhook ack. The throw aggregates every column that failed, so a lead link
+ * that DID land is still recorded even though the call reports the conversation
+ * failure.
  */
 export async function updateCallAssociation(
   orgId: string,
   providerCallId: string,
   fields: CallAssociationFields,
 ): Promise<void> {
-  // Build the patch from ONLY the fields with a real value, so an absent
-  // conversation id (or a bare re-link) never nulls a link already captured.
-  const row: Record<string, unknown> = {};
-  if (fields.leadId != null) row.lead_id = fields.leadId;
-  if (fields.conversationId != null) row.conversation_id = fields.conversationId;
+  // Apply one column in its own statement. Returns the error message, or null.
+  async function link(column: "lead_id" | "conversation_id", value: string): Promise<string | null> {
+    const upd = await table("calls")
+      .update({ [column]: value })
+      .eq("provider_call_id", providerCallId)
+      .eq("org_id", orgId);
+    if (upd.error) {
+      const message = upd.error.message;
+      Sentry.captureException(
+        new Error(`updateCallAssociation ${column} update failed: ${message}`),
+        { tags: { service: "telephony", column } },
+      );
+      console.error("[telephony] updateCallAssociation update failed", {
+        org_id: orgId,
+        provider_call_id: providerCallId,
+        column,
+        message,
+      });
+      return message;
+    }
+    return null;
+  }
 
-  // Nothing to write ⇒ no-op (never issue an empty UPDATE).
-  if (Object.keys(row).length === 0) return;
+  const failures: string[] = [];
+  // Lead FIRST and in its own statement: it is the link the tenant-facing reader
+  // needs, and it must survive a later conversation-link failure.
+  if (fields.leadId != null) {
+    const err = await link("lead_id", fields.leadId);
+    if (err) failures.push(`lead_id: ${err}`);
+  }
+  if (fields.conversationId != null) {
+    const err = await link("conversation_id", fields.conversationId);
+    if (err) failures.push(`conversation_id: ${err}`);
+  }
 
-  const upd = await table("calls")
-    .update(row)
-    .eq("provider_call_id", providerCallId)
-    .eq("org_id", orgId);
-  if (upd.error) {
-    const message = upd.error.message;
-    Sentry.captureException(new Error(`updateCallAssociation update failed: ${message}`), {
-      tags: { service: "telephony" },
-    });
-    console.error("[telephony] updateCallAssociation update failed", {
-      org_id: orgId,
-      provider_call_id: providerCallId,
-      message,
-    });
-    throw new Error(`updateCallAssociation failed: ${message}`);
+  if (failures.length > 0) {
+    throw new Error(`updateCallAssociation failed: ${failures.join("; ")}`);
   }
 }
 

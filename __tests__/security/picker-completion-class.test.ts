@@ -126,6 +126,19 @@ const ALLOWLIST: Record<string, string> = {
   // class targets.
   "app/(app)/payments/reconcile/[id]/page.tsx:invoice_id":
     "per-line explicit-confirm — single-field form, required select pre-set to the line's suggested match, only action confirms THAT line; empty submit is refused loudly, options are per-line suggestions not a capped reader; not a silent-null edit re-render",
+  // Both jobId <select>s (generate-from-template form + manual draft form) live on
+  // the RAMS CREATE page (/health-safety/new). No risk_assessments row exists yet,
+  // so there is no saved job_id for an untouched save to null — this is the D-16
+  // create-link entry point, not an edit re-render. The option reader
+  // (listLinkableJobs) is PAGED via fetchAllRows (COMPLETE, not a capped sample),
+  // and the page only honours `?job=` when it is one of those listed active jobs
+  // (presetJob falls to "" otherwise), so a valid active-job deep-link is always
+  // selectable; a non-active/foreign ?job simply opens unlinked, which is a
+  // create-time choice, not the nulling of a stored reference. The refuted
+  // snags/reviews precedent was a CAPPED reader dropping an in-list preset — not
+  // the case here because the reader is paged.
+  "app/(app)/health-safety/new/page.tsx:jobId":
+    "create-only RAMS form — no saved record exists, so nothing to silently null; paged reader (listLinkableJobs via fetchAllRows) + preset validated against the listed active jobs; non-active/foreign ?job opens unlinked (create-time choice), not an edit re-render of a saved reference",
 };
 
 function stripComments(src: string): string {

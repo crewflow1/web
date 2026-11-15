@@ -65,17 +65,25 @@ const envSchema = z.object({
   TRANSCRIPTION_API_KEY: z.string().optional(),
 
   // -- Twilio + Vapi (required when telephony code runs) ------------------
-  // NOTE (env-contract census): every Twilio adapter in the build (lib/comms/
+  // NOTE (env-contract census): the inbound Twilio adapters (lib/comms/
   // providers/twilio.ts, lib/telephony/providers/twilio.ts, lib/telephony/
-  // config.ts, lib/comms/readiness.ts) authenticates with ACCOUNT_SID +
+  // config.ts, lib/comms/readiness.ts) authenticate with ACCOUNT_SID +
   // AUTH_TOKEN basic auth, and the auth token also verifies inbound
-  // X-Twilio-Signature headers. No key-pair (API Key SID/Secret) auth path
-  // exists, so the previously declared TWILIO_API_KEY_SID / TWILIO_API_KEY_SECRET
-  // had ZERO readers and were removed — a declaration with no reader is a false
-  // claim about what this deployment consumes. Re-declare them only together
-  // with an adapter change that actually uses key-pair auth.
+  // X-Twilio-Signature headers. The number-PROVISIONING adapter
+  // (lib/telephony/provisioning.ts) additionally supports a restricted API
+  // KEY-PAIR (preferred over the account auth token for least-privilege REST
+  // calls): when TWILIO_API_KEY_SID + TWILIO_API_KEY_SECRET + ACCOUNT_SID are
+  // all present it builds the REST client from the key pair, else it falls back
+  // to ACCOUNT_SID + AUTH_TOKEN. Hence the key-pair names are read again and are
+  // declared below.
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
+  // Restricted Twilio API key pair — the LEAST-PRIVILEGE credential the number-
+  // provisioning REST client prefers (search / buy / configure / release). A
+  // secret; optional at boot (absent ⇒ provisioning falls back to the account
+  // auth token, or is dark when neither is set).
+  TWILIO_API_KEY_SID: z.string().optional(),
+  TWILIO_API_KEY_SECRET: z.string().optional(),
   // The outbound SMS sender — the Twilio phone number (E.164) or Messaging
   // Service SID that missed-call text-backs are sent FROM. Optional at boot;
   // its absence (even with the account creds present) is what makes the SMS

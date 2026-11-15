@@ -333,12 +333,19 @@ describe("call ↔ lead linkage: the enrichment columns are provably reachable",
   // paths, so a future regression (dropping the return / the write) fails CI. Source
   // pins over comment-stripped code so prose can neither satisfy nor trip them.
 
-  it("the service exposes an org-pinned, fail-loud linkage writer that sets lead_id + conversation_id", () => {
+  it("the service exposes an org-pinned, fail-loud linkage writer that sets lead_id + conversation_id as INDEPENDENT writes", () => {
     const code = codeOf(read(SERVICE));
     expect(code).toMatch(/export async function updateCallAssociation\(/);
-    // Writes the two linkage columns the reader needs…
-    expect(code).toMatch(/row\.lead_id\s*=\s*fields\.leadId/);
-    expect(code).toMatch(/row\.conversation_id\s*=\s*fields\.conversationId/);
+    // Writes the two linkage columns the reader needs, each as its OWN statement
+    // (migration 20261290000000 fix): a conversation-link FK failure must never
+    // roll back / strand the lead_id link the leads/[id] reader depends on. This
+    // is the anti-regression for the exact stranding defect that was fixed —
+    // re-bundling them into one UPDATE would reintroduce it and fail here.
+    expect(code).toMatch(/link\(\s*"lead_id",\s*fields\.leadId\s*\)/);
+    expect(code).toMatch(/link\(\s*"conversation_id",\s*fields\.conversationId\s*\)/);
+    // lead_id is applied FIRST, so it has committed before the conversation link
+    // is attempted.
+    expect(code).toMatch(/fields\.leadId[\s\S]*fields\.conversationId/);
     // …org-pinned on the provider_call_id-matched UPDATE (defence in depth over the
     // RLS-bypassing admin client)…
     expect(code).toMatch(

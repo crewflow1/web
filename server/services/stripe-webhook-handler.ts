@@ -243,6 +243,12 @@ export async function processStripeEvent(
   try {
     switch (event.type) {
       case "checkout.session.completed":
+      // Async/delayed payment methods settle AFTER checkout: the money confirms
+      // via async_payment_succeeded (session now "paid") or fails via
+      // async_payment_failed (session "unpaid"). Both route through the same
+      // payment-gated handler, so success provisions and failure is a no-op.
+      case "checkout.session.async_payment_succeeded":
+      case "checkout.session.async_payment_failed":
         actions.push(...(await handleCheckoutCompleted(event)));
         break;
       case "customer.subscription.created":
@@ -295,6 +301,34 @@ async function handleCheckoutCompleted(
 ): Promise<string[]> {
   const session = event.data.object as Stripe.Checkout.Session;
   const meta = (session.metadata ?? {}) as Partial<CheckoutSessionMetadata>;
+
+  // PAYMENT-CONFIRMED GATE (first, so it protects BOTH the demo and org flows).
+  // This handler serves checkout.session.completed AND .async_payment_succeeded
+  // / .async_payment_failed. For card checkout, `completed` arrives "paid". For
+  // async/delayed methods, `completed` arrives "unpaid" and the money confirms
+  // later via async_payment_succeeded ("paid") or fails via async_payment_failed
+  // ("unpaid"). Provisioning paid access — or confirming a demo setup-fee —
+  // before payment is confirmed would grant access without money. Gate here.
+  // "no_payment_required" covers genuine £0 / fully-discounted sessions.
+  const paymentConfirmed =
+    session.payment_status === "paid" || session.payment_status === "no_payment_required";
+  if (!paymentConfirmed) {
+    await recordAdminActivity({
+      actorId: null,
+      actorEmail: null,
+      action: "stripe.checkout_completed_unpaid_skipped",
+      targetTable: meta.demo_id ? "demo_requests" : "organizations",
+      targetId: meta.org_id ?? meta.demo_id ?? session.id,
+      metadata: {
+        stripe_session_id: session.id,
+        payment_status: session.payment_status ?? null,
+        kind: meta.kind ?? null,
+        demo_id: meta.demo_id ?? null,
+        event_type: event.type,
+      },
+    });
+    return [`skipped_unpaid:payment_status=${session.payment_status ?? "unknown"}`];
+  }
 
   // --- DEMO flow: setup-fee paid BEFORE the org exists. -------------
   // The Demos CRM "Send setup payment" action mints a Checkout Session
@@ -493,15 +527,25 @@ async function handleSubscriptionDeleted(
   const orgId = await orgIdByCustomer(customerId);
   if (!orgId) return ["skipped:no_org_for_customer"];
 
-  // Don't auto-cancel the org — that's a high-blast-radius decision.
-  // Record the event and let the operator decide via /admin/customers.
+  // REVOKE ACCESS on a deleted subscription. The access gate (requireOrgContext →
+  // orgHasActiveAccess) authorises only on `organizations.status` (active/trial), so
+  // leaving it untouched here let a churned/cancelled tenant keep full product access
+  // (and incur compute) until a human noticed the HQ alert — a revenue leak. A deleted
+  // subscription is a terminal cancel, so we set `cancelled` exactly as the
+  // `subscription.updated → canceled` path (handleSubscriptionUpsert) already does. This
+  // only GATES access (→ /access-pending); it never deletes tenant data, and an operator
+  // can reactivate (or a new checkout re-activates) via /admin/customers.
+  await adminTable("organizations")
+    .update({ status: "cancelled", stripe_subscription_id: sub.id })
+    .eq("id", orgId);
+
   await recordAdminActivity({
     actorId: null,
     actorEmail: null,
     action: "stripe.subscription_deleted",
     targetTable: "organizations",
     targetId: orgId,
-    metadata: { stripe_subscription_id: sub.id, status: sub.status },
+    metadata: { stripe_subscription_id: sub.id, status: sub.status, org_status: "cancelled" },
   });
 
   // P3W2: mirror the terminal status onto the org_subscriptions projection
@@ -515,7 +559,7 @@ async function handleSubscriptionDeleted(
       stripe_subscription_id: sub.id,
     }),
   );
-  return ["subscription_deleted_recorded"];
+  return ["subscription_deleted:org_cancelled"];
 }
 
 async function handleInvoicePaid(event: Stripe.Event): Promise<string[]> {

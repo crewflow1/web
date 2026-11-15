@@ -47,3 +47,47 @@ export async function resolveOrgForDialedNumber(e164: string | null): Promise<st
   }
   return res.data?.org_id ?? null;
 }
+
+/**
+ * Resolve the org for a call from its PROVIDER CALL ID (Twilio CallSid), or null.
+ *
+ * Some provider callbacks — notably the recording-status callback — do NOT carry
+ * the dialed number, only the CallSid. The call was already attributed (the
+ * origination/status edge wrote the `calls` row org-pinned), so we resolve the org
+ * from that existing row. Null when no such call exists (an unattributable
+ * callback is ignored, never processed against a guessed org).
+ */
+export async function resolveOrgForProviderCall(
+  provider: string,
+  providerCallId: string | null,
+): Promise<string | null> {
+  if (!providerCallId || !providerCallId.trim()) return null;
+  const admin = createAdminClient();
+  const res = await (
+    admin.from("calls" as never) as unknown as {
+      select: (cols: string) => {
+        eq: (k: string, v: unknown) => {
+          eq: (k: string, v: unknown) => {
+            maybeSingle: () => Promise<{
+              data: { org_id: string } | null;
+              error: { message: string } | null;
+            }>;
+          };
+        };
+      };
+    }
+  )
+    .select("org_id")
+    .eq("provider", provider)
+    .eq("provider_call_id", providerCallId.trim())
+    .maybeSingle();
+
+  if (res.error) {
+    console.error("[telephony] provider-call org lookup failed", {
+      providerCallId: providerCallId.trim(),
+      message: res.error.message,
+    });
+    return null;
+  }
+  return res.data?.org_id ?? null;
+}

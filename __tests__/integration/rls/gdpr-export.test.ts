@@ -143,7 +143,7 @@ describeIntegration("gdpr export · org-pinned, redacted, isolated", () => {
 
     const oa = await svc
       .from("organizations")
-      .insert({ name: `Org A ${TOKEN}`, slug: `org-a-${TOKEN}` })
+      .insert({ status: "active", name: `Org A ${TOKEN}`, slug: `org-a-${TOKEN}` })
       .select("id")
       .single();
     expect(oa.error, oa.error?.message).toBeNull();
@@ -151,7 +151,7 @@ describeIntegration("gdpr export · org-pinned, redacted, isolated", () => {
 
     const ob = await svc
       .from("organizations")
-      .insert({ name: `Org B ${TOKEN}`, slug: `org-b-${TOKEN}` })
+      .insert({ status: "active", name: `Org B ${TOKEN}`, slug: `org-b-${TOKEN}` })
       .select("id")
       .single();
     expect(ob.error, ob.error?.message).toBeNull();

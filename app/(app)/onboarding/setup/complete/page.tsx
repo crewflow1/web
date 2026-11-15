@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementRole, requireOrgContext } from "@/server/auth/session";
 import { buildOnboardingSnapshot } from "@/server/services/onboarding-snapshot";
 import { computeProgress } from "@/lib/onboarding/checklist";
 import { markCompleted } from "../actions";
@@ -22,6 +22,8 @@ export const dynamic = "force-dynamic";
 
 export default async function OnboardingSetupCompletePage() {
   const { ctx } = await requireOrgContext();
+  // Least privilege: the organisation set-up wizard is an administrative function.
+  requireManagementRole(ctx);
   const snap = await buildOnboardingSnapshot(ctx.org.id);
   const progress = computeProgress(snap);
 

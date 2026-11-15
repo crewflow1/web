@@ -111,7 +111,7 @@ describeIntegration("R8 profit rollups · margin snapshot-equality (RPC == TS fo
   }
 
   beforeAll(async () => {
-    orgId = await insId(svc, "organizations", { name: `R8 ${TOKEN}`, slug: `${TOKEN}` });
+    orgId = await insId(svc, "organizations", { status: "active", name: `R8 ${TOKEN}`, slug: `${TOKEN}` });
     const m = await mkUser("member", orgId);
     memberId = m.id;
     memberToken = m.token;

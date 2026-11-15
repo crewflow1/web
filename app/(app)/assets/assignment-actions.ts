@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { hasCapability, requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
   checkOutSchema,
@@ -68,12 +69,19 @@ function parseCheckout(formData: FormData) {
 
 export async function checkOutAsset(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets_field", "edit");
   const parsed = checkOutSchema.safeParse(parseCheckout(formData));
   if (!parsed.success) {
     const first = Object.values(parsed.error.flatten().fieldErrors).flat()[0] ?? "Please check the form.";
     return formError(first);
   }
   const d = parsed.data;
+  // D-17: a crew member may take an asset into their OWN custody; assigning it to a
+  // colleague / a job / a vehicle needs the management capability (the database refuses
+  // the same shape for a field user — 20261346).
+  if (!(await hasCapability(ctx, user, "assets", "edit")) && d.assignee_id !== user.id) {
+    return formError("You can take an asset into your own custody. Ask a manager to assign it to someone else.");
+  }
 
   const tenant = await createClient();
   const { error } = await (
@@ -116,6 +124,7 @@ export async function checkOutAsset(_prev: FormState, formData: FormData): Promi
 
 export async function returnAsset(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets_field", "edit");
   const assetId = String(formData.get("asset_id") ?? "");
   const parsed = returnSchema.safeParse({
     id: formData.get("id") ?? "",
@@ -169,6 +178,7 @@ export async function returnAsset(_prev: FormState, formData: FormData): Promise
 
 export async function transferAsset(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "edit");
   const parsed = transferSchema.safeParse(parseCheckout(formData));
   if (!parsed.success) {
     const first = Object.values(parsed.error.flatten().fieldErrors).flat()[0] ?? "Please check the form.";

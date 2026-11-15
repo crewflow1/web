@@ -27,6 +27,9 @@ const ACTIONS = "app/(app)/jobs/[id]/commercial/actions.ts";
 const PAGE = "app/(app)/jobs/[id]/commercial/page.tsx";
 const FORM = "app/(app)/jobs/[id]/commercial/_budget-form.tsx";
 const QUOTES = "app/(app)/quotes/actions.ts";
+// createVariation + its cost-plan write were extracted here (#1035); the variation
+// assertions below read it from its new home, same intent.
+const QUOTE_VARIATIONS = "app/(app)/quotes/variation-actions.ts";
 const COMMITTED = "lib/purchase-orders/committed.ts";
 const PROFITABILITY = "lib/profitability/compute.ts";
 
@@ -90,7 +93,7 @@ describe("the cost baseline never posts to `finances`", () => {
   it("the variation write records a PLAN and says so, right where it does it", () => {
     // The variation's cost basis is a PLAN. A future edit that "helpfully" also
     // books the expense is the whole hazard.
-    const src = read(QUOTES);
+    const src = read(QUOTE_VARIATIONS);
     const start = src.indexOf("export async function createVariation(");
     expect(start).toBeGreaterThan(-1);
     const body = src.slice(start);
@@ -442,7 +445,7 @@ describe("baseline reads fail loudly", () => {
     // job look more profitable than it is — the exact defect class this closes.
     // It cannot go missing independently now: the four columns are written by the
     // SAME insert that creates the variation, whose error already aborts.
-    const src = codeOf(read(QUOTES));
+    const src = codeOf(read(QUOTE_VARIATIONS));
     expect(src).toMatch(/cost_labour: computed\.cost_breakdown\.labour/);
     expect(src).toMatch(/cost_misc: computed\.cost_breakdown\.misc/);
     expect(src).toMatch(/if \(qErr \|\| !variation\)/);

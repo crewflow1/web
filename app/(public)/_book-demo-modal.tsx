@@ -15,6 +15,7 @@ import {
   TURNOVER_LABELS,
   TURNOVER_RANGES,
 } from "@/lib/demo/schema";
+import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
 
 type SubmitResult =
   | { ok: true; deduped?: boolean }
@@ -136,6 +137,15 @@ export function BookDemoModal() {
           };
         }
         if (result.ok) {
+          // Fire the conversion ONLY for a genuinely new request, never for a
+          // server-deduped duplicate, so demo conversions aren't double-counted.
+          // Consent-gated + a no-op until PostHog is live; PII is never sent.
+          if (!result.deduped) {
+            trackEvent(ANALYTICS_EVENTS.DEMO_REQUESTED, {
+              employees: payload.employees ?? "unspecified",
+              path: window.location.pathname,
+            });
+          }
           setDone(true);
           form.reset();
         } else {

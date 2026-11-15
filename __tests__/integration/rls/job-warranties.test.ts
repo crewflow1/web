@@ -57,7 +57,7 @@ describeIntegration("job_warranties · org binding, freeze + teardown (20261079)
   beforeAll(async () => {
     const svc = db(serviceClient());
     const mkOrg = async (name: string, slug: string) =>
-      String((await svc.from("organizations").insert({ name, slug }).select("id").single()).data?.id ?? "");
+      String((await svc.from("organizations").insert({ status: "active", name, slug }).select("id").single()).data?.id ?? "");
     const mkJob = async (org: string) =>
       String((await svc.from("jobs").insert({ org_id: org, status: "completed" }).select("id").single()).data?.id ?? "");
 
@@ -194,7 +194,7 @@ describeIntegration("job_warranties · org binding, freeze + teardown (20261079)
   it("deleting the job removes its warranties (no orphan cover)", async () => {
     const svc = db(serviceClient());
     const org = String(
-      (await svc.from("organizations").insert({ name: "W J", slug: `${TOKEN}-j` }).select("id").single()).data?.id ?? "",
+      (await svc.from("organizations").insert({ status: "active", name: "W J", slug: `${TOKEN}-j` }).select("id").single()).data?.id ?? "",
     );
     const job = String(
       (await svc.from("jobs").insert({ org_id: org, status: "completed" }).select("id").single()).data?.id ?? "",

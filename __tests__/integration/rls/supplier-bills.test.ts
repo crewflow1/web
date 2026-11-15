@@ -34,7 +34,7 @@ describeIntegration("finances · supplier bills org-integrity (20261009)", () =>
   const svc = () => db(serviceClient());
 
   const mkOrg = async (label: string) => {
-    const o = await svc().from("organizations").insert({ name: `Bills ${label}`, slug: `${TOKEN}-${label}` }).select("id").single();
+    const o = await svc().from("organizations").insert({ status: "active", name: `Bills ${label}`, slug: `${TOKEN}-${label}` }).select("id").single();
     expect(o.error, JSON.stringify(o.error)).toBeNull();
     return o.data?.id as string;
   };

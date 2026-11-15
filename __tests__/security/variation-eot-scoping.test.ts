@@ -20,7 +20,11 @@ import { resolve } from "node:path";
 
 const ROOT = resolve(__dirname, "..", "..");
 const src = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
-const ACTIONS = src("app/(app)/quotes/actions.ts");
+// #1035 extracted the variation/EoT writers (createVariation, loadVariationForOrg,
+// recordVariationEotAgreement, reclassifyVariationValidUntilAsEot) into their own
+// module. Every function this suite pins lives there now; the scoping/active-org
+// assertions are unchanged, just read from the new file.
+const ACTIONS = src("app/(app)/quotes/variation-actions.ts");
 
 /** Isolate one exported function body so a sibling can't satisfy an assertion. */
 function fn(source: string, name: string): string {

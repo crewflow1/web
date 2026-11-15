@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireOrgContext } from "@/server/auth/session";
+import { readVehicleMoney } from "@/server/services/private-columns";
 import { loadVehicleDetail, loadVehicleTelematics, isInService } from "@/server/services/fleet-snapshot";
 import { formatGbp } from "@/lib/money";
 import { computeConsumption, mileageSpan, sumFuel } from "@/lib/fleet/fuel";
@@ -68,6 +69,9 @@ export default async function VehiclePage({
 
   const vehicle = await loadVehicleForOrg(ctx.org.id, id);
   if (!vehicle) notFound();
+  // Purchase price + finance agreement are not Data-API readable (20261343):
+  // overlaid server-side for a fleet:view holder.
+  Object.assign(vehicle, (await readVehicleMoney(id)) ?? {});
 
   const [detail, telematics, suppliers, sites] = await Promise.all([
     loadVehicleDetail(ctx.org.id, id),

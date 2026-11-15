@@ -177,12 +177,16 @@ describe("env-contract census — lib/env.ts is the single source of env truth",
   });
 
   it("removed dead declarations STAY removed: a declared name must not imply a gate with zero readers", () => {
-    // The 2026-10 census removed VAPI_API_KEY and TWILIO_API_KEY_SID/SECRET:
-    // declared-with-zero-readers, each falsely implying an activation gate.
-    // Pin the removal. (This is a targeted pin, not a general "declared ⇒ read"
-    // rule — most declarations are legitimately read via the parsed `env`
-    // object or dynamic keys, which this static census cannot see.)
-    for (const ghost of ["VAPI_API_KEY", "TWILIO_API_KEY_SID", "TWILIO_API_KEY_SECRET"]) {
+    // The 2026-10 census removed VAPI_API_KEY (declared-with-zero-readers, falsely
+    // implying an activation gate). Pin the removal. (This is a targeted pin, not a
+    // general "declared ⇒ read" rule — most declarations are legitimately read via
+    // the parsed `env` object or dynamic keys, which this static census cannot see.)
+    // TWILIO_API_KEY_SID/SECRET were also removed in that census but have been
+    // RE-INTRODUCED with a real reader: the number-provisioning REST client
+    // (lib/telephony/provisioning.ts) prefers the restricted key pair. They are now
+    // legitimately declared AND read, so they are no longer ghosts and the
+    // "every read is declared" census above keeps them honest.
+    for (const ghost of ["VAPI_API_KEY"]) {
       expect(declared.has(ghost), `${ghost} re-declared without a reader`).toBe(false);
       expect(reads.has(ghost), `${ghost} is read again — re-declare it in lib/env.ts`).toBe(false);
     }

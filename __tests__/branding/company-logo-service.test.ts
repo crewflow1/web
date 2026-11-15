@@ -71,11 +71,10 @@ vi.mock("@/lib/supabase/server", () => ({
           }),
         }),
       }),
-      update: (payload: unknown, opts: unknown) => {
-        h.updateMock(payload, opts);
-        h.captured.updatePayload = payload;
-        h.captured.updateOpts = opts;
-        return { eq: async () => h.state.update };
+      // `organizations` is a boundary table: a user-JWT client holds no write
+      // grant, so the service must NEVER write it through the tenant client.
+      update: () => {
+        throw new Error("organizations must be written via the service role, not the tenant client");
       },
     }),
   })),
@@ -83,6 +82,14 @@ vi.mock("@/lib/supabase/server", () => ({
 
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: vi.fn(() => ({
+    from: () => ({
+      update: (payload: unknown, opts: unknown) => {
+        h.updateMock(payload, opts);
+        h.captured.updatePayload = payload;
+        h.captured.updateOpts = opts;
+        return { eq: async () => h.state.update };
+      },
+    }),
     storage: {
       from: () => ({
         upload: async (path: string, bytes: unknown, opts: unknown) => {

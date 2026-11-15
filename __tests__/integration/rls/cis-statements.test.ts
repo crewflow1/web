@@ -184,10 +184,10 @@ describeIntegration("H2-CIS M4 statements + monthly return (real Postgres)", () 
 
   beforeAll(async () => {
     orgA = String(
-      (await svc().from("organizations").insert({ name: "M4 A", slug: `${T}-a` }).select("id").single()).data?.id,
+      (await svc().from("organizations").insert({ status: "active", name: "M4 A", slug: `${T}-a` }).select("id").single()).data?.id,
     );
     orgB = String(
-      (await svc().from("organizations").insert({ name: "M4 B", slug: `${T}-b` }).select("id").single()).data?.id,
+      (await svc().from("organizations").insert({ status: "active", name: "M4 B", slug: `${T}-b` }).select("id").single()).data?.id,
     );
 
     sub20 = await mkSupplier(orgA, "Groundworks");

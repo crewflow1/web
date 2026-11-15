@@ -12,9 +12,10 @@ name: security-scan
 #     Actions minutes are free for this public repo). It is cheap and
 #     deterministic: a filesystem scan for committed secrets, nothing more.
 #
-# gitleaks is free for public repositories (no GITLEAKS_LICENSE needed). The
-# action is SHA-pinned (supply-chain hygiene: a moved tag can't swap the code
-# under us); Dependabot's github-actions ecosystem keeps the pin current.
+# Secret scanning runs the gitleaks CLI (MIT-licensed, free) from its official
+# image pinned by DIGEST — NOT the gitleaks-action, whose v2 now requires a paid
+# GITLEAKS_LICENSE for org-owned repos and fails closed when it can't validate it.
+# The CLI gives identical coverage (same ruleset + .gitleaks.toml + .gitleaksignore).
 on:
   pull_request:
   push:
@@ -37,13 +38,30 @@ jobs:
           # Full history so a secret introduced in an earlier commit is caught,
           # not just one in the tip. Cheap on GitHub-hosted runners; no Vercel.
           fetch-depth: 0
-      # v2.3.9 — pinned by commit SHA, not the moving v2 tag.
-      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e
+      # FREE, unlicensed secret scan via the gitleaks CLI.
+      #
+      # Why not gitleaks/gitleaks-action: the v2 ACTION now requires a paid
+      # GITLEAKS_LICENSE for ORG-owned repos (2025 breaking change); when its
+      # license check can't reach the API it fails the job ("missing gitleaks
+      # license") even though nothing leaked. The gitleaks BINARY is MIT-licensed
+      # and free — only the Action wrapper is gated. We run the CLI directly from
+      # the official image, pinned by DIGEST (supply-chain hygiene: a moved tag
+      # can't swap the code). Equivalent coverage: same ruleset, same
+      # .gitleaks.toml, and git-mode so .gitleaksignore fingerprints apply.
+      - name: gitleaks (CLI — free, no licence)
         env:
-          # Required by gitleaks-action v2 to scan pull_request events (it reads
-          # the PR commit range via the API). The auto-provided token is enough;
-          # `permissions: contents: read` above scopes it. No secret to configure.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Repo-root .gitleaks.toml narrows the default ruleset to avoid
-          # false positives on Stripe live-key *prefix checks* / test fixtures.
-          GITLEAKS_CONFIG: .gitleaks.toml
+          # zricethezav/gitleaks v8.30.1 — pin by digest, not the moving tag.
+          GITLEAKS_IMAGE: "zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
+        run: |
+          set -euo pipefail
+          # PR: scan only the PR's commit range (base..head) — matches the old
+          # action's behaviour so a pre-existing finding on the base can't fail an
+          # unrelated PR. push to main: scan full history (fetch-depth:0 above).
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="${{ github.event.pull_request.base.sha }}..${{ github.sha }}"
+            docker run --rm -v "$PWD:/repo" "$GITLEAKS_IMAGE" \
+              detect --source /repo --config /repo/.gitleaks.toml --redact --log-opts="$RANGE"
+          else
+            docker run --rm -v "$PWD:/repo" "$GITLEAKS_IMAGE" \
+              detect --source /repo --config /repo/.gitleaks.toml --redact
+          fi

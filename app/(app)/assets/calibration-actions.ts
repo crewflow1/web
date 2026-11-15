@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
   recordCalibrationSchema,
@@ -47,6 +48,7 @@ type DeleteChain = {
 
 export async function recordCalibrationCertificate(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "create");
   const assetId = String(formData.get("asset_id") ?? "");
 
   const parsed = recordCalibrationSchema.safeParse({
@@ -110,6 +112,7 @@ export async function recordCalibrationCertificate(_prev: FormState, formData: F
 
 export async function deleteCalibrationCertificate(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "delete");
   const assetId = String(formData.get("asset_id") ?? "");
   const certId = String(formData.get("cert_id") ?? "");
   if (!isAdmin(ctx.membership.role)) return formError("Only an owner or admin can do that.");

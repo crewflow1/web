@@ -1,6 +1,7 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Browser } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalE2eTarget } from "./_guard";
+import { mintState, asActor } from "./_actors";
 
 /**
  * CORE CUSTOMER JOURNEY (authenticated OWNER, real browser) — the launch-gate
@@ -9,7 +10,7 @@ import { assertLocalE2eTarget } from "./_guard";
  *
  *   1. lead → customer
  *   2. quote with line items + correct VAT math
- *   3. request approval → self-approve → accept  ⇒ auto Job + draft Invoice
+ *   3. request approval → approve (distinct admin approver) → accept ⇒ auto Job + draft Invoice
  *   4. assign a staff member to the job (persists)
  *   5. record a payment ⇒ invoice balance/status + dashboard update
  *
@@ -87,9 +88,61 @@ async function submitAndLand(page: Page, label: string, urlRe: RegExp) {
   }
 }
 
+// --- Separation-of-duties approver (step 3) -------------------------------
+// The seeded org is SHARED and other specs (first-customer-sim) add a second
+// owner/admin approver to it, so the owner can no longer self-approve their own
+// quote (a control we must NOT weaken). Rather than depend on the org having a
+// single approver, this spec seeds its OWN dedicated admin approver (granted
+// quotes:manage) and approves THROUGH them — the real two-approver flow — so the
+// step is deterministic regardless of what else is in the org.
+const PASSWORD = "E2e-Harness-Pw-2f9c1a"; // local-only synthetic credential (matches global-setup)
+const SLUG = "e2e-harness-org";
+const APPROVER_EMAIL = "e2e-core-approver@crewflow.test";
+const APPROVER_STATE = "e2e/.auth/core-approver.json";
+let APPROVER_ORG_ID = "";
+
+/** Idempotently seed a dedicated admin approver with quotes:manage, and mint its session. */
+async function seedApprover(): Promise<void> {
+  const org = (await svc.from("organizations").select("id").eq("slug", SLUG).maybeSingle()).data as
+    | { id: string }
+    | null;
+  if (!org?.id) throw new Error("[core-journey] seeded org not found — did globalSetup run?");
+  APPROVER_ORG_ID = org.id;
+
+  const created = await svc.auth.admin.createUser({ email: APPROVER_EMAIL, password: PASSWORD, email_confirm: true });
+  let id = created.data.user?.id;
+  if (!id) {
+    const list = await svc.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    id = list.data.users.find((u) => u.email === APPROVER_EMAIL)?.id;
+    if (id) await svc.auth.admin.updateUserById(id, { password: PASSWORD, email_confirm: true });
+  }
+  if (!id) throw new Error(`[core-journey] could not seed approver ${APPROVER_EMAIL}`);
+  await svc.from("users").upsert({ id, email: APPROVER_EMAIL, full_name: "E2E Core Approver" });
+  await svc.from("memberships").upsert(
+    { org_id: APPROVER_ORG_ID, user_id: id, role: "admin" },
+    { onConflict: "org_id,user_id" },
+  );
+  // R4 default-deny: a bare admin holds NO management capabilities. Grant
+  // quotes:manage (implies view + approve) so this admin can legitimately approve.
+  const mem = (
+    await svc.from("memberships").select("id").eq("org_id", APPROVER_ORG_ID).eq("user_id", id).maybeSingle()
+  ).data as { id: string } | null;
+  if (!mem?.id) throw new Error("[core-journey] approver membership missing");
+  const { error: grantErr } = await svc.from("membership_permissions").upsert(
+    { org_id: APPROVER_ORG_ID, membership_id: mem.id, module: "quotes", action: "manage", granted_by: null },
+    { onConflict: "membership_id,module,action" },
+  );
+  if (grantErr) throw new Error(`[core-journey] grant quotes:manage failed: ${grantErr.message}`);
+  await mintState(APPROVER_EMAIL, PASSWORD, APPROVER_STATE);
+}
+
 test.describe.configure({ mode: "serial" });
 
 test.describe("core customer journey — owner, real browser", () => {
+  test.beforeAll(async () => {
+    await seedApprover();
+  });
+
   test("1. lead → customer", async ({ page }) => {
     test.setTimeout(60_000);
     await gotoReady(page, "/leads/new");
@@ -131,15 +184,23 @@ test.describe("core customer journey — owner, real browser", () => {
       .toEqual({ status: "draft", total: 240 });
   });
 
-  test("3. approve → accept ⇒ auto Job + draft Invoice", async ({ page }) => {
+  test("3. approve → accept ⇒ auto Job + draft Invoice", async ({ page, browser }) => {
     test.setTimeout(90_000);
     await gotoReady(page, `/quotes/${S.quoteId}`);
     await page.getByRole("button", { name: /request approval/i }).click();
     await page.waitForURL(/saved=approval_requested/);
     await settle(page);
-    await page.getByRole("button", { name: /^approve$/i }).click();
-    await page.waitForURL(/saved=approved/);
-    await settle(page);
+    // Approve as a DISTINCT authorised approver (separation of duties). The owner
+    // created the quote, so when another approver exists the app correctly blocks
+    // self-approval; we approve through the seeded admin (quotes:manage) instead of
+    // weakening that rule. This is the common production path (multi-approver orgs).
+    await asActor(browser, APPROVER_STATE, async (approver) => {
+      await gotoReady(approver, `/quotes/${S.quoteId}`);
+      await approver.getByRole("button", { name: /^approve$/i }).click();
+      await approver.waitForURL(/saved=approved/);
+    });
+    // Back as the owner: the approved quote can now be accepted on the customer's behalf.
+    await gotoReady(page, `/quotes/${S.quoteId}`);
     await page.getByRole("button", { name: /accept on customer'?s behalf/i }).click();
     await page.waitForURL(/saved=accepted/);
 

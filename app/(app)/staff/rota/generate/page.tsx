@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
+import { hasCapability } from "@/server/auth/capabilities";
 import { buildRotaPlan } from "@/server/services/schedule-integrity";
+import { persistGeneratedRota } from "../../actions";
+import { ApproveRotaForm } from "./_approve-form";
 import { SCHEDULE_WINDOW_DAYS } from "@/lib/schedule/window";
 import {
   SOLVER_CRITERIA,
@@ -163,9 +166,13 @@ function UnfilledCard({ job }: { job: UnfilledJob }) {
 }
 
 export default async function GenerateRotaPage() {
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const { plan, window } = await buildRotaPlan(ctx.org.id);
   const { assignments, unfilled, summary, insufficient, notes } = plan;
+  // Only an owner (or an admin granted rota:create) may save the plan; everyone
+  // else sees the preview without the approve control. The server action
+  // re-checks this gate, so hiding it here is UX, not the boundary.
+  const canApprove = await hasCapability(ctx, user, "rota", "create");
 
   return (
     <div className="space-y-6">
@@ -176,8 +183,8 @@ export default async function GenerateRotaPage() {
             A proposed rota for the jobs in the next {SCHEDULE_WINDOW_DAYS} days (
             {formatConflictDay(window.fromDay)} – {formatConflictDay(window.toDay)}) that have
             nobody on them yet. Every proposal is worked out from your own records — no AI, no
-            guesswork — and <strong>nothing here is saved</strong>: each line fills in the rota
-            form for you to check and confirm.
+            guesswork — and <strong>nothing is saved until you approve it</strong>: review the
+            plan, then save it all at once or fill in any single line by hand.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -255,6 +262,27 @@ export default async function GenerateRotaPage() {
             </details>
           </section>
 
+          {canApprove && assignments.length > 0 ? (
+            <section
+              aria-label="Approve and save"
+              className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 shadow-sm"
+            >
+              <h2 className="text-sm font-semibold text-slate-900">
+                Save this plan to the rota
+              </h2>
+              <p className="mt-1 text-xs text-slate-600">
+                Reviewed the {summary.assigned}{" "}
+                {summary.assigned === 1 ? "assignment" : "assignments"} below? Save
+                them all in one go. It is written transactionally (all or none),
+                skips anything already on the rota, and never overwrites a
+                confirmed shift.
+              </p>
+              <div className="mt-3">
+                <ApproveRotaForm action={persistGeneratedRota} count={summary.assigned} />
+              </div>
+            </section>
+          ) : null}
+
           {assignments.length > 0 ? (
             <section aria-label="Proposed assignments" className="space-y-2">
               <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -301,11 +329,13 @@ export default async function GenerateRotaPage() {
         is best — because CrewFlow stores no skills or certifications against a person.
       </p>
       <p className="text-[11px] leading-relaxed text-slate-500">
-        Proposals are never actions: <strong>nothing on this page moves anybody</strong>. “Fill in
-        on the rota” opens the assign-shift form with the details filled in, and the shift exists
-        only once you press Assign there — where the usual checks and permissions still apply.
-        Times are shown in UK local time here; the rota form and grid work in UTC clock time, so
-        during British Summer Time they read one hour earlier there.
+        Nothing is written until you choose to write it. <strong>Approve &amp; save</strong>{" "}
+        persists the whole plan in one all-or-nothing step (owner or a permitted admin only),
+        skipping anything already on the rota and leaving any shift that clashes with a confirmed
+        one untouched and explained — it is only ever added, never overwritten. “Fill in on the
+        rota” instead opens the assign-shift form with one line pre-filled, to save by hand. Times
+        are shown in UK local time here; the rota form and grid work in UTC clock time, so during
+        British Summer Time they read one hour earlier there.
       </p>
     </div>
   );

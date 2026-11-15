@@ -4,13 +4,20 @@ import { isMaintenanceMode } from "@/lib/maintenance";
 import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
 import { getVoiceProvider, isVoiceConfigured } from "@/lib/telephony";
 import { resolveOrgForDialedNumber } from "@/lib/telephony/router";
-import { buildAckDropTwiml, buildGatherTwiml, buildInboundTwiml } from "@/lib/telephony/providers/twilio";
+import {
+  buildAckDropTwiml,
+  buildDialTwiml,
+  buildGatherTwiml,
+  buildInboundTwiml,
+} from "@/lib/telephony/providers/twilio";
+import { loadAnsweringPolicy } from "@/lib/telephony/answering-config";
+import { decideAnswering } from "@/lib/telephony/answering-policy";
 import {
   appendCallEvent,
   recordInboundCall,
   updateCallAssociation,
 } from "@/server/services/telephony";
-import { processInboundEnquiry } from "@/server/services/receptionist";
+import { processInboundEnquiry, processMissedCallTextback } from "@/server/services/receptionist";
 import { maybeGenerateVoiceTurn } from "@/lib/telephony/ai-turn";
 import {
   buildReceptionistGreeting,
@@ -48,6 +55,18 @@ function callbackUrl(request: Request): string {
     request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? parsed.host;
   return `${proto}://${host}${parsed.pathname}${parsed.search}`;
 }
+
+/** The recording-status callback URL, on the same public host Twilio reached. */
+function recordingStatusUrl(request: Request): string {
+  const parsed = new URL(request.url);
+  const proto = request.headers.get("x-forwarded-proto") ?? parsed.protocol.replace(/:$/, "");
+  const host =
+    request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? parsed.host;
+  return `${proto}://${host}/api/webhooks/twilio/voice/recording-status`;
+}
+
+/** The default spoken consent line when recording is on but none is configured. */
+const DEFAULT_CONSENT = "Please note, this call may be recorded for quality and training purposes.";
 
 export async function POST(request: Request): Promise<NextResponse> {
   if (isMaintenanceMode()) {
@@ -101,8 +120,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     return new NextResponse(buildAckDropTwiml(), { status: 200, headers: TWIML_HEADERS });
   }
 
+  // 8. Persist origination + the first lifecycle event (admin client, org-pinned).
+  //    This is the call record every later enrichment hangs off, so a failure here
+  //    is a 500 (Twilio retries) rather than a swallowed error.
   try {
-    // 8. Persist origination + the first lifecycle event (admin client, org-pinned).
     const { callId } = await recordInboundCall(orgId, call);
     await appendCallEvent(orgId, callId, {
       type: call.status,
@@ -110,59 +131,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       payload: call.raw,
       occurredAt: call.occurredAt,
     });
-
-    // 9. Delegate to the UNCHANGED ingestion core — same path as SMS/WhatsApp.
-    //    Origination is the SINGLE delegation door (the status route never
-    //    delegates). We delegate UNCONDITIONALLY rather than gating on the
-    //    calls-row `created` flag: Twilio is at-least-once and unordered, so a
-    //    status callback can create the calls row first, making origination see
-    //    created:false — a `created`-gated skip would then DROP the enquiry
-    //    entirely. Idempotency is owned downstream instead: `provider_message_id`
-    //    (the CallSid) drives processInboundEnquiry's (org_id, provider_message_id)
-    //    partial-unique dedup, so a redelivered origination folds into the same
-    //    enquiry. Best-effort: a failure must not break the TwiML.
-    //
-    //    REPLY DEFERRED (G-6): at origination the call is LIVE — the TwiML below
-    //    opens the AI answering loop, so "missed" is unknowable here and a
-    //    text-back now would reach a caller we are actively speaking to. The
-    //    status callback's unanswered TERMINAL (no_answer/busy/failed) owns the
-    //    missed-call decision via processMissedCallTextback, which re-enters the
-    //    SAME ingestion idempotently on this CallSid.
-    try {
-      const { lead_id, conversation_id } = await processInboundEnquiry(
-        {
-          org_id: orgId,
-          channel: "phone",
-          caller: call.from,
-          dedup_key: call.providerCallId,
-          provider_message_id: call.providerCallId,
-        },
-        { textback: "defer" },
-      );
-
-      // LINK the calls row to the lead + conversation the enquiry resolved, so
-      // the C41 duration/ended-at and C35c transcript/summary/recording
-      // enrichment become reachable by the tenant-facing leads/[id] reader
-      // (which filters `calls.lead_id = id`). Matched on the SAME providerCallId
-      // recordInboundCall wrote above, so the UPDATE hits the right row.
-      // Best-effort: a linkage failure must NEVER break the TwiML ack.
-      if (lead_id) {
-        try {
-          await updateCallAssociation(orgId, call.providerCallId, {
-            leadId: lead_id,
-            conversationId: conversation_id,
-          });
-        } catch (e) {
-          Sentry.captureException(e, {
-            tags: { route: "webhooks/twilio/voice", stage: "link" },
-          });
-          console.error("[twilio-voice] call-lead linkage failed", e);
-        }
-      }
-    } catch (e) {
-      Sentry.captureException(e, { tags: { route: "webhooks/twilio/voice", stage: "enquiry" } });
-      console.error("[twilio-voice] enquiry delegation failed", e);
-    }
   } catch (e) {
     Sentry.captureException(e, { tags: { route: "webhooks/twilio/voice" } });
     console.error("[twilio-voice] call persistence failed", e);
@@ -170,6 +138,117 @@ export async function POST(request: Request): Promise<NextResponse> {
       { ok: false, error: e instanceof Error ? e.message : "unknown_error" },
       { status: 500 },
     );
+  }
+
+  // 9. STAFF-FIRST ROUTING DECISION (Twilio receptionist PR 2). An org that has
+  //    configured the STRUCTURED answering policy (enabled) may ring its OWN staff
+  //    numbers first and only fall through to the AI on a miss; an unconfigured org
+  //    (enabled:false / no row) keeps the PRIOR behaviour verbatim — the AI answers
+  //    directly below. decideAnswering is the SAME pure function the dial-status
+  //    fallthrough re-runs with the observed staff outcome. Best-effort load: a
+  //    failure degrades to a disabled policy ⇒ the AI-answers-directly path.
+  const policy = await loadAnsweringPolicy(orgId);
+  if (policy.config.enabled) {
+    const decision = decideAnswering(policy.config, new Date(), "no_attempt_yet");
+
+    if (decision.action === "ring_staff") {
+      // When recording is enabled the caller must hear a consent line BEFORE the
+      // recorded leg begins (UK disclosure); it replaces the greeting on this path.
+      const greeting = policy.recordingEnabled
+        ? (policy.consentMessage ?? DEFAULT_CONSENT)
+        : policy.greeting;
+      const dial = buildDialTwiml({
+        numbers: policy.staffNumbers,
+        timeoutSeconds: decision.ringSeconds,
+        // callerId MUST be a Twilio-owned number — the DIALED number is guaranteed
+        // owned, so staff reliably see the business line.
+        callerId: call.to,
+        greeting,
+        record: policy.recordingEnabled,
+        recordingStatusCallback: policy.recordingEnabled ? recordingStatusUrl(request) : null,
+      });
+      // Ring staff; the <Dial> action (dial-status) owns the AI / message
+      // fallthrough and creates the lead only if the AI ends up answering. NO
+      // enquiry is delegated here — a staff-answered call is a human-handled lead.
+      // If there is no VALID staff number the builder returns null and we fall
+      // through to the AI path below (never drop the caller).
+      if (dial) return new NextResponse(dial, { status: 200, headers: TWIML_HEADERS });
+    } else if (decision.action === "take_message") {
+      // out_of_hours mode with nobody to ring during open hours: the AI stays out,
+      // but the caller is captured via the idempotent, eligibility-gated missed-call
+      // text-back, then we close politely. Best-effort.
+      try {
+        await processMissedCallTextback({
+          org_id: orgId,
+          provider_call_id: call.providerCallId,
+          caller: call.from,
+        });
+      } catch (e) {
+        Sentry.captureException(e, {
+          tags: { route: "webhooks/twilio/voice", stage: "take_message" },
+        });
+        console.error("[twilio-voice] take-message text-back failed", e);
+      }
+      return new NextResponse(
+        buildInboundTwiml(
+          "Sorry we missed you. We'll pass your message to the team and someone will be in touch shortly. Goodbye.",
+        ),
+        { status: 200, headers: TWIML_HEADERS },
+      );
+    }
+    // decision.action === "ai_answer" → fall through to the AI path below.
+  }
+
+  // 9b. Delegate to the UNCHANGED ingestion core — same path as SMS/WhatsApp.
+  //    Reached on the AI-answers path (policy disabled, or decided ai_answer, or a
+  //    ring_staff with no valid number). We delegate UNCONDITIONALLY rather than
+  //    gating on the calls-row `created` flag: Twilio is at-least-once and
+  //    unordered, so a status callback can create the calls row first, making
+  //    origination see created:false — a `created`-gated skip would then DROP the
+  //    enquiry entirely. Idempotency is owned downstream instead: `provider_message_id`
+  //    (the CallSid) drives processInboundEnquiry's (org_id, provider_message_id)
+  //    partial-unique dedup, so a redelivered origination folds into the same
+  //    enquiry. Best-effort: a failure must not break the TwiML.
+  //
+  //    REPLY DEFERRED (G-6): on this path the call is LIVE — the TwiML below opens
+  //    the AI answering loop, so "missed" is unknowable here and a text-back now
+  //    would reach a caller we are actively speaking to. The status callback's
+  //    unanswered TERMINAL (no_answer/busy/failed) owns the missed-call decision
+  //    via processMissedCallTextback, which re-enters the SAME ingestion
+  //    idempotently on this CallSid.
+  try {
+    const { lead_id, conversation_id } = await processInboundEnquiry(
+      {
+        org_id: orgId,
+        channel: "phone",
+        caller: call.from,
+        dedup_key: call.providerCallId,
+        provider_message_id: call.providerCallId,
+      },
+      { textback: "defer" },
+    );
+
+    // LINK the calls row to the lead + conversation the enquiry resolved, so the
+    // C41 duration/ended-at and C35c transcript/summary/recording enrichment
+    // become reachable by the tenant-facing leads/[id] reader (which filters
+    // `calls.lead_id = id`). Matched on the SAME providerCallId recordInboundCall
+    // wrote above. Best-effort: a linkage failure must NEVER break the TwiML ack.
+    if (lead_id) {
+      try {
+        await updateCallAssociation(orgId, call.providerCallId, {
+          leadId: lead_id,
+          conversationId: conversation_id,
+        });
+      } catch (e) {
+        Sentry.captureException(e, {
+          tags: { route: "webhooks/twilio/voice", stage: "link" },
+        });
+        console.error("[twilio-voice] call-lead linkage failed", e);
+      }
+    }
+  } catch (e) {
+    Sentry.captureException(e, { tags: { route: "webhooks/twilio/voice", stage: "enquiry" } });
+    console.error("[twilio-voice] enquiry delegation failed", e);
   }
 
   // 10. Return TwiML that OPENS the conversational loop. The greeting is wrapped
@@ -189,6 +268,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   const transcript = typeof call.raw.SpeechResult === "string" ? call.raw.SpeechResult : "";
   const profile = await loadReceptionistProfile(orgId);
   const spokenTurn = await maybeGenerateVoiceTurn({ orgId, transcript, business: profile });
-  const twiml = buildGatherTwiml({ prompt: spokenTurn ?? buildReceptionistGreeting(profile) });
+  const twiml = buildGatherTwiml({
+    prompt: spokenTurn ?? policy.greeting ?? buildReceptionistGreeting(profile),
+  });
   return new NextResponse(twiml, { status: 200, headers: TWIML_HEADERS });
 }

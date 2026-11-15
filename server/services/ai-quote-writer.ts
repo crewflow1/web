@@ -88,7 +88,15 @@ import type { LineItem } from "@/lib/quotes/schema";
 const DRAFTS = "ai_quote_drafts";
 
 /** Output cap. A scope of works is not a novel; an unbounded cap is a bill. */
-const MAX_OUTPUT_TOKENS = 2_000;
+// A full multi-line extension quote (scope_summary + 15-30 line items + assumptions
+// + exclusions + provenance) overruns 2,000 output tokens and gets truncated into
+// malformed JSON (observed with claude-sonnet-5). 4,000 fits a realistic draft with
+// headroom; the governor's mid-tier envelope still caps spend.
+const MAX_OUTPUT_TOKENS = 4_000;
+// The draft is a one-shot, user-initiated generation of a large structured object;
+// it needs more than the provider's 20s summary default. 60s matches the Node
+// worker's maxDuration ceiling and avoids aborting a valid in-progress draft.
+const QUOTE_GEN_TIMEOUT_MS = 60_000;
 /** Deterministic decoding. A quote is not a place for creative sampling. */
 const TEMPERATURE = 0;
 /** How many historic line prices form the price book. */
@@ -368,6 +376,12 @@ export function resolveQuoteWriterModel(
         system: prompt.system,
         temperature: TEMPERATURE,
         maxTokens: MAX_OUTPUT_TOKENS,
+        // The provider's default 20s is calibrated for short summaries. A full
+        // quote draft (scope + up to ~30 priced line items + assumptions +
+        // exclusions, up to MAX_OUTPUT_TOKENS) legitimately generates for longer,
+        // and this is a deliberate, user-initiated, one-shot action — so give it
+        // a generous ceiling rather than aborting a valid draft mid-stream.
+        signal: AbortSignal.timeout(QUOTE_GEN_TIMEOUT_MS),
       });
       return {
         text: result.text,

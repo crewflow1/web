@@ -378,13 +378,14 @@ export async function drainSmsQueue(): Promise<SmsDrainResult> {
   const startedAt = Date.now();
   const c = createAdminClient();
 
-  const { data, error } = await c
-    .from("sms_deliveries" as never)
-    .select("id, notification_id, org_id, user_id, category, retry_count" as never)
-    .eq("status" as never, "queued")
-    .lte("scheduled_for" as never, new Date().toISOString())
-    .order("scheduled_for" as never, { ascending: true })
-    .limit(SMS_DRAIN_BATCH_SIZE);
+  // Atomically CLAIM a disjoint batch (status queued→'sending') before sending,
+  // so two overlapping drain ticks never read + send the same rows (F-1 double-
+  // send). Mirrors the webhook drain's claim RPC: FOR UPDATE ... SKIP LOCKED +
+  // crashed-tick lease reclaim. settle() / the retry re-queue below move the row
+  // back out of 'sending'. See 20261274000000_push_sms_atomic_claim.sql.
+  const { data, error } = await c.rpc("sms_claim_deliveries" as never, {
+    p_limit: SMS_DRAIN_BATCH_SIZE,
+  } as never);
   if (error) {
     return {
       picked: 0,

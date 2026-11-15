@@ -32,6 +32,10 @@ export async function acknowledgeSafetyDocument(formData: FormData): Promise<voi
     subjectId: formData.get("subjectId"),
     subjectVersion: formData.get("subjectVersion"),
     signedName: formData.get("signedName"),
+    // The SignoffPanel's SignaturePad posts the drawn PNG under this name; it must
+    // be read here or `v.signatureDataUrl` is always undefined and the drawn
+    // signature is silently dropped (the typed name alone was recorded).
+    signatureDataUrl: formData.get("signatureDataUrl") ?? undefined,
   });
   const rawId = String(formData.get("subjectId") ?? "");
   const rawType = String(formData.get("subjectType") ?? "risk_assessment") as AckSubjectType;

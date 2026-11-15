@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { assembleQuotePrompt } from "@/lib/ai/quote-prompt";
 import { interpretQuoteDraftResponse } from "@/lib/ai/quote-draft-pipeline";
 import { quoteDraftTotals, unpricedLines } from "@/lib/ai/quote-draft-schema";
+import { QUOTE_CONTEXT_FIELD_KEYS } from "@/lib/ai/quote-context";
 import {
   EVAL_CASES,
   INJECTION_PAYLOADS,
@@ -254,5 +255,26 @@ describe("instruction-leak detection", () => {
     // A leak detector that cannot fail is decoration.
     expect(draftContainsMarker({ title: "ZZQUOTEONEPOUND discount" }, "ZZQUOTEONEPOUND")).toBe(true);
     expect(draftContainsMarker({ title: "Bathroom refit" }, "ZZQUOTEONEPOUND")).toBe(false);
+  });
+});
+
+describe("quote-writer prompt — provenance tokens are enumerated (regression)", () => {
+  // Regression for the 2026-11 acceptance finding: the model was emitting
+  // descriptive provenance ("context: currency (GBP)") instead of the schema
+  // enum ('currency'), so parseQuoteDraft rejected every genuine draft as
+  // schema_invalid. The prompt must give the model the EXACT enum tokens and tag
+  // each context input with its [token].
+  const prompt = assembleQuotePrompt(EVAL_CASES[0]!.context);
+  const full = `${prompt.system}\n${prompt.user}`;
+  it("spells out every provenance enum token in the instruction (system channel)", () => {
+    expect(prompt.system).toMatch(/provenance\[\] must contain ONLY these exact tokens/);
+    for (const key of QUOTE_CONTEXT_FIELD_KEYS) {
+      expect(full.includes(key), `provenance token '${key}' must appear in the prompt`).toBe(true);
+    }
+  });
+  it("tags the trusted context lines with their [token] (user channel)", () => {
+    for (const tag of ["[org_trade]", "[property_kind]", "[postcode_outward]", "[currency]", "[default_vat_rate]"]) {
+      expect(prompt.user.includes(tag), `context line must carry ${tag}`).toBe(true);
+    }
   });
 });

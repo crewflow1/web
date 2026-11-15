@@ -81,13 +81,33 @@ export async function JobSafetySection({ jobId }: { jobId: string }) {
   const rams = (ramsRes.data ?? []) as RaRow[];
   const permits = (permitsRes.data ?? []) as PermitRow[];
   const talks = (talksRes.data ?? []) as TalkRow[];
-  if (rams.length === 0 && permits.length === 0 && talks.length === 0) return null;
-
   const now = new Date();
   const currentRams = rams.find((r) => r.status === "issued") ?? null;
   const hasNoCurrent = rams.length > 0 && !currentRams;
   // Only the delivered talks are evidence; the current one is the single issued revision.
   const deliveredTalks = talks.filter((t) => t.status !== "draft");
+  // D-16: deep-link the RAMS create form pre-filled with this job, so a RAMS can
+  // actually be attached to the job (the only path that sets risk_assessments.job_id).
+  const createRamsHref = `/health-safety/new?job=${jobId}`;
+
+  // D-16: a job with nothing on file previously rendered NO panel at all, so there
+  // was no entry point to create its first RAMS. Show an explicit empty state with
+  // the create link instead of hiding the section.
+  if (rams.length === 0 && permits.length === 0 && talks.length === 0) {
+    return (
+      <section aria-labelledby="job-safety-heading" className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between">
+          <h2 id="job-safety-heading" className="text-base font-semibold text-slate-900">Health &amp; safety</h2>
+        </div>
+        <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          No RAMS, permits or toolbox talks on this job yet. Issue a RAMS before work starts.
+        </p>
+        <Link href={createRamsHref} className="mt-3 inline-flex min-h-[44px] items-center text-sm font-medium text-slate-700 hover:text-slate-900 hover:underline">
+          Create RAMS for this job →
+        </Link>
+      </section>
+    );
+  }
 
   return (
     <section aria-labelledby="job-safety-heading" className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -99,9 +119,12 @@ export async function JobSafetySection({ jobId }: { jobId: string }) {
       </div>
 
       {hasNoCurrent ? (
-        <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           No issued RAMS is current for this job. Issue one before work starts.
-        </p>
+          <Link href={createRamsHref} className="ml-2 font-medium underline hover:text-amber-900">
+            Create RAMS for this job →
+          </Link>
+        </div>
       ) : null}
 
       {rams.length > 0 ? (

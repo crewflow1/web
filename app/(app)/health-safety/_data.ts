@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import type { RiskAssessmentRow, HazardRow, RevisionSibling } from "@/lib/health-safety/schema";
 
@@ -102,6 +103,63 @@ export async function getRevisionSiblings(
     .order("revision_number", { ascending: false });
   if (error) throw readFailure("health-safety: revision siblings", error);
   return data ?? [];
+}
+
+/**
+ * Active jobs in the ACTIVE org that a RAMS can be linked to (D-16). Without a
+ * job link the job's Health & Safety panel can never find an issued RAMS and the
+ * dashboard flags the job as unsafe, so the create form must expose this. Tenant
+ * (user-JWT) client — RLS scopes the picker to jobs the caller may see; the
+ * ACTIVE-org predicate keeps a dual-org member's other company out. Completed and
+ * cancelled jobs are excluded: you issue a RAMS before/while work runs.
+ */
+export async function listLinkableJobs(
+  orgId: string,
+): Promise<Array<{ id: string; label: string }>> {
+  type JobRow = { id: string; status: string | null; customer: { name: string | null } | null };
+  const supabase = await createClient();
+  // COMPLETE (F-1): a reference picker must see EVERY linkable job, so page via
+  // fetchAllRows on a stable (created_at desc, id asc) order rather than letting a
+  // bare read clamp at PostgREST max_rows (1000) and silently drop later jobs.
+  const { data, error } = await fetchAllRows<JobRow>(
+    (from, to) =>
+      (supabase as unknown as {
+        from: (t: string) => {
+          select: (c: string) => {
+            eq: (k: string, v: string) => {
+              not: (k: string, op: string, v: string) => {
+                order: (k: string, o: { ascending: boolean }) => {
+                  order: (
+                    k: string,
+                    o: { ascending: boolean },
+                  ) => {
+                    range: (
+                      f: number,
+                      t: number,
+                    ) => PromiseLike<{ data: JobRow[] | null; error: SupabaseReadError | null }>;
+                  };
+                };
+              };
+            };
+          };
+        };
+      })
+        .from("jobs")
+        .select("id, status, customer:customers ( name )")
+        .eq("org_id", orgId)
+        .not("status", "in", "(completed,cancelled)")
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{
+        data: JobRow[] | null;
+        error: unknown;
+      }>,
+  );
+  if (error) throw readFailure("health-safety: job picker", error as SupabaseReadError);
+  return (data ?? []).map((j) => ({
+    id: j.id,
+    label: `${j.customer?.name ?? "Job"}${j.status ? ` · ${j.status}` : ""}`,
+  }));
 }
 
 /** Members of the ACTIVE org who can be named as the assessor. */

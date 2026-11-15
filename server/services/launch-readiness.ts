@@ -17,6 +17,7 @@ import {
   isTranscriptionModelBound,
 } from "@/lib/ai/transcription";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getActivationPreflightRows } from "./activation-preflight";
 
 /**
  * Phase 8 — launch readiness aggregator.
@@ -248,13 +249,14 @@ async function checkTranscriptionEstate(): Promise<ChecklistRow> {
 }
 
 export async function buildLaunchReadiness(): Promise<LaunchReadiness> {
-  const [ops, autoHealth, hqAttribution, embeddingEstate, transcriptionEstate] =
+  const [ops, autoHealth, hqAttribution, embeddingEstate, transcriptionEstate, activationRows] =
     await Promise.all([
       buildOpsSnapshot(),
       readAutomationHealth(),
       checkHqAttribution(),
       checkEmbeddingEstate(),
       checkTranscriptionEstate(),
+      getActivationPreflightRows(),
     ]);
 
   // Aggregate cron health.
@@ -334,6 +336,7 @@ export async function buildLaunchReadiness(): Promise<LaunchReadiness> {
     hqAttribution,
     embeddingEstate,
     transcriptionEstate,
+    ...activationRows,
     {
       id: "security-doc",
       label: "Security contract",

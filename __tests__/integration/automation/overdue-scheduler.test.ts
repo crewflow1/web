@@ -112,7 +112,7 @@ describeIntegration("overdue-invoice scheduler", () => {
     ] as const) {
       const res = await svc
         .from("organizations")
-        .insert({ name: `OD Sched ${label}`, slug })
+        .insert({ status: "active", name: `OD Sched ${label}`, slug })
         .select("id")
         .single();
       expect(res.error, res.error?.message).toBeNull();
@@ -312,7 +312,7 @@ describeIntegration("overdue-invoice scheduler", () => {
       // exact-count assertions here.
       const orgRes = await db(serviceClient())
         .from("organizations")
-        .insert({ name: "OD Sched C", slug: `${TOKEN}-c` })
+        .insert({ status: "active", name: "OD Sched C", slug: `${TOKEN}-c` })
         .select("id")
         .single();
       expect(orgRes.error, orgRes.error?.message).toBeNull();

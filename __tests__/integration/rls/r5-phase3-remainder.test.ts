@@ -51,8 +51,8 @@ const seenIn = async (who: string, table: string, ids: string[]): Promise<Set<st
 
 describeIntegration("rls · R5 Phase 3 remainder (20261270-273)", () => {
   beforeAll(async () => {
-    orgA = await insId("organizations", { name: `${T}A`, slug: `${T}-a` });
-    orgB = await insId("organizations", { name: `${T}B`, slug: `${T}-b` });
+    orgA = await insId("organizations", { status: "active", name: `${T}A`, slug: `${T}-a` });
+    orgB = await insId("organizations", { status: "active", name: `${T}B`, slug: `${T}-b` });
     for (const w of ["owner", "admin", "assigned", "unassigned", "revoked", "otherOrg"]) {
       const u = await mk(w); uid[w] = u.id; tok[w] = u.token;
     }

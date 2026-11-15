@@ -218,11 +218,11 @@ describeIntegration("H2-CIS M3 deduction engine (real Postgres)", () => {
 
   beforeAll(async () => {
     orgA = String(
-      (await svc().from("organizations").insert({ name: "M3 A", slug: `${T}-a` }).select("id").single())
+      (await svc().from("organizations").insert({ status: "active", name: "M3 A", slug: `${T}-a` }).select("id").single())
         .data?.id,
     );
     orgB = String(
-      (await svc().from("organizations").insert({ name: "M3 B", slug: `${T}-b` }).select("id").single())
+      (await svc().from("organizations").insert({ status: "active", name: "M3 B", slug: `${T}-b` }).select("id").single())
         .data?.id,
     );
 

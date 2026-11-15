@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "@/lib/supabase/admin"; import { orgPublicWriteRefused } from "@/server/services/org-lifecycle"; import { PUBLIC_WRITE_REFUSED_MESSAGE } from "@/lib/auth/org-status";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
 import {
@@ -20,11 +20,11 @@ import {
 import { computeTotals } from "@/lib/quotes/totals";
 import { invoiceDueDate } from "@/lib/invoices/due-date";
 import { sendInvoiceEmail } from "@/lib/email/send-invoice";
-import { loadJobForOrg } from "@/lib/jobs/load";
 import { verifyQuoteReferences } from "@/lib/crm/reference-integrity";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { storeSignatureImage } from "@/server/services/signature-capture";
 import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
+import * as Sentry from "@sentry/nextjs";
 import type { Database } from "@/lib/supabase/types";
 import {
   type FormState,
@@ -541,26 +541,25 @@ export async function updateQuote(
   const supabase = await createClient();
   const totals = computeTotals(parsed.data.line_items);
 
-  // Wave 2 — if the quote is past the approval gate (approved/sent/viewed),
-  // editing reverts it to pending_approval so the approver re-confirms the
-  // new numbers. The trigger emits quote.changed_after_approval.
-  const { data: existing } = await supabase
+  // Resolve the quote in the ACTIVE org first — for the friendly "accepted"
+  // refusal below, and so a quote we cannot resolve here never reaches a write.
+  const { data: existing, error: existingError } = await supabase
     .from("quotes")
     .select("status")
     .eq("id", id)
     // ACTIVE-ORG SCOPE. RLS's `current_org_ids()` spans EVERY org the caller
     // belongs to, so without this a dual-org user working in org A reads org
-    // B's quote here — and then every write below lands on B's row. A foreign
-    // quote reads as absent, and the UPDATE's own predicate makes it a no-op.
+    // B's quote here — and then the write below lands on B's row. A foreign
+    // quote reads as absent; the write is pinned to the same org again.
     .eq("org_id", ctx.org.id)
     .maybeSingle();
 
-  // Not in the active org (or gone). Bail BEFORE the destructive line-item
-  // replacement below — that delete is keyed on quote_id, so proceeding on a
-  // quote we could not resolve in this org would wipe another org's priced
-  // line items and leave the quote a shell. Same wording as the later
-  // load-failure branch: a foreign quote is indistinguishable from a missing one.
-  if (!existing) {
+  // Not in the active org (or gone), or the read itself failed. Bail BEFORE the
+  // replacement below. Same wording for all three: a foreign quote is
+  // indistinguishable from a missing one, and a failed read must never be
+  // treated as licence to write.
+  if (existingError || !existing) {
+    if (existingError) console.error("[quotes] update: quote read failed", existingError);
     return formError(
       "Couldn't load the quote. Try again.",
       echoValuesFromForm(formData),
@@ -568,21 +567,17 @@ export async function updateQuote(
   }
 
   // Commercial integrity: an accepted quote/variation is a firm agreement — its
-  // amounts and scope are frozen (the DB enforces this too, via triggers
-  // quotes_freeze_accepted / quote_line_items_freeze_accepted). Refuse the edit
-  // up front rather than let the DB reject the line-item re-insert mid-write.
-  // To change agreed scope, the operator raises a variation.
+  // amounts and scope are frozen (the DB enforces this too: triggers
+  // quotes_freeze_accepted / quote_line_items_freeze_accepted, and
+  // replace_quote_content refuses it under the row lock). Refuse the edit up
+  // front with the actionable message. To change agreed scope, the operator
+  // raises a variation.
   if (existing?.status === "accepted") {
     return formError(
       "This quote has been accepted and can't be edited. Raise a variation to change the agreed scope.",
       echoValuesFromForm(formData),
     );
   }
-
-  const revertToPending =
-    existing?.status === "approved" ||
-    existing?.status === "sent" ||
-    existing?.status === "viewed";
 
   // Cross-tenant reference integrity — see createQuote. Verified before the
   // write so a forged customer_id / property_id / lead_id is a clean validation
@@ -594,10 +589,37 @@ export async function updateQuote(
   });
   if (!refs.ok) return formError(refs.message, echoValuesFromForm(formData));
 
-  // Update parent row.
-  const { error: qErr } = await supabase
-    .from("quotes")
-    .update({
+  // ONE ATOMIC WRITE (migration 20261325000000, `replace_quote_content`): the
+  // header update, the line-item delete and the line-item insert run in a single
+  // transaction under a lock on the quote row.
+  //
+  // This used to be three separate statements (update header → delete lines →
+  // insert lines). If the insert failed after the delete had committed — a
+  // dropped connection, a timeout, the freeze trigger firing because the
+  // customer accepted in the gap — the quote kept its NEW totals and had NO line
+  // items: the saved, priced scope was destroyed and the only copy of the
+  // replacement was this form's echo in one browser tab. Now a failure leaves
+  // the previous header and lines exactly as they were.
+  //
+  // Also moved inside the lock: the Wave 2 rule that editing a quote past the
+  // approval gate (approved/sent/viewed) reverts it to pending_approval — it is
+  // decided on the locked row, not on the read above (the trigger still emits
+  // quote.changed_after_approval).
+  //
+  // Lines are stamped with the ACTIVE org inside the function (p_org_id), never
+  // from a row re-read by id — the retention-ledger shape fixed in #456.
+  const { error: saveErr } = await (
+    supabase.rpc as unknown as (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => PromiseLike<{
+      data: { status?: string; line_count?: number } | null;
+      error: { message: string; code?: string; details?: string; hint?: string } | null;
+    }>
+  )("replace_quote_content", {
+    p_org_id: ctx.org.id,
+    p_quote_id: id,
+    p_header: {
       customer_id: parsed.data.customer_id,
       property_id: parsed.data.property_id ?? null,
       lead_id: parsed.data.lead_id ?? null,
@@ -607,61 +629,34 @@ export async function updateQuote(
       notes: parsed.data.notes ?? null,
       terms: parsed.data.terms ?? null,
       valid_until: parsed.data.valid_until ?? null,
-      ...(revertToPending
-        ? {
-            status: "pending_approval" as const,
-            approved_by: null,
-            approved_at: null,
-            // Keep the prior approval_comment as context — operator can
-            // see why it had been approved before.
-          }
-        : {}),
-    })
-    .eq("id", id)
-    .eq("org_id", ctx.org.id);
-  if (qErr) {
-    console.error("[quotes] update failed", qErr);
+    },
+    p_lines: parsed.data.line_items.map((li, idx) => ({
+      description: li.description,
+      qty: li.qty,
+      unit: li.unit,
+      unit_price: li.unit_price,
+      vat_rate: li.vat_rate,
+      line_total: totals.lines[idx]?.line_total ?? 0,
+      sort_order: idx,
+    })),
+  });
+  if (saveErr) {
+    console.error("[quotes] update failed (rolled back — nothing was changed)", {
+      quoteId: id,
+      code: saveErr.code,
+      message: saveErr.message,
+      details: saveErr.details,
+      hint: saveErr.hint,
+    });
+    // The customer accepted while this edit was open: say so, don't invite a retry.
+    if (saveErr.message?.includes("has been accepted")) {
+      return formError(
+        "This quote has been accepted and can't be edited. Raise a variation to change the agreed scope.",
+        echoValuesFromForm(formData),
+      );
+    }
     return formError(
-      "Couldn't save changes. Try again.",
-      echoValuesFromForm(formData),
-    );
-  }
-
-  // Replace line items (delete + insert is simpler than diffing for v1).
-  const { error: delErr } = await supabase
-    .from("quote_line_items")
-    .delete()
-    .eq("quote_id", id)
-    .eq("org_id", ctx.org.id);
-  if (delErr) {
-    console.error("[quotes] line items delete failed", delErr);
-    return formError(
-      "Couldn't save line items. Try again.",
-      echoValuesFromForm(formData),
-    );
-  }
-
-  const rows: LineItemInsert[] = parsed.data.line_items.map((li, idx) => ({
-    quote_id: id,
-    // Stamp from the ACTIVE org, never from a row re-read by id. Re-reading
-    // the parent's own org_id was the same shape as the retention-ledger bug
-    // fixed in #456: it faithfully copies whichever org the row turned out to
-    // belong to, so an unscoped resolve silently writes into that org instead
-    // of refusing. The quote itself is proven in-org above.
-    org_id: ctx.org.id,
-    description: li.description,
-    qty: li.qty,
-    unit: li.unit,
-    unit_price: li.unit_price,
-    vat_rate: li.vat_rate,
-    line_total: totals.lines[idx]?.line_total ?? 0,
-    sort_order: idx,
-  }));
-  const { error: insErr } = await supabase.from("quote_line_items").insert(rows);
-  if (insErr) {
-    console.error("[quotes] line items re-insert failed", insErr);
-    return formError(
-      "Couldn't save line items. Try again.",
+      "Couldn't save changes — nothing was changed. Try again.",
       echoValuesFromForm(formData),
     );
   }
@@ -1047,23 +1042,57 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
   const supabase = await createClient();
   const now = new Date().toISOString();
 
-  // IDEMPOTENCY: re-accepting an already-accepted quote must NOT post a
+  // IDEMPOTENCY + HEAL: re-accepting an already-accepted quote must NOT post a
   // second invoice (or re-create the job). This button is double-submittable,
   // and an owner may "confirm by phone" a quote the customer already accepted
-  // via the public portal. acceptQuoteByToken guards this with a status
-  // precondition (see below) — mirror it here: read first, and short-circuit
-  // as an idempotent success when the quote is already accepted. RLS scopes
-  // this read to the caller's org; a wrong-org/unknown id returns null and
-  // falls through to the UPDATE, which no-ops and redirects accept_failed
-  // exactly as before.
-  const { data: preExisting } = await supabase
+  // via the public portal. So read first — and when the quote is already
+  // accepted, run ONLY the idempotent job+invoice ensure, exactly as the public
+  // path does on a re-accept.
+  //
+  // That heal is the point. This branch used to redirect `saved=accepted`
+  // unconditionally: if the first accept had recorded the status and then
+  // failed to create the invoice (the owner was shown `warn=invoice_skipped`),
+  // pressing Accept again reported plain success while still creating nothing —
+  // a quiet lie on the retry, and an accepted quote stuck invoice-less. Now the
+  // retry creates what is missing, and keeps warning if it still cannot.
+  //
+  // Active-org pinned: a wrong-org/unknown id returns null and falls through to
+  // the UPDATE, which matches nothing and redirects accept_failed as before.
+  // LOUD: this read gates a write, so a failed read must not be mistaken for
+  // "not accepted yet".
+  const { data: preExisting, error: preExistingError } = await supabase
     .from("quotes")
-    .select("status")
+    .select(
+      "id, org_id, status, subtotal, vat_total, job_id, variation_number, customer_id, property_id, number, notes",
+    )
     .eq("id", id)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
+  if (preExistingError) throw readFailure("quote accept: quote", preExistingError);
   if (preExisting?.status === "accepted") {
-    redirect(`/quotes/${id}?saved=accepted`);
+    const healed = await ensureJobAndInvoiceForAcceptedQuote(
+      supabase,
+      ctx.org.id,
+      preExisting,
+      now,
+    );
+    // Only a FRESHLY created invoice is emailed — reusing one means the
+    // customer was already sent it on the first accept.
+    if (healed.createdInvoice && healed.invoiceId) {
+      const emailRes = await sendInvoiceEmail(supabase, healed.invoiceId, {
+        orgId: ctx.org.id,
+      });
+      if (!emailRes.sent) {
+        console.warn("[quotes] backfilled-invoice email skipped (owner re-accept)", emailRes);
+      }
+    }
+    revalidatePath("/quotes");
+    revalidatePath(`/quotes/${id}`);
+    redirect(
+      healed.invoiceId
+        ? `/quotes/${id}?saved=accepted`
+        : `/quotes/${id}?saved=accepted&warn=invoice_skipped`,
+    );
   }
 
   // ACTIVE-ORG SCOPE — the single most consequential predicate in this file.
@@ -1109,107 +1138,27 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
     channel: "owner",
   });
 
-  // Auto-create a job (status=new) from the accepted quote — mirrors the
-  // public-portal path so an owner-accepted quote produces the same
-  // job → invoice chain. Skipped for variations (they already carry the
-  // parent's job_id) and for quotes with no customer to attach the job to.
-  let jobId: string | null = quote.job_id;
-  if (!quote.job_id && quote.customer_id) {
-    // Carry the quote's site + scope onto the job (first-customer fix 4) —
-    // best-effort; a failed enrichment degrades to the bare provenance note.
-    const carry = await buildJobCarryFromQuote(supabase, ctx.org.id, quote);
-    const { data: newJob, error: jobErr } = await supabase
-      .from("jobs")
-      .insert({
-        // Stamp from the ACTIVE org, not from the row we just read. The quote
-        // is proven in-org above, so these are now the same value — saying
-        // ctx.org.id keeps it that way if the resolve is ever loosened again.
-        org_id: ctx.org.id,
-        customer_id: quote.customer_id,
-        status: "new",
-        site_address_line1: carry.site_address_line1,
-        notes: carry.notes,
-      })
-      .select("id")
-      .single();
-    if (jobErr) {
-      console.error("[quotes] owner auto-job failed", jobErr);
-    } else if (newJob?.id) {
-      jobId = newJob.id;
-      // Backlink so the quote knows which job it spawned.
-      await supabase
-        .from("quotes")
-        .update({ job_id: jobId })
-        .eq("id", quote.id)
-        .eq("org_id", ctx.org.id);
-    }
-  }
-
-  // Auto-create invoice using the next_invoice_number RPC (mirrors what
-  // /api/invoices POST does — duplicated here so the owner gets one
-  // round trip).
+  // Auto-create the job (status=new; skipped for variations, which already
+  // carry the parent's job_id, and for quotes with no customer) + the draft
+  // invoice, as ONE atomic, idempotent step — the same helper the public-portal
+  // path uses, so an owner-accepted quote produces the same job → invoice chain.
   //
-  // IDEMPOTENCY: reuse any invoice already linked to this quote instead of
-  // posting a second one. The status precondition above stops the common
-  // double-submit before we reach here; this is the belt-and-braces guard
-  // for the degenerate "accepted-but-no-invoice retried" / concurrent-submit
-  // race, and is the in-code half of the partial unique index on
-  // invoices(quote_id). Without it a re-run allocates a fresh number and
-  // INSERTs a duplicate draft invoice for the same quote, double-billing the
-  // customer. limit(1) keeps maybeSingle safe even if pre-fix duplicates
-  // already exist.
-  const { data: existingInvoice } = await supabase
-    .from("invoices")
-    .select("id")
-    .eq("quote_id", quote.id)
-    // Org-scoped so the idempotency check answers a question about THIS org's
-    // books — an invoice found in another org must not suppress this one.
-    .eq("org_id", ctx.org.id)
-    .limit(1)
-    .maybeSingle();
-
-  let invoiceId: string | null = existingInvoice?.id ?? null;
-  let createdInvoice = false;
-  if (!invoiceId) {
-    // Number allocation MUTATES a per-org sequence, so the target org must be
-    // the active one — an unscoped accept burned a number out of another org's
-    // invoice series, permanently leaving a gap in their numbering.
-    const { data: invNumber, error: numErr } = await supabase.rpc(
-      "next_invoice_number",
-      { target_org: ctx.org.id },
-    );
-    if (numErr || !invNumber) {
-      console.error("[quotes] invoice number alloc failed", numErr);
-      redirect(`/quotes/${id}?saved=accepted&warn=invoice_skipped`);
-    }
-    // Pass job_id through so revenue from accepted quotes (including
-    // variations) rolls up on the dashboard. due_date defaults to net-14
-    // so the customer always sees a concrete payment deadline.
-    const { data: newInvoice, error: invErr } = await supabase
-      .from("invoices")
-      .insert({
-        org_id: ctx.org.id,
-        quote_id: quote.id,
-        // Denormalised customer anchor (Issue #349 Phase 1) — stamped from the
-        // quote at creation so the invoice keeps its customer identity if the
-        // quote is later deleted. Composite FK guarantees same-org.
-        customer_id: quote.customer_id,
-        number: invNumber as unknown as string,
-        amount: quote.subtotal,
-        vat_total: quote.vat_total,
-        status: "draft",
-        job_id: jobId,
-        due_date: invoiceDueDate(now),
-      })
-      .select("id")
-      .single();
-    if (invErr || !newInvoice) {
-      console.error("[quotes] auto-invoice failed", invErr);
-      redirect(`/quotes/${id}?saved=accepted&warn=invoice_skipped`);
-    }
-    invoiceId = newInvoice.id;
-    createdInvoice = true;
-  }
+  // This used to be hand-rolled here as separate statements (insert job, update
+  // backlink, read invoice, allocate number, insert invoice). Any of them could
+  // fail after the earlier ones had committed, and an invoice failure redirected
+  // away BEFORE the lead was advanced and `quote.accepted` was dispatched — so a
+  // number-allocation blip also silently dropped the automation and left the
+  // pipeline stale. The step is now all-or-nothing, and the rest of the accept
+  // runs regardless; only the final redirect carries the warning.
+  //
+  // The org passed is the ACTIVE org (never the fetched row's): the function
+  // pins the quote to it, so nothing here can land in another tenant.
+  const artifacts = await ensureJobAndInvoiceForAcceptedQuote(
+    supabase,
+    ctx.org.id,
+    quote,
+    now,
+  );
 
   // Auto-email the invoice PDF to the customer. Best-effort: a send
   // failure (missing key, customer has no email, Resend rejection) does
@@ -1217,8 +1166,8 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
   // owner can manually re-send from /invoices/[id]. Only email a freshly
   // created invoice — reusing an existing one means the customer was
   // already sent it on the first accept.
-  if (createdInvoice && invoiceId) {
-    const emailRes = await sendInvoiceEmail(supabase, invoiceId, {
+  if (artifacts.createdInvoice && artifacts.invoiceId) {
+    const emailRes = await sendInvoiceEmail(supabase, artifacts.invoiceId, {
       orgId: ctx.org.id,
     });
     if (!emailRes.sent) {
@@ -1262,7 +1211,13 @@ export async function acceptQuoteAsOwner(id: string, formData: FormData) {
   revalidatePath("/quotes");
   revalidatePath(`/quotes/${id}`);
   revalidatePath("/leads");
-  redirect(`/quotes/${id}?saved=accepted`);
+  // Tell the truth: the quote IS accepted, but if the job+invoice step failed
+  // (it rolled back as a unit) say so — pressing Accept again retries it.
+  redirect(
+    artifacts.invoiceId
+      ? `/quotes/${id}?saved=accepted`
+      : `/quotes/${id}?saved=accepted&warn=invoice_skipped`,
+  );
 }
 
 export async function declineQuoteAsOwner(id: string) {
@@ -1305,6 +1260,118 @@ export async function declineQuoteAsOwner(id: string) {
  * Exposed via separate file at /q/[token]/actions.ts so this module
  * keeps user-context only.
  */
+/** The quote fields the accept artifacts (job + invoice) are built from. */
+type AcceptedQuote = {
+  id: string;
+  org_id: string;
+  subtotal: number;
+  vat_total: number;
+  job_id: string | null;
+  customer_id: string | null;
+  property_id?: string | null;
+  variation_number?: number | null;
+  number: string;
+  notes: string | null;
+};
+
+/**
+ * Ensure the job + draft invoice that an accepted quote implies EXIST —
+ * ATOMICALLY and EXACTLY ONCE.
+ *
+ * The whole step is ONE database transaction (`ensure_accepted_quote_artifacts`,
+ * migration 20261324000000): it locks the quote row, creates the job + backlink
+ * only if the quote has none, and reuses-or-creates the invoice under a per-org
+ * number lock. It used to be five separate PostgREST statements, which left
+ * three reachable bad states (all reproduced on real Postgres —
+ * __tests__/integration/resilience/quote-accept-atomic.test.ts):
+ *
+ *   • concurrent accepts each read `job_id IS NULL` and each inserted a JOB;
+ *   • two quotes accepted at the same moment were handed the same invoice
+ *     number, and the loser was left accepted-but-INVOICE-LESS with only a log;
+ *   • a failed invoice step left the job (and backlink) committed without it.
+ *
+ * IDEMPOTENT + HEALING: a second call reuses what exists and creates only what
+ * is missing, so BOTH accept paths call it on a re-accept of an
+ * already-accepted quote to heal a partial first accept.
+ *
+ * Never throws: acceptance has already been recorded by the caller, and a
+ * failure here rolls the artifacts back as a unit (nothing half-written). The
+ * failure is reported (Sentry + log) and returned as `ok: false` so the caller
+ * can tell the user the truth instead of implying an invoice exists.
+ *
+ * `client` is the tenant client on the owner path (the function is SECURITY
+ * INVOKER — the caller's RLS applies) and the admin client on the public token
+ * path. `orgId` is the ACTIVE org on the owner path; a quote in another org is
+ * "not found" inside the function, never acted on.
+ */
+async function ensureJobAndInvoiceForAcceptedQuote(
+  client: Pick<Awaited<ReturnType<typeof createClient>>, "from" | "rpc">,
+  orgId: string,
+  quote: AcceptedQuote,
+  now: string,
+): Promise<{
+  ok: boolean;
+  jobId: string | null;
+  invoiceId: string | null;
+  createdInvoice: boolean;
+}> {
+  // The job carry (site address + scope notes) is only needed when a job will
+  // be created; it is best-effort enrichment and never blocks the step.
+  const carry =
+    !quote.job_id && quote.customer_id
+      ? await buildJobCarryFromQuote(client, orgId, quote)
+      : null;
+
+  // `ensure_accepted_quote_artifacts` is not in the generated Supabase types
+  // yet — the established cast idiom (see payments/allocate-actions.ts).
+  const { data, error } = await (
+    client.rpc as unknown as (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => PromiseLike<{
+      data: {
+        job_id?: string | null;
+        invoice_id?: string | null;
+        created_invoice?: boolean;
+      } | null;
+      error: { message: string; code?: string; details?: string; hint?: string } | null;
+    }>
+  )("ensure_accepted_quote_artifacts", {
+    p_org_id: orgId,
+    p_quote_id: quote.id,
+    p_job_site_address: carry?.site_address_line1 ?? null,
+    p_job_notes: carry?.notes ?? null,
+    p_due_date: invoiceDueDate(now),
+  });
+
+  if (error || !data) {
+    // LOUD. The quote is accepted and has no invoice; nothing else will tell a
+    // human. The transaction rolled back, so there is no orphan job to clean up
+    // and the next accept (either path) retries the whole step.
+    const failure = new Error(
+      `quote accept: job+invoice step failed for quote ${quote.id}: ` +
+        `${error?.code ? `[${error.code}] ` : ""}${error?.message ?? "no result"}`,
+    );
+    Sentry.captureException(failure);
+    console.error("[quotes] accepted quote left without job/invoice (rolled back, will heal on re-accept)", {
+      quoteId: quote.id,
+      orgId,
+      code: error?.code,
+      message: error?.message,
+      details: error?.details,
+      hint: error?.hint,
+    });
+    return { ok: false, jobId: quote.job_id ?? null, invoiceId: null, createdInvoice: false };
+  }
+
+  return {
+    ok: true,
+    jobId: data.job_id ?? null,
+    invoiceId: data.invoice_id ?? null,
+    createdInvoice: Boolean(data.created_invoice && data.invoice_id),
+  };
+}
+
 export async function acceptQuoteByToken(
   token: string,
   signerName: string,
@@ -1324,10 +1391,20 @@ export async function acceptQuoteByToken(
     .eq("public_token", token)
     .maybeSingle();
 
-  if (lookupErr || !quote) return { ok: false, error: "Quote not found" };
-  // Idempotency: a re-accept is a no-op. The first accept already created
-  // (or linked) the invoice + job, so nothing to redo.
-  if (quote.status === "accepted") return { ok: true, quoteId: quote.id };
+  if (lookupErr || !quote) return { ok: false, error: "Quote not found" }; if (await orgPublicWriteRefused(quote.org_id, "operational")) return { ok: false, error: PUBLIC_WRITE_REFUSED_MESSAGE };
+  // A re-accept is idempotent, but must still HEAL a partial first accept: if the first
+  // accept set status='accepted' then its invoice insert failed, the old blanket
+  // early-return left the quote with NO invoice forever. So on a re-accept we skip the
+  // one-time signature/status writes but still run the idempotent job+invoice ensure
+  // (which reuses any linked invoice — no double-bill — and backfills a missing one).
+  if (quote.status === "accepted") {
+    const healed = await ensureJobAndInvoiceForAcceptedQuote(admin, quote.org_id, quote, now);
+    if (healed.createdInvoice && healed.invoiceId) {
+      const emailRes = await sendInvoiceEmail(admin, healed.invoiceId);
+      if (!emailRes.sent) console.warn("[quotes] backfilled-invoice email skipped", emailRes);
+    }
+    return { ok: true, quoteId: quote.id };
+  }
   if (quote.status === "declined") return { ok: false, error: "Quote already declined" };
   if (quote.status === "expired") return { ok: false, error: "Quote has expired" };
   if (quote.valid_until && quote.valid_until < now.slice(0, 10)) {
@@ -1404,75 +1481,22 @@ export async function acceptQuoteByToken(
       }
     });
 
-  // Auto-create a job (status=new) from the accepted quote — but only when
-  // the quote isn't a variation against an existing job. Variations
-  // already carry the parent's job_id; using it preserves the revenue
-  // rollup on /jobs profitability.
-  let newJobId: string | null = quote.job_id;
-  let createdJob = false;
-  if (!quote.job_id && quote.customer_id) {
-    // Carry the quote's site + scope onto the job (first-customer fix 4).
-    // org-pinned reads on the admin client; best-effort (see the helper).
-    const carry = await buildJobCarryFromQuote(admin, quote.org_id, quote);
-    const { data: newJob, error: jobErr } = await admin
-      .from("jobs")
-      .insert({
-        org_id: quote.org_id,
-        customer_id: quote.customer_id,
-        status: "new",
-        site_address_line1: carry.site_address_line1,
-        notes: carry.notes,
-      })
-      .select("id")
-      .single();
-    if (jobErr) {
-      console.error("[quotes] public auto-job failed", jobErr);
-    } else if (newJob?.id) {
-      newJobId = newJob.id;
-      createdJob = true;
-      // Backlink so the quote knows which job it spawned.
-      await admin.from("quotes").update({ job_id: newJobId }).eq("id", quote.id);
-    }
-  }
+  // Auto-create the job (status=new, variation-aware) + draft invoice from the accepted
+  // quote, via the shared idempotent ensure-helper. It reuses any invoice already linked
+  // to the quote (no double-bill on a concurrent double-accept) and backfills a missing
+  // one — the same path the re-accept heal above uses. Revenue rolls up to the job on the
+  // profitability dashboard via the invoice's job_id.
+  const { invoiceId: newInvoiceId, createdInvoice } = await ensureJobAndInvoiceForAcceptedQuote(
+    admin,
+    quote.org_id,
+    quote,
+    now,
+  );
 
-  // Auto-create invoice (draft) from the accepted quote. Picks up the
-  // job_id we just resolved so revenue rolls up to the job on the
-  // profitability dashboard.
-  const { data: invNumber } = await admin.rpc("next_invoice_number", {
-    target_org: quote.org_id,
-  });
-  let newInvoiceId: string | null = null;
-  if (invNumber) {
-    const { data: newInvoice, error: invErr } = await admin
-      .from("invoices")
-      .insert({
-        org_id: quote.org_id,
-        quote_id: quote.id,
-        // Denormalised customer anchor (Issue #349 Phase 1) — see the owner
-        // auto-invoice path above. Same composite-FK guarantee.
-        customer_id: quote.customer_id,
-        number: invNumber as unknown as string,
-        amount: quote.subtotal,
-        vat_total: quote.vat_total,
-        status: "draft",
-        job_id: newJobId,
-        due_date: invoiceDueDate(now),
-      })
-      .select("id")
-      .single();
-    if (invErr) {
-      console.error("[quotes] public auto-invoice failed", invErr);
-    } else {
-      newInvoiceId = newInvoice?.id ?? null;
-    }
-  }
-
-  void createdJob;
-
-  // Auto-email the invoice PDF to the customer. Best-effort — accept must
-  // succeed even if Resend rejects, the customer email is missing, or
-  // RESEND_API_KEY is not configured yet.
-  if (newInvoiceId) {
+  // Auto-email the invoice PDF to the customer — only a FRESHLY created invoice (reusing
+  // an existing one means the customer was already emailed). Best-effort: accept must
+  // succeed even if Resend rejects, the customer email is missing, or the key is absent.
+  if (newInvoiceId && createdInvoice) {
     const emailRes = await sendInvoiceEmail(admin, newInvoiceId);
     if (!emailRes.sent) {
       console.warn("[quotes] public auto-email after accept skipped", emailRes);
@@ -1536,7 +1560,7 @@ export async function declineQuoteByToken(
     reportReadFailure("quote decline (public): quote", quoteError);
     return { ok: false, error: "Couldn't load the quote — try again." };
   }
-  if (!quote) return { ok: false, error: "Quote not found" };
+  if (!quote) return { ok: false, error: "Quote not found" }; if (await orgPublicWriteRefused(quote.org_id, "operational")) return { ok: false, error: PUBLIC_WRITE_REFUSED_MESSAGE };
   if (quote.status === "accepted") return { ok: false, error: "Quote already accepted" };
   if (quote.status === "declined") return { ok: true, quoteId: quote.id };
 
@@ -1579,431 +1603,3 @@ export async function declineQuoteByToken(
 
 
 
-/**
- * Create a Variation Order — a quote scoped to a specific job with a
- * per-job sequence number. Uses the same quotes/quote_line_items
- * pipeline so PDF + public portal + accept/decline + auto-invoice all
- * work for free.
- *
- * The form captures the operator's cost breakdown (labour/materials/
- * subcontractors/misc) + desired margin %; revenue is derived. Each
- * non-zero cost bucket becomes a quote_line_item so the PDF reads
- * cleanly, while the customer-facing line shows the bucket as a
- * description and the bucket's net-of-margin price as the unit_price.
- *
- * For the customer the variation looks like a small quote with a few
- * line items. Internally we mark it as a variation via the new
- * quotes.variation_number column. On accept, an invoice is generated
- * exactly as for a normal quote — and because we carry the job_id
- * through, the new invoice automatically rolls up under the same job
- * on the profitability dashboard.
- *
- * Two things this deliberately does NOT do (20261073):
- *   - it never writes the requested completion date into `valid_until`. That
- *     column means "this offer lapses on", and the accept gate acts on it.
- *   - it never touches the job's dates. An extension of time is recorded as
- *     requested/agreed and surfaced; whether it moves the programme is a
- *     product decision nobody has made, so nothing is proposed automatically.
- */
-export async function createVariation(jobId: string, formData: FormData) {
-  const { user, ctx } = await requireOrgContext();
-  await requireCapabilityFor(ctx, user, "quotes", "create"); // R4 — variation is a new quote
-  if (!idSchema.safeParse(jobId).success) redirect("/jobs");
-
-  const { variationFormSchema, computeVariation } = await import(
-    "@/lib/variations/schema"
-  );
-
-  const parsed = variationFormSchema.safeParse({
-    title: formData.get("title") ?? "",
-    description: formData.get("description") ?? "",
-    labour_cost: formData.get("labour_cost") ?? 0,
-    materials_cost: formData.get("materials_cost") ?? 0,
-    subcontractor_cost: formData.get("subcontractor_cost") ?? 0,
-    misc_cost: formData.get("misc_cost") ?? 0,
-    margin_pct: formData.get("margin_pct") ?? 0,
-    vat_rate: formData.get("vat_rate") ?? 20,
-    note: formData.get("note") ?? "",
-    eot_requested_completion_date:
-      formData.get("eot_requested_completion_date") ?? "",
-  });
-
-  if (!parsed.success) {
-    const msg = parsed.error.issues[0]?.message ?? "Invalid variation";
-    redirect(`/jobs/${jobId}/variations/new?error=${encodeURIComponent(msg)}`);
-  }
-
-  const computed = computeVariation(parsed.data);
-  const supabase = await createClient();
-
-  // Resolve job: org check + customer_id for the quote FK.
-  //
-  // The comment said "org check"; the query did not have one. Loading by id
-  // alone let a dual-org user raise a variation against another org's job —
-  // and because every stamp below was copied from `job.org_id`, the variation
-  // quote, its number (drawn from that org's sequence) and its line items were
-  // all created THERE. Routed through the same chokepoint the jobs domain got
-  // in #456, so a job outside the active org is simply not found.
-  const job = await loadJobForOrg<{ id: string; customer_id: string | null }>(
-    supabase,
-    jobId,
-    ctx.org.id,
-    "id, customer_id",
-  );
-  if (!job) redirect("/jobs?error=job_not_found");
-  if (!job.customer_id) {
-    redirect(`/jobs/${jobId}?error=variation_needs_customer`);
-  }
-
-  // Allocate per-org quote number AND per-job variation number.
-  const [{ data: quoteNumber }, { data: varNumber }] = await Promise.all([
-    supabase.rpc("next_quote_number", { target_org: ctx.org.id }),
-    supabase.rpc("next_variation_number", { target_job: jobId }),
-  ]);
-  if (!quoteNumber || !varNumber) {
-    console.error("[variations] number allocation failed", { quoteNumber, varNumber });
-    redirect(`/jobs/${jobId}/variations/new?error=create_failed`);
-  }
-
-  const publicToken = crypto.randomUUID();
-
-  // Insert the variation as a quote.
-  const { data: variation, error: qErr } = await supabase
-    .from("quotes")
-    .insert({
-      org_id: ctx.org.id,
-      customer_id: job.customer_id,
-      lead_id: null,
-      job_id: jobId,
-      variation_number: varNumber,
-      number: quoteNumber as unknown as string,
-      status: "draft",
-      currency: "GBP",
-      subtotal: computed.subtotal,
-      vat_total: computed.vat_total,
-      total: computed.total,
-      notes: parsed.data.description
-        ? `${parsed.data.title}\n\n${parsed.data.description}${parsed.data.note ? `\n\n${parsed.data.note}` : ""}`.trim()
-        : `${parsed.data.title}${parsed.data.note ? `\n\n${parsed.data.note}` : ""}`.trim(),
-      terms: null,
-      // valid_until is the QUOTE EXPIRY and nothing else.
-      //
-      // This used to be `parsed.data.target_completion_date` — the extension-of-
-      // time date the form asks for. Two unrelated commercial meanings shared one
-      // column, and the expiry meaning is the one the system acts on:
-      // acceptQuoteByToken force-writes status='expired' once valid_until is
-      // past, so a variation asking "please let us finish by 30 Sept" became
-      // un-acceptable on 1 Oct with no operator action; meanwhile the PDF and the
-      // customer portal printed that date as "Valid until". The EoT request now
-      // lives in eot_requested_completion_date (20261073) and a variation carries
-      // no expiry unless an operator sets a real one on the quote.
-      valid_until: null,
-      eot_requested_completion_date:
-        parsed.data.eot_requested_completion_date ?? null,
-      // The priced cost basis. computeVariation() derived revenue from these and
-      // then only used them to apportion line-item unit_price, so the margin the
-      // business priced this variation at was unrecoverable the instant it was
-      // saved (subtotal alone cannot yield it). cost_total is GENERATED from
-      // these four, and margin stays derived — one number per fact.
-      cost_labour: computed.cost_breakdown.labour,
-      cost_materials: computed.cost_breakdown.materials,
-      cost_subcontractors: computed.cost_breakdown.subcontractors,
-      cost_misc: computed.cost_breakdown.misc,
-      public_token: publicToken,
-      created_by: user.id,
-    })
-    .select("id")
-    .single();
-
-  if (qErr || !variation) {
-    console.error("[variations] insert failed", qErr);
-    redirect(`/jobs/${jobId}/variations/new?error=create_failed`);
-  }
-
-  // Build customer-facing line items from the cost breakdown. We split
-  // the variation revenue across buckets in proportion to their costs
-  // so the customer sees a meaningful breakdown rather than a single
-  // opaque "variation" line.
-  const { labour, materials, subcontractors, misc } = computed.cost_breakdown;
-  const totalCost = computed.total_cost;
-
-  // THE COST BASIS IS ALREADY PERSISTED, on the quote itself (cost_labour …
-  // cost_misc above, 20261073). There is deliberately NO second per-variation
-  // cost store: `quotes.cost_total` is GENERATED from those four, so parts and
-  // total cannot drift, and a job budget READS it rather than re-keying it
-  // (lib/jobs/budget.ts). Two cost bases for one variation would be two
-  // commercial truths, and the one that went stale would be invisible.
-  //
-  // THE ACCOUNTING BOUNDARY: those columns are a PLAN. They are NOT a cost and
-  // never reach `finances` — the real spend lands there when the supplier bill
-  // is recorded, and posting the estimate too would double-count it.
-  type LIRow = { label: string; cost: number };
-  const buckets: LIRow[] = [
-    { label: "Labour", cost: labour },
-    { label: "Materials", cost: materials },
-    { label: "Subcontractors", cost: subcontractors },
-    { label: "Other", cost: misc },
-  ].filter((b) => b.cost > 0);
-
-  let lineItems: LineItemInsert[];
-  if (totalCost === 0 || buckets.length === 0) {
-    // Fallback: a single line representing the whole revenue.
-    lineItems = [
-      {
-        quote_id: variation.id,
-        org_id: ctx.org.id,
-        description: parsed.data.title,
-        qty: 1,
-        unit_price: computed.subtotal,
-        vat_rate: parsed.data.vat_rate,
-        line_total: computed.subtotal,
-        sort_order: 0,
-      },
-    ];
-  } else {
-    lineItems = buckets.map((b, idx) => {
-      const share = b.cost / totalCost;
-      const unit_price = Math.round(computed.subtotal * share * 100) / 100;
-      return {
-        quote_id: variation.id,
-        org_id: ctx.org.id,
-        description: b.label,
-        qty: 1,
-        unit_price,
-        vat_rate: parsed.data.vat_rate,
-        line_total: unit_price,
-        sort_order: idx,
-      };
-    });
-    // Adjust the last line to ensure sum == computed.subtotal (rounding).
-    const summed = lineItems.reduce((s, l) => s + Number(l.unit_price ?? 0), 0);
-    const delta = Math.round((computed.subtotal - summed) * 100) / 100;
-    if (delta !== 0 && lineItems.length > 0) {
-      const last = lineItems[lineItems.length - 1]!;
-      last.unit_price = Math.round((Number(last.unit_price ?? 0) + delta) * 100) / 100;
-      last.line_total = last.unit_price;
-    }
-  }
-
-  const { error: liErr } = await supabase
-    .from("quote_line_items")
-    .insert(lineItems);
-  if (liErr) {
-    console.error("[variations] line items insert failed", liErr);
-    redirect(`/jobs/${jobId}?error=variation_line_items_failed`);
-  }
-
-  // G2 convert hook: when this VO was raised FROM an accepted variation
-  // request (/jobs/[id]/variations/new?fromRequest=… plants the hidden field),
-  // stamp that request 'converted' with this quote's id — closing the
-  // intake → decision → priced-VO trail. Best-effort AND fail-closed on
-  // identity: the update is pinned to the active org + THIS job + status
-  // 'accepted' (the only status the DB trigger lets convert), so a forged or
-  // stale id no-ops rather than corrupting another request. A failure here
-  // never unwinds the VO — the request can be reconciled later; the money
-  // must not vanish because a bookkeeping stamp raced.
-  const variationRequestId = formData.get("variation_request_id");
-  if (
-    typeof variationRequestId === "string" &&
-    idSchema.safeParse(variationRequestId).success
-  ) {
-    await markVariationRequestConverted(supabase, {
-      requestId: variationRequestId,
-      orgId: ctx.org.id,
-      jobId,
-      quoteId: variation.id,
-    });
-  }
-
-  revalidatePath(`/jobs/${jobId}`);
-  revalidatePath(`/quotes/${variation.id}`);
-  redirect(`/quotes/${variation.id}?saved=variation_created`);
-}
-
-/**
- * Stamp a variation request 'converted' after its VO was created (G2).
- *
- * NOT exported (this is a "use server" module — exports must be actions) and
- * never the enforcement: the DB trigger tg_variation_requests_guard is what
- * actually guarantees only accepted→converted with a quote id. The
- * `.eq("status", "accepted")` predicate makes the common non-accepted case a
- * silent no-op instead of a trigger error, and `.eq("job_id", …)` refuses a
- * request id borrowed from a different job.
- */
-async function markVariationRequestConverted(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  input: { requestId: string; orgId: string; jobId: string; quoteId: string },
-): Promise<void> {
-  // variation_requests post-dates the generated types (snags idiom).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = supabase as unknown as { from: (t: string) => any };
-  const { data, error } = await db
-    .from("variation_requests")
-    .update({ status: "converted", variation_quote_id: input.quoteId })
-    .eq("id", input.requestId)
-    .eq("org_id", input.orgId)
-    .eq("job_id", input.jobId)
-    .eq("status", "accepted")
-    .select("id");
-  if (error) {
-    console.error("[variations] convert-stamp failed", error);
-  } else if (!data || data.length === 0) {
-    console.warn(
-      "[variations] convert-stamp matched no accepted request — request id stale or not accepted",
-      { requestId: input.requestId },
-    );
-  }
-}
-
-/**
- * Load a variation (a quote with a variation_number) inside the ACTIVE org.
- *
- * Same chokepoint discipline as loadJobForOrg: a variation belonging to another
- * org the viewer also happens to be a member of must be INDISTINGUISHABLE from
- * one that does not exist, so `.eq("id", …)` alone is never enough. Both EoT
- * writers below go through this, and both re-assert the org on the UPDATE too —
- * the read proves ownership, the write predicate is what actually scopes it.
- */
-async function loadVariationForOrg(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  quoteId: string,
-  orgId: string,
-): Promise<
-  | {
-      id: string;
-      job_id: string | null;
-      variation_number: number | null;
-      valid_until: string | null;
-      eot_requested_completion_date: string | null;
-    }
-  | null
-> {
-  const { data, error } = await supabase
-    .from("quotes")
-    .select(
-      "id, job_id, variation_number, valid_until, eot_requested_completion_date",
-    )
-    .eq("id", quoteId)
-    .eq("org_id", orgId)
-    .maybeSingle();
-  // A failed read must never be silently treated as "not a variation" — that
-  // would show the caller a generic not-found for what is really an outage.
-  if (error) throw readFailure("variations: load for EoT write", error);
-  if (!data || data.variation_number == null) return null;
-  return data;
-}
-
-/**
- * Record the AGREED extension of time on a variation.
- *
- * An EoT is agreed AFTER the variation's money is accepted, which is why this
- * is its own action rather than a field on the create form, and why the
- * accepted-document freeze (20261073) deliberately leaves the agreed columns
- * writable while freezing the requested one.
- *
- * IT DOES NOT MOVE THE JOB. Nothing here writes to `jobs`. Under JCT/NEC an
- * agreed extension changes the completion date for damages purposes without
- * necessarily re-baselining the works programme, so auto-applying it would
- * silently re-date live jobs on a guess. The agreed date is stored and shown;
- * re-planning stays a human act.
- */
-export async function recordVariationEotAgreement(
-  quoteId: string,
-  formData: FormData,
-) {
-  const { user, ctx } = await requireOrgContext();
-  await requireCapabilityFor(ctx, user, "quotes", "edit"); // R4 — record EoT agreement
-  if (!idSchema.safeParse(quoteId).success) redirect("/quotes");
-
-  // Recording an agreed contractual date is an owner/admin act, matching how
-  // quote approval and deletion are gated.
-  const role = ctx.membership.role;
-  if (role !== "owner" && role !== "admin") {
-    redirect(`/quotes/${quoteId}?error=eot_forbidden`);
-  }
-
-  const { variationEotAgreementSchema } = await import("@/lib/variations/schema");
-  const parsed = variationEotAgreementSchema.safeParse({
-    eot_agreed_completion_date:
-      formData.get("eot_agreed_completion_date") ?? "",
-  });
-  if (!parsed.success) {
-    redirect(`/quotes/${quoteId}?error=eot_bad_date`);
-  }
-
-  const supabase = await createClient();
-  const variation = await loadVariationForOrg(supabase, quoteId, ctx.org.id);
-  if (!variation) redirect("/quotes?error=not_found");
-
-  const { error } = await supabase
-    .from("quotes")
-    .update({
-      eot_agreed_completion_date: parsed.data.eot_agreed_completion_date,
-      eot_agreed_at: new Date().toISOString(),
-      eot_agreed_by: user.id,
-    })
-    .eq("id", quoteId)
-    .eq("org_id", ctx.org.id);
-  if (error) {
-    console.error("[variations] EoT agreement write failed", error);
-    redirect(`/quotes/${quoteId}?error=eot_failed`);
-  }
-
-  if (variation.job_id) revalidatePath(`/jobs/${variation.job_id}`);
-  revalidatePath(`/quotes/${quoteId}`);
-  redirect(`/quotes/${quoteId}?saved=eot_agreed`);
-}
-
-/**
- * Per-row remediation for the pre-20261073 defect.
- *
- * Variations created before this fix stored their requested completion date in
- * `valid_until`. Those rows cannot be told apart from a variation where an
- * operator later set a GENUINE expiry — there is no column-level history, and
- * the builder pre-fills its "Valid until" input from the same column, so an
- * operator editing anything else re-submitted the misfiled date unchanged. A
- * bulk UPDATE would therefore relabel some real expiries, so the migration
- * refuses to guess and this action lets the person who raised the variation
- * decide, one row at a time.
- *
- * Legal on an accepted variation: the write-once clause permits NULL→value on
- * the requested date, and `valid_until` has never been a frozen column.
- */
-export async function reclassifyVariationValidUntilAsEot(quoteId: string) {
-  const { ctx, user } = await requireOrgContext();
-  await requireCapabilityFor(ctx, user, "quotes", "edit"); // R4
-  if (!idSchema.safeParse(quoteId).success) redirect("/quotes");
-
-  const role = ctx.membership.role;
-  if (role !== "owner" && role !== "admin") {
-    redirect(`/quotes/${quoteId}?error=eot_forbidden`);
-  }
-
-  const supabase = await createClient();
-  const variation = await loadVariationForOrg(supabase, quoteId, ctx.org.id);
-  if (!variation) redirect("/quotes?error=not_found");
-
-  // Only the exact legacy signature is reclassifiable: a date in valid_until
-  // and nothing yet recorded as an EoT request. Anything else and we would be
-  // overwriting a date somebody deliberately put somewhere.
-  if (!variation.valid_until || variation.eot_requested_completion_date) {
-    redirect(`/quotes/${quoteId}?error=eot_not_reclassifiable`);
-  }
-
-  const { error } = await supabase
-    .from("quotes")
-    .update({
-      eot_requested_completion_date: variation.valid_until,
-      valid_until: null,
-    })
-    .eq("id", quoteId)
-    .eq("org_id", ctx.org.id);
-  if (error) {
-    console.error("[variations] EoT reclassify failed", error);
-    redirect(`/quotes/${quoteId}?error=eot_failed`);
-  }
-
-  if (variation.job_id) revalidatePath(`/jobs/${variation.job_id}`);
-  revalidatePath(`/quotes/${quoteId}`);
-  redirect(`/quotes/${quoteId}?saved=eot_reclassified`);
-}

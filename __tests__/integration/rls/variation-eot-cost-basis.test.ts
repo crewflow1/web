@@ -93,7 +93,7 @@ describeIntegration("variations · extension of time + cost basis (20261073)", (
   async function makeOrg(label: string): Promise<{ org: string; cust: string; job: string }> {
     const o = await svc()
       .from("organizations")
-      .insert({ name: `EoT ${label}`, slug: `${T}-${label}` })
+      .insert({ status: "active", name: `EoT ${label}`, slug: `${T}-${label}` })
       .select("id")
       .single();
     expect(o.error, o.error?.message).toBeNull();

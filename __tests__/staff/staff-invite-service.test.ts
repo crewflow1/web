@@ -64,9 +64,16 @@ const baseArgs = {
   metadata,
 };
 
-// No '&' so it threads verbatim into both the HTML (href is attr-escaped) and
-// the text body — this test asserts link propagation, not HTML escaping.
-const MAGIC_LINK = "https://link.example/verify-token-hash-abc-magiclink";
+// The hashed one-time token generateLink returns in `properties.hashed_token`.
+// sendStaffInvite builds the embedded link as {appUrl}/auth/callback?token_hash=
+// <this>&type=magiclink (see lib/auth/magic-link.ts) — NOT the GoTrue-hosted
+// action_link, which would land the session in a URL hash fragment the server
+// callback can't read. Hex so URL-encoding is a no-op in the assertions.
+const HASHED_TOKEN = "fb9202308f44aabbccddeeff00112233445566778899aabbccddeeff";
+// The action_link is DELIBERATELY present in the mock but must NOT be embedded
+// (regression guard: we stopped trusting it).
+const GOTRUE_ACTION_LINK =
+  "http://127.0.0.1:54321/auth/v1/verify?token=raw&type=magiclink&redirect_to=x";
 
 let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
@@ -80,7 +87,7 @@ beforeEach(() => {
   // Happy-path defaults; individual tests override.
   createUserMock.mockResolvedValue({ data: { user: { id: "new-1" } }, error: null });
   generateLinkMock.mockResolvedValue({
-    data: { properties: { action_link: MAGIC_LINK } },
+    data: { properties: { hashed_token: HASHED_TOKEN, action_link: GOTRUE_ACTION_LINK } },
     error: null,
   });
   sendEmailMock.mockResolvedValue({ sent: true, id: "resend-1" });
@@ -106,16 +113,27 @@ describe("sendStaffInvite — success", () => {
     const createArg = createUserMock.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
     expect(createArg?.email_confirm).toBeUndefined();
 
-    // The branded email goes out via Resend with the magic link embedded.
+    // The branded email goes out via Resend with a link at OUR /auth/callback
+    // carrying token_hash + type (the verifyOtp shape) — NOT the GoTrue hosted
+    // action_link (which would deliver the session in a hash fragment the
+    // server callback can't read).
+    // The text body carries the link verbatim; the HTML href attr-escapes `&`
+    // to `&amp;` (both are the SAME /auth/callback?token_hash=…&type=… link).
+    const expectedTextLink = `/auth/callback?token_hash=${HASHED_TOKEN}&type=magiclink`;
+    const expectedHtmlLink = `/auth/callback?token_hash=${HASHED_TOKEN}&amp;type=magiclink`;
     expect(sendEmailMock).toHaveBeenCalledTimes(1);
     expect(sendEmailMock).toHaveBeenCalledWith(
       expect.objectContaining({
         to: "jane@x.test",
         subject: expect.stringContaining("Acme Builders"),
-        html: expect.stringContaining(MAGIC_LINK),
-        text: expect.stringContaining(MAGIC_LINK),
+        html: expect.stringContaining(expectedHtmlLink),
+        text: expect.stringContaining(expectedTextLink),
       }),
     );
+    // Regression: the raw GoTrue action_link must never be embedded.
+    const emailArg = sendEmailMock.mock.calls[0]?.[0] as { html?: string; text?: string };
+    expect(emailArg?.html).not.toContain(GOTRUE_ACTION_LINK);
+    expect(emailArg?.text).not.toContain(GOTRUE_ACTION_LINK);
 
     // No existing-user fixups on the brand-new path.
     expect(listUsersMock).not.toHaveBeenCalled();
@@ -227,6 +245,23 @@ describe("sendStaffInvite — generateLink is non-fatal", () => {
       expect.objectContaining({ html: expect.stringContaining("/login") }),
     );
     const emailArg = sendEmailMock.mock.calls[0]?.[0] as { html?: string } | undefined;
-    expect(emailArg?.html).not.toContain(MAGIC_LINK);
+    expect(emailArg?.html).not.toContain("/auth/callback?token_hash=");
+  });
+
+  it("treats a success with NO hashed_token as hadMagicLink:false (defensive)", async () => {
+    // generateLink can succeed yet omit hashed_token; we must not embed a
+    // broken link — fall back to the /login recovery copy.
+    generateLinkMock.mockResolvedValue({
+      data: { properties: { action_link: GOTRUE_ACTION_LINK } },
+      error: null,
+    });
+
+    const res = await sendStaffInvite(baseArgs);
+
+    expect(res).toEqual({ ok: true, alreadyExisted: false, hadMagicLink: false });
+    const emailArg = sendEmailMock.mock.calls[0]?.[0] as { html?: string } | undefined;
+    expect(emailArg?.html).toContain("/login");
+    expect(emailArg?.html).not.toContain(GOTRUE_ACTION_LINK);
+    expect(emailArg?.html).not.toContain("/auth/callback?token_hash=");
   });
 });

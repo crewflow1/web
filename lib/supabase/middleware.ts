@@ -138,6 +138,7 @@ export async function updateSession(request: NextRequest, requestId?: string) {
     pathname.startsWith("/q/") || // public per-quote view
     pathname.startsWith("/customer-portal/") || // customer-scoped portal
     pathname.startsWith("/worker-portal/") || // external-worker H&S sign-off (token-gated)
+    pathname.startsWith("/l/") || // public per-company enquiry (lead-capture) form, org by slug
     pathname.startsWith("/payment/") || // Stripe Checkout success/cancel return (customer not yet logged in)
     pathname.startsWith("/auth/callback") ||
     pathname === "/api/health" ||

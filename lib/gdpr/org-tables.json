@@ -235,10 +235,12 @@
     "whatsapp_number_routes",
     "whatsapp_optouts",
     "whatsapp_webhook_events",
+    "tenant_search_documents",
     "worker_acknowledgements",
     "worker_signoff_tokens"
   ],
   "excluded": {
+    "tenant_search_documents": "derived search index: a denormalized, rebuildable copy of the org's OWN records (job/customer/etc. text chunks + opaque embedding vectors) built solely to serve semantic search. Every piece of subject-access-relevant content is the source record's, exported via its own table (jobs, customers, …); including this index would duplicate that content (and leak raw embeddings) without adding subject-access value. Rebuilt from source on demand — not a primary record.",
     "membership_permissions": "access-control configuration: per-admin module×action permission grants (authorization metadata, not data-subject personal data); keyed by membership and cascades on membership delete",
     "permission_audit": "security accountability trail: append-only log of permission/admin/ownership changes (actor + target references, module/action, no tenant business data) — authorization audit metadata, not data-subject personal data",
     "accounting_connections": "credentials: OAuth access/refresh tokens",
@@ -295,6 +297,10 @@
   },
   "_service_side_export_comment": "Org-scoped tables that ARE subject-access-relevant but are service-role-only (RLS on, no authenticated client grant), so the normal user-JWT export loop cannot read them. They are NOT excluded from the DSAR — they are read via a SEPARATE service-role (admin-client) lane in server/services/gdpr-export.ts that is MANDATORILY pinned to the caller's authorised active org (the route gates owner/admin of that org; the pin is the only tenant boundary once RLS is bypassed) and passes through the same redactRow. Keeps a dark table from being permanently invisible to legitimate data-subject access. ORG_EXPORT_TABLES = KNOWN − EXCLUDED − SERVICE_SIDE; the hermetic invariant is EXPORT ∪ SERVICE_SIDE ∪ EXCLUDED === KNOWN.",
   "service_side_export": {
+    "assets": "column ACL (20261343): purchase_price / current_value / hire_rate carry no authenticated SELECT grant, so a client `select *` is refused. Exported in full via the service-role lane, org-pinned + redacted.",
+    "customer_contacts": "column ACL (20261341): portal_token (the per-contact portal credential) carries no authenticated SELECT grant, so a client `select *` is refused. Exported via the service-role lane, org-pinned; redactRow still strips the credential.",
+    "customers": "column ACL (20261341): portal_token (the portal bearer credential) carries no authenticated SELECT grant, so a client `select *` is refused. Exported via the service-role lane, org-pinned; redactRow still strips the credential.",
+    "fleet_vehicles": "column ACL (20261343): the finance_* columns carry no authenticated SELECT grant, so a client `select *` is refused. Exported in full via the service-role lane, org-pinned + redacted.",
     "job_assignments": "service-role-only (R5 Phase 1, 20261242): the worker↔job assignment graph is the data subject's own employment-activity record, so it belongs in their DSAR export, but the table has no authenticated client grant. Exported via the service-role lane, org-pinned + redacted. (Its single-assignee rows currently mirror jobs.assigned_to, which is also exported; the service-side lane keeps multi-worker assignments — once that UI exists — exported too, with no divergence.)"
   },
   "_order_keys_comment": "Stable, unique per-row ORDER BY column for the fully-paged DSAR export (server/services/gdpr-export.ts). Every exported table is paged via fetchAllRows, which REQUIRES a stable total ordering so no row is dropped/repeated at a page boundary. The default key is 'id'; the entries below are the ONLY exported tables lacking an 'id' column — each maps to a column that is unique WITHIN an org-pinned read (the non-org_id part of the table's primary key; org_id is constant under the .eq('org_id', orgId) pin). Ordering by a column that does not exist on a table is a hard read error (Postgres 42703) that would abort the whole export, so this map must stay exhaustive — the integration FORWARD drift test orders each table by its key against live Postgres, failing CI if a key is wrong or a new id-less table appears.",

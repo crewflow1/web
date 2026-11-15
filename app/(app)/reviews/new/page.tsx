@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
+import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { withPreservedOption } from "@/lib/quotes/preserve-option";
 import { CustomerCombobox } from "../../_components/customer-combobox";
@@ -69,6 +70,11 @@ export default async function NewReviewRequestPage({
     ),
   ]);
 
+  // Fail loud: a rejected picker read must not render an EMPTY customer picker
+  // (which silently makes it impossible to create a review request) as though
+  // the org simply had no customers/jobs. See lib/supabase/read-failure.ts.
+  if (customersRes.error) throw readFailure("reviews/new: customers", customersRes.error);
+  if (jobsRes.error) throw readFailure("reviews/new: completed jobs", jobsRes.error);
   const customers = (customersRes.data ?? []) as unknown as CustomerOption[];
   const jobs = (jobsRes.data ?? []) as unknown as JobOption[];
   // Preserve the `?job_id=` preset as a selectable option even if a future

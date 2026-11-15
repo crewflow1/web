@@ -94,6 +94,6 @@ export const config = {
   // verification never gets a chance to run and the webhook delivery fails
   // with 307.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|manifest.webmanifest|icon.svg|opengraph-image|pdf.worker.min.mjs|sw.js|offline|icons/|api/og|api/health|api/cron|api/demo|api/webhooks|api/receptionist|api/v1|api/sso|scim/v2).*)",
+    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|manifest.webmanifest|icon.svg|opengraph-image|pdf.worker.min.mjs|sw.js|offline|icons/|api/og|api/health|api/cron|api/demo|api/public|api/webhooks|api/receptionist|api/v1|api/sso|scim/v2).*)",
   ],
 };

@@ -96,7 +96,7 @@ describeIntegration("job programme baseline · isolation, immutability, atomicit
   }
 
   async function makeOrg(name: string, slug: string): Promise<string> {
-    const r = await svc().from("organizations").insert({ name, slug }).select("id").single();
+    const r = await svc().from("organizations").insert({ status: "active", name, slug }).select("id").single();
     expect(r.error, r.error?.message).toBeNull();
     return String(r.data?.id ?? "");
   }

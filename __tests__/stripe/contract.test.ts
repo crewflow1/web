@@ -55,6 +55,8 @@ describe("PROCESSED_STRIPE_EVENTS — every directive-mandated event", () => {
     // slip through isProcessedEvent and skip the side-effects.
     for (const evt of [
       "checkout.session.completed",
+      "checkout.session.async_payment_succeeded",
+      "checkout.session.async_payment_failed",
       "customer.subscription.created",
       "customer.subscription.updated",
       "customer.subscription.deleted",
@@ -171,9 +173,35 @@ describe("processStripeEvent handler", () => {
     expect(HANDLER).toMatch(/handleSubscriptionUpsert/);
   });
 
-  it("does NOT auto-cancel the org on customer.subscription.deleted (high-blast operator decision)", () => {
+  it("REVOKES org access on customer.subscription.deleted (sets status=cancelled) + still alerts HQ", () => {
+    // A deleted subscription is a terminal cancel; the access gate authorises only on
+    // organizations.status, so the handler must flip it to 'cancelled' (not merely record
+    // the event) or a churned tenant keeps full access. It must also still notify HQ.
     expect(HANDLER).toMatch(/handleSubscriptionDeleted/);
-    expect(HANDLER).toMatch(/subscription_deleted_recorded/);
+    expect(HANDLER).toMatch(/subscription_deleted:org_cancelled/);
+    // the revoke write + the HQ alert both present in the deleted handler
+    const delIdx = HANDLER.indexOf("async function handleSubscriptionDeleted");
+    const nextFnIdx = HANDLER.indexOf("async function handleInvoicePaid");
+    const body = HANDLER.slice(delIdx, nextFnIdx);
+    expect(body).toMatch(/status: "cancelled"/);
+    expect(body).toMatch(/notifyOnSubscriptionCancelled/);
+  });
+
+  it("GATES paid-access provisioning on confirmed payment (never provision an 'unpaid' checkout)", () => {
+    // checkout.session.completed can arrive with payment_status 'unpaid' for
+    // async/delayed methods; provisioning setup_fee='paid' or status='active'
+    // then would grant access before the money lands. The handler must gate on
+    // payment_status before the provisioning blocks and skip an unpaid session.
+    expect(HANDLER).toMatch(/payment_status === "paid"/);
+    expect(HANDLER).toMatch(/no_payment_required/);
+    expect(HANDLER).toMatch(/skipped_unpaid/);
+    // The gate must sit BEFORE the access-granting writes.
+    const gateIdx = HANDLER.indexOf("paymentConfirmed");
+    const setupPaidIdx = HANDLER.indexOf('setup_fee_status: "paid"');
+    const activeIdx = HANDLER.indexOf('status: "active"');
+    expect(gateIdx).toBeGreaterThan(-1);
+    expect(gateIdx).toBeLessThan(setupPaidIdx);
+    expect(gateIdx).toBeLessThan(activeIdx);
   });
 });
 

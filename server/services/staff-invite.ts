@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { findAuthUserByEmail } from "@/lib/supabase/auth-user-lookup";
 import { sendEmail } from "@/lib/email/send";
 import { staffInviteEmail } from "@/lib/email/demo-templates";
+import { buildCallbackMagicLink } from "@/lib/auth/magic-link";
 import { env } from "@/lib/env";
 
 /**
@@ -131,6 +132,14 @@ export async function sendStaffInvite(args: {
   //    Non-fatal on failure: the email still goes out with /login
   //    recovery instructions (the account exists, so the teammate can
   //    request a fresh link or sign in with Google).
+  //
+  //    We embed a link straight at OUR /auth/callback carrying
+  //    `token_hash` + `type` (see lib/auth/magic-link.ts), NOT GoTrue's
+  //    hosted `action_link`. The hosted link verifies server-side and
+  //    returns the session in a URL hash fragment (implicit flow) that
+  //    the server callback can't read — so it would burn the one-time
+  //    token and bounce the teammate to /login. The token_hash shape is
+  //    what the callback's verifyOtp path was built to exchange.
   // -------------------------------------------------------------------
   let magicLinkUrl: string | null = null;
   const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
@@ -141,7 +150,11 @@ export async function sendStaffInvite(args: {
   if (linkErr) {
     console.error("[staff-invite] generateLink failed", linkErr);
   } else {
-    magicLinkUrl = linkData?.properties?.action_link ?? null;
+    magicLinkUrl = buildCallbackMagicLink({
+      appUrl,
+      properties: linkData?.properties,
+      type: "magiclink",
+    });
   }
 
   // -------------------------------------------------------------------
