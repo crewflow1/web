@@ -147,7 +147,7 @@ export async function createInspection(_prev: FormState, formData: FormData): Pr
 
 export async function issueInspection(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
-  await requireCapability("assets", "edit");
+  await requireCapability("assets_field", "edit");
   const inspectionId = String(formData.get("inspection_id") ?? "");
 
   const parsed = issueInspectionSchema.safeParse({
