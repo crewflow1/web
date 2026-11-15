@@ -20,7 +20,7 @@ test.describe("raise a support ticket", () => {
   test.use({ storageState: "e2e/.auth/owner.json" });
   const db = (): { from: (t: string) => any } => {
     assertLocalE2eTarget("support-ticket-create.spec.ts");
-    return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
+    return createClient(assertLocalE2eTarget("support-ticket-create.spec.ts"), process.env.SUPABASE_SERVICE_ROLE_KEY!, {
       auth: { persistSession: false, autoRefreshToken: false },
     }) as unknown as { from: (t: string) => any };
   };
