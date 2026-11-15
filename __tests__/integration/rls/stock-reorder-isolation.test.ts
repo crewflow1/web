@@ -85,7 +85,7 @@ describeIntegration("stock replenishment · determinism, isolation, handoff, bou
   }
 
   async function makeOrg(name: string, slug: string): Promise<string> {
-    const org = await svc().from("organizations").insert({ name, slug }).select("id").single();
+    const org = await svc().from("organizations").insert({ status: "active", name, slug }).select("id").single();
     expect(org.error, org.error?.message).toBeNull();
     return String(org.data?.id ?? "");
   }

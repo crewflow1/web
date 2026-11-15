@@ -1,5 +1,5 @@
 import "server-only";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "@/lib/supabase/admin"; import { orgPublicWriteRefused } from "@/server/services/org-lifecycle";
 import { API_KEY_REGEX, hashApiKey } from "@/lib/api-auth/keygen";
 
 /**
@@ -147,6 +147,10 @@ export async function resolveApiKey(
   if (data.expires_at !== null && Date.parse(data.expires_at) <= Date.now()) {
     return null;
   }
+
+  // D-17: an API key is a public write path — it does not work for a company that is not
+  // active (it would otherwise keep creating jobs / invoices for a suspended tenant).
+  if (await orgPublicWriteRefused(data.org_id, "operational")) return null;
 
   // USAGE TELEMETRY — only now that the key is valid. Awaited (serverless can
   // freeze out a dangling write) but can never throw or block resolution.

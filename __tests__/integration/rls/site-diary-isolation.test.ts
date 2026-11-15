@@ -50,7 +50,7 @@ describeIntegration("site_diary_entries · tenant isolation (RLS)", () => {
 
     const org = await svc
       .from("organizations")
-      .insert({ name: "Diary RLS Probe Org", slug: TOKEN })
+      .insert({ status: "active", name: "Diary RLS Probe Org", slug: TOKEN })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

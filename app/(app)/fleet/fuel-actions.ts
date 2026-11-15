@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { fuelLogSchema, vehicleIdSchema } from "@/lib/fleet/schema";
 import { formError, formSuccess, type FormState } from "@/lib/forms/state";
@@ -51,6 +52,7 @@ export async function createFuelLog(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("fuel_field", "create");
   const assetId = fs(formData, "asset_id");
   const returnTo =
     fs(formData, "return_to") === "fuel" ? "/fleet/fuel" : `/fleet/vehicles/${assetId}`;
@@ -135,6 +137,7 @@ export async function deleteFuelLog(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("fleet", "delete");
   const id = fs(formData, "id");
   const assetId = fs(formData, "asset_id");
   const returnTo =

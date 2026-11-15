@@ -37,8 +37,8 @@ describeIntegration("public lead capture · POST /api/public/lead", () => {
   const slugB = `${TOKEN}-b`;
 
   beforeAll(async () => {
-    orgA = String((await svc.from("organizations").insert({ name: "Lead Co A", slug: slugA }).select("id").single()).data?.id ?? "");
-    orgB = String((await svc.from("organizations").insert({ name: "Lead Co B", slug: slugB }).select("id").single()).data?.id ?? "");
+    orgA = String((await svc.from("organizations").insert({ status: "active", name: "Lead Co A", slug: slugA }).select("id").single()).data?.id ?? "");
+    orgB = String((await svc.from("organizations").insert({ status: "active", name: "Lead Co B", slug: slugB }).select("id").single()).data?.id ?? "");
     if (!orgA || !orgB) throw new Error("org seed failed");
   });
 
@@ -118,7 +118,7 @@ describeIntegration("public lead capture · POST /api/public/lead", () => {
   }
   async function freshOrg(tag: string): Promise<string> {
     const id = String(
-      (await svc.from("organizations").insert({ name: `Lead Co ${tag}`, slug: `${TOKEN}-${tag}` }).select("id").single()).data?.id ?? "",
+      (await svc.from("organizations").insert({ status: "active", name: `Lead Co ${tag}`, slug: `${TOKEN}-${tag}` }).select("id").single()).data?.id ?? "",
     );
     if (!id) throw new Error("org seed failed");
     return id;

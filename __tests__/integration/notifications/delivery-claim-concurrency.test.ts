@@ -44,7 +44,7 @@ describeIntegration("push/sms delivery claim · concurrency + lease", () => {
   let notifId = "";
 
   beforeAll(async () => {
-    orgId = await insId(svc, "organizations", { name: "Claim Org", slug: `${TOKEN}-org` });
+    orgId = await insId(svc, "organizations", { status: "active", name: "Claim Org", slug: `${TOKEN}-org` });
     const created = await serviceClient().auth.admin.createUser({
       email: `${TOKEN}@example.test`,
       password: `Pw-${TOKEN}`,

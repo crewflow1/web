@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { markNotificationsRead, markOneNotificationRead } from "./notifications-actions";
 import { RELATIVE_TIME_PRESETS, relativeTime } from "@/lib/time/relative";
+import { safeActionPath } from "@/lib/notifications/action-url";
 
 /**
  * Bell-icon dropdown — opens to show the most-recent 15 notifications.
@@ -130,11 +131,14 @@ function NotificationRow({ n, close }: { n: Notification; close: () => void }) {
       </div>
     </div>
   );
-  if (n.action_url) {
+  // The deep link is stored DATA — only a same-origin relative path is ever a
+  // link (see safeActionPath); a poisoned value renders as a plain row.
+  const href = safeActionPath(n.action_url);
+  if (href) {
     return (
       <li>
         <Link
-          href={n.action_url}
+          href={href}
           className="block px-3 py-2 hover:bg-slate-50"
           onClick={() => {
             close();

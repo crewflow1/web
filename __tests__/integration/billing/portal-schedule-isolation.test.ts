@@ -34,7 +34,7 @@ describeIntegration("H2-CASH portal schedule isolation (real Postgres)", () => {
   const svc = () => db(serviceClient());
 
   beforeAll(async () => {
-    org = String((await svc().from("organizations").insert({ name: "PS Org", slug: `${T}-o` }).select("id").single()).data?.id);
+    org = String((await svc().from("organizations").insert({ status: "active", name: "PS Org", slug: `${T}-o` }).select("id").single()).data?.id);
     custA = String((await svc().from("customers").insert({ org_id: org, name: "Customer A" }).select("id").single()).data?.id);
     custB = String((await svc().from("customers").insert({ org_id: org, name: "Customer B" }).select("id").single()).data?.id);
     jobA = String((await svc().from("jobs").insert({ org_id: org, status: "new", customer_id: custA }).select("id").single()).data?.id);

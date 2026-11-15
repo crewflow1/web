@@ -109,12 +109,12 @@ describeIntegration("accounting export · RLS + row-count parity", () => {
     const svc = db(serviceClient());
     const a = await svc
       .from("organizations")
-      .insert({ name: "Accounting A", slug: `${TOKEN}-a` })
+      .insert({ status: "active", name: "Accounting A", slug: `${TOKEN}-a` })
       .select("id")
       .single();
     const b = await svc
       .from("organizations")
-      .insert({ name: "Accounting B", slug: `${TOKEN}-b` })
+      .insert({ status: "active", name: "Accounting B", slug: `${TOKEN}-b` })
       .select("id")
       .single();
     orgA = String(a.data?.id ?? "");

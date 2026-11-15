@@ -96,7 +96,7 @@ describeIntegration("failed-email requeue (real Postgres)", () => {
   it("requeues a permanently-failed row into the drain's claimable shape", async () => {
     const org = await svc()
       .from("organizations")
-      .insert({ name: `Requeue Test ${T}`, slug: `requeue-${T}` })
+      .insert({ status: "active", name: `Requeue Test ${T}`, slug: `requeue-${T}` })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

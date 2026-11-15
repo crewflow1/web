@@ -24,7 +24,7 @@ describeIntegration("H&S evidence · issued records are non-deletable (RLS delet
 
   beforeAll(async () => {
     const svc = db(serviceClient());
-    orgId = String((await svc.from("organizations").insert({ name: "Del Guard", slug: TOKEN }).select("id").single()).data?.id);
+    orgId = String((await svc.from("organizations").insert({ status: "active", name: "Del Guard", slug: TOKEN }).select("id").single()).data?.id);
     const created = await serviceClient().auth.admin.createUser({ email: `${TOKEN}@x.test`, password: `Pw-${TOKEN}`, email_confirm: true });
     ownerId = created.data.user?.id ?? "";
     await svc.from("users").insert({ id: ownerId, email: `${TOKEN}@x.test`, full_name: "Owner" });
@@ -87,7 +87,7 @@ describeIntegration("H&S evidence · issued records are non-deletable (RLS delet
   it("tearing down an org cascades even when it holds issued RAMS + permits", async () => {
     const svc = db(serviceClient());
     const tearToken = `${TOKEN}-tear`;
-    const oid = String((await svc.from("organizations").insert({ name: "Teardown", slug: tearToken }).select("id").single()).data?.id);
+    const oid = String((await svc.from("organizations").insert({ status: "active", name: "Teardown", slug: tearToken }).select("id").single()).data?.id);
     const ra = String((await svc.from("risk_assessments").insert({ org_id: oid, title: "t", activity: "x" }).select("id").single()).data?.id);
     await svc.from("risk_assessments").update({ status: "issued", reference: `RA-${tearToken}`, issued_at: new Date().toISOString() }).eq("id", ra);
     const p = String((await svc.from("permits_to_work").insert({ org_id: oid, permit_type: "general", title: "t", scope: "s", valid_from: new Date().toISOString(), valid_until: new Date(Date.now() + 3.6e6).toISOString() }).select("id").single()).data?.id);

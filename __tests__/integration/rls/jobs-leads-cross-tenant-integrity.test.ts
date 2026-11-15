@@ -51,7 +51,7 @@ const TOKEN = `it-jlxt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 async function mkOrg(label: string): Promise<string> {
   const res = await db(serviceClient())
     .from("organizations")
-    .insert({ name: `JLXT Org ${label}`, slug: `${TOKEN}-${label.toLowerCase()}` })
+    .insert({ status: "active", name: `JLXT Org ${label}`, slug: `${TOKEN}-${label.toLowerCase()}` })
     .select("id")
     .single();
   expect(res.error, res.error?.message).toBeNull();

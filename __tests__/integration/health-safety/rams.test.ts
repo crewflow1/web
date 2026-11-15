@@ -31,9 +31,9 @@ describeIntegration("RAMS · DB invariants", () => {
 
   beforeAll(async () => {
     const svc = db(serviceClient());
-    const a = await svc.from("organizations").insert({ name: "RAMS A", slug: `${TOKEN}-a` }).select("id").single();
+    const a = await svc.from("organizations").insert({ status: "active", name: "RAMS A", slug: `${TOKEN}-a` }).select("id").single();
     orgA = String(a.data?.id ?? "");
-    const b = await svc.from("organizations").insert({ name: "RAMS B", slug: `${TOKEN}-b` }).select("id").single();
+    const b = await svc.from("organizations").insert({ status: "active", name: "RAMS B", slug: `${TOKEN}-b` }).select("id").single();
     orgB = String(b.data?.id ?? "");
     const j = await svc.from("jobs").insert({ org_id: orgB }).select("id").single();
     jobB = String(j.data?.id ?? "");

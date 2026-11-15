@@ -20,7 +20,7 @@ describeIntegration("RLS · organizations tenant isolation", () => {
   beforeAll(async () => {
     const { data, error } = await serviceClient()
       .from("organizations")
-      .insert({ name: "RLS Probe Org", slug })
+      .insert({ status: "active", name: "RLS Probe Org", slug })
       .select("id")
       .single();
     expect(error, error?.message).toBeNull();

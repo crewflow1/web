@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { hasCapability } from "@/server/auth/capabilities";
 import { requireOrgContext } from "@/server/auth/session";
 import {
   type FormState,
@@ -18,10 +19,17 @@ import {
  *                          (full_name, phone). Email comes from auth.users
  *                          and is read-only in the UI.
  *   updateOrganization   — updates the current org's name / phone /
- *                          vat_number / address jsonb. Admin-only at the
- *                          DB (organizations UPDATE policy is members-of-
- *                          org; we additionally enforce admin role here so
- *                          the form is consistent with the UI).
+ *                          vat_number / address / terms / bank details.
+ *                          Owner, or an admin holding `settings:manage`.
+ *
+ * WRITE PATH. `users` and `organizations` are tenant-BOUNDARY tables: RLS gives
+ * clients SELECT policies only and (since 20261295) no write grant, so a write
+ * through the user-JWT client can never succeed — both actions here used to
+ * fail for everyone ("Couldn't save…" / "You don't have permission…"). The
+ * house rule for boundary tables: authorise on the SERVER from the session,
+ * then write with the service role, pinned to the session's own ids —
+ * `users.id = <session user>` and `organizations.id = <session active org>`.
+ * Nothing from the request selects the row.
  */
 
 const profileSchema = z.object({
@@ -81,15 +89,19 @@ export async function updateProfile(
   const result = validateFormData(formData, profileSchema);
   if (!result.ok) return result.state as FormState<SettingsValues>;
 
-  const supabase = await createClient();
-  const { error } = await supabase
+  // Own profile only: the row is the SESSION user's — no id is read from the form.
+  const admin = createAdminClient();
+  const { error, count } = await admin
     .from("users")
-    .update({
-      full_name: result.data.full_name,
-      phone: result.data.phone ?? null,
-    })
+    .update(
+      {
+        full_name: result.data.full_name,
+        phone: result.data.phone ?? null,
+      },
+      { count: "exact" },
+    )
     .eq("id", user.id);
-  if (error) {
+  if (error || count !== 1) {
     console.error("[settings] profile update failed", error);
     return formError(
       "Couldn't save your profile. Try again.",
@@ -105,9 +117,11 @@ export async function updateOrganization(
   _prevState: FormState<SettingsValues>,
   formData: FormData,
 ): Promise<FormState<SettingsValues>> {
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
 
-  if (ctx.membership.role !== "owner" && ctx.membership.role !== "admin") {
+  // Owner always; an admin only with `settings:manage` (the capability model —
+  // these details include the bank account printed on every invoice); never staff.
+  if (!(await hasCapability(ctx, user, "settings", "manage"))) {
     return formError("Only admins/owners can edit organisation details.");
   }
 
@@ -134,8 +148,9 @@ export async function updateOrganization(
   const bank_details =
     bankEntries.length > 0 ? Object.fromEntries(bankEntries) : null;
 
-  const supabase = await createClient();
-  const { error, count } = await supabase
+  // Service-role write AFTER the gate above, pinned to the session's ACTIVE org.
+  const admin = createAdminClient();
+  const { error, count } = await admin
     .from("organizations")
     .update(
       {

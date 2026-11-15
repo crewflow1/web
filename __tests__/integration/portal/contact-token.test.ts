@@ -121,7 +121,7 @@ describeIntegration("customer portal · named-contact token", () => {
     ] as const) {
       const res = await svc
         .from("organizations")
-        .insert({ name: `CnTok ${label}`, slug })
+        .insert({ status: "active", name: `CnTok ${label}`, slug })
         .select("id")
         .single();
       expect(res.error, res.error?.message).toBeNull();

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "@/lib/supabase/admin"; import { publicWriteAllowed, PUBLIC_WRITE_REFUSED_MESSAGE } from "@/lib/auth/org-status";
 import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
 import { parsePublicLead } from "@/lib/public-lead/schema";
 import { emitNotifications } from "@/server/services/notifications-service";
@@ -70,16 +70,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // Resolve the company from the slug — SERVER-SIDE. Unknown slug → 404.
   const orgRes = await admin
     .from("organizations")
-    .select("id, name")
+    .select("id, name, status")
     .eq("slug", d.orgSlug)
     .maybeSingle();
   if (orgRes.error) {
     console.error("[public-lead] org lookup failed", orgRes.error.message);
     return NextResponse.json({ ok: false, error: "Could not reach the company right now." }, { status: 503 });
   }
-  const org = orgRes.data as { id: string; name: string } | null;
+  const org = orgRes.data as { id: string; name: string; status: string | null } | null;
   if (!org) {
     return NextResponse.json({ ok: false, error: "This enquiry link is not valid." }, { status: 404 });
+  }
+  // D-17: a public form must not create a lead in a company that is not active.
+  if (!publicWriteAllowed(org.status, "operational")) {
+    return NextResponse.json({ ok: false, error: PUBLIC_WRITE_REFUSED_MESSAGE }, { status: 403 });
   }
 
   const email = d.email || null;

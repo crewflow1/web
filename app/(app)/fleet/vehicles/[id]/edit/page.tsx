@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireOrgContext } from "@/server/auth/session";
+import { readVehicleMoney } from "@/server/services/private-columns";
 import { updateVehicle, removeVehicleProfile } from "../../../actions";
 import {
   loadSiteOptions,
@@ -32,6 +33,9 @@ export default async function EditVehiclePage({
   // to null here and renders as not-found — never as an editable form.
   const vehicle = await loadVehicleForOrg(ctx.org.id, id);
   if (!vehicle) notFound();
+  // Purchase price + finance agreement are not Data-API readable (20261343); an
+  // edit form rendered without them would blank the saved values on Save.
+  Object.assign(vehicle, (await readVehicleMoney(id)) ?? {});
 
   const [suppliers, sites] = await Promise.all([
     loadSupplierOptions(ctx.org.id),

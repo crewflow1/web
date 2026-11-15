@@ -84,7 +84,7 @@ describeIntegration("stripe · subscription lifecycle → org access", () => {
   beforeAll(async () => {
     const org = await svc()
       .from("organizations")
-      .insert({ name: "SubLC Org", slug: `${TOKEN}-org`, stripe_customer_id: CUSTOMER })
+      .insert({ status: "active", name: "SubLC Org", slug: `${TOKEN}-org`, stripe_customer_id: CUSTOMER })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

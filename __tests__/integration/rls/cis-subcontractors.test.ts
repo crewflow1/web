@@ -67,11 +67,11 @@ describeIntegration("H2-CIS cis_subcontractors (real Postgres)", () => {
 
   beforeAll(async () => {
     orgA = String(
-      (await svc().from("organizations").insert({ name: "CIS A", slug: `${T}-a` }).select("id").single())
+      (await svc().from("organizations").insert({ status: "active", name: "CIS A", slug: `${T}-a` }).select("id").single())
         .data?.id,
     );
     orgB = String(
-      (await svc().from("organizations").insert({ name: "CIS B", slug: `${T}-b` }).select("id").single())
+      (await svc().from("organizations").insert({ status: "active", name: "CIS B", slug: `${T}-b` }).select("id").single())
         .data?.id,
     );
     supplierA = String(

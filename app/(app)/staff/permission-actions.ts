@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session"; import { assertOrgWritable } from "@/server/auth/capabilities";
 import { isOwner } from "@/server/auth/capabilities";
 import { CAP_ACTIONS, CAP_MODULES } from "@/lib/auth/capability-rules";
 import { recordPermissionEvent } from "@/server/services/permission-audit";
@@ -38,7 +38,7 @@ export async function setAdminPermissions(
   targetUserId: string,
   grants: ReadonlyArray<{ module: string; action: string }>,
 ): Promise<SetPermissionsResult> {
-  const { ctx, user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext(); assertOrgWritable(ctx);
   // HARD RULE: owner-only. An admin can never manage permissions (incl. its own).
   if (!isOwner(ctx)) return { ok: false, error: "forbidden" };
   if (!uuid.safeParse(targetUserId).success) return { ok: false, error: "invalid_target" };

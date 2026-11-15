@@ -22,7 +22,7 @@ describeIntegration("permits_to_work · tenant isolation (RLS)", () => {
 
   beforeAll(async () => {
     const svc = db(serviceClient());
-    orgId = String((await svc.from("organizations").insert({ name: "PTW RLS", slug: TOKEN }).select("id").single()).data?.id);
+    orgId = String((await svc.from("organizations").insert({ status: "active", name: "PTW RLS", slug: TOKEN }).select("id").single()).data?.id);
     permitId = String((await svc.from("permits_to_work").insert({ org_id: orgId, permit_type: "general", title: "RLS permit", scope: "x" }).select("id").single()).data?.id);
     condId = String((await svc.from("permit_conditions").insert({ org_id: orgId, permit_id: permitId, label: "Probe", required: true }).select("id").single()).data?.id);
 

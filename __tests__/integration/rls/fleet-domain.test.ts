@@ -57,7 +57,7 @@ describeIntegration("fleet · compliance engines + fuel", () => {
 
     const org = await svc
       .from("organizations")
-      .insert({ name: "Fleet Domain Probe", slug: TOKEN })
+      .insert({ status: "active", name: "Fleet Domain Probe", slug: TOKEN })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();
@@ -65,7 +65,7 @@ describeIntegration("fleet · compliance engines + fuel", () => {
 
     const other = await svc
       .from("organizations")
-      .insert({ name: "Fleet Domain Other", slug: `${TOKEN}-o` })
+      .insert({ status: "active", name: "Fleet Domain Other", slug: `${TOKEN}-o` })
       .select("id")
       .single();
     otherOrgId = String(other.data?.id ?? "");

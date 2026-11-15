@@ -55,8 +55,8 @@ describeIntegration("financial tables · admin-only SELECT/INSERT/UPDATE", () =>
     String((await svc.from(table).insert(row).select("id").single()).data?.id ?? "");
 
   beforeAll(async () => {
-    orgA = await insId("organizations", { name: "Fin A", slug: `${TOKEN}-a` });
-    orgB = await insId("organizations", { name: "Fin B", slug: `${TOKEN}-b` });
+    orgA = await insId("organizations", { status: "active", name: "Fin A", slug: `${TOKEN}-a` });
+    orgB = await insId("organizations", { status: "active", name: "Fin B", slug: `${TOKEN}-b` });
     if (!orgA || !orgB) throw new Error("org seed failed");
     owner = await mkUser(`${TOKEN}-owner@example.test`, "owner", orgA);
     admin = await mkUser(`${TOKEN}-admin@example.test`, "admin", orgA);

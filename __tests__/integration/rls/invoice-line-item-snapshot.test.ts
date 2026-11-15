@@ -133,7 +133,7 @@ describeIntegration("invoices · line-item snapshot (Phase 2)", () => {
     ] as const) {
       const o = await svc()
         .from("organizations")
-        .insert({ name: `InvLI ${label}`, slug })
+        .insert({ status: "active", name: `InvLI ${label}`, slug })
         .select("id")
         .single();
       expect(o.error, o.error?.message).toBeNull();

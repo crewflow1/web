@@ -92,8 +92,8 @@ describeIntegration("payment allocation · DB invariants", () => {
   beforeAll(async () => {
     const svc = db(serviceClient());
 
-    const a = await svc.from("organizations").insert({ name: "Alloc Org A", slug: `${TOKEN}-a` }).select("id").single();
-    const b = await svc.from("organizations").insert({ name: "Alloc Org B", slug: `${TOKEN}-b` }).select("id").single();
+    const a = await svc.from("organizations").insert({ status: "active", name: "Alloc Org A", slug: `${TOKEN}-a` }).select("id").single();
+    const b = await svc.from("organizations").insert({ status: "active", name: "Alloc Org B", slug: `${TOKEN}-b` }).select("id").single();
     orgA = String(a.data?.id ?? "");
     orgB = String(b.data?.id ?? "");
     if (!orgA || !orgB) throw new Error("failed to create probe orgs");

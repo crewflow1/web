@@ -110,8 +110,8 @@ describeIntegration("Train A outbound webhooks (real Postgres)", () => {
   }
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "WH A", slug: `${T}-a` }).select("id").single()).data?.id);
-    orgB = String((await svc().from("organizations").insert({ name: "WH B", slug: `${T}-b` }).select("id").single()).data?.id);
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "WH A", slug: `${T}-a` }).select("id").single()).data?.id);
+    orgB = String((await svc().from("organizations").insert({ status: "active", name: "WH B", slug: `${T}-b` }).select("id").single()).data?.id);
     admin = await mkMember(orgA, "admin", "adm");
     member = await mkMember(orgA, "staff", "mem");
     adminB = await mkMember(orgB, "admin", "admb");

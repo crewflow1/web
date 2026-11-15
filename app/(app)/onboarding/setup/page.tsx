@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementRole, requireOrgContext } from "@/server/auth/session";
 import { buildOnboardingSnapshot } from "@/server/services/onboarding-snapshot";
 import {
   CHECKLIST_STEPS,
@@ -40,6 +40,8 @@ export default async function OnboardingSetupPage({
   searchParams: SP;
 }) {
   const { ctx } = await requireOrgContext();
+  // Least privilege: the organisation set-up wizard is an administrative function.
+  requireManagementRole(ctx);
   const sp = await searchParams;
 
   // Best-effort stamp of started_at on first visit. Idempotent.

@@ -145,8 +145,8 @@ describeIntegration("company health · active-org pinning (RLS)", () => {
   }
 
   beforeAll(async () => {
-    orgA = await insId(svc, "organizations", { name: "Health A", slug: `${TOKEN}-a` });
-    orgB = await insId(svc, "organizations", { name: "Health B", slug: `${TOKEN}-b` });
+    orgA = await insId(svc, "organizations", { status: "active", name: "Health A", slug: `${TOKEN}-a` });
+    orgB = await insId(svc, "organizations", { status: "active", name: "Health B", slug: `${TOKEN}-b` });
     dual = await mkUser("dual", [orgA, orgB]);
     outsider = await mkUser("outsider", [orgB]);
 

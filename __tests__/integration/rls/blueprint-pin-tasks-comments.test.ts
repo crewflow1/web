@@ -54,8 +54,8 @@ describeIntegration("blueprint pins P2 · tasks + comments + photos", () => {
   let outsider = { id: "", token: "" };
 
   beforeAll(async () => {
-    orgA = await insId(svc, "organizations", { name: "P2 A", slug: `${TOKEN}-a` });
-    orgB = await insId(svc, "organizations", { name: "P2 B", slug: `${TOKEN}-b` });
+    orgA = await insId(svc, "organizations", { status: "active", name: "P2 A", slug: `${TOKEN}-a` });
+    orgB = await insId(svc, "organizations", { status: "active", name: "P2 B", slug: `${TOKEN}-b` });
     jobA = await insId(svc, "jobs", { org_id: orgA, status: "in-progress" });
     const jobB = await insId(svc, "jobs", { org_id: orgB, status: "in-progress" });
     const bpA = await insId(svc, "blueprints", { org_id: orgA, job_id: jobA, drawing_number: "A-1", title: "A" });

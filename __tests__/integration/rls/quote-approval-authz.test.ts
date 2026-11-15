@@ -108,7 +108,7 @@ describeIntegration("quote approval authz · DB-layer owner/admin gate", () => {
   beforeAll(async () => {
     const org = await svc()
       .from("organizations")
-      .insert({ name: "QAuthz Probe", slug: `${TOKEN}-a` })
+      .insert({ status: "active", name: "QAuthz Probe", slug: `${TOKEN}-a` })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

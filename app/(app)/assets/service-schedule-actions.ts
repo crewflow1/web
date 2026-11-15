@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { z } from "zod";
 import { SCHEDULE_CADENCES, cadenceToInterval } from "@/lib/assets/inspection-schedule";
@@ -73,6 +74,7 @@ function isAdmin(role: string): boolean {
 
 export async function createServiceSchedule(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "create");
   const assetId = String(formData.get("asset_id") ?? "");
   if (!isAdmin(ctx.membership.role)) return formError("Only an owner or admin can do that.");
 
@@ -126,6 +128,7 @@ export async function createServiceSchedule(_prev: FormState, formData: FormData
 
 export async function toggleServiceSchedule(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "edit");
   const assetId = String(formData.get("asset_id") ?? "");
   const scheduleId = String(formData.get("schedule_id") ?? "");
   const nextActive = String(formData.get("next_active") ?? "") === "true";
@@ -156,6 +159,7 @@ export async function toggleServiceSchedule(_prev: FormState, formData: FormData
 
 export async function deleteServiceSchedule(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "delete");
   const assetId = String(formData.get("asset_id") ?? "");
   const scheduleId = String(formData.get("schedule_id") ?? "");
   if (!isAdmin(ctx.membership.role)) return formError("Only an owner or admin can do that.");

@@ -328,7 +328,7 @@ export default async function EditQuotePage({
     : null;
   const warnMessage =
     sp.warn === "invoice_skipped"
-      ? "Quote accepted, but the auto-invoice didn't create. Generate it manually from /invoices/new."
+      ? "Quote accepted, but the job and invoice didn't create — nothing was half-saved. Retry below; if it keeps failing, contact support."
       : null;
 
   const publicAbsoluteUrl = quote.public_token
@@ -405,6 +405,20 @@ export default async function EditQuotePage({
           className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
         >
           {warnMessage}
+          {/* The retry is the SAME owner-accept action: on an already-accepted
+              quote it runs only the idempotent job+invoice ensure (it can never
+              re-accept, double-bill or create a second job), and it keeps this
+              warning up if the step still cannot complete. */}
+          {status === "accepted" ? (
+            <form action={acceptQuoteAsOwner.bind(null, id)} className="mt-2">
+              <button
+                type="submit"
+                className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+              >
+                Retry creating the job and invoice
+              </button>
+            </form>
+          ) : null}
         </div>
       ) : null}
       {errorMessage ? (

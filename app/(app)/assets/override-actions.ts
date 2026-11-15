@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
   createOverrideSchema,
@@ -58,6 +59,7 @@ type RevokeChain = {
 
 export async function createInspectionOverride(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "approve");
   const assetId = String(formData.get("asset_id") ?? "");
   if (!isAdmin(ctx.membership.role)) return formError("Only an owner or admin can do that.");
 
@@ -107,6 +109,7 @@ export async function createInspectionOverride(_prev: FormState, formData: FormD
 
 export async function revokeInspectionOverride(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "approve");
   const assetId = String(formData.get("asset_id") ?? "");
   if (!isAdmin(ctx.membership.role)) return formError("Only an owner or admin can do that.");
 

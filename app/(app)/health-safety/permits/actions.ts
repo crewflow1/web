@@ -3,7 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure } from "@/lib/supabase/read-failure";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session"; import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
   createPermitSchema, updatePermitSchema, permitIdSchema, addConditionSchema,
@@ -69,7 +69,7 @@ function permitRow(v: CreatePermitInput) {
 }
 
 export async function createPermit(_prev: FormState, formData: FormData): Promise<FormState> {
-  const { user, ctx } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext(); await requireCapability("site_safety_field", "edit");
   const parsed = createPermitSchema.safeParse(permitFields(formData));
   if (!parsed.success) return formError(firstError(parsed.error.issues));
   const id = randomUUID();
@@ -82,7 +82,7 @@ export async function createPermit(_prev: FormState, formData: FormData): Promis
 }
 
 export async function updatePermit(_prev: FormState, formData: FormData): Promise<FormState> {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); await requireCapability("site_safety_field", "edit");
   const parsed = updatePermitSchema.safeParse({ id: formData.get("id"), ...permitFields(formData) });
   if (!parsed.success) return formError(firstError(parsed.error.issues));
   const { id } = parsed.data;
@@ -96,13 +96,20 @@ export async function updatePermit(_prev: FormState, formData: FormData): Promis
 }
 
 export async function addPermitCondition(_prev: FormState, formData: FormData): Promise<FormState> {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); await requireCapability("site_safety_field", "edit");
   const parsed = addConditionSchema.safeParse({
     permitId: formData.get("permitId"), label: formData.get("label"),
     required: formData.get("required") ?? undefined, sortOrder: (formData.get("sortOrder") as string) || 0,
   });
   if (!parsed.success) return formError(firstError(parsed.error.issues));
   const supabase = await createClient();
+  // LEAST PRIVILEGE: a condition may only be added to a permit the caller can
+  // OPEN (owner/admin, or a job they are assigned to) in the ACTIVE org — the
+  // same rule the page applies; RLS repeats it (20261345).
+  const { data: parentPermit, error: parentPermitError } = await tbl(supabase)("permits_to_work")
+    .select("id").eq("id", parsed.data.permitId).eq("org_id", ctx.org.id).maybeSingle();
+  if (parentPermitError) return formError("Couldn't check that permit — try again.");
+  if (!parentPermit) return formError("Permit not found.");
   const { error } = await tbl(supabase)("permit_conditions").insert({
     org_id: ctx.org.id, permit_id: parsed.data.permitId, label: parsed.data.label,
     required: parsed.data.required === "on" || parsed.data.required === true,
@@ -113,7 +120,7 @@ export async function addPermitCondition(_prev: FormState, formData: FormData): 
 }
 
 export async function deletePermitCondition(_prev: FormState, formData: FormData): Promise<FormState> {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); await requireCapability("site_safety_field", "edit");
   const parsed = conditionIdSchema.safeParse({ id: formData.get("id"), permitId: formData.get("permitId") });
   if (!parsed.success) return formError("That condition link looks wrong — reload and try again.");
   const { id, permitId } = parsed.data;
@@ -125,7 +132,7 @@ export async function deletePermitCondition(_prev: FormState, formData: FormData
 }
 
 export async function confirmPermitCondition(_prev: FormState, formData: FormData): Promise<FormState> {
-  const { user, ctx } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext(); await requireCapability("site_safety_field", "edit");
   const parsed = conditionIdSchema.safeParse({ id: formData.get("id"), permitId: formData.get("permitId") });
   if (!parsed.success) return formError("That condition link looks wrong — reload and try again.");
   const { id, permitId } = parsed.data;
@@ -142,7 +149,7 @@ export async function confirmPermitCondition(_prev: FormState, formData: FormDat
 }
 
 export async function issuePermit(_prev: FormState, formData: FormData): Promise<FormState> {
-  const { user, ctx } = await requireOrgContext();
+  const { user, ctx } = await requireOrgContext(); await requireCapability("site_safety", "approve");
   const parsed = permitIdSchema.safeParse({ id: formData.get("id") });
   if (!parsed.success) return formError("That permit link looks wrong — reload and try again.");
   const id = parsed.data.id;
@@ -170,7 +177,7 @@ export async function issuePermit(_prev: FormState, formData: FormData): Promise
 
 /** activate / suspend / close / cancel — the DB trigger validates the transition. */
 export async function transitionPermit(_prev: FormState, formData: FormData): Promise<FormState> {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); await requireCapability("site_safety", "approve");
   const parsed = permitIdSchema.safeParse({ id: formData.get("id") });
   const verb = String(formData.get("verb") ?? "");
   const map = TRANSITION_STAMP[verb];

@@ -106,7 +106,7 @@ describeIntegration("invoices · customer denormalisation (Phase 1)", () => {
     ] as const) {
       const o = await svc
         .from("organizations")
-        .insert({ name: `InvCust ${label}`, slug })
+        .insert({ status: "active", name: `InvCust ${label}`, slug })
         .select("id")
         .single();
       expect(o.error, o.error?.message).toBeNull();
