@@ -102,7 +102,7 @@ export async function prepareCis300ReturnAction(formData: FormData): Promise<voi
   const raw = String(formData.get("taxMonthEnd") ?? "").trim();
   const taxMonthEnd = /^\d{4}-\d{2}-\d{2}$/.test(raw)
     ? raw
-    : cisTaxMonthEnd(new Date().toISOString());
+    : cisTaxMonthEnd(new Date().toISOString().slice(0, 10)); // date-only: the helper returns null for a full timestamp
   if (!taxMonthEnd) {
     throw new Error("Could not resolve the CIS tax month.");
   }
