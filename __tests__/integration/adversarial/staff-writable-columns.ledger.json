@@ -1,0 +1,631 @@
+{
+ "_comment": "Reviewed ledger for __tests__/integration/adversarial/staff-column-mutation.test.ts \u2014 every (table, column) a staff JWT can change through PostgREST. It only shrinks: a new entry needs a class (INTENDED | OPEN) and a reason.",
+ "tables": {
+  "asset_calibration_certificates": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff (see docs/programme/security-tenant/staff-column-mutation.csv); *_by / created_at / money columns are wider than the action exposes \u2014 ST-10b",
+   "unassigned": [
+    "certificate_number",
+    "calibrated_by",
+    "calibration_date",
+    "next_due_date",
+    "result",
+    "standard",
+    "notes",
+    "recorded_by",
+    "created_at",
+    "updated_at"
+   ],
+   "assigned": [
+    "certificate_number",
+    "calibrated_by",
+    "calibration_date",
+    "next_due_date",
+    "result",
+    "standard",
+    "notes",
+    "recorded_by",
+    "created_at",
+    "updated_at"
+   ]
+  },
+  "asset_fuel_logs": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff (see docs/programme/security-tenant/staff-column-mutation.csv); *_by / created_at / money columns are wider than the action exposes \u2014 ST-10b",
+   "unassigned": [
+    "odometer_miles",
+    "litres",
+    "cost",
+    "is_full_fill",
+    "station",
+    "driver_id",
+    "notes",
+    "created_by",
+    "created_at",
+    "updated_at"
+   ],
+   "assigned": [
+    "odometer_miles",
+    "litres",
+    "cost",
+    "is_full_fill",
+    "station",
+    "driver_id",
+    "notes",
+    "created_by",
+    "created_at",
+    "updated_at"
+   ]
+  },
+  "asset_inspection_templates": {
+   "class": "OPEN",
+   "note": "ST-10: versions are published through publish_inspection_template; direct edits rewrite a published definition",
+   "unassigned": [
+    "family_id",
+    "version",
+    "name",
+    "description",
+    "categories",
+    "check_level",
+    "definition",
+    "created_by",
+    "published_by",
+    "published_at",
+    "created_at",
+    "updated_at"
+   ],
+   "assigned": [
+    "family_id",
+    "version",
+    "name",
+    "description",
+    "categories",
+    "check_level",
+    "definition",
+    "created_by",
+    "published_by",
+    "published_at",
+    "created_at",
+    "updated_at"
+   ]
+  },
+  "asset_inspections": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff (see docs/programme/security-tenant/staff-column-mutation.csv); *_by / created_at / money columns are wider than the action exposes \u2014 ST-10b",
+   "unassigned": [
+    "title",
+    "kind",
+    "safety_critical",
+    "outcome",
+    "content",
+    "snapshot",
+    "inspected_at",
+    "inspected_by",
+    "due_at",
+    "revision",
+    "created_by",
+    "created_at",
+    "updated_at",
+    "template_version",
+    "template_snapshot",
+    "cycle_key"
+   ],
+   "assigned": [
+    "title",
+    "kind",
+    "safety_critical",
+    "outcome",
+    "content",
+    "inspected_at",
+    "inspected_by",
+    "due_at",
+    "revision",
+    "created_by",
+    "created_at",
+    "updated_at",
+    "cycle_key"
+   ]
+  },
+  "asset_maintenance_cases": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff (see docs/programme/security-tenant/staff-column-mutation.csv); *_by / created_at / money columns are wider than the action exposes \u2014 ST-10b",
+   "unassigned": [
+    "case_type",
+    "priority",
+    "status",
+    "title",
+    "description",
+    "assigned_to",
+    "scheduled_for",
+    "work_performed",
+    "parts_used",
+    "out_of_service",
+    "downtime_start",
+    "reinspection_required",
+    "reported_by",
+    "completed_at",
+    "completed_by",
+    "cancelled_at",
+    "cancelled_by",
+    "cancellation_reason",
+    "created_at",
+    "updated_at",
+    "cycle_key",
+    "odometer_miles"
+   ],
+   "assigned": [
+    "case_type",
+    "priority",
+    "status",
+    "title",
+    "description",
+    "assigned_to",
+    "scheduled_for",
+    "work_performed",
+    "parts_used",
+    "out_of_service",
+    "downtime_start",
+    "reinspection_required",
+    "reported_by",
+    "completed_at",
+    "completed_by",
+    "cancelled_at",
+    "cancelled_by",
+    "cancellation_reason",
+    "created_at",
+    "updated_at",
+    "cycle_key",
+    "odometer_miles"
+   ]
+  },
+  "asset_qr_identities": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff (see docs/programme/security-tenant/staff-column-mutation.csv); *_by / created_at / money columns are wider than the action exposes \u2014 ST-10b",
+   "unassigned": [
+    "token",
+    "active",
+    "generated_by",
+    "generated_at",
+    "revoked_by",
+    "revoked_at",
+    "revocation_reason",
+    "created_at",
+    "updated_at"
+   ],
+   "assigned": [
+    "token",
+    "active",
+    "generated_by",
+    "generated_at",
+    "revoked_by",
+    "revoked_at",
+    "revocation_reason",
+    "created_at",
+    "updated_at"
+   ]
+  },
+  "assets": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff (see docs/programme/security-tenant/staff-column-mutation.csv); *_by / created_at / money columns are wider than the action exposes \u2014 ST-10b",
+   "unassigned": [
+    "name",
+    "category",
+    "asset_ref",
+    "manufacturer",
+    "model",
+    "serial_number",
+    "registration",
+    "ownership",
+    "status",
+    "purchase_date",
+    "purchase_price",
+    "current_value",
+    "warranty_expires_at",
+    "hire_start",
+    "hire_end",
+    "hire_rate",
+    "notes",
+    "created_by",
+    "created_at",
+    "updated_at"
+   ],
+   "assigned": [
+    "name",
+    "category",
+    "asset_ref",
+    "manufacturer",
+    "model",
+    "serial_number",
+    "registration",
+    "ownership",
+    "status",
+    "purchase_date",
+    "purchase_price",
+    "current_value",
+    "warranty_expires_at",
+    "hire_start",
+    "hire_end",
+    "hire_rate",
+    "notes",
+    "created_by",
+    "created_at",
+    "updated_at"
+   ]
+  },
+  "blueprints": {
+   "class": "OPEN",
+   "note": "ST-10: setBlueprintStatus is owner/admin-gated in the app; assigned staff can change status directly",
+   "unassigned": [],
+   "assigned": [
+    "drawing_number",
+    "title",
+    "discipline",
+    "status",
+    "current_version",
+    "created_by",
+    "updated_by",
+    "created_at",
+    "updated_at"
+   ]
+  },
+  "delay_events": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff (see docs/programme/security-tenant/staff-column-mutation.csv); *_by / created_at / money columns are wider than the action exposes \u2014 ST-10b",
+   "unassigned": [],
+   "assigned": [
+    "category",
+    "working_days_lost",
+    "description",
+    "status",
+    "created_at",
+    "updated_at",
+    "client_write_key",
+    "offline_authored_at",
+    "last_offline_write_key"
+   ]
+  },
+  "fleet_vehicles": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff (see docs/programme/security-tenant/staff-column-mutation.csv); *_by / created_at / money columns are wider than the action exposes \u2014 ST-10b",
+   "unassigned": [
+    "variant",
+    "first_registered_on",
+    "fuel_type",
+    "vehicle_class",
+    "gross_weight_kg",
+    "mot_exempt",
+    "operational_status",
+    "finance_type",
+    "home_depot",
+    "odometer_miles",
+    "odometer_recorded_at",
+    "created_by",
+    "created_at",
+    "updated_at"
+   ],
+   "assigned": [
+    "variant",
+    "first_registered_on",
+    "fuel_type",
+    "vehicle_class",
+    "gross_weight_kg",
+    "mot_exempt",
+    "operational_status",
+    "finance_type",
+    "home_depot",
+    "odometer_miles",
+    "odometer_recorded_at",
+    "created_by",
+    "created_at",
+    "updated_at"
+   ]
+  },
+  "goods_received_lines": {
+   "class": "OPEN",
+   "note": "ST-10: as goods_received_notes \u2014 qty_received feeds PO receipt matching",
+   "unassigned": [
+    "qty_received",
+    "notes",
+    "created_at"
+   ],
+   "assigned": []
+  },
+  "goods_received_notes": {
+   "class": "OPEN",
+   "note": "ST-10: written only through post_/void_goods_received_note (SECURITY INVOKER RPCs); a direct PATCH bypasses the posting state machine",
+   "unassigned": [
+    "number",
+    "status",
+    "voided_at",
+    "voided_by",
+    "void_reason",
+    "created_by",
+    "created_at",
+    "updated_at"
+   ],
+   "assigned": [
+    "voided_at",
+    "voided_by",
+    "void_reason",
+    "created_by",
+    "created_at",
+    "updated_at"
+   ]
+  },
+  "inspection_plan_template_items": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff (see docs/programme/security-tenant/staff-column-mutation.csv); *_by / created_at / money columns are wider than the action exposes \u2014 ST-10b",
+   "unassigned": [
+    "item_number",
+    "title",
+    "acceptance_criteria",
+    "inspection_method",
+    "specification_ref",
+    "control_point",
+    "is_hold_point",
+    "required",
+    "created_at"
+   ],
+   "assigned": []
+  },
+  "inspection_plan_templates": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff (see docs/programme/security-tenant/staff-column-mutation.csv); *_by / created_at / money columns are wider than the action exposes \u2014 ST-10b",
+   "unassigned": [
+    "name",
+    "version",
+    "description",
+    "status",
+    "updated_at"
+   ],
+   "assigned": [
+    "updated_at"
+   ]
+  },
+  "job_checklists": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff (see docs/programme/security-tenant/staff-column-mutation.csv); *_by / created_at / money columns are wider than the action exposes \u2014 ST-10b",
+   "unassigned": [],
+   "assigned": [
+    "label",
+    "requires_photo",
+    "is_done",
+    "sort",
+    "created_by",
+    "created_at",
+    "assigned_to",
+    "due_on"
+   ]
+  },
+  "job_documents": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff (see docs/programme/security-tenant/staff-column-mutation.csv); *_by / created_at / money columns are wider than the action exposes \u2014 ST-10b",
+   "unassigned": [],
+   "assigned": [
+    "doc_type",
+    "title",
+    "status",
+    "template_id",
+    "assigned_to",
+    "external_reference",
+    "customer_shared_at",
+    "requires_staff_signature",
+    "requires_customer_signature",
+    "current_version",
+    "completed_at",
+    "completed_by",
+    "created_by",
+    "updated_by",
+    "created_at",
+    "updated_at"
+   ]
+  },
+  "job_progress_observations": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff (see docs/programme/security-tenant/staff-column-mutation.csv); *_by / created_at / money columns are wider than the action exposes \u2014 ST-10b",
+   "unassigned": [],
+   "assigned": [
+    "percent",
+    "note",
+    "recorded_by",
+    "created_at",
+    "updated_at"
+   ]
+  },
+  "job_warranties": {
+   "class": "OPEN",
+   "note": "ST-10: portal_published_at / voided_* are customer-facing publication controls with no staff action",
+   "unassigned": [],
+   "assigned": [
+    "title",
+    "kind",
+    "cover",
+    "exclusions",
+    "provider",
+    "reference",
+    "period_months",
+    "service_interval_months",
+    "service_notes",
+    "void_reason",
+    "voided_at",
+    "voided_by",
+    "portal_published_at",
+    "portal_published_by",
+    "portal_withdrawn_at",
+    "created_by",
+    "created_at",
+    "updated_at"
+   ]
+  },
+  "permit_conditions": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff (see docs/programme/security-tenant/staff-column-mutation.csv); *_by / created_at / money columns are wider than the action exposes \u2014 ST-10b",
+   "unassigned": [
+    "label",
+    "required",
+    "confirmed",
+    "confirmed_by",
+    "confirmed_at",
+    "notes",
+    "sort_order",
+    "created_at"
+   ],
+   "assigned": [
+    "label",
+    "required",
+    "confirmed",
+    "confirmed_by",
+    "confirmed_at",
+    "notes",
+    "sort_order",
+    "created_at"
+   ]
+  },
+  "properties": {
+   "class": "OPEN",
+   "note": "ST-10: the customers module is capability-gated; staff can still edit a property's address/notes directly",
+   "unassigned": [
+    "address",
+    "notes",
+    "created_at"
+   ],
+   "assigned": [
+    "address",
+    "notes",
+    "created_at"
+   ]
+  },
+  "site_visitors": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff (see docs/programme/security-tenant/staff-column-mutation.csv); *_by / created_at / money columns are wider than the action exposes \u2014 ST-10b",
+   "unassigned": [
+    "visitor_name",
+    "company",
+    "purpose",
+    "host_user_id",
+    "vehicle_registration",
+    "signed_out_at",
+    "signed_in_by",
+    "signed_out_by",
+    "created_at",
+    "updated_at"
+   ],
+   "assigned": [
+    "visitor_name",
+    "company",
+    "purpose",
+    "host_user_id",
+    "vehicle_registration",
+    "signed_out_at",
+    "signed_in_by",
+    "signed_out_by",
+    "created_at",
+    "updated_at"
+   ]
+  },
+  "stock_items": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff (see docs/programme/security-tenant/staff-column-mutation.csv); *_by / created_at / money columns are wider than the action exposes \u2014 ST-10b",
+   "unassigned": [
+    "name",
+    "description",
+    "sku",
+    "unit",
+    "active",
+    "supplier_reference",
+    "reorder_level",
+    "target_level",
+    "notes",
+    "created_by",
+    "created_at",
+    "updated_at",
+    "reorder_quantity",
+    "barcode"
+   ],
+   "assigned": [
+    "name",
+    "description",
+    "sku",
+    "unit",
+    "active",
+    "supplier_reference",
+    "reorder_level",
+    "target_level",
+    "notes",
+    "created_by",
+    "created_at",
+    "updated_at",
+    "reorder_quantity",
+    "barcode"
+   ]
+  },
+  "stocktake_lines": {
+   "class": "OPEN",
+   "note": "ST-10: as stocktake_sessions \u2014 counted_qty feeds the stock adjustment on post",
+   "unassigned": [
+    "counted_at",
+    "counted_by",
+    "created_at"
+   ],
+   "assigned": [
+    "counted_qty",
+    "counted_at",
+    "counted_by",
+    "created_at"
+   ]
+  },
+  "stocktake_sessions": {
+   "class": "OPEN",
+   "note": "ST-10: written only through the stocktake RPCs; a direct PATCH bypasses open\u2192counting\u2192posted",
+   "unassigned": [
+    "reference",
+    "status",
+    "notes",
+    "opened_by",
+    "opened_at",
+    "posted_by",
+    "posted_at",
+    "cancelled_by",
+    "cancelled_at",
+    "created_at",
+    "updated_at"
+   ],
+   "assigned": [
+    "reference",
+    "notes",
+    "opened_by",
+    "opened_at",
+    "posted_by",
+    "posted_at",
+    "cancelled_by",
+    "cancelled_at",
+    "created_at",
+    "updated_at"
+   ]
+  },
+  "suppliers": {
+   "class": "INTENDED",
+   "note": "an ungated server action performs this write for staff (see docs/programme/security-tenant/staff-column-mutation.csv); *_by / created_at / money columns are wider than the action exposes \u2014 ST-10b",
+   "unassigned": [
+    "name",
+    "phone",
+    "email",
+    "category",
+    "notes",
+    "created_at",
+    "updated_at",
+    "payment_terms_days"
+   ],
+   "assigned": [
+    "name",
+    "phone",
+    "email",
+    "category",
+    "notes",
+    "created_at",
+    "updated_at",
+    "payment_terms_days"
+   ]
+  }
+ }
+}
