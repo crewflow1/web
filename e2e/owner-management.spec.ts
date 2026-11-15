@@ -321,8 +321,9 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await form.locator('input[name="phone"]').fill("07700 900333");
       await submitAction(page, "/staff/", () => form.getByRole("button", { name: "Save profile" }).click());
       await expect(page.getByText(/Couldn't save|don't have permission|Only the owner/)).toHaveCount(0);
+      // "Some POST under /staff/ resolved" does not prove THIS save landed; wait for the row.
+      await expect.poll(async () => (await userRow("profileTarget")).full_name, { timeout: 15_000 }).toBe("OM Profile Edited");
       const row = await userRow("profileTarget");
-      expect(row.full_name).toBe("OM Profile Edited");
       expect(row.phone).toBe("07700 900333");
       await page.goto(profile);
       await expect(profileForm(page).locator('input[name="full_name"]')).toHaveValue("OM Profile Edited");
