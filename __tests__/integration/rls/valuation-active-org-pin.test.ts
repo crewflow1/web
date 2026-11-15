@@ -47,8 +47,8 @@ const submittedVal = (org: string, job: string) => ({
 
 describeIntegration("rls · valuation RPCs active-org pin (20261267)", () => {
   beforeAll(async () => {
-    orgA = await insId("organizations", { name: `VAO A ${TOKEN}`, slug: `${TOKEN}-a` });
-    orgB = await insId("organizations", { name: `VAO B ${TOKEN}`, slug: `${TOKEN}-b` });
+    orgA = await insId("organizations", { status: "active", name: `VAO A ${TOKEN}`, slug: `${TOKEN}-a` });
+    orgB = await insId("organizations", { status: "active", name: `VAO B ${TOKEN}`, slug: `${TOKEN}-b` });
     const cA = await insId("customers", { org_id: orgA, name: "Cust A" });
     const cB = await insId("customers", { org_id: orgB, name: "Cust B" });
     jobA = await insId("jobs", { org_id: orgA, status: "in-progress", customer_id: cA });

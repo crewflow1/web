@@ -137,7 +137,7 @@ describeIntegration("HQ Event Spine · activation (Module 1 reveal)", () => {
 
     const org = await svc()
       .from("organizations")
-      .insert({ name: "Spine Activation Org", slug })
+      .insert({ status: "active", name: "Spine Activation Org", slug })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

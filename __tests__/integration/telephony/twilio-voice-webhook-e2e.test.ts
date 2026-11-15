@@ -77,7 +77,7 @@ describeIntegration("telephone receptionist · SANDBOX VERIFIED real Twilio voic
 
   beforeAll(async () => {
     const svc = db();
-    const o = await svc.from("organizations").insert({ name: "Voice E2E", slug: `${TOKEN}-a` }).select("id").single();
+    const o = await svc.from("organizations").insert({ status: "active", name: "Voice E2E", slug: `${TOKEN}-a` }).select("id").single();
     expect(o.error, o.error?.message).toBeNull();
     orgA = String((o.data as { id: string }).id);
 

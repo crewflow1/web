@@ -69,7 +69,7 @@ const DEF = {
 
 async function mkOrg(slug: string): Promise<string> {
   const { data, error } = await db(serviceClient())
-    .from("organizations").insert({ name: `Gen ${slug}`, slug: `${TAG}-${slug}` }).select("id").single();
+    .from("organizations").insert({ status: "active", name: `Gen ${slug}`, slug: `${TAG}-${slug}` }).select("id").single();
   expect(error, error?.message).toBeNull();
   return String(data?.id ?? "");
 }

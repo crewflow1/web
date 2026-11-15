@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "@/lib/supabase/admin"; import { loadNonActiveOrgIds } from "@/server/services/org-lifecycle";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { sendInvoiceEmail } from "@/lib/email/send-invoice";
 import { isCronAuthorised } from "@/lib/cron/auth";
@@ -104,7 +104,7 @@ async function runReminders() {
   // Iterate stages in ascending order — within one cron run we send at
   // most one stage per invoice. If multiple stages match, the smallest
   // wins (most polite). Larger stages will fire on subsequent runs.
-  for (const stage of ["day_3", "day_7", "day_14", "day_21"] as const) {
+  const heldOrgs = await loadNonActiveOrgIds(); for (const stage of ["day_3", "day_7", "day_14", "day_21"] as const) {
     const days = STAGE_DAYS[stage];
     const upperIso = new Date(now - days * 86_400_000).toISOString();
     const lowerIso = new Date(now - (days + WINDOW_DAYS) * 86_400_000).toISOString();
@@ -168,7 +168,7 @@ async function runReminders() {
     // Partition synchronously so the stat counters stay deterministic;
     // only the email send + row insert run concurrently below.
     const pending: CandidateRow[] = [];
-    for (const inv of rows) {
+    for (const inv of rows) { if (heldOrgs.has(inv.org_id)) continue; // D-17: no chasers from a company that is not active
       stats.scanned++;
       if (alreadySent.has(inv.id)) {
         stats.skipped_already_sent++;

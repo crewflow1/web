@@ -97,12 +97,12 @@ describeIntegration("maintenance reminders · RLS + idempotency + dark drain", (
 
     const a = await svc
       .from("organizations")
-      .insert({ name: "Maint Reminders A", slug: `${TOKEN}-a` })
+      .insert({ status: "active", name: "Maint Reminders A", slug: `${TOKEN}-a` })
       .select("id")
       .single();
     const b = await svc
       .from("organizations")
-      .insert({ name: "Maint Reminders B", slug: `${TOKEN}-b` })
+      .insert({ status: "active", name: "Maint Reminders B", slug: `${TOKEN}-b` })
       .select("id")
       .single();
     orgA = String(a.data?.id ?? "");
@@ -295,7 +295,7 @@ describeIntegration("maintenance reminders · atomic claim prevents double-send"
 
     const o = await svc()
       .from("organizations")
-      .insert({ name: "Maint Reminders Claim", slug: `${TOKEN}-claim` })
+      .insert({ status: "active", name: "Maint Reminders Claim", slug: `${TOKEN}-claim` })
       .select("id")
       .single();
     org = String(o.data?.id ?? "");

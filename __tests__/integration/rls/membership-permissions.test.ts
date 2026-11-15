@@ -27,7 +27,7 @@ describeIntegration("membership_permissions / permission_audit are service-role-
   let token = "";
 
   beforeAll(async () => {
-    const org = await svc().from("organizations").insert({ name: `MP ${T}`, slug: T }).select("id").single();
+    const org = await svc().from("organizations").insert({ status: "active", name: `MP ${T}`, slug: T }).select("id").single();
     if (org.error) throw new Error(org.error.message);
     orgId = String(org.data.id);
 
@@ -117,7 +117,7 @@ describeIntegration("membership_permissions / permission_audit are service-role-
   it("the composite FK refuses a grant whose org_id is NOT the membership's org", async () => {
     // Create a second real org; a grant for org-A's membership but stamped with
     // org-B must be rejected by (membership_id, org_id) -> memberships(id, org_id).
-    const orgB = await svc().from("organizations").insert({ name: `MP ${T} B`, slug: `${T}b` }).select("id").single();
+    const orgB = await svc().from("organizations").insert({ status: "active", name: `MP ${T} B`, slug: `${T}b` }).select("id").single();
     if (orgB.error) throw new Error(orgB.error.message);
     const r = await svc().from("membership_permissions").insert({
       org_id: String(orgB.data.id), // wrong org for this membership

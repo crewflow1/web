@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
   assertTransition,
@@ -97,6 +98,7 @@ type InspectionRow = {
 
 export async function createInspection(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets_field", "create");
 
   const parsed = createInspectionSchema.safeParse({
     asset_id: formData.get("asset_id"),
@@ -145,6 +147,7 @@ export async function createInspection(_prev: FormState, formData: FormData): Pr
 
 export async function issueInspection(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "edit");
   const inspectionId = String(formData.get("inspection_id") ?? "");
 
   const parsed = issueInspectionSchema.safeParse({
@@ -226,6 +229,7 @@ export async function issueInspection(_prev: FormState, formData: FormData): Pro
 
 export async function archiveInspection(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "edit");
   const inspectionId = String(formData.get("inspection_id") ?? "");
   const assetId = String(formData.get("asset_id") ?? "");
 
@@ -301,6 +305,7 @@ function parseRunForm(formData: FormData): {
 
 export async function startInspectionFromTemplate(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets_field", "create");
   const assetId = String(formData.get("asset_id") ?? "");
   const templateId = String(formData.get("template_id") ?? "");
   if (!assetId || !templateId) return formError("Please check the inspection details.");
@@ -402,6 +407,7 @@ async function loadTemplatedInspection(orgId: string, inspectionId: string) {
 /** Save partial progress on a draft templated inspection (field-interruption recovery). */
 export async function saveInspectionAnswers(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx } = await requireOrgContext();
+  await requireCapability("assets_field", "edit");
   const inspectionId = String(formData.get("inspection_id") ?? "");
   const insp = await loadTemplatedInspection(ctx.org.id, inspectionId);
   if (!insp) return formError("Inspection not found.");
@@ -429,6 +435,7 @@ export async function saveInspectionAnswers(_prev: FormState, formData: FormData
  */
 export async function completeTemplatedInspection(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets_field", "edit");
   const inspectionId = String(formData.get("inspection_id") ?? "");
   const insp = await loadTemplatedInspection(ctx.org.id, inspectionId);
   if (!insp) return formError("Inspection not found.");
@@ -567,6 +574,7 @@ export async function completeTemplatedInspection(_prev: FormState, formData: Fo
  */
 export async function startReinspection(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets_field", "create");
   const failId = String(formData.get("inspection_id") ?? "");
   const fail = await loadTemplatedInspection(ctx.org.id, failId);
   if (!fail) return formError("Inspection not found.");

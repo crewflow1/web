@@ -39,7 +39,7 @@ describeIntegration("retention schedule · DB CHECKs + admin-only RLS", () => {
 
   beforeAll(async () => {
     const svc = db(serviceClient());
-    const org = await svc.from("organizations").insert({ name: "RetSched Org", slug: TOKEN }).select("id").single();
+    const org = await svc.from("organizations").insert({ status: "active", name: "RetSched Org", slug: TOKEN }).select("id").single();
     orgId = String(org.data?.id ?? "");
     const job = await svc.from("jobs").insert({ org_id: orgId, status: "new", retention_percent: 5 }).select("id").single();
     jobId = String(job.data?.id ?? "");

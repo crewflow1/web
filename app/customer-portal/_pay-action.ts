@@ -1,6 +1,6 @@
 "use server";
 
-import { redirect } from "next/navigation";
+import { redirect } from "next/navigation"; import { gatePortalWrite } from "@/server/services/org-lifecycle";
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
@@ -59,7 +59,7 @@ export async function startInvoicePayment(formData: FormData): Promise<void> {
     backTo(token, invoiceId, "too_many_requests");
   }
 
-  const loaded = await loadCustomerByPortalToken(token);
+  const loaded = await gatePortalWrite(await loadCustomerByPortalToken(token), "payment");
   if (!loaded) {
     backTo(token, invoiceId, "invalid_token");
   }

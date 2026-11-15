@@ -91,14 +91,14 @@ describeIntegration("whatsapp activation hardening · real Postgres", () => {
   beforeAll(async () => {
     const a = await svc()
       .from("organizations")
-      .insert({ name: "WA-Hard Org A", slug: `${TOKEN}-a` })
+      .insert({ status: "active", name: "WA-Hard Org A", slug: `${TOKEN}-a` })
       .select("id")
       .single();
     expect(a.error, a.error?.message).toBeNull();
     orgA = String(a.data?.id ?? "");
     const b = await svc()
       .from("organizations")
-      .insert({ name: "WA-Hard Org B", slug: `${TOKEN}-b` })
+      .insert({ status: "active", name: "WA-Hard Org B", slug: `${TOKEN}-b` })
       .select("id")
       .single();
     expect(b.error, b.error?.message).toBeNull();
@@ -274,7 +274,7 @@ describeIntegration("whatsapp activation hardening · real Postgres", () => {
     vi.stubEnv(WHATSAPP_FLAG, "true");
     const org = await svc()
       .from("organizations")
-      .insert({ name: "WA-Hard OptOut Org", slug: `${TOKEN}-opt` })
+      .insert({ status: "active", name: "WA-Hard OptOut Org", slug: `${TOKEN}-opt` })
       .select("id")
       .single();
     const orgId = String(org.data?.id ?? "");
@@ -346,7 +346,7 @@ describeIntegration("whatsapp activation hardening · real Postgres", () => {
     // whatsapp_optouts FKs organizations — use a real org throughout.
     const org = await svc()
       .from("organizations")
-      .insert({ name: "WA-Hard OptOut Out", slug: `${TOKEN}-out` })
+      .insert({ status: "active", name: "WA-Hard OptOut Out", slug: `${TOKEN}-out` })
       .select("id")
       .single();
     const realOrg = String(org.data?.id ?? "");
@@ -378,7 +378,7 @@ describeIntegration("whatsapp activation hardening · real Postgres", () => {
   it("P2-7 RLS: anon cannot write the opt-out ledger; members cannot fabricate/erase one", async () => {
     const org = await svc()
       .from("organizations")
-      .insert({ name: "WA-Hard OptOut RLS", slug: `${TOKEN}-optrls` })
+      .insert({ status: "active", name: "WA-Hard OptOut RLS", slug: `${TOKEN}-optrls` })
       .select("id")
       .single();
     const orgId = String(org.data?.id ?? "");
@@ -432,7 +432,7 @@ describeIntegration("whatsapp activation hardening · real Postgres", () => {
     vi.stubEnv(WHATSAPP_FLAG, "true");
     const org = await svc()
       .from("organizations")
-      .insert({ name: "WA-Hard Sweep Org", slug: `${TOKEN}-swp` })
+      .insert({ status: "active", name: "WA-Hard Sweep Org", slug: `${TOKEN}-swp` })
       .select("id")
       .single();
     const orgId = String(org.data?.id ?? "");
@@ -555,7 +555,7 @@ describeIntegration("whatsapp activation hardening · real Postgres", () => {
   it("P2-5: threading provider_message_id makes a replayed normalised event fold to ONE enquiry + ONE lead", async () => {
     const org = await svc()
       .from("organizations")
-      .insert({ name: "WA-Hard Replay Org", slug: `${TOKEN}-rpl` })
+      .insert({ status: "active", name: "WA-Hard Replay Org", slug: `${TOKEN}-rpl` })
       .select("id")
       .single();
     const orgId = String(org.data?.id ?? "");

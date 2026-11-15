@@ -313,7 +313,7 @@ describeIntegration("HQ Event Spine · historical backfill (PR4)", () => {
   beforeAll(async () => {
     await setBackfillEnabled(false);
 
-    const org = await svc().from("organizations").insert({ name: "PR4 Backfill Org", slug }).select("id").single();
+    const org = await svc().from("organizations").insert({ status: "active", name: "PR4 Backfill Org", slug }).select("id").single();
     expect(org.error, org.error?.message).toBeNull();
     orgId = String((org.data as { id: string }).id);
 

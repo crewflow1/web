@@ -1,6 +1,6 @@
 "use server";
 
-import { redirect } from "next/navigation";
+import { redirect } from "next/navigation"; import { gatePortalWrite } from "@/server/services/org-lifecycle";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -58,7 +58,7 @@ export async function sendPortalMessage(formData: FormData): Promise<void> {
     );
   }
 
-  const loaded = await loadCustomerByPortalToken(token);
+  const loaded = await gatePortalWrite(await loadCustomerByPortalToken(token), "operational");
   if (!loaded) {
     redirect(`/customer-portal/${token}/messages?error=invalid_token`);
   }

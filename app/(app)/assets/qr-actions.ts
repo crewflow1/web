@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { generateOpaqueToken } from "@/lib/assets/qr-token";
 import { assetIdSchema } from "@/lib/assets/schema";
@@ -43,6 +44,7 @@ export async function generateOrRegenerateQr(
   _prev: FormState, _formData: FormData, // eslint-disable-line @typescript-eslint/no-unused-vars
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "edit");
   if (!assetIdSchema.safeParse(assetId).success) return formError("Invalid asset.");
 
   const tenant = await createClient();
@@ -82,6 +84,7 @@ export async function revokeQr(
   _prev: FormState, _formData: FormData, // eslint-disable-line @typescript-eslint/no-unused-vars
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "edit");
   if (!assetIdSchema.safeParse(assetId).success) return formError("Invalid asset.");
 
   const tenant = await createClient();

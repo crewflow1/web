@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { storagePathBelongsToOrg } from "@/lib/storage/owned-path";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session"; import { assertOrgWritable } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 
 /**
@@ -57,7 +57,7 @@ const uploadSchema = z.object({
 const idSchema = z.string().uuid();
 
 export async function uploadComplianceDocument(formData: FormData): Promise<void> {
-  const { ctx, user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext(); assertOrgWritable(ctx);
 
   const parsed = uploadSchema.safeParse({
     kind: formData.get("kind") ?? "",
@@ -138,7 +138,7 @@ export async function uploadComplianceDocument(formData: FormData): Promise<void
 }
 
 export async function deleteComplianceDocument(id: string): Promise<void> {
-  const { ctx, user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext(); assertOrgWritable(ctx);
   if (!idSchema.safeParse(id).success) redirect("/compliance?error=bad_id");
 
   // SECURITY (P2 audit M-4): deletion is destructive and admin-only — the
@@ -225,7 +225,7 @@ export async function deleteComplianceDocument(id: string): Promise<void> {
 }
 
 export async function getComplianceDocSignedUrl(id: string): Promise<string | null> {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); assertOrgWritable(ctx);
   if (!idSchema.safeParse(id).success) return null;
 
   const tenant = await createClient();

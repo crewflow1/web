@@ -3,7 +3,7 @@ import { ImportButton } from "@/components/import/import-button";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session"; import { requireCapability } from "@/server/auth/capabilities";
 import { poStatusLabel } from "@/lib/purchase-orders/schema";
 import { countPostedReceipts } from "./_receiving-data";
 
@@ -40,7 +40,7 @@ export default async function PurchaseOrdersPage({
   searchParams: Promise<{ saved?: string }>;
 }) {
   const { saved } = await searchParams;
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); await requireCapability("purchase_orders", "view");
   const supabase = await createClient();
 
   // PAGED (F-1): the register must show EVERY committed order (and its ids feed

@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { randomUUID } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { loadWorkerSession } from "../_loader";
+import { loadWorkerSession } from "../_loader"; import { isHeldStatus } from "@/lib/auth/org-status";
 import { workerAcknowledgeSchema } from "@/lib/health-safety/worker-signoff-schema";
 import { ackStatement, ACK_STATEMENT_VERSION } from "@/lib/health-safety/acknowledgements";
 import { storeSignatureImage, deleteSignatureImage } from "@/server/services/signature-capture";
@@ -33,6 +33,11 @@ export async function acknowledgeAsWorker(token: string, formData: FormData): Pr
   // 1. Resolve the link — the ONLY gate. Fails closed on bad/expired/revoked.
   const session = await loadWorkerSession(token);
   if (!session) redirect(back);
+  // D-17: a suspended / cancelled company is read-only — no new sign-off evidence is written
+  // (this action uses the service role, so RLS would not stop it).
+  const { data: heldOrg } = await createAdminClient()
+    .from("organizations").select("status").eq("id", session!.token.org_id).maybeSingle();
+  if (isHeldStatus(heldOrg?.status)) redirect(`${back}?error=read_only`);
 
   // 2. Rate-limit token+IP: blocks token-guessing + sign-off spam while letting
   //    a worker sign each of several documents in a sitting.

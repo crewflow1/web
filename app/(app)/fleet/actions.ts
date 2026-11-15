@@ -3,6 +3,7 @@
 import type { ZodError } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { vehicleFormSchema, vehicleIdSchema } from "@/lib/fleet/schema";
 import { formError, formSuccess, type FormState } from "@/lib/forms/state";
@@ -189,6 +190,7 @@ export async function createVehicle(
   formData: FormData,
 ): Promise<VehicleFormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("fleet", "create");
   const parsed = readVehicleForm(formData);
   if (!parsed.success) return vehicleFailure(parsed.error, formData);
 
@@ -230,6 +232,7 @@ export async function updateVehicle(
   formData: FormData,
 ): Promise<VehicleFormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("fleet", "edit");
   const id = formString(formData, "asset_id");
   if (!vehicleIdSchema.safeParse(id).success) {
     return formError(fleetMsg("bad_id"), echoValues(formData));
@@ -285,6 +288,7 @@ export async function removeVehicleProfile(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("fleet", "delete");
   const id = formString(formData, "asset_id");
   if (!vehicleIdSchema.safeParse(id).success) return formError(fleetMsg("bad_id"));
 

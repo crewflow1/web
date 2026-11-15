@@ -147,7 +147,7 @@ async function freshOrg(): Promise<string> {
   const slug = `it-r29-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const res = await svc()
     .from("organizations")
-    .insert({ name: "R29 Conversation Authorisation Org", slug })
+    .insert({ status: "active", name: "R29 Conversation Authorisation Org", slug })
     .select("id");
   expect(res.error, res.error?.message).toBeNull();
   const id = String((res.data ?? [])[0]?.id);

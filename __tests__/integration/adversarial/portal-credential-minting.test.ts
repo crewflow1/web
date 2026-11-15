@@ -132,24 +132,23 @@ describeIntegration("ADVERSARIAL · customer-portal credential minting via custo
     expect(edit.data).toHaveLength(1);
   });
 
-  it("OPEN ST-07a · a staff member assigned to a customer's job can READ that customer's own portal token", async () => {
-    // customers.portal_token is the customer's bearer credential, stored in clear so the
-    // owner's "copy portal link" works. `customers: scoped select` lets staff see the
-    // customers of their assigned jobs — whole row, token included — and RLS cannot hide
-    // a column. So the insider this file is about does not need to MINT a credential for
-    // an assigned customer: they can read the real one, open the portal and see that
-    // customer's invoices/quotes. Unassigned customers stay invisible (asserted below).
-    // Closing it needs a schema decision (hash the token at rest, or move it to an
-    // admin-only table) — see the register. This asserts TODAY's behaviour and is
-    // written to fail when that lands.
+  it("ST-07a (closed) · a staff member assigned to a customer's job can NOT read that customer's portal token", async () => {
+    // customers.portal_token is the customer's bearer credential. `customers: scoped
+    // select` lets staff see the customers of their assigned jobs — and RLS cannot hide a
+    // column — so until 20261341 the insider this file is about could simply READ the
+    // real credential. The column now carries no client SELECT grant at all (the "copy
+    // portal link" panel reads it server-side after a customers:view check). The full
+    // proof (select *, filters, embeds, the server reader) is rls/private-column-acl.
     const world = w!;
-    const other = await svc().from("customers").insert({ org_id: world.A.id, name: "Unassigned customer" }).select("id, portal_token").single();
-    const assigned = await as(world.A.staff.token).from("customers").select("id, portal_token").eq("id", customerA);
-    const token = (assigned.data ?? [])[0]?.portal_token as string | undefined;
-    expect(typeof token === "string" && token.length > 0, "CURRENT behaviour: staff reads the assigned customer's portal token").toBe(true);
-    expect((await resolve(token!))?.customer.id).toBe(customerA);
-    // Bounded: a customer staff are NOT assigned to is not readable at all.
-    const unassigned = await as(world.A.staff.token).from("customers").select("id, portal_token").eq("id", (other.data as { id: string }).id);
+    const other = await svc().from("customers").insert({ org_id: world.A.id, name: "Unassigned customer" }).select("id").single();
+    const staff = as(world.A.staff.token);
+    const assigned = await staff.from("customers").select("id, portal_token").eq("id", customerA);
+    expect(assigned.error?.code, JSON.stringify(assigned.error ?? assigned.data)).toBe("42501");
+    // The row itself is still theirs to see (name / site contact) …
+    const row = await staff.from("customers").select("id, name").eq("id", customerA);
+    expect(row.data ?? []).toHaveLength(1);
+    // … and a customer staff are NOT assigned to is still not readable at all.
+    const unassigned = await staff.from("customers").select("id").eq("id", (other.data as { id: string }).id);
     expect(unassigned.data ?? []).toEqual([]);
   });
 

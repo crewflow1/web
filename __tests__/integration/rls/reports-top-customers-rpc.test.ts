@@ -97,7 +97,7 @@ describeIntegration("reports · reports_top_customers_by_revenue (R2)", () => {
   }
 
   async function makeOrg(label: string): Promise<string> {
-    const r = await svc().from("organizations").insert({ name: `TopCust ${label}`, slug: `${T}-${label}` }).select("id").single();
+    const r = await svc().from("organizations").insert({ status: "active", name: `TopCust ${label}`, slug: `${T}-${label}` }).select("id").single();
     expect(r.error, r.error?.message).toBeNull();
     return String(r.data?.id ?? "");
   }

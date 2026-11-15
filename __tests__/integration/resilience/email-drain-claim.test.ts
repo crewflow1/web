@@ -74,7 +74,7 @@ const row = async (id: string) =>
 const sendsOf = (subject: string) => sent.calls.filter((c) => c.subject === subject).length;
 
 beforeAll(async () => {
-  const org = await svc().from("organizations").insert({ name: `Resilience Email ${TOKEN}`, slug: `${TOKEN}-org` }).select("id").single();
+  const org = await svc().from("organizations").insert({ status: "active", name: `Resilience Email ${TOKEN}`, slug: `${TOKEN}-org` }).select("id").single();
   expect(org.error, org.error?.message).toBeNull();
   orgId = org.data.id as string;
 });

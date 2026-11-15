@@ -113,7 +113,7 @@ describeIntegration("INJ-01 notification content is immutable to tenant users", 
   beforeAll(async () => {
     const o = await svc()
       .from("organizations")
-      .insert({ name: `NCI ${TOKEN}`, slug: TOKEN })
+      .insert({ status: "active", name: `NCI ${TOKEN}`, slug: TOKEN })
       .select("id")
       .single();
     expect(o.error, o.error?.message).toBeNull();

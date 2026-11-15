@@ -172,7 +172,7 @@ describeIntegration("Train A webhook Resume/re-ping re-enables a disabled endpoi
   beforeAll(async () => {
     const org = await svc()
       .from("organizations")
-      .insert({ name: "WH Re-enable", slug: `${T}-org` })
+      .insert({ status: "active", name: "WH Re-enable", slug: `${T}-org` })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

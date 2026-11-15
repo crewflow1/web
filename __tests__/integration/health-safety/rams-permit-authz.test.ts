@@ -26,11 +26,15 @@ describeIntegration("RAMS + permit lifecycle authz (S4 integrity / S5 intent, re
   let jobA = "";
   let memberId = "";
   let memberTok = "";
+  // D-17: publishing / lifecycle is an approval — a separate OWNER principal does it.
+  let bossId = "";
+  let bossTok = "";
+  const boss = () => db(userClient(bossTok));
   const svc = () => db(serviceClient());
   const me = () => db(userClient(memberTok));
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "HZ A", slug: `${T}-a` }).select("id").single()).data?.id ?? "");
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "HZ A", slug: `${T}-a` }).select("id").single()).data?.id ?? "");
     jobA = String((await svc().from("jobs").insert({ org_id: orgA, status: "new" }).select("id").single()).data?.id ?? "");
     const email = `${T}-m@x.test`;
     const created = await serviceClient().auth.admin.createUser({ email, password: `Pw-${T}`, email_confirm: true });
@@ -46,11 +50,21 @@ describeIntegration("RAMS + permit lifecycle authz (S4 integrity / S5 intent, re
     if (s.error) throw new Error(s.error.message);
     memberTok = s.data.session?.access_token ?? "";
     if (!orgA || !jobA || !memberTok) throw new Error("fixture setup failed");
+    const be = `${T}-boss@x.test`;
+    const bc = await serviceClient().auth.admin.createUser({ email: be, password: `Pw-${T}`, email_confirm: true });
+    if (bc.error) throw new Error(bc.error.message);
+    bossId = bc.data.user?.id ?? "";
+    await svc().from("users").insert({ id: bossId, email: be, full_name: "Owner" });
+    await svc().from("memberships").insert({ org_id: orgA, user_id: bossId, role: "owner" });
+    const bs = await anonClient().auth.signInWithPassword({ email: be, password: `Pw-${T}` });
+    bossTok = bs.data.session?.access_token ?? "";
+    if (!bossTok) throw new Error("no owner token");
   });
 
   afterAll(async () => {
     if (orgA) await svc().from("organizations").delete().eq("id", orgA);
     if (memberId) await serviceClient().auth.admin.deleteUser(memberId);
+    if (bossId) await serviceClient().auth.admin.deleteUser(bossId);
   });
 
   // ---- S4: RAMS draft->terminal forgery bypass is closed ---------------------
@@ -66,21 +80,23 @@ describeIntegration("RAMS + permit lifecycle authz (S4 integrity / S5 intent, re
     }
   });
 
-  it("[S4] a member CAN still author a draft RAMS and issue it (first delivery stays member-level)", async () => {
+  it("[S4] a member CAN author a draft RAMS; ISSUING it is an approval (D-17) — refused for staff, pinned to the owner", async () => {
     const d = await me().from("risk_assessments").insert({ org_id: orgA, title: "Real", activity: "roofing", assessor_id: memberId, job_id: jobA }).select("id").single();
     expect(d.error, d.error?.message).toBeNull();
     const id = String(d.data?.id);
     await me().from("risk_assessment_hazards").insert({ org_id: orgA, risk_assessment_id: id, hazard: "Fall", likelihood: 3, severity: 3, control_measures: "harness" });
-    const iss = await me().from("risk_assessments").update({ status: "issued", reference: `RA-${T}-ok`, issued_at: now() }).eq("id", id);
-    expect(iss.error, "a member must still be able to issue a ready RAMS").toBeNull();
-    // and the DB pinned provenance to the member (not forgeable)
+    const patch = { status: "issued", reference: `RA-${T}-ok`, issued_at: now() };
+    await me().from("risk_assessments").update(patch).eq("id", id);
+    expect((await svc().from("risk_assessments").select("status").eq("id", id).maybeSingle()).data?.status, "staff must not issue a RAMS").toBe("draft");
+    const iss = await boss().from("risk_assessments").update(patch).eq("id", id);
+    expect(iss.error, "the owner must be able to issue a ready RAMS").toBeNull();
     const row = (await svc().from("risk_assessments").select("status, issued_by").eq("id", id).maybeSingle()).data;
     expect(row?.status).toBe("issued");
-    expect(row?.issued_by).toBe(memberId);
+    expect(row?.issued_by).toBe(bossId);
   });
 
   // ---- S5: permits remain member-level (intent lock, per product policy) ------
-  it("[S5] a member CAN suspend and close an issued permit (member-level lifecycle is the current policy)", async () => {
+  it("[S5] a member can NOT suspend / reactivate / close an issued permit (D-17: lifecycle is an approval); the owner can", async () => {
     // Seed an issued+active permit via service role (wide validity window, no conditions).
     const d = await svc().from("permits_to_work")
       .insert({ org_id: orgA, permit_type: "general", title: "P", scope: "s", job_id: jobA, valid_from: "2020-01-01T00:00:00Z", valid_until: "2999-01-01T00:00:00Z" })
@@ -90,10 +106,18 @@ describeIntegration("RAMS + permit lifecycle authz (S4 integrity / S5 intent, re
     const iss = await svc().from("permits_to_work").update({ status: "issued", reference: `PTW-${T}`, issued_at: now() }).eq("id", id);
     expect(iss.error, `seed issue: ${iss.error?.message}`).toBeNull();
     await svc().from("permits_to_work").update({ status: "active", activated_at: now() }).eq("id", id);
-    // As a NON-ADMIN member (tenant JWT): suspend + reactivate + close all succeed today.
-    expect((await me().from("permits_to_work").update({ status: "suspended", suspended_at: now() }).eq("id", id)).error, "member suspend must succeed (member-level policy)").toBeNull();
-    expect((await me().from("permits_to_work").update({ status: "active" }).eq("id", id)).error, "member reactivate must succeed").toBeNull();
-    expect((await me().from("permits_to_work").update({ status: "closed", closed_at: now() }).eq("id", id)).error, "member close must succeed").toBeNull();
+    // As a plain staff member (tenant JWT): every lifecycle move is refused (RLS filters the row).
+    const denied = async (patch: Record<string, unknown>, what: string) => {
+      const before = (await svc().from("permits_to_work").select("status").eq("id", id).maybeSingle()).data?.status;
+      await me().from("permits_to_work").update(patch).eq("id", id);
+      expect((await svc().from("permits_to_work").select("status").eq("id", id).maybeSingle()).data?.status, `staff ${what} must be refused`).toBe(before);
+    };
+    await denied({ status: "suspended", suspended_at: now() }, "suspend");
+    await denied({ status: "closed", closed_at: now() }, "close");
+    // The owner (site_safety:approve) can run the whole lifecycle.
+    expect((await boss().from("permits_to_work").update({ status: "suspended", suspended_at: now() }).eq("id", id)).error, "owner suspend").toBeNull();
+    expect((await boss().from("permits_to_work").update({ status: "active" }).eq("id", id)).error, "owner reactivate").toBeNull();
+    expect((await boss().from("permits_to_work").update({ status: "closed", closed_at: now() }).eq("id", id)).error, "owner close").toBeNull();
   });
 
   // ---- Adversarial follow-up: issued-hazard reparent immutability -----------
@@ -104,7 +128,7 @@ describeIntegration("RAMS + permit lifecycle authz (S4 integrity / S5 intent, re
     const ra1 = String(d1.data?.id);
     const h = await me().from("risk_assessment_hazards").insert({ org_id: orgA, risk_assessment_id: ra1, hazard: "Fall", likelihood: 3, severity: 3, control_measures: "harness" }).select("id").single();
     const hz = String(h.data?.id);
-    expect((await me().from("risk_assessments").update({ status: "issued", reference: `RA-${T}-fz`, issued_at: now() }).eq("id", ra1)).error, "seed issue").toBeNull();
+    expect((await boss().from("risk_assessments").update({ status: "issued", reference: `RA-${T}-fz`, issued_at: now() }).eq("id", ra1)).error, "seed issue (owner)").toBeNull();
     // a throwaway DRAFT to reparent into
     const ra2 = String((await me().from("risk_assessments").insert({ org_id: orgA, title: "Throwaway", activity: "x", job_id: jobA }).select("id").single()).data?.id);
     // attack: move the hazard off the frozen RA_1 → must be rejected

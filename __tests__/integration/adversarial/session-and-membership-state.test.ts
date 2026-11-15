@@ -321,11 +321,12 @@ describeIntegration("ADVERSARIAL · sessions, tokens and membership state", () =
   });
 
   for (const state of ["suspended", "cancelled", "rejected", "pending"] as const) {
-    it(`OPEN ST-07b · a member of a ${state.toUpperCase()} org keeps full Data API access to that org (the status gate is application-only)`, async () => {
-      // server/auth/session.ts → requireOrgContext() redirects a non active/trial org to
-      // /access-pending. current_org_ids() does not look at organizations.status, so the
-      // SAME session used directly against PostgREST still reads and writes the org's
-      // data. Own-org only (no cross-tenant reach) — a commercial / abuse-hold bypass.
+    // D-17 (migration 20261346): a suspended / cancelled / rejected company is READ-ONLY at the
+    // data layer — reads stay (the owner's billing / export / recovery and the 30-day read-only
+    // promise), user-JWT writes are refused by a RESTRICTIVE policy AND a trigger. `pending` is
+    // read-only too: the application locks a pending company out, so a direct Data API request must
+    // not get around that (onboarding writes use the service role).
+    it(`ST-07b · a member of a ${state.toUpperCase()} org ${state === "suspended" || state === "cancelled" ? "can READ but not WRITE the org's data (owner, read-only)" : "can neither READ nor WRITE the org's data"}`, async () => {
       const world = w!;
       const orgId = await mkOrg(world.tag, `st-${state}`, { status: state });
       world.extraOrgIds.push(orgId);
@@ -338,8 +339,7 @@ describeIntegration("ADVERSARIAL · sessions, tokens and membership state", () =
       const write = await as(member.token).from("customers").insert({ org_id: orgId, name: "written while held" }).select("id");
       const reach = { read: (read.data ?? []).length === 1, write: write.error === null };
       observed[`org_${state}`] = reach;
-      // CURRENT behaviour. When ST-07b is fixed these flip to false — update the register.
-      expect(reach).toEqual({ read: true, write: true });
+      expect(reach).toEqual({ read: state === "suspended" || state === "cancelled", write: false });
       // And it is strictly own-org: the held org's member still cannot touch org B.
       expect(await canReadB(member.token)).toBe(false);
     });

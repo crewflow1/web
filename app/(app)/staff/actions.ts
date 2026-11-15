@@ -10,7 +10,7 @@ import {
   sendStaffInvite,
   type StaffInviteMetadata,
 } from "@/server/services/staff-invite";
-import { requireOrgContext, type OrgContext } from "@/server/auth/session";
+import { requireOrgContext, type OrgContext } from "@/server/auth/session"; import { isHeldStatus } from "@/lib/auth/org-status";
 import {
   listUserShiftsOnDay,
   listWeekRotaEntries,
@@ -94,6 +94,9 @@ function requireAdmin(ctx: OrgContext): void {
   if (role !== "owner" && role !== "admin") {
     redirect("/dashboard?error=forbidden");
   }
+  // D-17: a suspended / cancelled company is read-only — staff administration is an
+  // operational write (these writes use the service role, so RLS would not stop them).
+  if (isHeldStatus(ctx.org?.status)) redirect("/dashboard?error=read_only");
 }
 
 // -------------------------------------------------------------------------
@@ -166,7 +169,7 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
   const supabase = await createClient();
   const { data: existing } = await supabase
     .from("users")
-    .select("id, email, full_name, phone, employment_type")
+    .select("id, email, full_name")
     .eq("email", data.email)
     .maybeSingle();
 
@@ -272,9 +275,17 @@ export async function inviteStaff(formData: FormData): Promise<InviteStaffResult
   const admin = createAdminClient();
   type UserUpdate = { full_name?: string; phone?: string; employment_type?: string };
   const userUpdates: UserUpdate = {};
+  // phone / employment_type are not Data-API readable (20261342): read the
+  // current values with the service role (this action is admin-gated above).
+  const { data: existingPrivate, error: existingPrivateError } = await admin
+    .from("users")
+    .select("phone, employment_type")
+    .eq("id", existing.id)
+    .maybeSingle();
+  if (existingPrivateError) throw readFailure("staff invite: existing profile", existingPrivateError);
   if (!existing.full_name && data.full_name) userUpdates.full_name = data.full_name;
-  if (!existing.phone && data.phone) userUpdates.phone = data.phone;
-  if (!existing.employment_type && data.employment_type)
+  if (!existingPrivate?.phone && data.phone) userUpdates.phone = data.phone;
+  if (!existingPrivate?.employment_type && data.employment_type)
     userUpdates.employment_type = data.employment_type;
   if (Object.keys(userUpdates).length > 0) {
     await admin.from("users").update(userUpdates).eq("id", existing.id);

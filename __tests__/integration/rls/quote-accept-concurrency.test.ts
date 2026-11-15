@@ -24,7 +24,7 @@ let jobId = "";
 let quoteId = "";
 
 beforeAll(async () => {
-  const org = await svc().from("organizations").insert({ name: `QAcc ${TOKEN}`, slug: `${TOKEN}-org` }).select("id").single();
+  const org = await svc().from("organizations").insert({ status: "active", name: `QAcc ${TOKEN}`, slug: `${TOKEN}-org` }).select("id").single();
   expect(org.error, org.error?.message).toBeNull();
   orgId = org.data.id as string;
   const cust = await svc().from("customers").insert({ org_id: orgId, name: "QAcc Customer" }).select("id").single();

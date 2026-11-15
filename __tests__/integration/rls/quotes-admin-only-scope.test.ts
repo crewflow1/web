@@ -45,8 +45,8 @@ describeIntegration("quotes · admin-only isolation (staff/cross-org/revoked den
     String((await svc.from(table).insert(row).select("id").single()).data?.id ?? "");
 
   beforeAll(async () => {
-    orgA = await insId("organizations", { name: "QAO A", slug: `${TOKEN}-a` });
-    orgB = await insId("organizations", { name: "QAO B", slug: `${TOKEN}-b` });
+    orgA = await insId("organizations", { status: "active", name: "QAO A", slug: `${TOKEN}-a` });
+    orgB = await insId("organizations", { status: "active", name: "QAO B", slug: `${TOKEN}-b` });
     owner = await mkUser(`${TOKEN}-owner@example.test`, "owner", orgA);
     staff = await mkUser(`${TOKEN}-staff@example.test`, "staff", orgA);
     revoked = await mkUser(`${TOKEN}-revoked@example.test`, "staff", orgA);

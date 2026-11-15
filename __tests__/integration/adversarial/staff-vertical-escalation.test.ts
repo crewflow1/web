@@ -59,8 +59,7 @@ const STAFF_CAN_READ: ReadonlySet<string> = new Set([
   "job_milestones", "job_template_checklist_items", "job_template_milestones", "job_templates",
   "lead_followup_state", "leave_requests", "maintenance_reminder_log", "memberships",
   "merchant_catalogue_items", "merchant_po_submissions", "messages", "missed_call_textbacks",
-  "org_payment_connections", "org_settings", "org_subscriptions", "permit_conditions",
-  "properties", "report_subscriptions", "retention_policies", "retention_purge_log",
+  "org_payment_connections", "org_settings", "org_subscriptions", "properties", "report_subscriptions", "retention_policies", "retention_purge_log",
   "service_booking_slots", "service_bookings", "service_catalog", "signatures",
   "site_inductions", "site_visitors", "sites", "staff_qualifications", "stock_items",
   "stocktake_lines", "stocktake_sessions", "suppliers", "support_messages", "support_tickets",
@@ -69,16 +68,36 @@ const STAFF_CAN_READ: ReadonlySet<string> = new Set([
   "worker_signoff_tokens",
 ]);
 
+/**
+ * PROBE CORRECTION (2026-11-15) — NOT new access. Until now the read probe used
+ * `select=*`, which a table with a column ACL refuses outright, so these eight tables
+ * (token columns hidden by a column ACL, member-wide SELECT policy) were recorded as
+ * "not readable by staff". With the probe on the primary key the truth shows: a staff
+ * JWT reads the NON-TOKEN columns of its org's integration connection rows (provider,
+ * status, institution / tenant / VRN, phone numbers with monthly cost). That is an
+ * existing, test-pinned design — rls/{accounting,bank,calendar,hmrc,telematics}-
+ * connections + telephony ("a MEMBER can STILL read the non-token columns") — and is
+ * recorded as finding LP-F1 for a founder decision (docs/programme/
+ * security-least-privilege/ENFORCEMENT.md). The tokens themselves stay unreadable:
+ * asserted by the TOKEN_ACL case below.
+ */
+const STAFF_CAN_READ_NON_TOKEN_COLUMNS: readonly string[] = [
+  "accounting_connections", "bank_connections", "calendar_connections", "calendar_watch_channels",
+  "hmrc_connections", "merchant_connections", "phone_numbers", "telematics_connections",
+];
+
 /** Tables where a staff JWT can UPDATE an org-wide row it did not author. */
 const STAFF_CAN_UPDATE: ReadonlySet<string> = new Set([
-  "asset_calibration_certificates", "asset_fuel_logs", "asset_inspection_templates",
-  "asset_inspections", "asset_maintenance_cases", "asset_qr_identities", "assets", "fleet_vehicles", "goods_received_lines", "goods_received_notes", "inspection_plan_template_items", "inspection_plan_templates", "permit_conditions", "properties", "site_visitors", "stock_items", "stocktake_sessions", "suppliers",
+  // 2026-11-14 least-privilege enforcement (20261340): 15 tables removed — the operations
+  // modules (assets, fleet, stock, suppliers, goods receiving) and properties are
+  // owner/admin-write at the data layer. Nothing was added. (20261345 then removed
+  // permit_conditions from all three ledgers: its rows follow the parent permit.)
+  "inspection_plan_templates", "site_visitors",
 ]);
 
 /** Tables where a staff JWT can DELETE an org-wide row it did not author. */
 const STAFF_CAN_DELETE: ReadonlySet<string> = new Set([
-  "goods_received_lines", "inspection_plan_template_items", "permit_conditions",
-]);
+  "inspection_plan_template_items", ]);
 
 /**
  * Money / credential / governance tables. Independent of the ledgers above: a staff JWT
@@ -89,13 +108,21 @@ const NEVER_STAFF: readonly string[] = [
   "invoices", "invoice_line_items", "invoice_payments", "invoice_payment_intents", "payments",
   "quotes", "quote_line_items", "quote_versions", "quote_templates", "quote_template_lines",
   "price_book_items", "finances", "job_budgets", "job_valuations", "job_billing_plans",
-  "job_billing_stages", "bank_statements", "bank_statement_lines", "bank_connections",
-  "supplier_payments", "payroll_runs", "payroll_lines", "payroll_tax_profiles",
+  "job_billing_stages", "bank_statements", "bank_statement_lines", "supplier_payments", "payroll_runs", "payroll_lines", "payroll_tax_profiles",
   "cis_contractor_profiles", "cis_subcontractors", "api_keys", "webhook_endpoints",
   "org_sso_config", "org_scim_config", "membership_permissions", "permission_audit",
-  "accounting_connections", "hmrc_connections", "billing_invoices", "billing_events",
+  "billing_invoices", "billing_events",
   "staff_secrets",
 ];
+
+/**
+ * Credential stores whose ROW is member-readable by design but whose token columns are
+ * hidden by a column ACL (see STAFF_CAN_READ_NON_TOKEN_COLUMNS). These three were on
+ * NEVER_STAFF, where the old `select=*` probe passed vacuously. What must hold — and is
+ * now asserted — is that the whole row (i.e. the tokens) is refused to a staff JWT and
+ * that staff can change or delete nothing.
+ */
+const TOKEN_ACL: readonly string[] = ["accounting_connections", "bank_connections", "hmrc_connections"];
 
 type Reach = { table: string; read: boolean; update: boolean; del: boolean };
 
@@ -123,7 +150,11 @@ describeIntegration("ADVERSARIAL · vertical escalation — a staff JWT against 
     // delete (which may cascade) cannot hide another table's row from the read probe.
     for (const { rel, filter, row } of probe) {
       const orgCol = orgColumnOf(rel)!;
-      const r = await rawFetch(`/rest/v1/${rel.name}?${qs(filter)}`, { bearer: staff });
+      // Row reach is measured on the PRIMARY KEY, not `select=*`: a table with a column
+      // ACL (20261341–43: customers, customer_contacts, users, assets, fleet_vehicles)
+      // refuses `*` outright although staff still reach the row. Column reach is pinned
+      // separately in rls/private-column-acl.test.ts.
+      const r = await rawFetch(`/rest/v1/${rel.name}?${qs(filter)}&select=${rel.pk.join(",")}`, { bearer: staff });
       const read = r.status === 200 && Array.isArray(r.json) && r.json.length === 1;
       const textCol = rel.columns.find(
         (c) => c.type === "text" && !c.generated && !rel.pk.includes(c.name) && c.name !== orgCol && !rel.fks.some((f) => f.cols.includes(c.name)),
@@ -171,7 +202,7 @@ describeIntegration("ADVERSARIAL · vertical escalation — a staff JWT against 
   });
 
   for (const [kind, ledger, name] of [
-    ["read", STAFF_CAN_READ, "STAFF_CAN_READ"],
+    ["read", new Set([...STAFF_CAN_READ, ...STAFF_CAN_READ_NON_TOKEN_COLUMNS]), "STAFF_CAN_READ"],
     ["update", STAFF_CAN_UPDATE, "STAFF_CAN_UPDATE"],
     ["del", STAFF_CAN_DELETE, "STAFF_CAN_DELETE"],
   ] as const) {
@@ -195,6 +226,18 @@ describeIntegration("ADVERSARIAL · vertical escalation — a staff JWT against 
     // Not vacuous: most of the named tables really were seeded and probed.
     const probed = reach.filter((r) => NEVER_STAFF.includes(r.table)).length;
     expect(probed).toBeGreaterThanOrEqual(20);
+  });
+
+  it("TOKEN_ACL · staff cannot read a whole credential row (the token columns), nor update or delete it", async () => {
+    const world = w!;
+    for (const t of TOKEN_ACL) {
+      const row = seed.rows.get(t);
+      expect(row, `${t} was not seeded`).toBeTruthy();
+      const whole = await rawFetch(`/rest/v1/${t}?org_id=eq.${world.A.id}&select=*`, { bearer: world.A.staff.token });
+      expect(whole.status, `${t}: select=* must be refused (column ACL on the tokens)`).toBeGreaterThanOrEqual(400);
+      const r = reach.find((x) => x.table === t);
+      expect(r && !r.update && !r.del, `${t}: staff must not update / delete`).toBe(true);
+    }
   });
 
   // ── PART 2 · named escalations ─────────────────────────────────────────────

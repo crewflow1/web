@@ -1,5 +1,5 @@
 import "server-only";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "@/lib/supabase/admin"; import { assertOrgAcceptsPublicWrite } from "@/server/services/org-lifecycle";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
@@ -2359,7 +2359,7 @@ export async function processInboundEnquiry(
   conversation_id: string | null;
   textback: MissedCallTextbackResult;
 }> {
-  const admin = createAdminClient();
+  const admin = createAdminClient(); await assertOrgAcceptsPublicWrite(input.org_id, "operational"); // D-17: no enquiry / lead / reply for a company that is not active
 
   // Step 0 — CONVERSATION SUBSTRATE (CEO Directive #018, R10). Resolve (or create) the
   // persistent conversation this contact belongs to BEFORE the enquiry is recorded, so the

@@ -37,8 +37,8 @@ describeIntegration("Operative sign-off · DB invariants", () => {
 
   beforeAll(async () => {
     const svc = db(serviceClient());
-    orgA = String((await svc.from("organizations").insert({ name: "Ack A", slug: `${TOKEN}-a` }).select("id").single()).data?.id);
-    orgB = String((await svc.from("organizations").insert({ name: "Ack B", slug: `${TOKEN}-b` }).select("id").single()).data?.id);
+    orgA = String((await svc.from("organizations").insert({ status: "active", name: "Ack A", slug: `${TOKEN}-a` }).select("id").single()).data?.id);
+    orgB = String((await svc.from("organizations").insert({ status: "active", name: "Ack B", slug: `${TOKEN}-b` }).select("id").single()).data?.id);
     memberA = await mkUser("m"); nonMember = await mkUser("n");
     await svc.from("memberships").insert({ org_id: orgA, user_id: memberA, role: "staff" });
     // an ISSUED RAMS in org A

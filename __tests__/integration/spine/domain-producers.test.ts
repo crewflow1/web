@@ -102,7 +102,7 @@ describeIntegration("HQ Event Spine · domain producers (PR2)", () => {
   beforeAll(async () => {
     const org = await svc()
       .from("organizations")
-      .insert({ name: "PR2 Producers Org", slug })
+      .insert({ status: "active", name: "PR2 Producers Org", slug })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

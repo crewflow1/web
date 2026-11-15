@@ -64,7 +64,7 @@ describeIntegration("tenant teardown · org delete cascade (20261052)", () => {
   const mkOrg = async (label: string) => {
     const r = await svc()
       .from("organizations")
-      .insert({ name: `Teardown ${label}`, slug: `${T}-${label}` })
+      .insert({ status: "active", name: `Teardown ${label}`, slug: `${T}-${label}` })
       .select("id")
       .single();
     expect(r.error, JSON.stringify(r.error)).toBeNull();

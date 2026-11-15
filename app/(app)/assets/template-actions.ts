@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import {
@@ -136,6 +137,7 @@ async function audit(user: { id: string; email?: string | null }, action: string
 
 export async function createTemplate(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "create");
   const parsed = createTemplateSchema.safeParse({
     name: formData.get("name"),
     description: formData.get("description"),
@@ -171,6 +173,7 @@ export async function createTemplate(_prev: FormState, formData: FormData): Prom
 
 export async function cloneTemplate(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "create");
   const sourceId = String(formData.get("template_id") ?? "");
   const source = await loadTemplate(ctx.org.id, sourceId);
   if (!source) return formError("Template not found.");
@@ -202,6 +205,7 @@ export async function cloneTemplate(_prev: FormState, formData: FormData): Promi
 
 export async function createNextVersion(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "create");
   const sourceId = String(formData.get("template_id") ?? "");
   const source = await loadTemplate(ctx.org.id, sourceId);
   if (!source) return formError("Template not found.");
@@ -254,6 +258,7 @@ async function writeDraftDefinition(
   definition: TemplateDefinition,
 ): Promise<"ok" | "not_draft" | "failed"> {
   const { ctx } = await requireOrgContext();
+  await requireCapability("assets", "create");
   const parsed = templateDefinitionSchema.safeParse(definition);
   if (!parsed.success) return "failed";
 
@@ -273,6 +278,7 @@ async function writeDraftDefinition(
 
 export async function addSection(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx } = await requireOrgContext();
+  await requireCapability("assets", "edit");
   const templateId = String(formData.get("template_id") ?? "");
   const title = String(formData.get("title") ?? "").trim();
   const t = await loadTemplate(ctx.org.id, templateId);
@@ -287,6 +293,7 @@ export async function addSection(_prev: FormState, formData: FormData): Promise<
 
 export async function removeSection(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx } = await requireOrgContext();
+  await requireCapability("assets", "edit");
   const templateId = String(formData.get("template_id") ?? "");
   const sectionKey = String(formData.get("section_key") ?? "");
   const t = await loadTemplate(ctx.org.id, templateId);
@@ -300,6 +307,7 @@ export async function removeSection(_prev: FormState, formData: FormData): Promi
 
 export async function moveSection(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx } = await requireOrgContext();
+  await requireCapability("assets", "edit");
   const templateId = String(formData.get("template_id") ?? "");
   const sectionKey = String(formData.get("section_key") ?? "");
   const dir = String(formData.get("dir") ?? "") === "up" ? -1 : 1;
@@ -323,6 +331,7 @@ export async function moveSection(_prev: FormState, formData: FormData): Promise
 
 export async function addItem(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx } = await requireOrgContext();
+  await requireCapability("assets", "edit");
   const templateId = String(formData.get("template_id") ?? "");
   const sectionKey = String(formData.get("section_key") ?? "");
   const t = await loadTemplate(ctx.org.id, templateId);
@@ -363,6 +372,7 @@ export async function addItem(_prev: FormState, formData: FormData): Promise<For
 
 export async function removeItem(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx } = await requireOrgContext();
+  await requireCapability("assets", "edit");
   const templateId = String(formData.get("template_id") ?? "");
   const itemKey = String(formData.get("item_key") ?? "");
   const t = await loadTemplate(ctx.org.id, templateId);
@@ -379,6 +389,7 @@ export async function removeItem(_prev: FormState, formData: FormData): Promise<
 
 export async function moveItem(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx } = await requireOrgContext();
+  await requireCapability("assets", "edit");
   const templateId = String(formData.get("template_id") ?? "");
   const itemKey = String(formData.get("item_key") ?? "");
   const dir = String(formData.get("dir") ?? "") === "up" ? -1 : 1;
@@ -406,6 +417,7 @@ export async function moveItem(_prev: FormState, formData: FormData): Promise<Fo
 
 export async function publishTemplate(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "approve");
   const templateId = String(formData.get("template_id") ?? "");
   const t = await loadTemplate(ctx.org.id, templateId);
   if (!t) return formError("Template not found.");
@@ -442,6 +454,7 @@ export async function publishTemplate(_prev: FormState, formData: FormData): Pro
 
 export async function archiveTemplate(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "edit");
   const templateId = String(formData.get("template_id") ?? "");
   const t = await loadTemplate(ctx.org.id, templateId);
   if (!t) return formError("Template not found.");

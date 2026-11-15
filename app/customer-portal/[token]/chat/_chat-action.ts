@@ -1,6 +1,6 @@
 "use server";
 
-import { redirect } from "next/navigation";
+import { redirect } from "next/navigation"; import { gatePortalWrite } from "@/server/services/org-lifecycle";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -93,7 +93,7 @@ export async function sendPortalChatMessage(formData: FormData): Promise<void> {
   if (!parsed.success) backTo(rawToken, { error: "invalid_input" });
   const { token, body } = parsed.data;
 
-  const loaded = await loadCustomerByPortalToken(token);
+  const loaded = await gatePortalWrite(await loadCustomerByPortalToken(token), "operational");
   if (!loaded) backTo(token, { error: "invalid_token" });
   const { customer } = loaded;
 

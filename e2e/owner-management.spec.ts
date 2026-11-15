@@ -364,9 +364,14 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       }
 
       await page.goto("/staff");
+      // Staff are bounced off the roster through a redirect chain; let it FINISH before the next
+      // navigation, or that goto is aborted by the in-flight redirect (net::ERR_ABORTED).
+      await expect(page).not.toHaveURL(/\/staff(\?|$)/);
+      await page.waitForLoadState("networkidle");
       await expect(page.getByRole("button", { name: "+ Add staff" })).toHaveCount(0);
 
       await page.goto(`/staff/${ids.profileTarget}`);
+      await page.waitForLoadState("networkidle");
       for (const name of ["Save profile", "Update", "Remove"]) {
         await expect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
       }

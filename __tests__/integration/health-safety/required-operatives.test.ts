@@ -42,8 +42,8 @@ describeIntegration("H&S required operatives · rota-derived crew (JWT, org-scop
   }
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "ReqOp A", slug: `${TOKEN}-a` }).select("id").single()).data?.id);
-    orgB = String((await svc().from("organizations").insert({ name: "ReqOp B", slug: `${TOKEN}-b` }).select("id").single()).data?.id);
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "ReqOp A", slug: `${TOKEN}-a` }).select("id").single()).data?.id);
+    orgB = String((await svc().from("organizations").insert({ status: "active", name: "ReqOp B", slug: `${TOKEN}-b` }).select("id").single()).data?.id);
     uA = await member(orgA, "opA");
     uB = await member(orgA, "opB");
     jobA = String((await svc().from("jobs").insert({ org_id: orgA }).select("id").single()).data?.id);

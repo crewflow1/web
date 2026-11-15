@@ -128,7 +128,7 @@ describeIntegration("variation requests · tenant isolation + state machine", ()
     ] as const) {
       const org = await svc()
         .from("organizations")
-        .insert({ name: `VReq Probe ${name}`, slug: `${TOKEN}-${name.toLowerCase()}` })
+        .insert({ status: "active", name: `VReq Probe ${name}`, slug: `${TOKEN}-${name.toLowerCase()}` })
         .select("id")
         .single();
       expect(org.error, org.error?.message).toBeNull();

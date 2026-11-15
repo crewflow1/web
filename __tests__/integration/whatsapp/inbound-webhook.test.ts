@@ -73,7 +73,7 @@ describeIntegration("whatsapp inbound webhook · claim/route/dedup", () => {
   beforeAll(async () => {
     const svc = db(serviceClient());
     for (const [label, slug] of [["A", `${TOKEN}-a`], ["B", `${TOKEN}-b`]] as const) {
-      const o = await svc.from("organizations").insert({ name: `WA ${label}`, slug }).select("id").single();
+      const o = await svc.from("organizations").insert({ status: "active", name: `WA ${label}`, slug }).select("id").single();
       expect(o.error, o.error?.message).toBeNull();
       if (label === "A") orgA = o.data?.id as string; else orgB = o.data?.id as string;
     }

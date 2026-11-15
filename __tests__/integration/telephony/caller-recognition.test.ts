@@ -27,7 +27,7 @@ let orgA = "";
 let orgB = "";
 
 async function mkOrg(tag: string): Promise<string> {
-  const r = await svc().from("organizations").insert({ name: `CRec ${tag}`, slug: `${TOKEN}-${tag}` }).select("id").single();
+  const r = await svc().from("organizations").insert({ status: "active", name: `CRec ${tag}`, slug: `${TOKEN}-${tag}` }).select("id").single();
   expect(r.error, r.error?.message).toBeNull();
   return String(r.data.id);
 }

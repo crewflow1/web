@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import {
   computeHolidayBalance,
@@ -75,11 +76,22 @@ export async function getHolidayBalanceForUser(
   // masquerade as "no start date" (which would silently over-grant a joiner's
   // allowance) — on error we fall back to null proration but bind the error so
   // it is not silently discarded.
-  const { data: userRow, error: userErr } = await supabase
-    .from("users")
-    .select("start_date")
-    .eq("id", userId)
+  //
+  // users.start_date is not Data-API readable (20261342 — a colleague's start
+  // date is personal data). Callers are the member's own leave page and the
+  // owner/admin-or-self staff profile, so the read is made with the service
+  // role, pinned to a membership of `orgId` so an id from another org resolves
+  // to nothing.
+  const admin = createAdminClient();
+  const { data: memberRow, error: memberErr } = await admin
+    .from("memberships")
+    .select("user_id")
+    .eq("org_id", orgId)
+    .eq("user_id", userId)
     .maybeSingle();
+  const { data: userRow, error: userErr } = memberRow
+    ? await admin.from("users").select("start_date").eq("id", userId).maybeSingle()
+    : { data: null, error: memberErr };
   const employmentStartIso = userErr
     ? null
     : ((userRow as { start_date?: string | null } | null)?.start_date ?? null);

@@ -1,6 +1,6 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "@/lib/supabase/admin"; import { loadNonActiveOrgIds } from "@/server/services/org-lifecycle";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
@@ -134,7 +134,7 @@ export async function cancelReviewRequest(
  */
 export async function runReviewRequestSends(): Promise<{ scanned: number; sent: number; errors: number }> {
   const admin = createAdminClient();
-  const stats = { scanned: 0, sent: 0, errors: 0 };
+  const stats = { scanned: 0, sent: 0, errors: 0 }; const heldOrgs = await loadNonActiveOrgIds();
 
   type Row = {
     id: string;
@@ -179,7 +179,7 @@ export async function runReviewRequestSends(): Promise<{ scanned: number; sent: 
   const rows = data ?? [];
   stats.scanned = rows.length;
 
-  for (const r of rows) {
+  for (const r of rows) { if (heldOrgs.has(r.org_id)) continue; // D-17: no review requests from a company that is not active
     try {
       await (admin.from("review_requests" as never) as unknown as {
         update: (row: unknown) => {

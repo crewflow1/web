@@ -31,7 +31,7 @@ let userId: string | null = null;
 async function makeOrg(slugSuffix: string): Promise<string> {
   const { data, error } = await svc()
     .from("organizations")
-    .insert({ name: `ToS Test ${slugSuffix}`, slug: `${T}-${slugSuffix}` })
+    .insert({ status: "active", name: `ToS Test ${slugSuffix}`, slug: `${T}-${slugSuffix}` })
     .select("id")
     .single();
   expect(error, error?.message).toBeNull();

@@ -23,8 +23,8 @@ describeIntegration("H&S evidence hygiene · timestamps + provenance are frozen"
   const svc = () => db(serviceClient());
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "Hyg A", slug: `${TOKEN}-a` }).select("id").single()).data?.id);
-    orgB = String((await svc().from("organizations").insert({ name: "Hyg B", slug: `${TOKEN}-b` }).select("id").single()).data?.id);
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "Hyg A", slug: `${TOKEN}-a` }).select("id").single()).data?.id);
+    orgB = String((await svc().from("organizations").insert({ status: "active", name: "Hyg B", slug: `${TOKEN}-b` }).select("id").single()).data?.id);
   });
   afterAll(async () => {
     for (const o of [orgA, orgB]) if (o) await svc().from("organizations").delete().eq("id", o);

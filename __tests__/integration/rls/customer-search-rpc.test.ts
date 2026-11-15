@@ -80,8 +80,8 @@ async function namesA(args: Record<string, unknown>): Promise<string[]> {
 
 describeIntegration("rls · search_customers RPC (20261261 · universal customer search)", () => {
   beforeAll(async () => {
-    orgA = await insId("organizations", { name: `CS A ${TOKEN}`, slug: `${TOKEN}-a` });
-    orgB = await insId("organizations", { name: `CS B ${TOKEN}`, slug: `${TOKEN}-b` });
+    orgA = await insId("organizations", { status: "active", name: `CS A ${TOKEN}`, slug: `${TOKEN}-a` });
+    orgB = await insId("organizations", { status: "active", name: `CS B ${TOKEN}`, slug: `${TOKEN}-b` });
     for (const who of ["ownerA", "staffA", "ownerB"]) {
       const u = await mkUser(who);
       uid[who] = u.id;

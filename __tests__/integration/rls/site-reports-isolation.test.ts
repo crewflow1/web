@@ -56,7 +56,7 @@ describeIntegration("site_reports · isolation + immutability", () => {
 
     const org = await svc
       .from("organizations")
-      .insert({ name: "Site Reports Probe Org", slug: TOKEN })
+      .insert({ status: "active", name: "Site Reports Probe Org", slug: TOKEN })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

@@ -77,7 +77,7 @@ describeIntegration("bank-feed dedupe · real Postgres (42P10 regression)", () =
 
     const a = await svc
       .from("organizations")
-      .insert({ name: "Bank Dedupe A", slug: `${TOKEN}-a` })
+      .insert({ status: "active", name: "Bank Dedupe A", slug: `${TOKEN}-a` })
       .select("id")
       .single();
     expect(a.error, a.error?.message).toBeNull();
@@ -85,7 +85,7 @@ describeIntegration("bank-feed dedupe · real Postgres (42P10 regression)", () =
 
     const b = await svc
       .from("organizations")
-      .insert({ name: "Bank Dedupe B", slug: `${TOKEN}-b` })
+      .insert({ status: "active", name: "Bank Dedupe B", slug: `${TOKEN}-b` })
       .select("id")
       .single();
     expect(b.error, b.error?.message).toBeNull();

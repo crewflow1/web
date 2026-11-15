@@ -67,6 +67,13 @@ const NEVER_STAFF_WRITABLE: readonly string[] = [
   "messages", "conversations", "inbound_enquiries", "whatsapp_assistant_actions", "calls",
   "missed_call_textbacks", "voice_notes", "lead_followup_state", "service_catalog",
   "notifications",
+  // 2026-11-14 least-privilege enforcement (20261340 / 20261344): the operations
+  // modules, customer properties and warranties are owner/admin-write at the data layer.
+  "purchase_orders", "purchase_order_line_items", "goods_received_notes", "goods_received_lines",
+  "suppliers", "stock_items", "stock_movements", "stocktake_sessions", "stocktake_lines",
+  "assets", "fleet_vehicles", "asset_assignments", "asset_calibration_certificates",
+  "asset_fuel_logs", "asset_inspection_templates", "asset_inspections",
+  "asset_maintenance_cases", "asset_qr_identities", "properties", "job_warranties",
 ];
 
 function enumValues(rel: Relation, col: string): string[] {

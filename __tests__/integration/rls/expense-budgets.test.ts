@@ -91,12 +91,12 @@ describeIntegration("expense budgets · tenant isolation + admin-write", () => {
 
     const a = await svc
       .from("organizations")
-      .insert({ name: "Expense Budgets A", slug: `${TOKEN}-a` })
+      .insert({ status: "active", name: "Expense Budgets A", slug: `${TOKEN}-a` })
       .select("id")
       .single();
     const b = await svc
       .from("organizations")
-      .insert({ name: "Expense Budgets B", slug: `${TOKEN}-b` })
+      .insert({ status: "active", name: "Expense Budgets B", slug: `${TOKEN}-b` })
       .select("id")
       .single();
     orgA = String(a.data?.id ?? "");

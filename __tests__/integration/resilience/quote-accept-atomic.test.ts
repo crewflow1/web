@@ -45,7 +45,7 @@ const userIds: string[] = [];
 async function makeOrg(suffix: string): Promise<string> {
   const r = await svc()
     .from("organizations")
-    .insert({ name: `Resilience QAcc ${suffix} ${TOKEN}`, slug: `${TOKEN}-${suffix}` })
+    .insert({ status: "active", name: `Resilience QAcc ${suffix} ${TOKEN}`, slug: `${TOKEN}-${suffix}` })
     .select("id")
     .single();
   expect(r.error, r.error?.message).toBeNull();

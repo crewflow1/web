@@ -98,7 +98,7 @@ describeIntegration("job_progress_observations · isolation + integrity", () => 
     ] as const) {
       const org = await svc
         .from("organizations")
-        .insert({ name: `Progress Probe ${label}`, slug: `${TOKEN}-${label.toLowerCase()}` })
+        .insert({ status: "active", name: `Progress Probe ${label}`, slug: `${TOKEN}-${label.toLowerCase()}` })
         .select("id")
         .single();
       expect(org.error, org.error?.message).toBeNull();
@@ -435,7 +435,7 @@ describeIntegration("job_progress_observations · isolation + integrity", () => 
     const svc = db(serviceClient());
     const org = await svc
       .from("organizations")
-      .insert({ name: "Progress Teardown", slug: `${TOKEN}-teardown` })
+      .insert({ status: "active", name: "Progress Teardown", slug: `${TOKEN}-teardown` })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

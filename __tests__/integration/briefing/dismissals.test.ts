@@ -40,8 +40,8 @@ describeIntegration("Briefing dismissals RLS (real Postgres)", () => {
   }
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "BRIEF A", slug: `${T}-a` }).select("id").single()).data?.id ?? "");
-    orgB = String((await svc().from("organizations").insert({ name: "BRIEF B", slug: `${T}-b` }).select("id").single()).data?.id ?? "");
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "BRIEF A", slug: `${T}-a` }).select("id").single()).data?.id ?? "");
+    orgB = String((await svc().from("organizations").insert({ status: "active", name: "BRIEF B", slug: `${T}-b` }).select("id").single()).data?.id ?? "");
     if (!orgA || !orgB) throw new Error("fixture org setup failed");
     a1 = await mkMember(orgA, "a1");
     a2 = await mkMember(orgA, "a2");
