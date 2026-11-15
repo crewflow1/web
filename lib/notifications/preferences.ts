@@ -27,6 +27,7 @@
  */
 
 import type { NotificationCategory, NotificationPriority } from "./types";
+import { safeActionPath } from "./action-url";
 
 /** Email delivery cadence a user can pick per category. */
 export const NOTIFICATION_CADENCES = ["immediate", "daily", "weekly"] as const;
@@ -247,11 +248,15 @@ function categoryHeading(category: string): string {
 
 const BASE_URL = "https://crewflow.uk";
 
+// Escapes for BOTH text and double-/single-quoted attribute contexts — the
+// digest interpolates into `href="…"`, so quotes must be neutralised too.
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 /**
@@ -313,7 +318,10 @@ export function buildDigestEmail(input: {
     for (const n of g.items) {
       const line = n.body ? `${n.title} — ${n.body}` : n.title;
       textParts.push(`  • ${line}`);
-      if (n.action_url) textParts.push(`    ${BASE_URL}${n.action_url}`);
+      // Stored deep link = untrusted data: only a same-origin relative path is
+      // ever appended to our origin (see safeActionPath).
+      const path = safeActionPath(n.action_url);
+      if (path) textParts.push(`    ${BASE_URL}${path}`);
     }
   }
   textParts.push(
@@ -326,8 +334,9 @@ export function buildDigestEmail(input: {
     .map((g) => {
       const items = g.items
         .map((n) => {
-          const titleHtml = n.action_url
-            ? `<a href="${BASE_URL}${escapeHtml(n.action_url)}" style="color:#1d4ed8;text-decoration:none;font-weight:600">${escapeHtml(n.title)}</a>`
+          const path = safeActionPath(n.action_url);
+          const titleHtml = path
+            ? `<a href="${BASE_URL}${escapeHtml(path)}" style="color:#1d4ed8;text-decoration:none;font-weight:600">${escapeHtml(n.title)}</a>`
             : `<span style="font-weight:600">${escapeHtml(n.title)}</span>`;
           const bodyHtml = n.body
             ? `<div style="color:#475569;margin-top:2px">${escapeHtml(n.body)}</div>`

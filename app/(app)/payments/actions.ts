@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { readFailure } from "@/lib/supabase/read-failure";
+import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireOrgContext } from "@/server/auth/session";
 import { requireCapabilityFor } from "@/server/auth/capabilities";
@@ -220,13 +220,22 @@ export async function confirmBankMatch(
   const supabase = await createClient();
   const { data: line, error: lineError } = await supabase
     .from("bank_statement_lines")
-    .select("id, org_id, bank_statement_id, amount, posted_at, reference, description")
+    .select(
+      "id, org_id, bank_statement_id, amount, posted_at, reference, description, match_status, matched_payment_id",
+    )
     .eq("id", bankLineId)
     .maybeSingle();
   if (lineError) throw readFailure("payments match: bank line", lineError);
   if (!line) return formError("Bank line not found.");
   if (line.org_id !== ctx.org.id) return formError("Bank line not found.");
   if (line.amount <= 0) return formError("Only incoming payments can be matched to invoices.");
+
+  // IDEMPOTENCY (1/3) — a line that is already confirmed and linked to its
+  // payment is DONE. A second confirm (stale tab, double submit, a colleague who
+  // got there first) must not record the bank transfer again.
+  if (line.match_status === "confirmed" && line.matched_payment_id) {
+    return formSuccess({ redirectTo: `/payments/reconcile/${line.bank_statement_id}?saved=matched` });
+  }
 
   // SECURITY: `invoice_id` arrives from the form and was previously trusted.
   // The bank line above is org-checked; the invoice was not, and nothing
@@ -252,26 +261,82 @@ export async function confirmBankMatch(
   if (!inv) return formError("Invoice not found.");
   if (inv.org_id !== ctx.org.id) return formError("Invoice not found.");
 
-  // Insert payment + link the line in one round trip (the trigger
-  // auto-derives invoice status).
-  const { data: payment, error: payErr } = await supabase
-    .from("invoice_payments")
-    .insert({
-      org_id: ctx.org.id,
-      invoice_id: targetInvoiceId,
-      amount: line.amount,
-      paid_at: line.posted_at,
-      reference: line.reference ?? null,
-      notes: line.description ?? null,
-      source: "bank_csv",
-      bank_line_id: line.id,
-      created_by: user.id,
-    })
-    .select("id")
-    .single();
-  if (payErr || !payment) {
-    console.error("[payments] match payment insert failed", payErr);
-    return formError("Couldn't record the payment — try again.");
+  // IDEMPOTENCY (2/3) — REPAIR, don't repeat.
+  //
+  // Recording the match is two statements: insert the payment, then mark the
+  // line confirmed. If the second failed after the first committed, the operator
+  // was told "match partially failed" and the line still looked unmatched — and
+  // confirming it again used to INSERT A SECOND PAYMENT for the same bank
+  // transfer, overstating the invoice's receipts from one real payment.
+  //
+  // So before inserting, look for a payment this bank line has ALREADY produced
+  // and, if there is one, reuse it: the retry then only completes the missing
+  // half (the line update below). The lookup is org-pinned and FAILS CLOSED — a
+  // rejected probe is indistinguishable from "no payment yet", and guessing
+  // records the customer's money twice.
+  type LinkedPayment = { id: string; invoice_id: string };
+  const findLinkedPayment = async (): Promise<
+    { ok: true; payment: LinkedPayment | null } | { ok: false }
+  > => {
+    const { data, error } = await supabase
+      .from("invoice_payments")
+      .select("id, invoice_id")
+      .eq("bank_line_id", line.id)
+      .eq("org_id", ctx.org.id)
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      reportReadFailure("payments match: existing payment probe", error);
+      return { ok: false };
+    }
+    return { ok: true, payment: (data as LinkedPayment | null) ?? null };
+  };
+
+  const probe = await findLinkedPayment();
+  if (!probe.ok) {
+    return formError(
+      "We couldn't safely check whether this line was already matched, so nothing was saved. Try again.",
+    );
+  }
+
+  let payment: LinkedPayment | null = probe.payment;
+  let createdPayment = false;
+
+  if (!payment) {
+    // The trigger auto-derives invoice status from the inserted payment.
+    const { data: inserted, error: payErr } = await supabase
+      .from("invoice_payments")
+      .insert({
+        org_id: ctx.org.id,
+        invoice_id: targetInvoiceId,
+        amount: line.amount,
+        paid_at: line.posted_at,
+        reference: line.reference ?? null,
+        notes: line.description ?? null,
+        source: "bank_csv",
+        bank_line_id: line.id,
+        created_by: user.id,
+      })
+      .select("id, invoice_id")
+      .single();
+
+    if (payErr?.code === "23505") {
+      // IDEMPOTENCY (3/3) — the atomic backstop. A concurrent confirm of the same
+      // line won the race between our probe and our insert; the partial unique
+      // index invoice_payments_bank_line_uniq (20261326000000) refused ours.
+      // That is success, not failure: adopt the winner's payment.
+      const again = await findLinkedPayment();
+      if (!again.ok || !again.payment) {
+        return formError("This line is being matched by someone else — refresh and check before retrying.");
+      }
+      payment = again.payment;
+    } else if (payErr || !inserted) {
+      console.error("[payments] match payment insert failed", payErr);
+      return formError("Couldn't record the payment — try again.");
+    } else {
+      payment = inserted as LinkedPayment;
+      createdPayment = true;
+    }
   }
 
   // Automation OS — a confirmed bank match records a real customer payment, so
@@ -279,36 +344,53 @@ export async function confirmBankMatch(
   // point the payment row exists, so it's independent of the subsequent bookkeeping
   // update below. Keyed on the unique invoice_payments row id, org-pinned to
   // ctx.org.id, best-effort. Dark by default (the only rule on this trigger ships
-  // enabled:false).
-  await dispatchAutomation({
-    type: "payment.recorded",
-    org_id: ctx.org.id,
-    source_table: "invoice_payments",
-    source_id: payment.id,
-    payload: {
-      amount: line.amount,
-      invoice_id: targetInvoiceId,
-      source: "bank_csv",
-    },
-    actor_email: user.email ?? null,
-  }).catch((e) => {
-    console.error("[payments] automation dispatch failed", e);
-  });
+  // enabled:false). Only for a payment THIS call created — a repaired/adopted one
+  // was already announced by the call that inserted it.
+  if (createdPayment) {
+    await dispatchAutomation({
+      type: "payment.recorded",
+      org_id: ctx.org.id,
+      source_table: "invoice_payments",
+      source_id: payment.id,
+      payload: {
+        amount: line.amount,
+        invoice_id: payment.invoice_id,
+        source: "bank_csv",
+      },
+      actor_email: user.email ?? null,
+    }).catch((e) => {
+      console.error("[payments] automation dispatch failed", e);
+    });
+  }
 
   const { error: updErr } = await supabase
     .from("bank_statement_lines")
     .update({
-      matched_invoice_id: targetInvoiceId,
+      // The invoice the money ACTUALLY went to: for a repaired/adopted payment
+      // that is the existing payment's invoice, which may differ from the one
+      // picked on this (retried) submit. The ledger is the truth.
+      matched_invoice_id: payment.invoice_id,
       matched_payment_id: payment.id,
       match_status: "confirmed",
     })
-    .eq("id", line.id);
+    .eq("id", line.id)
+    .eq("org_id", ctx.org.id);
   if (updErr) {
     console.error("[payments] line update failed", updErr);
-    // Payment is recorded — don't unwind, but flag.
+    // Payment is recorded — don't unwind, but flag. Confirming again is SAFE:
+    // it reuses this payment and only retries this update.
     return formSuccess({
       redirectTo: `/payments/reconcile/${line.bank_statement_id}?error=match_partially_failed`,
     });
+  }
+
+  // A retry that picked a DIFFERENT invoice than the payment already recorded
+  // for this line: the earlier match stands, and the operator is told so rather
+  // than being shown a success for something that did not happen.
+  if (!createdPayment && payment.invoice_id !== targetInvoiceId) {
+    return formError(
+      "This bank line was already matched to another invoice — that match was kept. Remove that payment first if it was wrong.",
+    );
   }
 
   // Recompute matched_count from the lines table — single source of truth.
