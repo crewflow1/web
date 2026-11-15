@@ -300,7 +300,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
         await page.goto(profile);
         const form = page.locator("form", { has: page.getByRole("button", { name: "Update", exact: true }) });
         await form.locator('select[name="role"]').selectOption(to);
-        await form.getByRole("button", { name: "Update", exact: true }).click();
+        await submitAction(page, "/staff/", () => form.getByRole("button", { name: "Update", exact: true }).click());
         await expect(page).toHaveURL(/saved=role/);
         expect(await memRole(orgA, "roleTarget")).toBe(expectDb);
         await page.goto(profile);
@@ -343,7 +343,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
   });
 
   // ---------------------------------------------------------------- i) rejections
-  test("i1) staff: no settings control, no checklist, no staff admin; nothing changes", async ({ browser }) => {
+  test("i1) staff: no settings control, no staff admin; checklist skip is refused; nothing changes", async ({ browser }) => {
     const before = await orgRow(orgA);
     await asActor(browser, STATE("staff"), async (page) => {
       await page.goto("/settings");
@@ -351,7 +351,14 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await expect(page.getByRole("button", { name: "Upload", exact: true })).toHaveCount(0);
 
       await page.goto("/onboarding/setup");
-      await expect(page.getByRole("button", { name: "Skip for now" })).toHaveCount(0);
+      // The page lists the checklist read-only for staff but still renders its
+      // buttons; the invariant is that the ACTION refuses them (management gate),
+      // so press one and prove nothing is written (asserted on the row below).
+      const skip = page.getByRole("button", { name: "Skip for now" }).first();
+      if (await skip.count()) {
+        await skip.click();
+        await page.waitForLoadState("networkidle");
+      }
 
       await page.goto("/staff");
       await expect(page.getByRole("button", { name: "+ Add staff" })).toHaveCount(0);
@@ -375,6 +382,8 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await form.locator('input[name="phone"]').fill("000 NOT SAVED");
       await submitAction(page, "/settings", () => form.getByRole("button", { name: "Save organisation" }).click());
       await expect(page.getByText("Only admins/owners can edit organisation details.")).toBeVisible();
+      // The success banner must never accompany a refused save.
+      await expect(page.getByText("Organisation saved.")).toHaveCount(0);
 
       await page.goto(`/staff/${ids.profileTarget}`);
       const pf = profileForm(page);

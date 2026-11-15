@@ -468,8 +468,9 @@ export async function updateStaffRole(userId: string, formData: FormData) {
     detail: { from: target?.role ?? null, to: parsed.data.role },
   });
 
-  revalidatePath("/staff");
-  revalidatePath(`/staff/${userId}`);
+  // (no revalidatePath: the client follows the redirect with a full page load,
+  // and a revalidation payload here stalled the action response ~10 s — D-12.)
+  // -
   redirect(`/staff/${userId}?saved=role`);
 }
 
