@@ -37,7 +37,7 @@ const idSchema = z.string().uuid();
 const jobUrl = (jobId: string, params: string): string => `/jobs/${jobId}?${params}`;
 
 const blankToUndefined = (v: unknown) =>
-  typeof v === "string" && v.trim() === "" ? undefined : v;
+  v === null || (typeof v === "string" && v.trim() === "") ? undefined : v;
 
 const progressSchema = z.object({
   percent: z.coerce

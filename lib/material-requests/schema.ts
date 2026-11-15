@@ -179,12 +179,12 @@ export const MATERIAL_REQUEST_OPEN_STATUSES = [
 // ── Form schemas ────────────────────────────────────────────────────────────
 
 const optionalUuid = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
   z.string().uuid().optional(),
 );
 
 const optionalDate = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
   z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a real date")
@@ -221,7 +221,7 @@ export const materialRequestFormSchema = z.object({
   needed_by: optionalDate,
   priority: z.enum(MATERIAL_REQUEST_PRIORITIES).default("normal"),
   notes: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(5000).optional(),
   ),
   lines: z.array(materialRequestLineSchema).min(1, "Add at least one material"),

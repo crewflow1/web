@@ -34,7 +34,7 @@ export const supplierFormSchema = z.object({
   // (lib/commercial/overdue-payables.ts), never here — a form must not stamp an
   // assumed term onto a supplier the operator didn't set.
   payment_terms_days: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.coerce
       .number({ invalid_type_error: "Payment terms must be a number of days." })
       .int("Payment terms must be a whole number of days.")
@@ -73,7 +73,7 @@ const MAX_MONEY = 10_000_000;
  */
 const blankToUndefined = (max: number) =>
   z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(max).optional(),
   );
 

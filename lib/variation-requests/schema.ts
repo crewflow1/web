@@ -105,7 +105,7 @@ export function isTerminalVariationRequestStatus(
 
 const optionalString = (max: number) =>
   z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(max).optional(),
   );
 

@@ -27,17 +27,17 @@ export type FinanceCategory = (typeof FINANCE_CATEGORIES)[number];
 
 const optionalString = (max: number) =>
   z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(max).optional(),
   );
 
 const optionalUuid = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
   z.string().uuid().optional(),
 );
 
 const optionalCategory = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
   z.enum(FINANCE_CATEGORIES).optional(),
 );
 

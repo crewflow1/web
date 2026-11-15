@@ -103,7 +103,7 @@ export function vehiclesWithoutStock(
 export const enableVanStockSchema = z.object({
   vehicle_asset_id: z.string().uuid("Pick a vehicle"),
   name: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(160, "Keep the name under 160 characters").optional(),
   ),
 });
@@ -122,7 +122,7 @@ export const vanTransferSchema = z
     stock_item_id: z.string().uuid("Pick an item"),
     qty: movementQuantitySchema,
     notes: z.preprocess(
-      (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+      (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
       z.string().trim().max(2000).optional(),
     ),
   })

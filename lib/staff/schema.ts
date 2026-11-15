@@ -32,12 +32,12 @@ export type LeaveStatus = (typeof LEAVE_STATUSES)[number];
 
 const optionalString = (max: number) =>
   z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(max).optional(),
   );
 
 const optionalDate = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
   z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
@@ -62,7 +62,7 @@ export const updateStaffProfileSchema = z.object({
   full_name: optionalString(200),
   phone: optionalString(40),
   hourly_pay: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.coerce.number().min(0).max(1000).optional(),
   ),
   employment_type: z
@@ -99,7 +99,7 @@ export const inviteStaffSchema = z.object({
     .optional()
     .transform((v) => (v === "" ? undefined : v)),
   hourly_pay: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.coerce.number().min(0).max(1000).optional(),
   ),
   emergency_contact_name: optionalString(200),
@@ -156,7 +156,7 @@ export type AccrualMethodInput = (typeof ACCRUAL_METHODS)[number];
 
 const nonNegDays = (max: number) =>
   z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.coerce.number().min(0).max(max),
   );
 
@@ -185,7 +185,7 @@ export const PENSION_STATUSES = [
 export type PensionStatusInput = (typeof PENSION_STATUSES)[number];
 
 const percent = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
   z.coerce.number().min(0).max(100),
 );
 
@@ -241,7 +241,7 @@ export type NiCategoryInput = (typeof NI_CATEGORIES)[number];
 
 /** Contracted hours per working day (0..24). Empty ⇒ undefined (no holiday pay). */
 const standardHoursPerDay = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
   z.coerce.number().min(0).max(24).optional(),
 );
 

@@ -67,7 +67,7 @@ export function resolvedAtForTransition(
 // "" and a naive union would short-circuit on it and keep the empty string. We
 // map "" -> undefined first so an untouched form input never writes a blank.
 const blankToUndefined = (v: unknown) =>
-  typeof v === "string" && v.trim() === "" ? undefined : v;
+  v === null || (typeof v === "string" && v.trim() === "") ? undefined : v;
 
 // An optional free-text field: trims, caps length, treats "" as absent.
 const optionalText = (max: number) =>

@@ -72,7 +72,7 @@ async function db(): Promise<LooseDb> {
 }
 
 const optionalDate = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
   z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").optional(),
 );
 const money = (label: string) =>
@@ -87,7 +87,7 @@ const detailsSchema = z.object({
   deductions: money("Deductions"),
   vat_rate: z.coerce.number().min(0, "VAT rate can't be negative").max(100, "VAT rate can't exceed 100%"),
   notes: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(5000).optional(),
   ),
 });
