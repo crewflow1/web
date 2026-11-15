@@ -224,3 +224,162 @@ jobs:
             gh issue close "$NUM" -R "$REPO" --reason completed || true
             echo "Closed outage issue #$NUM"
           fi
+
+  # ---------------------------------------------------------------------------
+  # BACKUP FRESHNESS — a second, independent signal on the same schedule.
+  #
+  # The off-platform backup runs on the founder's Mac. If that Mac is asleep, off
+  # or offline, nothing in production notices: every scheduled 03:17 run failed
+  # for days in November 2026 without an alert. `/api/health` publishes a bucketed
+  # `backups.lastSuccessAgeHours`; this job raises ONE deduped issue (label
+  # `backup-stale`) and fails the run (GitHub emails the failure) when the last
+  # successful backup is older than the threshold, and closes the issue on
+  # recovery. null = unknown → warn only, never alert. It is a separate job and a
+  # separate issue on purpose: a stale backup is not "production down".
+  # ---------------------------------------------------------------------------
+  backup-freshness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check off-platform backup freshness
+        id: backup
+        env:
+          HEALTH_URL: https://crewflow.uk/api/health
+          # The backup is daily (03:17, with daytime catch-up slots). 36h = one missed day.
+          BACKUP_STALE_AFTER_HOURS: "36"
+        run: |
+          set -uo pipefail
+          body="$(mktemp)"
+          code=$(curl -sS -m 25 --retry 2 --retry-delay 10 -o "$body" -w "%{http_code}" "$HEALTH_URL" 2>/dev/null) || code="000"
+          if [ "$code" != "200" ]; then
+            echo "::warning::health endpoint returned HTTP $code — backup freshness unobservable this probe (the probe job owns that alert)."
+            echo "stale=false" >>"$GITHUB_OUTPUT"; exit 0
+          fi
+          age=$(jq -r '.backups.lastSuccessAgeHours' <"$body" 2>/dev/null || echo "null")
+          if [ "$age" = "null" ] || [ -z "$age" ]; then
+            echo "::warning::backups.lastSuccessAgeHours is null — backup freshness unobservable this probe."
+            echo "stale=false" >>"$GITHUB_OUTPUT"; exit 0
+          fi
+          case "$age" in ''|*[!0-9]*) echo "::warning::unexpected backup age value"; echo "stale=false" >>"$GITHUB_OUTPUT"; exit 0 ;; esac
+          echo "age=$age" >>"$GITHUB_OUTPUT"
+          if [ "$age" -gt "$BACKUP_STALE_AFTER_HOURS" ]; then
+            echo "stale=true" >>"$GITHUB_OUTPUT"
+            echo "Last successful off-platform backup: >= ${age}h ago (threshold ${BACKUP_STALE_AFTER_HOURS}h)." >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "stale=false" >>"$GITHUB_OUTPUT"
+            echo "Last successful off-platform backup: ~${age}h ago." >>"$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Raise, update or close the backup-stale issue (deduped — one open issue)
+        if: steps.backup.outputs.age != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          STALE: ${{ steps.backup.outputs.stale }}
+          AGE: ${{ steps.backup.outputs.age }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          STAMP="$(date -u '+%Y-%m-%d %H:%M UTC')"
+          gh label create backup-stale --color D93F0B \
+            --description "Automated: no recent successful off-platform backup (outage-monitor workflow)" \
+            --force 2>/dev/null || true
+          NUM=$(gh issue list -R "$REPO" --state open --label backup-stale \
+            --json number --jq '.[0].number // empty' 2>/dev/null || echo "")
+          if [ "$STALE" = "true" ]; then
+            if [ -z "$NUM" ]; then
+              BODY=$(printf '%s\n' \
+                "**Automated alert — no successful off-platform backup for at least ${AGE} hours (checked ${STAMP}).**" \
+                "" \
+                "The backup runs on the founder's Mac (launchd, 03:17 with catch-up slots at 09:17 / 13:17 / 19:17)." \
+                "" \
+                "**Act now:**" \
+                "1. Wake the Mac, connect power and network. A missed slot runs on wake; or run \`launchctl start com.crewflow.backup\`." \
+                "2. If it fails: \`~/CrewFlow-backups/LAST_FAILURE.txt\` and \`~/.local/state/crewflow-backup/logs/\` name the stage; \`/admin/ops\` shows the heartbeat." \
+                "3. Runbook: \`docs/backup-recovery-runbook.md\`." \
+                "" \
+                "_Checked every ~15 minutes; this issue is closed automatically after the next successful backup. Probe: ${RUN_URL}_")
+              gh issue create -R "$REPO" --title "⚠️ BACKUP STALE — no successful off-platform backup in ${AGE}h+" \
+                --label backup-stale --body "$BODY"
+            fi
+          elif [ -n "$NUM" ]; then
+            gh issue comment "$NUM" -R "$REPO" --body "Recovered at ${STAMP}: a successful backup is now ~${AGE}h old. Closing. Probe: ${RUN_URL}"
+            gh issue close "$NUM" -R "$REPO"
+          fi
+
+      - name: Fail the run so GitHub sends a failure notification
+        if: steps.backup.outputs.stale == 'true'
+        env:
+          AGE: ${{ steps.backup.outputs.age }}
+        run: |
+          echo "::error::BACKUP STALE: no successful off-platform backup in ${AGE}h+"
+          exit 1
+
+  # Stripe webhook events that the handler has not managed to process for 30+ minutes.
+  # A stuck event can mean a paid checkout that never activated its company or a cancellation
+  # that never applied. /api/health publishes only a capped count (no identifiers).
+  billing-webhooks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check for stuck Stripe webhook events
+        id: hooks
+        env:
+          HEALTH_URL: https://crewflow.uk/api/health
+        run: |
+          set -uo pipefail
+          body="$(mktemp)"
+          code=$(curl -sS -m 25 --retry 2 --retry-delay 10 -o "$body" -w "%{http_code}" "$HEALTH_URL" 2>/dev/null) || code="000"
+          if [ "$code" != "200" ]; then
+            echo "::warning::health endpoint returned HTTP $code — webhook backlog unobservable this probe (the probe job owns that alert)."
+            exit 0
+          fi
+          n=$(jq -r '.billingWebhooks.stuckEvents' <"$body" 2>/dev/null || echo "null")
+          case "$n" in ''|null|*[!0-9]*) echo "::warning::billingWebhooks.stuckEvents is unknown this probe."; exit 0 ;; esac
+          echo "count=$n" >>"$GITHUB_OUTPUT"
+          echo "Stripe webhook events stuck for 30+ minutes: ${n}" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Raise, update or close the stuck-webhook issue (deduped — one open issue)
+        if: steps.hooks.outputs.count != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          COUNT: ${{ steps.hooks.outputs.count }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          STAMP="$(date -u '+%Y-%m-%d %H:%M UTC')"
+          gh label create billing-webhook-stuck --color D93F0B \
+            --description "Automated: Stripe webhook events not processed (outage-monitor workflow)" \
+            --force 2>/dev/null || true
+          NUM=$(gh issue list -R "$REPO" --state open --label billing-webhook-stuck \
+            --json number --jq '.[0].number // empty' 2>/dev/null || echo "")
+          if [ "$COUNT" -gt 0 ]; then
+            if [ -z "$NUM" ]; then
+              BODY=$(printf '%s\n' \
+                "**Automated alert — at least ${COUNT} Stripe webhook event(s) have been unprocessed for 30+ minutes (checked ${STAMP}).**" \
+                "" \
+                "A payment, activation or cancellation may not have been applied to a company." \
+                "" \
+                "**Act now:**" \
+                "1. Query \`billing_events\` where \`processed_at is null\`: \`error_message\` names the failure." \
+                "2. Fix the cause, then resend the event from the Stripe dashboard (Developers → Events → Resend). The handler is idempotent, so a resend is safe." \
+                "3. Stripe stops retrying after about three days — do not leave this open." \
+                "" \
+                "_Checked every ~15 minutes; this issue is closed automatically when no event is stuck. Probe: ${RUN_URL}_")
+              gh issue create -R "$REPO" --title "⚠️ STRIPE WEBHOOK STUCK — ${COUNT} event(s) unprocessed for 30+ minutes" \
+                --label billing-webhook-stuck --body "$BODY"
+            fi
+          elif [ -n "$NUM" ]; then
+            gh issue comment "$NUM" -R "$REPO" --body "Recovered at ${STAMP}: no Stripe webhook event is stuck. Closing. Probe: ${RUN_URL}"
+            gh issue close "$NUM" -R "$REPO"
+          fi
+
+      - name: Fail the run so GitHub sends a failure notification
+        if: steps.hooks.outputs.count != '' && steps.hooks.outputs.count != '0'
+        env:
+          COUNT: ${{ steps.hooks.outputs.count }}
+        run: |
+          echo "::error::STRIPE WEBHOOK STUCK: ${COUNT} event(s) unprocessed for 30+ minutes"
+          exit 1
+

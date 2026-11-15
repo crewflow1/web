@@ -69,8 +69,8 @@ export type RecentCronFailure = {
 /**
  * Off-platform encrypted-backup health, from `ops_backup_runs`.
  * The Mac scheduler is only an execution mechanism; this is the source of truth.
- * green ≤7d since last validated success · amber >7d · red >10d or last run failed
- * or no successful backup on record.
+ * The backup is DAILY: green ≤36h since last validated success · amber >36h · red >72h,
+ * or last run failed, or no successful backup on record.
  */
 export type BackupHealth = {
   status: "green" | "amber" | "red";
@@ -440,20 +440,16 @@ async function readBackupHealth(
     } else if (ageH == null) {
       status = "red";
       summary = "No successful off-platform backup on record.";
-    } else if (ageH > 10 * 24) {
+    } else if (ageH > 72) {
       status = "red";
-      summary = `Last validated backup ${Math.round(
-        ageH / 24,
-      )}d ago (>10d) — backup is STALE.`;
-    } else if (ageH > 7 * 24) {
+      summary = `Last validated backup ${Math.round(ageH)}h ago (>72h) — backup is STALE.`;
+    } else if (ageH > 36) {
       status = "amber";
-      summary = `Last validated backup ${Math.round(
-        ageH / 24,
-      )}d ago (>7d) — a scheduled run may have been missed.`;
+      summary = `Last validated backup ${Math.round(ageH)}h ago (>36h) — a daily run has been missed.`;
     } else if (stuckRunning) {
       status = "amber";
       summary =
-        "A backup run appears stuck/incomplete (running >6h); last success still within 7d.";
+        "A backup run appears stuck/incomplete (running >6h); last success still within 36h.";
     } else {
       status = "green";
       summary = `Last validated backup ${Math.round(ageH)}h ago (upload: ${

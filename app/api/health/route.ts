@@ -8,6 +8,8 @@ import { getAnalyticsReadiness } from "@/lib/analytics/readiness";
 import { getMigrationReadiness } from "@/lib/migration/readiness";
 import { probeDatabase } from "@/lib/health/db-probe";
 import { probeCronFreshness } from "@/lib/health/cron-freshness";
+import { probeBackupFreshness } from "@/lib/health/backup-freshness";
+import { probeBillingWebhookBacklog } from "@/lib/health/billing-webhook-backlog";
 
 /**
  * Health check endpoint.
@@ -87,7 +89,7 @@ export async function GET() {
   // unknown-or-stale crons are an alert for the monitor to raise, not a reason for this
   // endpoint to declare the serving path down. Probed in parallel with the DB so the health
   // path stays one round-trip wide.
-  const [db, cron] = await Promise.all([probeDatabase(), probeCronFreshness()]);
+  const [db, cron, backup, webhookBacklog] = await Promise.all([probeDatabase(), probeCronFreshness(), probeBackupFreshness(), probeBillingWebhookBacklog()]);
 
   return NextResponse.json(
     {
@@ -122,11 +124,23 @@ export async function GET() {
         // endpoint is public and must never expose timestamps, route names or env vars.
         lastSuccessAgeMinutes: cron.ageMinutes,
       },
+      backups: {
+        // Bucketed (6-hour floor, 10-day cap) hours since the last SUCCESSFUL off-platform
+        // backup; null = unknown. The external monitor alerts when this goes stale, so a Mac
+        // that is asleep / off / offline can no longer miss backups silently. Integer only.
+        lastSuccessAgeHours: backup.ageHours,
+      },
       monitoring: {
         enabled: monitoring.enabled,
         // The build-time half, so a false `enabled` is diagnosable without
         // shell access: "SDK missing" and "no DSN" need different actions.
         sdkIntegrated: monitoring.sdkIntegrated,
+      },
+      billingWebhooks: {
+        // Stripe events received >30 min ago that the webhook handler has still not processed
+        // (capped at 5; null = unknown). >0 means a payment / cancellation may not have been
+        // applied — the external monitor raises an issue. Integer only, no identifiers.
+        stuckEvents: webhookBacklog.stuck,
       },
       billing: {
         // Can the server reach Stripe at all (secret key present)?
