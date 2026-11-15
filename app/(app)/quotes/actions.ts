@@ -13,7 +13,7 @@ import {
 } from "@/server/auth/session";
 import { requireCapabilityFor } from "@/server/auth/capabilities";
 import {
-  quoteFormSchema,
+  quoteFormSchema, PUBLIC_VISIBLE_STATUSES, type QuoteStatus,
   type LineItem,
   type QuoteFormInput,
 } from "@/lib/quotes/schema";
@@ -1391,7 +1391,7 @@ export async function acceptQuoteByToken(
     .eq("public_token", token)
     .maybeSingle();
 
-  if (lookupErr || !quote) return { ok: false, error: "Quote not found" }; if (await orgPublicWriteRefused(quote.org_id, "operational")) return { ok: false, error: PUBLIC_WRITE_REFUSED_MESSAGE };
+  if (lookupErr || !quote) return { ok: false, error: "Quote not found" }; if (await orgPublicWriteRefused(quote.org_id, "operational")) return { ok: false, error: PUBLIC_WRITE_REFUSED_MESSAGE }; if (!PUBLIC_VISIBLE_STATUSES.includes(quote.status as QuoteStatus)) return { ok: false, error: "This quote isn't available right now — ask your contractor for an up-to-date link." };
   // A re-accept is idempotent, but must still HEAL a partial first accept: if the first
   // accept set status='accepted' then its invoice insert failed, the old blanket
   // early-return left the quote with NO invoice forever. So on a re-accept we skip the
@@ -1424,7 +1424,7 @@ export async function acceptQuoteByToken(
       })
     : null;
 
-  const { error: updErr } = await admin
+  const { error: updErr, data: updRows } = await admin
     .from("quotes")
     .update({
       status: "accepted",
@@ -1438,9 +1438,9 @@ export async function acceptQuoteByToken(
       },
       customer_comment: customerComment,
     })
-    .eq("id", quote.id);
-  if (updErr) {
-    console.error("[quotes] public accept failed", updErr);
+    .eq("id", quote.id).eq("status", quote.status).select("id");
+  if (updErr || !updRows?.length) {
+    console.error("[quotes] public accept failed", updErr ?? "status changed since it was read (concurrent accept / decline / edit)");
     return { ok: false, error: "Couldn't record acceptance" };
   }
 
@@ -1560,7 +1560,7 @@ export async function declineQuoteByToken(
     reportReadFailure("quote decline (public): quote", quoteError);
     return { ok: false, error: "Couldn't load the quote — try again." };
   }
-  if (!quote) return { ok: false, error: "Quote not found" }; if (await orgPublicWriteRefused(quote.org_id, "operational")) return { ok: false, error: PUBLIC_WRITE_REFUSED_MESSAGE };
+  if (!quote) return { ok: false, error: "Quote not found" }; if (await orgPublicWriteRefused(quote.org_id, "operational")) return { ok: false, error: PUBLIC_WRITE_REFUSED_MESSAGE }; if (!PUBLIC_VISIBLE_STATUSES.includes(quote.status as QuoteStatus)) return { ok: false, error: "This quote isn't available right now — ask your contractor for an up-to-date link." };
   if (quote.status === "accepted") return { ok: false, error: "Quote already accepted" };
   if (quote.status === "declined") return { ok: true, quoteId: quote.id };
 
@@ -1569,7 +1569,7 @@ export async function declineQuoteByToken(
     ? `${quote.notes ?? ""}\n\n[Declined ${now}] ${reason}`.trim()
     : quote.notes;
 
-  const { error } = await admin
+  const { error, data: declinedRows } = await admin
     .from("quotes")
     .update({
       status: "declined",
@@ -1577,9 +1577,9 @@ export async function declineQuoteByToken(
       notes: nextNotes,
       customer_comment: customerComment,
     })
-    .eq("id", quote.id);
-  if (error) {
-    console.error("[quotes] public decline failed", error);
+    .eq("id", quote.id).eq("status", quote.status).select("id");
+  if (error || !declinedRows?.length) {
+    console.error("[quotes] public decline failed", error ?? "status changed since it was read (concurrent accept / decline / edit)");
     return { ok: false, error: "Couldn't record decline" };
   }
 
