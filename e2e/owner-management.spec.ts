@@ -51,6 +51,7 @@ let db: any;
 const ids = {} as Record<Key, string>;
 let orgA = "";
 let orgB = "";
+let orgC = "";
 
 async function mkUser(key: Key, fullName: string): Promise<string> {
   const created = await db.auth.admin.createUser({ email: email(key), password: PASSWORD, email_confirm: true });
@@ -116,6 +117,14 @@ test.describe("owner & admin management persists, and lesser roles are refused",
     await member(orgA, "profileTarget", "staff");
     await member(orgA, "removeTarget", "staff");
     await member(orgA, "adminTarget", "admin");
+    // A THIRD org shared by the owner (as plain staff) and the joiner: the only way the
+    // owner's RLS-scoped user lookup can SEE a non-member (users are readable only by
+    // self and co-members), which is what routes inviteStaff to its direct-add branch.
+    const c = await db.from("organizations").insert({ name: `OM Shared Co ${sfx}`, slug: `${sfx}-c`, status: "active" }).select("id").single();
+    if (c.error) throw new Error(`[owner-management] org C seed: ${c.error.message}`);
+    orgC = c.data.id;
+    await member(orgC, "owner", "staff");
+    await member(orgC, "joiner", "staff");
     await member(orgB, "ownerB", "owner");
     await member(orgB, "staffB", "staff");
     // adminCap holds BOTH management capabilities; adminNone holds none (default-deny).
@@ -132,7 +141,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
   test.afterAll(async () => {
     if (!db) return;
     // Best-effort local cleanup of everything this spec created.
-    for (const org of [orgA, orgB].filter(Boolean)) {
+    for (const org of [orgA, orgB, orgC].filter(Boolean)) {
       const files = await db.storage.from("company-logos").list(org);
       if (files.data?.length) await db.storage.from("company-logos").remove(files.data.map((f: any) => `${org}/${f.name}`));
       await db.from("membership_permissions").delete().eq("org_id", org);
@@ -254,22 +263,32 @@ test.describe("owner & admin management persists, and lesser roles are refused",
   });
 
   // ---------------------------------------------------------------- e) add staff
-  test("e) owner adds an existing user as staff; membership row, listed after reload, no email sent", async ({ browser }) => {
+  test("e) owner adds staff: direct-add writes the membership; a stranger's address goes down the invite path (no email, no membership)", async ({ browser }) => {
     await asActor(browser, STATE("owner"), async (page) => {
       await page.goto("/staff");
+      // e1: joiner is visible to the owner via the shared org -> DIRECT ADD.
       await page.getByRole("button", { name: "+ Add staff" }).first().click();
-      const dialog = page.getByRole("dialog");
+      let dialog = page.getByRole("dialog");
       await dialog.locator('input[name="full_name"]').fill("OM Joiner");
       await dialog.locator('input[name="email"]').fill(email("joiner"));
       await dialog.locator('select[name="role"]').selectOption("staff");
       await dialog.getByRole("button", { name: "Send invite" }).click();
-      // "added to" = the existing-user DIRECT-ADD path (membership insert); the
-      // new-email path would instead say "Invite emailed" and send a real email.
       await expect(dialog.getByText(/added to /)).toBeVisible();
       await expect(dialog.getByText(/Invite emailed/)).toHaveCount(0);
       expect(await memRole(orgA, "joiner")).toBe("staff");
       await page.reload();
       await expect(page.getByText("OM Joiner", { exact: true }).first()).toBeVisible();
+
+      // e2: joiner2 is invisible to the owner (no shared org) -> INVITE path. The local env
+      // has no mail provider key, so the action reports it could not send and NOTHING
+      // is emailed; crucially no membership is created for a stranger.
+      await page.getByRole("button", { name: "+ Add staff" }).first().click();
+      dialog = page.getByRole("dialog");
+      await dialog.locator('input[name="email"]').fill(email("joiner2"));
+      await dialog.locator('select[name="role"]').selectOption("staff");
+      await dialog.getByRole("button", { name: "Send invite" }).click();
+      await expect(dialog.getByText("Couldn't send the invite email. Check the address and try again.")).toBeVisible();
+      expect(await memRole(orgA, "joiner2")).toBeNull();
     });
   });
 
