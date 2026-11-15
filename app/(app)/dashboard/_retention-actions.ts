@@ -1,8 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementRole, requireOrgContext } from "@/server/auth/session";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
 import {
   MILESTONE_IDS,
@@ -41,7 +42,12 @@ export async function dismissMilestone(formData: FormData): Promise<void> {
   if (!(MILESTONE_IDS as ReadonlyArray<string>).includes(id)) return;
 
   const { ctx } = await requireOrgContext();
+  // Organisation-wide state (the owner/admin dashboard): management only.
+  requireManagementRole(ctx);
   const supabase = await createClient();
+  // organizations is a boundary table — clients hold SELECT only — so the write
+  // below uses the service role, after the gate, pinned to the active org.
+  const boundaryDb = createAdminClient();
 
   const { data, error } = await supabase
     .from("organizations")
@@ -65,7 +71,7 @@ export async function dismissMilestone(formData: FormData): Promise<void> {
     ...state,
     celebrated_milestones: [...existing, id as MilestoneId],
   };
-  await supabase
+  await boundaryDb
     .from("organizations")
     .update({ onboarding_state: next as never })
     .eq("id", ctx.org.id);
@@ -84,7 +90,12 @@ export async function dismissNudge(formData: FormData): Promise<void> {
   if (!(DISMISSIBLE_NUDGES as ReadonlyArray<string>).includes(id)) return;
 
   const { ctx } = await requireOrgContext();
+  // Organisation-wide state (the owner/admin dashboard): management only.
+  requireManagementRole(ctx);
   const supabase = await createClient();
+  // organizations is a boundary table — clients hold SELECT only — so the write
+  // below uses the service role, after the gate, pinned to the active org.
+  const boundaryDb = createAdminClient();
   const { data, error } = await supabase
     .from("organizations")
     .select("onboarding_state")
@@ -101,7 +112,7 @@ export async function dismissNudge(formData: FormData): Promise<void> {
     revalidatePath("/dashboard");
     return;
   }
-  await supabase
+  await boundaryDb
     .from("organizations")
     .update({
       onboarding_state: {

@@ -134,6 +134,9 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       "server/services/permission-audit.ts",
       // R3 — owner-controlled admin appointment + staff:manage + grant editor.
       "app/(app)/staff/actions.ts",
+      // Company settings: saving organisation details needs settings:manage (owner
+      // always) — the write itself goes through the service role after that gate.
+      "app/(app)/settings/actions.ts",
       "app/(app)/staff/permission-actions.ts",
       // R4 — capability enforcement, financial modules (invoices first).
       "app/(app)/invoices/layout.tsx",

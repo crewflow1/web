@@ -500,7 +500,10 @@ const RATCHET: Array<{
     // shared write core (server/services/site-report-writes.ts), so the online
     // form and the offline queue replay allocate it identically. The count-only
     // shape moved with it — it is now counted under "server + lib + components".
-    countOnly: 4,
+    // 4 → 3 (boundary-table write fix): updateStaffProfile's "is the target a
+    // member?" check was a count-only head read whose error was dropped; it is now
+    // a loud role read (the role also decides who may edit the record). Debt REDUCED.
+    countOnly: 3,
   },
   {
     scope: "app outside (app) — admin/api/portal/q/onboarding",
