@@ -30,6 +30,10 @@ const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 
 const MIGRATION = read("supabase/migrations/20260605000000_admin_activity_log.sql");
 const DEMO_ACTIONS = read("app/admin/demos/actions.ts");
+// The move-demo Zod schema + confirm token were extracted to a sibling module
+// (server-action files may only export async functions), so the schema/token
+// assertions read it from there; the gate wiring stays in actions.ts.
+const MOVE_FORM = read("app/admin/demos/_move-form.ts");
 const DEMO_PAGE = read("app/admin/demos/page.tsx");
 const KANBAN = read("app/admin/demos/_kanban.tsx");
 const DETAIL = read("app/admin/demos/_detail-panel.tsx");
@@ -150,7 +154,7 @@ describe("server actions — auth + dual-write", () => {
   });
 
   it("Zod schemas reject non-lifecycle statuses on the form path", () => {
-    expect(DEMO_ACTIONS).toMatch(/z\.enum\(DEMO_LIFECYCLE_STATUSES\)/);
+    expect(MOVE_FORM).toMatch(/z\.enum\(DEMO_LIFECYCLE_STATUSES\)/);
   });
 });
 
@@ -179,8 +183,8 @@ describe("kanban + page wiring", () => {
     // SERVER is the real gate — the UI confirm is UX on top of it.
     it("both server actions refuse active_onboarding without the confirm token", () => {
       // Token plumbed through the schema and the JSON action signature.
-      expect(DEMO_ACTIONS).toMatch(/ONBOARD_CONFIRM_TOKEN\s*=\s*"ONBOARD"/);
-      expect(DEMO_ACTIONS).toMatch(/confirm:\s*z\.string\(\)\.optional\(\)/);
+      expect(MOVE_FORM).toMatch(/ONBOARD_CONFIRM_TOKEN\s*=\s*"ONBOARD"/);
+      expect(MOVE_FORM).toMatch(/confirm:\s*z\.string\(\)\.optional\(\)/);
       expect(DEMO_ACTIONS).toMatch(/confirm\?:\s*string/);
       // Each action short-circuits BEFORE provisioning when the token is absent.
       const formGate = DEMO_ACTIONS.indexOf("confirm_onboarding=");
