@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 import {
   CONSENT_CATEGORIES,
   CONSENT_COOKIE,
@@ -310,6 +312,51 @@ describe("needsDecision — when the banner is due", () => {
   it("re-asks a legacy 'granted' (the categories changed) but not a legacy 'denied'", () => {
     expect(needsDecision(parseConsentRecord("granted"), both)).toBe(true);
     expect(needsDecision(parseConsentRecord("denied"), both)).toBe(false);
+  });
+});
+
+describe("consent record — version + timestamp, and a version bump re-prompts", () => {
+  const both = [...CONSENT_CATEGORIES];
+
+  it("stores the current version and the decision time, and they survive a round trip", () => {
+    const rec = buildConsentRecord({ analytics: true }, NOW);
+    expect(rec.version).toBe(CONSENT_VERSION);
+    expect(rec.decidedAt).toBe(NOW.toISOString());
+    const back = parseConsentRecord(serializeConsentValue(rec));
+    expect(back).toEqual(rec);
+  });
+
+  it("a granting record from an OLDER version is re-asked when the version moves on", () => {
+    const old = { ...buildConsentRecord(allGranted(), NOW), version: CONSENT_VERSION - 1 };
+    expect(needsDecision(old, both)).toBe(true);
+    // The same record under the current version is not re-asked.
+    expect(needsDecision({ ...old, version: CONSENT_VERSION }, both)).toBe(false);
+  });
+
+  it("a stored full rejection is not nagged again after a version bump", () => {
+    const old = { ...buildConsentRecord(allDenied(), NOW), version: CONSENT_VERSION - 1 };
+    expect(needsDecision(old, both)).toBe(false);
+  });
+});
+
+describe("external-surface guard — every top-level dynamic public route is excluded", () => {
+  it("app/<x>/[param] routes (token / slug links) never get the banner or trackers", () => {
+    const appDir = path.join(process.cwd(), "app");
+    const dynamicTop = fs
+      .readdirSync(appDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && !d.name.startsWith("(") && !d.name.startsWith("_"))
+      .filter((d) =>
+        fs
+          .readdirSync(path.join(appDir, d.name), { withFileTypes: true })
+          .some((c) => c.isDirectory() && c.name.startsWith("[")),
+      )
+      // /admin is the staff console, not an external surface.
+      .map((d) => d.name)
+      .filter((n) => n !== "admin");
+    expect(dynamicTop.sort()).toEqual(["customer-portal", "l", "q", "worker-portal"]);
+    for (const n of dynamicTop) {
+      expect(isFirstPartySurface(`/${n}/some-token`), n).toBe(false);
+    }
   });
 });
 
