@@ -263,6 +263,7 @@ describe("route classification (which policy a path gets)", () => {
       "/terms": "app/terms/page.tsx",
       "/reset-password": "app/(auth)/reset-password/page.tsx",
       "/offline": "app/offline/page.tsx",
+      "/check-email": "app/(auth)/check-email/page.tsx",
     };
     expect([...STATIC_POLICY_PREFIXES].sort()).toEqual(Object.keys(routeFile).sort());
     for (const [prefix, file] of Object.entries(routeFile)) {

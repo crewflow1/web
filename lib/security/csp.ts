@@ -124,6 +124,9 @@ export const STATIC_POLICY_PREFIXES: readonly string[] = [
   "/terms",
   "/reset-password",
   "/offline",
+  // Prerendered since the privacy PR (#1108) stopped passing the email in the URL: the page reads it
+  // from sessionStorage in the browser, so its HTML holds no user data.
+  "/check-email",
 ];
 
 /** Which policy class a request path belongs to. Unknown paths → "nonce". */
