@@ -176,3 +176,23 @@ branch's registry entry. It clears for each when this branch's
 - Production migrations: three to apply, in order, before the code deploys.
 - Unchanged: no Stripe call has been made; full unit suite, full integration
   suite and `npm run build` not run.
+
+---
+
+## 2026-11-16 — END-OF-PERIOD policy (founder billing policy) — supersedes "immediate" above for paying companies
+
+**Behaviour now:** owner (and HQ) cancellation of an active, paid subscription sets Stripe
+`cancel_at_period_end`; the company stays `active` with full access; Stripe does not renew; at the period
+end Stripe deletes the subscription and the existing `customer.subscription.deleted` handler applies the
+D-17 cancelled state (owner read-only with billing + export, others locked out). Immediate termination
+only when nothing can renew (no subscription / company not active / subscription not in good standing).
+Undo before expiry. No automatic refunds; setup fee non-refundable (Checkout disclosure). No data deletion.
+
+| Evidence | Result |
+|---|---|
+| Unit (service, DI fakes incl. Stripe idempotency replay) | 63 cancellation-service cases; full unit 12,232 |
+| Security tier | 8,742 |
+| Integration (real Postgres) | stripe suite 76/76 incl. scheduled-keeps-active → deletion-webhook-cancels, undo, HQ-schedules |
+| Stripe TEST MODE (`STRIPE_E2E=1`, restricted test key, events relayed + signed locally) | **11/11**: fee once, activation after both payments, duplicate/reordered/forged webhooks, failed payment + recovery, schedule with exact date (org active), undo, re-schedule + expiry → cancelled, reactivation (no second fee), DB==Stripe, **test-clock renewal boundary** (stale dialog refused after renewal; new date scheduled; period end → no renewal invoice; org cancelled) |
+| Defect found by Stripe test mode, fixed | reused idempotency key on schedule→undo→schedule made Stripe replay the old response without applying it → per-request keys + replaying fake + regression test (fails on old code) |
+| Migrations 355–357 | rehearsed on a restored production backup at tip 354: apply → synthetic claim/confirm → rollback → idempotent re-apply (`docs/engineering/release/rehearsal-20261355-57.out`) |
