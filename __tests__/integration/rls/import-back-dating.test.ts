@@ -101,7 +101,7 @@ describeIntegration("imports · a row keeps the date the file gave it", () => {
   beforeAll(async () => {
     const o = await svc()
       .from("organizations")
-      .insert({ name: "Import Back-dating Co", slug: TOKEN })
+      .insert({ status: "active", name: "Import Back-dating Co", slug: TOKEN })
       .select("id")
       .single();
     expect(o.error, JSON.stringify(o.error)).toBeNull();

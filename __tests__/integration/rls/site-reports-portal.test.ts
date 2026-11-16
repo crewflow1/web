@@ -124,7 +124,7 @@ describeIntegration("site_reports · customer-portal access", () => {
     const org = async (slug: string) => {
       const { data, error } = await svc
         .from("organizations")
-        .insert({ name: `SRP ${slug}`, slug })
+        .insert({ status: "active", name: `SRP ${slug}`, slug })
         .select("id")
         .single();
       expect(error, error?.message).toBeNull();

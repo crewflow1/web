@@ -57,7 +57,7 @@ describeIntegration("asset_assignments · assets embed disambiguation (PGRST201)
     const svc = db(serviceClient());
     const o = await svc
       .from("organizations")
-      .insert({ name: `AAEmbed ${TOKEN}`, slug: TOKEN })
+      .insert({ status: "active", name: `AAEmbed ${TOKEN}`, slug: TOKEN })
       .select("id")
       .single();
     expect(o.error, o.error?.message).toBeNull();

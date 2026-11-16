@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext, type OrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { type FormState, formError, formSuccess } from "@/lib/forms/state";
 import { stockIdSchema } from "@/lib/stock/schema";
 import { materialRequestFormSchema } from "@/lib/material-requests/schema";
@@ -102,6 +103,7 @@ export async function createReplenishmentRequest(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("stock", "create");
   if (!isAdmin(ctx)) {
     return formError("Only an owner or admin can raise a replenishment request.");
   }

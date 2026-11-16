@@ -93,7 +93,7 @@ describeIntegration("quotes · accepted-quote immutability (20261004)", () => {
   };
 
   beforeAll(async () => {
-    const o = await svc().from("organizations").insert({ name: "QImm A", slug: `${TOKEN}-a` }).select("id").single();
+    const o = await svc().from("organizations").insert({ status: "active", name: "QImm A", slug: `${TOKEN}-a` }).select("id").single();
     expect(o.error, o.error?.message).toBeNull();
     orgA = o.data?.id as string;
     const c = await svc().from("customers").insert({ org_id: orgA, name: "Cust A" }).select("id").single();

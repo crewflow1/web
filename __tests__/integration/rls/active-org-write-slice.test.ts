@@ -177,8 +177,8 @@ describeIntegration("active-org WRITE slice (RLS + real Postgres)", () => {
   }
 
   beforeAll(async () => {
-    orgA = await insId(svc, "organizations", { name: "Write A", slug: `${TOKEN}-a` });
-    orgB = await insId(svc, "organizations", { name: "Write B", slug: `${TOKEN}-b` });
+    orgA = await insId(svc, "organizations", { status: "active", name: "Write A", slug: `${TOKEN}-a` });
+    orgB = await insId(svc, "organizations", { status: "active", name: "Write B", slug: `${TOKEN}-b` });
     dual = await mkUser("dual", [orgA, orgB]);
     outsider = await mkUser("outsider", [orgB]);
 

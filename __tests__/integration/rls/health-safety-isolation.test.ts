@@ -30,7 +30,7 @@ describeIntegration("risk_assessments · tenant isolation (RLS)", () => {
 
   beforeAll(async () => {
     const svc = db(serviceClient());
-    const org = await svc.from("organizations").insert({ name: "RAMS RLS Probe", slug: TOKEN }).select("id").single();
+    const org = await svc.from("organizations").insert({ status: "active", name: "RAMS RLS Probe", slug: TOKEN }).select("id").single();
     expect(org.error, org.error?.message).toBeNull();
     orgId = String(org.data?.id ?? "");
 

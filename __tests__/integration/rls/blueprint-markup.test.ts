@@ -44,8 +44,8 @@ describeIntegration("blueprint_markup · DB invariants", () => {
   let outsider = { id: "", token: "" };
 
   beforeAll(async () => {
-    orgA = await insId(svc, "organizations", { name: "Mk A", slug: `${TOKEN}-a` });
-    orgB = await insId(svc, "organizations", { name: "Mk B", slug: `${TOKEN}-b` });
+    orgA = await insId(svc, "organizations", { status: "active", name: "Mk A", slug: `${TOKEN}-a` });
+    orgB = await insId(svc, "organizations", { status: "active", name: "Mk B", slug: `${TOKEN}-b` });
     jobA = await insId(svc, "jobs", { org_id: orgA, status: "in-progress" });
     const bpA = await insId(svc, "blueprints", { org_id: orgA, job_id: jobA, drawing_number: "A-201", title: "GA" });
     versionA = await insId(svc, "blueprint_versions", {

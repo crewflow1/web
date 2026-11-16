@@ -99,7 +99,7 @@ async function freshOrg(): Promise<string> {
   const slug = `it-r54-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const res = await svc()
     .from("organizations")
-    .insert({ name: "R54 Reassignment Surface Org", slug })
+    .insert({ status: "active", name: "R54 Reassignment Surface Org", slug })
     .select("id")
     .single();
   expect(res.error, res.error?.message).toBeNull();

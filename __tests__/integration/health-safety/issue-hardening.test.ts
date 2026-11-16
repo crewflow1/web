@@ -31,14 +31,18 @@ const BACKDATE = "2020-01-01T00:00:00Z";
 
 describeIntegration("H&S issue-path hardening · real authenticated member (JWT)", () => {
   let orgA = "", orgB = "", uid = "", token = "", jobA = "";
+  // D-17: issuing (publishing) a RAMS / permit is an APPROVAL — owner (or an admin holding
+  // site_safety:approve). The plain staff member above drafts; this owner issues.
+  let bossUid = "", bossToken = "";
+  const boss = () => db(userClient(bossToken));
   const svc = () => db(serviceClient());
   const me = () => db(userClient(token));
 
   beforeAll(async () => {
-    const a = await svc().from("organizations").insert({ name: "Issue A", slug: `${TOKEN}-a` }).select("id").single();
+    const a = await svc().from("organizations").insert({ status: "active", name: "Issue A", slug: `${TOKEN}-a` }).select("id").single();
     if (a.error) throw new Error(`org A insert: ${a.error.message}`);
     orgA = String(a.data?.id);
-    const b = await svc().from("organizations").insert({ name: "Issue B", slug: `${TOKEN}-b` }).select("id").single();
+    const b = await svc().from("organizations").insert({ status: "active", name: "Issue B", slug: `${TOKEN}-b` }).select("id").single();
     if (b.error) throw new Error(`org B insert: ${b.error.message}`);
     orgB = String(b.data?.id);
     const created = await serviceClient().auth.admin.createUser({ email: `${TOKEN}@x.test`, password: `Pw-${TOKEN}`, email_confirm: true });
@@ -63,11 +67,20 @@ describeIntegration("H&S issue-path hardening · real authenticated member (JWT)
     // Sanity: the member must actually resolve to org A via current_org_ids().
     const check = await db(userClient(token)).rpc("next_ra_number", { target_org: orgA });
     if (check.error) throw new Error(`membership not effective (current_org_ids empty?): ${check.error.message}`);
+    const bc = await serviceClient().auth.admin.createUser({ email: `${TOKEN}-boss@x.test`, password: `Pw-${TOKEN}`, email_confirm: true });
+    if (bc.error) throw new Error(`createUser boss: ${bc.error.message}`);
+    bossUid = bc.data.user?.id ?? "";
+    await svc().from("users").insert({ id: bossUid, email: `${TOKEN}-boss@x.test`, full_name: "Owner" });
+    await svc().from("memberships").insert({ org_id: orgA, user_id: bossUid, role: "owner" });
+    const bs = await anonClient().auth.signInWithPassword({ email: `${TOKEN}-boss@x.test`, password: `Pw-${TOKEN}` });
+    bossToken = bs.data.session?.access_token ?? "";
+    if (!bossToken) throw new Error("no owner token");
   });
   afterAll(async () => {
     if (orgA) await svc().from("organizations").delete().eq("id", orgA);
     if (orgB) await svc().from("organizations").delete().eq("id", orgB);
     if (uid) await serviceClient().auth.admin.deleteUser(uid);
+    if (bossUid) await serviceClient().auth.admin.deleteUser(bossUid);
   });
 
   // Create a draft RAMS as the member; optionally give it an assessor + a hazard.
@@ -103,30 +116,33 @@ describeIntegration("H&S issue-path hardening · real authenticated member (JWT)
     expect(error?.message ?? "", "issuing with no assessor must fail").toMatch(/assessor/i);
   });
 
-  it("[P1] issuing pins issued_by=caller and issued_at=now — a forged/back-dated issue is ignored", async () => {
+  it("[P1] issuing pins issued_by=caller and issued_at=now — a forged/back-dated issue is ignored (D-17: the caller must be an approver)", async () => {
     const raId = await draftRa({ assessor: true, hazard: true });
-    const { error } = await me().from("risk_assessments")
-      .update({ status: "issued", reference: `RA-${TOKEN}-ok`, issued_at: BACKDATE, issued_by: FORGED_USER })
-      .eq("id", raId);
+    const patch = { status: "issued", reference: `RA-${TOKEN}-ok`, issued_at: BACKDATE, issued_by: FORGED_USER };
+    // D-17: a plain staff member drafts but can NOT publish.
+    await me().from("risk_assessments").update(patch).eq("id", raId);
+    expect((await svc().from("risk_assessments").select("status").eq("id", raId).maybeSingle()).data?.status, "staff must not issue a RAMS").toBe("draft");
+    const { error } = await boss().from("risk_assessments").update(patch).eq("id", raId);
     expect(error, error?.message).toBeNull();
     const row = (await svc().from("risk_assessments").select("issued_by, issued_at, status").eq("id", raId).maybeSingle()).data;
     expect(row?.status).toBe("issued");
-    expect(row?.issued_by, "issued_by must be pinned to the acting member, not the forged id").toBe(uid);
+    expect(row?.issued_by, "issued_by must be pinned to the acting approver, not the forged id").toBe(bossUid);
     expect(new Date(String(row?.issued_at)).getTime(), "issued_at must be pinned to now(), not back-dated")
       .toBeGreaterThan(Date.parse("2021-01-01T00:00:00Z"));
   });
 
-  it("[P1] issuing a permit pins issued_by=caller and issued_at=now (forge/back-date ignored)", async () => {
+  it("[P1] issuing a permit pins issued_by=caller and issued_at=now (forge/back-date ignored; D-17: approver only)", async () => {
     const pid = String((await me().from("permits_to_work").insert({
       org_id: orgA, permit_type: "general", title: "P", scope: "s", job_id: jobA,
       valid_from: new Date().toISOString(), valid_until: new Date(Date.now() + 3.6e6).toISOString(),
     }).select("id").single()).data?.id);
-    const { error } = await me().from("permits_to_work")
-      .update({ status: "issued", reference: `PTW-${TOKEN}`, issued_at: BACKDATE, issued_by: FORGED_USER })
-      .eq("id", pid);
+    const patch = { status: "issued", reference: `PTW-${TOKEN}`, issued_at: BACKDATE, issued_by: FORGED_USER };
+    await me().from("permits_to_work").update(patch).eq("id", pid);
+    expect((await svc().from("permits_to_work").select("status").eq("id", pid).maybeSingle()).data?.status, "staff must not issue a permit").toBe("draft");
+    const { error } = await boss().from("permits_to_work").update(patch).eq("id", pid);
     expect(error, error?.message).toBeNull();
     const row = (await svc().from("permits_to_work").select("issued_by, issued_at").eq("id", pid).maybeSingle()).data;
-    expect(row?.issued_by, "permit issued_by must be pinned to the acting member").toBe(uid);
+    expect(row?.issued_by, "permit issued_by must be pinned to the acting approver").toBe(bossUid);
     expect(new Date(String(row?.issued_at)).getTime(), "permit issued_at must be pinned to now()")
       .toBeGreaterThan(Date.parse("2021-01-01T00:00:00Z"));
   });

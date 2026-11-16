@@ -82,8 +82,8 @@ describeIntegration("job assignment reconciliation · transactional RPCs", () =>
     client.rpc("add_job_worker", { p_job_id: jobId, p_org_id: orgId, p_user_id: userId });
 
   beforeAll(async () => {
-    orgA = await insId(svc, "organizations", { name: "Asgn A", slug: `${TOKEN}-a` });
-    orgB = await insId(svc, "organizations", { name: "Asgn B", slug: `${TOKEN}-b` });
+    orgA = await insId(svc, "organizations", { status: "active", name: "Asgn A", slug: `${TOKEN}-a` });
+    orgB = await insId(svc, "organizations", { status: "active", name: "Asgn B", slug: `${TOKEN}-b` });
     if (!orgA || !orgB) throw new Error("fixture org setup failed");
     admin = await mkUser(`${TOKEN}-adm@example.test`, "owner", orgA);
     staff = await mkUser(`${TOKEN}-staff@example.test`, "staff", orgA);

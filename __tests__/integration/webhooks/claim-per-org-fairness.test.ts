@@ -66,7 +66,7 @@ describeIntegration("outbound webhook claim · per-org fairness (real Postgres)"
   const makeOrgWithEndpoint = async (label: string): Promise<{ org: string; ep: string }> => {
     const org = await svc()
       .from("organizations")
-      .insert({ name: label, slug: `${T}-${label}` })
+      .insert({ status: "active", name: label, slug: `${T}-${label}` })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

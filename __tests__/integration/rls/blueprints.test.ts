@@ -36,8 +36,8 @@ describeIntegration("blueprints · DB invariants", () => {
 
   beforeAll(async () => {
     const svc = db(serviceClient());
-    orgA = String((await svc.from("organizations").insert({ name: "BP A", slug: `${TOKEN}-a` }).select("id").single()).data?.id ?? "");
-    orgB = String((await svc.from("organizations").insert({ name: "BP B", slug: `${TOKEN}-b` }).select("id").single()).data?.id ?? "");
+    orgA = String((await svc.from("organizations").insert({ status: "active", name: "BP A", slug: `${TOKEN}-a` }).select("id").single()).data?.id ?? "");
+    orgB = String((await svc.from("organizations").insert({ status: "active", name: "BP B", slug: `${TOKEN}-b` }).select("id").single()).data?.id ?? "");
     jobA = String((await svc.from("jobs").insert({ org_id: orgA, status: "in-progress" }).select("id").single()).data?.id ?? "");
     bpA = String((await svc.from("blueprints").insert({ org_id: orgA, job_id: jobA, drawing_number: "A-201", title: "GA Plan", discipline: "architectural" }).select("id").single()).data?.id ?? "");
     // v1: pass a foreign org + version 99 → triggers must override both.

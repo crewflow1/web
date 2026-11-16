@@ -50,7 +50,7 @@ describeIntegration("automation engine · overrides, wired actions, drain", () =
   async function makeOrg(name: string, email: string | null): Promise<string> {
     const r = await svc()
       .from("organizations")
-      .insert({ name, slug: `${TOKEN}-${Math.random().toString(36).slice(2, 8)}`, email })
+      .insert({ status: "active", name, slug: `${TOKEN}-${Math.random().toString(36).slice(2, 8)}`, email })
       .select("id")
       .single();
     expect(r.error, r.error?.message).toBeNull();

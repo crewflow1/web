@@ -1,6 +1,6 @@
 "use server";
 
-import { redirect } from "next/navigation";
+import { redirect } from "next/navigation"; import { gatePortalWrite } from "@/server/services/org-lifecycle";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -10,6 +10,7 @@ import { consume, DEFAULT_LIMITS } from "@/lib/security/rate-limit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { postDeterministicChatAck } from "@/server/services/chat-auto-reply";
 import { chatContactRef } from "./_chat-reads";
+import { findOrCreateConversation, type ConversationClient } from "@/lib/inbox/find-or-create-conversation";
 
 /**
  * MP Phase 8 "Live Chat" — the customer's SEND action.
@@ -52,19 +53,6 @@ function backTo(token: string, outcome: { sent?: string; error?: string }): neve
 }
 
 /** Upsert shim — conversations' columns aren't in the generated types. */
-type Upsert = {
-  upsert: (
-    row: unknown,
-    opts: { onConflict: string },
-  ) => {
-    select: (cols: string) => {
-      single: () => Promise<{
-        data: { id: string } | null;
-        error: { message: string } | null;
-      }>;
-    };
-  };
-};
 type MessageInsert = {
   insert: (row: unknown) => {
     select: (cols: string) => {
@@ -93,7 +81,7 @@ export async function sendPortalChatMessage(formData: FormData): Promise<void> {
   if (!parsed.success) backTo(rawToken, { error: "invalid_input" });
   const { token, body } = parsed.data;
 
-  const loaded = await loadCustomerByPortalToken(token);
+  const loaded = await gatePortalWrite(await loadCustomerByPortalToken(token), "operational");
   if (!loaded) backTo(token, { error: "invalid_token" });
   const { customer } = loaded;
 
@@ -103,28 +91,16 @@ export async function sendPortalChatMessage(formData: FormData): Promise<void> {
 
   // (4) Upsert the customer's one chat thread. Identity is stamped from the
   // token-resolved customer; the conflict key reuses an existing thread.
-  const { data: conv, error: convErr } = await (
-    admin.from("conversations" as never) as unknown as Upsert
-  )
-    .upsert(
-      {
-        org_id: customer.org_id,
-        channel: "chat",
-        contact_ref: contactRef,
-        customer_id: customer.id,
-        contact_name: customer.name,
-        status: "active",
-        last_message_at: now,
-      },
-      { onConflict: "org_id,channel,contact_ref" },
-    )
-    .select("id")
-    .single();
-  if (convErr || !conv?.id) {
-    console.error("[portal/chat] conversation upsert failed", convErr);
+  const conv = await findOrCreateConversation(
+    admin as unknown as ConversationClient,
+    { org_id: customer.org_id, channel: "chat", contact_ref: contactRef },
+    { customer_id: customer.id, contact_name: customer.name, status: "active", last_message_at: now },
+  );
+  if ("error" in conv) {
+    console.error("[portal/chat] conversation find-or-create failed", conv.error);
     backTo(token, { error: "could_not_send" });
   }
-  const conversationId = conv!.id;
+  const conversationId = (conv as { id: string }).id;
 
   // (5) Record the inbound customer message — what staff see in the inbox.
   const { error: msgErr } = await (

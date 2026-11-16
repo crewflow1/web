@@ -106,11 +106,11 @@ describeIntegration("Train 9 api_keys (real Postgres)", () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL ??= process.env.SUPABASE_URL;
 
     orgA = String(
-      (await svc().from("organizations").insert({ name: "Keys A", slug: `${T}-a` }).select("id").single())
+      (await svc().from("organizations").insert({ status: "active", name: "Keys A", slug: `${T}-a` }).select("id").single())
         .data?.id,
     );
     orgB = String(
-      (await svc().from("organizations").insert({ name: "Keys B", slug: `${T}-b` }).select("id").single())
+      (await svc().from("organizations").insert({ status: "active", name: "Keys B", slug: `${T}-b` }).select("id").single())
         .data?.id,
     );
     admin = await mkMember(orgA, "admin", "adm");

@@ -1,6 +1,6 @@
 "use server";
 
-import { redirect } from "next/navigation";
+import { redirect } from "next/navigation"; import { gatePortalWrite } from "@/server/services/org-lifecycle";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadCustomerByPortalToken } from "./_helpers";
@@ -48,7 +48,7 @@ export async function bookServiceSlot(formData: FormData): Promise<void> {
   });
   if (!parsed.success) backTo(token, { error: "invalid_input" });
 
-  const loaded = await loadCustomerByPortalToken(token);
+  const loaded = await gatePortalWrite(await loadCustomerByPortalToken(token), "operational");
   if (!loaded) backTo(token, { error: "invalid_token" });
   const { customer } = loaded;
 

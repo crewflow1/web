@@ -135,7 +135,7 @@ export function isInspectionOverdue(dueAt: string | null, todayIso: string): boo
 
 // ── Validation ────────────────────────────────────────────────────────────────
 const blankToUndefined = (v: unknown) =>
-  typeof v === "string" && v.trim() === "" ? undefined : v;
+  v === null || (typeof v === "string" && v.trim() === "") ? undefined : v;
 
 export const createScheduleSchema = z
   .object({

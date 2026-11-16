@@ -67,10 +67,10 @@ describeIntegration("staff invite → magic link → accept (real Supabase)", ()
 
   beforeAll(async () => {
     orgA = String(
-      (await svc().from("organizations").insert({ name: "Invite CO A", slug: `${T}-a` }).select("id").single()).data?.id,
+      (await svc().from("organizations").insert({ status: "active", name: "Invite CO A", slug: `${T}-a` }).select("id").single()).data?.id,
     );
     orgB = String(
-      (await svc().from("organizations").insert({ name: "Invite CO B", slug: `${T}-b` }).select("id").single()).data?.id,
+      (await svc().from("organizations").insert({ status: "active", name: "Invite CO B", slug: `${T}-b` }).select("id").single()).data?.id,
     );
   });
 

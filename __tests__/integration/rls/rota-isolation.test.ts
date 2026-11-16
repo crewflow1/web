@@ -89,8 +89,8 @@ describeIntegration("staff rota · active-org pinning (RLS)", () => {
   let entryB = ""; // dual's org B shift (10:00–17:00 on DAY — overlaps entryA's window)
 
   beforeAll(async () => {
-    orgA = await insId(svc, "organizations", { name: "Rota A", slug: `${TOKEN}-a` });
-    orgB = await insId(svc, "organizations", { name: "Rota B", slug: `${TOKEN}-b` });
+    orgA = await insId(svc, "organizations", { status: "active", name: "Rota A", slug: `${TOKEN}-a` });
+    orgB = await insId(svc, "organizations", { status: "active", name: "Rota B", slug: `${TOKEN}-b` });
     dual = await mkUser("dual", [orgA, orgB]);
     outsider = await mkUser("outsider", [orgB]);
 

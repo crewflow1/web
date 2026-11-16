@@ -21,13 +21,20 @@ describe("expenses surfaces are capability-gated with the right action", () => {
   it("layout + page require expenses:view, no residual management gate", () => {
     for (const f of ["app/(app)/expenses/layout.tsx", "app/(app)/expenses/page.tsx"]) {
       const code = codeOf(read(f));
-      expect(code, `${f} view gate`).toMatch(/requireCapability\(\s*"expenses",\s*"view"\s*\)/);
+      // D-17: the LAYOUT is shared with the crew's pending-cost submission, so it admits
+      // expenses:view OR the job_costs_field baseline; the register PAGE stays expenses:view only.
+      const isLayout = f.endsWith("layout.tsx");
+      expect(code, `${f} view gate`).toMatch(
+        isLayout
+          ? /requireAnyCapability\(\s*\[\s*\["expenses",\s*"view"\]/
+          : /requireCapability\(\s*"expenses",\s*"view"\s*\)/,
+      );
       expect(code, `${f} no residual`).not.toMatch(/requireManagement(Role|Context|Api)/);
     }
   });
 
   const ACTIONS: Array<{ file: string; needs: Array<[string, string]> }> = [
-    { file: "app/(app)/expenses/actions.ts", needs: [["expenses", "create"], ["expenses", "approve"]] },
+    { file: "app/(app)/expenses/actions.ts", needs: [["job_costs_field", "create"], ["expenses", "approve"]] },
     { file: "app/(app)/expenses/budgets/actions.ts", needs: [["expenses", "manage"]] },
   ];
   for (const { file, needs } of ACTIONS) {

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { describeIntegration, serviceClient } from "../_harness";
+import { anonClient, describeIntegration, serviceClient } from "../_harness";
 
 /**
  * Least-privilege grant revoke — regression guard (real Postgres) for
@@ -36,9 +36,17 @@ describeIntegration("least-privilege grant revoke (20261295)", () => {
     ).toHaveLength(0);
 
     // SELECT must survive (RLS read policies depend on it; /api/health reads organizations as anon).
+    // `users` keeps it at COLUMN level since 20261342 (phone / employment_type / start_date
+    // carry no client grant), so a table-level row is no longer the right evidence for it:
+    // prove the grant behaviourally — a client can still select the non-private columns.
     for (const t of BOUNDARY_TABLES) {
-      const hasSelect = rows.some((r) => r.table_name === t && r.privilege_type === "SELECT");
-      expect(hasSelect, `${t} must retain a client SELECT grant for its RLS read policies`).toBe(true);
+      const tableLevel = rows.some((r) => r.table_name === t && r.privilege_type === "SELECT");
+      const probe = await anonClient().from(t as "users").select("id").limit(1);
+      expect(
+        tableLevel || probe.error === null,
+        `${t} must retain a client SELECT grant for its RLS read policies (${probe.error?.message ?? "ok"})`,
+      ).toBe(true);
+      expect(probe.error, `${t}: a client select of the id column must not be refused`).toBeNull();
     }
   });
 });

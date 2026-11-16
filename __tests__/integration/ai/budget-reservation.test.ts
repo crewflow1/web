@@ -216,14 +216,14 @@ describeIntegration("AI budget reservation · atomic ceiling on real Postgres", 
     const svc = db(serviceClient());
     const a = await svc
       .from("organizations")
-      .insert({ name: "AI Reservation Org A", slug: `${TOKEN}-a` })
+      .insert({ status: "active", name: "AI Reservation Org A", slug: `${TOKEN}-a` })
       .select("id")
       .single();
     expect(a.error, a.error?.message).toBeNull();
     orgA = String(a.data?.id ?? "");
     const b = await svc
       .from("organizations")
-      .insert({ name: "AI Reservation Org B", slug: `${TOKEN}-b` })
+      .insert({ status: "active", name: "AI Reservation Org B", slug: `${TOKEN}-b` })
       .select("id")
       .single();
     expect(b.error, b.error?.message).toBeNull();
@@ -782,7 +782,7 @@ describeIntegration("AI budget reservation · atomic ceiling on real Postgres", 
       const svc = db(serviceClient());
       const tmp = await svc
         .from("organizations")
-        .insert({ name: "AI Reservation Teardown", slug: `${TOKEN}-teardown` })
+        .insert({ status: "active", name: "AI Reservation Teardown", slug: `${TOKEN}-teardown` })
         .select("id")
         .single();
       expect(tmp.error, tmp.error?.message).toBeNull();

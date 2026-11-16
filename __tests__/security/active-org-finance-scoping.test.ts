@@ -212,23 +212,41 @@ describe("quotes actions — reads and writes pinned to the active org", () => {
   }
 
   it("updateQuote bails when the quote is not resolvable in the active org", () => {
-    // The line-item replacement below it is a DELETE keyed on quote_id, so
-    // proceeding past an unresolvable quote would wipe another org's lines.
+    // The replacement below it deletes the quote's line items, so proceeding
+    // past an unresolvable quote would wipe another org's lines. Since migration
+    // 20261325000000 the replacement is ONE atomic database function
+    // (replace_quote_content) rather than a hand-rolled DELETE + INSERT, so the
+    // guard must precede THAT call — and there must be no direct line-item
+    // statement left in the action to slip past it.
     const F = fn(ACTIONS, "updateQuote");
-    const guard = F.indexOf("if (!existing)");
-    const del = F.indexOf('from("quote_line_items")');
+    const guard = F.indexOf("!existing)");
+    const write = F.indexOf('"replace_quote_content"');
     expect(guard, "must refuse before the destructive replacement").toBeGreaterThan(-1);
-    expect(del).toBeGreaterThan(-1);
-    expect(guard).toBeLessThan(del);
+    expect(write).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(write);
+    expect(F).not.toMatch(/from\("quote_line_items"\)/);
+    // The resolve itself is pinned to the active org.
+    expect(F).toMatch(/from\("quotes"\)[\s\S]*?\.eq\("id", id\)[\s\S]*?\.eq\("org_id", ctx\.org\.id\)/);
   });
 
   it("updateQuote scopes the line-item delete and stamps lines from ctx, not a re-read row", () => {
     const F = fn(ACTIONS, "updateQuote");
-    expect(F).toMatch(/from\("quote_line_items"\)[\s\S]*?\.eq\("quote_id", id\)[\s\S]*?\.eq\("org_id", ctx\.org\.id\)/);
-    expect(F).toMatch(/org_id: ctx\.org\.id/);
+    // The action hands the function the ACTIVE org as its pin…
+    expect(F).toMatch(/"replace_quote_content"[\s\S]{0,80}?p_org_id: ctx\.org\.id/);
     // The retention-ledger shape from #456: copying a row's own org_id
     // faithfully writes into whichever org it belonged to.
     expect(F).not.toMatch(/org_id: parent\.org_id/);
+    expect(F).not.toMatch(/p_org_id: existing\.org_id/);
+    // …and the function resolves the quote ONLY inside that org, scopes the
+    // line-item DELETE to (quote, org), and stamps every inserted line from the
+    // pin — never from the row it read.
+    const SQL = src("supabase/migrations/20261325000000_quote_content_replace_atomic.sql");
+    expect(SQL).toMatch(/from public\.quotes\s+where id = p_quote_id and org_id = p_org_id\s+for update/);
+    expect(SQL).toMatch(/delete from public\.quote_line_items\s+where quote_id = p_quote_id and org_id = p_org_id/);
+    expect(SQL).toMatch(/insert into public\.quote_line_items[\s\S]*?select p_quote_id, p_org_id,/);
+    expect(SQL).not.toMatch(/v_quote\.org_id/);
+    expect(SQL).toMatch(/security invoker/);
+    expect(SQL).toMatch(/p_org_id not in \(select public\.current_org_ids\(\)\)/);
   });
 
   it("deleteQuote scopes the DELETE to match its org-scoped dependency guard", () => {
@@ -246,17 +264,65 @@ describe("quotes actions — reads and writes pinned to the active org", () => {
     // job and an invoice, and emailed it, in THAT org.
     expect(F).not.toMatch(/org_id: quote\.org_id/);
     expect(F).not.toMatch(/target_org: quote\.org_id/);
-    expect(F).toMatch(/target_org: ctx\.org\.id/);
     expect(F).toMatch(/org_id: ctx\.org\.id/);
+
+    // The job + invoice (and the number allocation) are no longer hand-rolled
+    // statements in this function: since migration 20261324000000 they are ONE
+    // atomic database function, reached through the shared helper. The invariant
+    // is unchanged and is pinned at every link of the new chain:
+    //
+    //   (1) every helper call in the OWNER path passes the ACTIVE org
+    //       (ctx.org.id) — never an org read off the quote row;
+    const calls = [...F.matchAll(/ensureJobAndInvoiceForAcceptedQuote\(\s*([^,]+),\s*([^,]+),/g)];
+    expect(calls.length, "first accept + re-accept heal").toBe(2);
+    for (const c of calls) {
+      expect(c[1]!.trim()).toBe("supabase"); // the tenant (RLS) client, not service-role
+      expect(c[2]!.trim()).toBe("ctx.org.id");
+    }
+    //   (2) the helper forwards exactly that org as the function's pin;
+    // (module-private, so sliced by hand: fn() resolves exported actions only)
+    const hStart = ACTIONS.indexOf("async function ensureJobAndInvoiceForAcceptedQuote(");
+    const hEnd = ACTIONS.indexOf("export async function acceptQuoteByToken(");
+    expect(hStart).toBeGreaterThan(-1);
+    expect(hEnd).toBeGreaterThan(hStart);
+    const H = ACTIONS.slice(hStart, hEnd);
+    expect(H).toMatch(/p_org_id: orgId/);
+    expect(H).not.toMatch(/p_org_id: quote\.org_id/);
+    //   (3) the function resolves the quote ONLY inside that org, and stamps the
+    //       job, the backlink, the invoice and the number allocation from the
+    //       pin — never from the row it read.
+    const SQL = src("supabase/migrations/20261324000000_quote_acceptance_artifacts_atomic.sql");
+    expect(SQL).toMatch(/from public\.quotes\s+where id = p_quote_id and org_id = p_org_id\s+for update/);
+    expect(SQL).toMatch(/insert into public\.jobs \(org_id,[^)]*\)\s*values \(p_org_id,/);
+    expect(SQL).toMatch(/insert into public\.invoices\s*\(org_id,[^)]*\)\s*values\s*\(p_org_id,/);
+    expect(SQL).toMatch(/next_invoice_number\(p_org_id\)/);
+    expect(SQL).not.toMatch(/v_quote\.org_id/);
+    //   (4) and it is SECURITY INVOKER with a membership fence, so it adds no
+    //       privilege over the hand-rolled statements it replaced.
+    expect(SQL).toMatch(/security invoker/);
+    expect(SQL).toMatch(/p_org_id not in \(select public\.current_org_ids\(\)\)/);
+    expect(SQL).toMatch(/errcode = '42501'/);
   });
 
   it("acceptQuoteAsOwner scopes the accepting UPDATE before anything downstream runs", () => {
     const F = fn(ACTIONS, "acceptQuoteAsOwner");
+    // The very first org scope (the pre-read) precedes every downstream step…
     const scope = F.indexOf('.eq("org_id", ctx.org.id)');
-    const job = F.indexOf('from("jobs")');
+    const firstStep = F.indexOf("ensureJobAndInvoiceForAcceptedQuote(");
     expect(scope).toBeGreaterThan(-1);
-    expect(job).toBeGreaterThan(-1);
-    expect(scope).toBeLessThan(job);
+    expect(firstStep).toBeGreaterThan(-1);
+    expect(scope).toBeLessThan(firstStep);
+    // …and the accepting UPDATE carries its own org scope, which precedes the
+    // job+invoice step that follows it (the step is the only thing that creates
+    // a job or an invoice — there is no from("jobs") left in this function).
+    const update = F.indexOf('status: "accepted"');
+    const updateScope = F.indexOf('.eq("org_id", ctx.org.id)', update);
+    const stepAfterUpdate = F.indexOf("ensureJobAndInvoiceForAcceptedQuote(", update);
+    expect(update).toBeGreaterThan(-1);
+    expect(updateScope).toBeGreaterThan(update);
+    expect(stepAfterUpdate).toBeGreaterThan(updateScope);
+    expect(F).not.toMatch(/from\("jobs"\)/);
+    expect(F).not.toMatch(/from\("invoices"\)/);
   });
 
   it("acceptQuoteAsOwner passes the active org into the auto-email", () => {

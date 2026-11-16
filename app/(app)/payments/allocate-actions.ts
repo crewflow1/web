@@ -8,7 +8,7 @@ import { recordAdminActivity } from "@/server/services/hq-audit";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { recordPaymentSchema } from "@/lib/payments/schema";
 import { computePaymentAllocation } from "@/lib/payments/allocation";
-import { type FormState, formError, formSuccess } from "@/lib/forms/state";
+import { type FormState, formError, formSuccess } from "@/lib/forms/state"; import { overPaymentMessage } from "@/lib/payments/over-payment";
 import { reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 
 /**
@@ -160,7 +160,7 @@ export async function recordAllocatedPayment(
     if (error?.message?.includes("over-allocated")) {
       return formError("That payment is already fully allocated. Refresh and try again.");
     }
-    return formError("Couldn't record the payment. Try again.");
+    return formError(overPaymentMessage(error) ?? "Couldn't record the payment. Try again.");
   }
 
   await recordAdminActivity({

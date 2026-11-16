@@ -32,7 +32,7 @@ let convB = ""; // receptionist_conversations in B
 let leadA = "";
 
 async function mkOrg(tag: string): Promise<string> {
-  const r = await svc().from("organizations").insert({ name: `CClink ${tag}`, slug: `${TOKEN}-${tag}` }).select("id").single();
+  const r = await svc().from("organizations").insert({ status: "active", name: `CClink ${tag}`, slug: `${TOKEN}-${tag}` }).select("id").single();
   expect(r.error, r.error?.message).toBeNull();
   return String(r.data.id);
 }

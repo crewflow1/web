@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { CreateCompanySubmit } from "./_submit";
 import { createOrg } from "./actions";
 import { requireUser } from "@/server/auth/session";
 
@@ -108,12 +109,7 @@ export default async function CompanyPage({
           </span>
         </label>
 
-        <button
-          type="submit"
-          className="w-full rounded-md bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
-        >
-          Continue →
-        </button>
+        <CreateCompanySubmit />
       </form>
     </div>
   );

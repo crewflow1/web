@@ -1,4 +1,5 @@
-import { acknowledgeSafetyDocument } from "./signoff-actions";
+import { acknowledgeSafetyDocumentState } from "./_signoff-state-action";
+import { StateForm } from "@/components/forms/StateForm";
 import { SignaturePad } from "@/app/_components/signature-pad";
 import type { PriorSignoff } from "./_signoff-data";
 import {
@@ -145,7 +146,7 @@ export function SignoffPanel({
           <span aria-hidden>✓ </span>You acknowledged this on {mine.acknowledged_at.slice(0, 10)}.
         </p>
       ) : (
-        <form action={acknowledgeSafetyDocument} className="mt-4 space-y-3 border-t border-slate-100 pt-4">
+        <StateForm action={acknowledgeSafetyDocumentState} className="mt-4 space-y-3 border-t border-slate-100 pt-4">
           <input type="hidden" name="subjectType" value={subjectType} />
           <input type="hidden" name="subjectId" value={subjectId} />
           <input type="hidden" name="subjectVersion" value={reference} />
@@ -171,7 +172,7 @@ export function SignoffPanel({
           >
             I have read and understood — sign
           </button>
-        </form>
+        </StateForm>
       )}
     </section>
   );

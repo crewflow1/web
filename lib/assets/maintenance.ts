@@ -175,8 +175,10 @@ export function downtimeHours(start: string | null, end: string | null): number 
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────
+// FormData.get() returns null for a field the form did not render (e.g. no supplier select in a
+// company without suppliers); treat that exactly like a blank value, or an optional field rejects it.
 const blankToUndefined = (v: unknown) =>
-  typeof v === "string" && v.trim() === "" ? undefined : v;
+  v === null || (typeof v === "string" && v.trim() === "") ? undefined : v;
 const optText = (max: number) =>
   z.preprocess(blankToUndefined, z.string().trim().max(max).optional());
 const optUuid = z.preprocess(blankToUndefined, z.string().uuid().optional());

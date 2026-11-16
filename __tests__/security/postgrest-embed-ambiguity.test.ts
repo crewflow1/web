@@ -276,6 +276,11 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   // embed must name its FK constraint; test 2 enforces it.
   "inspection_witness_invitations → users",
   "invoice_payments → invoices",
+  // Same-org composite FK added ALONGSIDE the bare one (20261301000000, ST-03).
+  // Reviewed 2026-11-14: nothing embeds invoices(...) ↔ invoice_reminders(...)
+  // (grep of app/ lib/ server/); the reminder cron selects scalar columns only.
+  // Any future embed must name its FK constraint; test 2 enforces it.
+  "invoice_reminders → invoices",
   // Job checklists (P3, 20261132000000): created_by + done_by → users. Reviewed
   // 2026-08-15: the only reader (app/(app)/jobs/[id]/_job-checklist.tsx) selects
   // scalar columns only and never embeds users(...). Two FKs is inherent — who
@@ -345,6 +350,11 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   // embed must name its FK constraint; test 2 enforces it.
   "non_conformance_reports → users",
   "permits_to_work → users",
+  // Same-org composite FK added ALONGSIDE the bare one (20261301000000, ST-01).
+  // Reviewed 2026-11-14: every reader of quote_line_items filters by quote_id and
+  // selects scalar columns; nothing embeds quotes(...) ↔ quote_line_items(...).
+  // Any future embed must name its FK constraint; test 2 enforces it.
+  "quote_line_items → quotes",
   "risk_assessments → users",
   "rota_entries → users",
   // site_inductions: user_id (the inductee) + created_by (the supervisor who
@@ -369,6 +379,12 @@ const REVIEWED_AMBIGUOUS_PAIRS = [
   // embed, so no query on this table is ambiguous (asserted in stocktake.test.ts).
   "stocktake_sessions → users",
   "supplier_payments → users",
+  // Same-org composite FK added ALONGSIDE the bare one (20261301000000, ST-06).
+  // Reviewed 2026-11-14: the ONE embed across this pair
+  // (app/customer-portal/[token]/messages/page.tsx) already carries the explicit
+  // hint support_messages!support_messages_ticket_id_fkey — which is why the bare
+  // FK was kept rather than replaced.
+  "support_messages → support_tickets",
   "support_tickets → users",
   // variation_requests (G2, 20261221000000): requested_by (the staff member who
   // asked) + reviewed_by (the admin who decided) both → users. Reviewed

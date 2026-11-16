@@ -40,7 +40,7 @@ const PASS_AT = "2026-02-01T00:00:00.000Z"; // later than FAIL_AT → clears the
 
 async function mkOrg(slug: string): Promise<string> {
   const { data, error } = await db(serviceClient())
-    .from("organizations").insert({ name: `Safety ${slug}`, slug: `${TAG}-${slug}` }).select("id").single();
+    .from("organizations").insert({ status: "active", name: `Safety ${slug}`, slug: `${TAG}-${slug}` }).select("id").single();
   expect(error, error?.message).toBeNull();
   return String(data?.id ?? "");
 }

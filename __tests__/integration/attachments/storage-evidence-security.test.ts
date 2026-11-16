@@ -43,8 +43,8 @@ describeIntegration("Storage evidence security (S0/S1/S2, real Postgres)", () =>
   }
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "SEC A", slug: `${T}-a` }).select("id").single()).data?.id ?? "");
-    orgB = String((await svc().from("organizations").insert({ name: "SEC B", slug: `${T}-b` }).select("id").single()).data?.id ?? "");
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "SEC A", slug: `${T}-a` }).select("id").single()).data?.id ?? "");
+    orgB = String((await svc().from("organizations").insert({ status: "active", name: "SEC B", slug: `${T}-b` }).select("id").single()).data?.id ?? "");
     jobA = String((await svc().from("jobs").insert({ org_id: orgA, status: "new" }).select("id").single()).data?.id ?? "");
     if (!orgA || !orgB || !jobA) throw new Error("fixture setup failed");
     ({ id: memberId, token: memberTok } = await mkMember("staff", "mem"));
@@ -72,6 +72,9 @@ describeIntegration("Storage evidence security (S0/S1/S2, real Postgres)", () =>
     const ok = await member().from("tenant_attachments").insert({
       org_id: orgA, target_table: "jobs", target_id: jobA, filename: "ok.pdf",
       storage_path: `${orgA}/jobs/${jobA}/${T}-ok.pdf`, mime_type: "application/pdf", size_bytes: 3, content_hash: HASH_A,
+      // As the app writes it (server/services/tenant-attachments.ts): the uploader is recorded, which is
+      // also what lets the uploader read the row back (20261354000000 — attachments follow record visibility).
+      uploaded_by: memberId,
     }).select("id").single();
     expect(ok.error, ok.error?.message).toBeNull();
   });

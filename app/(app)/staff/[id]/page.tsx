@@ -1,13 +1,13 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { ButtonLink } from "@/components/ui";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
+import { readMemberPrivateProfiles } from "@/server/services/private-columns";
 import { PermissionEditor } from "./_permission-editor";
 import {
   updateStaffProfile,
-  updateStaffRole,
   removeStaff,
   upsertHolidayEntitlementAction,
   upsertPensionEnrolmentAction,
@@ -17,6 +17,8 @@ import {
 } from "../actions";
 import { STAFF_ROLES } from "@/lib/staff/schema";
 import { StaffProfileForm } from "./_profile-form";
+import { StaffRoleForm } from "./_role-form";
+import { updateStaffRoleState } from "./_role-action";
 import { HolidayEntitlementForm } from "./_holiday-form";
 import { PensionEnrolmentForm } from "./_pension-form";
 import { PayrollTaxProfileForm } from "./_payroll-tax-form";
@@ -55,7 +57,7 @@ export default async function StaffDetailPage({
 }) {
   const { id } = await params;
   const sp = await searchParams;
-  const { ctx } = await requireOrgContext();
+  const { ctx, user: viewer } = await requireOrgContext();
   const supabase = await createClient();
 
   // (Read deleted upstream — #480's loud-read guard here is obsolete, not lost.)
@@ -64,6 +66,10 @@ export default async function StaffDetailPage({
   // errors in any org with ≥2 members.
   const isAdmin =
     ctx.membership.role === "owner" || ctx.membership.role === "admin";
+  // LEAST PRIVILEGE (decision S-2): a member may open their OWN profile; a
+  // colleague's profile (phone, employment type, start date, performance) is
+  // owner/admin only. Same treatment as every other management page.
+  if (!isAdmin && viewer.id !== id) redirect("/dashboard?error=forbidden");
   // Prefill the Add-qualification form from a certificate/CSCS-card import
   // (admin-only, mirroring addStaffQualification's requireAdmin).
   const qualPrefill =
@@ -75,7 +81,7 @@ export default async function StaffDetailPage({
     .select(
       `
         role, user_id,
-        user:users ( id, full_name, email, phone, employment_type, start_date )
+        user:users ( id, full_name, email )
       `,
     )
     .eq("org_id", ctx.org.id)
@@ -85,14 +91,19 @@ export default async function StaffDetailPage({
 
   if (!row) notFound();
 
-  const user = row.user as {
-    id: string;
-    full_name: string | null;
-    email: string;
-    phone: string | null;
-    employment_type: string | null;
-    start_date: string | null;
-  } | null;
+  // phone / employment_type / start_date are not Data-API readable (20261342).
+  // The gate above admits only an owner/admin or the member themselves, which is
+  // exactly who readMemberPrivateProfiles serves.
+  const priv = (await readMemberPrivateProfiles(ctx, viewer, [id])).get(id);
+  const userBase = row.user as { id: string; full_name: string | null; email: string } | null;
+  const user = userBase
+    ? {
+        ...userBase,
+        phone: priv?.phone ?? null,
+        employment_type: priv?.employment_type ?? null,
+        start_date: priv?.start_date ?? null,
+      }
+    : null;
 
   // Owner-facing admin permission editor (R3 UI). ONLY the owner may view/set an
   // admin's capability grants (the hard rule — an admin can never reach this, and
@@ -514,29 +525,11 @@ export default async function StaffDetailPage({
       {isAdmin ? (
         <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
           <h2 className="text-base font-semibold text-slate-900">Role</h2>
-          <form action={updateStaffRole.bind(null, id)} className="mt-3 flex items-end gap-2">
-            <label className="block text-xs text-slate-600">
-              Role
-              <select
-                name="role"
-                defaultValue={row.role}
-                className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
-              >
-                {STAFF_ROLES.filter((r) => r !== "owner").map((r) => (
-                  <option key={r} value={r}>{r}</option>
-                ))}
-                {row.role === "owner" ? <option value="owner">owner</option> : null}
-              </select>
-            </label>
-            <button
-              type="submit"
-              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
-              disabled={row.role === "owner"}
-              title={row.role === "owner" ? "Owner role can't be changed here" : "Update role"}
-            >
-              Update
-            </button>
-          </form>
+          <StaffRoleForm
+            action={updateStaffRoleState.bind(null, id)}
+            roles={STAFF_ROLES}
+            current={row.role}
+          />
         </section>
       ) : null}
 

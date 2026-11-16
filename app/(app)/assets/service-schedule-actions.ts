@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { z } from "zod";
 import { SCHEDULE_CADENCES, cadenceToInterval } from "@/lib/assets/inspection-schedule";
@@ -12,12 +13,12 @@ const createServiceScheduleSchema = z
   .object({
     asset_id: z.string().uuid(),
     maintenance_type: z.enum(["preventive", "service", "calibration"] as const),
-    title: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().trim().max(160).optional()),
+    title: z.preprocess((v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v), z.string().trim().max(160).optional()),
     cadence: z.enum(SCHEDULE_CADENCES),
-    custom_days: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.coerce.number().int().min(1).max(3660).optional()),
+    custom_days: z.preprocess((v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v), z.coerce.number().int().min(1).max(3660).optional()),
     next_due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a due date"),
-    lead_time_days: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.coerce.number().int().min(0).max(365).default(14)),
-    supplier_id: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().uuid().optional()),
+    lead_time_days: z.preprocess((v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v), z.coerce.number().int().min(0).max(365).default(14)),
+    supplier_id: z.preprocess((v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v), z.string().uuid().optional()),
   })
   .superRefine((v, ctx) => {
     if (v.cadence === "custom_days" && v.custom_days == null) {
@@ -73,6 +74,7 @@ function isAdmin(role: string): boolean {
 
 export async function createServiceSchedule(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "create");
   const assetId = String(formData.get("asset_id") ?? "");
   if (!isAdmin(ctx.membership.role)) return formError("Only an owner or admin can do that.");
 
@@ -126,6 +128,7 @@ export async function createServiceSchedule(_prev: FormState, formData: FormData
 
 export async function toggleServiceSchedule(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "edit");
   const assetId = String(formData.get("asset_id") ?? "");
   const scheduleId = String(formData.get("schedule_id") ?? "");
   const nextActive = String(formData.get("next_active") ?? "") === "true";
@@ -156,6 +159,7 @@ export async function toggleServiceSchedule(_prev: FormState, formData: FormData
 
 export async function deleteServiceSchedule(_prev: FormState, formData: FormData): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("assets", "delete");
   const assetId = String(formData.get("asset_id") ?? "");
   const scheduleId = String(formData.get("schedule_id") ?? "");
   if (!isAdmin(ctx.membership.role)) return formError("Only an owner or admin can do that.");

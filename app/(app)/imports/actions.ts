@@ -9,7 +9,7 @@ import { sendStaffInvite } from "@/server/services/staff-invite";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure, reportReadFailure } from "@/lib/supabase/read-failure";
 import type { Json } from "@/lib/supabase/types";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session"; import { assertOrgWritable } from "@/server/auth/capabilities";
 import {
   parseCsvFile,
   parseXlsxBuffer,
@@ -64,7 +64,7 @@ export async function createImport(
   _prevState: FormState<Record<string, unknown>>,
   formData: FormData,
 ): Promise<FormState<Record<string, unknown>>> {
-  const { ctx, user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext(); assertOrgWritable(ctx);
   if (!isAdmin(ctx.membership.role)) {
     return formError("Only admins/owners can create imports.");
   }
@@ -99,7 +99,7 @@ export async function createImport(
 export async function uploadImportFiles(importId: string, formData: FormData) {
   // `user` is read for AI budget attribution on the OCR path below — a governed
   // invocation records WHO triggered the spend, not just which org paid for it.
-  const { ctx, user } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext(); assertOrgWritable(ctx);
   if (!isAdmin(ctx.membership.role)) redirect(`/imports/${importId}?error=forbidden`);
   if (!uuid.safeParse(importId).success) redirect("/imports?error=bad_id");
 
@@ -380,7 +380,7 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
  * it can only ever read the org's OWN connected book.
  */
 export async function importFromConnector(importId: string, formData: FormData) {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); assertOrgWritable(ctx);
   if (!isAdmin(ctx.membership.role)) redirect(`/imports/${importId}?error=forbidden`);
   if (!uuid.safeParse(importId).success) redirect("/imports?error=bad_id");
 
@@ -648,7 +648,7 @@ async function annotateDuplicates(importId: string, orgId: string): Promise<bool
  * their target tables, writes audit rows for rollback.
  */
 export async function commitImport(importId: string) {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); assertOrgWritable(ctx);
   if (!isAdmin(ctx.membership.role)) redirect(`/imports/${importId}?error=forbidden`);
   if (!uuid.safeParse(importId).success) redirect("/imports?error=bad_id");
 
@@ -798,7 +798,7 @@ export async function commitImport(importId: string) {
  * target row + marks the session 'rolled_back'.
  */
 export async function rollbackImport(importId: string) {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); assertOrgWritable(ctx);
   if (!isAdmin(ctx.membership.role)) redirect(`/imports/${importId}?error=forbidden`);
   if (!uuid.safeParse(importId).success) redirect("/imports?error=bad_id");
 
@@ -895,7 +895,7 @@ export async function rollbackImport(importId: string) {
  * creating a duplicate. Used on the preview screen.
  */
 export async function ignoreDuplicateRow(rowId: string) {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); assertOrgWritable(ctx);
   if (!isAdmin(ctx.membership.role)) redirect("/imports?error=forbidden");
   if (!uuid.safeParse(rowId).success) redirect("/imports?error=bad_id");
   const supabase = await createClient();
@@ -950,7 +950,7 @@ const REVIEWABLE_ENTITIES: EntityType[] = [
  *   - skip    → exclude the row from this import (`skipped`).
  */
 export async function resolveReviewRow(rowId: string, formData: FormData) {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); assertOrgWritable(ctx);
   if (!isAdmin(ctx.membership.role)) redirect("/imports?error=forbidden");
   if (!uuid.safeParse(rowId).success) redirect("/imports?error=bad_id");
 
@@ -1071,7 +1071,7 @@ export async function overrideSheetEntity(
   fromEntity: string,
   formData: FormData,
 ) {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); assertOrgWritable(ctx);
   if (!isAdmin(ctx.membership.role)) redirect(`/imports/${importId}?error=forbidden`);
   if (!uuid.safeParse(importId).success) redirect("/imports?error=bad_id");
 
@@ -1177,7 +1177,7 @@ export async function overrideColumnMapping(
   entityArg: string,
   formData: FormData,
 ) {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); assertOrgWritable(ctx);
   if (!isAdmin(ctx.membership.role)) redirect(`/imports/${importId}?error=forbidden`);
   if (!uuid.safeParse(importId).success) redirect("/imports?error=bad_id");
 
@@ -1272,7 +1272,7 @@ export async function overrideColumnMapping(
  * offering them.
  */
 export async function sendStaffInvitesFromImport(importId: string) {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); assertOrgWritable(ctx);
   if (!isAdmin(ctx.membership.role)) redirect(`/imports/${importId}?error=forbidden`);
   if (!uuid.safeParse(importId).success) redirect("/imports?error=bad_id");
 

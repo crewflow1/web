@@ -72,7 +72,7 @@ export const approvalActionSchema = z.object({
   action: z.enum(APPROVAL_ACTIONS),
   // Required at app-layer for reject + request_changes; optional for approve.
   comment: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(5000).optional(),
   ),
 });
@@ -81,12 +81,12 @@ export const QUOTE_VAT_RATES = [0, 5, 20] as const;
 
 const optionalString = (max: number) =>
   z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(max).optional(),
   );
 
 const optionalDate = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
   z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
@@ -94,7 +94,7 @@ const optionalDate = z.preprocess(
 );
 
 const optionalUuid = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
   z.string().uuid().optional(),
 );
 

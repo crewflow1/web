@@ -126,7 +126,7 @@ describeIntegration("Slice 1.5 PR1 privilege holes + hygiene (real Postgres)", (
 
   beforeAll(async () => {
     orgA = String(
-      (await svc().from("organizations").insert({ name: "S15 A", slug: `${T}-a` }).select("id").single()).data?.id,
+      (await svc().from("organizations").insert({ status: "active", name: "S15 A", slug: `${T}-a` }).select("id").single()).data?.id,
     );
     admin = await mkMember(orgA, "admin", "adm");
     // A partner OWNED by orgA so the owner-insert RLS passes and the column

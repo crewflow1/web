@@ -37,8 +37,8 @@ describeIntegration("Toolbox Talks M1 · DB invariants (service role, 20261025)"
   const svc = () => db(serviceClient());
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "TBT A", slug: `${T}-a` }).select("id").single()).data?.id ?? "");
-    orgB = String((await svc().from("organizations").insert({ name: "TBT B", slug: `${T}-b` }).select("id").single()).data?.id ?? "");
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "TBT A", slug: `${T}-a` }).select("id").single()).data?.id ?? "");
+    orgB = String((await svc().from("organizations").insert({ status: "active", name: "TBT B", slug: `${T}-b` }).select("id").single()).data?.id ?? "");
     jobA = String((await svc().from("jobs").insert({ org_id: orgA, status: "new" }).select("id").single()).data?.id ?? "");
     jobB = String((await svc().from("jobs").insert({ org_id: orgB, status: "new" }).select("id").single()).data?.id ?? "");
     const ra = await svc().from("risk_assessments").insert({ org_id: orgB, title: "B RA", activity: "x" }).select("id").single();
@@ -145,8 +145,8 @@ describeIntegration("Toolbox Talks M1 · issue-path hardening (real member JWT)"
   const me = () => db(userClient(token));
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "TBT-M A", slug: `${T}-ma` }).select("id").single()).data?.id ?? "");
-    orgB = String((await svc().from("organizations").insert({ name: "TBT-M B", slug: `${T}-mb` }).select("id").single()).data?.id ?? "");
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "TBT-M A", slug: `${T}-ma` }).select("id").single()).data?.id ?? "");
+    orgB = String((await svc().from("organizations").insert({ status: "active", name: "TBT-M B", slug: `${T}-mb` }).select("id").single()).data?.id ?? "");
     const created = await serviceClient().auth.admin.createUser({ email: `${T}-m@x.test`, password: `Pw-${T}`, email_confirm: true });
     if (created.error) throw new Error(`createUser: ${created.error.message}`);
     uid = created.data.user?.id ?? "";
@@ -277,7 +277,7 @@ describeIntegration("Toolbox Talks · post-audit authz + evidence integrity (rea
   }
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "TBT-AZ", slug: `${T}-az` }).select("id").single()).data?.id ?? "");
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "TBT-AZ", slug: `${T}-az` }).select("id").single()).data?.id ?? "");
     if (!orgA) throw new Error("authz fixture: org insert failed");
     ({ id: staffId, token: staffTok } = await mkMember("staff", "az-staff"));
     ({ id: adminId, token: adminTok } = await mkMember("admin", "az-admin"));

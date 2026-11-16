@@ -170,8 +170,8 @@ describeIntegration("schedule recommendations · real resolutions + roster org i
   let leaveSam = "";
 
   beforeAll(async () => {
-    orgA = await insId(svc, "organizations", { name: "Rec A", slug: `${TOKEN}-a` });
-    orgB = await insId(svc, "organizations", { name: "Rec B", slug: `${TOKEN}-b` });
+    orgA = await insId(svc, "organizations", { status: "active", name: "Rec A", slug: `${TOKEN}-a` });
+    orgB = await insId(svc, "organizations", { status: "active", name: "Rec B", slug: `${TOKEN}-b` });
 
     zoe = await mkUser("zoe", [orgA, orgB], `${TOKEN} Zoe Viewer`);
     // Scheduling is a MANAGEMENT read: the conflict engine must see the whole

@@ -3,6 +3,7 @@ import { renderToBuffer } from "@react-pdf/renderer";
 import { createClient } from "@/lib/supabase/server";
 import type { SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { AssetLabelPdf, type AssetLabelInput } from "@/lib/pdf/asset-label-pdf";
 import { safeLabelFilename, scanPath } from "@/lib/assets/qr";
 
@@ -37,6 +38,9 @@ type AssetRow = {
  * the asset isn't in the caller's active org or has no active identity yet.
  */
 export async function GET(request: NextRequest, { params }: Ctx) {
+  // Least privilege: the asset register is an `assets:view` surface (staff denied).
+  const denied = await requireCapabilityApi("assets", "view");
+  if (denied instanceof Response) return denied;
   const { ctx } = await requireOrgContext();
   const { id } = await params;
   const supabase = await createClient();

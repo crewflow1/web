@@ -66,7 +66,7 @@ describeIntegration("missed-call text-back · terminal trigger semantics", () =>
     const svc = db(serviceClient());
     const o = await svc
       .from("organizations")
-      .insert({ name: "Missed Call Org", slug: `${TOKEN}-org` })
+      .insert({ status: "active", name: "Missed Call Org", slug: `${TOKEN}-org` })
       .select("id")
       .single();
     expect(o.error, o.error?.message).toBeNull();

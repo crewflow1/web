@@ -17,6 +17,8 @@ import { OrgSwitcher } from "./_components/org-switcher";
 import { MobileNav } from "./_components/mobile-nav";
 import { NotificationsBell, type Notification } from "./_components/notifications";
 import { SearchPalette } from "./_components/search-palette";
+import { HeldCompanyBanner } from "./_components/held-company-banner";
+import { CommitNudge } from "./_components/commit-nudge";
 
 // Authenticated product — never index (defence in depth on robots.txt + auth).
 export const metadata = NOINDEX_METADATA;
@@ -129,6 +131,8 @@ export default async function AppLayout({
             width so wide tables scroll within their own container instead of
             pushing the whole page sideways (flex children default to min-w:auto). */}
         <main className="container flex-1 min-w-0 py-6 pb-24 sm:py-10 md:pb-10">
+          <HeldCompanyBanner status={ctx.org.status} />
+          <CommitNudge />
           {children}
         </main>
       </div>

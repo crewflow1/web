@@ -64,7 +64,7 @@ const idSchema = z.string().uuid();
 
 export async function uploadExpenseReceipt(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
-  await requireCapabilityFor(ctx, user, "expenses", "create"); // R4 (defence-in-depth vs direct action POST)
+  await requireCapabilityFor(ctx, user, "job_costs_field", "create"); // R4 (defence-in-depth vs direct action POST)
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) {
     redirect("/expenses/new?error=no_file");
@@ -129,7 +129,7 @@ export async function uploadExpenseReceipt(formData: FormData): Promise<void> {
   });
 
   revalidatePath("/expenses");
-  redirect(`/expenses/${created.id}`);
+  redirect((await (await import("@/server/auth/capabilities")).hasCapability(ctx, user, "expenses", "view")) ? `/expenses/${created.id}` : "/expenses/new?saved=submitted"); // D-17: the review screen is management-only; a field submitter gets a confirmation
 }
 
 export async function approveExpenseDraftAction(formData: FormData): Promise<void> {

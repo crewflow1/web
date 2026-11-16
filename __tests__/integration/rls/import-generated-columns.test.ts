@@ -77,7 +77,7 @@ describeIntegration("imports · generated columns are never written", () => {
   beforeAll(async () => {
     const o = await svc()
       .from("organizations")
-      .insert({ name: "Import VAT Co", slug: TOKEN })
+      .insert({ status: "active", name: "Import VAT Co", slug: TOKEN })
       .select("id")
       .single();
     expect(o.error, JSON.stringify(o.error)).toBeNull();

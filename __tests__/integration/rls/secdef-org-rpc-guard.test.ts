@@ -78,6 +78,14 @@ const ALLOWLIST: ReadonlyMap<string, string> = new Map<string, string>([
     "membership primitive: checks the CALLER's own membership via auth.uid(); returns false for anon; leaks nothing.",
   ],
   [
+    "org_is_writable",
+    "D-17 held-org predicate: true only when the CALLER (auth.uid()) is a member of p_org AND p_org is active/trial; false for anon and for any non-member, so it cannot probe another tenant. Boolean only; EXECUTE-able because the RLS policies invoke it as the querying role.",
+  ],
+  [
+    "has_org_capability",
+    "D-17 capability predicate (DB mirror of canWith): requires the CALLER's own membership of p_org; false for anon / non-members; never raises, never returns row data. EXECUTE-able because the RLS policies and the stock-ledger trigger invoke it as the querying role.",
+  ],
+  [
     "is_org_admin",
     "admin membership primitive: checks the CALLER's own owner/admin membership via auth.uid() (with impersonation scoping); returns false for anon; leaks nothing.",
   ],
@@ -409,7 +417,7 @@ describeIntegration(
 
     beforeAll(async () => {
       const org = await table(serviceClient(), "organizations")
-        .insert({ name: `Secdef State ${T}`, slug: T })
+        .insert({ status: "active", name: `Secdef State ${T}`, slug: T })
         .select("id")
         .single();
       if (org.error) throw new Error(org.error.message);
