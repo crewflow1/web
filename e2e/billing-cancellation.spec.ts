@@ -131,9 +131,12 @@ test("owner: the confirmation step is honest, and 'Keep subscription' changes no
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole("heading", { name: `Cancel CrewFlow for ${ORG_NAME}?` })).toBeVisible();
     // What stops, payments, data — stated before anything happens.
-    await expect(dialog).toContainText("Your subscription ends immediately");
+    // No card subscription on this workspace → nothing left to renew → the immediate path,
+    // stated as such. (A paying company is cancelled at the end of its paid period — proven
+    // against Stripe test mode in e2e/stripe-test-lifecycle.spec.ts.)
+    await expect(dialog).toContainText("There's no paid period left to run, so the workspace closes as soon as you confirm");
     await expect(dialog).toContainText("nothing further to charge");
-    await expect(dialog).toContainText("Your data isn't deleted when you cancel");
+    await expect(dialog).toContainText("Cancelling never deletes your data");
     await expect(dialog.getByRole("link", { name: "Download an export now" })).toBeVisible();
     // The reason is optional and labelled so.
     await expect(dialog.getByLabel(/Why are you cancelling\?\s*Optional/)).toBeVisible();
