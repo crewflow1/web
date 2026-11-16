@@ -19,7 +19,7 @@ column ACLs 20261340–46, file-visibility 354).
 | Fix | Re-check on current main | Result |
 |---|---|---|
 | M-1 clock-in GPS | Every `time_entries` writer in `app/ server/ lib/` (grep `from("time_entries")`): the only insert is still `clockIn` in `app/(app)/me/actions.ts`; D-17 (`20261346`) changes operations-table policies only and adds no clock-in path or location column; no `navigator.geolocation` / `getCurrentPosition` anywhere | VERIFIED — no re-introduction. `__tests__/security/clock-in-no-location.test.ts` 3/3 |
-| M-2 avatar copy | No `avatar_url` write in `app/ server/ lib/` (only comments); `20261342` keeps `avatar_url` in the colleague-readable column grant, so the staged drop must also edit that grant list | VERIFIED. `no-avatar-collection.test.ts` 3/3 |
+| M-2 avatar copy | No `avatar_url` write in `app/ server/ lib/` (only comments); `20261342` lists `avatar_url` in the colleague-readable column grant (dropping the column drops its privileges automatically; see the staged-SQL README for the follow-up) | VERIFIED. `no-avatar-collection.test.ts` 3/3 |
 | M-3 rate-limit keys | `rate_limit_hit` is called only from `checkPersistent` (`lib/security/rate-limit.ts`), which digests the key; no new direct caller | VERIFIED. `rate-limit.test.ts` 18/18 |
 | M-4 Sentry free text | Not on this branch — owned by the SECURITY workstream (see §1) | — |
 
