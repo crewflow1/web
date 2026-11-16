@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { type FormState, formError, formSuccess } from "@/lib/forms/state";
 
@@ -47,19 +48,19 @@ const receiveLineSchema = z.object({
 
 const receiveSchema = z.object({
   delivery_date: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").optional(),
   ),
   delivery_note_reference: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(120).optional(),
   ),
   delivery_location: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(200).optional(),
   ),
   notes: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(2000).optional(),
   ),
   lines: z.array(receiveLineSchema).min(1, "Enter what arrived on at least one line"),
@@ -104,6 +105,7 @@ export async function receiveDelivery(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("goods_receiving_field", "edit");
   if (!idSchema.safeParse(purchaseOrderId).success) {
     return formError("Invalid purchase order.");
   }
@@ -171,6 +173,7 @@ export async function voidDelivery(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("purchase_orders", "edit");
   if (!idSchema.safeParse(grnId).success) return formError("Invalid delivery.");
 
   const reason = String(formData.get("void_reason") ?? "").trim();

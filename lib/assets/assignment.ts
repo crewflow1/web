@@ -129,7 +129,7 @@ export function friendlyAssignmentError(
 }
 
 const blankToUndefined = (v: unknown) =>
-  typeof v === "string" && v.trim() === "" ? undefined : v;
+  v === null || (typeof v === "string" && v.trim() === "") ? undefined : v;
 const optText = (max: number) =>
   z.preprocess(blankToUndefined, z.string().trim().max(max).optional());
 const optUuid = z.preprocess(blankToUndefined, z.string().uuid().optional());

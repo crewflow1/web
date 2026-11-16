@@ -112,7 +112,7 @@ describeIntegration("stripe webhook · in-flight concurrency claim", () => {
     const svc = db(serviceClient());
     const org = await svc
       .from("organizations")
-      .insert({ name: "Stripe Claim Org", slug: `${TOKEN}-org` })
+      .insert({ status: "active", name: "Stripe Claim Org", slug: `${TOKEN}-org` })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

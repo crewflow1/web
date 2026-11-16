@@ -48,7 +48,7 @@ const CALLS: { fn: string; args: (org: string) => Record<string, unknown> }[] = 
 
 describeIntegration("rls · report RPCs admin-only (20261253 · R5 Phase 4)", () => {
   beforeAll(async () => {
-    orgA = await insId("organizations", { name: `RPT ${TOKEN}`, slug: `${TOKEN}-a` });
+    orgA = await insId("organizations", { status: "active", name: `RPT ${TOKEN}`, slug: `${TOKEN}-a` });
     for (const who of ["admin", "staff"]) {
       const u = await mkUser(who);
       uid[who] = u.id; tok[who] = u.token;

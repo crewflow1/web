@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "@/lib/supabase/admin"; import { loadNonActiveOrgIds } from "@/server/services/org-lifecycle";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { computeNextRun, isValidCron } from "@/lib/automation/cron";
 import { AUTOMATION_RULES } from "@/lib/automation/rules";
@@ -250,7 +250,7 @@ export async function drainDueSchedules(
     return { scanned: 0, fired: 0, skipped: 0, results: [] };
   }
 
-  const rows = (due.data ?? []) as unknown as AutomationScheduleRow[];
+  const heldOrgs = await loadNonActiveOrgIds(); const rows = ((due.data ?? []) as unknown as AutomationScheduleRow[]).filter((r) => !heldOrgs.has(r.org_id)); // D-17: a company that is not active fires no automation schedule
   const results: Array<DrainOutcome["results"][number]> = [];
   let fired = 0;
   let skipped = 0;

@@ -199,8 +199,8 @@ describeIntegration("three-way bill matching · active-org isolation (RLS)", () 
   let supB = "";
 
   beforeAll(async () => {
-    orgA = await insId(svc, "organizations", { name: "3WM A", slug: `${TOKEN}-a` });
-    orgB = await insId(svc, "organizations", { name: "3WM B", slug: `${TOKEN}-b` });
+    orgA = await insId(svc, "organizations", { status: "active", name: "3WM A", slug: `${TOKEN}-a` });
+    orgB = await insId(svc, "organizations", { status: "active", name: "3WM B", slug: `${TOKEN}-b` });
     dual = await mkUser("dual", [orgA, orgB]);
     supA = await insId(svc, "suppliers", { org_id: orgA, name: `${TOKEN} Merchant A` });
     supB = await insId(svc, "suppliers", { org_id: orgB, name: `${TOKEN} Merchant B` });

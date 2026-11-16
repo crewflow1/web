@@ -1,6 +1,6 @@
 "use server";
 
-import { redirect } from "next/navigation";
+import { redirect } from "next/navigation"; import { gatePortalWrite } from "@/server/services/org-lifecycle";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadCustomerByPortalToken } from "./_helpers";
@@ -80,7 +80,7 @@ export async function uploadCustomerFile(formData: FormData): Promise<void> {
     backTo(token, "bad_file_type");
   }
 
-  const loaded = await loadCustomerByPortalToken(token);
+  const loaded = await gatePortalWrite(await loadCustomerByPortalToken(token), "operational");
   if (!loaded) {
     backTo(token, "invalid_token");
   }

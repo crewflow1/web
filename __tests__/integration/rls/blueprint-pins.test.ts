@@ -56,8 +56,8 @@ describeIntegration("blueprint_pins · DB invariants", () => {
   let outsider = { id: "", token: "" };
 
   beforeAll(async () => {
-    orgA = await insId(svc, "organizations", { name: "Pin A", slug: `${TOKEN}-a` });
-    orgB = await insId(svc, "organizations", { name: "Pin B", slug: `${TOKEN}-b` });
+    orgA = await insId(svc, "organizations", { status: "active", name: "Pin A", slug: `${TOKEN}-a` });
+    orgB = await insId(svc, "organizations", { status: "active", name: "Pin B", slug: `${TOKEN}-b` });
     jobA = await insId(svc, "jobs", { org_id: orgA, status: "in-progress" });
     jobA2 = await insId(svc, "jobs", { org_id: orgA, status: "in-progress" });
     jobB = await insId(svc, "jobs", { org_id: orgB, status: "in-progress" });

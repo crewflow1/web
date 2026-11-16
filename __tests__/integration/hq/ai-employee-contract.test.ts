@@ -125,7 +125,7 @@ describeIntegration("AI employee contract fields + roster completion 2", () => {
     const svc = db(serviceClient());
     const org = await svc
       .from("organizations")
-      .insert({ name: "AI employee contract org", slug: `${TOKEN}-org` })
+      .insert({ status: "active", name: "AI employee contract org", slug: `${TOKEN}-org` })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

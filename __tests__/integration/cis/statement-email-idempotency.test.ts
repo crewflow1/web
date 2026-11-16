@@ -112,7 +112,7 @@ describeIntegration("CIS statement-email idempotency (real Postgres)", () => {
   async function makeOrg(suffix: string): Promise<string> {
     const { data, error } = await svc
       .from("organizations")
-      .insert({ name: `${token}-${suffix}`, slug: `${token}-${suffix}` })
+      .insert({ status: "active", name: `${token}-${suffix}`, slug: `${token}-${suffix}` })
       .select("id");
     if (error) throw new Error(`org fixture: ${error.message}`);
     const id = (data as Array<{ id: string }>)[0]?.id;

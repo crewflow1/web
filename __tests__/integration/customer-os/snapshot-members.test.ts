@@ -42,7 +42,7 @@ async function makeUser(suffix: string): Promise<string> {
 async function makeOrg(suffix: string): Promise<string> {
   const { data, error } = await svc()
     .from("organizations")
-    .insert({ name: `Snap Members ${suffix}`, slug: `${T}-${suffix}` })
+    .insert({ status: "active", name: `Snap Members ${suffix}`, slug: `${T}-${suffix}` })
     .select("id")
     .single();
   expect(error, error?.message).toBeNull();

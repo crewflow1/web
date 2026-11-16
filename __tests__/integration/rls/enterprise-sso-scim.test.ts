@@ -83,8 +83,8 @@ describeIntegration("enterprise SSO + SCIM · RLS + provisioning", () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL ??= process.env.SUPABASE_URL;
 
     const svc = db(serviceClient());
-    const a = await svc.from("organizations").insert({ name: "EntSSO A", slug: `${TOKEN}-a` }).select("id").single();
-    const b = await svc.from("organizations").insert({ name: "EntSSO B", slug: `${TOKEN}-b` }).select("id").single();
+    const a = await svc.from("organizations").insert({ status: "active", name: "EntSSO A", slug: `${TOKEN}-a` }).select("id").single();
+    const b = await svc.from("organizations").insert({ status: "active", name: "EntSSO B", slug: `${TOKEN}-b` }).select("id").single();
     orgA = String(a.data?.id ?? "");
     orgB = String(b.data?.id ?? "");
     if (!orgA || !orgB) throw new Error("failed to create probe orgs");

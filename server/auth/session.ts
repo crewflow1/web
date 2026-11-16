@@ -13,7 +13,7 @@ import {
   type AalPair,
 } from "@/lib/auth/mfa-policy";
 import { normalizeOrgI18n, type OrgI18n } from "@/lib/i18n/config";
-
+import { isHeldStatus } from "@/lib/auth/org-status";
 export type OrgStatus =
   | "pending"
   | "active"
@@ -248,6 +248,26 @@ export function orgHasActiveAccess(status: OrgStatus): boolean {
 }
 
 /**
+ * D-17 held-company rule: a SUSPENDED or CANCELLED company's OWNER keeps READ-ONLY access
+ * (billing, data export, recovery, and the advertised 30-day read-only period); every other
+ * member stays locked out on /access-pending, and pending / rejected companies are locked
+ * out entirely. Writes are refused twice over: by the database (RESTRICTIVE
+ * org_is_writable policies, migration 20261346) and by the capability guards, which refuse
+ * any non-view, non-billing/export action while the company is held. Never auto-erases.
+ */
+export function orgHeldReadOnlyForOwner(ctx: OrgContext): boolean {
+  return (
+    (ctx.org.status === "suspended" || ctx.org.status === "cancelled") &&
+    ctx.membership.role === "owner"
+  );
+}
+
+/** Is the company in a held (read-only) state? */
+export function orgIsHeld(ctx: OrgContext): boolean {
+  return isHeldStatus(ctx.org.status);
+}
+
+/**
  * List every org the user is a member of. Used by the header org switcher.
  * Returns [] for users with no memberships.
  */
@@ -310,7 +330,7 @@ export const requireOrgContext = cache(async function requireOrgContext(): Promi
 
   const ctx = await getOrgForUser(user.id, { currentEmail: user.email ?? null });
   if (!ctx) redirect("/onboarding/company");
-  if (!orgHasActiveAccess(ctx.org.status)) {
+  if (!orgHasActiveAccess(ctx.org.status) && !orgHeldReadOnlyForOwner(ctx)) {
     redirect("/access-pending");
   }
 

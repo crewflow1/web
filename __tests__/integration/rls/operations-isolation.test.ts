@@ -154,7 +154,7 @@ interface Fixture {
 }
 
 async function seedOrg(svc: ReturnType<typeof db>, label: string): Promise<Fixture> {
-  const orgId = await insId(svc, "organizations", {
+  const orgId = await insId(svc, "organizations", { status: "active",
     name: `Ops ${label}`,
     slug: `${TOKEN}-${label}`,
   });

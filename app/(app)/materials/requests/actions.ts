@@ -647,7 +647,7 @@ const fulfilFromStockSchema = z.object({
     .positive("The quantity must be above zero")
     .max(9_999_999, "That's too big"),
   notes: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(2000).optional(),
   ),
 });
@@ -676,6 +676,7 @@ export async function fulfilRequestLineFromStock(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx } = await requireOrgContext();
+  if (!isAdmin(ctx)) return formError("Only an owner or admin can issue stock against a request.");
   const parsed = fulfilFromStockSchema.safeParse({
     request_id: formData.get("request_id") ?? "",
     material_request_line_id: formData.get("material_request_line_id") ?? "",

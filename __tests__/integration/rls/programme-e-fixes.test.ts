@@ -38,8 +38,8 @@ describeIntegration("Programme E fixes · PO org-integrity + retention concurren
 
   beforeAll(async () => {
     const svc = db(serviceClient());
-    const a = await svc.from("organizations").insert({ name: "Prog-E A", slug: `${TOKEN}-a` }).select("id").single();
-    const b = await svc.from("organizations").insert({ name: "Prog-E B", slug: `${TOKEN}-b` }).select("id").single();
+    const a = await svc.from("organizations").insert({ status: "active", name: "Prog-E A", slug: `${TOKEN}-a` }).select("id").single();
+    const b = await svc.from("organizations").insert({ status: "active", name: "Prog-E B", slug: `${TOKEN}-b` }).select("id").single();
     orgA = String(a.data?.id ?? "");
     orgB = String(b.data?.id ?? "");
     const sB = await svc.from("suppliers").insert({ org_id: orgB, name: "Foreign Supplier" }).select("id").single();

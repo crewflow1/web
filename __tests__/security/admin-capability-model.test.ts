@@ -134,6 +134,9 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       "server/services/permission-audit.ts",
       // R3 — owner-controlled admin appointment + staff:manage + grant editor.
       "app/(app)/staff/actions.ts",
+      // Company settings: saving organisation details needs settings:manage (owner
+      // always) — the write itself goes through the service role after that gate.
+      "app/(app)/settings/actions.ts",
       "app/(app)/staff/permission-actions.ts",
       // R4 — capability enforcement, financial modules (invoices first).
       "app/(app)/invoices/layout.tsx",
@@ -278,6 +281,74 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       // the server action + RLS admin WITH CHECK are). Legitimate owner/admin
       // write gating, not early adoption of a dark module surface.
       "app/(app)/staff/rota/generate/page.tsx",
+      // Least-privilege enforcement (2026-11-14, founder rules in AGENT-RULES §8):
+      // the Operations modules are CAPABILITY surfaces — segment layouts require
+      // <module>:view, every server action re-checks <module>:<verb>, and the
+      // private-column readers check the capability before a service-role read.
+      // Decision table: docs/programme/security-least-privilege/.
+      "app/(app)/a/layout.tsx",
+      "app/(app)/assets/actions.ts",
+      "app/(app)/assets/assignment-actions.ts",
+      "app/(app)/assets/calibration-actions.ts",
+      "app/(app)/assets/depreciation-actions.ts",
+      "app/(app)/assets/inspection-actions.ts",
+      "app/(app)/assets/layout.tsx",
+      "app/(app)/assets/maintenance-actions.ts",
+      "app/(app)/assets/override-actions.ts",
+      "app/(app)/assets/qr-actions.ts",
+      "app/(app)/assets/schedule-actions.ts",
+      "app/(app)/assets/service-schedule-actions.ts",
+      "app/(app)/assets/template-actions.ts",
+      "app/(app)/fleet/actions.ts",
+      "app/(app)/fleet/compliance-actions.ts",
+      "app/(app)/fleet/fuel-actions.ts",
+      "app/(app)/fleet/layout.tsx",
+      "app/(app)/operations/layout.tsx",
+      "app/(app)/purchase-orders/actions.ts",
+      "app/(app)/purchase-orders/layout.tsx",
+      "app/(app)/purchase-orders/receiving-actions.ts",
+      "app/(app)/sites/actions.ts",
+      "app/(app)/sites/layout.tsx",
+      "app/(app)/stock/actions.ts",
+      "app/(app)/stock/layout.tsx",
+      "app/(app)/stock/reorder-actions.ts",
+      "app/(app)/stock/stocktake-actions.ts",
+      "app/(app)/stock/van-actions.ts",
+      "app/(app)/suppliers/actions.ts",
+      "app/(app)/suppliers/layout.tsx",
+      "app/(app)/variations/layout.tsx",
+      // D-17 (2026-11-15): reviewed adopters — field-baseline gates, the 18 under-restricted routes,
+      // and the management-only child routes. Each file is a guard, not a bypass.
+      "app/(app)/assets/calibration/layout.tsx",
+      "app/(app)/assets/holdings/layout.tsx",
+      "app/(app)/assets/new/layout.tsx",
+      "app/(app)/assets/page.tsx",
+      "app/(app)/assets/templates/layout.tsx",
+      "app/(app)/compliance/layout.tsx",
+      "app/(app)/documents/layout.tsx",
+      "app/(app)/expenses/[id]/layout.tsx",
+      "app/(app)/expenses/budgets/layout.tsx",
+      "app/(app)/fleet/compliance/layout.tsx",
+      "app/(app)/fleet/page.tsx",
+      "app/(app)/fleet/vehicles/new/layout.tsx",
+      "app/(app)/fleet/vehicles/[id]/edit/layout.tsx",
+      "app/(app)/health-safety/actions.ts",
+      "app/(app)/health-safety/permits/actions.ts",
+      "app/(app)/health-safety/worker-links/layout.tsx",
+      "app/(app)/jobs/new/layout.tsx",
+      "app/(app)/jobs/templates/layout.tsx",
+      "app/(app)/purchase-orders/matching/layout.tsx",
+      "app/(app)/purchase-orders/new/layout.tsx",
+      "app/(app)/purchase-orders/page.tsx",
+      "app/(app)/staff/rota/conflicts/layout.tsx",
+      "app/(app)/staff/rota/generate/layout.tsx",
+      "app/(app)/stock/items/[id]/edit/layout.tsx",
+      "app/(app)/stock/items/new/layout.tsx",
+      "app/(app)/stock/replenishment/layout.tsx",
+      "app/(app)/stock/stocktake/new/layout.tsx",
+      "app/(app)/stock/valuation/layout.tsx",
+      "app/api/assets/[id]/label/pdf/route.ts",
+      "server/services/private-columns.ts",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|requireCapabilityFor|hasCapability|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;

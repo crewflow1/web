@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ImportButton } from "@/components/import/import-button";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext } from "@/server/auth/session"; import { requireCapability } from "@/server/auth/capabilities";
 import { EmptyState } from "../_components/empty-state";
 import {
   ASSET_OWNERSHIP_LABELS,
@@ -58,7 +58,7 @@ type AssetQuery = Promise<{ data: AssetRow[] | null; error: SupabaseReadError | 
 type SP = Promise<{ status?: string; saved?: string; error?: string }>;
 
 export default async function AssetsPage({ searchParams }: { searchParams: SP }) {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireOrgContext(); await requireCapability("assets", "view");
   const sp = await searchParams;
   const supabase = await createClient();
 
@@ -105,7 +105,7 @@ export default async function AssetsPage({ searchParams }: { searchParams: SP })
             documents and history in one place.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Link
             href="/assets/holdings"
             className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"

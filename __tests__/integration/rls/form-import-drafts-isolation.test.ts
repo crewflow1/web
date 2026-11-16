@@ -45,8 +45,8 @@ describeIntegration("form_import_drafts · org + self isolation (20261265)", () 
   }
 
   beforeAll(async () => {
-    const oA = await svc().from("organizations").insert({ name: `A ${T}`, slug: `${T}-a` }).select("id").single();
-    const oB = await svc().from("organizations").insert({ name: `B ${T}`, slug: `${T}-b` }).select("id").single();
+    const oA = await svc().from("organizations").insert({ status: "active", name: `A ${T}`, slug: `${T}-a` }).select("id").single();
+    const oB = await svc().from("organizations").insert({ status: "active", name: `B ${T}`, slug: `${T}-b` }).select("id").single();
     if (oA.error || oB.error) throw new Error(oA.error?.message ?? oB.error?.message);
     orgA = String(oA.data.id);
     orgB = String(oB.data.id);

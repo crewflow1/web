@@ -1,5 +1,5 @@
 import "server-only";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "@/lib/supabase/admin"; import { loadNonActiveOrgIds } from "@/server/services/org-lifecycle";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { emitNotifications } from "@/server/services/notifications-service";
 import type { NotificationCreate } from "@/lib/notifications/types";
@@ -87,9 +87,9 @@ export async function runLeadFollowups(): Promise<FollowupRunResult> {
     return { ...stats, errors: stats.errors + 1 };
   }
   const rows = (data ?? []) as unknown as LeadRow[];
-  stats.scanned = rows.length;
+  stats.scanned = rows.length; const heldOrgs = await loadNonActiveOrgIds();
 
-  for (const lead of rows) {
+  for (const lead of rows) { if (heldOrgs.has(lead.org_id)) continue; // D-17
     try {
       // If owner already acted on this lead, skip.
       if (lead.state?.acted_at) {

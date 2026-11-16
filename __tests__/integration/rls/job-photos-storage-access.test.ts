@@ -46,7 +46,7 @@ async function makeUser(suffix: string): Promise<{ id: string; token: string }> 
 
 describeIntegration("rls · job-photos storage assignment-aware (20261249 · R5 Phase 3 slice 5)", () => {
   beforeAll(async () => {
-    const org = await svc().from("organizations").insert({ name: `PH ${TOKEN}`, slug: `${TOKEN}-a` }).select("id").single();
+    const org = await svc().from("organizations").insert({ status: "active", name: `PH ${TOKEN}`, slug: `${TOKEN}-a` }).select("id").single();
     orgA = String((org.data as { id: string }).id);
     for (const who of ["admin", "assigned", "unassigned"]) {
       const u = await makeUser(who);

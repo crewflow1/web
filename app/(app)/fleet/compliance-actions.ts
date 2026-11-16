@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { FLEET_COMPLIANCE_TYPES, FLEET_COMPLIANCE_LABELS } from "@/lib/fleet/compliance";
 import { vehicleIdSchema } from "@/lib/fleet/schema";
@@ -52,7 +53,7 @@ type RpcChain = {
 };
 
 const blankToUndefined = (v: unknown) =>
-  typeof v === "string" && v.trim() === "" ? undefined : v;
+  v === null || (typeof v === "string" && v.trim() === "") ? undefined : v;
 const isoDate = z
   .string()
   .trim()
@@ -119,6 +120,7 @@ export async function saveComplianceSchedule(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("fleet", "edit");
   const parsed = scheduleSchema.safeParse({
     asset_id: fs(formData, "asset_id"),
     maintenance_type: fs(formData, "maintenance_type"),
@@ -180,6 +182,7 @@ export async function deactivateComplianceSchedule(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("fleet", "edit");
   const scheduleId = fs(formData, "schedule_id");
   const assetId = fs(formData, "asset_id");
   if (!vehicleIdSchema.safeParse(scheduleId).success) return formError(fleetMsg("bad_id"));
@@ -227,6 +230,7 @@ export async function recordComplianceCompletion(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("fleet", "edit");
   const assetId = fs(formData, "asset_id");
   const parsed = completionSchema.safeParse({
     asset_id: assetId,

@@ -122,8 +122,8 @@ describeIntegration("R7 aged-ledgers RPC · real Postgres", () => {
     String((await svc().from(table).insert(row).select("id").single()).data?.id);
 
   beforeAll(async () => {
-    orgA = await insId("organizations", { name: "R7 A", slug: `${T}-a` });
-    orgB = await insId("organizations", { name: "R7 B", slug: `${T}-b` });
+    orgA = await insId("organizations", { status: "active", name: "R7 A", slug: `${T}-a` });
+    orgB = await insId("organizations", { status: "active", name: "R7 B", slug: `${T}-b` });
 
     custA = await insId("customers", { org_id: orgA, name: "Acme Builders" });
     custNoName = await insId("customers", { org_id: orgA, name: "" }); // resolves but blank → "Unnamed customer"

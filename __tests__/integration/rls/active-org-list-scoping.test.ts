@@ -517,8 +517,8 @@ describeIntegration("active-org scoping · LIST surfaces (multi-org user)", () =
   }
 
   beforeAll(async () => {
-    orgA = await insId("organizations", { name: "List Scoping A", slug: `${TOKEN}-a` });
-    orgB = await insId("organizations", { name: "List Scoping B", slug: `${TOKEN}-b` });
+    orgA = await insId("organizations", { status: "active", name: "List Scoping A", slug: `${TOKEN}-a` });
+    orgB = await insId("organizations", { status: "active", name: "List Scoping B", slug: `${TOKEN}-b` });
     dual = await mkUser("dual", [orgA, orgB]);
     outsider = await mkUser("outsider", [orgB]);
 

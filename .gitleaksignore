@@ -4,6 +4,12 @@
 # the historic commit in the PR scan range passing.
 78464a4700b8400d209d8a0603f9b10b9f3799db:lib/hq/finance.ts:generic-api-key:432
 
-# e2e/_consent-harness.ts — DUMMY PostHog project key for the consent network proof.
-# Synthetic, points at a reserved .invalid host, never a real credential.
+# e2e/_consent-harness.ts (PR #1092, branch privacy/tracking-consent) — DUMMY PostHog project
+# key for the consent network proof; points at a reserved .invalid host, never a real credential.
+# The push-to-main scan reads every fetched branch, so the fingerprint must live on main too.
 0b2fb6f696ce46632b62607856eed517b439f5d8:e2e/_consent-harness.ts:generic-api-key:18
+
+# e2e/owner-management.spec.ts (PR #1096) — an earlier commit of this branch held a synthetic
+# local-stack test password as a literal; HEAD now generates it per run. This fingerprint keeps
+# that historic commit in the PR scan range passing (no real credential was ever involved).
+f786a8927f1017632d278aacce9722e21dd71c94:e2e/owner-management.spec.ts:generic-api-key:30

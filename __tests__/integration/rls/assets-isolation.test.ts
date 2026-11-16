@@ -47,7 +47,7 @@ describeIntegration("assets · tenant isolation (RLS)", () => {
 
     const org = await svc
       .from("organizations")
-      .insert({ name: "Asset RLS Probe Org", slug: TOKEN })
+      .insert({ status: "active", name: "Asset RLS Probe Org", slug: TOKEN })
       .select("id")
       .single();
     expect(org.error, org.error?.message).toBeNull();

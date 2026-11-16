@@ -47,7 +47,7 @@ const createdOrgs: string[] = [];
 
 async function freshOrg(): Promise<string> {
   const slug = `${TOKEN}-${createdOrgs.length}`;
-  const res = await db().from("organizations").insert({ name: "WA Draft-First Org", slug }).select("id").single();
+  const res = await db().from("organizations").insert({ status: "active", name: "WA Draft-First Org", slug }).select("id").single();
   expect(res.error, res.error?.message).toBeNull();
   const id = String((res.data as { id: string }).id);
   createdOrgs.push(id);

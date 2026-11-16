@@ -48,7 +48,7 @@ describeIntegration("HQ alerts snapshot — demo_requests linkage (Wave A.1)", (
 
     const a = await svc
       .from("organizations")
-      .insert({ name: `${TOKEN}-A`, slug: `${TOKEN}-a` })
+      .insert({ status: "active", name: `${TOKEN}-A`, slug: `${TOKEN}-a` })
       .select("id")
       .single();
     expect(a.error, a.error?.message).toBeNull();
@@ -56,7 +56,7 @@ describeIntegration("HQ alerts snapshot — demo_requests linkage (Wave A.1)", (
 
     const b = await svc
       .from("organizations")
-      .insert({ name: `${TOKEN}-B`, slug: `${TOKEN}-b` })
+      .insert({ status: "active", name: `${TOKEN}-B`, slug: `${TOKEN}-b` })
       .select("id")
       .single();
     expect(b.error, b.error?.message).toBeNull();
