@@ -33,7 +33,10 @@ const PORTAL_INVOICES = read("app/customer-portal/[token]/invoices/page.tsx");
 const PORTAL_PDF_ROUTE = read(
   "app/customer-portal/[token]/invoices/[id]/pdf/route.ts",
 );
-const CHECK_EMAIL = read("app/(auth)/check-email/page.tsx");
+// The resend form is rendered by a client component (the address comes from
+// sessionStorage, never the URL — privacy G-10), so read both files.
+const CHECK_EMAIL =
+  read("app/(auth)/check-email/page.tsx") + read("app/(auth)/_magic-link.client.tsx");
 
 describe("Sprint A item 1 — landing positioning (CEO directive 2026-05-22)", () => {
   // CrewFlow is premium onboarding (£1k setup + £500/mo). The earlier
