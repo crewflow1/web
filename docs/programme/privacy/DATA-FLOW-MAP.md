@@ -57,7 +57,7 @@ hosts are also allowed), `vitals.vercel-insights.com` (unused), `vercel.live`, `
 
 ## 2. Vercel — hosting, serverless functions, logs
 - **Purpose:** serves every page, runs every server action / route / cron.
-- **Data categories:** all request and response content in transit; request logs (IP, URL incl. query string, user agent); function logs (`console.*` output). URLs can carry personal data: `/check-email?email=` (M-7), `/login?email=` (G-10), bearer tokens in `/q/…`, `/customer-portal/…`, `/worker-portal/…` paths.
+- **Data categories:** all request and response content in transit; request logs (IP, URL incl. query string, user agent); function logs (`console.*` output). Auth URLs no longer carry the email address once `privacy/data-minimisation` ships (M-7/G-10 fixed; today's main still does); bearer tokens in `/q/…`, `/customer-portal/…`, `/worker-portal/…` paths.
 - **Browser vs server:** both.
 - **Prod state:** ACTIVE.
 - **Region / transfer:** functions **`dub1` (Dublin)**, edge `lhr1` — VERIFIED `x-vercel-id: lhr1::dub1::…` on 2026-11-16 (`vercel.json` `regions: ["dub1"]`, commit `e3773aa1`). The 2026-11-13 US processing (G-2) is resolved. Vercel Inc. is US: log storage location / support access ⚖.
@@ -120,7 +120,7 @@ hosts are also allowed), `vitals.vercel-insights.com` (unused), `vercel.live`, `
 
 ## 8. PostHog — product analytics
 - **Purpose:** anonymous page-view statistics.
-- **Data categories:** page views with UUID-masked URLs (query values other than UUIDs are **not** masked — M-7), device/browser properties, random visitor id cookie, IP as seen by PostHog. No autocapture, no session recording, no `identify()`.
+- **Data categories:** page views with UUID-masked URLs (query values other than UUIDs are **not** masked; the auth-URL email leak M-7 is fixed at source on `privacy/data-minimisation`), device/browser properties, random visitor id cookie, IP as seen by PostHog. No autocapture, no session recording, no `identify()`.
 - **Browser vs server:** browser (`posthog-js`, loaded dynamically only after consent). Server sink DORMANT (`serverEnabled=false`).
 - **Region / transfer:** EU (`eu.i.posthog.com`, CSP VERIFIED 2026-11-16).
 - **Terms to verify:** DPA; project data retention (F-16); IP capture setting.

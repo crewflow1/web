@@ -14,7 +14,7 @@ Evidence labels follow `AGENT-RULES.md` §5. The technical facts behind every st
 | A24, A25 | Resolved by #1092 once released: "Cookie settings" withdrawal control in every footer; `/worker-portal` and `/l` excluded from optional tracking |
 | A29 | Now contradicted twice: the founder's policy is that cancelling **never** deletes data automatically; deletion is a separate request (#1091, dark). The live 30-day promise in both the policy and the terms must go (the terms draft in #1090 `docs/programme/cancellation/TERMS-UPDATE-DRAFT.md` already proposes this) |
 | new | Photos can carry the phone's GPS position in EXIF metadata (`DATA-MINIMISATION.md` M-6) — the "we do not track location" sentence needs PD-4 |
-| new | Every magic-link sign-in puts the email address in a URL (M-7) — reaches hosting logs and, after analytics consent, PostHog |
+| new | Every magic-link sign-in put the email address in a URL (M-7) — **fixed** on `privacy/data-minimisation` (`924774c1`) |
 
 ---
 

@@ -23,7 +23,7 @@ No P0 was found: nothing in this audit showed personal data exposed across tenan
 | G-7 | P2 | Ex-staff sensitive data survives removal indefinitely | NOT-IMPLEMENTED | Engineering (after F-11) |
 | G-8 | P2 | Sentry received bearer tokens and identifiers in free text | Fix moved to the SECURITY branch (`be7140af`, `a0c26962`), not deployed | Lead (merge) |
 | G-9 | P2 | Consent banner/analytics could load on the external-worker page; no "change my choice" control | Fixed in #1092 (worker-portal + `/l` excluded; Cookie settings control); not released | Lead (merge) |
-| G-10 | **P2** | Email address in a URL — on **every magic-link sign-in** (`/check-email?email=`), not only failed bootstrap (M-7) | Proposed; needs a cookie-register entry (#1092) | Engineering + consent workstream |
+| G-10 | ~~P2~~ | Email address in a URL — on every magic-link sign-in and failed bootstrap (M-7); email in the sign-in success log | **FIXED** on `privacy/data-minimisation` (`924774c1`): sessionStorage hand-off, no cookie; unit + e2e proof | Lead (merge) |
 | G-11 | P2 | Rate-limit table held raw IPs, emails and portal tokens, never expired | **Fixed on `privacy/data-minimisation`** (`afdbc459`), not deployed | Lead (merge) |
 | G-12 | P2 | Prospecting/outreach: no Art. 14 notice, PECR position unrecorded | NEEDS-FOUNDER | Founder + ⚖ |
 | G-13 | P2 | AI processing undisclosed to tenants; no per-tenant off switch; provider terms unconfirmed | Per-org spend ceiling exists; platform ceiling pending (AI workstream); off switch still absent → PD-6 | Founder + engineering |
@@ -134,7 +134,8 @@ Call recording and transcription (`calls.recording_url`, `ai_receptionist_setups
 
 ## P3 — post-launch
 
-### G-10 · Email address in a URL — VERIFIED (raised to P2 on 2026-11-16)
+### G-10 · Email address in a URL — FIXED 2026-11-16 (`924774c1`)
+- **Resolution:** `/check-email` takes no parameters; the address is handed over in this tab's `sessionStorage` (written client-side just before submit, removed once read — no cookie, so no cookie-register change); the callback bounce carries only the error code; provider messages quoting an address are replaced; the callback success log no longer records the email. Proof: `__tests__/security/auth-urls-no-email.test.ts` (13) and the magic-link test in `e2e/auth-recovery-and-signup.spec.ts` (no URL requested or visited contains `@`/`%40`). Original finding:
 `bounceToLogin()` (`app/auth/callback/route.ts`) appends `?email=<address>` on bootstrap failure, and — far more often — `signInWithMagicLink` redirects **every** magic-link request to `/check-email?email=<address>` (`app/(auth)/actions.ts:120`) → hosting logs, browser history, PostHog page-view URL after analytics consent, Sentry breadcrumbs until the security scrub ships. **Fix:** carry the address in a short-lived HttpOnly cookie scoped to `/check-email` (needed by the resend button) and drop it from both URLs; add the cookie to the #1092 cookie register / e2e exempt list in the same change; update `__tests__/security/auth-completion.test.ts:473` to assert the address is **absent** from the redirect. **Acceptance:** no `email=` in any auth redirect (source guard + e2e on the magic-link flow).
 
 ### G-16 · Raw webhook payloads and `comm_events` — VERIFIED
