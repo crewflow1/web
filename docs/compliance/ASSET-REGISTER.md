@@ -1,6 +1,6 @@
 # Non-code asset register
 
-Baseline `origin/main` @ `8cec66a7`, 2026-11-13. Machine-readable: `asset-register.csv` (93 rows; regenerate with `node scripts/compliance/asset-register.mjs`). Verdict vocabulary: OWNED/ORIGINAL · LICENSED · GENERATED · UNKNOWN-PROVENANCE. Evidence labels per AGENT-RULES §5.
+Baseline `origin/main` @ `8cec66a7`, 2026-11-13; refreshed 2026-11-16 against `d24295e` (no new asset files; 95 rows now because two generated compliance CSVs are listed). Promotional media outside the repo: see `MEDIA-ASSET-REGISTER.md`. Machine-readable: `asset-register.csv` (95 rows; regenerate with `node scripts/compliance/asset-register.mjs`). Verdict vocabulary: OWNED/ORIGINAL · LICENSED · GENERATED · UNKNOWN-PROVENANCE. Evidence labels per AGENT-RULES §5.
 
 ## 1. Result
 

@@ -1,7 +1,7 @@
 {
  "note": "Heuristic static trace; see scripts/compliance/client-bundle-trace.mjs header for method and limits.",
- "clientSeedFiles": 197,
- "clientReachableLocalFiles": 620,
+ "clientSeedFiles": 200,
+ "clientReachableLocalFiles": 629,
  "directClientPackages": {
   "@anthropic-ai/sdk": "lib/ai/vision/anthropic.ts",
   "@dnd-kit/core": "app/admin/demos/_kanban.tsx",
