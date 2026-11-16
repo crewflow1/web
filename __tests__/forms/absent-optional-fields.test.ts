@@ -51,7 +51,6 @@ describe("guard: no blank-to-undefined helper ignores null", () => {
         }
       });
     }
-    // lib/assets/inspection.ts is corrected by the post-D-17 stabilisation change (PR #1098).
-    expect(offenders.filter((o) => !o.startsWith("lib/assets/inspection.ts:"))).toEqual([]);
+    expect(offenders).toEqual([]);
   });
 });
