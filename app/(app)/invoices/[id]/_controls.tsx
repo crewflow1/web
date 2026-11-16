@@ -217,7 +217,7 @@ export function InvoiceControls({
         </div>
         <div className="mt-2">
           <select
-            value={linkedJobId ?? ""}
+            aria-label="Link to job" value={linkedJobId ?? ""}
             onChange={(e) => onLinkJob(e.target.value)}
             disabled={busy}
             className="block w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 disabled:opacity-50"
