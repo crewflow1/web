@@ -25,9 +25,73 @@ the load generator on one machine over loopback. It validates the harness and ex
 per-request costs; it says nothing about hosted capacity, where every Supabase round-trip pays
 Vercel↔Supabase network latency and the database has a different CPU/connection budget.
 
-## 2. Local baseline (measured 2026-11-16)
+## 2. Local baseline (measured 2026-11-16) — a laptop, not capacity
 
-_Filled in from the runs; see §2.1–2.3._
+**Conditions.** Production build (`next build && next start`, commit on this branch, base `d24295e`)
+on `:3000`; the shared local Supabase stack in Docker (Postgres `max_connections` 100, PostgREST,
+GoTrue, Kong, Storage); k6 v2.3.0 on the same Apple-silicon 16 GB laptop, which other workstreams
+were also using (load average ≈10 when the session started). Dataset: 25 synthetic tenants
+(`--orgs 25 --tag lt1`: 195 memberships, 1,021 customers, 2,064 jobs, 1,446 quotes, 1,008 invoices,
+~40k rows). Runner: `scripts/load/run-local.sh`; raw output in `load/results/` (gitignored).
+
+### 2.1 Results
+
+| Run | Sessions (VUs) | Think time | Result | RPS (peak hold) | In-flight (derived) | Req / session / min | Latency p50 / p95 / p99 (peak hold, all requests) | Errors |
+|---|---|---|---|---|---|---|---|---|
+| smoke | 12 | ×1 | **PASS** — all thresholds | 2.1 | 0.2 | 10.7 | 102 / 192 / 219 ms | 0 % 5xx, 0 bounces |
+| local | 100 | ×1 (realistic) | **PASS** — all thresholds | **15.7** | 4.7 | **9.4** | **132 / 1,264 / 3,602 ms** (whole run incl. ramp: 135 / 2,522 / 3,893; max 8.0 s) | 0.05 % 5xx · 0 auth bounces · 0.43 % business errors · 103/103 sign-ins |
+| local-stress | 100 | ×0.2 (≈500 people) | **FAIL — aborted at 62 s by the auth-bounce threshold** | ≈31 (pre-abort) | ≈16 | n/a (compressed) | whole run 162 / 1,864 / 2,659 ms | 0.19 % 5xx · 3.8 % bounces · 110 of 185 sign-ins failed |
+
+Per request kind, realistic 100-session run (whole run): pages p95 2.07 s (1,650 requests), server
+actions p95 2.59 s (411), API p95 1.23 s (475), photo uploads p95 1.61 s (113), end-to-end sign-in
+p95 2.48 s (103). Writes: 456 confirmed, 2 with unknown outcome.
+
+**Tenant isolation under load: 0 violations in 2,119 marker-scanned responses; 63/63 cross-tenant
+canaries refused (realistic run); 0 / 689 and 11/11 in the stress run.**
+
+Server side (collector, realistic run): Postgres connections peaked at **50 of 100** (PostgREST
+pool: 11 idle + ≤8 active; GoTrue ≈20 idle); container CPU peaks — Postgres 250 % (2.5 cores),
+GoTrue 175 %, PostgREST 45 %, Next.js 76 % (100 % = one core).
+
+### 2.2 Fan-out — the number that turns into latency on hosted infrastructure
+
+Server-side trace of the realistic run (`scripts/load/trace-fetch.cjs`): **5,071 app requests made
+53,144 Supabase calls — 10.5 per request**: 9,884 Auth calls (`GET /auth/v1/user` = exactly **2 per
+authenticated request**: middleware + render) and 42,876 PostgREST calls. Heaviest renders:
+`/jobs/[id]` ≈ 39 calls (RSC navigation; one full render traced at 49 — ~30 module tables, most
+read twice), `/dashboard` ≈ 37 (RSC) / ≈ 80 (full document, matching the 2026-10-22 baseline's 86),
+`/me` ≈ 10 (RSC) / 16 (full), `/quotes/new` 13, `createQuote` 21; lists 4–6. On loopback each call
+costs ~0.1 ms of network; hosted, each pays a Vercel↔Supabase round trip.
+
+### 2.3 Bottleneck observed (on the laptop)
+
+1. **The Auth path failed first.** Under compressed load (≈31 RPS → ≈60 GoTrue requests/s) the local
+   GoTrue returned HTTP 500 on 21 % of `getUser` and 60 % of sign-in calls; its log shows
+   `dial tcp …:5432: connect: cannot assign requested address` (1,544×) — GoTrue opening Postgres
+   connections faster than the Docker network recycles ports. Failed `getUser` → the middleware
+   treats the user as signed out → redirect to `/login` → the run's abort threshold fired. This
+   failure mode is specific to the local Docker stack, but the cause — **two Auth round-trips on
+   every authenticated request** — is product behaviour and will load hosted Auth the same way.
+2. **Postgres CPU from fan-out.** At only 15.7 RPS the database container peaked at 2.5 cores;
+   p50 stays ~130 ms but p95/p99 jump to 1.3–3.6 s across every route at once during the sign-in
+   ramp — a shared-CPU stall on one machine (app + DB + Auth + generator + other agents), not a
+   per-route defect.
+3. **Not the bottleneck locally:** Postgres connections (≤50/100), PostgREST pool (≤8 active),
+   tenant isolation (0 leaks), product rate limiters (4 × 429 in the realistic run).
+
+### 2.4 Data hygiene (verified on the shared local database)
+Seed of 25 tenants: 4.2 s, ~40k rows; re-running it is a no-op (0.4 s, identical counts — only the
+newly added admin-grant rows were inserted). `scripts/load/teardown.mjs --tag lt1` afterwards removed
+every tagged row (including the rows the runs created: quotes, invoices, clock entries, leads,
+RAMS sign-offs) and the 147 uploaded photos via the Storage API, with **zero** orphan-sweep deletions
+and the non-synthetic organisation / user counts unchanged before vs after. A 2-tenant `lt9` seed →
+teardown cycle showed the same. `01-mark-staging.sql` run against the local database refused
+(non-synthetic organisations present) and refused the production ref; it created nothing.
+
+**What this does NOT show:** anything about hosted capacity or 50,000 concurrent users. The laptop
+saturates near ~30 RPS because one machine runs everything; hosted infrastructure has separate,
+much larger budgets for each tier — and also adds network latency to every one of the 10.5
+Supabase calls per request. Only the staged gates in §6 can answer the capacity question.
 
 ## 3. The load model — three different numbers
 
@@ -124,7 +188,25 @@ Each gate runs only after the previous one passed **and** the founder approved i
 defined (config only, never run locally) in `STAGES` (`load/k6/lib/model.js`); every staged profile has
 a ≥10-minute peak hold, then drops to 20 % and holds (**recovery**), then ends.
 
-_Expected RPS column: filled in from the measured requests-per-session-per-minute (§2)._
+Expected RPS = sessions × **9.4** requests/session/minute (measured, realistic think time, §2.1) ÷ 60.
+Expected Supabase calls ≈ 10.5 × RPS, of which ≈ 2 × RPS hit Auth (§2.2). Tier = the Supabase compute
+tier to start the gate on (resize up only after ruling out a code fix). Budgets = page p95 / p99.
+
+| Gate | Sessions | Expected RPS (peak) | Duration | VU-hours | App requests | Supabase tier to start | p95 / p99 budget | Generators | Est. cost (verify at purchase) |
+|---|---|---|---|---|---|---|---|---|---|
+| G1 | 100 | ~16 | 18 min (peak 10) | 22 | ~0.01 M | same tier as production | 1.5 / 3 s | 1 (workstation OK) | $0–1 |
+| G2 | 500 | ~78 | 27 min (peak 15) | 163 | ~0.09 M | prod tier → Large | 2 / 4 s | 1 | $1–2 |
+| G3 | 1,000 | ~157 | 33 min (peak 15) | 377 | ~0.21 M | Large | 2 / 4 s | 1 | $1–2 |
+| G4 | 5,000 | ~783 | 59 min (peak 20) | 3,150 | ~1.8 M | XL → 2XL | 2.5 / 5 s | 1 VM | $8–19 |
+| G5 | 10,000 | ~1,567 | 71 min (peak 20) | 7,150 | ~4.0 M | 2XL → 4XL | 3 / 6 s | 2 VMs | $17–63 |
+| G6 | 25,000 | ~3,917 | 82 min (peak 20) | 19,917 | ~11.2 M | 4XL → 8XL | 3 / 6 s | 5 VMs | $42–132 |
+| G7 | 50,000 | ~7,833 | 128 min (peak 30) | 63,167 | ~35.6 M | 8XL → 16XL | 3 / 6 s | 10 VMs | $110–336 |
+
+At G7 that is ≈ 82,000 Supabase calls/s, ≈ 15,700 of them Auth `getUser` — which is why §8 item 1
+(local JWT verification) and the fan-out work should be evaluated **before** G6, not after.
+Entry conditions for every gate: previous gate PASS (§7), isolation proofs (§4) recorded, budget
+approved. G1 additionally re-validates the harness against hosted latency at the same tier as
+production, so its numbers are directly comparable with production behaviour today.
 
 ## 7. Pass / fail criteria and abort conditions
 
@@ -159,15 +241,17 @@ Ranked from repository evidence and the local trace; each is a hypothesis for st
 
 1. **Supabase Auth (GoTrue) on every navigation.** Middleware calls `getUser()` on every matched
    request and the render validates again (`lib/supabase/middleware.ts`, `server/auth/session.ts`);
-   the local trace shows ~1.4–2 Auth calls per authenticated request. At G7 that is thousands of Auth
-   requests per second, each a Postgres read in the `auth` schema. Cheapest lever if it binds:
+   the local trace shows exactly 2 `GET /auth/v1/user` calls per authenticated request (§2.2), and
+   the local Auth path was the first thing to fail (§2.3). At G7 that is ≈15,700 Auth requests per
+   second, each a Postgres read in the `auth` schema. Cheapest lever if it binds:
    validate the JWT locally (signing keys / `getClaims`) in middleware instead of a network
    `getUser()` per request — a code change with security review, not a tier change.
 2. **PostgREST pool + Postgres CPU, driven by query fan-out.** The app reaches Postgres only through
    PostgREST over HTTP (no direct connections — `docs/connection-pooling-and-scale.md`), so the
    "connection limit" that matters is PostgREST's own pool (sized by compute tier), not Supavisor.
    `/dashboard` makes ~80 PostgREST calls per full render (measured locally, matches the
-   2026-10-22 baseline's 86); `/me` ~13; lists 3–6. Owners land on `/dashboard` at sign-in, so a
+   2026-10-22 baseline's 86) and ~37 per client navigation; `/jobs/[id]` ~39–49; `/me` 10–16;
+   lists 4–6 (§2.2). Owners land on `/dashboard` at sign-in, so a
    Monday-morning login wave multiplies this. Expect pool queueing (latency) well before errors.
 3. **RLS evaluation cost.** Every RLS-protected query runs the `current_org_ids()` InitPlan
    (cheap, indexed); at high RPS it is CPU, not correctness. `pg_stat_statements` on staging will show
@@ -221,15 +305,17 @@ Ranked from repository evidence and the local trace; each is a hypothesis for st
 | Grafana Cloud k6 (alternative) | ~$0.15 per VU-hour beyond a small free allowance |
 
 ### 9.3 Per-gate estimate
-
-_Filled in with the measured request rate (§6 table)._
+Per gate (§6 table): Supabase = tier hourly rate × 4 h (×1.5 for the high end); Vercel = app requests
+× $2–7 per million (invocation + ~100 ms active CPU + memory + middleware/edge request); generators =
+VMs × ~$0.45/h × 4 h (×2 for the high end); +$20 egress allowance at G5+. G1–G3 likely fit inside the
+plans' included usage.
 
 ### 9.4 Totals
-- **One pass of G1–G7: roughly $300–$900** (Supabase compute ~$40–120, Vercel usage ~$200–600,
-  generators ~$50–150, egress ~$0–50).
-- **Recommended budget cap: ~$2,000** to cover re-runs after fixes and one "crons during peak" /
-  "real photo size" variant at G5. Set Vercel spend management and a Supabase spend cap / alerts
-  before G4.
+- **One pass of G1–G7: roughly $180–$560** (sum of §6; Supabase compute ~$40–130, Vercel usage
+  ~$100–330, generators ~$20–110, egress allowance ~$40–60).
+- **Recommended budget cap: ~$1,500** to cover re-runs after fixes (expect at least one at G4–G6) and
+  one "crons during peak" / "real 2–4 MB photo" variant at G5. Set Vercel spend management and
+  Supabase spend alerts before G4.
 - **Idle cost while staging exists:** ~$10–15/month (Micro compute + small disk).
 - **Optional, only if a gate needs it (verify at purchase):** Supabase Team plan (~$599/month) for
   support/SLA during the 25k–50k gates; Vercel Enterprise only if the Pro concurrency ceiling blocks
