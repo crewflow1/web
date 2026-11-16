@@ -309,12 +309,22 @@ async function notifyHq(marks: readonly SpendAlertMark[], triggeringOrgId: strin
   let orgName: string | null = null;
   const orgMark = marks.find((m) => m.scope === "org" && m.orgId);
   if (orgMark?.orgId) {
+    // Display only. A failed read is LOGGED and the notice goes out without the
+    // name ("A company") — never silently, and never blocking the alert.
     try {
-      const { data } = await client.from("organizations").select("name").eq("id", orgMark.orgId).maybeSingle();
-      const n = (data as { name?: unknown } | null)?.name;
-      orgName = typeof n === "string" ? n : null;
-    } catch {
-      orgName = null; // display only — the notice still goes out
+      const { data, error } = await client
+        .from("organizations")
+        .select("name")
+        .eq("id", orgMark.orgId)
+        .maybeSingle();
+      if (error) {
+        console.error("[ai/spend-alerts] org name read failed — notifying without it", error);
+      } else {
+        const n = (data as { name?: unknown } | null)?.name;
+        orgName = typeof n === "string" ? n : null;
+      }
+    } catch (e) {
+      console.error("[ai/spend-alerts] org name read threw — notifying without it", e instanceof Error ? e.message : String(e));
     }
   }
   const hqOrgId = hqBudgetOrgId();
