@@ -72,6 +72,9 @@ describeIntegration("Storage evidence security (S0/S1/S2, real Postgres)", () =>
     const ok = await member().from("tenant_attachments").insert({
       org_id: orgA, target_table: "jobs", target_id: jobA, filename: "ok.pdf",
       storage_path: `${orgA}/jobs/${jobA}/${T}-ok.pdf`, mime_type: "application/pdf", size_bytes: 3, content_hash: HASH_A,
+      // As the app writes it (server/services/tenant-attachments.ts): the uploader is recorded, which is
+      // also what lets the uploader read the row back (20261354000000 — attachments follow record visibility).
+      uploaded_by: memberId,
     }).select("id").single();
     expect(ok.error, ok.error?.message).toBeNull();
   });
