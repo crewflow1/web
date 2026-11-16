@@ -696,6 +696,25 @@ describe("reactivation request", () => {
     expect(x.notices[0]!.body).toMatch(/new subscription checkout/);
   });
 
+  it("a repeat is still a repeat when the database clock is slightly ahead (the last request looks 1–2 s in the future)", async () => {
+    // Intermittent in the real-Postgres suite: the audit row is stamped by the database, whose
+    // clock ran ~60 ms ahead of the app's, so near a second boundary the age came out as -1 and
+    // the old `age >= 0` test let the repeat through — a second audit row and a second HQ alert.
+    for (const ahead of [1, 2, 30]) {
+      const x = deps({ last: new Date((NOW + ahead) * 1000).toISOString() });
+      const r = await requestReactivation(x.d, { orgId: ORG_ID, actor: ACTOR });
+      expect(r, `database ${ahead}s ahead`).toEqual({ ok: true, outcome: "already_requested" });
+      expect(x.audits).toEqual([]);
+      expect(x.notices).toHaveLength(0);
+    }
+  });
+
+  it("a last-request time far in the future is not trusted as recent (a new request goes through)", async () => {
+    const x = deps({ last: new Date((NOW + 3600) * 1000).toISOString() });
+    const r = await requestReactivation(x.d, { orgId: ORG_ID, actor: ACTOR });
+    expect(r).toEqual({ ok: true, outcome: "requested" });
+  });
+
   it("a repeat inside 24h does not alert HQ again", async () => {
     const x = deps({ last: new Date((NOW - 3600) * 1000).toISOString() });
     const r = await requestReactivation(x.d, { orgId: ORG_ID, actor: ACTOR });

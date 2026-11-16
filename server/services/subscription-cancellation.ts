@@ -839,6 +839,13 @@ export type ReactivationResult =
 
 /** A repeat request inside this window does not re-alert HQ. */
 export const REACTIVATION_REQUEST_DEDUPE_SECONDS = 24 * 60 * 60;
+/**
+ * The last request's time is stamped by the DATABASE clock; `now` is the application clock. The
+ * two differ by a little (measured ~60 ms locally, database ahead), so a repeat submitted
+ * straight after the first can see a request "from the future" — a slightly negative age. That
+ * is still a repeat. Anything further ahead than this is not treated as recent.
+ */
+export const REACTIVATION_CLOCK_SKEW_SECONDS = 5 * 60;
 
 /**
  * Record that the owner of a CANCELLED org wants it back and alert HQ, who
@@ -857,7 +864,7 @@ export async function requestReactivation(
   const last = await deps.lastReactivationRequestAt(org.id);
   if (last) {
     const age = deps.now() - Math.floor(new Date(last).getTime() / 1000);
-    if (age >= 0 && age < REACTIVATION_REQUEST_DEDUPE_SECONDS) {
+    if (age > -REACTIVATION_CLOCK_SKEW_SECONDS && age < REACTIVATION_REQUEST_DEDUPE_SECONDS) {
       return { ok: true, outcome: "already_requested" };
     }
   }
