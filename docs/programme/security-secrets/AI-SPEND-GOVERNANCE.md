@@ -1,6 +1,6 @@
 # CrewFlow — AI spending governance: audit, fixes, and what only the founder can set
 
-**Date:** 2026-11-13/14 · **Baseline:** `origin/main` `8cec66a7` · **Branch:** `security/secrets-and-ai-spend`
+**Date:** 2026-11-13/14, updated 2026-11-16 · **Baseline:** `origin/main` `8cec66a7` (2026-11-16 additions: `d24295e`) · **Branch:** `security/secrets-and-ai-spend` → `ai/spend-governance`
 **Companion files:** `AI-CALL-SITES.csv` (every call site, one row each) · `SECRETS-REGISTER.md` (Part A).
 
 Evidence labels: **VERIFIED** · **IMPLEMENTED-UNTESTED** · **SIMULATED-ONLY** ·
@@ -28,7 +28,7 @@ interchangeable, and this document never uses one name for the other.
 | Holds if a code path skips the governor? | **No.** | **Yes.** |
 | Holds if the accounting under-counts? | **No** — it enforces what it *recorded*. | **Yes** — the vendor meters its own bill. |
 | Granularity | Per tenant org, per user, per feature | Per organisation / workspace / project |
-| Status in CrewFlow | **Built, live, and strengthened on this branch** | **Unverified — NEEDS-FOUNDER** (§6) |
+| Status in CrewFlow | **Built, live, and strengthened on this branch** — per org, per employee, and CrewFlow-wide (§4b) | Vendor behaviour **VERIFIED from docs**; console settings **NEEDS-FOUNDER** (§6) |
 
 **An application budget is not a provider hard cap, and neither is a usage
 alert.** CrewFlow's £100/org/month ceiling is a strong application budget. It is
@@ -201,7 +201,7 @@ accounting** and **who is attributed** — not in whether calls are governed.
 - **Next step.** Cap pages before the call (or pre-flight with the vendor's
   token-count endpoint) and refuse over-envelope inputs.
 
-### G-8 · P3 · SDK retries are implicit — **NOT-IMPLEMENTED**
+### G-8 · P3 · SDK retries are implicit — **FIXED 2026-11-16 (§4b)**
 - **Gap.** All seven SDK constructions (`lib/ai/text/anthropic.ts:59`,
   `lib/ai/vision/anthropic.ts:62`, `lib/ai/embeddings/openai.ts:65`,
   `lib/ai/text/openai.ts:41`, `server/services/lead-summary.ts:199`,
@@ -242,6 +242,113 @@ path — **none**. A check-then-act race in the ceiling — **none** (39/39 on r
 Postgres). A way for a tenant to forge, edit or delete budget rows — **none**
 (the existing suite proves insert/update/delete are refused to tenants).
 
+### What was looked for and NOT found — addendum
+See §4b for the 2026-11-16 bypass audit.
+
+---
+
+## 4b. Additions on `ai/spend-governance` (2026-11-16)
+
+### G-11 · CrewFlow-wide monthly ceiling — **FIXED** (migration `20261358000000`)
+One platform budget (`ai_platform_budget`, default **50,000p = £500 / Europe-London
+month, pending founder confirmation**, clamped at 1,000,000p) enforced inside
+`ai_reserve_invocation` under the org lock then a platform lock (fixed order, no
+deadlock): a call must fit org **and** employee **and** platform headroom; refusal
+reason `platform_ceiling`. Changed only via the audited service-role
+`ai_set_platform_ceiling` (HQ section on `/admin/ai-costs`). **VERIFIED**:
+`proofs/platform-ceiling-proof.sql` (rolled back; output identical to the
+recorded `.out` on re-run) and `proofs/platform-ceiling-concurrency.sh`
+(20 simultaneous 10p claims across 4 orgs, 50p platform headroom ⇒ exactly 5
+reserved, 15 `platform_ceiling`; re-run 2026-11-16, state restored).
+
+### G-12 · Alerts before limits — **FIXED** (migration `20261363000000`)
+- **Was.** `warn_50` / `warn_80` / blocked rendered only on `/admin/ai-costs`.
+- **Now.** HQ is notified (in-app HQ notification + the HQ e-mail recipients
+  configured on `/admin/settings`, quiet hours honoured) the **first** time in a
+  Europe/London month that an **org's** ceiling or the **CrewFlow-wide** ceiling
+  reaches **80%** (priority high) and **100%** (urgent).
+- **Exactly once.** `ai_claim_spend_alerts` inserts the crossed thresholds into
+  `ai_spend_alert_marks` with `ON CONFLICT DO NOTHING` against partial unique
+  indexes and returns only the rows it inserted — the database picks the single
+  notifier across any number of instances. 100% also claims 80% so a stale 80%
+  notice cannot follow a 100% one. A ceiling of 0 (AI switched off) raises
+  nothing. Claim-then-notify: a crash between the two loses one notice
+  (at-most-once), never duplicates.
+- **"100%".** The reservation refuses the call that would cross the ceiling, so
+  committed spend stops just short of it: the refusal (`ceiling` /
+  `platform_ceiling`) **is** the limit-reached event; committed ≥ ceiling also
+  counts. 80% is measured on committed (ledger) spend.
+- **Cost on the request path.** Raised after settlement or on a refusal — never
+  before a provider call, never a provider call itself. Most calls make **no**
+  extra round trip: the org check runs only when the reservation's own figures
+  (already in hand) put the org at ≥80% after this claim; the platform check at
+  most once a minute per server instance; nothing once this instance has seen the
+  month's marks. A check is one RPC bounded at 1.5 s with an early exit. Never
+  throws (`lib/ai/governor/spend-alerts.ts`).
+- **Evidence.** Unit `__tests__/ai/governor-spend-alerts.test.ts` (18);
+  integration `__tests__/integration/ai/spend-threshold-alerts.test.ts` (7, real
+  Postgres: 30-way concurrent refusals ⇒ exactly one claimant; org override
+  honoured; AI-off org silent; platform refusal one-of-20; end-to-end three
+  refusals ⇒ ONE `ai.budget.reached` HQ notification); rolled-back
+  `proofs/spend-alerts-proof.sql` (platform 80% by spend, 100% by refusal, once
+  each; client roles have no access). **VERIFIED.**
+
+### G-13 · P3 · The quote writer told users "budget used up" for every refusal — **FIXED**
+The panel rendered "This month's AI budget is used up (£spent of £ceiling)" for
+**every** governor refusal, so a CrewFlow-wide, per-employee, rate-limit or
+reservation-unavailable refusal showed e.g. "used up (£0.00 of £100.00)". The
+service now passes the `BlockReason` through and `lib/ai/governor/refusal-copy.ts`
+words each reason (figures only for the org ceiling; both limits point to CrewFlow
+support, since only HQ can change them). `__tests__/ai/refusal-copy.test.ts`.
+
+### Safe refusal — every governed site re-checked (call sites: `AI-CALL-SITES.csv`)
+No call site branches on the refusal reason (grep of `app/ server/ lib/`), so
+`platform_ceiling` degrades exactly like `ceiling` everywhere. **VERIFIED** by
+reading each site's blocked branch:
+
+| Site(s) | When refused, the user sees | Clear? |
+|---|---|---|
+| G03 quote writer | reason-specific message + "Write the quote as usual." | **Yes** (G-13) |
+| G01 insights question, G17 site manager | the deterministic answer (labelled deterministic in the API result) | Sensible; does not say *why* |
+| G02 insights narrative | deterministic cards only | Sensible; silent |
+| G11 OCR import | an import with no rows to review | Sensible; silent (P3: say "AI unavailable — upload CSV/Excel") |
+| G12 autofill, G13 expense receipt | an empty form/draft to complete by hand | Sensible; silent |
+| G14 lead summary | the deterministic summary | Sensible; silent |
+| G21 search | keyword results | Sensible; silent |
+| G04–G10, G15, G16, G18–G20 | channel/HQ/cron paths: fixed acknowledgement, template, skipped step, deferred transcript | n/a to tenants (dark or HQ-internal) |
+
+Nothing crashes or renders blank; only the quote writer explains itself. Adding
+the same `aiRefusalMessage` to OCR / autofill / expense is a small P3 follow-up.
+
+### Bypass audit — retries, parallel requests, alternate provider paths
+- **Retries — FIXED (G-8).** All seven SDK constructions now pass
+  `maxRetries: AI_SDK_MAX_RETRIES` (= **0**, `lib/ai/governor/policy.ts`). Both
+  SDKs default to 2 retries on connection errors and 408/409/429/5xx
+  (**VERIFIED** in `node_modules`: `@anthropic-ai/sdk` 0.32.1 and `openai`
+  4.104.0 `core.js`); our own abort is not retried. A retry was a provider
+  request inside one reservation — unreserved, not velocity-counted, and
+  unledgered when the failed attempt had been billed. Now one governed call is at
+  most one provider request; a transient error takes the feature's degraded path
+  and a user retry goes back through velocity + reservation. The transcription
+  transport is raw `fetch` with no retry loop. Ratcheted.
+- **Parallel requests — no gap.** Org, employee and platform gates are decided in
+  one locked transaction (concurrency proofs above; the existing 39/39 seam test);
+  the velocity counter is one atomic upsert (40-way test in
+  `velocity-and-ceiling-seam`).
+- **Alternate provider paths — no gap; ratchet extended.**
+  `__tests__/security/ai-governance-closure.test.ts` now also derives from
+  source: the only AI-vendor host literal in `app/ lib/ server/` is
+  `lib/ai/transcription/openai.ts` (one `fetch`, no loop), reached only via the
+  private dispatcher inside the governed `voice_note.transcription` call; the
+  OpenAI embedding transport is constructed only by the embedding door, which is
+  governed (`memory.embedding_write|query`); every AI credential name —
+  including `TRANSCRIPTION_API_KEY`, and bracket / destructured forms — is read
+  only by the nine pinned files; `maxRetries` is pinned at every construction
+  and never overridden. Mutation-checked (removing one pin fails the test).
+- **Follow-ups (not done).** Surface a provider spend-cap refusal
+  (`enforced_spend_limit_reached`, `*_spend_limit_exceeded`) to HQ as an alert,
+  not just a log line; G-5, G-6, G-7, G-9 unchanged.
+
 ---
 
 ## 5. Behaviour when the budget is exhausted
@@ -256,79 +363,82 @@ mock provider, ten are refused with `ceiling`, committed spend lands **on**
 database does not know is also refused (`reservation_unavailable`), never
 treated as "no limit applies". **VERIFIED**.
 
+Since 2026-11-16 the same holds for the **CrewFlow-wide** ceiling
+(`platform_ceiling`), HQ is **notified** at 80% and at the refusal (G-12), and
+the quote writer states the true reason (G-13).
+
 Residual, by design and documented: a call whose true cost exceeds its claim can
 push committed spend past the ceiling by the shortfall (G-7 is the realistic
 source). `overrun_count` counts it.
 
 ---
 
-## 6. Provider-level hard caps — NEEDS-FOUNDER
+## 6. Provider-level hard caps — NEEDS-FOUNDER (console settings; vendor behaviour VERIFIED from docs 2026-11-16)
 
-I cannot read either console. Nothing below is verified as configured. Menu
-names move; treat the paths as "where to look", and treat the **outcome** as
-the requirement.
+Nothing below is verified as **configured** — I cannot read either console and
+made no console change. What changed on 2026-11-16 is that the vendors' own
+current documentation was read, so the **behaviour** of each control is no
+longer a guess. Sources: Anthropic, [Rate limits → Spend limits](https://platform.claude.com/docs/en/api/rate-limits);
+OpenAI, [Spend limits](https://developers.openai.com/api/docs/guides/spend-limits)
+and [Rate limits](https://developers.openai.com/api/docs/guides/rate-limits).
 
-### Anthropic — ACTIVE in production
-A true provider-side hard cap **does exist**: Anthropic lets an organisation set
-a monthly spend limit, and lets each **workspace** carry its own spend limit;
-when a limit is reached the API refuses further requests until the period rolls
-or the limit is raised. Prepaid credit with auto-reload turned off is a second,
-blunter hard stop.
+| Control | Anthropic (live) | OpenAI (embeddings; transcription bound) |
+|---|---|---|
+| Vendor-imposed monthly cap | **Hard.** Each tier has a monthly spend cap (Start $500, Build $1,000, Scale $200,000; Custom: none). At the cap requests return **HTTP 429** `rate_limit_error`, `error_code: enforced_spend_limit_reached`, **no `retry-after`**, until 00:00 UTC on the 1st. **VERIFIED (docs)** | An approved monthly **usage limit** per tier (Free $100, Build $500, Launch $5,000, Grow $200,000); error code `organization_usage_limit_exceeded`. **VERIFIED (docs)** |
+| Customer-set org cap | **Hard.** Console → Settings → Spend limits (`platform.claude.com/settings/spend-limits`) → *Monthly spend limit* → *Set/Adjust limit* (≤ tier cap). Reached ⇒ **HTTP 400** `invalid_request_error` "You have reached your specified API usage limits…". **VERIFIED (docs)** | **Hard, if "Enforce a hard limit" is ON.** Settings → Organization limits → Spend → *Edit spend limit* → *Monthly spend limit* + **Enforce a hard limit**. Reached ⇒ **HTTP 429** `organization_spend_limit_exceeded`. Without the toggle it is only an alert. **VERIFIED (docs)** |
+| Workspace / project cap | **Hard**, per workspace ("You can't set spend limits on the default workspace"); message "…specified workspace API usage limits". Workspace rate limits (RPM/ITPM/OTPM) too. **VERIFIED (docs)** | **Hard, if enforced**, per project: Project settings → Limits → Spend; ⇒ 429 `project_spend_limit_exceeded`; other projects unaffected. **VERIFIED (docs)** |
+| Alerts | Not described on the spend-limits page. **UNVERIFIED** | "Spend alerts send a notification and do not cap spend"; a project limit creates a 100% alert by default. **VERIFIED (docs)** |
+| Prepaid credits | Not described on that page. **UNVERIFIED** whether an exhausted prepaid balance stops calls or what auto-reload does today. | An exhausted prepaid balance ⇒ `credit_balance_exhausted` (calls fail). Auto-recharge **not described** on the page. **UNVERIFIED** |
+| Precision | Not stated. | "Enforcement is not instantaneous" — recorded spend can slightly exceed the limit. **VERIFIED (docs)** |
+| Endpoint coverage | Org/workspace spend limits apply to API usage of the org/workspace. | Docs say "API traffic" generally; embeddings / audio are **not named**. **UNVERIFIED** per endpoint. |
 
-Set, in the Claude Console (console.anthropic.com → Settings):
+**This corrects the 2026-11-14 text**, which said an OpenAI project "budget" was
+historically only a notification and that prepaid-without-auto-recharge was the
+dependable stop: OpenAI now documents an enforced **hard** spend limit at
+organisation and project level. The alert-only mode still exists — the toggle is
+what makes it a cap.
 
-1. **A dedicated workspace for CrewFlow production** (Settings → Workspaces),
-   and make the production `ANTHROPIC_API_KEY` a key that belongs to *that*
-   workspace only. Local/test keys go in a separate workspace so a laptop key
-   (see `SECRETS-REGISTER.md` §2) can never spend the production allowance.
-2. **A workspace spend limit** on that workspace (Workspace → Limits). Suggested
-   starting value: **the sum of the application ceilings plus a margin** — with 2
-   tenant orgs + HQ at £100 each, ≈ **US$400–500 / month**. Raise it deliberately
-   as tenants are added. It should sit *above* what the app can legitimately
-   spend and far below "painful".
-3. **An organisation-level monthly spend limit** (Settings → Limits) as the outer
-   wall, a little above the workspace limit.
-4. **Auto-reload OFF**, or capped, if the account is on prepaid credits
-   (Settings → Billing). Auto-reload with no cap turns a hard stop back into an
-   open tap.
-5. **Workspace rate limits** (requests/tokens per minute) lowered to what
-   production needs — a second, speed-shaped provider-side bound.
-6. **Spend alert e-mails** at ~50 % and ~80 %. *An alert is not a cap.* It tells
-   you; it stops nothing.
-7. Confirm who else holds keys in the organisation and revoke any that are unused.
+### What the founder should set (no console change was made)
+**Anthropic** — (1) a dedicated *CrewFlow production* workspace whose key is the
+production `ANTHROPIC_API_KEY` (the default workspace cannot carry a spend
+limit, so production must not live there); (2) a **workspace monthly spend
+limit** slightly above the application's worst case — at the current
+application settings that is the CrewFlow-wide ceiling, **£500 = US$625** at
+the governor's `USD_TO_GBP = 0.8`, so ≈ **US$650–700**; (3) an **organisation spend
+limit** a little above that as the outer wall; (4) lower workspace rate limits to
+what production needs; (5) local/test keys in a separate workspace with a small
+limit; revoke unused keys.
 
-### OpenAI — reported in use (HQ memory embeddings); also bound for transcription
-Be careful with vocabulary here: OpenAI's per-project **"budget"** has
-historically been a **notification threshold, not an enforced stop** — requests
-can continue past it. I could not confirm current behaviour, so **do not rely on
-a project budget as a hard cap.** The dependable hard stop is **prepaid credits
-with auto-recharge OFF**: when the balance is gone, calls fail.
+**OpenAI** — (1) a dedicated production project; key restricted to the endpoints
+used (Embeddings; Audio only if transcription is wanted) and models allow-listed
+(`text-embedding-3-small`, `gpt-4o-mini-transcribe`); (2) a **project monthly
+spend limit with "Enforce a hard limit" ON** (embeddings are tiny — US$10–20
+is generous); (3) an **organisation hard limit** above it; (4) keep alerts at
+~50% / ~80% — they warn, they do not stop.
 
-Set, in the OpenAI dashboard (platform.openai.com → Settings):
-
-1. **A dedicated project** for CrewFlow production; the production
-   `OPENAI_API_KEY` is a key of that project, **restricted** to the endpoints
-   used (Embeddings; Audio only if transcription is wanted).
-2. **Billing → auto-recharge OFF**, with a deliberately small prepaid balance
-   (embeddings at $0.02/MTok are tiny; US$10–20 lasts a long time). This is the
-   safest available hard cap.
-3. **Project limits**: set the monthly budget *and* verify in the UI whether it
-   is labelled as enforcing or notifying; set per-model rate limits and
-   **disable every model the app does not use** on that project (allow only
-   `text-embedding-3-small`, and `gpt-4o-mini-transcribe` if wanted) so a leaked
-   key cannot be pointed at an expensive model.
-4. **Usage alerts** — again, not a cap.
+### How the application reacts when a provider cap bites
+A provider refusal typically arrives as an exception inside the governed call
+(the doors throw on a non-2xx): the reservation is **settled as a failure** at the 1p floor (it is not a timeout, so
+not at the claim) and the feature takes its degraded path. With
+`AI_SDK_MAX_RETRIES = 0` the SDK no longer retries the 429 (Anthropic notes its
+SDK's automatic retries would fail anyway). So a provider cap degrades exactly
+like the application budget — but the application does **not** yet tell HQ
+*why*; an `enforced_spend_limit_reached` / `*_spend_limit_exceeded` code is only
+in the logs (follow-up, §4b).
 
 ### Not AI, same lesson
-Twilio, Vapi and Meta are dark. Before any is activated it needs the same
-treatment (Twilio: no auto-recharge + a usage trigger that *suspends*; Vapi: a
-monthly account limit). Out of scope here; listed so it is not forgotten.
+Twilio, Vapi and Meta are dark. Vapi minutes (its own STT/TTS/telephony) are
+billed by Vapi and are **outside** the AI governor by construction — only the
+LLM turn it calls back into (`receptionist.voice_turn`) is governed. Before any
+is activated it needs a vendor-side cap (Twilio: no auto-recharge + a usage
+trigger that *suspends*; Vapi: a monthly account limit).
 
 ### If no provider cap can be set
-The safest alternative, in order: prepaid balance with no auto-reload → a key
-scoped to one workspace/project with the minimum models → tight provider rate
-limits → the application budget. The application budget alone is the weakest of
-these against a leaked key, because a leaked key does not go through it.
+In order: an enforced provider spend limit on a dedicated workspace/project →
+a prepaid balance with no auto-reload → a key scoped to the minimum models →
+tight provider rate limits → the application budget. The application budget
+alone is the weakest of these against a leaked key, because a leaked key does
+not go through it.
 
 ---
 
@@ -343,6 +453,10 @@ these against a leaked key, because a leaked key does not go through it.
 | 5 | Decide per-employee limits | None are configured; the velocity limit is now the only per-user bound. |
 | 6 | Approve the velocity numbers, or ask for different shares | They are a reasoned default (25 % / 10 % per hour), not tuned. |
 | 7 | Prioritise G-5 (render-path call) and G-6 (penny rounding) | Both need product/schema decisions I did not take unilaterally. |
+| 8 | **Confirm the CrewFlow-wide ceiling: £500 / month** (default in `20261358000000`; change on `/admin/ai-costs`) | It caps the sum of every org's AI spend; production spent £2.74 in 30 days to 2026-11-13. |
+| 9 | Configure **HQ e-mail recipients** on `/admin/settings` | Without them the 80% / 100% alerts (G-12) are in-app HQ notifications only. |
+| 10 | Accept **`AI_SDK_MAX_RETRIES = 0`** or choose 1–2 | 0 = one governed call is one provider request (exact ledger); each retry step re-admits up to one unrecorded billed request per reservation in the worst case, in exchange for riding out transient 429/5xx. |
+| 11 | Set the provider caps in §6 with the **enforcing** options (Anthropic workspace + org spend limits; OpenAI project + org spend limit with *Enforce a hard limit* ON) | Vendor docs confirm both are hard stops; alerts alone are not. |
 
 ---
 
