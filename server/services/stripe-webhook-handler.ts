@@ -1,6 +1,7 @@
 import "server-only";
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getStripe } from "@/lib/stripe/client";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { recomputeHealthForOrg } from "@/server/services/hq-health-recompute";
 import { emitNotifications } from "@/server/services/notifications-service";
@@ -489,6 +490,31 @@ async function handleCheckoutCompleted(
     );
     out.push("setup_fee_paid");
 
+    // BILLING POLICY, other order: the subscription was paid FIRST and its activation was held
+    // for this fee. If the company has never been active and Stripe says that subscription is
+    // live, activate it now (through the same atomic, tombstone-aware write).
+    const orgNow = await adminTable("organizations")
+      .select("status, stripe_subscription_id, stripe_customer_id")
+      .eq("id", meta.org_id)
+      .maybeSingle();
+    if (orgNow.error) throw new Error(`organizations read after setup fee failed: ${orgNow.error.message}`);
+    const o = orgNow.data as { status: string; stripe_subscription_id: string | null; stripe_customer_id: string | null } | null;
+    if (o?.stripe_subscription_id && (o.status === "pending" || o.status === "trial")) {
+      const stripe = getStripe();
+      if (!stripe) throw new Error("setup fee paid with a held subscription, but Stripe is not configured");
+      const live = await stripe.subscriptions.retrieve(o.stripe_subscription_id);
+      if (live.status === "active" || live.status === "trialing") {
+        const activated = await applyStripeSubscriptionState({
+          orgId: meta.org_id,
+          subscriptionId: live.id,
+          customerId: o.stripe_customer_id,
+          status: "active",
+          nextRenewalAt: null,
+        });
+        out.push(`activated_after_setup_fee:${activated}:${live.id}`);
+      }
+    }
+
     // Insert a billing_invoices row capturing the payment if not
     // already present from a sibling invoice.paid event.
     const paymentIntentId =
@@ -568,6 +594,33 @@ async function handleCheckoutCompleted(
       });
       if (applied === "ignored_cancelled_subscription") {
         out.push(`subscription_start_ignored:cancelled:${subId}`);
+      } else if (applied === "held_setup_fee_unpaid") {
+        // BILLING POLICY: the subscription is paid but the £1,000 setup fee is not, so the
+        // company stays where it is. The setup-fee payment activates it (see the setup_fee
+        // branch above); HQ is told so it can chase the fee or waive it.
+        out.push(`subscription_start_held:setup_fee_unpaid:${subId}`);
+        await recordAdminActivity({
+          actorId: null,
+          actorEmail: null,
+          action: "stripe.activation_held_setup_fee_unpaid",
+          targetTable: "organizations",
+          targetId: meta.org_id,
+          metadata: { stripe_subscription_id: subId, stripe_session_id: session.id },
+        });
+        await emitNotifications([
+          {
+            org_id: meta.org_id,
+            user_id: null,
+            audience: "hq",
+            type: "stripe.activation_held_setup_fee",
+            category: "stripe",
+            priority: "high",
+            title: "Subscription paid — setup fee outstanding",
+            body: "The monthly subscription is active in Stripe but the setup fee has not been paid, so the company has NOT been activated. Send the setup-fee checkout, or waive the fee, from this customer's HQ page.",
+            source_module: "stripe",
+            source_id: subId,
+          },
+        ]);
       } else {
         out.push(`subscription_started:${subId}`);
 
@@ -1009,9 +1062,16 @@ async function handleCustomerUpsert(event: Stripe.Event): Promise<string[]> {
  */
 async function orgIdFromEvent(event: Stripe.Event): Promise<string | null> {
   const obj = event.data.object as unknown as Record<string, unknown>;
-  // 1. Checkout sessions carry org_id in metadata.
+  // 1. Checkout sessions carry org_id in metadata. Use it only if that company still exists:
+  //    an event about a company that has since been deleted used to fail the billing_events
+  //    insert on its foreign key, so the route 500'd and Stripe retried it for days. Such an
+  //    event is stored without an org and its handlers find nothing to change.
   const meta = obj.metadata as Record<string, string> | undefined;
-  if (meta?.org_id) return meta.org_id;
+  if (meta?.org_id) {
+    const exists = await adminTable("organizations").select("id").eq("id", meta.org_id).maybeSingle();
+    if (exists.error) throw new Error(`organizations lookup for webhook event failed: ${exists.error.message}`);
+    if (exists.data) return meta.org_id;
+  }
 
   // 2. Anything with a customer field → look it up.
   const cust = obj.customer;

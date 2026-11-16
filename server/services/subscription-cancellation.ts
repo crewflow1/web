@@ -979,6 +979,8 @@ export async function confirmCancellationRpc(args: {
 export type ApplySubscriptionStateOutcome =
   | "applied"
   | "ignored_cancelled_subscription"
+  /** Billing policy: a never-active company waits for its setup fee (migration 20261352000000). */
+  | "held_setup_fee_unpaid"
   | "org_not_found";
 
 /**

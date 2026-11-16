@@ -299,6 +299,16 @@ end $$;
 --   applied
 --   ignored_cancelled_subscription   the subscription id is tombstoned — a late
 --                                    or out-of-order event; nothing is written
+--   held_setup_fee_unpaid            BILLING POLICY: a company is activated only once
+--                                    BOTH the setup fee (paid or waived by HQ) and the
+--                                    subscription have succeeded. A subscription that
+--                                    becomes active for a company that has never been
+--                                    active (pending / trial) while the setup fee is
+--                                    outstanding is recorded (ids, renewal) but the
+--                                    status is left alone; the setup-fee payment
+--                                    activates it later. Never demotes, and never blocks
+--                                    recovery (suspended -> active) or a reactivation
+--                                    (cancelled -> active) of a company that was active.
 --   org_not_found
 create or replace function public.apply_stripe_subscription_state(
   p_org_id          uuid,
@@ -313,13 +323,14 @@ set search_path = ''
 as $$
 declare
   v_status text;
+  v_fee    text;
 begin
   if p_org_status is not null and p_org_status not in ('active', 'suspended') then
     raise exception 'apply_stripe_subscription_state: invalid p_org_status %', p_org_status
       using errcode = '22023';
   end if;
 
-  select o.status into v_status
+  select o.status, o.setup_fee_status into v_status, v_fee
     from public.organizations o
    where o.id = p_org_id
      for update;
@@ -335,6 +346,18 @@ begin
        and c.state = 'confirmed'
   ) then
     return 'ignored_cancelled_subscription';
+  end if;
+
+  -- Billing policy: first activation needs the setup fee too (see outcome note above).
+  if p_org_status = 'active'
+     and v_status in ('pending', 'trial')
+     and coalesce(v_fee, 'pending') not in ('paid', 'waived') then
+    update public.organizations o
+       set stripe_subscription_id = p_subscription_id,
+           stripe_customer_id = coalesce(p_customer_id, o.stripe_customer_id),
+           next_renewal_at = coalesce(p_next_renewal_at, o.next_renewal_at)
+     where o.id = p_org_id;
+    return 'held_setup_fee_unpaid';
   end if;
 
   update public.organizations o

@@ -162,8 +162,9 @@ function customerEvent(): Stripe.Event {
   } as unknown as Stripe.Event;
 }
 
-/** Did the business logic actually run? */
-const dispatched = () => h.ops.some((o) => o.table === "organizations");
+/** Did the business logic actually run? (A WRITE to organizations — the pre-claim existence
+ *  check of a metadata org_id is a read and is not dispatch.) */
+const dispatched = () => h.ops.some((o) => o.table === "organizations" && o.op !== "select");
 /** billing_events UPDATEs, in order. */
 const billingUpdates = () =>
   h.ops.filter((o) => o.table === "billing_events" && o.op === "update");
@@ -274,7 +275,9 @@ describe("retried / orphaned event — reclaimed and processed again", () => {
     const reclaim = reclaimUpdate();
     expect(reclaim).toBeDefined();
     expect(reclaim?.eqs).toContainEqual(["event_id", EVENT_ID]);
-    expect(h.ops.some((o) => o.op === "select")).toBe(false);
+    // (the only read allowed before it is the existence check of the event's org — never a
+    //  read of the billing_events row)
+    expect(h.ops.some((o) => o.op === "select" && o.table === "billing_events")).toBe(false);
   });
 });
 
