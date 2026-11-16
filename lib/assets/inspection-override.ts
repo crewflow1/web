@@ -86,7 +86,7 @@ export function hasUnbypassedBlock(blocks: SafetyBlock[]): boolean {
 
 // ── Validation ────────────────────────────────────────────────────────────────
 const blankToUndefined = (v: unknown) =>
-  typeof v === "string" && v.trim() === "" ? undefined : v;
+  v === null || (typeof v === "string" && v.trim() === "") ? undefined : v;
 
 export const createOverrideSchema = z.object({
   asset_id: z.string().uuid(),

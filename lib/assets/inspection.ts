@@ -107,8 +107,11 @@ export function issueRequiresOutcome(outcome: InspectionOutcome | null | undefin
 }
 
 // ── Input validation ───────────────────────────────────────────────────────────
+// FormData.get() returns null for a field the form does not render (the "new inspection" form has
+// no due-date or re-inspection input); treat that like a blank, or every optional field rejects it
+// and the whole submission fails with "Please check the inspection details".
 const blankToUndefined = (v: unknown) =>
-  typeof v === "string" && v.trim() === "" ? undefined : v;
+  v === null || (typeof v === "string" && v.trim() === "") ? undefined : v;
 
 const optText = (max = 2000) =>
   z.preprocess(blankToUndefined, z.string().trim().max(max).optional());
