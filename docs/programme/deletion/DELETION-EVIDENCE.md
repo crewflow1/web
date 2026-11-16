@@ -343,3 +343,54 @@ order by 1;
 | Provider deletion for Twilio / Vapi / Meta | Recorded as an open **manual request** per deletion (§12); no API call by design | Pre-activation condition for those integrations (runbook §5). |
 | Retiring `POST /api/gdpr/erase` | **NOT-IMPLEMENTED** | Separate reviewed change. |
 | `privacy_tombstone_reapply` accepts any well-formed tombstone | Noted | It is service-role-only and operator-run by design (the ledger that would authenticate a tombstone is exactly what a restore loses). Never call it from a request path; consider signing the exported file. |
+
+## 12. Round 2026-11-16: renumber, processors, the three cases, recovery gaps
+
+Run against the shared local stack with synthetic data only. Main (`d24295e`, which adds migration 354) was merged in.
+
+**Migration 354 vs teardown and erasure: VERIFIED compatible.** 354 changes only *read* policies on
+`storage.objects` and `tenant_attachments`, and adds a unique index on `tenant_attachments.storage_path`.
+
+- Deletion removes Storage objects with the service role, which bypasses those policies.
+- Teardown and erasure never insert or rewrite `storage_path`; they only delete rows.
+- The whole privacy suite passes with 354 applied.
+
+**Renumbered.** The migrations moved from `20261356–359` to `20261359–362`. The SQL bodies did not change, except for
+§8 below.
+
+**Processor ledger (migration 359 §8): VERIFIED.**
+
+- It adds `privacy_processor_requests` plus three functions: `privacy_processor_census`, `privacy_processor_record`
+  and `privacy_processor_request_resolve`. All are service-role only.
+- Lockdown re-checked: **23** `privacy_*` functions, **0** executable by `anon` or `authenticated`. All **3** tables have
+  RLS on, 0 policies and no client privilege.
+- Only §8 was applied to the shared DB. It is idempotent.
+- Tests: `company-deletion.test.ts` › "processors: …" and "primitives are unreachable…". Unit:
+  `__tests__/privacy/privacy-processors.test.ts` (7).
+
+**The three cases: VERIFIED.**
+
+- **A:** `account-deletion.test.ts` › "CASE A…". Across every org-scoped table, every row that did not mention the
+  person is unchanged after the deletion. The others' residue markers are identical, and the shared job and invoice
+  are byte-for-byte equal.
+- **B:** the existing company suite. It also now pins the exact column set of `privacy_retained_billing_records`.
+- **C:** `cancellation-never-deletes.test.ts`: a cancelled, held company with a confirmed cancellation and no request
+  is byte-for-byte unchanged after the drain runs with the flag ON. `no-silent-company-deletion.test.ts` (5)
+  statically proves:
+  - only two same-request rollbacks in app code delete an organisation;
+  - only `20261360` deletes one in a migration;
+  - only the deletion actions and the cron's drain import the engine;
+  - the retention purge can never name a company;
+  - with a fake admin and a 2099 clock, the drain runs nothing without a ledger row.
+
+**Recovery gaps closed: VERIFIED.**
+
+- Killed mid-storage: files were partly deleted and the step was not recorded. The DB stayed intact and unreachable,
+  and the resume removed only the rest and sealed.
+- Crash right after the new `processors` step: resumes and finishes once.
+- Account deletion frozen after its lockout while the company is deleted: resumes and seals.
+- Company deletion frozen after its lockout while a member deletes their account: resumes, and the identities tally
+  totals 4.
+
+Gate results (one `heavy.sh` run): unit 747 files / 12,107 tests passed. Security 349 / 8,741 passed. Privacy
+integration 8 files / 46 tests passed. Typecheck and e2e are in the final report.
