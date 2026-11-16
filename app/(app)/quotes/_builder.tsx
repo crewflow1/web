@@ -495,7 +495,7 @@ export function QuoteBuilder({
                   </td>
                   <td className="px-2 py-2 text-right">
                     <select
-                      value={li.vat_rate}
+                      aria-label={`Line ${idx + 1} VAT rate`} value={li.vat_rate}
                       onChange={(e) =>
                         updateLine(idx, { vat_rate: Number(e.target.value) })
                       }

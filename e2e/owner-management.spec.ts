@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- seed/assert helpers: the generated
    Database types don't cover every table the spec touches, so DB access goes through a loose cast. */
 import { randomBytes } from "node:crypto";
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalE2eTarget } from "./_guard";
 import { mintState, asActor } from "./_actors";
+import { waitForHydrated } from "./_hydration";
 
 /**
  * Owner / admin management of the tenant-boundary tables — end to end, real sessions.
@@ -81,6 +82,17 @@ const profileForm = (page: Page) =>
   page.locator("form", { has: page.getByRole("button", { name: "Save profile" }) });
 
 /** Submit a useActionState form and wait for the server action's own POST to answer. */
+/**
+ * Click a control only once React has hydrated it. These are streamed pages: before hydration a
+ * click on "+ Add staff" is lost (the dialog never opens) and a form submit falls back to a native
+ * POST that re-renders in place (no confirmation banner). Both showed up as intermittent failures
+ * of this spec; see ./_hydration.ts for the mechanism.
+ */
+async function clickHydrated(target: Locator): Promise<void> {
+  await waitForHydrated(target);
+  await target.click();
+}
+
 async function submitAction(page: Page, pathPrefix: string, click: () => Promise<void>) {
   const done = page.waitForResponse(
     (r) => r.request().method() === "POST" && new URL(r.url()).pathname.startsWith(pathPrefix),
@@ -169,7 +181,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await form.locator('input[name="phone"]').fill(phone);
       await form.locator('input[name="vat_number"]').fill(vat);
       await form.locator('input[name="address_city"]').fill("Belfast");
-      await submitAction(page, "/settings", () => form.getByRole("button", { name: "Save organisation" }).click());
+      await submitAction(page, "/settings", () => clickHydrated(form.getByRole("button", { name: "Save organisation" })));
       await expect(page.getByText(/Couldn't save organisation|don't have permission|Only admins\/owners/)).toHaveCount(0);
       // The confirmation banner (the screen's only success feedback).
       await expect(page.getByText("Organisation saved.")).toBeVisible();
@@ -200,7 +212,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
         const form = profileForm(page);
         await form.locator('input[name="full_name"]').fill(name);
         await form.locator('input[name="phone"]').fill(phone);
-        await submitAction(page, "/settings", () => form.getByRole("button", { name: "Save profile" }).click());
+        await submitAction(page, "/settings", () => clickHydrated(form.getByRole("button", { name: "Save profile" })));
         await expect(page.getByText("Profile saved.")).toBeVisible();
         const row = await userRow(who);
         expect(row.full_name).toBe(name);
@@ -218,7 +230,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await page.goto("/settings");
       await expect(page.getByText("No logo yet")).toBeVisible();
       await page.locator('input[type="file"][name="file"]').setInputFiles({ name: "logo.png", mimeType: "image/png", buffer: PNG });
-      await submitAction(page, "/settings", () => page.getByRole("button", { name: "Upload", exact: true }).click());
+      await submitAction(page, "/settings", () => clickHydrated(page.getByRole("button", { name: "Upload", exact: true })));
       await expect(page.getByRole("img", { name: "Company logo" })).toBeVisible();
 
       const row = await orgRow(orgA);
@@ -231,7 +243,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await expect(page.getByRole("img", { name: "Company logo" })).toBeVisible();
 
       page.once("dialog", (d) => void d.accept());
-      await submitAction(page, "/settings", () => page.getByRole("button", { name: "Remove", exact: true }).click());
+      await submitAction(page, "/settings", () => clickHydrated(page.getByRole("button", { name: "Remove", exact: true })));
       await expect(page.getByText("No logo yet")).toBeVisible();
       expect((await orgRow(orgA)).logo_path).toBeNull();
       const gone = await db.storage.from("company-logos").download(row.logo_path);
@@ -248,7 +260,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await page.goto("/onboarding/setup");
       const skip = page.getByRole("button", { name: "Skip for now" }).first();
       await expect(skip).toBeVisible();
-      await skip.click();
+      await clickHydrated(skip);
       await expect(page).toHaveURL(/saved=skipped/);
       const skipped = (await orgRow(orgA)).onboarding_state?.dismissed_steps as string[] | undefined;
       expect(skipped?.length).toBe(1);
@@ -256,7 +268,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await page.goto("/onboarding/setup");
       await expect(page.getByRole("button", { name: "Bring back" })).toHaveCount(1);
 
-      await page.getByRole("button", { name: "Bring back" }).click();
+      await clickHydrated(page.getByRole("button", { name: "Bring back" }));
       await expect(page).toHaveURL(/saved=unskipped/);
       expect(((await orgRow(orgA)).onboarding_state?.dismissed_steps as string[]) ?? []).toHaveLength(0);
       await page.goto("/onboarding/setup");
@@ -269,7 +281,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
     await asActor(browser, STATE("owner"), async (page) => {
       await page.goto("/staff");
       // e1: joiner is visible to the owner via the shared org -> DIRECT ADD.
-      await page.getByRole("button", { name: "+ Add staff" }).first().click();
+      await clickHydrated(page.getByRole("button", { name: "+ Add staff" }).first());
       let dialog = page.getByRole("dialog");
       // The dialog moves focus to its first field just after it opens. Typing before that lands
       // the text in "Full name" — wait for the focus hand-over, then fill.
@@ -277,7 +289,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await dialog.locator('input[name="full_name"]').fill("OM Joiner");
       await dialog.locator('input[name="email"]').fill(email("joiner"));
       await dialog.locator('select[name="role"]').selectOption("staff");
-      await dialog.getByRole("button", { name: "Send invite" }).click();
+      await clickHydrated(dialog.getByRole("button", { name: "Send invite" }));
       await expect(dialog.getByText(/added to /)).toBeVisible();
       await expect(dialog.getByText(/Invite emailed/)).toHaveCount(0);
       expect(await memRole(orgA, "joiner")).toBe("staff");
@@ -287,14 +299,14 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       // e2: joiner2 is invisible to the owner (no shared org) -> INVITE path. The local env
       // has no mail provider key, so the action reports it could not send and NOTHING
       // is emailed; crucially no membership is created for a stranger.
-      await page.getByRole("button", { name: "+ Add staff" }).first().click();
+      await clickHydrated(page.getByRole("button", { name: "+ Add staff" }).first());
       dialog = page.getByRole("dialog");
       // The dialog moves focus to its first field just after it opens. Typing before that lands
       // the text in "Full name" — wait for the focus hand-over, then fill.
       await expect(page.getByRole("dialog").locator('input[name="full_name"]')).toBeFocused();
       await dialog.locator('input[name="email"]').fill(email("joiner2"));
       await dialog.locator('select[name="role"]').selectOption("staff");
-      await dialog.getByRole("button", { name: "Send invite" }).click();
+      await clickHydrated(dialog.getByRole("button", { name: "Send invite" }));
       await expect(dialog.getByText("Couldn't send the invite email. Check the address and try again.")).toBeVisible();
       expect(await memRole(orgA, "joiner2")).toBeNull();
     });
@@ -308,7 +320,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
         await page.goto(profile);
         const form = page.locator("form", { has: page.getByRole("button", { name: "Update", exact: true }) });
         await form.locator('select[name="role"]').selectOption(to);
-        await submitAction(page, "/staff/", () => form.getByRole("button", { name: "Update", exact: true }).click());
+        await submitAction(page, "/staff/", () => clickHydrated(form.getByRole("button", { name: "Update", exact: true })));
         await expect(page).toHaveURL(/saved=role/);
         expect(await memRole(orgA, "roleTarget")).toBe(expectDb);
         await page.goto(profile);
@@ -325,7 +337,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       const form = profileForm(page);
       await form.locator('input[name="full_name"]').fill("OM Profile Edited");
       await form.locator('input[name="phone"]').fill("07700 900333");
-      await submitAction(page, "/staff/", () => form.getByRole("button", { name: "Save profile" }).click());
+      await submitAction(page, "/staff/", () => clickHydrated(form.getByRole("button", { name: "Save profile" })));
       await expect(page.getByText(/Couldn't save|don't have permission|Only the owner/)).toHaveCount(0);
       // "Some POST under /staff/ resolved" does not prove THIS save landed; wait for the row.
       await expect.poll(async () => (await userRow("profileTarget")).full_name, { timeout: 15_000 }).toBe("OM Profile Edited");
@@ -342,7 +354,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
     await asActor(browser, STATE("owner"), async (page) => {
       await page.goto(`/staff/${ids.removeTarget}`);
       page.once("dialog", (d) => void d.accept());
-      await page.getByRole("button", { name: "Remove", exact: true }).click();
+      await clickHydrated(page.getByRole("button", { name: "Remove", exact: true }));
       await expect(page).toHaveURL(/saved=removed/);
       expect(await memRole(orgA, "removeTarget")).toBeNull();
       expect((await userRow("removeTarget")).id).toBe(ids.removeTarget); // identity persists
@@ -365,7 +377,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       // so press one and prove nothing is written (asserted on the row below).
       const skip = page.getByRole("button", { name: "Skip for now" }).first();
       if (await skip.count()) {
-        await skip.click();
+        await clickHydrated(skip);
         // The refused action bounces staff /dashboard?error=forbidden -> /me in TWO navigations.
         // Wait for the FINAL one to land; "networkidle" alone can fire between the two, and the
         // next goto is then interrupted by the pending navigation to /me.
@@ -398,7 +410,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await page.goto("/settings");
       const form = settingsOrgForm(page);
       await form.locator('input[name="phone"]').fill("000 NOT SAVED");
-      await submitAction(page, "/settings", () => form.getByRole("button", { name: "Save organisation" }).click());
+      await submitAction(page, "/settings", () => clickHydrated(form.getByRole("button", { name: "Save organisation" })));
       await expect(page.getByText("Only admins/owners can edit organisation details.")).toBeVisible();
       // The success banner must never accompany a refused save.
       await expect(page.getByText("Organisation saved.")).toHaveCount(0);
@@ -406,18 +418,18 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await page.goto(`/staff/${ids.profileTarget}`);
       const pf = profileForm(page);
       await pf.locator('input[name="full_name"]').fill("OM Must Not Save");
-      await submitAction(page, "/staff/", () => pf.getByRole("button", { name: "Save profile" }).click());
+      await submitAction(page, "/staff/", () => clickHydrated(pf.getByRole("button", { name: "Save profile" })));
       await expect(page.getByText("You don't have permission to edit staff records.")).toBeVisible();
 
       await page.goto("/staff");
-      await page.getByRole("button", { name: "+ Add staff" }).first().click();
+      await clickHydrated(page.getByRole("button", { name: "+ Add staff" }).first());
       const dialog = page.getByRole("dialog");
       // The dialog moves focus to its first field just after it opens. Typing before that lands
       // the text in "Full name" — wait for the focus hand-over, then fill.
       await expect(page.getByRole("dialog").locator('input[name="full_name"]')).toBeFocused();
       await dialog.locator('input[name="email"]').fill(email("joiner2"));
       await dialog.locator('select[name="role"]').selectOption("staff");
-      await dialog.getByRole("button", { name: "Send invite" }).click();
+      await clickHydrated(dialog.getByRole("button", { name: "Send invite" }));
       await expect(dialog.getByText("You don't have permission to add staff.")).toBeVisible();
     });
     const after = await orgRow(orgA);
@@ -432,7 +444,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await page.goto("/settings");
       const form = settingsOrgForm(page);
       await form.locator('input[name="phone"]').fill("028 9000 4444");
-      await submitAction(page, "/settings", () => form.getByRole("button", { name: "Save organisation" }).click());
+      await submitAction(page, "/settings", () => clickHydrated(form.getByRole("button", { name: "Save organisation" })));
       await expect(page.getByText("Organisation saved.")).toBeVisible();
       expect((await orgRow(orgA)).phone).toBe("028 9000 4444");
       await page.reload();
@@ -448,21 +460,21 @@ test.describe("owner & admin management persists, and lesser roles are refused",
         await page.goto(`/staff/${ids[key]}`);
         const pf = profileForm(page);
         await pf.locator('input[name="full_name"]').fill("OM Must Not Save");
-        await submitAction(page, "/staff/", () => pf.getByRole("button", { name: "Save profile" }).click());
+        await submitAction(page, "/staff/", () => clickHydrated(pf.getByRole("button", { name: "Save profile" })));
         await expect(page.getByText("Only the owner can edit an owner's or admin's record.")).toBeVisible();
         expect((await userRow(key)).full_name).toBe(beforeName);
       }
 
       // Appoint an admin via the add-staff dialog -> refused, no membership.
       await page.goto("/staff");
-      await page.getByRole("button", { name: "+ Add staff" }).first().click();
+      await clickHydrated(page.getByRole("button", { name: "+ Add staff" }).first());
       const dialog = page.getByRole("dialog");
       // The dialog moves focus to its first field just after it opens. Typing before that lands
       // the text in "Full name" — wait for the focus hand-over, then fill.
       await expect(page.getByRole("dialog").locator('input[name="full_name"]')).toBeFocused();
       await dialog.locator('input[name="email"]').fill(email("joiner2"));
       await dialog.locator('select[name="role"]').selectOption("admin");
-      await dialog.getByRole("button", { name: "Send invite" }).click();
+      await clickHydrated(dialog.getByRole("button", { name: "Send invite" }));
       await expect(dialog.getByText("Only the owner can appoint an admin.").first()).toBeVisible();
       expect(await memRole(orgA, "joiner2")).toBeNull();
 
@@ -470,7 +482,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await page.goto(`/staff/${ids.profileTarget}`);
       const rf = page.locator("form", { has: page.getByRole("button", { name: "Update", exact: true }) });
       await rf.locator('select[name="role"]').selectOption("admin");
-      await rf.getByRole("button", { name: "Update", exact: true }).click();
+      await clickHydrated(rf.getByRole("button", { name: "Update", exact: true }));
       await page.waitForLoadState("networkidle");
       await expect(page).not.toHaveURL(/saved=role/);
       expect(await memRole(orgA, "profileTarget")).toBe("staff");
@@ -479,7 +491,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await page.goto(`/staff/${ids.adminTarget}`);
       const af = page.locator("form", { has: page.getByRole("button", { name: "Update", exact: true }) });
       await af.locator('select[name="role"]').selectOption("staff");
-      await af.getByRole("button", { name: "Update", exact: true }).click();
+      await clickHydrated(af.getByRole("button", { name: "Update", exact: true }));
       await page.waitForLoadState("networkidle");
       await expect(page).not.toHaveURL(/saved=role/);
       expect(await memRole(orgA, "adminTarget")).toBe("admin");
@@ -509,7 +521,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       const form = settingsOrgForm(page);
       await expect(form.locator('input[name="name"]')).toHaveValue(`OM Other Co ${sfx}`);
       await form.locator('input[name="phone"]').fill("028 9000 5555");
-      await submitAction(page, "/settings", () => form.getByRole("button", { name: "Save organisation" }).click());
+      await submitAction(page, "/settings", () => clickHydrated(form.getByRole("button", { name: "Save organisation" })));
       await expect(page.getByText("Organisation saved.")).toBeVisible();
 
       // Org A's staff records are not reachable by id from org B's session.

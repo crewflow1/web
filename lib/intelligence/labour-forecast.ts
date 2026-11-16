@@ -227,8 +227,8 @@ export function labourForecastMetric(f: LabourForecast): LabelledMetric<LabourFo
       "change it if your week differs. Available hours are unbooked capacity, not idle time (people " +
       "can work unrostered); a negative figure means more is rostered than the assumed week holds.",
     computedFrom: [
-      { label: "Rota", href: "/rota" },
-      { label: "Team", href: "/team" },
+      { label: "Rota", href: "/staff/rota" },
+      { label: "Team", href: "/staff" },
     ],
   });
 }
