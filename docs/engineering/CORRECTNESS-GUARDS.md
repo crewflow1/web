@@ -197,3 +197,29 @@ When an audit finds a production-class defect:
 A defect class is only "closed" when the guard is green **and** would go red if
 the class were reintroduced (non-vacuous). Prove non-vacuity by temporarily
 reintroducing the defect locally and watching the guard fail.
+
+## TEMPORARY — CommitNudge: saves must not wait ~10 s to show (added 2026-11-16, PR #1105)
+
+**Symptom it works around.** On many pages, after a form action the router's update suspends and
+React never receives the wake-up for it, so the saved result (confirmation + new values) only
+appears at the next unrelated render — in the app shell a 10-second poll. Measured: record
+payment 9.5 s, assign worker 9.7 s, staff profile 10.1 s, settings 9.7 s; server ~0.1 s. Not
+caused by `revalidatePath` (`router.refresh()` stalls the same way). Upstream class:
+vercel/next.js#87529. Page-specific trigger not isolated (a bare page in the same shell does not
+reproduce it).
+
+**Workaround.** `app/(app)/_components/commit-nudge.tsx`, mounted once in `app/(app)/layout.tsx`:
+after any `submit` (capture phase) it re-renders an empty component 14 times over 15 s, which lets
+React retry and commit the held update. It never submits, fetches or writes; cost ≈ 8 ms of script
+time per save, no long tasks (`e2e/commit-nudge-safety.spec.ts`). Covers form submissions only —
+a server action fired from a plain `onClick` is not nudged (none found stalling).
+
+**Rules while it exists.**
+- Do not "fix" a slow confirmation by removing `revalidatePath` or adding `router.refresh()` — that
+  does not address this and can leave stale values (the first version of #1103 did).
+- New save forms are covered automatically if they submit a `<form>`.
+
+**Removal condition (do this at every Next.js / React upgrade).** Delete `<CommitNudge />` from the
+layout on a branch and run `e2e/form-saves-confirm-promptly.spec.ts` (eight saves × two timings,
+3 s limit) a few times serially. If it passes without the nudge, remove the component and this
+section. If it fails, keep both.
