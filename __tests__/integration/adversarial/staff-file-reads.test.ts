@@ -182,4 +182,22 @@ describe("stored files follow record visibility (staff vs owner vs other company
       expect(ownerRead.error, `${bucket}: owner reads it (positive control)`).toBeNull();
     }
   });
+
+  it("one row per stored object: a staff member cannot add a second row pointing at a file they may not see (and so cannot read it)", async () => {
+    const world = w!;
+    const staff = as(world.A.staff.token);
+    const assignedJob = await svc().from("tenant_attachments").select("target_id").eq("id", planted["assigned-job"]!.id).single();
+    const forged = await staff.from("tenant_attachments").insert({
+      org_id: world.A.id,
+      target_table: "jobs",
+      target_id: (assignedJob.data as { target_id: string }).target_id,
+      filename: "forged.pdf",
+      storage_path: planted["invoice"]!.path,
+      mime_type: "application/pdf",
+      size_bytes: 20,
+      uploaded_by: world.A.staff.id,
+    });
+    expect(forged.error, "a duplicate storage_path must be refused").not.toBeNull();
+    expect(await objectReadable(world.A.staff.token, "invoice"), "the invoice file stays unreadable").toBe(false);
+  });
 });

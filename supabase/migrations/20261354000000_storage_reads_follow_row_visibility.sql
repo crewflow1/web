@@ -20,7 +20,8 @@
 -- Rollback: recreate each "<bucket>: members can read" policy with its previous predicate
 --   (bucket_id = '<bucket>' and split_part(name,'/',1)::uuid in (select current_org_ids()))
 -- (receipts / whatsapp-media used (storage.foldername(name))[1]); recreate tenant_attachments_select
--- as (org_id in (select current_org_ids())); drop function tenant_attachment_visible.
+-- as (org_id in (select current_org_ids())); drop function tenant_attachment_visible;
+-- drop index tenant_attachments_storage_path_uidx.
 
 begin;
 
@@ -93,7 +94,11 @@ create policy tenant_attachments_select on public.tenant_attachments
     and public.tenant_attachment_visible(org_id, target_table, target_id, uploaded_by)
   );
 
-create index if not exists tenant_attachments_storage_path_idx
+-- ONE row per stored object. Without this, a member could insert a SECOND row that points at an
+-- existing object they may not see (their own row is visible to them as its uploader) and the
+-- Storage policy below would then admit the read. Every writer generates a fresh path; production
+-- had 0 rows and 0 duplicate paths when this was written (read-only check, 2026-11-16).
+create unique index if not exists tenant_attachments_storage_path_uidx
   on public.tenant_attachments (storage_path);
 
 -- ── 2. Storage reads follow the referencing row ────────────────────────────────────────────────
