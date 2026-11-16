@@ -53,13 +53,13 @@ async function makeInvoice(): Promise<string> {
   return r.data.id as string;
 }
 
-const payFromLine = (lineId: string, invoice: string) =>
+const payFromLine = (lineId: string, invoice: string, amount = 120) =>
   svc()
     .from("invoice_payments")
     .insert({
       org_id: orgId,
       invoice_id: invoice,
-      amount: 120,
+      amount,
       paid_at: "2026-11-01",
       source: "bank_csv",
       bank_line_id: lineId,
@@ -150,8 +150,10 @@ describeIntegration("bank reconciliation · a bank line pays an invoice exactly 
     expect((await manual()).error, "two genuine part-payments are legitimate").toBeNull();
     const l1 = await makeLine(10);
     const l2 = await makeLine(10);
-    expect((await payFromLine(l1, invoice)).error).toBeNull();
-    expect((await payFromLine(l2, invoice)).error).toBeNull();
+    // Each line pays ITS OWN £10 (the invoice is £120): since 20261350000000 the payments on
+    // one invoice cannot add up to more than its total, so the lines no longer pay £120 each.
+    expect((await payFromLine(l1, invoice, 10)).error).toBeNull();
+    expect((await payFromLine(l2, invoice, 10)).error).toBeNull();
     expect(await paymentsFor(invoice)).toHaveLength(4);
   });
 
