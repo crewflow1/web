@@ -98,12 +98,12 @@ describe("magic-link request (server action)", () => {
     expectNoAddress(url);
   });
 
-  it("a provider error without an address is still shown as before", async () => {
+  it("a provider error becomes a CODE — provider text never travels in the URL", async () => {
     createClientMock.mockResolvedValue({
       auth: { signInWithOtp: async () => ({ error: { message: "Signups not allowed for otp" } }) },
     });
     const url = await redirectedTo(() => signInWithMagicLink(fd({ email: ADDRESS })));
-    expect(decodeURIComponent(url)).toBe("/login?error=Signups not allowed for otp");
+    expect(url).toBe("/login?error=magic_link_send_failed");
   });
 
   it("an OAuth start error that quotes an address is replaced too", async () => {
