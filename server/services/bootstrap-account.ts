@@ -21,25 +21,30 @@ export async function ensureUserRow(input: {
 }): Promise<void> {
   const supabase = createAdminClient();
 
-  const { error } = await supabase
-    .from("users")
-    .upsert(
-      {
-        id: input.id,
-        email: input.email,
-        full_name: input.fullName ?? null,
-        // DATA MINIMISATION: `users.avatar_url` is deliberately NOT written.
-        // The OAuth provider's profile-picture URL (a link to an image of the
-        // person's face) used to be copied here on every sign-in, yet no screen,
-        // export or email ever read it. Leaving the key out of the upsert means
-        // new users never get one and existing values are not refreshed (the
-        // staged, approval-required clean-up of old values lives in
-        // docs/programme/privacy/staged-migrations/). Pinned by
-        // __tests__/security/no-avatar-collection.test.ts.
-        phone: input.phone ?? null,
-      },
-      { onConflict: "id" },
-    );
+  // DATA ACCURACY (UK GDPR Art. 5(1)(d)): this runs on EVERY sign-in, and the
+  // password and magic-link paths have no name or phone to offer. Writing
+  // `null` for a value the caller does not have used to wipe the name and
+  // phone the person (or their employer) had saved in settings, on each
+  // sign-in. A profile field is therefore written only when the caller
+  // actually supplies a non-empty value; otherwise the upsert leaves the stored
+  // value alone (a brand-new row still gets NULL by default).
+  // Pinned by __tests__/security/user-profile-accuracy.test.ts.
+  const row: { id: string; email: string; full_name?: string; phone?: string } = {
+    id: input.id,
+    email: input.email,
+  };
+  if (input.fullName) row.full_name = input.fullName;
+  if (input.phone) row.phone = input.phone;
+  // DATA MINIMISATION: `users.avatar_url` is deliberately NOT written.
+  // The OAuth provider's profile-picture URL (a link to an image of the
+  // person's face) used to be copied here on every sign-in, yet no screen,
+  // export or email ever read it. Leaving the key out of the upsert means
+  // new users never get one and existing values are not refreshed (the
+  // staged, approval-required clean-up of old values lives in
+  // docs/programme/privacy/staged-migrations/). Pinned by
+  // __tests__/security/no-avatar-collection.test.ts.
+
+  const { error } = await supabase.from("users").upsert(row, { onConflict: "id" });
 
   if (error) {
     console.error("[bootstrap] ensureUserRow failed", error);

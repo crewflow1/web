@@ -57,7 +57,9 @@ describe("no profile-picture collection", () => {
 
     expect(upsertMock).toHaveBeenCalledTimes(1);
     const row = upsertMock.mock.calls[0]![0];
-    expect(Object.keys(row).sort()).toEqual(["email", "full_name", "id", "phone"]);
+    // phone is null here, so (accuracy fix) it is omitted rather than written as NULL.
+    expect(Object.keys(row).sort()).toEqual(["email", "full_name", "id"]);
+    expect(row).not.toHaveProperty("avatar_url");
     expect(JSON.stringify(row)).not.toContain("googleusercontent");
   });
 
