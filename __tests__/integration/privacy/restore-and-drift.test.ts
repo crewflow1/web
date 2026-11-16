@@ -192,7 +192,13 @@ describeIntegration("privacy · catalogue drift guards", () => {
       "tg_permit_condition_block_delete",
       "tg_rah_block_delete_when_issued",
     ]);
-    const blocking = guards.filter((g) => !g.has_org_escape && !PARENT_CHECKED.has(g.fn));
+    // Guards that only refuse CLIENT JWTs (service_role / JWT-less sessions pass) and
+    // therefore never see the service-role teardown. Reviewed 2026-11-16; behaviour
+    // proven by company-deletion.test.ts ("a CANCELLED ... company can still be deleted").
+    const SERVICE_ROLE_EXEMPT = new Set(["tg_held_org_write_guard"]);
+    const blocking = guards.filter(
+      (g) => !g.has_org_escape && !PARENT_CHECKED.has(g.fn) && !SERVICE_ROLE_EXEMPT.has(g.fn),
+    );
     expect(
       blocking.map((g) => `${g.tbl} ← ${g.fn}`),
       "a delete guard with no teardown escape makes every tenant holding such a row undeletable",

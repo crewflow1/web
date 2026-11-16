@@ -266,6 +266,32 @@ describeIntegration("privacy · company deletion", () => {
     expect(await ledger(req.requestId)).toEqual(tomb);
   }, 180_000);
 
+  it("a CANCELLED (read-only, D-17 held) company can still be deleted completely — the held-company write guard does not block the teardown", async () => {
+    const w = await buildWorld("held", orgB, { shareWithBystander: false });
+    const held = await db().from("organizations").update({ status: "cancelled" }).eq("id", w.org.id);
+    expect(held.error, held.error?.message).toBeNull();
+    // Precondition: the company really is read-only to its own members.
+    const ownerToken = await signIn(w.owner);
+    const write = await userClient(ownerToken).from("customers").insert({ org_id: w.org.id, name: "should be refused" });
+    expect(write.error, "a held company must refuse member writes (or the test proves nothing)").not.toBeNull();
+
+    const stripe = stripeMock();
+    const req = await requestOrgDeletion(
+      { orgId: w.org.id, actorUserId: w.owner.id, confirmName: w.org.name },
+      { admin: admin() },
+    );
+    expect(req.ok, JSON.stringify(req)).toBe(true);
+    if (!req.ok) return;
+    await makeDue(req.requestId);
+    const run = await runDeletionRequest(req.requestId, { admin: admin(), stripe });
+    expect(run.status, JSON.stringify(run)).toBe("completed");
+    expect(await countRows("organizations", { id: w.org.id })).toBe(0);
+    for (const t of ["customers", "jobs", "memberships", "notifications"]) {
+      expect(await countRows(t, { org_id: w.org.id }), t).toBe(0);
+    }
+    expect(await countOrgObjects(w.org.id), "storage objects").toBe(0);
+  }, 180_000);
+
   it("append-only evidence stays append-only: the teardown escape is unusable outside a sanctioned teardown", async () => {
     const w = await buildWorld("escape", orgB, { shareWithBystander: false });
     const correlationId = await seedReceptionistLedgerRow(w.org.id);
