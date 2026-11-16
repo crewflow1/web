@@ -108,6 +108,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { limitSubjectUserId } from "./governor/attribution";
 import { resolveEffectiveCeiling } from "./governor/limits";
 import { consumeAiVelocity } from "./governor/velocity";
+import { raiseSpendAlerts } from "./governor/spend-alerts";
 import {
   featureDefinition,
   reservationEnvelopeOf,
@@ -1069,6 +1070,16 @@ export async function invokeWithGovernor<T>(
         `${reservation.committedPence}p committed + ${reservation.reservedPence}p in flight, ` +
         `claim ${claimPence}p, ceiling ${reservation.ceilingPence}p.`,
     );
+    // 100% ALERT: a refusal by the org or CrewFlow-wide ceiling is the "limit
+    // reached" event. Once per threshold per month (./governor/spend-alerts.ts);
+    // never throws, no provider call, and the caller is refused either way.
+    if (reservation.reason === "ceiling" || reservation.reason === "platform_ceiling") {
+      await raiseSpendAlerts({
+        kind: "refused",
+        orgId: input.orgId,
+        scope: reservation.reason === "platform_ceiling" ? "platform" : "org",
+      });
+    }
     return {
       status: "blocked",
       budget: "blocked",
@@ -1095,6 +1106,19 @@ export async function invokeWithGovernor<T>(
     inputTokens: 0,
     outputTokens: 0,
   };
+
+  // 80% / 100% ALERTS after spend lands. The figures are the reservation's own
+  // (already in hand), so most calls make no extra round trip; see
+  // ./governor/spend-alerts.ts. Never throws, never calls a provider.
+  const alertAfterSettle = () =>
+    raiseSpendAlerts({
+      kind: "settled",
+      orgId: input.orgId,
+      committedPence: reservation.committedPence,
+      reservedPence: reservation.reservedPence,
+      claimPence,
+      ceilingPence: reservation.ceilingPence,
+    });
 
   // 5/6/7. Run it, time it, account for it.
   const startedAt = Date.now();
@@ -1145,6 +1169,7 @@ export async function invokeWithGovernor<T>(
         aiEmployeeId: input.aiEmployeeId ?? null,
       },
     });
+    await alertAfterSettle();
     // RETHROW: the caller's existing catch owns the degraded path.
     throw err;
   }
@@ -1181,6 +1206,8 @@ export async function invokeWithGovernor<T>(
       aiEmployeeId: input.aiEmployeeId ?? null,
     },
   });
+
+  await alertAfterSettle();
 
   return { status: "ran", value: call.value, budget: budgetStatus, recorded, dark: false };
 }

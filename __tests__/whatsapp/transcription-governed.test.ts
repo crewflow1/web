@@ -185,10 +185,13 @@ describe("transcribeVoiceNoteGoverned — ARMED + KEY runs the REAL governed pat
       });
       expect(r.recovered).toBeUndefined();
     }
-    // The FULL governed lifecycle ran: atomic reservation, then settlement.
+    // The FULL governed lifecycle ran: atomic reservation, then settlement,
+    // then (first settle on this instance) the 80%/100% HQ-alert threshold
+    // claim — after the provider call, never before it, and never a provider.
     expect(adminState.rpcCalls.map((c) => c.fn)).toEqual([
       "ai_reserve_invocation",
       "ai_settle_reservation",
+      "ai_claim_spend_alerts",
     ]);
     // And the key never leaks anywhere but the Authorization header.
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
