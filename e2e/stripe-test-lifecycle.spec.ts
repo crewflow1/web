@@ -1,11 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- service-role client, Stripe REST JSON */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "node:crypto";
 import { rmSync } from "node:fs";
 import { assertLocalE2eTarget } from "./_guard";
 import { waitForHydrated } from "./_hydration";
 import { mintState, asActor } from "./_actors";
+import { STRIPE_E2E_ON, assertStripeTestEnv, stripe, relay, now, waitForEvent, payOnStripeCheckout, declinedShown, ukDate, periodEndOf } from "./_stripe-test";
 
 /**
  * FULL BILLING LIFECYCLE AGAINST STRIPE TEST MODE (opt-in; local only).
@@ -19,9 +20,7 @@ import { mintState, asActor } from "./_actors";
  * delivered to /api/webhooks/stripe signed with the local secret in Stripe's v1 scheme — the
  * same bytes, headers and verification path Stripe's own delivery uses.
  */
-const ON = process.env.STRIPE_E2E === "1";
-const KEY = process.env.STRIPE_SECRET_KEY ?? "";
-const WHSEC = process.env.STRIPE_WEBHOOK_SECRET ?? "";
+const ON = STRIPE_E2E_ON;
 const HQ_STATE = "e2e/.auth/hq.json";
 const TAG = `stl${Date.now().toString(36)}`;
 const OWNER_EMAIL = `owner-${TAG}@example.test`;
@@ -29,132 +28,13 @@ const PASSWORD = `Pw-${crypto.randomUUID()}`;
 const OWNER_STATE = `e2e/.auth/${TAG}-owner.json`;
 
 const db = () => createClient(assertLocalE2eTarget("stripe-test-lifecycle.spec.ts"), process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false, autoRefreshToken: false } }) as any;
-const auth = () => ({ Authorization: "Basic " + Buffer.from(KEY + ":").toString("base64") });
-async function stripe(method: string, path: string, form?: Record<string, string>) {
-  const res = await fetch(`https://api.stripe.com/v1/${path}`, {
-    method, headers: { ...auth(), ...(form ? { "content-type": "application/x-www-form-urlencoded" } : {}) },
-    body: form ? new URLSearchParams(form).toString() : undefined,
-  });
-  const body = await res.json();
-  if (!res.ok) throw new Error(`Stripe ${method} ${path.split("?")[0]} → ${res.status}: ${(body?.error?.message ?? "").slice(0, 160)}`);
-  return body;
-}
-/** Deliver every real Stripe event created since `since` to the local webhook (signed locally). */
-async function relay(since: number, opts: { repeat?: number; reverse?: boolean } = {}) {
-  const events: any[] = []; let after: string | null = null;
-  for (;;) {
-    const q = new URLSearchParams({ limit: "100", "created[gte]": String(since) });
-    if (after) q.set("starting_after", after);
-    const d = await stripe("GET", `events?${q}`);
-    events.push(...d.data);
-    if (!d.has_more) break;
-    after = d.data[d.data.length - 1].id;
-  }
-  events.sort((a, b) => a.created - b.created);
-  if (opts.reverse) events.reverse();
-  const out: Array<{ id: string; type: string; status: number; body: string }> = [];
-  for (const e of events) for (let i = 0; i < (opts.repeat ?? 1); i++) {
-    const payload = JSON.stringify(e);
-    const t = Math.floor(Date.now() / 1000);
-    const sig = crypto.createHmac("sha256", WHSEC).update(`${t}.${payload}`).digest("hex");
-    const r = await fetch("http://localhost:3000/api/webhooks/stripe", { method: "POST", headers: { "content-type": "application/json", "stripe-signature": `t=${t},v1=${sig}` }, body: payload });
-    out.push({ id: e.id, type: e.type, status: r.status, body: (await r.text()).slice(0, 200) });
-  }
-  return out;
-}
-const now = () => Math.floor(Date.now() / 1000) - 5;
-/** Stripe's events list is eventually consistent: wait until an expected event is listed. */
-async function waitForEvent(since: number, type: string, status?: string) {
-  await expect.poll(async () => {
-    const d = await stripe("GET", `events?limit=100&created[gte]=${since}&type=${encodeURIComponent(type)}`);
-    return d.data.some((e: any) => !status || e.data?.object?.status === status);
-  }, { timeout: 60_000, message: `Stripe event ${type}${status ? ` (${status})` : ""} listed` }).toBe(true);
-}
-
-/** Find the frame (page or iframe) that contains `probe`. Stripe Checkout renders its payment
- *  form inside an iframe in the current version. */
-async function frameWith(page: Page, probe: (f: import("@playwright/test").Frame) => import("@playwright/test").Locator, timeoutMs = 30_000) {
-  const end = Date.now() + timeoutMs;
-  while (Date.now() < end) {
-    for (const f of page.frames()) {
-      if (await probe(f).first().isVisible().catch(() => false)) return f;
-    }
-    await page.waitForTimeout(250);
-  }
-  await page.screenshot({ path: `test-results/stripe-checkout-debug-${Date.now()}.png`, fullPage: true }).catch(() => {});
-  for (const f of page.frames()) {
-    const snap = await f.locator("body").ariaSnapshot({ timeout: 2_000 }).catch(() => "");
-    if (snap.trim()) console.log(`[checkout-debug] frame ${f.url().slice(0, 70)}\n${snap.replace(/- option "[^"]*"\n\s*/g, "").slice(-1200)}`);
-  }
-  throw new Error("Stripe Checkout: expected control not found in any frame");
-}
-async function fillFirstVisible(f: import("@playwright/test").Frame, selectors: string[], value: string) {
-  for (const sel of selectors) {
-    const loc = f.locator(sel).first();
-    if (await loc.isVisible().catch(() => false)) { await loc.fill(value); return true; }
-  }
-  return false;
-}
-
-async function payOnStripeCheckout(page: Page, card: string, expectSuccess = true) {
-  await page.waitForURL(/checkout\.stripe\.com/, { timeout: 30_000 });
-  // Wait for the payment form (it lives inside an iframe). A customer who already paid once may
-  // be shown their SAVED card instead of empty card fields — then there is nothing to fill.
-  const cardInput = (fr: import("@playwright/test").Frame) => fr.locator('input[name="cardNumber"], input[autocomplete="cc-number"], input[placeholder="1234 1234 1234 1234"]');
-  const cardButton = (fr: import("@playwright/test").Frame) => fr.getByRole("button", { name: "Card", exact: true });
-  const submitBtn = (fr: import("@playwright/test").Frame) => fr.locator('[data-testid="hosted-payment-submit-button"]');
-  await frameWith(page, (fr) => cardInput(fr).or(cardButton(fr)).or(submitBtn(fr)));
-  for (const fr of page.frames()) {
-    if (await cardButton(fr).isVisible().catch(() => false)) { await cardButton(fr).click(); break; }
-  }
-  let f: import("@playwright/test").Frame | null = null;
-  for (let i = 0; i < 20 && !f; i++) {
-    for (const fr of page.frames()) if (await cardInput(fr).first().isVisible().catch(() => false)) { f = fr; break; }
-    if (!f) await page.waitForTimeout(250);
-  }
-  if (f) {
-    await fillFirstVisible(f, ['input[name="cardNumber"]', 'input[autocomplete="cc-number"]', 'input[placeholder="1234 1234 1234 1234"]'], card);
-    await fillFirstVisible(f, ['input[name="cardExpiry"]', 'input[autocomplete="cc-exp"]', 'input[placeholder="MM / YY"]'], "12 / 34");
-    await fillFirstVisible(f, ['input[name="cardCvc"]', 'input[autocomplete="cc-csc"]', 'input[placeholder="CVC"]'], "123");
-    await fillFirstVisible(f, ['input[name="billingName"]', 'input[autocomplete="cc-name"]', 'input[autocomplete="name"]'], "Stripe Test Buyer");
-  } else if (card !== "4242 4242 4242 4242") {
-    throw new Error("Stripe Checkout showed a saved card; cannot enter a different test card");
-  }
-  for (const fr of page.frames()) {
-    const country = fr.locator('select[name="billingCountry"], select[autocomplete="billing country"], select[autocomplete="country"]').first();
-    if (await country.isVisible().catch(() => false)) { await country.selectOption("GB").catch(() => {}); }
-  }
-  for (const fr of page.frames()) {
-    if (await fillFirstVisible(fr, ['input[name="billingPostalCode"]', 'input[autocomplete="billing postal-code"]', 'input[autocomplete="postal-code"]'], "BT1 1AA")) break;
-  }
-  // The submit button only — NOT "Pay with Klarna" / "Pay securely with Onelink" (wallet buttons).
-  const submit = (fr: import("@playwright/test").Frame) => fr.locator('[data-testid="hosted-payment-submit-button"]').or(fr.getByRole("button", { name: /^(Pay|Subscribe|Start trial)\b(?!\s+(with|securely))/ }));
-  const pay = await frameWith(page, submit);
-  await submit(pay).first().click();
-  if (!expectSuccess) {
-    // A decline is confirmed through the Stripe API (the on-screen wording varies): the session's
-    // PaymentIntent carries the decline as its last payment error, and no redirect happened.
-    const cs = /\/(cs_test_[A-Za-z0-9]+)/.exec(page.url())?.[1];
-    if (!cs) throw new Error("could not read the Checkout Session id from the page URL");
-    await expect.poll(async () => {
-      const sess = await stripe("GET", `checkout/sessions/${cs}?expand[]=payment_intent`);
-      return sess.payment_intent?.last_payment_error?.code ?? null;
-    }, { timeout: 45_000 }).toBe("card_declined");
-  }
-  if (expectSuccess) await page.waitForURL(/localhost:3000\/admin\/customers\/.*stripe=success/, { timeout: 60_000 });
-}
-async function declinedShown(page: Page) {
-  // still on Stripe's page, not redirected to success
-  await expect(page).toHaveURL(/checkout\.stripe\.com/);
-}
 
 test.describe.configure({ mode: "serial" });
 test.describe("Stripe TEST MODE · full billing lifecycle (opt-in)", () => {
   test.skip(!ON, "set STRIPE_E2E=1 with a test key and a local webhook secret to run");
   test.beforeAll(() => {
     if (!ON) return;
-    if (!/^(sk|rk)_test_/.test(KEY)) throw new Error("refusing to run: STRIPE_SECRET_KEY is not a TEST key");
-    if (!WHSEC.startsWith("whsec_")) throw new Error("STRIPE_WEBHOOK_SECRET (local) missing");
+    assertStripeTestEnv();
   });
 
   let orgId = "", ownerId = "", customer = "", firstSub = "", t0 = 0;
@@ -284,10 +164,6 @@ test.describe("Stripe TEST MODE · full billing lifecycle (opt-in)", () => {
     expect(delivered.filter((d) => d.status !== 200), JSON.stringify(delivered)).toEqual([]);
     expect((await org()).status, "payment recovered → active again").toBe("active");
   });
-
-  const ukDate = (unix: number) =>
-    new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" }).format(new Date(unix * 1000));
-  const periodEndOf = (sub: any): number => sub.current_period_end ?? sub.items?.data?.[0]?.current_period_end;
 
   test("6. the owner cancels: the dialog shows the exact end date; Stripe sets cancel_at_period_end; the company STAYS ACTIVE", async ({ browser }) => {
     test.setTimeout(120_000);
