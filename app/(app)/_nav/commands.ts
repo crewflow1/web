@@ -47,7 +47,8 @@ interface ActionDef {
 const ADMIN: readonly NavRole[] = ["owner", "admin"];
 
 const ACTIONS: ActionDef[] = [
-  { id: "new-job", label: "New job", href: "/jobs/new", keywords: ["create", "project"] },
+  // /jobs/new needs jobs:create (D-17) — staff are refused, so they are not offered it.
+  { id: "new-job", label: "New job", href: "/jobs/new", roles: ADMIN, keywords: ["create", "project"] },
   { id: "new-lead", label: "New lead", href: "/leads/new", roles: ADMIN, keywords: ["create", "enquiry"] },
   { id: "new-quote", label: "Create quote", href: "/quotes/new", roles: ADMIN, keywords: ["estimate", "proposal"] },
   { id: "new-customer", label: "Add customer", href: "/customers/new", roles: ADMIN, keywords: ["client"] },

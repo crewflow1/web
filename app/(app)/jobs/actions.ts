@@ -24,7 +24,8 @@ import { hasCapability } from "@/server/auth/capabilities";
  * Job CRUD server actions.
  *
  * RLS posture on `jobs` (from migration 20260515150000):
- *   - SELECT / INSERT: org members
+ *   - INSERT: owners/admins or a `jobs:create` holder (D-17, 20261365000000);
+ *     createJob checks the same capability before writing
  *   - UPDATE / DELETE: admins/owners only
  *
  * Non-admins who attempt update/delete will see RLS silently filter the
@@ -87,14 +88,24 @@ export async function createJob(
   const result = validateFormData(formData, jobFormSchema);
   if (!result.ok) return result.state as FormState<JobValues>;
 
+  // AUTHORISATION (D-17): creating a job needs `jobs:create` — the owner always, an
+  // admin only with the grant, staff never. Same capability as the /jobs/new segment
+  // guard; the jobs INSERT policy (20261365000000) enforces it again in the database.
+  if (!(await hasCapability(ctx, user, "jobs", "create"))) {
+    return formError(
+      "Only owners or admins can create jobs. Ask an admin to create this job for you.",
+      result.data as JobValues,
+    );
+  }
+
   const supabase = await createClient();
 
   // AUTHORISATION for assignment (review F2). Assigning a worker is an
   // owner/admin action — set_job_primary_assignment is admin-only — so if a
   // non-admin picked an assignee we must refuse UP FRONT with a clear message,
   // not insert the job and then silently swallow the RPC's 42501 (which left the
-  // job unassigned under a misleading "Job created."). A member may still create
-  // the job with no assignee; an admin assigns it afterwards.
+  // job unassigned under a misleading "Job created."). A jobs:create holder without
+  // jobs:manage may still create the job with no assignee; it is assigned afterwards.
   if (result.data.assigned_to && !(await hasCapability(ctx, user, "jobs", "manage"))) {
     return formError(
       "Only owners or admins can assign a worker. Create the job and ask an admin to assign it.",
