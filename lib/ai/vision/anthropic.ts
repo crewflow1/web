@@ -1,4 +1,5 @@
 import "server-only";
+import { AI_SDK_MAX_RETRIES } from "@/lib/ai/governor/policy";
 
 /**
  * Shared vision door — the Anthropic implementation.
@@ -59,7 +60,7 @@ export function createAnthropicVisionProvider(apiKey: string, model: string): Vi
       }
 
       const { default: Anthropic } = await import("@anthropic-ai/sdk");
-      const client = new Anthropic({ apiKey });
+      const client = new Anthropic({ apiKey, maxRetries: AI_SDK_MAX_RETRIES });
 
       // PDF `document` blocks postdate the installed SDK's types (^0.32.0); the
       // API accepts them. Cast the block, not the whole request, so everything

@@ -410,6 +410,24 @@ export const MIN_RESERVATION_PENCE = 1;
 export const FAILURE_FLOOR_PENCE = 1;
 
 /**
+ * SDK-LEVEL RETRIES: NONE. Passed explicitly as `maxRetries` to every Anthropic
+ * and OpenAI client this application constructs (pinned by
+ * __tests__/security/ai-governance-closure.test.ts).
+ *
+ * Both SDKs default to `maxRetries: 2` and retry connection errors and
+ * 408/409/429/5xx (verified in node_modules: @anthropic-ai/sdk 0.32.1 core.js,
+ * openai 4.104.0 core.js). A retry is a further provider request INSIDE one
+ * reservation: it is not reserved for, not counted by the velocity limiter, and
+ * — when the failed attempt had already been processed (a dropped connection) —
+ * billed without a ledger row. One governed call therefore means AT MOST ONE
+ * provider request. A transient failure takes the feature's tested degraded
+ * path, and a user retry goes back through velocity + reservation like any call.
+ * Raising this is a founder decision: each step adds up to one unrecorded call
+ * per reservation in the worst case.
+ */
+export const AI_SDK_MAX_RETRIES = 0;
+
+/**
  * The pessimistic claim for ONE call, in integer pence — what the atomic gate
  * reserves before the provider is reached.
  *

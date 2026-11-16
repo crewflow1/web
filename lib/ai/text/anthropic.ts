@@ -1,4 +1,5 @@
 import "server-only";
+import { AI_SDK_MAX_RETRIES } from "@/lib/ai/governor/policy";
 
 /**
  * Shared Memory — Anthropic text provider ("Version 1", preferred).
@@ -56,7 +57,7 @@ export function createAnthropicTextProvider(apiKey: string, model: string): Text
       }
 
       const { default: Anthropic } = await import("@anthropic-ai/sdk");
-      const client = new Anthropic({ apiKey });
+      const client = new Anthropic({ apiKey, maxRetries: AI_SDK_MAX_RETRIES });
 
       const msg = await client.messages.create(
         {

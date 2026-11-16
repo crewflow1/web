@@ -1,4 +1,5 @@
 import "server-only";
+import { AI_SDK_MAX_RETRIES } from "@/lib/ai/governor/policy";
 
 /**
  * CrewFlow HQ — Research AI model layer (CEO Directive 005, Phases 2–5).
@@ -161,7 +162,7 @@ async function callJsonWithProvider(
 
   try {
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const client = new Anthropic({ apiKey: anthropicKey });
+    const client = new Anthropic({ apiKey: anthropicKey, maxRetries: AI_SDK_MAX_RETRIES });
     const msg = await client.messages.create(
       {
         model: anthropicModel,

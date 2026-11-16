@@ -1,4 +1,5 @@
 import "server-only";
+import { AI_SDK_MAX_RETRIES } from "@/lib/ai/governor/policy";
 
 /**
  * Shared Memory — OpenAI text provider (fallback).
@@ -38,7 +39,7 @@ export function createOpenAiTextProvider(apiKey: string, model: string): TextPro
       }
 
       const { default: OpenAI } = await import("openai");
-      const client = new OpenAI({ apiKey });
+      const client = new OpenAI({ apiKey, maxRetries: AI_SDK_MAX_RETRIES });
 
       const res = await client.chat.completions.create(
         {
