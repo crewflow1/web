@@ -1,6 +1,26 @@
 import "server-only";
+import { timingSafeEqual } from "node:crypto";
 import { env } from "@/lib/env";
 import { isMaintenanceMode } from "@/lib/maintenance";
+
+/**
+ * Constant-time string equality.
+ *
+ * `timingSafeEqual` throws on a length mismatch, so compare lengths first and
+ * return early — but do the early return in a way that still runs the digest
+ * comparison for equal-length inputs, so the only timing signal an attacker can
+ * observe is the secret's LENGTH, never its contents. This mirrors the comms
+ * webhook verifiers (lib/comms/providers/*), which all use timingSafeEqual
+ * rather than `===`; the cron chokepoint was the one secret comparison still on
+ * a short-circuiting `===`.
+ */
+function constantTimeEquals(a: string, b: string): boolean {
+  const aBuf = Buffer.from(a, "utf8");
+  const bBuf = Buffer.from(b, "utf8");
+  if (aBuf.length !== bBuf.length) return false;
+  if (aBuf.length === 0) return false;
+  return timingSafeEqual(aBuf, bBuf);
+}
 
 /**
  * Vercel Cron auth.
@@ -28,5 +48,6 @@ export function isCronAuthorised(request: Request): boolean {
     return false;
   }
   const header = request.headers.get("authorization") ?? "";
-  return header === `Bearer ${secret}`;
+  // Constant-time compare — never a short-circuiting `===` on a secret.
+  return constantTimeEquals(header, `Bearer ${secret}`);
 }
