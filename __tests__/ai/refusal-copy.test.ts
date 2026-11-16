@@ -38,3 +38,14 @@ describe("aiRefusalMessage", () => {
     expect(aiRefusalMessage("x", FIG, FALLBACK)).toBe(`AI is temporarily unavailable. ${FALLBACK}`);
   });
 });
+
+describe("ai_disabled (per-company AI off switch)", () => {
+  it("says AI is switched off and where to change it, never a budget claim", async () => {
+    const { aiRefusalMessage } = await import("@/lib/ai/governor/refusal-copy");
+    const msg = aiRefusalMessage("ai_disabled", { spentPence: 10, ceilingPence: 10000 }, "Write it as usual.");
+    expect(msg).toContain("switched off for your company");
+    expect(msg).toContain("Settings");
+    expect(msg).not.toMatch(/budget|£/i);
+    expect(msg.endsWith("Write it as usual.")).toBe(true);
+  });
+});

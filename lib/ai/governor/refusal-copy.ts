@@ -42,6 +42,8 @@ export function aiRefusalMessage(
       return `You have reached your personal AI limit for this month; contact CrewFlow support if you need it raised.${tail}`;
     case "platform_ceiling":
       return `AI features are paused across CrewFlow for the rest of this month. CrewFlow has been alerted.${tail}`;
+    case "ai_disabled":
+      return `AI features are switched off for your company. A company owner can turn them back on in Settings > AI features.${tail}`;
     case "rate_limited":
       return `Too many AI requests in the last hour. Try again later.${tail}`;
     case "tier_dark_provider_live":

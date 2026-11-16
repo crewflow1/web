@@ -554,3 +554,18 @@ provider-side settings only the founder can make:
 
 None of this is a provider-side cap. An application budget protects nothing
 against a leaked key; the vendor consoles do.
+
+## Per-company AI off switch (migration 20261366000000, gap G-13)
+
+A company owner (Settings → AI features) or HQ (/admin/ai-costs → Per-company AI switch) can turn ALL AI
+features off for a company. The earlier option, a per-org ceiling of 0, was HQ-service-role only (a tenant
+could not reach it) and is a money control, so it is not used for consent.
+
+- **State:** `ai_org_switches` (absent row = ON). Owner writes via `ai_owner_set_ai_enabled` (SECURITY DEFINER,
+  `current_org_ids()` + owner membership else 42501; switching back ON also needs an active company, switching
+  OFF is always allowed). HQ writes via `ai_hq_set_ai_enabled` (service role). Each change writes `ai_org_switch_audit`.
+- **Enforcement:** inside `ai_reserve_invocation`, under the per-org lock and before the ceiling, so it covers every
+  governed entry point (text, vision, transcription, embeddings, HTTP routes). Refusal is `block_reason = ai_disabled`;
+  no reservation row, no provider request, no spend alert. A read error raises and the governor refuses (fail closed).
+- **UI:** the refusal copy says AI is switched off and where to turn it on; Settings → AI features shows state.
+- **Tests:** `__tests__/integration/ai/org-ai-switch.test.ts` (real Postgres, cross-tenant), `__tests__/security/ai-org-off-switch.test.ts`.

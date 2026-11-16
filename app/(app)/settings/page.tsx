@@ -339,6 +339,23 @@ export default async function SettingsPage() {
         </div>
       </section>
 
+      {/* AI features --------------------------------------------------- */}
+      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-base font-semibold text-slate-900">AI features</h2>
+        <p className="mt-1 text-sm text-slate-600">
+          See whether AI assistance is on for your company. Owners can switch
+          all AI features off.
+        </p>
+        <div className="mt-4">
+          <Link
+            href="/settings/ai-features"
+            className="inline-flex items-center rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+          >
+            AI features
+          </Link>
+        </div>
+      </section>
+
       {/* Data retention ------------------------------------------------ */}
       {isAdmin ? (
         <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">

@@ -164,6 +164,26 @@ export async function clearOrgCeilingAction(formData: FormData): Promise<void> {
   backTo({ saved: "ceiling_cleared" });
 }
 
+// ── Per-company AI off switch (20261366000000) ─────────────────────────────
+
+export async function setOrgAiEnabledAction(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const parsed = orgSchema.safeParse({ org_id: formData.get("org_id") });
+  if (!parsed.success) backTo({ error: "Invalid organisation." });
+  const enabled = formData.get("enabled") === "true";
+
+  const { error } = await rpc(createAdminClient()).rpc("ai_hq_set_ai_enabled", {
+    p_org_id: parsed.data.org_id,
+    p_enabled: enabled,
+    p_set_by: admin.id,
+  });
+  if (error) {
+    console.error("[ai-costs] setOrgAiEnabled failed", error);
+    backTo({ error: "Couldn't change the AI switch — check the organisation id." });
+  }
+  backTo({ saved: enabled ? "ai_enabled" : "ai_disabled" });
+}
+
 // ── Per-employee limit ──────────────────────────────────────────────────────
 
 export async function setEmployeeLimitAction(formData: FormData): Promise<void> {

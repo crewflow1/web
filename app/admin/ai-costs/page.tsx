@@ -20,6 +20,7 @@ import {
   clearOrgCeilingAction,
   runTranscriptionSelftestAction,
   setEmployeeLimitAction,
+  setOrgAiEnabledAction,
   setOrgCeilingAction,
   setPlatformCeilingAction,
 } from "./actions";
@@ -766,6 +767,43 @@ function BudgetControlsSection({ controls }: { controls: AiBudgetControls }) {
             </table>
           </div>
         )}
+      </div>
+
+      {/* ── Per-company AI off switch ── */}
+      <div className="mt-6">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+          Per-company AI switch
+        </h3>
+        <form
+          action={setOrgAiEnabledAction}
+          className="mt-2 flex flex-wrap items-end gap-2 rounded-md border border-slate-200 bg-white p-3"
+        >
+          <label className="flex flex-col text-[11px] text-slate-600">
+            Organisation id
+            <input
+              name="org_id"
+              required
+              placeholder="uuid"
+              className="mt-0.5 w-72 rounded border border-slate-300 px-2 py-1 font-mono text-xs"
+            />
+          </label>
+          <label className="flex flex-col text-[11px] text-slate-600">
+            AI features
+            <select name="enabled" className="mt-0.5 rounded border border-slate-300 px-2 py-1 text-xs">
+              <option value="false">Off (no provider requests)</option>
+              <option value="true">On</option>
+            </select>
+          </label>
+          <button
+            type="submit"
+            className="rounded bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+          >
+            Apply
+          </button>
+        </form>
+        <p className="mt-1 text-xs text-slate-500">
+          Owners can also switch AI off in Settings → AI features. Every change is audited.
+        </p>
       </div>
 
       {/* ── Per-employee limit ── */}

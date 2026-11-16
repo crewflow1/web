@@ -530,6 +530,13 @@ export type BlockReason =
    * (supabase/migrations/20261358000000). Degrades exactly like `ceiling`.
    */
   | "platform_ceiling"
+  /**
+   * The company's owner (or HQ) has switched AI OFF for this company
+   * (ai_org_switches, migration 20261366000000). Refused inside
+   * `ai_reserve_invocation` before any provider request; not a budget event, so
+   * it raises no spend alert. Fails closed like every other reason.
+   */
+  | "ai_disabled"
   /** The reservation itself could not be taken. Fails CLOSED — see `reserveBudget`. */
   | "reservation_unavailable"
   /**
@@ -677,7 +684,9 @@ export async function reserveBudget(input: {
             ? "employee_limit"
             : row.block_reason === "platform_ceiling"
               ? "platform_ceiling"
-              : "ceiling"
+              : row.block_reason === "ai_disabled"
+                ? "ai_disabled"
+                : "ceiling"
           : "reservation_unavailable",
     };
   } catch (e) {

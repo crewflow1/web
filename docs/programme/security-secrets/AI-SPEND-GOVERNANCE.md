@@ -489,3 +489,8 @@ any live provider call.
 
 Not run: Playwright (the only UI change is one message string in the quote-writer
 panel), `npm run build`, the non-AI integration suites, and any live provider call.
+
+## Addendum: per-company AI off switch (20261366000000)
+
+Owner- and HQ-reachable, audited, enforced fail-closed at `ai_reserve_invocation` (`ai_disabled`), so an off company
+makes no provider request on any governed path. Details: `docs/ai-cost-governor.md`.
