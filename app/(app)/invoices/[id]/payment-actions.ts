@@ -17,7 +17,7 @@ import {
 } from "@/lib/forms/state";
 import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
 import { fetchAllRows } from "@/lib/supabase/paginate";
-import { invoiceRemaining } from "@/lib/invoices/receivables";
+import { invoiceRemaining } from "@/lib/invoices/receivables"; import { overPaymentMessage } from "@/lib/payments/over-payment";
 
 const uuid = z.string().uuid();
 
@@ -184,7 +184,7 @@ export async function addInvoicePayment(
       hint: error.hint,
     });
     return formError(
-      "Couldn't record payment. Try again.",
+      overPaymentMessage(error) ?? "Couldn't record payment. Try again.",
       result.data as PaymentValues,
     );
   }
