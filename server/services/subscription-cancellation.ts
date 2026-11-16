@@ -53,7 +53,7 @@ import { buildCancellationEmail } from "@/lib/billing/cancellation-email";
  *      human (refund_review = 'pending').
  *  I6  Revocation and the owner's confirmation email happen ONCE, whichever of
  *      this action and the Stripe webhook confirms first
- *      (confirm_subscription_cancellation, migration 20261348000000). HQ is
+ *      (confirm_subscription_cancellation, migration 20261352000000). HQ is
  *      told at least once; if the webhook wins the race it sends its generic
  *      alert and this action still sends the detailed one (refund review,
  *      invoices) — two HQ notices for one cancellation, never zero.

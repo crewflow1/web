@@ -197,7 +197,7 @@ describe("processStripeEvent handler", () => {
     expect(body).toMatch(/return confirmSubscriptionTerminated\(event, orgId, sub\)/);
     expect(body).toMatch(/confirmCancellationRpc\(\{[\s\S]*?via: "webhook"/);
     const CONFIRM_SQL = read(
-      "supabase/migrations/20261348000000_subscription_cancellation_state_functions.sql",
+      "supabase/migrations/20261352000000_subscription_cancellation_state_functions.sql",
     );
     const confirmFn = CONFIRM_SQL.slice(
       CONFIRM_SQL.indexOf("create or replace function public.confirm_subscription_cancellation"),

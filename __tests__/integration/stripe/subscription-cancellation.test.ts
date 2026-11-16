@@ -8,7 +8,7 @@ import { anonClient, describeIntegration, serviceClient, userClient } from "../_
  * EVIDENCE LABELS
  *   • Everything about organizations.status, the cancellation ledger, the three
  *     SQL functions, the webhook handler's writes, grants and RLS is REAL: real
- *     migrations (20261347000000 / 20261348000000), real rows, real concurrency
+ *     migrations (20261351000000 / 20261352000000), real rows, real concurrency
  *     (Promise.all against one database).
  *   • STRIPE IS SIMULATED-ONLY. Webhook events are fixtures passed straight to
  *     processStripeEvent (as the existing lifecycle test does), and where the
