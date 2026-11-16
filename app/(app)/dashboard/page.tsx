@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { getRequestI18n } from "@/server/i18n/request";
-import { computeReceivables } from "@/lib/invoices/receivables";
+import { computeReceivables } from "@/lib/invoices/receivables"; import { isIssuedStatus } from "@/lib/invoices/schema";
 import { computeRetentionDueRollup } from "@/lib/retentions/rollup";
 import { loadOrgHourlyPay } from "@/lib/profitability/labour-rates";
 import { ActivityFeed } from "./_activity-feed";
@@ -561,7 +561,7 @@ export default async function DashboardPage() {
     // "paid" with no invoice_payments rows) used to inflate "Revenue this month"
     // to figures that money-in never backs. Cash actually collected is tracked
     // separately via cashInThisMonth (sum of invoice_payments).
-    if (inv.created_at && inv.created_at >= monthStart) {
+    if (isIssuedStatus(inv.status) && inv.created_at && inv.created_at >= monthStart) { // issued only: a draft is not billed, a void is not revenue
       invoicedThisMonth += Number(inv.total ?? 0);
     }
   }
