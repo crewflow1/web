@@ -69,9 +69,23 @@ if [ -s "${ARTIFACT}.sha256" ]; then
 fi
 
 # 1. throwaway, network-less, RAM-only Postgres (same build family as production)
-docker run -d --name "$C" --network none --memory 3g \
+#    MEMORY: the container's memory cgroup limit (was 3g, now 4g) covers EVERYTHING RAM-backed: the tmpfs data
+#    directory (grows through the restore), pg_wal (which lives in it), the /restore tmpfs, shared
+#    buffers and the backends. The image's defaults (wal_level=logical, max_wal_size=1GB,
+#    full_page_writes on) let a bulk restore put up to ~1GB of WAL ON TOP of the data in RAM, and a
+#    5-second sample of a normal run already read 2.48 of 3.0 GiB; a slightly larger artefact or a
+#    concurrent memory spike is then OOM-killed mid-restore. A restore TEST needs no WAL history,
+#    replication or crash safety, so it is switched off: that removes the WAL from RAM without
+#    touching what is restored or verified.
+docker run -d --name "$C" --network none --memory 4g --memory-swap 4g \
   --tmpfs /var/lib/postgresql/data:rw,size=3g --tmpfs /restore:rw,size=1500m \
-  -e POSTGRES_PASSWORD=restore-test-only "$IMAGE" >/dev/null || die "could not start the throwaway container"
+  -e POSTGRES_PASSWORD=restore-test-only "$IMAGE" \
+  postgres -D /etc/postgresql \
+  -c wal_level=minimal -c max_wal_senders=0 -c archive_mode=off \
+  -c max_wal_size=192MB -c min_wal_size=32MB -c checkpoint_timeout=30min \
+  -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
+  -c autovacuum=off -c maintenance_work_mem=128MB -c max_connections=20 \
+  >/dev/null || die "could not start the throwaway container"
 for _i in $(seq 1 60); do docker exec "$C" pg_isready -U postgres -h localhost >/dev/null 2>&1 && break; sleep 2; done
 sleep 8   # the image runs its init scripts and restarts once
 for _i in $(seq 1 30); do [ "$(scalar 'select 1;' 2>/dev/null)" = "1" ] && break; sleep 2; done
