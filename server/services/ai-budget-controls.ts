@@ -55,7 +55,7 @@ export type EmployeeLimitControlRow = {
 };
 
 /**
- * The CrewFlow-wide monthly budget (migration 20261355000000). `null` when it
+ * The CrewFlow-wide monthly budget (migration 20261358000000). `null` when it
  * cannot be read — the page then says so rather than showing a fake zero.
  */
 export type PlatformBudgetRow = {

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Concurrency proof for 20261355000000 against the LOCAL stack only (refuses any non-local URL).
+# Concurrency proof for 20261358000000 against the LOCAL stack only (refuses any non-local URL).
 # 4 orgs x 5 simultaneous 10p reservations, platform headroom 50p => exactly 5 must be reserved.
 set -euo pipefail
 case "$DB_URL" in *127.0.0.1*|*localhost*) ;; *) echo "refusing: not a local database"; exit 2;; esac

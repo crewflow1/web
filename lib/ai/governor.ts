@@ -526,7 +526,7 @@ export type BlockReason =
    * The CrewFlow-WIDE monthly budget (all orgs, HQ included) has no headroom
    * for a call of this size, even though this org and employee still do.
    * Enforced inside the same `ai_reserve_invocation` transaction
-   * (supabase/migrations/20261355000000). Degrades exactly like `ceiling`.
+   * (supabase/migrations/20261358000000). Degrades exactly like `ceiling`.
    */
   | "platform_ceiling"
   /** The reservation itself could not be taken. Fails CLOSED — see `reserveBudget`. */

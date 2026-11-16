@@ -190,7 +190,7 @@ describe("reserveBudget — effective-ceiling threading", () => {
     if (res.outcome === "blocked") expect(res.reason).toBe("employee_limit");
   });
 
-  it("maps a blocked/platform_ceiling row to reason platform_ceiling (CrewFlow-wide budget, 20261355)", async () => {
+  it("maps a blocked/platform_ceiling row to reason platform_ceiling (CrewFlow-wide budget, 20261358)", async () => {
     reserveState.row = {
       outcome: "blocked",
       block_reason: "platform_ceiling",

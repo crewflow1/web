@@ -643,7 +643,7 @@ function BudgetControlsSection({ controls }: { controls: AiBudgetControls }) {
         atomic reservation. Copy org / employee ids from the tables above.
       </p>
 
-      {/* ── CrewFlow-wide ceiling (20261355000000) ── */}
+      {/* ── CrewFlow-wide ceiling (20261358000000) ── */}
       <div className="mt-5">
         <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
           CrewFlow-wide monthly ceiling (all companies + HQ)

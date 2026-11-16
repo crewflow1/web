@@ -1,4 +1,4 @@
--- 20261355000000 — CrewFlow-wide AI spending ceiling.
+-- 20261358000000 — CrewFlow-wide AI spending ceiling.
 --
 -- WHY: every AI call is already reserved atomically against a per-org monthly
 -- ceiling (default £100, hard-clamped at £500) and, optionally, a per-employee
@@ -35,7 +35,7 @@ comment on table public.ai_platform_budget is
   'Single row: CrewFlow-wide monthly AI application budget (pence). Service-role only; read by ai_reserve_invocation.';
 
 insert into public.ai_platform_budget (id, ceiling_pence, note)
-values (true, 50000, 'initial default (20261355000000)')
+values (true, 50000, 'initial default (20261358000000)')
 on conflict (id) do nothing;
 
 create table if not exists public.ai_platform_budget_audit (
@@ -216,7 +216,7 @@ begin
      and r.created_at >= v_month_start
      and r.created_at <  v_month_end;
 
-  -- ── PLATFORM-WIDE CEILING (20261355000000) ─────────────────────────────────
+  -- ── PLATFORM-WIDE CEILING (20261358000000) ─────────────────────────────────
   -- One CrewFlow-wide monthly budget across EVERY org (HQ included), on top of
   -- the per-org ceiling and the per-employee limit. Taken AFTER the org lock —
   -- every caller locks org → platform in the same order, so no deadlock — and

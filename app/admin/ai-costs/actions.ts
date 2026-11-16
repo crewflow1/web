@@ -85,7 +85,7 @@ function noteFrom(raw: FormDataEntryValue | null): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-// ── CrewFlow-wide ceiling (20261355000000) ──────────────────────────────────
+// ── CrewFlow-wide ceiling (20261358000000) ──────────────────────────────────
 //
 // Raising this is how the founder approves more AI spend across every company.
 // The RPC clamps to £10,000 and writes the audit row in the same transaction.

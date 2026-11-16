@@ -1,4 +1,4 @@
--- Proof for 20261355000000 (CrewFlow-wide AI ceiling). Runs in ONE transaction and ROLLS BACK:
+-- Proof for 20261358000000 (CrewFlow-wide AI ceiling). Runs in ONE transaction and ROLLS BACK:
 -- safe on a shared local database; never run against production.
 --   psql "$DB_URL" -v ON_ERROR_STOP=1 -f docs/programme/security-secrets/proofs/platform-ceiling-proof.sql
 \set QUIET on
