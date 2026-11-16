@@ -184,6 +184,10 @@ test.describe("owner launch journeys (browser)", () => {
     await waitForHydrated(request);
     await request.click();
     await expect.poll(async () => (await db.from("quotes").select("status").eq("id", S.quoteId).single()).data.status, { timeout: 20_000 }).toBe("pending_approval");
+    // requestQuoteApproval ends in redirect(?saved=approval_requested): settle that navigation before
+    // the next goto on this page, or the goto races/aborts it.
+    await expect(page).toHaveURL(/saved=approval_requested/);
+    await page.waitForLoadState("load");
 
     await asActor(browser, APPROVER_STATE, async (approver) => {
       await approver.goto(`/quotes/${S.quoteId}`);

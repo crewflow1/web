@@ -116,6 +116,11 @@ test.describe("D-17 staff field operations (browser)", () => {
     await start.click();
     await expect.poll(async () => (await db.from("asset_inspections").select("status, created_by").eq("asset_id", assetId).eq("title", `Pre-use check ${TAG}`)).data?.[0]?.created_by, { timeout: 15_000 }).toBe(staffId);
     expect((await db.from("asset_inspections").select("status").eq("asset_id", assetId).eq("title", `Pre-use check ${TAG}`).limit(1)).data?.[0]?.status).toBe("draft");
+    // The action row lands BEFORE the client receives the action result; StateForm then starts a
+    // full-document `window.location.assign(redirectTo)`. Let that navigation settle (URL + document
+    // load) before the next goto, or the goto aborts it / is aborted by it (net::ERR_ABORTED).
+    await expect(page).toHaveURL(/\/assets\/[^/?]+\?saved=inspection/);
+    await page.waitForLoadState("load");
     // …and completes (issues) their OWN draft with an outcome.
     await page.goto(`/assets/${assetId}`);
     const issue = page.locator("form", { has: page.locator('select[name="outcome"]') }).first();
