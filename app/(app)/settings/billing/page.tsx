@@ -29,6 +29,8 @@ import {
   type CancelPreviewView,
 } from "@/components/billing/cancel-subscription.client";
 import { openBillingPortal, changePlan } from "./actions";
+import { SETUP_FEE_GBP } from "@/lib/hq/customer-financials";
+import { MONTHLY_PRICE_GBP } from "@/lib/hq/metrics";
 
 /**
  * Settings → Billing — self-serve tenant plan management (DARK).
@@ -183,16 +185,40 @@ export default async function BillingSettingsPage({
         <dl className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2">
             <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Plan</dt>
-            <dd className="mt-0.5 text-sm font-semibold text-slate-900">{currentPlan.name}</dd>
+            <dd className="mt-0.5 text-sm font-semibold text-slate-900" data-testid="billing-plan">
+              {configured
+                ? currentPlan.name
+                : `CrewFlow — £${MONTHLY_PRICE_GBP.toLocaleString("en-GB")} a month, every feature`}
+            </dd>
+            {configured ? null : (
+              <p className="mt-0.5 text-xs text-slate-500">
+                Plus a one-time £{SETUP_FEE_GBP.toLocaleString("en-GB")} setup fee, charged once.
+              </p>
+            )}
           </div>
           <div className="rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2">
             <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
               Subscription status
             </dt>
             <dd className="mt-0.5 text-sm font-semibold capitalize text-slate-900">
-              {subscription?.status ?? "—"}
+              {subscription?.status ??
+                (preview?.kind === "end_of_period"
+                  ? preview.alreadyScheduled
+                    ? "Cancellation scheduled"
+                    : "Active"
+                  : "—")}
             </dd>
           </div>
+          {!subscription && preview?.kind === "end_of_period" ? (
+            <div className="rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2 sm:col-span-2">
+              <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                {preview.alreadyScheduled ? "Access ends" : "Renews"}
+              </dt>
+              <dd className="mt-0.5 text-sm font-semibold text-slate-900" data-testid="billing-period-end">
+                {formatAccessDate(preview.accessEndsAt)}
+              </dd>
+            </div>
+          ) : null}
           {subscription?.current_period_end ? (
             <div className="rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2 sm:col-span-2">
               <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -205,6 +231,9 @@ export default async function BillingSettingsPage({
           ) : null}
         </dl>
 
+        {/* The per-plan feature checklist only means something when self-serve plans exist;
+            founder-provisioned customers are on the single all-features plan (no seat caps). */}
+        {configured ? (
         <ul className="mt-4 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
           {FEATURE_KEYS.map((f) => {
             const included = planHasFeature(currentPlanKey, f);
@@ -219,6 +248,7 @@ export default async function BillingSettingsPage({
             );
           })}
         </ul>
+        ) : null}
 
         {configured && canManage ? (
           <form action={openBillingPortal} className="mt-5">
@@ -232,19 +262,20 @@ export default async function BillingSettingsPage({
         ) : (
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <a
-              href={`mailto:hello@crewflow.uk?subject=${encodeURIComponent(`Plan change — ${ctx.org.name}`)}`}
+              href={`mailto:hello@crewflow.uk?subject=${encodeURIComponent(`Billing question — ${ctx.org.name}`)}`}
               className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
             >
-              Email us to change plan
+              Email us about billing
             </a>
             <p className="text-xs text-slate-500">
-              Self-serve billing isn&apos;t enabled yet — we&apos;ll switch it on soon.
+              Questions about invoices or your plan go to hello@crewflow.uk.
             </p>
           </div>
         )}
       </section>
 
-      {/* Plans ---------------------------------------------------------- */}
+      {/* Plans (self-serve only) --------------------------------------- */}
+      {configured ? (
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">Plans</h2>
         <p className="mt-1 text-sm text-slate-600">
@@ -288,6 +319,7 @@ export default async function BillingSettingsPage({
           })}
         </div>
       </section>
+      ) : null}
 
       <InvoiceHistory history={history} />
 

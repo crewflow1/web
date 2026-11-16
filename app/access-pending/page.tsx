@@ -42,9 +42,8 @@ const COPY: Record<
   },
   cancelled: {
     title: "This CrewFlow workspace has been cancelled.",
-    // Matches the terms ("When you cancel, we delete it within 30 days, except
-    // where tax law obliges us to retain it") — not a promise to KEEP it 30 days.
-    body: "The subscription for this company was cancelled, so the workspace is closed. Under our terms the data is deleted within 30 days of cancellation, except records tax law requires us to keep.",
+    // Founder policy 2026-11-16: cancellation never deletes data automatically.
+    body: "The subscription for this company has ended, so the workspace is closed to staff. Cancelling doesn't delete your data: the account owner can still sign in to download an export and invoices, or ask us to reactivate.",
   },
 };
 
