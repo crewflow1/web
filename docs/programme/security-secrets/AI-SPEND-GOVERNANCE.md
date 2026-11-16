@@ -472,3 +472,20 @@ not go through it.
 
 Not run: Playwright E2E (no UI flow changed), the non-AI integration suites, and
 any live provider call.
+
+### 2026-11-16 re-run on `ai/spend-governance` (base `d24295e`)
+
+| Command | Result |
+|---|---|
+| `heavy.sh npm run typecheck` | exit 0 (re-run after the last code change) |
+| `heavy.sh npx vitest run` (unit tier) | 747 files, **12,110 passed** |
+| `heavy.sh npx vitest run --config vitest.security.config.ts` | 350 files, **8,752 passed** (first run caught one new error-discarding read in `spend-alerts.ts`; fixed by binding + logging the error, then re-run green) |
+| `npx vitest run --config vitest.integration.config.ts __tests__/integration/ai/` (real Postgres) | 6 files, **69 passed**, 2 skipped (pre-existing, `vision-document-extraction`) |
+| `npx vitest run --config vitest.integration.config.ts __tests__/integration/rls/gdpr-export.test.ts` | 10 passed, 1 failed — REVERSE names only `subscription_cancellations` (billing #1090, known noise); `ai_spend_alert_marks` is classified |
+| `npx eslint` on every changed .ts/.tsx | 0 errors (2 pre-existing warnings in `transcription-governed.test.ts`) |
+| `proofs/platform-ceiling-proof.sql` (rolled back) | output identical to the recorded `.out` |
+| `proofs/platform-ceiling-concurrency.sh` (local only, restores state) | 5 reserved / 15 `platform_ceiling` (expected 5) |
+| `proofs/spend-alerts-proof.sql` (rolled back) | platform 80% once, 100% once, client roles denied |
+
+Not run: Playwright (the only UI change is one message string in the quote-writer
+panel), `npm run build`, the non-AI integration suites, and any live provider call.
