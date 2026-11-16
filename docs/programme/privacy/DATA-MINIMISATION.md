@@ -10,18 +10,45 @@ Evidence labels per `AGENT-RULES.md` §5. Production counts are aggregates taken
 
 ---
 
+## 0. Re-verification on main `d24295e8` (2026-11-16)
+
+The branch was rebuilt from `origin/main` (`d24295e8`, prod) as `privacy/data-minimisation`; M-1–M-3 were
+cherry-picked and re-checked against the code that landed since `8cec66a7` (D-17 staff field operations,
+column ACLs 20261340–46, file-visibility 354).
+
+| Fix | Re-check on current main | Result |
+|---|---|---|
+| M-1 clock-in GPS | Every `time_entries` writer in `app/ server/ lib/` (grep `from("time_entries")`): the only insert is still `clockIn` in `app/(app)/me/actions.ts`; D-17 (`20261346`) changes operations-table policies only and adds no clock-in path or location column; no `navigator.geolocation` / `getCurrentPosition` anywhere | VERIFIED — no re-introduction. `__tests__/security/clock-in-no-location.test.ts` 3/3 |
+| M-2 avatar copy | No `avatar_url` write in `app/ server/ lib/` (only comments); `20261342` keeps `avatar_url` in the colleague-readable column grant, so the staged drop must also edit that grant list | VERIFIED. `no-avatar-collection.test.ts` 3/3 |
+| M-3 rate-limit keys | `rate_limit_hit` is called only from `checkPersistent` (`lib/security/rate-limit.ts`), which digests the key; no new direct caller | VERIFIED. `rate-limit.test.ts` 18/18 |
+| M-4 Sentry free text | Not on this branch — owned by the SECURITY workstream (see §1) | — |
+
+**Public API of `lib/security/rate-limit.ts` is unchanged by this branch** apart from two additive exports
+(`durableKey`, `sweepExpiredCounters`): `check`, `enforce`, `identifyRequest`, `identifyHeaders`, `checkPersistent`,
+`consume`, `enforcePersistent`, `enforceIdentified`, `enforceIdentifiedStrict`, `DEFAULT_LIMITS` and the
+`RateLimit*` types keep their signatures, so per-user AI route limits can call them as-is. Only the stored key
+format changes (`<route>:h1_<digest>`), which callers never see.
+
+### New findings on 2026-11-16
+
+| # | Finding | Evidence | Decision | Label |
+|---|---|---|---|---|
+| M-5 | **Every password or magic-link sign-in erased the saved name and phone** (accuracy, Art. 5(1)(d) — formerly G-18) | `ensureUserRow` upserted `full_name: input.fullName ?? null, phone: input.phone ?? null`; the password path and a magic-link callback without OAuth metadata pass neither. Reproduced on the local PostgREST with a synthetic user: the null-filled upsert cleared both fields | **FIXED** (`server/services/bootstrap-account.ts`): a profile field is written only when a non-empty value is supplied. Test `__tests__/security/user-profile-accuracy.test.ts` (4); the local reproduction shows the new `{id,email}` upsert keeps saved values | VERIFIED |
+| M-6 | **Photo uploads keep the camera's EXIF metadata, which can include the GPS position where the photo was taken** | `app/api/jobs/[id]/photos/route.ts` stores `await f.arrayBuffer()` unchanged; no EXIF handling exists anywhere (`grep -ri exif` over `app lib server components` = 0). The job-documents picker uses `capture="environment"`. Whether a given file carries GPS depends on the phone and its camera settings | RECOMMEND — **founder decision** (`COMPLIANCE-GAPS.md` G-24): strip location on upload, or keep it as site evidence and say so in the notice. Not changed: it alters evidential content and the upload pipeline other workstreams are testing (#1104) | VERIFIED (code); content of real files not inspected |
+| M-7 | **Every magic-link sign-in puts the email address in a URL** — wider than G-10 | `app/(auth)/actions.ts:120` redirects to `/check-email?email=<address>`; `bounceToLogin()` (`app/auth/callback/route.ts:76`) adds `?email=` on a failed bootstrap. The URL reaches Vercel request logs and browser history, PostHog page-view URLs **after** analytics consent (`lib/analytics/sanitize-url.ts` masks UUIDs only, not query values), and Sentry breadcrumbs (masked only once the SECURITY branch's free-text scrub ships) | RECOMMEND (P2): drop the address from the URL. The simplest form needs a short-lived, HttpOnly, path-scoped cookie for the "resend" button, which must be added to the consent workstream's cookie register / e2e exempt list (#1092), so it was not done unilaterally here. Tests that pin the current URL: `__tests__/security/auth-completion.test.ts:473`, `__tests__/sprint-a-friction/sprint-a.test.ts` | VERIFIED (code) |
+
 ## 1. What was changed on this branch
 
 | # | Finding | Before | Change | Commit | Regression test | Label |
 |---|---|---|---|---|---|---|
-| M-1 | **Clock-in accepted GPS coordinates** | `clockIn` copied `gps_lat`/`gps_lng` from the posted form into `time_entries`. No screen sends them and the Permissions-Policy denies geolocation, so the only route was a hand-crafted request — precise worker location stored with no notice, purpose or retention. `/me` selected the columns and never displayed them | Action ignores the fields; page no longer selects them | `d1c86403` | `__tests__/security/clock-in-no-location.test.ts` (3): a form post *with* coordinates produces an insert with no location keys; no executable reference in action/page; `geolocation=()` still in the header | VERIFIED |
-| M-2 | **Google profile-picture URL copied on every sign-in** | `/auth/callback` read `avatar_url`/`picture` from the OAuth metadata; `ensureUserRow` upserted it to `users.avatar_url`. Nothing reads the column — no screen, export, email, PDF, view or function | Neither read nor written | `fdf847dd` | `__tests__/security/no-avatar-collection.test.ts` (3): upsert payload keys are exactly `email, full_name, id, phone` even when a caller passes an avatar; callback has no reference | VERIFIED |
-| M-3 | **Rate-limit table stored raw IPs, emails and live portal tokens, forever** | `rate_limit_counters.key = "<route>:<identifier>"`, where the identifier is the visitor IP (quote links, public forms), the sign-in email, or the **customer-portal bearer token**. `rate_limit_sweep()` existed and was never called | Key is `<route>:h1_<HMAC-SHA256 digest>`; the daily housekeeping cron now calls the sweep | `253aece3` | `__tests__/security/rate-limit.test.ts` (18, 6 new): no raw IP/email/token reaches the RPC; digest is deterministic and keyed; sweep is called and fail-soft. The previous assertion that pinned the raw email as the key was updated to expect the digest | VERIFIED |
-| M-4 | **Error reports carried access tokens and identifiers** (integration payload) | Sentry scrubbing was by key name only. A synthetic event kept the token segment of `/customer-portal/<token>`, an email inside an exception message, and an email + phone in a console breadcrumb | `redactPathTokens` + `scrubText` applied to URL, message, exception values, breadcrumbs, spans | `932c189a` | `__tests__/monitoring/scrub-free-text.test.ts` (6) | VERIFIED |
+| M-1 | **Clock-in accepted GPS coordinates** | `clockIn` copied `gps_lat`/`gps_lng` from the posted form into `time_entries`. No screen sends them and the Permissions-Policy denies geolocation, so the only route was a hand-crafted request — precise worker location stored with no notice, purpose or retention. `/me` selected the columns and never displayed them | Action ignores the fields; page no longer selects them | `671ee57a` | `__tests__/security/clock-in-no-location.test.ts` (3): a form post *with* coordinates produces an insert with no location keys; no executable reference in action/page; `geolocation=()` still in the header | VERIFIED |
+| M-2 | **Google profile-picture URL copied on every sign-in** | `/auth/callback` read `avatar_url`/`picture` from the OAuth metadata; `ensureUserRow` upserted it to `users.avatar_url`. Nothing reads the column — no screen, export, email, PDF, view or function | Neither read nor written | `015c53fb` | `__tests__/security/no-avatar-collection.test.ts` (3): the upsert payload never carries `avatar_url`, even when a caller passes one; callback has no reference | VERIFIED |
+| M-3 | **Rate-limit table stored raw IPs, emails and live portal tokens, forever** | `rate_limit_counters.key = "<route>:<identifier>"`, where the identifier is the visitor IP (quote links, public forms), the sign-in email, or the **customer-portal bearer token**. `rate_limit_sweep()` existed and was never called | Key is `<route>:h1_<HMAC-SHA256 digest>`; the daily housekeeping cron now calls the sweep | `afdbc459` | `__tests__/security/rate-limit.test.ts` (18, 6 new): no raw IP/email/token reaches the RPC; digest is deterministic and keyed; sweep is called and fail-soft. The previous assertion that pinned the raw email as the key was updated to expect the digest | VERIFIED |
+| M-4 | **Error reports carried access tokens and identifiers** (integration payload) | Sentry scrubbing was by key name only. A synthetic event kept the token segment of `/customer-portal/<token>`, an email inside an exception message, and an email + phone in a console breadcrumb | `redactPathTokens` + `scrubText` applied to URL, message, exception values, breadcrumbs, spans | moved to the SECURITY workstream (`security/injection-secrets-hardening`, commits `be7140af` + `a0c26962`) — not on this branch | `__tests__/monitoring/scrub-free-text.test.ts` (on that branch) | VERIFIED on 2026-11-13; ownership transferred 2026-11-16 |
 
 Tests and typecheck: see §6.
 
-**Not deployed.** All four are commits on `privacy/data-register-and-policy`; production behaves as "Before" until the lead merges and deploys.
+**Not deployed.** M-1–M-3 (and M-5, §0) are commits on `privacy/data-minimisation`, rebuilt on main `d24295e8` on 2026-11-16; M-4 ships with the security branch. Production behaves as "Before" until the lead merges and deploys.
 
 ---
 
@@ -85,7 +112,7 @@ Legend — **Decision:** KEEP (legitimate need) · REMOVED (this branch) · STAG
 | **Prompt content to AI providers** | no redaction layer except the quote-writer contract | RECOMMEND extending the closed "disclosure contract" idiom (`lib/ai/quote-context.ts`) to `lead.summary`; uploaded documents cannot be minimised — the file is the task |
 | **Plaintext backup copies** | 8 local plaintext dump directories | RECOMMEND (G-6) — the largest unnecessary copy of personal data in the whole system |
 | **`organizations.last_login_at`, health scores, MRR** | CrewFlow's customer-success view of each tenant | KEEP — organisation-level; disclose (policy audit A21) |
-| **Password sign-in nulls name/phone** | the opposite of over-collection — an accuracy defect | RECOMMEND (G-18) |
+| **Password sign-in nulls name/phone** | the opposite of over-collection — an accuracy defect | **FIXED 2026-11-16** (M-5, §0) |
 
 ### 3.3 Minimisation that is already done well (verified, no action)
 

@@ -57,15 +57,15 @@ Checked column by column and by tracing the code (details in `DATA-MINIMISATION.
 |---|---|---|
 | Biometric data (face/fingerprint templates, liveness, voiceprints) | **No.** No biometric processing anywhere | No such columns; no face/voice-matching library in `package.json` |
 | Identity-document photos (passport, driving licence) | **Not requested by any form.** A tenant *can* upload any file as a staff qualification scan or a form-import document | `staff_qualifications.document_path`; `form-imports` bucket (7-day purge) |
-| Selfies / profile photos | **No longer collected.** A Google profile-picture URL was copied into `users.avatar_url` on sign-in and never used; stopped on this branch | commit `fdf847dd`; 2 values remain in prod |
-| Precise location / location history | **No longer accepted** at clock-in (was reachable only by a hand-crafted request; 0 values in prod). Vehicle telematics positions exist as a **dormant** feature | commit `d1c86403`; `telematics_readings` 0 rows |
+| Selfies / profile photos | **No longer collected.** A Google profile-picture URL was copied into `users.avatar_url` on sign-in and never used; stopped on this branch | commit `015c53fb`; 2 values remain in prod |
+| Precise location / location history | **No longer accepted** at clock-in (was reachable only by a hand-crafted request; 0 values in prod). Vehicle telematics positions exist as a **dormant** feature | commit `671ee57a`; `telematics_readings` 0 rows |
 | Health data | **Not asked for**, but can appear: leave `type` (sickness), free-text leave `reason`, H&S records, RIDDOR-style notes in site diaries | `leave_requests.type/reason` |
 | Date of birth | Optional, payroll tax profile only; 0 values in prod | `payroll_tax_profiles.date_of_birth` |
 | National Insurance number | Yes, optional, isolated in an admin-only table; 0 values in prod | `staff_secrets.ni_number` |
 | UTR (subcontractor tax reference) | Yes — needed for CIS; masked in statements; 0 values in prod | `cis_subcontractors.utr` |
 | Bank details | The tenant's own, printed on its invoices. No staff or customer bank details are collected. Card numbers never reach CrewFlow (Stripe Checkout) | `organizations.bank_details` |
 | Emergency contact (a third party's data) | Yes, optional free text; 0 values in prod | `staff_compensation.emergency_contact` |
-| IP addresses | Raw: Supabase Auth sessions, CrewFlow support-access sessions, hosting logs. Keyed hash: e-signatures and H&S acknowledgements. Rate-limit keys were raw; now a keyed digest (this branch) | `auth.sessions.ip`, `impersonation_sessions.ip_address`, `signatures.ip_address` (hash), commit `253aece3` |
+| IP addresses | Raw: Supabase Auth sessions, CrewFlow support-access sessions, hosting logs. Keyed hash: e-signatures and H&S acknowledgements. Rate-limit keys were raw; now a keyed digest (this branch) | `auth.sessions.ip`, `impersonation_sessions.ip_address`, `signatures.ip_address` (hash), commit `afdbc459` |
 | Call recordings / voice | Dormant features only; 0 rows | `calls.recording_url`, `voice_notes.audio_url` |
 | Trade-union, religion, ethnicity, sexual orientation, criminal records | **No fields.** Could only appear in free text | — |
 | Automated decisions with legal/significant effect | **None.** A rule-based lead score and AI *drafts* exist; nothing is decided or sent without a person | `leads.lead_score*`; `docs/ai-cost-governor.md` |
@@ -113,7 +113,7 @@ Lawful basis is a **proposal for legal review**, never a finding. "R/W path" nam
 | C6 | Security and abuse prevention | everyone | `rate_limit_counters`; e-signature IP hashes; Supabase Auth | — | legitimate interests | ACTIVE |
 | C7 | Error and performance monitoring | everyone using the site | not in DB | Sentry (Germany) | legitimate interests | ACTIVE |
 | C8 | Product analytics | consenting visitors/users | cookie `cf_cookie_consent` | PostHog (EU) | consent (PECR + UK GDPR) | ACTIVE after Accept |
-| C9 | Hosting, request logs | everyone | not in DB | Vercel (functions in the USA) | legitimate interests | ACTIVE |
+| C9 | Hosting, request logs | everyone | not in DB | Vercel (functions in `dub1` Dublin since 2026-11-15 — VERIFIED `x-vercel-id: lhr1::dub1` on 2026-11-16) | legitimate interests ⚖ | ACTIVE |
 | C10 | Operations audit and AI usage accounting | tenant users, operators | `activity_log`, `admin_activity_log`, `ai_invocations`, `cron_runs`, `hq_events` | — | legitimate interests | ACTIVE |
 | C11 | Backups and disaster recovery | everyone in the DB | Supabase backups; encrypted archive | Backblaze B2 | legitimate interests / security obligation | ACTIVE |
 | C12 | Terms-of-service acceptance record | account holders | `organizations.tos_*` | — | contract | ACTIVE |
@@ -137,7 +137,7 @@ Lawful basis is a **proposal for legal review**, never a finding. "R/W path" nam
 |---|---|---|---|
 | Vercel function logs | `console.*` output (1,264 call sites). Mostly error objects; structured events include user ids. Postgres error text can embed a value (e.g. a duplicate email) | grep of `console.(log|info|warn|error)` | Retention is plan-dependent |
 | Vercel request logs | IP, user agent, full URL — including bearer-token paths and `/login?email=…` on a failed sign-in | `app/auth/callback/route.ts` `bounceToLogin` | See G-10 |
-| Sentry | errors + 10% traces; scrubbed by key name; path tokens and identifiers in free text were **not** scrubbed until this branch | `lib/monitoring/scrub.ts`; commit `932c189a` | Not yet deployed |
+| Sentry | errors + 10% traces; scrubbed by key name; path tokens and identifiers in free text are masked by the SECURITY workstream (`security/injection-secrets-hardening`, commits `be7140af` + `a0c26962`) — not on this branch | `lib/monitoring/scrub.ts` | Not yet deployed |
 | `activity_log` | actor id + name; trigger metadata copies customer **name, email, phone** on create and name on delete | `supabase/migrations/20260518120000_customers_activity_trigger.sql` | Append-only; never purged |
 | `admin_activity_log` | operator email, action, target, metadata | — | Append-only; never purged |
 | `impersonation_sessions` | operator email, target user, reason, **raw IP**, user agent | `server/services/impersonation.ts` | Never purged |
@@ -146,7 +146,7 @@ Lawful basis is a **proposal for legal review**, never a finding. "R/W path" nam
 | `hq_events` / `hq_timeline` | CrewFlow's internal event spine (actor ids, object ids, payload) | 90,335 rows | Internal; never purged |
 | `comm_events` | email delivery events: recipient address + provider payload | 16 rows | Never purged |
 | Webhook inboxes | raw provider payloads (`billing_events`, `whatsapp_webhook_events`, `email_webhook_events`, `call_events`) | — | Never purged |
-| `rate_limit_counters` | was raw IP / email / portal token; now a keyed digest | commit `253aece3` | Swept daily (branch) |
+| `rate_limit_counters` | was raw IP / email / portal token; now a keyed digest | commit `afdbc459` | Swept daily (branch) |
 | `auth.audit_log_entries` | **0 rows** in prod | count | Supabase auth audit is not being written to the DB |
 
 ---
