@@ -14,6 +14,7 @@ import {
 import { transcribeVoiceNoteGoverned } from "@/lib/ai/transcription";
 import { buildSelftestWav, SELFTEST_WAV_SECONDS } from "@/lib/ai/transcription/selftest";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { AI_PLATFORM_CEILING_HARD_MAX_PENCE } from "@/server/services/ai-budget-controls";
 
 /**
  * /admin/ai-costs — server actions for the EDITABLE budget controls.
@@ -82,6 +83,39 @@ function noteFrom(raw: FormDataEntryValue | null): string | null {
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim().slice(0, 500);
   return trimmed.length > 0 ? trimmed : null;
+}
+
+// ── CrewFlow-wide ceiling (20261355000000) ──────────────────────────────────
+//
+// Raising this is how the founder approves more AI spend across every company.
+// The RPC clamps to £10,000 and writes the audit row in the same transaction.
+
+export async function setPlatformCeilingAction(formData: FormData): Promise<void> {
+  const admin = await requireAdmin();
+  const raw = formData.get("pounds");
+  const cleaned = typeof raw === "string" ? raw.replace(/[£,\s]/g, "") : "";
+  const pounds = cleaned.length > 0 ? Number(cleaned) : Number.NaN;
+  const pence = Number.isFinite(pounds) && pounds >= 0 ? Math.round(pounds * 100) : null;
+  if (pence === null || !isAcceptableLimitPence(pence, AI_PLATFORM_CEILING_HARD_MAX_PENCE)) {
+    backTo({
+      error: `Platform ceiling must be a number between £0 and £${(
+        AI_PLATFORM_CEILING_HARD_MAX_PENCE / 100
+      ).toFixed(0)}.`,
+    });
+  }
+  const note = noteFrom(formData.get("note"));
+  if (!note) backTo({ error: "Say why the CrewFlow-wide ceiling is changing (note is required)." });
+
+  const { error } = await rpc(createAdminClient()).rpc("ai_set_platform_ceiling", {
+    p_ceiling_pence: pence,
+    p_set_by: admin.id,
+    p_note: note,
+  });
+  if (error) {
+    console.error("[ai-costs] setPlatformCeiling failed", error);
+    backTo({ error: "Couldn't save the platform ceiling — try again." });
+  }
+  backTo({ saved: "platform_ceiling_set" });
 }
 
 // ── Per-org ceiling ─────────────────────────────────────────────────────────

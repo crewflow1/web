@@ -21,6 +21,7 @@ import {
   runTranscriptionSelftestAction,
   setEmployeeLimitAction,
   setOrgCeilingAction,
+  setPlatformCeilingAction,
 } from "./actions";
 
 type SP = Promise<{
@@ -37,6 +38,7 @@ type SP = Promise<{
 
 const SAVED_LABEL: Record<string, string> = {
   ceiling_set: "Org ceiling saved.",
+  platform_ceiling_set: "CrewFlow-wide ceiling saved.",
   ceiling_cleared: "Org ceiling override cleared — back to the default.",
   limit_set: "Employee limit saved.",
   limit_cleared: "Employee limit cleared.",
@@ -640,6 +642,60 @@ function BudgetControlsSection({ controls }: { controls: AiBudgetControls }) {
         ceiling — a call must fit under both. Both are bounded to £{maxPounds} and enforced by the
         atomic reservation. Copy org / employee ids from the tables above.
       </p>
+
+      {/* ── CrewFlow-wide ceiling (20261355000000) ── */}
+      <div className="mt-5">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+          CrewFlow-wide monthly ceiling (all companies + HQ)
+        </h3>
+        {controls.platform ? (
+          <p className="mt-1 text-xs text-slate-700" data-testid="platform-budget">
+            {formatPence(controls.platform.committedPence)} spent +{" "}
+            {formatPence(controls.platform.reservedPence)} in flight of{" "}
+            {formatPence(controls.platform.ceilingPence)} this month
+            {controls.platform.status === "allowed"
+              ? ""
+              : controls.platform.status === "blocked"
+                ? " — LIMIT REACHED: new AI calls are refused everywhere"
+                : controls.platform.status === "warn_80"
+                  ? " — over 80% used"
+                  : " — over 50% used"}
+          </p>
+        ) : (
+          <p className="mt-1 text-xs font-medium text-red-700">
+            Couldn&rsquo;t read the CrewFlow-wide budget.
+          </p>
+        )}
+        <form
+          action={setPlatformCeilingAction}
+          className="mt-2 flex flex-wrap items-end gap-2 rounded-md border border-slate-200 bg-white p-3"
+        >
+          <label className="flex flex-col text-[11px] text-slate-600">
+            Ceiling (£)
+            <input
+              name="pounds"
+              required
+              inputMode="decimal"
+              className="mt-0.5 w-28 rounded border border-slate-300 px-2 py-1 text-xs"
+            />
+          </label>
+          <label className="flex flex-col text-[11px] text-slate-600">
+            Reason (required, audited)
+            <input
+              name="note"
+              required
+              maxLength={500}
+              className="mt-0.5 w-72 rounded border border-slate-300 px-2 py-1 text-xs"
+            />
+          </label>
+          <button
+            type="submit"
+            className="rounded bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
+          >
+            Set CrewFlow-wide ceiling
+          </button>
+        </form>
+      </div>
 
       {/* ── Per-org ceiling override ── */}
       <div className="mt-5">

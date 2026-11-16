@@ -1,0 +1,48 @@
+1) org 1 reserves 60p (org ceiling 10000p, platform headroom 100p) -> reserved
+ outcome  | block_reason 
+----------+--------------
+ reserved | 
+(1 row)
+
+2) org 2 reserves 60p — its own ceiling has room, the PLATFORM does not -> blocked/platform_ceiling
+ outcome |   block_reason   
+---------+------------------
+ blocked | platform_ceiling
+(1 row)
+
+3) org 2 reserves 40p — fits exactly -> reserved
+ outcome  | block_reason 
+----------+--------------
+ reserved | 
+(1 row)
+
+4) org 1 reserves 1p — platform now full -> blocked/platform_ceiling
+ outcome |   block_reason   
+---------+------------------
+ blocked | platform_ceiling
+(1 row)
+
+5) platform ceiling 0 -> every call blocked/platform_ceiling
+ outcome |   block_reason   
+---------+------------------
+ blocked | platform_ceiling
+(1 row)
+
+6) setter clamps to 1,000,000p and audits every change
+ new_pence 
+-----------
+   1000000
+(1 row)
+
+ audit_rows_in_this_txn 
+------------------------
+                      3
+(1 row)
+
+7) the client roles cannot read the budget, set it, or reserve
+ auth_can_read_budget | auth_can_set | anon_can_reserve 
+----------------------+--------------+------------------
+ f                    | f            | f
+(1 row)
+
+ROLLBACK

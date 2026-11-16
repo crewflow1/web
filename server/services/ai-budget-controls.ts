@@ -4,7 +4,9 @@ import {
   AI_MONTHLY_CEILING_PENCE,
   AI_MONTHLY_CEILING_HARD_MAX_PENCE,
   effectiveCeilingPence,
+  evaluateBudget,
   ukMonthKeyOf,
+  type BudgetStatus,
   ukMonthWindow,
   type MonthKey,
 } from "@/lib/ai/governor";
@@ -52,8 +54,23 @@ export type EmployeeLimitControlRow = {
   updatedAt: string | null;
 };
 
+/**
+ * The CrewFlow-wide monthly budget (migration 20261355000000). `null` when it
+ * cannot be read — the page then says so rather than showing a fake zero.
+ */
+export type PlatformBudgetRow = {
+  ceilingPence: number;
+  committedPence: number;
+  reservedPence: number;
+  status: BudgetStatus;
+};
+
+/** Platform cap the HQ form may set — mirrors the SQL clamp in ai_set_platform_ceiling. */
+export const AI_PLATFORM_CEILING_HARD_MAX_PENCE = 1_000_000;
+
 export type AiBudgetControls = {
   month: MonthKey;
+  platform: PlatformBudgetRow | null;
   defaultCeilingPence: number;
   hardMaxPence: number;
   overrides: OrgCeilingControlRow[];
@@ -123,12 +140,37 @@ async function employeeUsedPence(
 }
 
 /** Build the editable-controls view for a budget month (default: this one). */
+export async function readPlatformBudget(): Promise<PlatformBudgetRow | null> {
+  try {
+    const { data, error } = await db(createAdminClient()).rpc("ai_platform_month_usage", {});
+    if (error) {
+      console.error("[ai-budget-controls] platform usage read failed", error);
+      return null;
+    }
+    const row = Array.isArray(data) ? (data as Array<Record<string, unknown>>)[0] : undefined;
+    if (!row) return null;
+    const ceilingPence = num(row.ceiling_pence);
+    const committedPence = num(row.committed_pence);
+    const reservedPence = num(row.reserved_pence);
+    return {
+      ceilingPence,
+      committedPence,
+      reservedPence,
+      status: evaluateBudget(committedPence + reservedPence, ceilingPence),
+    };
+  } catch (e) {
+    console.error("[ai-budget-controls] platform usage read threw", e);
+    return null;
+  }
+}
+
 export async function buildAiBudgetControls(month?: MonthKey): Promise<AiBudgetControls> {
   const monthKey = month ?? ukMonthKeyOf(new Date());
 
-  const [rawOverrides, rawLimits] = await Promise.all([
+  const [rawOverrides, rawLimits, platform] = await Promise.all([
     listOrgCeilingOverrides(),
     listEmployeeLimits(),
+    readPlatformBudget(),
   ]);
 
   const orgIds = [
@@ -174,6 +216,7 @@ export async function buildAiBudgetControls(month?: MonthKey): Promise<AiBudgetC
 
   return {
     month: monthKey,
+    platform,
     defaultCeilingPence: AI_CEILING_DEFAULT_PENCE,
     hardMaxPence: AI_CEILING_HARD_MAX_PENCE,
     overrides,
