@@ -307,17 +307,17 @@ All four are additive. **None deletes or rewrites a row when applied.** They may
 code deploys, and the code may deploy before them, **as long as `FEATURE_ACCOUNT_DELETION` stays off** — with
 the flag off no code path calls any of these functions (the cron drain returns before its first query; the
 account page does not read the ledger). The flag must not be turned on until all four are applied.
-Apply in numeric order (312–314 use `_privacy_require_service_role` from 311).
+Apply in numeric order (360–362 use `_privacy_require_service_role` from 359).
 
 | Migration | Changes existing objects? | Safe before code? | Precondition query (read-only, catalogue) | Expect |
 |---|---|---|---|---|
-| `20261359` ledger, tombstone, retained-billing table, request lifecycle | No | Yes | `select to_regclass('public.privacy_deletion_requests'), to_regclass('public.privacy_retained_billing_records'), (select count(*) from pg_proc where pronamespace='public'::regnamespace and (proname like 'privacy\_%' or proname like '\_privacy\_%'))` | `NULL, NULL, 0` — the names are free |
+| `20261359` ledger, tombstone, retained-billing table, request lifecycle, processor-request ledger (§8) | No | Yes | `select to_regclass('public.privacy_deletion_requests'), to_regclass('public.privacy_retained_billing_records'), to_regclass('public.privacy_processor_requests'), (select count(*) from pg_proc where pronamespace='public'::regnamespace and (proname like 'privacy\_%' or proname like '\_privacy\_%'))` | `NULL, NULL, NULL, 0` — the names are free |
 | `20261360` teardown-safe guards, lockout, teardown | **Yes — `create or replace` of 19 guard functions** | Yes: with no marker set they behave exactly as now | `select p.proname, (p.prosrc ilike '%organizations%' or p.prosrc ilike '%current_setting%') as already_conditional, p.proconfig from pg_proc p where p.pronamespace='public'::regnamespace and (p.proname ~ '^(receptionist_.*|ai_reply_.*)_block_mutation$' or p.proname='tg_comm_events_frozen') order by 1` | 19 rows, `already_conditional = false` on every row (i.e. production still has the unconditional bodies this migration replaces — if any row is `true`, someone changed a guard since and the migration must be re-read against it); `proconfig` NULL except `{search_path=public}` on `tg_comm_events_frozen` |
 | | | | `select c.relname from pg_trigger t join pg_proc p on p.oid=t.tgfoid join pg_class c on c.oid=t.tgrelid where not t.tgisinternal and (p.proname ~ '^(receptionist_.*|ai_reply_.*)_block_mutation$' or p.proname='tg_comm_events_frozen') and ((t.tgtype & 1)=0 or not exists (select 1 from pg_attribute a where a.attrelid=c.oid and a.attname='org_id' and not a.attisdropped))` | 0 rows — every such trigger is row-level on a table that has `org_id` (the guards read `old.org_id`) |
 | `20261361` per-person erasure | No | Yes | none beyond 359 | — |
 | `20261362` residue scan, drift introspection, tombstone export / re-apply | No | Yes | none beyond 359. `privacy_residue_scan` sequentially scans every text column — an operator tool, never to be run at peak. | — |
 
-After applying, confirm the lockdown (expect every row `false, false`, and both tables RLS on / 0 policies):
+After applying, confirm the lockdown (expect every row `false, false`, and all three tables RLS on / 0 policies):
 
 ```sql
 select p.proname, has_function_privilege('anon', p.oid, 'execute') as anon,
@@ -328,7 +328,7 @@ where p.pronamespace = 'public'::regnamespace
 order by 1;
 ```
 
-(VERIFIED locally: 20 functions, all `false / false`; both tables RLS on, 0 policies, no client privilege.)
+(VERIFIED locally 2026-11-14: 20 functions, all `false / false`. Re-checked 2026-11-16 after §8 was added: see §12.)
 
 ## 11. Not done
 
@@ -340,6 +340,6 @@ order by 1;
 | Erasing a person **already removed** from the team | **NOT-IMPLEMENTED** (no entry point; `privacy_request_create` requires a current membership) | Add an owner action that targets a former member by id, authorised by the org holding rows for them. |
 | Notifying the other owners / admins when a company deletion is scheduled | **NOT-IMPLEMENTED** | The pending banner on Settings → Account is the only signal today; add an in-app notification (email is a customer communication and needs sign-off). |
 | Tombstone upload in the off-platform backup script | **NOT-IMPLEMENTED** (SQL + `exportTombstones()` are VERIFIED) | See `staged-migrations/backup-tombstone-export.md`. |
-| Provider deletion for Twilio / Meta | **NOT-IMPLEMENTED** by design | Pre-activation condition for those integrations. |
+| Provider deletion for Twilio / Vapi / Meta | Recorded as an open **manual request** per deletion (§12); no API call by design | Pre-activation condition for those integrations (runbook §5). |
 | Retiring `POST /api/gdpr/erase` | **NOT-IMPLEMENTED** | Separate reviewed change. |
 | `privacy_tombstone_reapply` accepts any well-formed tombstone | Noted | It is service-role-only and operator-run by design (the ledger that would authenticate a tombstone is exactly what a restore loses). Never call it from a request path; consider signing the exported file. |

@@ -3,6 +3,7 @@ import {
   buildProcessorManifest,
   PROCESSOR_MANUAL_DEADLINE_DAYS,
   type ProcessorFacts,
+  type ProcessorName,
 } from "@/server/services/privacy-processors";
 
 /**
@@ -21,7 +22,20 @@ const NONE: ProcessorFacts = {
 };
 const ORG = "6f1c2a9e-1111-4222-8333-944455556666";
 const ctx = { now: new Date("2026-11-16T12:00:00Z"), billingRetentionUntil: "2032-12-31" };
-const by = (rows: ReturnType<typeof buildProcessorManifest>) => Object.fromEntries(rows.map((r) => [r.processor, r]));
+type Entry = ReturnType<typeof buildProcessorManifest>[number];
+const NAMES: readonly ProcessorName[] = [
+  "anthropic", "posthog", "resend", "sentry", "stripe", "supabase_platform_logs", "twilio", "vapi", "vercel", "whatsapp_meta",
+];
+/** processor → entry; throws if the manifest is missing one (so no lookup is ever undefined). */
+const by = (rows: Entry[]): Record<ProcessorName, Entry> => {
+  const out = {} as Record<ProcessorName, Entry>;
+  for (const name of NAMES) {
+    const r = rows.find((x) => x.processor === name);
+    if (!r) throw new Error(`no manifest entry for ${name}`);
+    out[name] = r;
+  }
+  return out;
+};
 
 describe("processor manifest", () => {
   it("lists every processor exactly once, for every kind", () => {
@@ -56,7 +70,7 @@ describe("processor manifest", () => {
     };
     for (const kind of ["user_account", "staff_erasure"] as const) {
       const m = by(buildProcessorManifest({ kind, orgId: ORG }, facts, { posthogConfigured: true }, ctx));
-      for (const p of ["stripe", "posthog", "vapi", "whatsapp_meta"]) expect(m[p].disposition, `${kind}/${p}`).toBe("not_held");
+      for (const p of ["stripe", "posthog", "vapi", "whatsapp_meta"] as const) expect(m[p].disposition, `${kind}/${p}`).toBe("not_held");
     }
   });
 
@@ -79,14 +93,14 @@ describe("processor manifest", () => {
     expect(m.whatsapp_meta).toMatchObject({ disposition: "manual_request", held_count: 1, external_refs: ["98765"] });
     expect(m.posthog.disposition).toBe("manual_request");
     expect(m.posthog.external_refs).toHaveLength(1);
-    expect(m.posthog.external_refs[0]).toMatch(/^org_[0-9a-f]{32}$/);
-    expect(m.posthog.external_refs[0]).not.toContain(ORG);
+    expect(m.posthog.external_refs[0] ?? "").toMatch(/^org_[0-9a-f]{32}$/);
+    expect(m.posthog.external_refs[0] ?? "").not.toContain(ORG);
   });
 
   it("analytics not configured → nothing held; log processors age out; Sentry holds nothing by design", () => {
     const m = by(buildProcessorManifest({ kind: "org", orgId: ORG }, NONE, { posthogConfigured: false }, ctx));
     expect(m.posthog.disposition).toBe("not_held");
-    for (const p of ["resend", "anthropic", "supabase_platform_logs", "vercel"]) expect(m[p].disposition).toBe("ages_out");
+    for (const p of ["resend", "anthropic", "supabase_platform_logs", "vercel"] as const) expect(m[p].disposition).toBe("ages_out");
     expect(m.sentry.disposition).toBe("not_held");
     expect(Object.values(m).every((r) => (r.disposition === "manual_request") === (r.due_by !== null))).toBe(true);
   });

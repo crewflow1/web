@@ -384,18 +384,25 @@ describeIntegration("privacy · company deletion", () => {
     expect(await countRows("phone_numbers", { org_id: w.org.id })).toBe(0);
 
     const procs = await processorRows(req.requestId);
-    const by = Object.fromEntries(procs.map((p) => [p.processor, p]));
-    expect(Object.keys(by).sort()).toEqual(
+    const pick = (name: string): ProcessorRow => {
+      const row = procs.find((p) => p.processor === name);
+      if (!row) throw new Error(`no processor row for ${name}`);
+      return row;
+    };
+    const by = {
+      stripe: pick("stripe"), twilio: pick("twilio"), whatsapp_meta: pick("whatsapp_meta"), posthog: pick("posthog"),
+    };
+    expect(procs.map((p) => p.processor).sort()).toEqual(
       ["anthropic", "posthog", "resend", "sentry", "stripe", "supabase_platform_logs", "twilio", "vapi", "vercel", "whatsapp_meta"],
     );
     expect(by.stripe).toMatchObject({ disposition: "retained_legal", status: "closed", external_refs: ["cus_TESTdeletion0001"], retention_until: "2032-12-31" });
     expect(by.twilio).toMatchObject({ disposition: "manual_request", status: "open", held_count: 2, external_refs: [numberSid], due_by: "2026-12-16" });
     expect(by.whatsapp_meta).toMatchObject({ disposition: "manual_request", status: "open", held_count: 1, external_refs: [waId] });
     expect(by.posthog).toMatchObject({ disposition: "manual_request", status: "open", held_count: 1 });
-    expect(by.posthog.external_refs[0]).toMatch(/^org_[0-9a-f]{32}$/);
-    expect(by.posthog.external_refs[0]).not.toContain(w.org.id);
-    for (const p of ["resend", "anthropic", "supabase_platform_logs", "vercel"]) expect(by[p]).toMatchObject({ disposition: "ages_out", status: "closed" });
-    for (const p of ["sentry", "vapi"]) expect(by[p]).toMatchObject({ disposition: "not_held", status: "closed" });
+    expect(by.posthog.external_refs[0] ?? "").toMatch(/^org_[0-9a-f]{32}$/);
+    expect(by.posthog.external_refs[0] ?? "").not.toContain(w.org.id);
+    for (const p of ["resend", "anthropic", "supabase_platform_logs", "vercel"]) expect(pick(p)).toMatchObject({ disposition: "ages_out", status: "closed" });
+    for (const p of ["sentry", "vapi"]) expect(pick(p)).toMatchObject({ disposition: "not_held", status: "closed" });
     // No personal data in the processor ledger — opaque handles only.
     const text = JSON.stringify(procs);
     for (const s of [w.m.name, w.m.email, w.m.phone, e164, w.org.slug]) expect(text).not.toContain(s);
@@ -879,8 +886,8 @@ describeIntegration("privacy · company deletion", () => {
     const company = await runDeletionRequest(req.requestId, { admin: admin(), stripe: stripeMock() });
     expect(company.status, JSON.stringify(company)).toBe("completed");
     const tomb = await ledger(req.requestId);
-    const identities = (tomb.steps as Record<string, Record<string, number>>).identities;
-    expect(identities.hard_deleted + identities.anonymised_placeholder + identities.already_gone).toBe(4);
+    const identities = (tomb.steps as { identities?: Record<string, number> }).identities ?? {};
+    expect((identities.hard_deleted ?? 0) + (identities.anonymised_placeholder ?? 0) + (identities.already_gone ?? 0)).toBe(4);
     expect(await countRows("organizations", { id: w.org.id })).toBe(0);
     for (const u of [w.owner, w.adminUser, w.staff, w.shared]) {
       expect((await serviceClient().auth.admin.getUserById(u.id)).data.user).toBeNull();
