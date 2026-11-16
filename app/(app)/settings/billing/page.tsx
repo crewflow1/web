@@ -189,12 +189,12 @@ export default async function BillingSettingsPage({
               {configured
                 ? currentPlan.name
                 : `CrewFlow — £${MONTHLY_PRICE_GBP.toLocaleString("en-GB")} a month, every feature`}
+              {configured ? null : (
+                <span className="mt-0.5 block text-xs font-normal text-slate-500">
+                  Plus a one-time £{SETUP_FEE_GBP.toLocaleString("en-GB")} setup fee, charged once.
+                </span>
+              )}
             </dd>
-            {configured ? null : (
-              <p className="mt-0.5 text-xs text-slate-500">
-                Plus a one-time £{SETUP_FEE_GBP.toLocaleString("en-GB")} setup fee, charged once.
-              </p>
-            )}
           </div>
           <div className="rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2">
             <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">
