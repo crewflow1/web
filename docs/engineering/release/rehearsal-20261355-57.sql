@@ -27,8 +27,10 @@ insert into public.organizations (id, name, slug, status, stripe_customer_id, st
 select 'claim1=' || (select outcome from public.claim_subscription_cancellation('00000000-0000-4000-8000-0000000f0001', 'sub_reh355', null, null, null, p_source => 'owner'))
   || ' claim2=' || (select outcome from public.claim_subscription_cancellation('00000000-0000-4000-8000-0000000f0001', 'sub_reh355', null, null, null, p_source => 'owner'));
 select 'confirm1_revoked=' || (select access_revoked from public.confirm_subscription_cancellation('00000000-0000-4000-8000-0000000f0001', 'sub_reh355', 'webhook', '{}'::jsonb))
-  || ' confirm2_newly=' || (select newly_confirmed from public.confirm_subscription_cancellation('00000000-0000-4000-8000-0000000f0001', 'sub_reh355', 'webhook', '{}'::jsonb))
-  || ' org_status=' || (select status from public.organizations where id = '00000000-0000-4000-8000-0000000f0001');
+  || ' confirm2_newly=' || (select newly_confirmed from public.confirm_subscription_cancellation('00000000-0000-4000-8000-0000000f0001', 'sub_reh355', 'webhook', '{}'::jsonb));
+-- separate statement: a status read inside the statement above would see its start-of-statement snapshot
+select 'org_status_after=' || status || ' cancelled_at_set=' || (cancelled_at is not null)
+  from public.organizations where id = '00000000-0000-4000-8000-0000000f0001';
 rollback;
 \echo '== rollback'
 \i /tmp/rollback355.sql
