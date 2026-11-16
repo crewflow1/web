@@ -44,11 +44,11 @@
  * Target safety: see scripts/load/_guard.mjs (production is refused, always).
  */
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertTag, authoriseTarget, parseArgs, stagingSentinelSql } from "./_guard.mjs";
+import { ltId, ltR, md5hex } from "./_ids.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "..", "..");
@@ -70,13 +70,7 @@ const seedN = int("seed", 1);
 const anchor = String(args.anchor ?? new Date().toISOString().slice(0, 10));
 if (!/^\d{4}-\d{2}-\d{2}$/.test(anchor)) throw new Error("--anchor must be YYYY-MM-DD");
 
-// ── deterministic primitives (mirrored in SQL and in load/k6/lib/ids.js) ─────
-export const md5hex = (s) => createHash("md5").update(s).digest("hex");
-export const ltId = (key) => {
-  const h = md5hex(key);
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-};
-export const ltR = (key) => parseInt(md5hex(key).slice(0, 7), 16) / 0x10000000;
+// deterministic primitives live in ./_ids.mjs (mirrored in SQL and in load/k6/lib/ids.js)
 
 const TRADES = ["Roofing", "Electrical", "Groundworks", "Joinery", "Plastering", "Building Services", "Scaffolding", "Mechanical", "Construction", "Civils", "Fit-Out", "Brickwork"];
 const NAMES = ["Harland", "Okafor", "McAllister", "Devlin", "Ferreira", "Whitcombe", "Nowak", "Brannigan", "Thornley", "Quigley", "Ashdown", "Mulholland", "Castellan", "Doherty", "Lindqvist", "Abernethy", "Trevelyan", "Macready", "Fenwick", "Penhale"];

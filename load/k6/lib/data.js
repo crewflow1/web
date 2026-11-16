@@ -1,12 +1,13 @@
 // load/k6/lib/data.js — the seeded dataset as the load generator sees it.
 //
 // The seeder (scripts/load/seed.mjs) derives every id as
-//   uuid = md5('<tag>:<kind>:<orgIdx>:<n>')
+//   uuid = md5('<tag>:<kind>:<orgIdx>:<n>')   (see ./ids.js)
 // so the generator needs NO id dump: it loads a small manifest (one row per
 // organisation with its row counts + tenant marker) and recomputes any id.
 import crypto from "k6/crypto";
 import { SharedArray } from "k6/data";
 import { ACTIONS_PATH, MANIFEST_PATH } from "./config.js";
+import { makeIds } from "./ids.js";
 
 const manifestArr = new SharedArray("manifest", () => [JSON.parse(open(MANIFEST_PATH))]);
 export const manifest = manifestArr[0];
@@ -22,13 +23,12 @@ const actionsArr = new SharedArray("actions", () => {
 });
 export const actionMap = actionsArr[0];
 
-export function ltId(kind, orgIdx, n) {
-  const h = crypto.md5(`${TAG}:${kind}:${orgIdx}:${n}`, "hex");
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-}
-export const userId = (orgIdx, role, n) => ltId("user", orgIdx, `${role}:${n}`);
-export const emailOf = (orgIdx, role, n) => `lt-${TAG}-o${orgIdx}-${role}${n}@loadtest.crewflow.invalid`;
-export const hqEmail = (n) => `lt-${TAG}-hq${n}@loadtest.crewflow.invalid`;
+// The id / email scheme is shared with the seeder (./ids.js, parity-tested).
+const ids = makeIds(TAG, (s) => crypto.md5(s, "hex"));
+export const ltId = ids.ltId;
+export const userId = ids.userId;
+export const emailOf = ids.emailOf;
+export const hqEmail = ids.hqEmail;
 
 // ── per-persona user pools (prefix sums → O(log n) lookup, no giant arrays) ──
 function prefix(field) {

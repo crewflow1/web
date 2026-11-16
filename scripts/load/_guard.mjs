@@ -85,7 +85,11 @@ export function authoriseTarget(url, what) {
  * disposable load-test environment and holds synthetic tenants only.
  * Run via psql with ON_ERROR_STOP; raises on violation.
  */
-export function stagingSentinelSql(tag) {
+export function stagingSentinelSql(tag, stagingRef = process.env.LOAD_STAGING_REF ?? "") {
+  const ref = String(stagingRef).trim().toLowerCase();
+  if (!/^[a-z0-9]{8,40}$/.test(ref) || ref === PRODUCTION_SUPABASE_REF) {
+    throw new Error("[load guard] REFUSED: a staging sentinel check needs a valid, non-production LOAD_STAGING_REF.");
+  }
   return `
 do $guard$
 declare
@@ -93,10 +97,10 @@ declare
   v_foreign integer;
 begin
   if to_regclass('public.loadtest_environment') is not null then
-    execute 'select exists (select 1 from public.loadtest_environment where is_disposable is true)' into v_marked;
+    execute 'select exists (select 1 from public.loadtest_environment where is_disposable is true and staging_ref = ''${ref}'')' into v_marked;
   end if;
   if not v_marked then
-    raise exception 'load guard: this database is not marked as a disposable load-test environment (run scripts/load/staging/01-mark-staging.sql against STAGING first)';
+    raise exception 'load guard: this database is not marked as the disposable load-test environment for LOAD_STAGING_REF (run scripts/load/staging/01-mark-staging.sql against STAGING first)';
   end if;
   select count(*) into v_foreign from public.organizations where slug not like 'lt-%';
   if v_foreign > 0 then

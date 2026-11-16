@@ -24,6 +24,8 @@ export const writesUnknown = new Counter("writes_unknown");
 /** Cross-tenant canary probes sent / correctly refused. */
 export const canaryProbes = new Counter("canary_probes");
 export const canaryRefused = new Counter("canary_refused");
+/** A cross-tenant probe that returned the foreign tenant's data. Must stay at zero. */
+export const canaryLeaks = new Counter("canary_leaks");
 /** Uncompressed response size per endpoint. */
 export const bodyBytes = new Trend("response_bytes");
 /** Upload bytes accepted by Storage (through the app). */
@@ -54,6 +56,14 @@ export function scanIsolation(res, ownMarker, name) {
   return true;
 }
 
+let lastBounce = false;
+/** True once after any authenticated request was bounced to /login (the session is gone). */
+export function consumeBounce() {
+  const b = lastBounce;
+  lastBounce = false;
+  return b;
+}
+
 function baseHeaders(extra) {
   return Object.assign({ "Accept-Encoding": "gzip", "User-Agent": "crewflow-load-harness/1 (k6)" }, extra || {});
 }
@@ -63,7 +73,9 @@ function account(res, name, ctx, { authed = true } = {}) {
   if (res.status === 429) rateLimited.add(1, { name });
   if (authed) {
     const loc = res.headers["Location"] || "";
-    authBounces.add((res.status === 307 || res.status === 302) && loc.indexOf("/login") !== -1, { name });
+    const bounced = (res.status === 307 || res.status === 302 || res.status === 303) && loc.indexOf("/login") !== -1;
+    authBounces.add(bounced, { name });
+    if (bounced) lastBounce = true;
   }
   if (typeof res.body === "string") bodyBytes.add(res.body.length, { name });
   if (ctx && ctx.marker && Math.random() < SCAN_RATE) scanIsolation(res, ctx.marker, name);
@@ -159,4 +171,39 @@ export function links(body, prefix) {
     }
   }
   return out;
+}
+
+/**
+ * Cross-tenant canary. A signed-in tenant user asks for a record that belongs
+ * to ANOTHER seeded tenant, by its deterministic id. The product must refuse
+ * (404 / redirect / an empty shell): a leak is a 200 whose body carries the
+ * foreign tenant's marker. Both this counter and the marker scan abort the run.
+ * @param idOf (kind, orgIdx, n) => uuid
+ */
+export function canaryProbe(ctx, foreign, idOf) {
+  if (!foreign || !ctx.marker) return;
+  const target = pick([
+    ["/customers", "customer", foreign.customers],
+    ["/jobs", "job", foreign.jobs],
+    ["/quotes", "quote", foreign.quotes],
+  ]);
+  const id = idOf(target[1], foreign.idx, 1 + Math.floor(Math.random() * target[2]));
+  const res = http.get(`${BASE_URL}${target[0]}/${id}`, {
+    headers: baseHeaders({ Accept: "text/html" }),
+    redirects: 0,
+    tags: { name: `canary:${target[0]}/[foreign id]`, kind: "canary" },
+    // any refusal (3xx/4xx) is the CORRECT outcome here, not a failed request
+    responseCallback: http.expectedStatuses({ min: 200, max: 499 }),
+  });
+  canaryProbes.add(1);
+  const leaked = res.status === 200 && typeof res.body === "string" && res.body.indexOf(foreign.marker) !== -1;
+  if (leaked) {
+    canaryLeaks.add(1, { name: target[0] });
+    console.error(`CROSS-TENANT CANARY LEAK on ${target[0]}/[id]: tenant ${ctx.org.idx} read tenant ${foreign.idx}`);
+  } else {
+    canaryRefused.add(1);
+  }
+  serverErrors.add(res.status >= 500 || res.status === 0, { name: "canary" });
+  scanIsolation(res, ctx.marker, "canary");
+  check(res, { "cross-tenant read refused": () => !leaked });
 }

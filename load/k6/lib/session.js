@@ -22,6 +22,7 @@ import { Counter, Trend } from "k6/metrics";
 import { ANON_KEY, BASE_URL, LOGIN_MODE, PASSWORD, SUPABASE_URL } from "./config.js";
 import { actionResult, callAction } from "./actions.js";
 import { rateLimited } from "./http.js";
+import { isSyntheticEmail } from "./ids.js";
 
 export const logins = new Counter("logins");
 export const loginFailures = new Counter("login_failures");
@@ -30,7 +31,7 @@ export const loginDuration = new Trend("login_duration", true);
 const CHUNK = 3180;
 const cookieKey = `sb-${/^https?:\/\/([^/:.]+)/.exec(SUPABASE_URL)[1]}-auth-token`;
 
-function setSessionCookie(session) {
+export function setSessionCookie(session) {
   const jar = http.cookieJar();
   const value = "base64-" + encoding.b64encode(JSON.stringify(session), "rawurl");
   if (value.length <= CHUNK) {
@@ -48,19 +49,31 @@ export function hasSessionCookie() {
   return false;
 }
 
+/**
+ * Password grant straight to Supabase Auth (SUPABASE_URL — already cleared by
+ * the target guard). Returns the session JSON or null. Refuses non-synthetic
+ * identities: the harness only ever signs in as seeded load-test users.
+ */
+export function passwordGrant(email) {
+  if (!isSyntheticEmail(email)) throw new Error("[load guard] refusing to sign in as a non-synthetic identity");
+  const res = http.post(
+    `${SUPABASE_URL}/auth/v1/token?grant_type=password`,
+    JSON.stringify({ email, password: PASSWORD }),
+    { headers: { apikey: ANON_KEY, "Content-Type": "application/json" }, tags: { name: "auth:password_grant", kind: "auth" } },
+  );
+  if (res.status === 429) rateLimited.add(1, { name: "auth:password_grant" });
+  return res.status === 200 ? res.json() : null;
+}
+
 /** Sign in. Returns true on success. `actions.signIn` comes from setup(). */
 export function login(email, actions) {
+  if (!isSyntheticEmail(email)) throw new Error("[load guard] refusing to sign in as a non-synthetic identity");
   const t0 = Date.now();
   let ok = false;
   if (LOGIN_MODE === "gotrue" || !actions.signIn) {
-    const res = http.post(
-      `${SUPABASE_URL}/auth/v1/token?grant_type=password`,
-      JSON.stringify({ email, password: PASSWORD }),
-      { headers: { apikey: ANON_KEY, "Content-Type": "application/json" }, tags: { name: "auth:password_grant", kind: "auth" } },
-    );
-    if (res.status === 429) rateLimited.add(1, { name: "auth:password_grant" });
-    if (res.status === 200) {
-      setSessionCookie(res.json());
+    const session = passwordGrant(email);
+    if (session) {
+      setSessionCookie(session);
       ok = true;
     }
   } else {
