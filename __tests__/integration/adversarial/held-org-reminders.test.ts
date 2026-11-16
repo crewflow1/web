@@ -17,6 +17,10 @@ describeIntegration("D-17 · scheduled customer reminders skip companies that ar
   const setStatus = async (org: string, status: string) => {
     const r = await svc().from("organizations").update({ status }).eq("id", org);
     if (r.error) throw new Error(r.error.message);
+    // emitNotifications caches the held-company list per process for 60 s; without this a notice
+    // emitted straight after re-activation is still withheld (seen in CI when another suite's
+    // emit had primed the cache between the two status changes).
+    (await import("@/server/services/org-lifecycle")).clearNonActiveOrgCache();
   };
 
   beforeAll(async () => {
@@ -71,5 +75,36 @@ describeIntegration("D-17 · scheduled customer reminders skip companies that ar
     await runLeadFollowups();
     const active = ((await svc().from("notifications").select("id").eq("org_id", world.A.id)).data ?? []).length;
     expect(active, "follow-up fires for the active company (the skip above was the lifecycle gate)").toBeGreaterThan(before);
+  }, 120_000);
+});
+
+import { emitNotifications } from "@/server/services/notifications-service";
+
+describeIntegration("D-17 · notifications for a company that is not active", () => {
+  let w: World | null = null;
+  beforeAll(async () => { w = await createWorld("d17-notif"); }, 120_000);
+  afterAll(async () => {
+    await svc().from("organizations").update({ status: "active" }).eq("id", w!.A.id);
+    await destroyWorld(w);
+  }, 120_000);
+
+  it("a suspended company still gets its billing notice; operational notices are withheld from the tenant, HQ keeps its copy", async () => {
+    const world = w!;
+    await svc().from("organizations").update({ status: "suspended" }).eq("id", world.A.id);
+    // the held-company list is cached per process for 60 s (a status change applies within a minute)
+    (await import("@/server/services/org-lifecycle")).clearNonActiveOrgCache();
+    const base = { org_id: world.A.id, user_id: null, priority: "medium" as const };
+    await emitNotifications([
+      { ...base, audience: "customer", type: `d17.op.${world.tag}`, category: "system", title: "Stock low" },
+      { ...base, audience: "both", type: `d17.both.${world.tag}`, category: "system", title: "Job overdue" },
+      { ...base, audience: "customer", type: `d17.bill.${world.tag}`, category: "billing", title: "Payment failed" },
+      { ...base, audience: "hq", type: `d17.hq.${world.tag}`, category: "system", title: "HQ note" },
+    ]);
+    const rows = ((await svc().from("notifications").select("type, audience, category").eq("org_id", world.A.id).like("type", `d17.%.${world.tag}`)).data ?? []) as any[];
+    const by = Object.fromEntries(rows.map((r) => [r.type.split(".")[1], r.audience]));
+    expect(by.op, "operational tenant notice is withheld").toBeUndefined();
+    expect(by.both, "a both-audience operational notice reaches HQ only").toBe("hq");
+    expect(by.bill, "the billing notice is delivered to the company").toBe("customer");
+    expect(by.hq, "HQ is never muted").toBe("hq");
   }, 120_000);
 });

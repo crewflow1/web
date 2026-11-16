@@ -129,7 +129,7 @@ export async function uploadExpenseReceipt(formData: FormData): Promise<void> {
   });
 
   revalidatePath("/expenses");
-  redirect(`/expenses/${created.id}`);
+  redirect((await (await import("@/server/auth/capabilities")).hasCapability(ctx, user, "expenses", "view")) ? `/expenses/${created.id}` : "/expenses/new?saved=submitted"); // D-17: the review screen is management-only; a field submitter gets a confirmation
 }
 
 export async function approveExpenseDraftAction(formData: FormData): Promise<void> {
