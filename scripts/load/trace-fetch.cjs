@@ -23,6 +23,7 @@
  * by the application and is never part of a production deployment.
  */
 "use strict";
+/* eslint-disable @typescript-eslint/no-require-imports -- a CommonJS preload for `node --require`; it cannot be an ES module */
 
 const file = process.env.LOAD_TRACE_FILE;
 if (file) {

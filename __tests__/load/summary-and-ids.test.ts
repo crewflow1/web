@@ -11,9 +11,13 @@ import path from "node:path";
 const ROOT = path.resolve(__dirname, "..", "..");
 const imp = async <T>(rel: string) => (await import(path.join(ROOT, rel))) as T;
 
-type Report = { json: Record<string, any>; markdown: string };
+type Nums = Record<string, number>;
+type Report = {
+  json: { model: { wholeRun: Nums; peakPhase: Nums }; latencyMs: { byKind: Record<string, Nums> }; verdict: string };
+  markdown: string;
+};
 type SummaryMod = { buildReport: (data: unknown, meta: unknown) => Report; failedThresholds: (d: unknown) => string[] };
-type ModelMod = { STAGES: Record<string, any>; phasesOf: (p: unknown) => unknown[] };
+type ModelMod = { STAGES: Record<string, unknown>; phasesOf: (p: unknown) => unknown[] };
 
 const trend = (avg: number, p95: number) => ({ type: "trend", contains: "time", values: { avg, min: 1, med: avg, "p(90)": p95 * 0.9, "p(95)": p95, "p(99)": p95 * 1.5, max: p95 * 2 } });
 function fixture(over: Record<string, unknown> = {}) {

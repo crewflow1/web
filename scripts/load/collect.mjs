@@ -138,8 +138,12 @@ function finish() {
       const p = prev.get(r.id);
       return { calls: r.calls - (p ? p.calls : 0), totalMs: r.total - (p ? p.total : 0), rows: r.rows - (p ? p.rows : 0), q: r.q };
     })
-    .filter((r) => r.calls > 0)
     .sort((a, b) => b.totalMs - a.totalMs);
+  // A negative delta means the entry was reset / evicted mid-window (another
+  // client called pg_stat_statements_reset, or the entry cap was hit): the
+  // delta is then not attributable, so say so instead of reporting nonsense.
+  const resetDuringRun = delta.some((r) => r.calls < 0 || r.totalMs < 0);
+  delta.splice(0, delta.length, ...delta.filter((r) => r.calls > 0 && r.totalMs >= 0));
   const totalCalls = delta.reduce((a, r) => a + r.calls, 0);
   const totalMs = delta.reduce((a, r) => a + r.totalMs, 0);
 
@@ -172,7 +176,7 @@ function finish() {
     },
     containers: containerCpu,
     next: nextPid ? { maxCpuPct: maxOf((s) => s.next?.cpu), avgCpuPct: avgOf((s) => s.next?.cpu), maxRssMb: maxOf((s) => s.next?.rssMb) } : null,
-    statements: statementsOn ? { calls: totalCalls, totalExecMs: Math.round(totalMs), top: delta.slice(0, 15).map((r) => ({ ...r, totalMs: Math.round(r.totalMs), meanMs: Math.round((r.totalMs / r.calls) * 100) / 100 })) } : null,
+    statements: statementsOn ? { resetDuringRun, calls: totalCalls, totalExecMs: Math.round(totalMs), top: delta.slice(0, 15).map((r) => ({ ...r, totalMs: Math.round(r.totalMs), meanMs: Math.round((r.totalMs / r.calls) * 100) / 100 })) } : null,
   };
   writeFileSync(resolve(outDir, "collector.json"), JSON.stringify(summary, null, 2));
   writeFileSync(resolve(outDir, "collector.md"), toMarkdown(summary));
@@ -191,7 +195,7 @@ function toMarkdown(s) {
   }
   if (s.next) L.push(`- Next.js server process tree: CPU max ${s.next.maxCpuPct?.toFixed(0)}% / avg ${s.next.avgCpuPct?.toFixed(0)}% (100% = one core), RSS max ${s.next.maxRssMb} MB`);
   if (s.statements) {
-    L.push(`- pg_stat_statements delta over the run, PostgREST roles only (authenticated / anon / service_role): ${s.statements.calls} statements, ${s.statements.totalExecMs} ms total execution. NOTE: the local database is shared, so this can include other clients' PostgREST traffic during the window.`);
+    L.push(`- pg_stat_statements delta over the run, PostgREST roles only (authenticated / anon / service_role): ${s.statements.calls} statements, ${s.statements.totalExecMs} ms total execution. NOTE: the local database is shared, so this can include other clients' PostgREST traffic during the window — the per-route trace below is the attributable fan-out.${s.statements.resetDuringRun ? " WARNING: statistics were reset/evicted during the window; this delta is partial." : ""}`);
     L.push("");
     L.push("| calls | total ms | mean ms | rows | statement (truncated) |");
     L.push("|---|---|---|---|---|");

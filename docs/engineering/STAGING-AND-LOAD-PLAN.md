@@ -35,7 +35,7 @@ Defined in `load/k6/lib/model.js` and reported separately by every run (`k6-summ
 
 | Number | Meaning | k6 | What it loads |
 |---|---|---|---|
-| **Concurrent sessions** | signed-in people with the app open at the same moment — what "50k users" means | VUs (each VU owns one seeded identity and keeps one session across many tasks) | Auth sessions, cookie refreshes, memory per session nowhere server-side (stateless app) |
+| **Concurrent sessions** | signed-in people with the app open at the same moment — what "50k users" means | VUs (each VU owns one seeded identity and keeps one session across many tasks) | Auth sessions + token refreshes and sign-in waves; no per-session server memory (the app is stateless) |
 | **Requests per second** | arrival rate those sessions generate | `http_reqs` rate | Vercel function invocations + middleware, PostgREST queries, GoTrue `getUser` calls |
 | **In-flight requests** | requests being served at one instant | derived: RPS × mean latency (Little's law) | function instances, PostgREST pool slots, Postgres backends |
 

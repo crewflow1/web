@@ -13,7 +13,7 @@ import { apiJson, businessErrors, page, pick, think, weighted, writesOk, writesU
 const MARKETING = ["/", "/pricing", "/features", "/construction-software"];
 const SERVICES = ["Roof repair", "Kitchen extension", "Rewire", "Bathroom refit", "Driveway"];
 
-function marketing(ctx) {
+function marketing() {
   const path = pick(MARKETING);
   page({ marker: null }, path, `page:${path}`, { authed: false });
   think(8, 40);

@@ -117,7 +117,7 @@ export function setup() {
 let ctx = null;
 let session = null;
 
-export default function (data) {
+export default function vuIteration(data) {
   if (!ctx) {
     const { persona, ordinal } = assignVu(exec.vu.idInTest);
     const identity = identityFor(persona, ordinal);
