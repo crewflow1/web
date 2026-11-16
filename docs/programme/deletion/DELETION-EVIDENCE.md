@@ -335,7 +335,7 @@ order by 1;
 | Item | Label | Exact next step |
 |---|---|---|
 | Real Stripe cancellation | **SIMULATED-ONLY** | Exercise once in Stripe **test mode** with a founder-supplied test key. |
-| Browser flows on a **production build**; passwordless re-auth in a browser | Flows **VERIFIED on `next dev` only**; passwordless path **IMPLEMENTED-UNTESTED** in a browser (logic unit- and integration-tested) | Add a CI job that builds and starts the app with `FEATURE_ACCOUNT_DELETION=true` and runs `e2e/account-deletion.spec.ts` with `E2E_ACCOUNT_DELETION=1`. The default CI run exercises only the dark-state test. |
+| Browser flows on a **production build**; passwordless re-auth in a browser | Flows **VERIFIED on `next start` 2026-11-16** (§12); passwordless path **IMPLEMENTED-UNTESTED** in a browser (logic unit- and integration-tested) | Add a CI job that builds and starts the app with `FEATURE_ACCOUNT_DELETION=true` and runs `e2e/account-deletion.spec.ts` with `E2E_ACCOUNT_DELETION=1`. The default CI run exercises only the dark-state test. |
 | Users with **no company** cannot open Settings → Account (the app shell requires an org) | **NOT-IMPLEMENTED** | Give `/settings/account` a route outside the org-gated shell, or handle via support. Affects someone erased from their only company who then wants their login deleted. |
 | Erasing a person **already removed** from the team | **NOT-IMPLEMENTED** (no entry point; `privacy_request_create` requires a current membership) | Add an owner action that targets a former member by id, authorised by the org holding rows for them. |
 | Notifying the other owners / admins when a company deletion is scheduled | **NOT-IMPLEMENTED** | The pending banner on Settings → Account is the only signal today; add an in-app notification (email is a customer communication and needs sign-off). |
@@ -393,4 +393,10 @@ Run against the shared local stack with synthetic data only. Main (`d24295e`, wh
   totals 4.
 
 Gate results (one `heavy.sh` run): unit 747 files / 12,107 tests passed. Security 349 / 8,741 passed. Privacy
-integration 8 files / 46 tests passed. Typecheck and e2e are in the final report.
+integration 8 files / 46 tests passed. Typecheck: 0 errors. Build: OK. `e2e/account-deletion.spec.ts` on a
+**production build** (`next start`, `--workers=1`): flag off, 1 passed (the dark-state test; 3 skipped by design); flag
+on with `E2E_ACCOUNT_DELETION=1`, 3 passed (1 skipped by design).
+
+Harness note: the shared local DB holds more than 1,000 auth users, so `e2e/global-setup.ts` cannot find its existing
+seed user (it lists page 1 with perPage 1000) and aborts the whole run. The deletion spec does not use that seed, so it
+was run with a throw-away config that omits `globalSetup`. The bug is pre-existing and lives outside this workstream.
