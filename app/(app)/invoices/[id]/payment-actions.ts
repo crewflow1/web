@@ -16,6 +16,8 @@ import {
   validateFormData,
 } from "@/lib/forms/state";
 import { trackEvent, ANALYTICS_EVENTS } from "@/lib/analytics/events";
+import { fetchAllRows } from "@/lib/supabase/paginate";
+import { invoiceRemaining } from "@/lib/invoices/receivables";
 
 const uuid = z.string().uuid();
 
@@ -118,6 +120,39 @@ export async function addInvoicePayment(
     revalidatePath("/invoices");
     revalidatePath("/dashboard");
     return formSuccess({ successMessage: "Payment recorded." });
+  }
+
+  // Over-payment guard. Nothing else stops a payment larger than what is still owed: the
+  // schema only caps the amount at £10m and the database's over-allocation trigger protects a
+  // bank payment split across invoices, not an invoice's own balance. A slipped digit
+  // (£12,000 against a £1,200 invoice) used to be accepted, marked the invoice paid and
+  // inflated cash-in. Refuse it and say what is owed; the operator can record the balance.
+  // FAIL CLOSED like the duplicate probe above: if the balance cannot be read, nothing is saved.
+  const { data: priorPayments, error: priorError } = await fetchAllRows<{ amount: number | string | null }>((from, to) =>
+    supabase
+      .from("invoice_payments")
+      .select("amount")
+      .eq("invoice_id", invoiceId)
+      .eq("org_id", ctx.org.id)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (priorError) {
+    reportReadFailure("invoice payment: balance check", priorError as { message?: string });
+    return formError(
+      "We couldn't check what is still owed on this invoice, so nothing was saved. Try again.",
+      result.data as PaymentValues,
+    );
+  }
+  const alreadyPaid = priorPayments.reduce((sum, p) => sum + Number(p.amount ?? 0), 0);
+  const stillOwed = invoiceRemaining({ total: inv.total, paid: alreadyPaid });
+  if (Number(result.data.amount) > stillOwed + 0.005) {
+    return formError(
+      stillOwed <= 0
+        ? "This invoice is already paid in full, so no further payment was recorded."
+        : `That is more than the £${stillOwed.toFixed(2)} still owed on this invoice. Record £${stillOwed.toFixed(2)} or less.`,
+      result.data as PaymentValues,
+    );
   }
 
   const { data: inserted, error } = await supabase
