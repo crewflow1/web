@@ -176,16 +176,20 @@ test("owner: cancel in three clicks → confirmation, then invoices, export and 
 
     await shots(page, "account-billing-cancelled");
 
-    // Entitlement is really revoked…
+    // Entitlement is really revoked. Under D-17 (founder ruling, 2026-11-15) the OWNER of a
+    // cancelled company keeps a READ-ONLY app — billing, settings and export stay reachable, no
+    // operational write is accepted — while admins and staff are locked out (next test). This
+    // replaces the pre-D-17 expectation that the owner was sent to /access-pending.
     expect(await orgStatus()).toBe("cancelled");
     await page.goto("/dashboard");
-    await expect(page).toHaveURL(/\/access-pending/);
-    await expect(page.getByText("Subscription cancelled", { exact: true })).toBeVisible();
-    await page.goto("/settings/billing");
-    await expect(page).toHaveURL(/\/access-pending/);
+    await expect(page).toHaveURL(/\/dashboard/);
+    const banner = page.getByTestId("held-company-banner");
+    await expect(banner).toContainText("This account has been cancelled — read-only");
 
-    // …but the lock screen is not a dead end for the owner.
-    await page.getByRole("link", { name: "Invoices, data export & reactivation" }).click();
+    // …and the read-only app is not a dead end: billing is one click away from every page.
+    await banner.getByRole("link", { name: "Billing", exact: true }).click();
+    await expect(page).toHaveURL(/\/settings\/billing/);
+    await page.goto("/account/billing");
     await expect(page).toHaveURL(/\/account\/billing/);
 
     // Data export still works after cancellation.
