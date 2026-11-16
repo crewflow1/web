@@ -13,7 +13,7 @@ type Model = {
   SLOTS_TOTAL: number;
   assignVu: (id: number) => { persona: string; ordinal: number };
   personaCounts: (vus: number) => Record<string, number>;
-  STAGES: Record<string, Profile>;
+  STAGES: Record<"smoke" | "local" | "100" | "500" | "1k" | "5k" | "10k" | "25k" | "50k", Profile>;
   LOCAL_MAX_VUS: number;
   stageProfile: (stage: string, target: string, allowBig?: boolean) => Profile;
   phasesOf: (p: Profile) => Phase[];
@@ -60,7 +60,7 @@ describe("persona mix + identity assignment", () => {
 describe("stage profiles", () => {
   it("defines smoke, local and the staged ladder to 50k", async () => {
     const m = await load();
-    for (const k of ["smoke", "local", "100", "500", "1k", "5k", "10k", "25k", "50k"]) expect(m.STAGES[k]).toBeDefined();
+    for (const k of ["smoke", "local", "100", "500", "1k", "5k", "10k", "25k", "50k"] as const) expect(m.STAGES[k]).toBeDefined();
     expect(m.STAGES["50k"].vus).toBe(50000);
   });
 
@@ -80,7 +80,7 @@ describe("stage profiles", () => {
       const ph = m.phasesOf(p);
       expect(ph.some((x) => x.name === "peak")).toBe(true);
       expect(ph.some((x) => x.name === "recovery")).toBe(true);
-      expect(ph[ph.length - 1].endVUs).toBe(0);
+      expect(ph.at(-1)?.endVUs).toBe(0);
       expect(Math.max(...p.ramp.map(([, t]) => t))).toBe(p.vus);
       expect(m.phaseSeconds(ph, "peak")).toBeGreaterThanOrEqual(600); // ≥10 min steady state
     }
@@ -91,7 +91,7 @@ describe("stage profiles", () => {
     const p = m.STAGES.local;
     const ph = m.phasesOf(p);
     expect(ph.map((x) => x.name)).toEqual(["ramp", "peak", "end"]);
-    expect(ph[ph.length - 1].toS).toBe(m.totalSeconds(p));
+    expect(ph.at(-1)?.toS).toBe(m.totalSeconds(p));
     expect(m.phaseAt(ph, 10)).toBe("ramp");
     expect(m.phaseAt(ph, 61)).toBe("peak");
     expect(m.phaseAt(ph, 10_000)).toBe("end");

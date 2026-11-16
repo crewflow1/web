@@ -64,7 +64,7 @@ describe("summary.buildReport", () => {
     expect(markdown).toContain("requests/s (arrival)");
     expect(markdown).toContain("in-flight requests (derived");
     expect(markdown).toMatch(/LOCAL RUN.*says \*\*nothing\*\* about hosted capacity/s);
-    expect(json.latencyMs.byKind.page.p95).toBe(600);
+    expect(json.latencyMs.byKind.page?.p95).toBe(600);
     expect(json.verdict).toBe("PASS");
   });
 
@@ -108,7 +108,7 @@ describe("deterministic ids: k6 ids.js ≡ seeder _ids.mjs ≡ Postgres md5()::u
     const seed = await imp<SeedIds>("scripts/load/_ids.mjs");
     const k6 = makeIds("lt1", md5);
     for (const kind of ["customer", "job", "quote", "invoice"]) {
-      for (const [o, n] of [[1, 1], [7, 42], [25, 999]]) expect(k6.ltId(kind, o, n)).toBe(seed.ltId(`lt1:${kind}:${o}:${n}`));
+      for (const [o, n] of [[1, 1], [7, 42], [25, 999]] as const) expect(k6.ltId(kind, o, n)).toBe(seed.ltId(`lt1:${kind}:${o}:${n}`));
     }
     expect(k6.userId(3, "staff", 2)).toBe(seed.ltId("lt1:user:3:staff:2"));
     // Postgres renders md5('lt1:org:1')::uuid as the 8-4-4-4-12 split of the hex digest
