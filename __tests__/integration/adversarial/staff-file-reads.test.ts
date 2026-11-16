@@ -200,4 +200,19 @@ describe("stored files follow record visibility (staff vs owner vs other company
     expect(forged.error, "a duplicate storage_path must be refused").not.toBeNull();
     expect(await objectReadable(world.A.staff.token, "invoice"), "the invoice file stays unreadable").toBe(false);
   });
+
+  it("attachments on assets (column-granted table) evaluate without error and follow asset visibility", async () => {
+    const world = w!;
+    const asset = await svc().from("assets").insert({ org_id: world.A.id, name: `Files asset ${world.tag}` }).select("id").single();
+    if (asset.error || !asset.data) throw new Error(`asset: ${asset.error?.message}`);
+    const assetId = (asset.data as { id: string }).id;
+    await plantAttachment("asset-photo", "assets", assetId, world.A.owner.id);
+    const staff = as(world.A.staff.token);
+    const staffSeesAsset = ((await staff.from("assets").select("id").eq("id", assetId)).data ?? []).length === 1;
+    // The whole-table read must not error (the visibility probe reads only assets.id).
+    const list = await staff.from("tenant_attachments").select("id").eq("org_id", world.A.id);
+    expect(list.error, "listing attachments as staff must not error").toBeNull();
+    expect(await rowVisible(world.A.staff.token, "asset-photo")).toBe(staffSeesAsset);
+    expect(await objectReadable(world.A.staff.token, "asset-photo")).toBe(staffSeesAsset);
+  });
 });
