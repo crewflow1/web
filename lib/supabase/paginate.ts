@@ -85,3 +85,41 @@ export async function fetchAllRows<T>(
   );
   return { data: out, error: null };
 }
+
+/**
+ * PostgREST carries `.in()` values in the request URL. Around 200 UUIDs push the
+ * request line past the gateway limit and the read fails with "URI too long" —
+ * so an estate-wide HQ read keyed on every org id breaks once the platform has
+ * a couple of hundred companies. Keep each `.in()` list well under that.
+ */
+export const IN_ID_CHUNK = 100;
+
+/**
+ * `fetchAllRows` over an id list of any length: the ids are de-duplicated and
+ * split into chunks of `chunkSize`, each chunk is fully paged, and the results
+ * are concatenated in chunk order. Rows for one id always come from ONE chunk,
+ * so any per-id ordering the query imposes is preserved; global ordering ACROSS
+ * ids is not — callers bucket per id (they all do).
+ *
+ * Error semantics match `fetchAllRows`: the first failing page stops the read
+ * and returns the partial set with the error.
+ */
+export async function fetchAllRowsForIds<T>(
+  ids: readonly string[],
+  buildPage: (chunk: string[], from: number, to: number) => PromiseLike<PageResult<T>>,
+  chunkSize: number = IN_ID_CHUNK,
+  pageSize: number = PAGE_SIZE,
+): Promise<{ data: T[]; error: unknown }> {
+  if (!Number.isInteger(chunkSize) || chunkSize <= 0) {
+    throw new Error(`fetchAllRowsForIds: chunkSize must be a positive integer, got ${chunkSize}`);
+  }
+  const unique = [...new Set(ids)];
+  const out: T[] = [];
+  for (let i = 0; i < unique.length; i += chunkSize) {
+    const chunk = unique.slice(i, i + chunkSize);
+    const r = await fetchAllRows<T>((from, to) => buildPage(chunk, from, to), pageSize);
+    out.push(...r.data);
+    if (r.error) return { data: out, error: r.error };
+  }
+  return { data: out, error: null };
+}

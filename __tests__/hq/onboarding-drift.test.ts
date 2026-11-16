@@ -34,14 +34,15 @@ describe("HQ onboarding drift hotfix", () => {
   });
 
   it("ONE query per dependent table — does not fan out per org", () => {
-    // The batched approach keeps round-trips O(1). Look for the five
-    // .in("org_id", ids) calls inside the helper.
+    // The batched approach keeps round-trips O(orgs / IN_ID_CHUNK), never per
+    // org: five dependent tables, each read through the id-chunked pager.
     const helperBlock =
       SVC.match(
         /async function buildHqChecklistProgress[\s\S]*?return out;\s*\}/,
       )?.[0] ?? "";
-    const inCalls = (helperBlock.match(/\.in\("org_id", ids\)/g) ?? []).length;
+    const inCalls = (helperBlock.match(/hqPagedForIds\([^)]*ids, \(b, chunk\) =>\s*b\.in\("org_id", chunk\)/g) ?? []).length;
     expect(inCalls).toBeGreaterThanOrEqual(5);
+    expect(helperBlock).not.toMatch(/\.in\("org_id", ids\)/);
   });
 
   it("OnboardingRow.onboarding_percent prefers the live map", () => {

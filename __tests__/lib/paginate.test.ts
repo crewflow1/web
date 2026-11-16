@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { fetchAllRows, PAGE_SIZE } from "@/lib/supabase/paginate";
+import { fetchAllRows, fetchAllRowsForIds, IN_ID_CHUNK, PAGE_SIZE } from "@/lib/supabase/paginate";
 
 /**
  * Unit tests for fetchAllRows — the volume-safe paginated read that fixes
@@ -109,5 +109,52 @@ describe("fetchAllRows", () => {
   it("defaults to a PAGE_SIZE that stays below the 1000-row PostgREST cap", () => {
     expect(PAGE_SIZE).toBeLessThan(1000);
     expect(PAGE_SIZE).toBeGreaterThan(0);
+  });
+});
+
+describe("fetchAllRowsForIds — estate-wide .in() never overflows the URL", () => {
+  const ids = Array.from({ length: 250 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
+
+  it("chunks ids at IN_ID_CHUNK (100), de-duplicates, and concatenates every row", async () => {
+    const seen: number[] = [];
+    const r = await fetchAllRowsForIds<{ id: string }>([...ids, ids[0]!, ids[1]!], async (chunk) => {
+      seen.push(chunk.length);
+      return { data: chunk.map((id) => ({ id })), error: null };
+    });
+    expect(IN_ID_CHUNK).toBe(100);
+    expect(seen).toEqual([100, 100, 50]);
+    expect(r.error).toBeNull();
+    expect(r.data.map((x) => x.id)).toEqual(ids);
+  });
+
+  it("pages within a chunk (a full page asks for the next range)", async () => {
+    const calls: Array<[number, number]> = [];
+    const r = await fetchAllRowsForIds<number>(["a"], async (_chunk, from, to) => {
+      calls.push([from, to]);
+      return { data: from === 0 ? Array.from({ length: PAGE_SIZE }, (_, i) => i) : [1, 2], error: null };
+    });
+    expect(calls).toEqual([
+      [0, PAGE_SIZE - 1],
+      [PAGE_SIZE, 2 * PAGE_SIZE - 1],
+    ]);
+    expect(r.data.length).toBe(PAGE_SIZE + 2);
+  });
+
+  it("stops at the first error and returns the partial set with it", async () => {
+    let n = 0;
+    const r = await fetchAllRowsForIds<string>(ids, async (chunk) => {
+      n += 1;
+      return n === 2 ? { data: null, error: { message: "URI too long" } } : { data: [...chunk], error: null };
+    });
+    expect(n).toBe(2);
+    expect(r.error).toEqual({ message: "URI too long" });
+    expect(r.data.length).toBe(100);
+  });
+
+  it("an empty id list makes no request", async () => {
+    const build = vi.fn();
+    const r = await fetchAllRowsForIds<string>([], build);
+    expect(build).not.toHaveBeenCalled();
+    expect(r).toEqual({ data: [], error: null });
   });
 });
