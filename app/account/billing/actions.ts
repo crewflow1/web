@@ -97,7 +97,7 @@ export async function cancelSubscriptionAction(
   if (!result.ok) return refusal(result.reason);
   // `emailed` only chooses whether the success banner mentions the email — it
   // is display, not state, so it is safe in the query string.
-  if (result.outcome === "scheduled" || result.outcome === "already_scheduled") {
+  if (!("immediate" in result)) {
     const emailed = result.outcome === "scheduled" && result.emailSent ? "&emailed=1" : "";
     return { status: "done", redirectTo: `${SETTINGS_BILLING_PATH}?cancellation_scheduled=1${emailed}` };
   }

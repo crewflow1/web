@@ -285,25 +285,84 @@ test.describe("Stripe TEST MODE · full billing lifecycle (opt-in)", () => {
     expect((await org()).status, "payment recovered → active again").toBe("active");
   });
 
-  test("6. the owner cancels in the app: Stripe stops billing and the company becomes read-only (PR #1090)", async ({ browser }) => {
+  const ukDate = (unix: number) =>
+    new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" }).format(new Date(unix * 1000));
+  const periodEndOf = (sub: any): number => sub.current_period_end ?? sub.items?.data?.[0]?.current_period_end;
+
+  test("6. the owner cancels: the dialog shows the exact end date; Stripe sets cancel_at_period_end; the company STAYS ACTIVE", async ({ browser }) => {
     test.setTimeout(120_000);
+    const before = await stripe("GET", `subscriptions/${firstSub}`);
+    const end = periodEndOf(before);
+    t0 = now();
+    await asActor(browser, OWNER_STATE, async (page) => {
+      await page.goto("/settings/billing");
+      await expect(page.getByText(`on ${ukDate(end)}`).first()).toBeVisible();
+      const trigger = page.getByRole("button", { name: "Cancel subscription", exact: true });
+      await waitForHydrated(trigger);
+      await trigger.click();
+      const dialog = page.getByRole("dialog");
+      await expect(dialog.getByTestId("access-end-date")).toHaveText(ukDate(end));
+      await dialog.getByLabel(/Why are you cancelling/).fill("stripe test-mode lifecycle");
+      await dialog.getByRole("button", { name: `Cancel at end of period (${ukDate(end)})` }).click();
+      await page.waitForURL(/\/settings\/billing\?cancellation_scheduled=1/, { timeout: 60_000 });
+      await expect(page.getByTestId("cancellation-scheduled")).toContainText(`ends on ${ukDate(end)}`);
+    });
+    const after = await stripe("GET", `subscriptions/${firstSub}`);
+    expect(after.status, "still live until the period end").toBe("active");
+    expect(after.cancel_at_period_end, "Stripe will not renew").toBe(true);
+    expect(periodEndOf(after)).toBe(end);
+    expect((await org()).status, "full access until the period end").toBe("active");
+    await waitForEvent(t0, "customer.subscription.updated");
+    const delivered = await relay(t0, { repeat: 2 });
+    expect(delivered.filter((d) => d.status !== 200), JSON.stringify(delivered)).toEqual([]);
+    expect((await org()).status, "the schedule webhook keeps the company active").toBe("active");
+  });
+
+  test("6b. the owner undoes the scheduled cancellation before expiry; Stripe renews as normal", async ({ browser }) => {
+    test.setTimeout(120_000);
+    t0 = now();
+    await asActor(browser, OWNER_STATE, async (page) => {
+      await page.goto("/settings/billing");
+      const keep = page.getByRole("button", { name: /Keep my subscription/ });
+      await waitForHydrated(keep);
+      await keep.click();
+      await page.waitForURL(/\/settings\/billing\?resumed=1/, { timeout: 60_000 });
+      await expect(page.getByText("Your subscription will continue.")).toBeVisible();
+    });
+    const sub = await stripe("GET", `subscriptions/${firstSub}`);
+    expect(sub.cancel_at_period_end).toBe(false);
+    expect(sub.status).toBe("active");
+    const delivered = await relay(t0);
+    expect(delivered.filter((d) => d.status !== 200), JSON.stringify(delivered)).toEqual([]);
+    expect((await org()).status).toBe("active");
+  });
+
+  test("6c. scheduled again, then the period ends (Stripe deletes the subscription): D-17 cancelled — owner read-only, data kept", async ({ browser }) => {
+    test.setTimeout(150_000);
     t0 = now();
     await asActor(browser, OWNER_STATE, async (page) => {
       await page.goto("/settings/billing");
       const trigger = page.getByRole("button", { name: "Cancel subscription", exact: true });
       await waitForHydrated(trigger);
       await trigger.click();
-      const dialog = page.getByRole("dialog");
-      await dialog.getByLabel(/Why are you cancelling/).fill("stripe test-mode lifecycle");
-      await dialog.getByRole("button", { name: "Cancel subscription now" }).click();
-      await page.waitForURL(/\/account\/billing\?cancelled=1/, { timeout: 60_000 });
+      await page.getByRole("dialog").getByRole("button", { name: /Cancel at end of period/ }).click();
+      await page.waitForURL(/cancellation_scheduled=1/, { timeout: 60_000 });
     });
-    expect((await stripe("GET", `subscriptions/${firstSub}`)).status, "Stripe really cancelled it").toBe("canceled");
-    expect((await org()).status).toBe("cancelled");
+    expect((await stripe("GET", `subscriptions/${firstSub}`)).cancel_at_period_end).toBe(true);
+    // What Stripe does at the period end. (The real renewal boundary is exercised with a test
+    // clock in test 9.)
+    await stripe("DELETE", `subscriptions/${firstSub}`);
     await waitForEvent(t0, "customer.subscription.deleted");
     const delivered = await relay(t0);
     expect(delivered.filter((d) => d.status !== 200), JSON.stringify(delivered)).toEqual([]);
-    expect((await org()).status, "the webhook echo is a no-op").toBe("cancelled");
+    const o = await org();
+    expect(o.status).toBe("cancelled");
+    await asActor(browser, OWNER_STATE, async (page) => {
+      await page.goto("/account/billing");
+      await expect(page.getByRole("link", { name: "Download data export" })).toBeVisible();
+    });
+    const kept = await db().from("organizations").select("id").eq("id", orgId);
+    expect(kept.data, "cancellation never deletes the company").toHaveLength(1);
   });
 
   test("7. reactivation: the owner asks, HQ takes a NEW subscription (no second setup fee), the company is active again", async ({ browser }) => {
@@ -348,4 +407,82 @@ test.describe("Stripe TEST MODE · full billing lifecycle (opt-in)", () => {
     const failed = await db().from("billing_events").select("event_id").not("error_message", "is", null).is("processed_at", null).eq("org_id", orgId);
     expect(failed.data ?? []).toEqual([]);
   });
+
+  test("9. RENEWAL BOUNDARY (Stripe test clock): a dialog shown before a renewal cannot commit the old date; after scheduling, the period ends with NO renewal and the company becomes cancelled", async ({ browser }) => {
+    test.setTimeout(420_000);
+    const clockStart = Math.floor(Date.now() / 1000);
+    const clock = await stripe("POST", "test_helpers/test_clocks", { frozen_time: String(clockStart), name: `crewflow-${TAG}` });
+    const advance = async (to: number) => {
+      await stripe("POST", `test_helpers/test_clocks/${clock.id}/advance`, { frozen_time: String(to) });
+      await expect.poll(async () => (await stripe("GET", `test_helpers/test_clocks/${clock.id}`)).status, { timeout: 180_000, intervals: [2000] }).toBe("ready");
+    };
+    const price = (await stripe("GET", `subscriptions/${(await org()).stripe_subscription_id}`)).items.data[0].price.id;
+    const email2 = `owner2-${TAG}@example.test`;
+    const state2 = `e2e/.auth/${TAG}-owner2.json`;
+    const pw2 = `Pw-${crypto.randomUUID()}`;
+    let org2 = "", owner2 = "";
+    try {
+      const cus = await stripe("POST", "customers", { email: email2, test_clock: clock.id, payment_method: "pm_card_visa", "invoice_settings[default_payment_method]": "pm_card_visa" });
+      const o2 = await db().from("organizations").insert({ name: `Stripe Clock Co ${TAG}`, slug: `${TAG}-clock`, status: "active", setup_fee_status: "paid", billing_email: email2, stripe_customer_id: cus.id, onboarding_state: { completed_at: new Date().toISOString() } }).select("id").single();
+      if (o2.error) throw new Error(o2.error.message);
+      org2 = o2.data.id;
+      const sub = await stripe("POST", "subscriptions", { customer: cus.id, "items[0][price]": price, "metadata[org_id]": org2, "metadata[kind]": "subscription" });
+      expect(sub.status).toBe("active");
+      await db().from("organizations").update({ stripe_subscription_id: sub.id }).eq("id", org2);
+      const u = await db().auth.admin.createUser({ email: email2, password: pw2, email_confirm: true });
+      owner2 = u.data.user!.id;
+      await db().from("users").upsert({ id: owner2, email: email2, full_name: "Clock Owner" });
+      await db().from("memberships").insert({ org_id: org2, user_id: owner2, role: "owner" });
+      await mintState(email2, pw2, state2);
+      const d1 = periodEndOf(sub);
+
+      // The owner opens the dialog showing D1 ... then the subscription renews before they click.
+      await asActor(browser, state2, async (page) => {
+        await page.goto("/settings/billing");
+        const trigger = page.getByRole("button", { name: "Cancel subscription", exact: true });
+        await waitForHydrated(trigger);
+        await trigger.click();
+        const dialog = page.getByRole("dialog");
+        await expect(dialog.getByTestId("access-end-date")).toHaveText(ukDate(d1));
+        await advance(d1 + 3600);
+        const renewed = await stripe("GET", `subscriptions/${sub.id}`);
+        const d2 = periodEndOf(renewed);
+        expect(d2, "the subscription renewed into a new period").toBeGreaterThan(d1);
+        await dialog.getByRole("button", { name: /Cancel at end of period/ }).click();
+        await expect(dialog.getByRole("alert")).toContainText("Your subscription has just renewed");
+        expect((await stripe("GET", `subscriptions/${sub.id}`)).cancel_at_period_end, "nothing changed").toBe(false);
+
+        // Reload: the dialog now shows D2; confirming schedules exactly D2.
+        await page.goto("/settings/billing");
+        const again = page.getByRole("button", { name: "Cancel subscription", exact: true });
+        await waitForHydrated(again);
+        await again.click();
+        await expect(page.getByRole("dialog").getByTestId("access-end-date")).toHaveText(ukDate(d2));
+        await page.getByRole("dialog").getByRole("button", { name: `Cancel at end of period (${ukDate(d2)})` }).click();
+        await page.waitForURL(/cancellation_scheduled=1/, { timeout: 60_000 });
+      });
+      const scheduled = await stripe("GET", `subscriptions/${sub.id}`);
+      expect(scheduled.cancel_at_period_end).toBe(true);
+      const d2 = periodEndOf(scheduled);
+      expect((await db().from("organizations").select("status").eq("id", org2).single()).data.status).toBe("active");
+
+      // Past D2: Stripe ends the subscription and does NOT renew it.
+      await advance(d2 + 2 * 86400);
+      const ended = await stripe("GET", `subscriptions/${sub.id}`);
+      expect(ended.status).toBe("canceled");
+      const invoices = await stripe("GET", `invoices?subscription=${sub.id}&limit=20`);
+      expect(invoices.data.filter((i: any) => i.status === "paid").length, "first payment + one renewal, no renewal after the cancellation").toBe(2);
+      expect(invoices.data.filter((i: any) => (i.period_start ?? 0) >= d2), "no invoice for a period after the access end").toEqual([]);
+
+      const delivered = await relay(clockStart - 5);
+      expect(delivered.filter((d) => d.status !== 200), JSON.stringify(delivered)).toEqual([]);
+      expect((await db().from("organizations").select("status").eq("id", org2).single()).data.status).toBe("cancelled");
+    } finally {
+      rmSync(state2, { force: true });
+      await stripe("DELETE", `test_helpers/test_clocks/${clock.id}`).catch(() => {});
+      if (org2) await db().from("organizations").delete().eq("id", org2);
+      if (owner2) { await db().from("users").delete().eq("id", owner2); await db().auth.admin.deleteUser(owner2); }
+    }
+  });
 });
+

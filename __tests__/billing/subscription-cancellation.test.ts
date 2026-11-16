@@ -89,6 +89,8 @@ type World = {
 
 let w: World;
 
+const idem = new Map<string, Snapshot>();
+
 function makeDeps(): Deps {
   let seq = 0;
   const keyOf = (s: string | null) => s ?? "none";
@@ -166,12 +168,17 @@ function makeDeps(): Deps {
       countPendingInvoiceItems: async () => 0,
       setCancelAtPeriodEnd: async (id, value, { idempotencyKey }) => {
         w.calls.schedule.push({ id, value, idempotencyKey });
+        // Like Stripe: a reused idempotency key replays the cached response and
+        // applies NOTHING.
+        const cached = idem.get(idempotencyKey);
+        if (cached) return cached;
         const err = w.scheduleFail?.(id, value);
         if (err) throw err;
         const cur = w.stripeSubs.get(id);
         if (!cur) throw Object.assign(new Error("No such subscription"), { type: "StripeInvalidRequestError", code: "resource_missing" });
         const next = { ...cur, cancelAtPeriodEnd: value };
         w.stripeSubs.set(id, next);
+        idem.set(idempotencyKey, next);
         return next;
       },
     },
@@ -204,6 +211,7 @@ const stripeCancels = async (id: string): Promise<Snapshot> => {
 };
 
 beforeEach(() => {
+  idem.clear();
   w = {
     org: {
       id: ORG_ID,
@@ -704,9 +712,11 @@ describe("OWNER cancellation — END OF PAID PERIOD (founder policy 2026-11-16)"
   it("schedules cancel_at_period_end in Stripe; the subscription stays live, the org stays ACTIVE, nothing is refunded or terminated", async () => {
     const r = await schedule(NOW + 20 * DAY);
     expect(r).toMatchObject({ ok: true, outcome: "scheduled", accessEndsAt: NOW + 20 * DAY, emailSent: true });
-    expect(w.calls.schedule).toEqual([
-      { id: "sub_1", value: true, idempotencyKey: `crewflow-cancel-schedule:${ORG_ID}:sub_1:${NOW + 20 * DAY}` },
-    ]);
+    expect(w.calls.schedule).toHaveLength(1);
+    expect(w.calls.schedule[0]).toMatchObject({ id: "sub_1", value: true });
+    expect(w.calls.schedule[0]!.idempotencyKey).toMatch(
+      new RegExp(`^crewflow-cancel-schedule:${ORG_ID}:sub_1:${NOW + 20 * DAY}:[0-9a-f-]{36}$`),
+    );
     expect(w.stripeSubs.get("sub_1")).toMatchObject({ status: "active", cancelAtPeriodEnd: true });
     expect(w.org?.status).toBe("active");
     expect(w.calls.cancel).toEqual([]);
@@ -799,6 +809,16 @@ describe("REVERSING a scheduled cancellation before expiry", () => {
     expect(w.calls.schedule.map((c) => c.value)).toEqual([true, false]);
     expect(w.calls.scheduleEmails.map((e) => e.kind)).toEqual(["scheduled", "resumed"]);
     expect(w.calls.audits.map((a) => a.action)).toContain("billing.subscription_resumed_by_owner");
+  });
+
+  it("schedule → undo → schedule in the SAME period uses a fresh idempotency key each time (Stripe replays a reused key without applying it)", async () => {
+    await scheduleOrgCancellation(makeDeps(), { orgId: ORG_ID, actor: ACTOR });
+    await resume();
+    const again = await scheduleOrgCancellation(makeDeps(), { orgId: ORG_ID, actor: ACTOR });
+    expect(again).toMatchObject({ ok: true, outcome: "scheduled" });
+    const keys = w.calls.schedule.map((c) => c.idempotencyKey);
+    expect(new Set(keys).size).toBe(3);
+    expect(w.stripeSubs.get("sub_1")!.cancelAtPeriodEnd).toBe(true);
   });
 
   it("nothing scheduled → not_scheduled, no Stripe call", async () => {

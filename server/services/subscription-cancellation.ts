@@ -1,4 +1,5 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
@@ -854,9 +855,23 @@ export type ScheduleResult =
   | { ok: true; outcome: "cancelled" | "already_cancelled"; immediate: CancelResult & { ok: true } }
   | { ok: false; reason: ScheduleFailureReason };
 
-/** Idempotency key: one schedule per subscription per period end. */
-export function scheduleIdempotencyKey(orgId: string, subId: string, periodEnd: number, value: boolean): string {
-  return `crewflow-cancel-${value ? "schedule" : "resume"}:${orgId}:${subId}:${periodEnd}`;
+/**
+ * Idempotency key for ONE schedule / resume request. It must be unique per
+ * request, never derived only from (org, subscription, period): Stripe replays
+ * the cached response for a reused key WITHOUT applying the change, so
+ * schedule → undo → schedule in the same period would report "scheduled" while
+ * Stripe still renews (found by the Stripe test-mode lifecycle, 2026-11-16).
+ * The SDK's own network retry reuses the key within the request; a duplicate
+ * click is caught before Stripe by checking `cancelAtPeriodEnd` first.
+ */
+export function scheduleIdempotencyKey(
+  orgId: string,
+  subId: string,
+  periodEnd: number,
+  value: boolean,
+  nonce: string = randomUUID(),
+): string {
+  return `crewflow-cancel-${value ? "schedule" : "resume"}:${orgId}:${subId}:${periodEnd}:${nonce}`;
 }
 
 async function verifySchedule(
@@ -1178,7 +1193,7 @@ export async function stopBillingForHqCancellation(
     const reason: CancelFailureReason = result.reason === "period_changed" ? "stripe_error" : result.reason;
     return { ok: false, reason, message: HQ_CANCEL_ERROR_COPY[reason] };
   }
-  if (result.outcome === "scheduled" || result.outcome === "already_scheduled") {
+  if (!("immediate" in result)) {
     const day = new Date(result.accessEndsAt * 1000).toISOString().slice(0, 10);
     return {
       ok: true,
