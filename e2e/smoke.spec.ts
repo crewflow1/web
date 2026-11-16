@@ -12,7 +12,7 @@ import { test, expect } from "@playwright/test";
  *   - app/page.tsx            → metadata.title contains "CrewFlow"
  *   - app/(auth)/login        → <h1>Sign in</h1> + <input type="email">
  *   - app/(app)/dashboard     → protected; middleware redirects logged-out → /login
- *   - next.config.ts          → baseline security headers on every route
+ *   - next.config.ts + middleware.ts → baseline security headers + enforced CSP
  *
  * The redirect is deterministic here precisely because the real Supabase
  * stack is up: GoTrue answers, so a logged-out visit is a clean "no user"
@@ -58,7 +58,7 @@ test.describe("smoke — the auth redirect contract holds end-to-end", () => {
 });
 
 test.describe("smoke — baseline security headers ship on every response", () => {
-  test("the always-on hardening headers are present and no enforcing CSP is set", async ({
+  test("the always-on hardening headers are present and the CSP is ENFORCED", async ({
     page,
   }) => {
     const res = await page.goto("/");
@@ -69,8 +69,9 @@ test.describe("smoke — baseline security headers ship on every response", () =
     expect(h["x-frame-options"]).toBe("DENY");
     expect(h["referrer-policy"]).toBe("strict-origin-when-cross-origin");
     expect(h["permissions-policy"]).toContain("geolocation=()");
-    // Guard against an accidental flip from Report-Only to an ENFORCING CSP
-    // before the policy has been validated in production (see headers.ts).
-    expect(h["content-security-policy"]).toBeUndefined();
+    // The CSP is enforced (lib/security/csp.ts; full browser proof in
+    // e2e/csp.spec.ts). Report-Only only when CSP_MODE=report-only is set.
+    expect(h["content-security-policy"]).toContain("default-src 'self'");
+    expect(h["content-security-policy-report-only"]).toBeUndefined();
   });
 });

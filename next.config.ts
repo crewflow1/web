@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
 import { buildSecurityHeaders } from "./lib/security/headers";
@@ -32,6 +33,15 @@ const config: NextConfig = {
      * import-optimisation, behaviour-identical (same runtime, same animations).
      */
     optimizePackageImports: ["framer-motion"],
+    /**
+     * CSP: URLs that match no route render app/global-not-found.tsx, which is
+     * rendered per request so it carries the request's CSP nonce (unknown
+     * paths get the strict nonce policy — lib/security/csp.ts). Without it the
+     * 404 would be the prerendered /_not-found HTML, whose un-nonced scripts
+     * the enforced policy blocks. app/not-found.tsx still handles notFound()
+     * inside real routes; keeping it static keeps the marketing pages static.
+     */
+    globalNotFound: true,
   },
   images: {
     remotePatterns: [
@@ -147,6 +157,25 @@ export default withSentryConfig(config, {
   project: process.env.SENTRY_PROJECT ?? "web",
   silent: !process.env.CI,
   hideSourceMaps: true,
+  /**
+   * Never ship browser source maps. withSentryConfig switches the client build
+   * to `hidden-source-map`, which still WRITES `.next/static/**\/*.js.map` —
+   * publicly downloadable, full original source. (`hideSourceMaps` above is a
+   * no-op in @sentry/nextjs 8.55.) `deleteSourcemapsAfterUpload` registers the
+   * plugin's file-deletion step, which runs after the client bundle is written
+   * whether or not an upload happened — so maps are removed even when no
+   * SENTRY_AUTH_TOKEN is set. With a token, maps upload first.
+   * Its built-in glob only covers *.js/.mjs/.cjs.map, and the build also emits
+   * .css.map files, so the deletion list is widened to every map under
+   * .next/static (verified: `find .next/static -name '*.map'` → 0 after
+   * `npm run build` without a token; 368 before).
+   */
+  sourcemaps: { deleteSourcemapsAfterUpload: true },
+  unstable_sentryWebpackPluginOptions: {
+    sourcemaps: {
+      filesToDeleteAfterUpload: [path.posix.join(process.cwd(), ".next", "static", "**", "*.map")],
+    },
+  },
   // If SENTRY_AUTH_TOKEN is unset the Sentry plugin emits a warning and
   // skips source-map upload but does not fail the build — exactly the
   // behaviour we want for local + cold-start preview deploys.

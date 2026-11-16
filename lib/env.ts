@@ -449,6 +449,13 @@ const envSchema = z.object({
   // process.env at call time, deliberately edge-safe) until the 2026-10 census.
   MAINTENANCE_BYPASS: z.string().optional(),
 
+  // -- Content-Security-Policy rollout switch (lib/security/csp.ts) ---------
+  // Unset (the default) ⇒ the CSP is ENFORCED. Only the exact value
+  // "report-only" downgrades every policy to Content-Security-Policy-Report-Only
+  // — the founder's no-code fallback (set on Vercel, then redeploy). Free
+  // string, not an enum: a typo must stay safe (enforcing), never brick boot.
+  CSP_MODE: z.string().optional(),
+
   // -- Vercel KV / Upstash Redis cache (lib/cache/kv.ts) -------------------
   // The REST endpoint + token @vercel/kv uses. BOTH must be present or
   // isKvConfigured() is false and every cacheGet/cacheSet silently no-ops (a
