@@ -1,0 +1,60 @@
+# Licence remediation: status for full public launch
+
+Date: 2026-11-16. Branch `compliance/licence-sbom` (PR #1113). Verified against the release candidate `integration/launch-batch` @ `a5044e75` (read with `git show`; the licences branch is an ancestor of it, and `package.json`, `package-lock.json`, `public/` and the font files are byte-identical between the two, so the 1,126-package inventory still holds). Not legal advice. Nothing was pushed, published, rendered, uploaded, bought or accepted; no original media file was moved or deleted.
+
+Status vocabulary: **CLEAN** (nothing to do) · **FIXED** (changed in this branch) · **FOUNDER MUST CONFIRM** · **REPLACE BEFORE USE**. "Blocks" says whether it can stop the app launch (only app-shipped items can) or only marketing use.
+
+## 1. The app (crewflow.uk)
+
+**Verdict: no code-licence blocker. One founder action (repo visibility, item A4) and two confirmations (logo authorship, demo data) remain; none changes the shipped bytes.**
+
+| ID | Item | Status | Blocks app launch? | Evidence / action |
+|---|---|---|---|---|
+| A1 | All runtime npm dependencies (759 prod, 1,126 total) | **CLEAN** | No | No GPL/AGPL/SSPL, non-commercial, source-available or unknown licence. Dual-licensed packages used under the permissive option (`jszip` MIT, `dompurify` Apache-2.0). LGPL `libvips` is server-side only. Lockfile unchanged on the release candidate. Detail: `LICENCE-REGISTER.md`. |
+| A2 | Third-party notices were not published (L-1) | **FIXED** | Was a P2 attribution gap, now closed | New public page `/third-party-notices` (`app/third-party-notices/page.tsx`: credits ITF, Inter/OFL, Lucide, PDF.js, libphonenumber, ONS/OGL and Open-Meteo data) and the full licence file `/third-party-notices.txt` (`public/third-party-notices.txt`, a copy of the generated `THIRD-PARTY-NOTICES.md`). Linked from the marketing footer and the legal-page header; added to the public-route list in `lib/supabase/middleware.ts` (page is `force-dynamic` so it gets a CSP nonce on the release candidate, which has no static-prefix entry for it). Test: `__tests__/compliance/third-party-notices.test.ts` (4 tests; notices file equals the generated file, required credits present, route public and linked). A trial merge with `integration/launch-batch` is conflict-free. |
+| A3 | Inter OFL-1.1 licence text not shipped (L-3) | **FIXED** | No | Official upstream text (rsms/inter `LICENSE.txt`) vendored at `scripts/compliance/licences/OFL-1.1-Inter.txt`, emitted by `generate-notices.mjs` into the notices file. |
+| A4 | Clash Display + Satoshi (6 WOFF2, marketing site) | **FOUNDER MUST CONFIRM** (partly resolved) | **Yes, until the repo is private or the files leave git** | The primary licence text was readable this time (the ITF Free Font License EULA is embedded in the Fontshare site bundle). It grants commercial use in any media, and expressly allows self-hosting via `@font-face`: so serving them from crewflow.uk is licensed (Q2 resolved on that point). Credit is "may, not required" in the current EULA although the files' embedded notes ask for one: both are satisfied by the credit now on the notices page. **Problem found:** section 02 forbids making the font files available via "publicly accessible servers", repositories or similar, and `gh repo view crewflow1/web` reports **visibility PUBLIC**. The WOFF2 files sit in a public repository, which is redistribution. Fix, founder's choice: (a) make `crewflow1/web` private (one setting; also protects the rest of the code); or (b) `git rm` the fonts and fetch them at build from Fontshare (history still holds them: needs a rewrite or acceptance); or (c) swap to OFL fonts (design decision). Also confirm the six files are the unmodified official kit WOFF2 (EULA bans subsetting/format conversion; the name tables look intact but a byte comparison with the kit was not possible) and keep the Fontshare licence PDF. |
+| A5 | Inter (all app screens) | **CLEAN** | No | OFL-1.1, served from own origin via `next/font/google`; text now shipped (A3). |
+| A6 | Icons: Lucide (ISC); inline SVGs | **CLEAN** | No | No icon font, no other icon library. Credit on the notices page. |
+| A7 | `public/`: PWA icons, product-shot PNGs, `sw.js`, pdf.js worker | **CLEAN** (own work / Apache with header kept) | No | See `ASSET-REGISTER.md`. No stock imagery, illustration, audio, video or third-party code under `public/`. |
+| A8 | CrewFlow mark, wordmark, OG card authorship | **FOUNDER MUST CONFIRM** (Q1) | No (ownership evidence, not a use restriction) | Needs "I designed it" or an assignment from whoever did. |
+| A9 | Demo org content in `public/product-shots` fictitious | **FOUNDER MUST CONFIRM** (Q6) | No (privacy tidy-up, P3) | Seed-data statement. |
+| A10 | Google / Microsoft sign-in marks | **FOUNDER MUST CONFIRM** (Q7) | No (P3 design review) | Compare markup to provider button guidelines. |
+| A11 | No root `LICENSE` / owner statement (L-2) | **FOUNDER MUST CONFIRM** (Q4) | No | Needs the legal owner's name. |
+| A12 | Embedded third-party source code | **CLEAN** | No | `LICENCE-REGISTER.md` section 10: no copied code found. |
+
+## 2. Promotional media (not part of the app; blocks marketing use only)
+
+Item IDs follow `MEDIA-ASSET-REGISTER.md`.
+
+### 2.1 The three "replace" items (M19, M20, M21): REPLACE BEFORE USE
+
+Finding: **none of the 22 sample files is referenced by any script, composition, README or note** (grep over both projects excluding `node_modules`/venvs: zero hits for `edge_en`, `piper_en`, `premium-previews`, `free-premium`, `female-samples`, `omnivoice`, `kitten`, `supertonic`), and none is byte-identical to any audio or video in either project's `public/` or `out/` (MD5 comparison over 331 files). Every rendered film uses the synthesised audio, Pexels footage, Higgsfield assets and Kokoro voice already catalogued. So there is nothing to repoint; the clean alternatives already exist and are already what the films use.
+
+| ID | Where | Replacement already in the projects | Action for the founder |
+|---|---|---|---|
+| M19 edge-tts | `~/crewflow-video/free-premium/edge_en-GB-{Libby,Maisie,Sonia}Neural.mp3` | Kokoro voices (Apache-2.0): `~/crewflow-video/vo-final/`, `vo-90/`, `crewflow-90s-VO-v2-george.mp3`; the 60 s ad's `public/audio/film-vo.wav` | Leave out of every cut. Delete when happy; I did not. If a commercial TTS voice is wanted, buy a plan whose terms state commercial narration is allowed. |
+| M20 Piper + premium previews | `~/crewflow-video/female-samples/piper_en_GB-*` (and `.onnx` models), `~/crewflow-video/premium-previews/{Ainsley,Evie,Faye,Isla,Maeve,Willow}.mp3` | Same Kokoro set (`female-samples/kokoro_bf_*` already sit beside the Piper files) | Do not use. Piper voices carry per-voice dataset licences (some non-commercial); the six previews have no recorded source. |
+| M21 other TTS samples | `~/crewflow-video/free-premium/{kitten_opening,supertonic_F*,qwen3_opening,clone_pipeline_test}.wav`; OmniVoice and VoxCPM2 weights in `~/.cache/huggingface/hub` | Kokoro | OmniVoice is CC-BY-NC: never commercial. Supertonic is OpenRAIL (read the use clauses first). Others not used. |
+
+### 2.2 The nine "confirm" items: what the founder must supply
+
+| ID | Status | Question / evidence needed | Pre-filled from local files and the Higgsfield account |
+|---|---|---|---|
+| M1 Remotion (Q13) | FOUNDER MUST CONFIRM | Headcount (employees, as Remotion's FAQ defines them) and whether CrewFlow is a for-profit with up to 3. If more: buy a Company Licence at remotion.pro before publishing. Keep the receipt. | `crewflow-video/crewflow-remotion/node_modules/remotion/LICENSE.md` (4.0.540) says free for individuals, for-profits with up to 3 employees, non-profits; otherwise a Company License; terms change in Remotion 5.0. The promo-videos copy (4.0.476) ships no LICENSE.md. No-purchase alternative: render with ffmpeg + HTML/GSAP capture. |
+| M6, M7 Hero film footage, Topaz (Q10, Q14) | FOUNDER MUST CONFIRM (evidence now strong) | Save a screenshot/PDF of the Higgsfield terms and your plan page dated on or after 14 Jun 2026. | Account ledger (read-only, this session): a **1,200-credit "Subscription Credits" grant on 2026-06-14 15:38 UTC**; all the film's Soul V2, Nano Banana Pro, Cinematic Studio 3.0, Soul ID, Sound Effects, Text-to-Music and Topaz spends are 14-16 Jun 2026 and drawn from it; renewed 1 Aug; cancelled 11 Sep; account is on the free plan now. So the shots were made on a paid-subscription credit grant, not the free tier. Current terms (higgsfield.ai/terms, last updated 23 Oct 2026, read this session): Higgsfield claims no ownership of outputs and does not limit commercial use; you must clear rights yourself, may not remove their AI provenance markings, must disclose AI content where the law requires, and outputs may not be unique. The terms in force on the June dates were not retrievable: keep a dated copy. |
+| M11 Score `score.m4a`, M12 SFX `sfx_impl.mp3` (Q14) | FOUNDER MUST CONFIRM | Same plan/terms evidence; the terms read do not mention music/SFX specifically. Decide whether to accept AI-music Content-ID risk. | Ledger shows one "Text to Music" (1.88 credits) and one "Sound Effects" (1.25) on 2026-06-16, matching jobs `a794fd9e` / `ece07933`. Clean fallback already in the project: swap the two `<Audio>` lines (`src/flagship/FlagshipFinal.tsx` 205, 207) to the synthesised `audio/track.wav`; not changed, since these are "confirm" items. |
+| M13, M14 Pexels clips (Q16) | FOUNDER MUST CONFIRM | Confirm the clip IDs below and accept keeping a ledger (URL, ID, date, screenshot of Pexels licence line) for every future clip. | Frame-matched (32x18 grey frames, minimum MSE 0.1-0.2 against 1,600-2,800 for the next-best of 52 candidates, so unambiguous) to the ID-named source downloads in `~/crewflow-video/footage/`: `op1.mp4` = **10253269**, `op2` = **5434223**, `op3` = **37256879**, `craft` = **19654640**, `drone` = **34091178** (the last two are also in `footage/thumbs/list.txt` as Pexels entries; the first three have no ledger entry). Please open `pexels.com/video/<id>` for each, confirm it is a Pexels (not another site's) clip, and screenshot the licence line. Pexels licence: free commercial use, no attribution needed; no implied endorsement by depicted people or brands. The 90 s film's still-wanted footage (M14): record URL and ID as each clip is chosen. |
+| M17 Chatterbox / CSM weights (Q17) | FOUNDER MUST CONFIRM (mostly resolved online) | Save the model cards; keep Perth watermark ON for anything published (`cb_test.py` disables it for two test samples). | Hugging Face model cards read this session: `ResembleAI/chatterbox` = MIT, every output carries the Perth watermark; `mlx-community/csm-1b-8bit` = apache-2.0 (converted from `sesame/csm-1b`; base card not read). Package licence MIT verified earlier. |
+| M18 Voice-actor consent (Q18) | FOUNDER MUST CONFIRM | Has an actor been engaged; do you hold signed permission (perpetual, worldwide, royalty-free, incl. AI cloning and synthesis for commercial use)? | No consent file exists; correct, since no real person has been cloned (the sample cloned Kokoro's synthetic `bm_george`). Do not clone anyone until it is signed. |
+
+Also noted: Kokoro's model card (apache-2.0, read this session) lists two CC BY training datasets (Koniwa, SIWIS) with attribution. The 60 s ad uses a Kokoro voice-over, so add a courtesy credit line ("Voice: Kokoro-82M") to the video description if it is published.
+
+## 3. What the founder still has to do (priority order)
+
+1. **Repo visibility (A4):** make `crewflow1/web` private, or remove the Fontshare files from git. Only item that can block launch.
+2. **Remotion headcount / licence (M1, Q13)** before any Remotion render is published.
+3. **Higgsfield terms/plan screenshots dated June 2026 (M6, M7, M11, M12, Q14)** and decision on the AI score/SFX.
+4. **Pexels IDs (M13, Q16):** confirm the five IDs above and start the ledger.
+5. **Voice actor consent (M18, Q18)** before any clone render.
+6. Logo authorship (Q1), legal owner (Q4), demo-data check (Q6), sign-in marks (Q7).

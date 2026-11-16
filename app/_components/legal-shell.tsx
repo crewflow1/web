@@ -39,6 +39,12 @@ export function LegalShell({
             <Link href="/terms" className="transition-colors hover:text-ink">
               Terms
             </Link>
+            <Link
+              href="/third-party-notices"
+              className="transition-colors hover:text-ink"
+            >
+              Notices
+            </Link>
             <a
               href="mailto:hello@crewflow.uk"
               className="transition-colors hover:text-ink"

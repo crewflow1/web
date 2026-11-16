@@ -26,6 +26,7 @@ const COLS = [
       { label: "Sign in", href: "/login" },
       { label: "Privacy", href: "/privacy" },
       { label: "Terms", href: "/terms" },
+      { label: "Third-party notices", href: "/third-party-notices" },
     ],
   },
 ];
