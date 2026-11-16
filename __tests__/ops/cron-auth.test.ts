@@ -74,7 +74,10 @@ describe("isCronAuthorised", () => {
 
   it("compares in constant time — no `===` on the secret (source pin)", () => {
     const src = readFileSync(resolve(__dirname, "../../lib/cron/auth.ts"), "utf8");
-    expect(src).toMatch(/timingSafeEqual\(/);
+    // The gate delegates to the shared digest-then-timingSafeEqual helper.
+    expect(src).toMatch(/constantTimeEqual\(header, `Bearer \$\{secret\}`\)/);
     expect(src).not.toMatch(/header\s*===\s*`Bearer/);
+    const helper = readFileSync(resolve(__dirname, "../../lib/security/constant-time.ts"), "utf8");
+    expect(helper).toMatch(/timingSafeEqual\(/);
   });
 });
