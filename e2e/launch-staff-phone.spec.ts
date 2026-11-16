@@ -70,7 +70,9 @@ test.describe("staff launch journeys on a phone (browser)", () => {
     if (!S.staffId) throw new Error("e2e staff user not found");
     const c1 = (await db.from("customers").insert({ org_id: S.org, name: S.mineCustomer }).select("id").single()).data.id;
     const c2 = (await db.from("customers").insert({ org_id: S.org, name: S.otherCustomer }).select("id").single()).data.id;
-    const a = await db.from("jobs").insert({ org_id: S.org, customer_id: c1, assigned_to: S.staffId, status: "in-progress", scheduled_date: "2026-12-01" }).select("id").single();
+    // the earliest date, so it is inside /me's 20 soonest open jobs (the clock-in picker) however
+    // many jobs earlier runs have left assigned to this shared staff user
+    const a = await db.from("jobs").insert({ org_id: S.org, customer_id: c1, assigned_to: S.staffId, status: "in-progress", scheduled_date: "2020-01-01" }).select("id").single();
     if (a.error) throw new Error(`job: ${a.error.message}`);
     S.mine = a.data.id;
     await db.from("job_assignments").insert({ org_id: S.org, job_id: S.mine, user_id: S.staffId });
@@ -79,7 +81,7 @@ test.describe("staff launch journeys on a phone (browser)", () => {
     S.notMine = b.data.id;
     const c3 = (await db.from("customers").insert({ org_id: S.org, name: S.longCustomer }).select("id").single()).data.id;
     const l = await db.from("jobs").insert({
-      org_id: S.org, customer_id: c3, assigned_to: S.staffId, status: "new", scheduled_date: "2026-12-02",
+      org_id: S.org, customer_id: c3, assigned_to: S.staffId, status: "new", scheduled_date: "2020-01-02",
       site_address_line1: "Unit-14B-Northgate-Industrial-Estate-Ballymena-Road-Antrim", site_postcode: "BT41 1AA",
       notes: `Ref:WO-2026-000000000000000000000000000000000000000000000000-${TAG}`,
     }).select("id").single();
@@ -88,6 +90,12 @@ test.describe("staff launch journeys on a phone (browser)", () => {
     await db.from("job_assignments").insert({ org_id: S.org, job_id: S.long, user_id: S.staffId });
     // a shift left open by an earlier run of another spec would block clock-in; close it
     await db.from("time_entries").update({ ended_at: new Date().toISOString() }).eq("user_id", S.staffId).is("ended_at", null);
+  });
+
+  test.afterAll(async () => {
+    // take this run's jobs off the shared staff user's open lists
+    const ids = [S.mine, S.notMine, S.long].filter(Boolean);
+    if (ids.length) await db.from("jobs").update({ status: "cancelled" }).in("id", ids);
   });
 
   test("every destination offered to staff renders on a phone: no dead ends, no sideways scroll, no hydration errors", async ({ page }) => {
@@ -149,16 +157,25 @@ test.describe("staff launch journeys on a phone (browser)", () => {
   });
 
   test("while a job streams in, its loading skeleton fits the phone (no sideways scroll)", async ({ page }) => {
-    await page.goto("/jobs");
-    await settled(page);
-    // hold the navigation's page payload (not the loading-boundary prefetch) so the skeleton stays up
+    // Hold the navigation's page payload (not the loading-boundary prefetch) so the skeleton stays up.
     await page.route(`**/jobs/${S.mine}**`, async (route) => {
       const h = route.request().headers();
       if (h["rsc"] && !h["next-router-prefetch"]) await new Promise((r) => setTimeout(r, 4_000));
       await route.continue();
     });
+    // The skeleton can only show instantly once the link's loading state has been prefetched,
+    // which happens when the link is on screen — so bring it on screen and wait for that prefetch
+    // (it may already have landed during page load, hence the tolerant wait).
+    const prefetched = page
+      .waitForResponse((r) => r.url().includes(`/jobs/${S.mine}`) && !!r.request().headers()["next-router-prefetch"], { timeout: 15_000 })
+      .catch(() => null);
+    await page.goto("/jobs");
+    await settled(page);
     const link = page.locator(`a[href="/jobs/${S.mine}"]`).filter({ visible: true }).first();
     await waitForHydrated(link);
+    await link.scrollIntoViewIfNeeded();
+    await link.hover();
+    await prefetched;
     await link.click();
     await expect(page.locator(".animate-pulse").first()).toBeVisible();
     expect(await overflowPx(page), "loading skeleton overflow at 390px").toBeLessThanOrEqual(1);
