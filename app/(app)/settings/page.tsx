@@ -221,9 +221,10 @@ export default async function SettingsPage() {
               {t("settings.ai.title")}
             </h2>
             <p className="mt-1 text-sm text-slate-600">
-              An AI receptionist that answers calls, WhatsApps and DMs,
-              qualifies the job, and creates a lead automatically. White-glove
-              setup by our team.
+              An AI receptionist that captures enquiries, qualifies the job and
+              creates a lead automatically. Setup is done with our team, and we
+              confirm which channels (calls, text, WhatsApp, email) are live
+              for your company before it goes on.
             </p>
           </div>
           <span

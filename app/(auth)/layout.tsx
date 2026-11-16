@@ -21,6 +21,13 @@ export default function AuthLayout({
 
       <footer className="container py-4 text-center text-xs text-slate-500">
         Never miss another construction lead.
+        <span className="mt-1 block">
+          <a href="/privacy" className="underline underline-offset-2">Privacy</a>
+          {" · "}
+          <a href="/terms" className="underline underline-offset-2">Terms</a>
+          {" · "}
+          <a href="mailto:hello@crewflow.uk" className="underline underline-offset-2">hello@crewflow.uk</a>
+        </span>
       </footer>
     </div>
   );
