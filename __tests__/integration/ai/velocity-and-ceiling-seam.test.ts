@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { durableKey } from "@/lib/security/rate-limit";
 import { describeIntegration, serviceClient, ukTodayIso } from "../_harness";
 
 /**
@@ -96,10 +97,12 @@ describeIntegration("AI governor seam · velocity + ceiling on real Postgres", (
   async function clearCounters() {
     for (const org of [orgId, orgB]) {
       if (!org) continue;
+      // Keys are `${route}:h1_<digest(identifier)>`; the digest does not depend on the route.
+      const digest = durableKey("probe", org).split(":h1_")[1];
       const res = await db(serviceClient())
         .from("rate_limit_counters")
         .delete()
-        .like("key", `ai_velocity_%:${org}%`);
+        .like("key", `ai_velocity_%:h1_${digest}`);
       expect(res.error, res.error?.message).toBeNull();
     }
   }
@@ -200,7 +203,8 @@ describeIntegration("AI governor seam · velocity + ceiling on real Postgres", (
 
     // Fill this user's window directly in the durable store (same key the limiter uses).
     const userId = uuid();
-    const key = `ai_velocity_user:insights.question:${orgId}:${userId}`;
+    // The limiter stores a keyed digest of the identifier (lib/security/rate-limit durableKey).
+    const key = durableKey("ai_velocity_user:insights.question", `${orgId}:${userId}`);
     for (let i = 0; i < userLimit; i++) {
       const hit = await db(serviceClient()).rpc("rate_limit_hit", {
         p_key: key,
