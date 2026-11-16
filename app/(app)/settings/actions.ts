@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { hasCapability } from "@/server/auth/capabilities";
@@ -109,7 +108,11 @@ export async function updateProfile(
     );
   }
 
-  revalidatePath("/settings");
+  // NO revalidatePath here (nor in updateOrganization below). Revalidating the route a
+  // useActionState form was submitted from strands the action's result in the router: the row
+  // is written, but the confirmation only appears when something else next re-renders the page
+  // — measured at ~10 s, the period of an unrelated timer in the app shell. The forms already
+  // call router.refresh() on success (useSettingsState), which is what shows the new values.
   return formSuccess({ successMessage: "Profile saved." });
 }
 
@@ -183,7 +186,5 @@ export async function updateOrganization(
     );
   }
 
-  revalidatePath("/settings");
-  revalidatePath("/dashboard");
   return formSuccess({ successMessage: "Organisation saved." });
 }
