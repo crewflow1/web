@@ -159,7 +159,7 @@ describeIntegration("D-17 · job creation requires jobs:create (owner / admin / 
       expect(r.redirect).toBeNull();
       expect((r.value as any)?.ok, JSON.stringify(r.value)).toBe(false);
       expect(await jobsWithNote(note)).toHaveLength(0);
-      expect(String((r.value as any)?.error ?? "")).toMatch(/only owners or admins can create jobs/i);
+      expect(String((r.value as any)?.error ?? "")).toMatch(/permission to create jobs/i);
     }
   });
 
@@ -171,6 +171,7 @@ describeIntegration("D-17 · job creation requires jobs:create (owner / admin / 
     const r = await run(() => createJob({} as never, form({ status: "new", notes: note })));
     expect((r.value as any)?.ok, JSON.stringify(r.value)).toBe(false);
     expect(await jobsWithNote(note)).toHaveLength(0);
+    expect(String((r.value as any)?.error ?? "")).toMatch(/permission to create jobs/i);
   });
 
   it("createJob · the owner and an admin holding jobs:create create the job (legitimate path kept)", async () => {

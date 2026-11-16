@@ -93,7 +93,7 @@ export async function createJob(
   // guard; the jobs INSERT policy (20261365000000) enforces it again in the database.
   if (!(await hasCapability(ctx, user, "jobs", "create"))) {
     return formError(
-      "Only owners or admins can create jobs. Ask an admin to create this job for you.",
+      "You don't have permission to create jobs. Ask the owner or an admin to create this job.",
       result.data as JobValues,
     );
   }
