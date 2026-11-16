@@ -408,4 +408,62 @@ describeIntegration("automation engine · overrides, wired actions, drain", () =
     expect(await notifCount(orgB, occA)).toBe(0);
     expect(await notifCount(orgA, occB)).toBe(0);
   });
+
+  // ── G. Schedules the drain must skip can never starve the ones it must fire ──
+  //
+  // A schedule bound to an unknown rule, or owned by a company that is not
+  // active (cancelled companies are kept forever, never deleted), is skipped
+  // and NOT advanced — it stays due. If the drain picked its batch before
+  // excluding those rows, a backlog of them older than everything else would
+  // fill every batch and no active company's schedule would ever fire again.
+
+  it("skipped schedules (unknown rule, non-active company) never starve a fireable one", async () => {
+    const live = await makeOrg("Starve Probe Live", null);
+    const cancelled = await makeOrg("Starve Probe Cancelled", null);
+    orgs.push(live, cancelled);
+    const st = await svc().from("organizations").update({ status: "cancelled" }).eq("id", cancelled);
+    expect(st.error, st.error?.message).toBeNull();
+
+    const LIMIT = 5;
+    // Blockers are OLDER than the fireable schedule (the drain serves oldest first),
+    // and older than anything another test could leave behind.
+    const blockerAt = (i: number) => new Date(Date.UTC(2001, 0, 1, 0, i)).toISOString();
+    for (let i = 0; i < LIMIT + 1; i++) {
+      const unknown = await svc().from("automation_schedules").insert({
+        org_id: live,
+        rule_key: `${TOKEN}-retired-rule-${i}`,
+        cron_expr: "*/5 * * * *",
+        enabled: true,
+        next_run_at: blockerAt(i),
+      });
+      expect(unknown.error, unknown.error?.message).toBeNull();
+      const held = await svc().from("automation_schedules").insert({
+        org_id: cancelled,
+        rule_key: "quote_accepted_notify",
+        cron_expr: "*/5 * * * *",
+        enabled: true,
+        next_run_at: blockerAt(30 + i),
+      });
+      expect(held.error, held.error?.message).toBeNull();
+    }
+    const target = await svc()
+      .from("automation_schedules")
+      .insert({
+        org_id: live,
+        rule_key: "quote_accepted_notify",
+        cron_expr: "*/5 * * * *",
+        enabled: true,
+        next_run_at: new Date(Date.UTC(2001, 5, 1)).toISOString(),
+      })
+      .select("id, next_run_at")
+      .single();
+    expect(target.error, target.error?.message).toBeNull();
+    const targetId = String(target.data?.id);
+
+    const out = await drainDueSchedules(new Date(), LIMIT);
+    expect(out.results.find((r) => r.schedule_id === targetId)?.status).toBe("fired");
+    expect(await notifCount(live, occurrenceId(targetId, String(target.data?.next_run_at)))).toBe(1);
+    // The cancelled company's schedules fired nothing.
+    expect(out.results.some((r) => r.org_id === cancelled && r.status === "fired")).toBe(false);
+  });
 });
