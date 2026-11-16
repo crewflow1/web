@@ -24,6 +24,7 @@
  *   --costs N         cost/bill rows per org               (default 40)
  *   --invoiceable N   accepted-but-uninvoiced quotes kept per org for the
  *                     POST /api/invoices scenario          (default 10, NOT tier-scaled)
+ *   --admin-ratio R   office admins per staff member        (default 0.15)
  *   --hq N            HQ operator users (no membership)    (default 2)
  *   --tag T           dataset tag, ^[a-z0-9]{2,12}$        (default lt1)
  *   --seed S          varies the tier/size draw            (default 1)
@@ -33,6 +34,9 @@
  *                     = replica). Much faster for very large seeds, but derived rows
  *                     (activity log, job→rota sync, invoice line-item snapshot, payment
  *                     status sync) are NOT produced. Default is triggers ON.
+ *   --plan            no database access: print persona identity pools for these parameters
+ *                     against the demand of every STAGE (model.js) and exit 2 if a gate's
+ *                     persona demand exceeds the pool (k6 setup() would abort the run)
  *   --manifest PATH   where to write the manifest JSON     (default load/k6/.manifest/<tag>.json)
  *   --db URL          Postgres URL (else LOAD_DATABASE_URL, else local DATABASE_URL)
  *
@@ -90,6 +94,8 @@ function buildOrgs() {
     fin: int("costs", 40),
   };
   const invoiceable = int("invoiceable", 10);
+  const adminRatio = args["admin-ratio"] === undefined ? 0.15 : Number(args["admin-ratio"]);
+  if (!(adminRatio >= 0 && adminRatio <= 2)) throw new Error("--admin-ratio must be 0..2");
   const n = int("orgs", 5);
   const flat = Boolean(args.flat);
   const orgs = [];
@@ -113,7 +119,7 @@ function buildOrgs() {
       marker: `ltm_${md5hex(`${tag}:marker:${idx}`).slice(0, 12)}`,
       tier,
       n_staff: staff,
-      n_admins: Math.max(1, Math.round(staff * 0.15)),
+      n_admins: Math.max(1, Math.round(staff * adminRatio)),
       n_customers: sized("customers", 5),
       n_jobs: sized("jobs", 6),
       n_quotes: quotes,
@@ -372,12 +378,30 @@ function expectedCounts(orgs) {
   };
 }
 
+// ── capacity plan (no DB): does the dataset hold enough identities for each gate? ──
+async function plan(orgs, expected) {
+  const { STAGES, personaCounts } = await import("../../load/k6/lib/model.js");
+  const pool = { owner: orgs.length, office: orgs.reduce((a, o) => a + o.n_admins, 0), staff: orgs.reduce((a, o) => a + o.n_staff, 0), hq: int("hq", 2) };
+  const rows = [];
+  let ok = true;
+  for (const [stage, s] of Object.entries(STAGES)) {
+    const need = personaCounts(s.vus);
+    const short = Object.keys(pool).filter((p) => need[p] > pool[p]);
+    if (short.length && s.target === "staging") ok = false;
+    rows.push({ stage, vus: s.vus, need: { hq: need.hq, owner: need.owner, office: need.office, staff: need.staff }, short });
+  }
+  console.log(JSON.stringify({ plan: tag, orgs: orgs.length, pool, users: expected.auth_users, rows, ok }, null, 2));
+  process.exit(ok ? 0 : 2);
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 async function main() {
   if (args.teardown) return teardown();
 
   const orgs = buildOrgs();
   const expected = expectedCounts(orgs);
+
+  if (args.plan) return plan(orgs, expected);
 
   if (args.verify) {
     const actual = readCounts();
