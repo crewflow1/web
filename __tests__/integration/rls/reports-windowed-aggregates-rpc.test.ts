@@ -205,7 +205,7 @@ describeIntegration("reports · windowed aggregate RPCs (A6)", () => {
   async function makeOrg(label: string): Promise<string> {
     const r = await svc()
       .from("organizations")
-      .insert({ name: `RptAgg ${label}`, slug: `${T}-${label}` })
+      .insert({ status: "active", name: `RptAgg ${label}`, slug: `${T}-${label}` })
       .select("id")
       .single();
     expect(r.error, r.error?.message).toBeNull();

@@ -84,7 +84,7 @@ async function makeUser(suffix: string): Promise<{ id: string; token: string }> 
 async function makeOrg(suffix: string): Promise<string> {
   const r = await svc()
     .from("organizations")
-    .insert({ name: `NSP ${suffix}`, slug: `${TOKEN}-${suffix}` })
+    .insert({ status: "active", name: `NSP ${suffix}`, slug: `${TOKEN}-${suffix}` })
     .select("id")
     .single();
   expect(r.error, r.error?.message).toBeNull();

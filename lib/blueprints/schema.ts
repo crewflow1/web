@@ -33,7 +33,7 @@ export const MAX_BLUEPRINT_BYTES = 52_428_800; // 50 MB — must mirror the buck
 export const blueprintIdSchema = z.string().uuid();
 
 const optionalText = (max: number) =>
-  z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().trim().max(max).optional());
+  z.preprocess((v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v), z.string().trim().max(max).optional());
 
 /** Create a new drawing register entry (with its first revision's metadata). */
 export const createBlueprintSchema = z.object({
@@ -42,7 +42,7 @@ export const createBlueprintSchema = z.object({
   discipline: z.enum(DISCIPLINES).optional(),
   revision: z.string().trim().min(1, "Revision is required (e.g. Rev A / P01)").max(30),
   revision_date: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").optional(),
   ),
   notes: optionalText(2000),
@@ -53,7 +53,7 @@ export type CreateBlueprintInput = z.infer<typeof createBlueprintSchema>;
 export const addRevisionSchema = z.object({
   revision: z.string().trim().min(1, "Revision is required").max(30),
   revision_date: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").optional(),
   ),
   notes: optionalText(2000),

@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
+import { requireCapability } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import {
   countLineSchema,
@@ -56,6 +57,7 @@ export async function openStocktakeSession(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("stock", "create");
   const parsed = openStocktakeSchema.safeParse({
     site_id: formData.get("site_id") ?? "",
     reference: formData.get("reference") ?? "",
@@ -94,6 +96,7 @@ export async function openStocktakeSession(
 
 export async function startStocktakeCounting(formData: FormData): Promise<void> {
   const { ctx } = await requireOrgContext();
+  await requireCapability("stock", "edit");
   const id = String(formData.get("session_id") ?? "");
   if (!stocktakeIdSchema.safeParse(id).success) redirect("/stock/stocktake?error=bad_id");
 
@@ -119,6 +122,7 @@ export async function recordStocktakeCount(
   formData: FormData,
 ): Promise<FormState> {
   const { ctx } = await requireOrgContext();
+  await requireCapability("stock_field", "edit");
   if (!stocktakeIdSchema.safeParse(sessionId).success) return formError("Invalid stocktake.");
 
   const parsed = countLineSchema.safeParse({
@@ -156,6 +160,7 @@ export async function resolveScannedItem(
   code: string,
 ): Promise<{ ok: boolean; itemId?: string; name?: string; message?: string }> {
   const { ctx } = await requireOrgContext();
+  await requireCapability("stock_field", "view");
   const trimmed = (code ?? "").trim();
   if (!trimmed) return { ok: false, message: "Nothing scanned." };
 
@@ -182,6 +187,7 @@ export async function resolveScannedItem(
  */
 export async function postStocktakeSession(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("stock", "approve");
   const id = String(formData.get("session_id") ?? "");
   if (!stocktakeIdSchema.safeParse(id).success) redirect("/stock/stocktake?error=bad_id");
 
@@ -212,6 +218,7 @@ export async function postStocktakeSession(formData: FormData): Promise<void> {
 
 export async function cancelStocktakeSession(formData: FormData): Promise<void> {
   const { ctx, user } = await requireOrgContext();
+  await requireCapability("stock", "edit");
   const id = String(formData.get("session_id") ?? "");
   if (!stocktakeIdSchema.safeParse(id).success) redirect("/stock/stocktake?error=bad_id");
   const reason = String(formData.get("reason") ?? "");

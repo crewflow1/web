@@ -85,7 +85,10 @@ export async function uploadCompanyLogo(input: {
   }
 
   // Point the org at the new object and drop any legacy external URL.
-  const { error: updErr, count } = await tenant
+  // `organizations` is a boundary table (SELECT-only for clients; no write
+  // grant since 20261295), so the write uses the service role — AFTER the
+  // owner/admin gate above, pinned to the session's active org.
+  const { error: updErr, count } = await admin
     .from("organizations")
     .update({ logo_path: path, logo_url: null }, { count: "exact" })
     .eq("id", ctx.org.id);
@@ -132,6 +135,7 @@ export async function deleteCompanyLogo(): Promise<LogoResult> {
   }
 
   const tenant = await createClient();
+  const boundaryDb = createAdminClient();
 
   const { data: existing } = await tenant
     .from("organizations")
@@ -140,8 +144,9 @@ export async function deleteCompanyLogo(): Promise<LogoResult> {
     .maybeSingle();
   const previousPath = existing?.logo_path ?? null;
 
-  // Clear both the managed path and any legacy URL.
-  const { error: updErr, count } = await tenant
+  // Clear both the managed path and any legacy URL. Service-role write (boundary
+  // table), after the owner/admin gate above, pinned to the session's active org.
+  const { error: updErr, count } = await boundaryDb
     .from("organizations")
     .update({ logo_path: null, logo_url: null }, { count: "exact" })
     .eq("id", ctx.org.id);

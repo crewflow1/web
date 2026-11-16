@@ -42,7 +42,7 @@ async function makeUser(s: string) {
   return { id, token: signedIn.data.session?.access_token ?? "" };
 }
 async function makeOrg(s: string) {
-  const r = await svc().from("organizations").insert({ name: `RJL ${s}`, slug: `${TOKEN}-${s}` }).select("id").single();
+  const r = await svc().from("organizations").insert({ status: "active", name: `RJL ${s}`, slug: `${TOKEN}-${s}` }).select("id").single();
   expect(r.error, r.error?.message).toBeNull();
   return (r.data as { id: string }).id;
 }

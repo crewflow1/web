@@ -192,8 +192,8 @@ describeIntegration("supplier performance · active-org pinning (RLS)", () => {
   }
 
   beforeAll(async () => {
-    orgA = await insId(svc, "organizations", { name: "Perf A", slug: `${TOKEN}-a` });
-    orgB = await insId(svc, "organizations", { name: "Perf B", slug: `${TOKEN}-b` });
+    orgA = await insId(svc, "organizations", { status: "active", name: "Perf A", slug: `${TOKEN}-a` });
+    orgB = await insId(svc, "organizations", { status: "active", name: "Perf B", slug: `${TOKEN}-b` });
     dual = await mkUser("dual", [orgA, orgB]);
     outsider = await mkUser("outsider", [orgB]);
 

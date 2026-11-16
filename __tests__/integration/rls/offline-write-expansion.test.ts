@@ -54,7 +54,7 @@ describeIntegration("offline write expansion · DB idempotency (20261083)", () =
   const mkOrg = async (label: string) => {
     const r = await svc()
       .from("organizations")
-      .insert({ name: `Offline Expansion ${label}`, slug: `${TOKEN}-${label}` })
+      .insert({ status: "active", name: `Offline Expansion ${label}`, slug: `${TOKEN}-${label}` })
       .select("id")
       .single();
     expect(r.error, r.error?.message).toBeNull();

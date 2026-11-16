@@ -70,7 +70,7 @@ describeIntegration("retention · invariants (20261005)", () => {
       ["A", `${TOKEN}-a`],
       ["B", `${TOKEN}-b`],
     ] as const) {
-      const o = await svc().from("organizations").insert({ name: `Ret ${label}`, slug }).select("id").single();
+      const o = await svc().from("organizations").insert({ status: "active", name: `Ret ${label}`, slug }).select("id").single();
       expect(o.error, o.error?.message).toBeNull();
       if (label === "A") orgA = o.data!.id;
       else orgB = o.data!.id;

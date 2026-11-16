@@ -99,11 +99,11 @@ export async function setJobRetentionRate(
 const releaseSchema = z.object({
   amount: z.coerce.number().positive("Amount must be greater than zero").max(10_000_000, "Unrealistic amount"),
   released_on: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").optional(),
   ),
   note: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(2000).optional(),
   ),
 });

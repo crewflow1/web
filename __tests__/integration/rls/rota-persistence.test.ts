@@ -128,7 +128,7 @@ describeIntegration("automatic rota persistence (approve → save, RLS)", () => 
   let manualId = ""; // the hand-confirmed shift the conflict case must not touch
 
   beforeAll(async () => {
-    orgA = await insId(svc, "organizations", { name: "Rota Persist A", slug: `${TOKEN}-a` });
+    orgA = await insId(svc, "organizations", { status: "active", name: "Rota Persist A", slug: `${TOKEN}-a` });
     owner = await mkUser("owner", [{ orgId: orgA, role: "owner" }]);
     worker1 = await mkUser("worker1", [{ orgId: orgA, role: "staff" }]);
     worker2 = await mkUser("worker2", [{ orgId: orgA, role: "staff" }]);

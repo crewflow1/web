@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
+import { readMemberPrivateProfiles } from "@/server/services/private-columns";
 import {
   entryHours,
   hoursInWindow,
@@ -67,7 +68,7 @@ export default async function TimesheetPage({
   const [profileRes, compRes, entriesRes] = await Promise.all([
     supabase
       .from("users")
-      .select("full_name, email, employment_type")
+      .select("full_name, email")
       .eq("id", staffId)
       .maybeSingle(),
     // Pay from staff_compensation (20261218, self-or-admin RLS). This page is
@@ -107,7 +108,11 @@ export default async function TimesheetPage({
   // £0 would understate labour cost rather than surface the failure. This page is
   // admin-or-self only, so the reader is entitled to the rate.
   if (compRes.error) throw readFailure("staff timesheet: compensation", compRes.error);
-  const profile = profileRes.data;
+  // employment_type is not Data-API readable (20261342). This page is already
+  // limited to an owner/admin or the member themselves (above), which is exactly
+  // who readMemberPrivateProfiles serves.
+  const privateProfile = (await readMemberPrivateProfiles(ctx, viewer, [staffId])).get(staffId);
+  const profile = { ...profileRes.data, employment_type: privateProfile?.employment_type ?? null };
   const entries = (entriesRes.data ?? []) as TimeEntry[];
 
   const now = new Date();

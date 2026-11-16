@@ -43,8 +43,8 @@ const extra: Record<string, Row> = {
 
 describeIntegration("rls · workforce self-scope (20261251 · R5 Phase 5)", () => {
   beforeAll(async () => {
-    orgA = await insId("organizations", { name: `P5 A ${TOKEN}`, slug: `${TOKEN}-a` });
-    orgB = await insId("organizations", { name: `P5 B ${TOKEN}`, slug: `${TOKEN}-b` });
+    orgA = await insId("organizations", { status: "active", name: `P5 A ${TOKEN}`, slug: `${TOKEN}-a` });
+    orgB = await insId("organizations", { status: "active", name: `P5 B ${TOKEN}`, slug: `${TOKEN}-b` });
     for (const who of ["owner", "staffA", "staffB", "otherOrg"]) {
       const u = await mkUser(who);
       uid[who] = u.id; tok[who] = u.token;

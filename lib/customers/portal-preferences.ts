@@ -38,7 +38,7 @@ export const PREFERRED_CHANNEL_LABELS: Record<PreferredChannel, string> = {
 export const portalPreferencesSchema = z.object({
   preferred_channel: z.enum(PREFERRED_CHANNELS),
   contact_notes: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(500, "Keep the note under 500 characters").optional(),
   ),
 });
@@ -82,15 +82,15 @@ export function buildPortalPreferencesView(row: {
 export const profileUpdateRequestSchema = z
   .object({
     requested_name: z.preprocess(
-      (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+      (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
       z.string().trim().max(200).optional(),
     ),
     requested_email: z.preprocess(
-      (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+      (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
       z.string().trim().max(254).email("Enter a valid email").optional(),
     ),
     requested_phone: z.preprocess(
-      (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+      (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
       z.string().trim().max(50).optional(),
     ),
   })

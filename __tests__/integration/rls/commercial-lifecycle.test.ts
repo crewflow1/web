@@ -47,8 +47,8 @@ describeIntegration("commercial lifecycle · tenant isolation (RLS)", () => {
   beforeAll(async () => {
     const svc = db(serviceClient());
 
-    const a = await svc.from("organizations").insert({ name: "Commercial A", slug: `${TOKEN}-a` }).select("id").single();
-    const b = await svc.from("organizations").insert({ name: "Commercial B", slug: `${TOKEN}-b` }).select("id").single();
+    const a = await svc.from("organizations").insert({ status: "active", name: "Commercial A", slug: `${TOKEN}-a` }).select("id").single();
+    const b = await svc.from("organizations").insert({ status: "active", name: "Commercial B", slug: `${TOKEN}-b` }).select("id").single();
     orgA = String(a.data?.id ?? "");
     orgB = String(b.data?.id ?? "");
     if (!orgA || !orgB) throw new Error("failed to create probe orgs");

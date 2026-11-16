@@ -296,8 +296,9 @@ const ALLOWLIST: Record<string, string> = {
   // BEFORE these writes; every subsequent write keys off `line.id` /
   // `line.bank_statement_id`, so the id is already proven active-org. Pinned as
   // safe-by-design in active-org-write-slice.test.ts §4 (confirmBankMatch).
-  "app/(app)/payments/actions.ts::bank_statement_lines::update::line.id":
-    "confirmBankMatch resolve-then-compare: line.org_id is checked against ctx.org.id before this write; keyed off the org-verified line",
+  // (the bank_statement_lines update in confirmBankMatch was allow-listed here as
+  // resolve-then-compare; since the resilience bank-match repair it carries its
+  // own `.eq("org_id", ctx.org.id)` pin, so the entry was retired, not kept.)
   "app/(app)/payments/actions.ts::bank_statements::update::line.bank_statement_id":
     "confirmBankMatch resolve-then-compare: derived from the org-verified `line`; keyed off line.bank_statement_id",
 

@@ -106,7 +106,7 @@ export function currentCalibrationStatus(
 
 // ── Validation ────────────────────────────────────────────────────────────────
 const blankToUndefined = (v: unknown) =>
-  typeof v === "string" && v.trim() === "" ? undefined : v;
+  v === null || (typeof v === "string" && v.trim() === "") ? undefined : v;
 const optText = (max: number) =>
   z.preprocess(blankToUndefined, z.string().trim().max(max).optional());
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;

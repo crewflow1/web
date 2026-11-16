@@ -171,14 +171,14 @@ describeIntegration("AI budget reservation · task_class 'embedding' on real Pos
     const svc = db(serviceClient());
     const a = await svc
       .from("organizations")
-      .insert({ name: "AI Embedding Reservation Org A", slug: `${TOKEN}-a` })
+      .insert({ status: "active", name: "AI Embedding Reservation Org A", slug: `${TOKEN}-a` })
       .select("id")
       .single();
     expect(a.error, a.error?.message).toBeNull();
     orgA = String(a.data?.id ?? "");
     const b = await svc
       .from("organizations")
-      .insert({ name: "AI Embedding Reservation Org B", slug: `${TOKEN}-b` })
+      .insert({ status: "active", name: "AI Embedding Reservation Org B", slug: `${TOKEN}-b` })
       .select("id")
       .single();
     expect(b.error, b.error?.message).toBeNull();

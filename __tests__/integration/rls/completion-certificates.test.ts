@@ -40,8 +40,8 @@ describeIntegration("completion certificates · DB invariants", () => {
 
   beforeAll(async () => {
     const svc = db(serviceClient());
-    const a = await svc.from("organizations").insert({ name: "Cert A", slug: `${TOKEN}-a` }).select("id").single();
-    const b = await svc.from("organizations").insert({ name: "Cert B", slug: `${TOKEN}-b` }).select("id").single();
+    const a = await svc.from("organizations").insert({ status: "active", name: "Cert A", slug: `${TOKEN}-a` }).select("id").single();
+    const b = await svc.from("organizations").insert({ status: "active", name: "Cert B", slug: `${TOKEN}-b` }).select("id").single();
     orgA = String(a.data?.id ?? "");
     orgB = String(b.data?.id ?? "");
     const j = await svc.from("jobs").insert({ org_id: orgA, status: "completed" }).select("id").single();

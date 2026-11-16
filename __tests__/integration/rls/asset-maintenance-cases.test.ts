@@ -50,7 +50,7 @@ const TAG = `it-mnt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 async function mkOrg(slug: string): Promise<string> {
   const { data, error } = await db(serviceClient())
-    .from("organizations").insert({ name: `Mnt ${slug}`, slug: `${TAG}-${slug}` }).select("id").single();
+    .from("organizations").insert({ status: "active", name: `Mnt ${slug}`, slug: `${TAG}-${slug}` }).select("id").single();
   expect(error, error?.message).toBeNull();
   return String(data?.id ?? "");
 }

@@ -7,6 +7,7 @@ import { ProfileForm, OrganizationForm } from "./_forms";
 import { SignOutButton } from "../_components/sign-out-button";
 import { LogoUpload } from "./_logo-upload";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
+import { readOwnPrivateProfile } from "@/server/services/private-columns";
 import { outboundWebhooksEnabled } from "@/lib/webhooks/flags";
 import { NotificationPreferences } from "./_notification-prefs";
 import { WorkingHoursSettings } from "./_working-hours";
@@ -38,12 +39,16 @@ export default async function SettingsPage() {
 
   // These feed EDIT forms — rendering blank defaults over a failed read would
   // let a save wipe the real profile/org values. Fail loud.
-  const { data: profile, error: profileError } = await supabase
+  const { data: profileBase, error: profileError } = await supabase
     .from("users")
-    .select("id, email, full_name, phone")
+    .select("id, email, full_name")
     .eq("id", user.id)
     .maybeSingle();
   if (profileError) throw readFailure("settings: profile", profileError);
+  // users.phone is not Data-API readable (20261342); a member reads their OWN.
+  const profile = profileBase
+    ? { ...profileBase, phone: (await readOwnPrivateProfile(user)).phone }
+    : null;
 
   const { data: org, error: orgError } = await supabase
     .from("organizations")

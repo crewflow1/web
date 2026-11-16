@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   ORG_EXPORT_TABLES,
+  SERVICE_SIDE_EXPORT_TABLES,
   EXCLUDED_FROM_EXPORT,
   EXPORT_ORDER_KEYS,
   exportOrderKey,
@@ -73,8 +74,11 @@ describe("gdpr export paging order-key registry is well-formed", () => {
   it("every order-key override names a table that IS exported", () => {
     // A stale override (renamed/excluded table) would silently never apply,
     // leaving that table to page by the wrong / a non-existent column. Every
-    // key must be a member of the exported set.
-    const exported = new Set(ORG_EXPORT_TABLES);
+    // key must be a member of the exported set — either lane: the service-role
+    // lane (server/services/gdpr-export.ts → pageTable) orders by the same key,
+    // and fleet_vehicles moved to it when its finance columns left the Data API
+    // (20261343).
+    const exported = new Set([...ORG_EXPORT_TABLES, ...SERVICE_SIDE_EXPORT_TABLES]);
     for (const table of Object.keys(EXPORT_ORDER_KEYS)) {
       expect(exported.has(table), `order-key override for non-exported table ${table}`).toBe(true);
     }

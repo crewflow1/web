@@ -139,11 +139,11 @@ describeIntegration("H2-CIS M2 supplier payments (real Postgres)", () => {
 
   beforeAll(async () => {
     orgA = String(
-      (await svc().from("organizations").insert({ name: "Pay A", slug: `${T}-a` }).select("id").single())
+      (await svc().from("organizations").insert({ status: "active", name: "Pay A", slug: `${T}-a` }).select("id").single())
         .data?.id,
     );
     orgB = String(
-      (await svc().from("organizations").insert({ name: "Pay B", slug: `${T}-b` }).select("id").single())
+      (await svc().from("organizations").insert({ status: "active", name: "Pay B", slug: `${T}-b` }).select("id").single())
         .data?.id,
     );
 
@@ -845,7 +845,7 @@ describeIntegration("H2-CIS M2 supplier payments (real Postgres)", () => {
     // with NO finances rows, because an org that has any `finances` row cannot
     // currently be deleted at all (see the afterAll note).
     const org = String(
-      (await svc().from("organizations").insert({ name: "Teardown", slug: `${T}-td` }).select("id").single())
+      (await svc().from("organizations").insert({ status: "active", name: "Teardown", slug: `${T}-td` }).select("id").single())
         .data?.id,
     );
     const supplier = String(

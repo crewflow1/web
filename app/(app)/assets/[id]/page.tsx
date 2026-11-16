@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure, reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
+import { readAssetMoney } from "@/server/services/private-columns";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
 import { StateForm } from "@/components/forms/StateForm";
 import {
@@ -142,7 +143,7 @@ export default async function AssetDetailPage({
   // this org's shell — and this page is where the custody/QR/maintenance
   // actions live. A non-active-org asset must be indistinguishable from a
   // missing one.
-  const { data: asset, error: assetError } = await (
+  const { data: assetBase, error: assetError } = await (
     supabase.from("assets" as never) as unknown as {
       select: (cols: string) => {
         eq: (
@@ -158,14 +159,24 @@ export default async function AssetDetailPage({
     }
   )
     .select(
-      "id, name, category, asset_ref, manufacturer, model, serial_number, registration, ownership, status, supplier_id, purchase_date, purchase_price, current_value, warranty_expires_at, hire_start, hire_end, hire_rate, notes, created_at, updated_at",
+      "id, name, category, asset_ref, manufacturer, model, serial_number, registration, ownership, status, supplier_id, purchase_date, warranty_expires_at, hire_start, hire_end, notes, created_at, updated_at",
     )
     .eq("id", id)
     .eq("org_id", ctx.org.id)
     .maybeSingle();
 
   if (assetError) throw readFailure("asset detail: asset", assetError);
-  if (!asset) notFound();
+  if (!assetBase) notFound();
+  // purchase_price / current_value / hire_rate are not Data-API readable
+  // (20261343): read server-side for an assets:view holder, org-pinned to the
+  // session's active org.
+  const assetMoney = await readAssetMoney(id);
+  const asset: AssetRow = {
+    ...assetBase,
+    purchase_price: assetMoney?.purchase_price ?? null,
+    current_value: assetMoney?.current_value ?? null,
+    hire_rate: assetMoney?.hire_rate ?? null,
+  };
 
   const status = asset.status as AssetStatus;
   const ownership = asset.ownership as AssetOwnership;

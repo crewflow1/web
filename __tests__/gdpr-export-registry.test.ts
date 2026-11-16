@@ -85,7 +85,10 @@ describe("GDPR export table registry", () => {
       "leads",
       "suppliers",
     ]) {
-      expect(ORG_EXPORT_TABLES).toContain(t);
+      // Exported through EITHER lane: `customers` moved to the service-role lane
+      // when its portal credential column left the Data API (20261341) — a client
+      // `select *` on it is refused, the export itself is unchanged.
+      expect([...ORG_EXPORT_TABLES, ...SERVICE_SIDE_EXPORT_TABLES]).toContain(t);
     }
   });
 });

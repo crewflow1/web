@@ -69,8 +69,8 @@ describeIntegration("H2-CASH money-out isolation + composition (real Postgres)",
   }
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "CO A", slug: `${T}-a` }).select("id").single()).data?.id);
-    orgB = String((await svc().from("organizations").insert({ name: "CO B", slug: `${T}-b` }).select("id").single()).data?.id);
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "CO A", slug: `${T}-a` }).select("id").single()).data?.id);
+    orgB = String((await svc().from("organizations").insert({ status: "active", name: "CO B", slug: `${T}-b` }).select("id").single()).data?.id);
 
     supA = String((await svc().from("suppliers").insert({ org_id: orgA, name: `Merchant A ${T}` }).select("id").single()).data?.id);
     supB = String((await svc().from("suppliers").insert({ org_id: orgB, name: `Merchant B ${T}` }).select("id").single()).data?.id);

@@ -60,7 +60,7 @@ describeIntegration("invoice_payments · organisation integrity (composite FK)",
     ] as const) {
       const res = await svc
         .from("organizations")
-        .insert({ name: `IPOI Org ${label}`, slug })
+        .insert({ status: "active", name: `IPOI Org ${label}`, slug })
         .select("id")
         .single();
       expect(res.error, res.error?.message).toBeNull();

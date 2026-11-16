@@ -1,6 +1,6 @@
 "use server";
 
-import { redirect } from "next/navigation";
+import { redirect } from "next/navigation"; import { gatePortalWrite } from "@/server/services/org-lifecycle";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadCustomerByPortalToken } from "./_helpers";
@@ -77,7 +77,7 @@ export async function uploadPaymentProof(formData: FormData): Promise<void> {
     backTo(token, invoiceId, "bad_file_type");
   }
 
-  const loaded = await loadCustomerByPortalToken(token);
+  const loaded = await gatePortalWrite(await loadCustomerByPortalToken(token), "payment");
   if (!loaded) {
     backTo(token, invoiceId, "invalid_token");
   }

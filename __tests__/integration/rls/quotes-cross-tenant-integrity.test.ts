@@ -45,7 +45,7 @@ const TOKEN = `it-qxt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 async function mkOrg(label: string): Promise<string> {
   const res = await db(serviceClient())
     .from("organizations")
-    .insert({ name: `QXT Org ${label}`, slug: `${TOKEN}-${label.toLowerCase()}` })
+    .insert({ status: "active", name: `QXT Org ${label}`, slug: `${TOKEN}-${label.toLowerCase()}` })
     .select("id")
     .single();
   expect(res.error, res.error?.message).toBeNull();

@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementContext } from "@/server/auth/session";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
 import type { DismissedStepsJson } from "@/server/services/onboarding-snapshot";
@@ -29,7 +29,7 @@ const KNOWN_STEPS: ReadonlyArray<ChecklistStepId> = [
  * keeping all other keys (`company: true` etc.) untouched.
  */
 export async function dismissChecklistStep(formData: FormData): Promise<void> {
-  const { ctx } = await requireOrgContext();
+  const { ctx } = await requireManagementContext();
   const stepId = String(formData.get("step_id") ?? "");
   if (!KNOWN_STEPS.includes(stepId as ChecklistStepId)) return;
 

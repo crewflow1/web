@@ -102,7 +102,7 @@ describeIntegration("imports · invoice → customer linking (G1)", () => {
     ] as const) {
       const o = await svc
         .from("organizations")
-        .insert({ name: `InvLink ${label}`, slug })
+        .insert({ status: "active", name: `InvLink ${label}`, slug })
         .select("id")
         .single();
       expect(o.error, o.error?.message).toBeNull();

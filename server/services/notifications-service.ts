@@ -215,7 +215,20 @@ export async function emitNotifications(
   inputs: NotificationCreate | ReadonlyArray<NotificationCreate>,
 ): Promise<void> {
   try {
-    const list = Array.isArray(inputs) ? inputs : [inputs];
+    const all = Array.isArray(inputs) ? inputs : [inputs];
+    if (all.length === 0) return;
+    // D-17: a company that is not active gets its ACCOUNT notices (billing, support, onboarding …)
+    // but no operational notifications; HQ is never muted. See heldCompanyNotificationDisposition.
+    const { nonActiveOrgIdsForNotifications } = await import("@/server/services/org-lifecycle");
+    const { heldCompanyNotificationDisposition } = await import("@/lib/auth/org-status");
+    const held = await nonActiveOrgIdsForNotifications();
+    const list: NotificationCreate[] = [];
+    for (const n of all) {
+      if (!held.has(n.org_id)) { list.push(n); continue; }
+      const d = heldCompanyNotificationDisposition(n.audience, n.category);
+      if (d === "send") list.push(n);
+      else if (d === "hq_only") list.push({ ...n, audience: "hq", email: undefined });
+    }
     if (list.length === 0) return;
     const rows = await insertNotificationsReturning(list);
     await queueEmailsForNotifications(list, rows);

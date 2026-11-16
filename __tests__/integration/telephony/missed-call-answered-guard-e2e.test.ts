@@ -95,7 +95,7 @@ describeIntegration("missed-call text-back · SANDBOX VERIFIED answered-guard (r
 
   beforeAll(async () => {
     const svc = db();
-    const o = await svc.from("organizations").insert({ name: "MCTB E2E", slug: `${TOKEN}-a` }).select("id").single();
+    const o = await svc.from("organizations").insert({ status: "active", name: "MCTB E2E", slug: `${TOKEN}-a` }).select("id").single();
     expect(o.error, o.error?.message).toBeNull();
     orgA = String((o.data as { id: string }).id);
 

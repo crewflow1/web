@@ -20,8 +20,8 @@ describeIntegration("H2-CASH org cash isolation (real Postgres)", () => {
   const svc = () => db(serviceClient());
 
   beforeAll(async () => {
-    orgA = String((await svc().from("organizations").insert({ name: "OC A", slug: `${T}-a` }).select("id").single()).data?.id);
-    orgB = String((await svc().from("organizations").insert({ name: "OC B", slug: `${T}-b` }).select("id").single()).data?.id);
+    orgA = String((await svc().from("organizations").insert({ status: "active", name: "OC A", slug: `${T}-a` }).select("id").single()).data?.id);
+    orgB = String((await svc().from("organizations").insert({ status: "active", name: "OC B", slug: `${T}-b` }).select("id").single()).data?.id);
     custA = String((await svc().from("customers").insert({ org_id: orgA, name: "Cust A" }).select("id").single()).data?.id);
     jobA = String((await svc().from("jobs").insert({ org_id: orgA, status: "new", customer_id: custA }).select("id").single()).data?.id);
     // An org-A invoice + a payment + a billing plan/stage — the cash-surface rows.

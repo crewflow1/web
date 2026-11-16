@@ -235,7 +235,7 @@ export function depreciationSchedule(policy: DepreciationPolicy): SchedulePeriod
 
 // ── Validation ────────────────────────────────────────────────────────────────
 const blankToUndefined = (v: unknown) =>
-  typeof v === "string" && v.trim() === "" ? undefined : v;
+  v === null || (typeof v === "string" && v.trim() === "") ? undefined : v;
 
 const ISO = z
   .string()

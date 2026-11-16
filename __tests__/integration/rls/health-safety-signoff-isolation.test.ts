@@ -30,7 +30,7 @@ describeIntegration("safety_acknowledgements · sign-as-self + tenant isolation 
 
   beforeAll(async () => {
     const svc = db(serviceClient());
-    orgId = String((await svc.from("organizations").insert({ name: "Ack RLS", slug: TOKEN }).select("id").single()).data?.id);
+    orgId = String((await svc.from("organizations").insert({ status: "active", name: "Ack RLS", slug: TOKEN }).select("id").single()).data?.id);
     memberId = await mkUser("m"); otherId = await mkUser("o");
     await svc.from("memberships").insert([{ org_id: orgId, user_id: memberId, role: "staff" }, { org_id: orgId, user_id: otherId, role: "staff" }]);
     raId = String((await svc.from("risk_assessments").insert({ org_id: orgId, title: "RA", activity: "x" }).select("id").single()).data?.id);
