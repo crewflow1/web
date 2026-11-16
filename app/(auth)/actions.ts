@@ -31,17 +31,6 @@ function getOrigin(headerList: Headers): string {
 }
 
 /**
- * A provider error message is shown on /login via the URL. Supabase Auth
- * messages can quote the address ("Email address \"…@…\" is invalid"), and an
- * address in a URL reaches request logs, history and analytics page views
- * (privacy finding G-10) — so a message containing one is replaced.
- */
-function urlSafeMessage(message: string | null | undefined, fallback: string): string {
-  const m = message ?? "";
-  return m && !m.includes("@") ? m : fallback;
-}
-
-/**
  * Begin a Google OAuth flow.
  *
  * Returns a redirect to Google's consent screen. After the user accepts,
@@ -67,7 +56,7 @@ export async function signInWithGoogle() {
   });
 
   if (error) {
-    redirect(`/login?error=${encodeURIComponent(urlSafeMessage(error.message, "We couldn't start the sign-in. Please try again."))}`);
+    redirect("/login?error=oauth_start_failed");
   }
 
   if (data?.url) {
@@ -107,9 +96,7 @@ export async function signInWithMagicLink(formData: FormData) {
     DEFAULT_LIMITS.auth,
   );
   if (!limit.allowed) {
-    redirect(
-      `/login?error=${encodeURIComponent("Too many sign-in attempts. Please wait a few minutes and try again.")}`,
-    );
+    redirect("/login?error=rate_limited");
   }
 
   const supabase = await createClient();
@@ -125,11 +112,7 @@ export async function signInWithMagicLink(formData: FormData) {
   });
 
   if (error) {
-    redirect(
-      `/login?error=${encodeURIComponent(
-        urlSafeMessage(error.message, "We couldn't send a sign-in link to that address. Check it and try again."),
-      )}`,
-    );
+    redirect("/login?error=magic_link_send_failed");
   }
 
   // PRIVACY (G-10): the address is NOT put in the URL. The confirmation page
@@ -469,7 +452,7 @@ export async function signInWithMicrosoft() {
   });
 
   if (error) {
-    redirect(`/login?error=${encodeURIComponent(urlSafeMessage(error.message, "We couldn't start the sign-in. Please try again."))}`);
+    redirect("/login?error=oauth_start_failed");
   }
   if (data?.url) {
     redirect(data.url);

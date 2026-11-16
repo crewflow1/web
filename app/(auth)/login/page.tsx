@@ -49,6 +49,18 @@ const ERROR_MESSAGES: Record<
     msg: "Your account exists but a setup step failed. Try signing in again, if it persists, email hello@crewflow.uk.",
     recoverable: true,
   },
+  oauth_start_failed: {
+    msg: "We couldn't start the sign-in. Please try again.",
+    recoverable: false,
+  },
+  rate_limited: {
+    msg: "Too many sign-in attempts. Please wait a few minutes and try again.",
+    recoverable: false,
+  },
+  magic_link_send_failed: {
+    msg: "We couldn't send a sign-in link to that address. Check it and try again.",
+    recoverable: true,
+  },
   oauth_no_url: {
     msg: "We couldn't start the sign-in. Please try again.",
     recoverable: false,
@@ -62,10 +74,12 @@ export default async function LoginPage({
 }) {
   const sp = await searchParams;
   const errorEntry = sp.error ? ERROR_MESSAGES[sp.error] : null;
+  // Only KNOWN codes render their own text. Anything else gets a generic message —
+  // the page never echoes URL text, so a crafted link cannot put its own wording here.
   const errorMessage = errorEntry
     ? errorEntry.msg
     : sp.error
-      ? decodeURIComponent(sp.error)
+      ? "We couldn't complete the sign-in. Please try again."
       : null;
   const isRecoverableError = errorEntry?.recoverable ?? false;
   const nextHint = sp.next ?? "";
