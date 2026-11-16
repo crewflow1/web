@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
   requireOrgContext: vi.fn(async () => ({})),
   getOrgForUser: vi.fn(),
   cancel: vi.fn(),
+  resume: vi.fn(),
   reactivate: vi.fn(),
   buildOrgExport: vi.fn(),
   recordGdprExport: vi.fn(async () => ({ ok: true })),
@@ -39,7 +40,10 @@ vi.mock("@/server/auth/session", () => ({
 }));
 vi.mock("@/server/auth/superadmin", () => ({ isSuperAdminEmail: () => h.superAdmin }));
 vi.mock("@/server/services/subscription-cancellation", () => ({
-  cancelOrgSubscription: h.cancel,
+  // The owner's cancel now SCHEDULES (end of paid period); the service decides
+  // when there is nothing to renew and delegates to the immediate path.
+  scheduleOrgCancellation: h.cancel,
+  resumeOrgSubscription: h.resume,
   requestReactivation: h.reactivate,
   wireCancellationDeps: () => ({ wired: "cancel" }),
   wireReactivationDeps: () => ({ wired: "reactivate" }),
@@ -49,7 +53,7 @@ vi.mock("@/server/services/gdpr-export", () => ({
   recordGdprExport: h.recordGdprExport,
 }));
 
-const { cancelSubscriptionAction, requestReactivationAction } = await import(
+const { cancelSubscriptionAction, requestReactivationAction, resumeSubscriptionAction } = await import(
   "@/app/account/billing/actions"
 );
 const { GET: exportGET } = await import("@/app/api/account/export/route");
@@ -79,12 +83,13 @@ beforeEach(() => {
   h.cancel.mockReset();
   h.cancel.mockResolvedValue({
     ok: true,
-    outcome: "cancelled",
-    accessRevoked: true,
-    subscriptionsCancelled: ["sub_1"],
-    refundReview: "not_applicable",
+    outcome: "scheduled",
+    accessEndsAt: 1_800_000_000,
+    subscriptionIds: ["sub_1"],
     emailSent: true,
   });
+  h.resume.mockReset();
+  h.resume.mockResolvedValue({ ok: true, outcome: "resumed", renewsAt: 1_800_000_000, emailSent: true });
   h.reactivate.mockReset();
   h.reactivate.mockResolvedValue({ ok: true, outcome: "requested" });
   h.buildOrgExport.mockReset();
@@ -101,13 +106,19 @@ const cancelAs = (fields: Record<string, string> = { expected_org_id: OWN_ORG })
 describe("cancelSubscriptionAction — authorisation", () => {
   it("OWNER of an active org → the service is called for the SESSION's org, with the session user as actor", async () => {
     signIn("owner");
-    const r = await cancelAs({ expected_org_id: OWN_ORG, reason: "  closing down  " });
-    expect(r).toEqual({ status: "done", redirectTo: "/account/billing?cancelled=1&emailed=1" });
+    const r = await cancelAs({
+      expected_org_id: OWN_ORG,
+      reason: "  closing down  ",
+      expected_access_ends_at: "1800000000",
+    });
+    // Scheduled for the period end: the owner stays in the app shell.
+    expect(r).toEqual({ status: "done", redirectTo: "/settings/billing?cancellation_scheduled=1&emailed=1" });
     expect(h.cancel).toHaveBeenCalledTimes(1);
     expect(h.cancel.mock.calls[0]![1]).toEqual({
       orgId: OWN_ORG,
       actor: { userId: "user-1", email: "someone@example.test" },
       reason: "closing down",
+      expectedAccessEndsAt: 1_800_000_000,
     });
     // Active org → the full session policy (MFA) is enforced too.
     expect(h.requireOrgContext).toHaveBeenCalledTimes(1);
@@ -182,10 +193,14 @@ describe("cancelSubscriptionAction — authorisation", () => {
     h.cancel.mockResolvedValue({
       ok: true,
       outcome: "already_cancelled",
-      accessRevoked: false,
-      subscriptionsCancelled: [],
-      refundReview: "not_applicable",
-      emailSent: false,
+      immediate: {
+        ok: true,
+        outcome: "already_cancelled",
+        accessRevoked: false,
+        subscriptionsCancelled: [],
+        refundReview: "not_applicable",
+        emailSent: false,
+      },
     });
     const r = await cancelAs();
     expect(r).toEqual({ status: "done", redirectTo: "/account/billing?cancelled=1" });
@@ -201,6 +216,7 @@ describe("cancelSubscriptionAction — failures are never reported as success", 
     "stripe_timeout",
     "stripe_error",
     "org_not_found",
+    "period_changed",
   ])("service refusal %s → error state, no redirect", async (reason) => {
     signIn("owner");
     h.cancel.mockResolvedValue({ ok: false, reason });
@@ -305,5 +321,39 @@ describe("resolveBillingOwner", () => {
       expect(r.ok, status).toBe(true);
       if (r.ok) expect(r.ctx.org.id).toBe(OWN_ORG);
     }
+  });
+});
+
+describe("resumeSubscriptionAction — undo a scheduled cancellation (owner only)", () => {
+  const resumeAs = (fields: Record<string, string> = { expected_org_id: OWN_ORG }) =>
+    resumeSubscriptionAction({ status: "idle" }, form(fields));
+
+  it("owner → service called for the SESSION's org; back to Settings → Billing", async () => {
+    signIn("owner");
+    const r = await resumeAs();
+    expect(r).toEqual({ status: "done", redirectTo: "/settings/billing?resumed=1&emailed=1" });
+    expect(h.resume.mock.calls[0]![1]).toEqual({
+      orgId: OWN_ORG,
+      actor: { userId: "user-1", email: "someone@example.test" },
+    });
+  });
+
+  it.each(["admin", "staff"])("%s cannot resume", async (role) => {
+    signIn(role);
+    expect(await resumeAs()).toMatchObject({ status: "error", code: "forbidden" });
+    expect(h.resume).not.toHaveBeenCalled();
+  });
+
+  it("another org's id is never a selector", async () => {
+    signIn("owner");
+    expect(await resumeAs({ expected_org_id: OTHER_ORG })).toMatchObject({ status: "error", code: "org_changed" });
+    expect(h.resume).not.toHaveBeenCalled();
+  });
+
+  it("after expiry → explained, not claimed as resumed", async () => {
+    signIn("owner");
+    h.resume.mockResolvedValue({ ok: false, reason: "expired" });
+    const r = await resumeAs();
+    expect(r).toMatchObject({ status: "error", code: "expired" });
   });
 });

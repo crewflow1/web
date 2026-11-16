@@ -30,6 +30,9 @@ const {
   cancelOrgSubscription,
   requestReactivation,
   stopBillingForHqCancellation,
+  scheduleOrgCancellation,
+  resumeOrgSubscription,
+  previewCancellation,
   HQ_CANCEL_ERROR_COPY,
   REACTIVATION_REQUEST_DEDUPE_SECONDS,
 } = await import("@/server/services/subscription-cancellation");
@@ -54,6 +57,7 @@ function sub(id: string, status: string, over: Partial<Snapshot> = {}): Snapshot
     unitAmountMinor: 50_000,
     quantity: 1,
     currency: "gbp",
+    cancelAtPeriodEnd: false,
     shape: { id, status, customer: "cus_1" },
     ...over,
   };
@@ -66,7 +70,11 @@ type World = {
   stripeAvailable: boolean;
   disabled: boolean;
   cancelImpl: (id: string) => Promise<Snapshot>;
+  /** Optional failure injection for setCancelAtPeriodEnd. */
+  scheduleFail?: (id: string, value: boolean) => Error | null;
   calls: {
+    schedule: Array<{ id: string; value: boolean; idempotencyKey: string }>;
+    scheduleEmails: Array<{ to: string; kind: string; at: number }>;
     cancel: Array<{ id: string; idempotencyKey: string }>;
     stopCollection: string[];
     released: Array<{ id: string; error: string }>;
@@ -156,6 +164,16 @@ function makeDeps(): Deps {
         return { stopped: [`in_open_${id}`], failed: [] };
       },
       countPendingInvoiceItems: async () => 0,
+      setCancelAtPeriodEnd: async (id, value, { idempotencyKey }) => {
+        w.calls.schedule.push({ id, value, idempotencyKey });
+        const err = w.scheduleFail?.(id, value);
+        if (err) throw err;
+        const cur = w.stripeSubs.get(id);
+        if (!cur) throw Object.assign(new Error("No such subscription"), { type: "StripeInvalidRequestError", code: "resource_missing" });
+        const next = { ...cur, cancelAtPeriodEnd: value };
+        w.stripeSubs.set(id, next);
+        return next;
+      },
     },
     projectSubscription: async (_org, shape) => {
       w.calls.projected.push(shape.id);
@@ -168,6 +186,10 @@ function makeDeps(): Deps {
     },
     sendOwnerEmail: async (a) => {
       w.calls.emails.push(a);
+      return { sent: true };
+    },
+    sendScheduleEmail: async (a) => {
+      w.calls.scheduleEmails.push({ to: a.to, kind: a.kind, at: a.at });
       return { sent: true };
     },
   };
@@ -196,6 +218,8 @@ beforeEach(() => {
     disabled: false,
     cancelImpl: stripeCancels,
     calls: {
+      schedule: [],
+      scheduleEmails: [],
       cancel: [],
       stopCollection: [],
       released: [],
@@ -252,6 +276,7 @@ describe("ACTIVE before renewal", () => {
       "countPendingInvoiceItems",
       "listCustomerSubscriptions",
       "retrieveSubscription",
+      "setCancelAtPeriodEnd",
       "stopInvoiceCollection",
     ]);
   });
@@ -581,49 +606,54 @@ describe("kill switch + missing org", () => {
   });
 });
 
-describe("HQ-INITIATED cancellation (the HQ 'Cancel' lifecycle action) — F2", () => {
+describe("HQ-INITIATED cancellation (the HQ 'Cancel' lifecycle action) — same policy as the owner", () => {
   const HQ = { userId: "33333333-3333-4333-8333-333333333333", email: "ops@hq.example.test" };
   const asHq = (deps = makeDeps()) =>
     stopBillingForHqCancellation(deps, { orgId: ORG_ID, actor: HQ, reason: "non-payment" });
 
-  it("terminates the Stripe subscription through the SAME path, recorded as source 'hq', with the refund-review flag", async () => {
+  it("a PAYING active company is NOT cut off: HQ schedules the end-of-period cancellation and the org stays active", async () => {
     const r = await asHq();
-    expect(r.ok).toBe(true);
-    expect(w.calls.cancel).toEqual([{ id: "sub_1", idempotencyKey: `crewflow-cancel:${ORG_ID}:sub_1` }]);
-    expect(w.stripeSubs.get("sub_1")?.status).toBe("canceled");
-    expect(w.org?.status).toBe("cancelled");
-    expect(w.calls.claimSources).toEqual(["hq"]);
-    expect(w.calls.confirms[0]!.refundReview).toBe("pending");
-    expect(w.calls.stopCollection).toEqual(["sub_1"]);
-    expect(w.calls.audits.map((a) => a.action)).toEqual(["billing.subscription_cancelled_by_hq"]);
-    expect(w.calls.notices[0]!.title).toBe("Subscription cancelled by HQ");
-    expect(w.calls.notices[0]!.body).toMatch(/REFUND REVIEW DUE/);
-  });
-
-  it("does NOT send the 'your subscription is cancelled' email to the HQ operator", async () => {
-    await asHq();
+    expect(r).toMatchObject({ ok: true, kind: "scheduled", accessEndsAt: NOW + 20 * DAY });
+    expect(w.calls.schedule.map((c) => [c.id, c.value])).toEqual([["sub_1", true]]);
+    expect(w.calls.cancel).toEqual([]);
+    expect(w.stripeSubs.get("sub_1")).toMatchObject({ status: "active", cancelAtPeriodEnd: true });
+    expect(w.org?.status).toBe("active");
+    expect(w.calls.audits.map((a) => a.action)).toEqual(["billing.subscription_cancellation_scheduled_by_hq"]);
+    expect(w.calls.notices[0]!.title).toBe("Cancellation scheduled by HQ");
+    expect(w.calls.scheduleEmails).toEqual([]);
     expect(w.calls.emails).toEqual([]);
   });
 
-  it("the self-serve kill switch does not stop HQ from stopping a customer's billing", async () => {
+  it("a SUSPENDED company (no paid period to honour) is terminated immediately, recorded as source 'hq', refund review flagged", async () => {
+    w.org = { ...w.org!, status: "suspended" };
+    w.stripeSubs.set("sub_1", sub("sub_1", "past_due"));
+    const r = await asHq();
+    expect(r).toMatchObject({ ok: true, kind: "cancelled" });
+    expect(w.calls.cancel).toEqual([{ id: "sub_1", idempotencyKey: `crewflow-cancel:${ORG_ID}:sub_1` }]);
+    expect(w.org?.status).toBe("cancelled");
+    expect(w.calls.claimSources).toEqual(["hq"]);
+    expect(w.calls.stopCollection).toEqual(["sub_1"]);
+    expect(w.calls.audits.map((a) => a.action)).toEqual(["billing.subscription_cancelled_by_hq"]);
+    expect(w.calls.notices[0]!.body).not.toMatch(/pro-rata/);
+    expect(w.calls.emails).toEqual([]);
+  });
+
+  it("the self-serve kill switch does not stop HQ", async () => {
     w.disabled = true;
     const r = await asHq();
-    expect(r.ok).toBe(true);
-    expect(w.calls.cancel).toHaveLength(1);
+    expect(r).toMatchObject({ ok: true, kind: "scheduled" });
   });
 
   it.each([
     ["Stripe refuses", () => Object.assign(new Error("no"), { type: "StripeInvalidRequestError" }), "stripe_error"],
     ["Stripe times out", () => Object.assign(new Error("timed out"), { type: "StripeConnectionError" }), "stripe_timeout"],
-  ] as const)("%s → FAILS LOUDLY and the org is NOT marked cancelled", async (_n, err, reason) => {
-    w.cancelImpl = async () => {
-      throw err();
-    };
+  ] as const)("%s while scheduling → FAILS LOUDLY, nothing scheduled, org untouched", async (_n, err, reason) => {
+    w.scheduleFail = () => err();
     const r = await asHq();
     expect(r).toMatchObject({ ok: false, reason });
     expect(!r.ok && r.message).toMatch(/^NOT cancelled\./);
     expect(w.org?.status).toBe("active");
-    expect(w.stripeSubs.get("sub_1")?.status).toBe("active");
+    expect(w.stripeSubs.get("sub_1")).toMatchObject({ status: "active", cancelAtPeriodEnd: false });
   });
 
   it("org linked to Stripe but Stripe unavailable → refused, org untouched", async () => {
@@ -643,12 +673,12 @@ describe("HQ-INITIATED cancellation (the HQ 'Cancel' lifecycle action) — F2", 
     expect(!r.ok && r.message).toMatch(/^NOT cancelled\./);
   });
 
-  it("org with no Stripe subscription → cancelled locally (nothing to bill)", async () => {
+  it("org with no Stripe subscription → cancelled locally (nothing to renew)", async () => {
     w.org = { ...w.org!, stripe_customer_id: null, stripe_subscription_id: null };
     w.stripeSubs.clear();
     w.stripeAvailable = false;
     const r = await asHq();
-    expect(r.ok).toBe(true);
+    expect(r).toMatchObject({ ok: true, kind: "cancelled" });
     expect(w.org?.status).toBe("cancelled");
   });
 
@@ -656,6 +686,137 @@ describe("HQ-INITIATED cancellation (the HQ 'Cancel' lifecycle action) — F2", 
     for (const code of ["billing_unavailable", "billing_mismatch", "stripe_timeout", "stripe_error"] as const) {
       expect(HQ_CANCEL_ERROR_COPY[code], code).toMatch(/^NOT cancelled\./);
     }
+  });
+});
+
+describe("OWNER cancellation — END OF PAID PERIOD (founder policy 2026-11-16)", () => {
+  const schedule = (expected?: number | null) =>
+    scheduleOrgCancellation(makeDeps(), { orgId: ORG_ID, actor: ACTOR, expectedAccessEndsAt: expected });
+
+  it("preview shows the exact access-end date (the current period end) before confirming", async () => {
+    expect(await previewCancellation(makeDeps(), ORG_ID)).toEqual({
+      kind: "end_of_period",
+      accessEndsAt: NOW + 20 * DAY,
+      alreadyScheduled: false,
+    });
+  });
+
+  it("schedules cancel_at_period_end in Stripe; the subscription stays live, the org stays ACTIVE, nothing is refunded or terminated", async () => {
+    const r = await schedule(NOW + 20 * DAY);
+    expect(r).toMatchObject({ ok: true, outcome: "scheduled", accessEndsAt: NOW + 20 * DAY, emailSent: true });
+    expect(w.calls.schedule).toEqual([
+      { id: "sub_1", value: true, idempotencyKey: `crewflow-cancel-schedule:${ORG_ID}:sub_1:${NOW + 20 * DAY}` },
+    ]);
+    expect(w.stripeSubs.get("sub_1")).toMatchObject({ status: "active", cancelAtPeriodEnd: true });
+    expect(w.org?.status).toBe("active");
+    expect(w.calls.cancel).toEqual([]);
+    expect(w.calls.confirms).toEqual([]);
+    expect(w.calls.stopCollection).toEqual([]);
+    expect(w.calls.projected).toEqual(["sub_1"]);
+    expect(w.calls.scheduleEmails).toEqual([{ to: ACTOR.email, kind: "scheduled", at: NOW + 20 * DAY }]);
+    expect(w.calls.audits.map((a) => a.action)).toEqual(["billing.subscription_cancellation_scheduled_by_owner"]);
+    expect(w.calls.notices[0]!.body).toMatch(/No refund is due under the policy/);
+  });
+
+  it("a duplicate request (double click / second tab) changes nothing and sends no second email", async () => {
+    await schedule(NOW + 20 * DAY);
+    const again = await schedule(NOW + 20 * DAY);
+    expect(again).toMatchObject({ ok: true, outcome: "already_scheduled" });
+    expect(w.calls.schedule).toHaveLength(1);
+    expect(w.calls.scheduleEmails).toHaveLength(1);
+    expect((await previewCancellation(makeDeps(), ORG_ID)) as { alreadyScheduled?: boolean }).toMatchObject({ alreadyScheduled: true });
+  });
+
+  it("RENEWAL BOUNDARY: if the subscription renewed after the dialog was shown, nothing changes and the owner must confirm the new date", async () => {
+    const shown = NOW + 20 * DAY;
+    w.stripeSubs.set("sub_1", sub("sub_1", "active", { currentPeriodStart: shown, currentPeriodEnd: shown + 30 * DAY }));
+    const r = await schedule(shown);
+    expect(r).toEqual({ ok: false, reason: "period_changed" });
+    expect(w.calls.schedule).toEqual([]);
+    const fresh = await schedule(shown + 30 * DAY);
+    expect(fresh).toMatchObject({ ok: true, outcome: "scheduled", accessEndsAt: shown + 30 * DAY });
+  });
+
+  it("Stripe accepted the update but the response was lost → verified by re-reading, reported as scheduled", async () => {
+    w.scheduleFail = (id, value) => {
+      const cur = w.stripeSubs.get(id)!;
+      w.stripeSubs.set(id, { ...cur, cancelAtPeriodEnd: value }); // the write landed
+      return Object.assign(new Error("socket hang up"), { type: "StripeConnectionError" });
+    };
+    const r = await schedule();
+    expect(r).toMatchObject({ ok: true, outcome: "scheduled" });
+  });
+
+  it("two live subscriptions: if the second cannot be scheduled the first is put back — a refusal means nothing changed", async () => {
+    w.stripeSubs.set("sub_2", sub("sub_2", "active", { currentPeriodEnd: NOW + 25 * DAY }));
+    w.scheduleFail = (id, value) => (id === "sub_2" && value ? Object.assign(new Error("no"), { type: "StripeInvalidRequestError" }) : null);
+    const r = await schedule();
+    expect(r).toEqual({ ok: false, reason: "stripe_error" });
+    expect(w.stripeSubs.get("sub_1")!.cancelAtPeriodEnd).toBe(false);
+    expect(w.stripeSubs.get("sub_2")!.cancelAtPeriodEnd).toBe(false);
+  });
+
+  it("access ends at the LATEST period end when more than one subscription is live", async () => {
+    w.stripeSubs.set("sub_2", sub("sub_2", "active", { currentPeriodEnd: NOW + 25 * DAY }));
+    const r = await schedule();
+    expect(r).toMatchObject({ ok: true, outcome: "scheduled", accessEndsAt: NOW + 25 * DAY });
+  });
+
+  it("a past_due subscription is not in good standing → immediate path (no paid period to honour)", async () => {
+    w.stripeSubs.set("sub_1", sub("sub_1", "past_due"));
+    expect(await previewCancellation(makeDeps(), ORG_ID)).toEqual({ kind: "immediate", why: "not_in_good_standing" });
+    const r = await schedule();
+    expect(r).toMatchObject({ ok: true, outcome: "cancelled" });
+    expect(w.calls.cancel).toHaveLength(1);
+  });
+
+  it("no Stripe subscription → immediate (nothing to renew)", async () => {
+    w.org = { ...w.org!, stripe_customer_id: null, stripe_subscription_id: null };
+    w.stripeSubs.clear();
+    expect(await previewCancellation(makeDeps(), ORG_ID)).toEqual({ kind: "immediate", why: "no_subscription" });
+  });
+
+  it("Stripe unreachable → preview unavailable and the schedule is refused", async () => {
+    w.stripeAvailable = false;
+    expect(await previewCancellation(makeDeps(), ORG_ID)).toEqual({ kind: "unavailable", reason: "billing_unavailable" });
+    expect(await schedule()).toEqual({ ok: false, reason: "billing_unavailable" });
+  });
+
+  it("the kill switch refuses owner scheduling", async () => {
+    w.disabled = true;
+    expect(await schedule()).toEqual({ ok: false, reason: "disabled" });
+  });
+});
+
+describe("REVERSING a scheduled cancellation before expiry", () => {
+  const resume = () => resumeOrgSubscription(makeDeps(), { orgId: ORG_ID, actor: ACTOR });
+
+  it("withdraws cancel_at_period_end; the subscription renews as normal", async () => {
+    await scheduleOrgCancellation(makeDeps(), { orgId: ORG_ID, actor: ACTOR });
+    const r = await resume();
+    expect(r).toMatchObject({ ok: true, outcome: "resumed", renewsAt: NOW + 20 * DAY, emailSent: true });
+    expect(w.stripeSubs.get("sub_1")!.cancelAtPeriodEnd).toBe(false);
+    expect(w.calls.schedule.map((c) => c.value)).toEqual([true, false]);
+    expect(w.calls.scheduleEmails.map((e) => e.kind)).toEqual(["scheduled", "resumed"]);
+    expect(w.calls.audits.map((a) => a.action)).toContain("billing.subscription_resumed_by_owner");
+  });
+
+  it("nothing scheduled → not_scheduled, no Stripe call", async () => {
+    expect(await resume()).toMatchObject({ ok: true, outcome: "not_scheduled" });
+    expect(w.calls.schedule).toEqual([]);
+  });
+
+  it("after expiry (company cancelled) there is nothing to undo → 'expired'", async () => {
+    w.org = { ...w.org!, status: "cancelled" };
+    w.stripeSubs.clear();
+    expect(await resume()).toEqual({ ok: false, reason: "expired" });
+  });
+
+  it("Stripe refuses the withdrawal → reported, not claimed as resumed", async () => {
+    await scheduleOrgCancellation(makeDeps(), { orgId: ORG_ID, actor: ACTOR });
+    w.scheduleFail = (_id, value) => (value ? null : Object.assign(new Error("no"), { type: "StripeInvalidRequestError" }));
+    expect(await resume()).toEqual({ ok: false, reason: "stripe_error" });
+    expect(w.stripeSubs.get("sub_1")!.cancelAtPeriodEnd).toBe(true);
   });
 });
 

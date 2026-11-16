@@ -33,6 +33,7 @@ type SP = Promise<{
   status?: string;
   sort?: string;
   error?: string;
+  notice?: string;
   saved?: string;
 }>;
 
@@ -290,6 +291,11 @@ export default async function AdminOrganizationsPage({
       {errorMessage ? (
         <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {errorMessage}
+        </div>
+      ) : null}
+      {sp.notice ? (
+        <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          {sp.notice}
         </div>
       ) : null}
       {savedMessage ? (

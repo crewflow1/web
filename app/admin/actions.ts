@@ -85,6 +85,11 @@ export async function setOrganizationStatus(formData: FormData): Promise<void> {
     if (!stopped.ok) {
       redirect(`/admin/organizations?error=${encodeURIComponent(stopped.message)}`);
     }
+    // A paying company is cancelled at the END of its paid period (policy): the
+    // org stays active and the Stripe webhook applies `cancelled` at expiry.
+    if (stopped.kind === "scheduled") {
+      redirect(`/admin/organizations?notice=${encodeURIComponent(stopped.message)}`);
+    }
   }
 
   const supabase = createAdminClient();

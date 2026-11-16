@@ -11,10 +11,23 @@ import {
 } from "@/server/services/self-serve-billing";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { loadBillingHistory, wireBillingHistoryDeps } from "@/server/services/billing-history";
-import { loadCancellationOrg } from "@/server/services/subscription-cancellation";
-import { isSelfServeCancellationDisabled } from "@/lib/billing/cancellation";
+import {
+  loadCancellationOrg,
+  previewCancellation,
+  wireCancellationDeps,
+  type CancellationPreview,
+} from "@/server/services/subscription-cancellation";
+import {
+  CANCELLATION_ERROR_COPY,
+  formatAccessDate,
+  isSelfServeCancellationDisabled,
+} from "@/lib/billing/cancellation";
 import { InvoiceHistory } from "@/components/billing/invoice-history";
-import { CancelSubscription } from "@/components/billing/cancel-subscription.client";
+import {
+  CancelSubscription,
+  KeepSubscription,
+  type CancelPreviewView,
+} from "@/components/billing/cancel-subscription.client";
 import { openBillingPortal, changePlan } from "./actions";
 
 /**
@@ -61,7 +74,14 @@ const ERROR_COPY: Record<string, string> = {
 export default async function BillingSettingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; change?: string; plan?: string }>;
+  searchParams: Promise<{
+    error?: string;
+    change?: string;
+    plan?: string;
+    cancellation_scheduled?: string;
+    resumed?: string;
+    emailed?: string;
+  }>;
 }) {
   // R4: gate on settings:view BEFORE any subscription / Stripe invoice read, so a
   // staff member never sees the org's subscription status or SaaS invoice list
@@ -96,6 +116,30 @@ export default async function BillingSettingsPage({
     billingOrg?.stripe_customer_id || billingOrg?.stripe_subscription_id,
   );
 
+  // What cancelling would do right now (end of the paid period, or immediately
+  // when nothing renews) — read live from Stripe so the date shown is the date
+  // Stripe will honour. Owner/admin only (settings:manage); staff never get here.
+  let preview: CancellationPreview | null = null;
+  if (isAccountOwner || canManage) {
+    try {
+      preview = await previewCancellation(wireCancellationDeps(), ctx.org.id);
+    } catch (e) {
+      console.error("[settings/billing] cancellation preview failed", {
+        org_id: ctx.org.id,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      preview = { kind: "unavailable", reason: "billing_unavailable" };
+    }
+  }
+  const scheduledEnd =
+    preview?.kind === "end_of_period" && preview.alreadyScheduled ? preview.accessEndsAt : null;
+  const cancelView: CancelPreviewView | null =
+    preview?.kind === "end_of_period"
+      ? { kind: "end_of_period", accessEndsAt: preview.accessEndsAt, dateLabel: formatAccessDate(preview.accessEndsAt) }
+      : preview?.kind === "immediate"
+        ? { kind: "immediate" }
+        : null;
+
   const errorMsg = sp.error ? (ERROR_COPY[sp.error] ?? "Something went wrong.") : null;
 
   return (
@@ -115,6 +159,21 @@ export default async function BillingSettingsPage({
       {sp.change === "success" ? (
         <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
           Plan change confirmed{sp.plan ? ` — you're now on ${getPlan(sp.plan)?.name ?? sp.plan}.` : "."}
+        </div>
+      ) : null}
+
+      {sp.cancellation_scheduled === "1" && scheduledEnd ? (
+        <div role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+          <strong className="font-semibold">Cancellation scheduled.</strong> You keep full access until{" "}
+          {formatAccessDate(scheduledEnd)}, and nothing more will be charged.
+          {sp.emailed === "1" ? ` We've emailed a confirmation to ${user.email}.` : ""}
+        </div>
+      ) : null}
+      {sp.resumed === "1" && preview?.kind === "end_of_period" && !preview.alreadyScheduled ? (
+        <div role="status" className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+          <strong className="font-semibold">Your subscription will continue.</strong> It next renews on{" "}
+          {formatAccessDate(preview.accessEndsAt)}.
+          {sp.emailed === "1" ? ` We've emailed a confirmation to ${user.email}.` : ""}
         </div>
       ) : null}
 
@@ -235,12 +294,26 @@ export default async function BillingSettingsPage({
       {/* Cancel --------------------------------------------------------- */}
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-semibold text-slate-900">Cancel subscription</h2>
-        <p className="mt-1 text-sm text-slate-600">
-          Cancelling takes effect immediately: your company loses access straight away and no
-          further payments are taken. You&apos;ll see exactly what happens before you confirm.
-        </p>
+        {scheduledEnd ? (
+          <div data-testid="cancellation-scheduled" className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <p>
+              <strong className="font-semibold">Your subscription ends on {formatAccessDate(scheduledEnd)}.</strong>{" "}
+              You and your team keep full access until then. It won&apos;t renew, and no refund is
+              issued for the rest of the period.
+            </p>
+            {isAccountOwner && !cancelDisabled ? (
+              <KeepSubscription orgId={ctx.org.id} dateLabel={formatAccessDate(scheduledEnd)} />
+            ) : null}
+          </div>
+        ) : (
+          <p className="mt-1 text-sm text-slate-600">
+            {preview?.kind === "end_of_period"
+              ? `Cancelling takes effect at the end of your current paid period, on ${formatAccessDate(preview.accessEndsAt)}. You keep full access until then. You'll see exactly what happens before you confirm.`
+              : "You'll see exactly what happens before you confirm."}
+          </p>
+        )}
         <div className="mt-4">
-          {!isAccountOwner ? (
+          {scheduledEnd ? null : !isAccountOwner ? (
             <p className="text-sm text-slate-600">
               Only the account owner can cancel the subscription.
             </p>
@@ -255,11 +328,18 @@ export default async function BillingSettingsPage({
               </a>{" "}
               and we&apos;ll cancel it for you today.
             </p>
+          ) : !cancelView ? (
+            <p className="text-sm text-slate-700" role="alert">
+              {CANCELLATION_ERROR_COPY[
+                preview?.kind === "unavailable" ? preview.reason : "billing_unavailable"
+              ] ?? CANCELLATION_ERROR_COPY.billing_unavailable}
+            </p>
           ) : (
             <CancelSubscription
               orgId={ctx.org.id}
               orgName={ctx.org.name}
               hasSubscription={hasCardSubscription}
+              preview={cancelView}
               dataExportHref="/api/gdpr/export"
             />
           )}

@@ -22,8 +22,6 @@
  * where tax law (HMRC) obliges us to retain it."
  */
 
-/** Days after cancellation within which the terms say tenant data is deleted. */
-export const CANCELLATION_DATA_DELETION_DAYS = 30;
 
 /** Where a lapsed (cancelled / suspended) org's owner manages billing + data. */
 export const ACCOUNT_BILLING_PATH = "/account/billing";
@@ -216,18 +214,40 @@ export function classifyStripeCancelError(e: unknown): StripeCancelErrorKind {
  *   refund   — restates the terms; nothing is refunded by code.
  *   data     — restates the terms; export stays available to the owner.
  */
+/** "16 December 2026" — the access-end date as the customer reads it (UK). */
+export function formatAccessDate(unixSeconds: number): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "Europe/London",
+  }).format(new Date(unixSeconds * 1000));
+}
+
+/**
+ * Customer-facing statements about cancelling. Founder policy 2026-11-16:
+ * cancellation takes effect at the END of the paid period; full access until
+ * then; no automatic refund for the rest of the period; the setup fee is a
+ * one-off, non-refundable charge except where the law requires otherwise;
+ * cancelling never deletes data. Wording deliberately preserves any refund a
+ * customer's existing agreement or the law gives them ("we'll contact you").
+ */
 export const CANCELLATION_COPY = {
-  stops:
-    "Your subscription ends immediately and everyone in your company loses access to the workspace straight away, including you.",
+  scheduledAccess: (date: string) =>
+    `Your subscription won't renew. You and your team keep full access until ${date}. After that, staff lose access and the account owner keeps read-only access to download data and invoices.`,
+  immediateAccess:
+    "There's no paid period left to run, so the workspace closes as soon as you confirm. Staff lose access straight away; the account owner keeps read-only access to download data and invoices.",
   charges:
-    "We won't take any further payments. No renewal will be charged, and we won't try your card again for any invoice.",
+    "We won't take any further subscription payments. Your next renewal won't be charged.",
   unpaid:
     "If an invoice is still unpaid, we stop trying to collect it from your card. It stays on your account as outstanding, and we'll contact you about it.",
   refund:
-    "Our terms give you a pro-rata refund for prepaid time you haven't used. It isn't paid automatically when you cancel: we work out what's due and refund it to your original payment method, then email you to confirm.",
-  data: `Your data isn't deleted when you cancel. Under our terms it's deleted within ${CANCELLATION_DATA_DELETION_DAYS} days of cancellation, except records tax law requires us to keep. You can still sign in to download an export and your invoices until then.`,
+    "There's no automatic refund for the rest of the current period: you keep using CrewFlow until it ends. The setup fee is a one-off charge and isn't refunded when you cancel. If your agreement with us or the law entitles you to a refund, we'll work it out and contact you.",
+  data: "Cancelling never deletes your data. We keep your company's records in line with our retention policy and legal obligations, and the account owner can still sign in to download an export and invoices.",
+  undo: (date: string) =>
+    `Changed your mind? You can undo this from your billing page any time before ${date}, and nothing else changes.`,
   reactivate:
-    "Changed your mind? Ask us to reactivate from your billing page and we'll get you set up again.",
+    "Changed your mind after the subscription has ended? Ask us to reactivate from your billing page and we'll get you set up again.",
 } as const;
 
 /** Human copy for each refusal the cancel action can return. */
@@ -248,6 +268,10 @@ export const CANCELLATION_ERROR_COPY: Record<string, string> = {
   stripe_error:
     "Our payment provider refused the cancellation, so nothing has changed. Try again, or email hello@crewflow.uk and we'll cancel it for you.",
   invalid: "That request wasn't valid. Reload the page and try again.",
+  period_changed:
+    "Your subscription has just renewed, so the date your access ends has moved. Nothing has changed. Reload the page to see the new date and confirm again.",
+  expired:
+    "This subscription has already ended, so there's nothing to undo. You can ask us to reactivate it from your billing page.",
   unexpected:
     "Something went wrong and we couldn't confirm the cancellation. Reload this page to see whether it went through before trying again.",
 };

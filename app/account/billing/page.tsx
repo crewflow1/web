@@ -148,6 +148,7 @@ export default async function AccountBillingPage({
                       </p>
                     ) : (
                       <CancelSubscription
+                        preview={{ kind: "immediate" }}
                         orgId={orgId}
                         orgName={ctx.org.name}
                         hasSubscription
@@ -230,6 +231,7 @@ export default async function AccountBillingPage({
                 </p>
               ) : (
                 <CancelSubscription
+                        preview={{ kind: "immediate" }}
                   orgId={orgId}
                   orgName={ctx.org.name}
                   hasSubscription={linkedToStripe}

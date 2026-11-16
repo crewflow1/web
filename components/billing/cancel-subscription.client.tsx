@@ -6,9 +6,21 @@ import { Modal } from "@/components/ui/modal";
 import { buttonClass } from "@/components/ui/button";
 import {
   cancelSubscriptionAction,
+  resumeSubscriptionAction,
   type CancelFormState,
+  type ResumeFormState,
 } from "@/app/account/billing/actions";
 import { CANCELLATION_COPY } from "@/lib/billing/cancellation";
+
+/**
+ * What cancelling would do, computed on the server just before render
+ * (previewCancellation). `accessEndsAt` is posted back so the server refuses if
+ * the subscription renewed in between — the owner is only ever committed to the
+ * date they were shown.
+ */
+export type CancelPreviewView =
+  | { kind: "end_of_period"; accessEndsAt: number; dateLabel: string }
+  | { kind: "immediate" };
 
 /**
  * The confirm button. A solid red fill, spelled out rather than layered onto
@@ -42,12 +54,14 @@ export function CancelSubscription({
   orgName,
   /** False when the workspace has no card subscription (nothing to bill). */
   hasSubscription,
+  preview,
   triggerLabel = "Cancel subscription",
   dataExportHref,
 }: {
   orgId: string;
   orgName: string;
   hasSubscription: boolean;
+  preview: CancelPreviewView;
   triggerLabel?: string;
   /** Where the owner can download their data right now, if reachable. */
   dataExportHref?: string;
@@ -88,18 +102,35 @@ export function CancelSubscription({
       >
         <form action={formAction} className="px-6 py-6 sm:px-8 sm:py-8">
           <input type="hidden" name="expected_org_id" value={orgId} />
+          {preview.kind === "end_of_period" ? (
+            <input type="hidden" name="expected_access_ends_at" value={preview.accessEndsAt} />
+          ) : null}
 
           <h2 id="cancel-subscription-title" className="text-lg font-semibold text-slate-900">
             Cancel CrewFlow for {orgName}?
           </h2>
           <p className="mt-1 text-sm text-slate-600">
-            This takes effect as soon as you confirm. Here is exactly what happens.
+            {preview.kind === "end_of_period" ? (
+              <>
+                Your access ends on{" "}
+                <strong className="font-semibold text-slate-900" data-testid="access-end-date">
+                  {preview.dateLabel}
+                </strong>
+                , the end of your current paid period. Here is exactly what happens.
+              </>
+            ) : (
+              "This takes effect as soon as you confirm. Here is exactly what happens."
+            )}
           </p>
 
           <dl className="mt-5 space-y-4 text-sm">
             <div>
               <dt className="font-semibold text-slate-900">Access</dt>
-              <dd className="mt-0.5 text-slate-700">{CANCELLATION_COPY.stops}</dd>
+              <dd className="mt-0.5 text-slate-700">
+                {preview.kind === "end_of_period"
+                  ? CANCELLATION_COPY.scheduledAccess(preview.dateLabel)
+                  : CANCELLATION_COPY.immediateAccess}
+              </dd>
             </div>
             <div>
               <dt className="font-semibold text-slate-900">Payments</dt>
@@ -130,6 +161,7 @@ export function CancelSubscription({
               <dt className="font-semibold text-slate-900">Your data</dt>
               <dd className="mt-0.5 text-slate-700">
                 {CANCELLATION_COPY.data}
+                {preview.kind === "end_of_period" ? ` ${CANCELLATION_COPY.undo(preview.dateLabel)}` : ""}
                 {dataExportHref ? (
                   <>
                     {" "}
@@ -167,7 +199,7 @@ export function CancelSubscription({
           ) : null}
           {done ? (
             <p role="status" className="mt-4 text-sm text-slate-700">
-              Cancelled. Taking you to your billing page…
+              {preview.kind === "end_of_period" ? "Cancellation scheduled. Updating your billing page…" : "Cancelled. Taking you to your billing page…"}
             </p>
           ) : null}
 
@@ -186,11 +218,43 @@ export function CancelSubscription({
               disabled={busy}
               className={CONFIRM_CLASS}
             >
-              {pending ? "Cancelling…" : "Cancel subscription now"}
+              {pending
+                ? "Cancelling…"
+                : preview.kind === "end_of_period"
+                  ? `Cancel at end of period (${preview.dateLabel})`
+                  : "Cancel subscription now"}
             </button>
           </div>
         </form>
       </Modal>
     </>
+  );
+}
+
+/**
+ * Undo a SCHEDULED cancellation before it takes effect. One click, no dialog:
+ * keeping the subscription is the safe direction.
+ */
+export function KeepSubscription({ orgId, dateLabel }: { orgId: string; dateLabel: string }) {
+  const [state, formAction, pending] = useActionState<ResumeFormState, FormData>(
+    resumeSubscriptionAction,
+    { status: "idle" },
+  );
+  useEffect(() => {
+    if (state.status === "done") window.location.assign(state.redirectTo);
+  }, [state]);
+  const busy = pending || state.status === "done";
+  return (
+    <form action={formAction} className="mt-3">
+      <input type="hidden" name="expected_org_id" value={orgId} />
+      <button type="submit" disabled={busy} className={buttonClass("primary", "md")}>
+        {busy ? "Keeping your subscription…" : `Keep my subscription (undo cancellation before ${dateLabel})`}
+      </button>
+      {state.status === "error" ? (
+        <p role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          {state.message}
+        </p>
+      ) : null}
+    </form>
   );
 }

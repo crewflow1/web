@@ -15,6 +15,7 @@ import { recordAdminActivity } from "@/server/services/hq-audit";
 import { env } from "@/lib/env";
 import type { CheckoutSessionMetadata } from "@/lib/stripe/events";
 import { setupFeeSatisfied } from "@/lib/billing/activation-policy";
+import { checkoutCustomText } from "@/lib/billing/checkout-disclosure";
 
 /**
  * Customer detail — Stripe checkout server actions (Stripe go-live).
@@ -286,11 +287,13 @@ async function runCheckout(
             ...baseSession,
             mode: "payment",
             payment_intent_data: { metadata },
+            custom_text: checkoutCustomText("setup_fee"),
           })
         : await stripe.checkout.sessions.create({
             ...baseSession,
             mode: "subscription",
             subscription_data: { metadata },
+            custom_text: checkoutCustomText("subscription"),
           });
   } catch (e) {
     throw new CheckoutError(

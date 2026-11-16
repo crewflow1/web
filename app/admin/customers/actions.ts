@@ -374,6 +374,21 @@ export async function setCustomerLifecycle(formData: FormData): Promise<void> {
         `/admin/customers/${parsed.data.org_id}?error=${encodeURIComponent(stopped.message)}`,
       );
     }
+    // A paying company is cancelled at the END of its paid period (policy): the
+    // org stays active and the Stripe webhook applies `cancelled` at expiry.
+    if (stopped.kind === "scheduled") {
+      await recordAdminActivity({
+        actorId: admin.id,
+        actorEmail: admin.email,
+        action: "customer.lifecycle_cancel_scheduled",
+        targetTable: "organizations",
+        targetId: parsed.data.org_id,
+        metadata: { access_ends_at: new Date(stopped.accessEndsAt * 1000).toISOString() },
+      });
+      redirect(
+        `/admin/customers/${parsed.data.org_id}?notice=${encodeURIComponent(stopped.message)}`,
+      );
+    }
   }
 
   const supabase = createAdminClient();

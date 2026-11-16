@@ -21,7 +21,7 @@ import {
   isSelfServeCancellationDisabled,
   type RefundReview,
 } from "@/lib/billing/cancellation";
-import { buildCancellationEmail } from "@/lib/billing/cancellation-email";
+import { buildCancellationEmail, buildCancellationScheduleEmail } from "@/lib/billing/cancellation-email";
 
 /**
  * Self-serve subscription CANCELLATION — the service.
@@ -98,6 +98,8 @@ export type SubscriptionSnapshot = {
   unitAmountMinor: number | null;
   quantity: number | null;
   currency: string | null;
+  /** Stripe's `cancel_at_period_end`: a cancellation is scheduled for the period end. */
+  cancelAtPeriodEnd: boolean;
   /** The raw object, for the org_subscriptions projection. */
   shape: StripeSubscriptionShape;
 };
@@ -160,6 +162,15 @@ export type CancellationDeps = {
       subscriptionId: string,
       opts: { idempotencyKey: string },
     ) => Promise<SubscriptionSnapshot>;
+    /**
+     * Schedule (true) or withdraw (false) the end-of-period cancellation —
+     * Stripe's `cancel_at_period_end`. No proration, no money moves.
+     */
+    setCancelAtPeriodEnd: (
+      subscriptionId: string,
+      value: boolean,
+      opts: { idempotencyKey: string },
+    ) => Promise<SubscriptionSnapshot>;
     stopInvoiceCollection: (subscriptionId: string) => Promise<InvoiceCollectionResult>;
     /** Count of pending (un-invoiced) invoice items on the customer. */
     countPendingInvoiceItems: (customerId: string) => Promise<number>;
@@ -171,6 +182,14 @@ export type CancellationDeps = {
     to: string;
     orgName: string;
     hadSubscription: boolean;
+  }) => Promise<{ sent: boolean; reason?: string }>;
+  /** Confirmation that a cancellation is SCHEDULED (or withdrawn), with the date. */
+  sendScheduleEmail: (args: {
+    to: string;
+    orgName: string;
+    kind: "scheduled" | "resumed";
+    /** Unix seconds: when access ends (scheduled) or the next renewal (resumed). */
+    at: number;
   }) => Promise<{ sent: boolean; reason?: string }>;
 };
 
@@ -213,7 +232,7 @@ function gbpFromMinor(minor: number | null, currency: string | null): string {
 function hqNotice(
   org: CancellationOrg,
   type: string,
-  priority: "high" | "urgent",
+  priority: "medium" | "high" | "urgent",
   title: string,
   body: string,
   sourceId: string | null,
@@ -676,12 +695,12 @@ async function finish(
         : "The owner cancelled in-app.";
     const lines: string[] = [
       r.hadSubscription
-        ? `${who} Stripe subscription terminated immediately; workspace access ${revoked ? "revoked" : "was already revoked"}.`
+        ? `${who} Stripe subscription terminated immediately (no paid period left to honour); workspace access ${revoked ? "revoked" : "was already revoked"}.`
         : `${who} There was no live Stripe subscription; workspace access ${revoked ? "revoked" : "was already revoked"}. Check for any manual billing arrangement.`,
     ];
     if (refundReview === "pending") {
       lines.push(
-        `REFUND REVIEW DUE (terms: pro-rata for unused prepaid time). Estimate ${gbpFromMinor(r.refund?.estimateMinor ?? null, r.refund?.currency ?? null)} before tax/discounts — nothing was refunded automatically.`,
+        `REFUND REVIEW DUE: the subscription was terminated before its paid period ended. Policy: no automatic refund — check whether the customer's agreement (customers on the pre-2026-11 terms were promised pro-rata refunds of unused prepaid time) or the law requires one. Unused-time estimate ${gbpFromMinor(r.refund?.estimateMinor ?? null, r.refund?.currency ?? null)} before tax/discounts — nothing was refunded automatically.`,
       );
     }
     if (r.collection && r.collection.stopped.length > 0) {
@@ -748,6 +767,338 @@ async function finish(
 }
 
 // ---------------------------------------------------------------------------
+// END-OF-PERIOD cancellation (founder policy 2026-11-16)
+// ---------------------------------------------------------------------------
+//
+// The commercial policy: a paying customer's cancellation takes effect at the
+// END of the current paid period. Until then they keep full access, the
+// company stays `active`, and nothing is refunded automatically. In Stripe that
+// is `cancel_at_period_end = true`: no renewal is created; at the period end
+// Stripe deletes the subscription and the existing `customer.subscription.deleted`
+// handler confirms the cancellation and applies the D-17 cancelled-company rules
+// (owner read-only with billing + export, everyone else locked out). Data is
+// never deleted by any of this.
+//
+// Immediate termination (cancelOrgSubscription) remains ONLY for workspaces
+// with nothing left to renew: no live subscription, a non-active company
+// (suspended / pending — there is no paid period to honour), or a subscription
+// that is not in good standing (past_due / unpaid / incomplete).
+
+/** Stripe statuses for which "keep access until the period end" is meaningful. */
+const SCHEDULABLE_STATUSES = new Set(["active", "trialing"]);
+
+export type CancellationPreview =
+  /** A paid period is running: cancellation would end access at `accessEndsAt`. */
+  | { kind: "end_of_period"; accessEndsAt: number; alreadyScheduled: boolean }
+  /** Nothing to renew: the workspace would close as soon as the owner confirms. */
+  | { kind: "immediate"; why: "no_subscription" | "not_active" | "not_in_good_standing" }
+  /** Billing cannot be read right now: the owner cannot cancel this minute. */
+  | { kind: "unavailable"; reason: CancelFailureReason };
+
+type ScheduleTargets =
+  | { kind: "schedule"; subs: SubscriptionSnapshot[]; accessEndsAt: number }
+  | { kind: "immediate"; why: "no_subscription" | "not_active" | "not_in_good_standing" }
+  | { kind: "fail"; reason: CancelFailureReason; detail?: string };
+
+async function scheduleTargets(deps: CancellationDeps, org: CancellationOrg): Promise<ScheduleTargets> {
+  if (org.status !== "active" && org.status !== "trial") return { kind: "immediate", why: "not_active" };
+  const linked = Boolean(org.stripe_customer_id || org.stripe_subscription_id);
+  if (!linked) return { kind: "immediate", why: "no_subscription" };
+  if (!deps.stripeAvailable()) return { kind: "fail", reason: "billing_unavailable" };
+  let targets: Targets;
+  try {
+    targets = await resolveTargets(deps, org);
+  } catch (e) {
+    return { kind: "fail", reason: "billing_unavailable", detail: errText(e) };
+  }
+  if (targets.kind === "mismatch") return { kind: "fail", reason: "billing_mismatch", detail: targets.detail };
+  if (targets.live.length === 0) return { kind: "immediate", why: "no_subscription" };
+  if (targets.live.some((sub) => !SCHEDULABLE_STATUSES.has(sub.status))) {
+    return { kind: "immediate", why: "not_in_good_standing" };
+  }
+  const ends = targets.live.map((sub) => sub.currentPeriodEnd);
+  if (ends.some((e) => e === null || !Number.isFinite(e))) {
+    return { kind: "fail", reason: "stripe_error", detail: "subscription has no current period end" };
+  }
+  return { kind: "schedule", subs: targets.live, accessEndsAt: Math.max(...(ends as number[])) };
+}
+
+/** What cancelling would do RIGHT NOW — the dialog shows this before the owner confirms. */
+export async function previewCancellation(
+  deps: CancellationDeps,
+  orgId: string,
+): Promise<CancellationPreview> {
+  const org = await deps.loadOrg(orgId);
+  if (!org) return { kind: "unavailable", reason: "org_not_found" };
+  const t = await scheduleTargets(deps, org);
+  if (t.kind === "fail") return { kind: "unavailable", reason: t.reason };
+  if (t.kind === "immediate") return { kind: "immediate", why: t.why };
+  return {
+    kind: "end_of_period",
+    accessEndsAt: t.accessEndsAt,
+    alreadyScheduled: t.subs.every((sub) => sub.cancelAtPeriodEnd),
+  };
+}
+
+export type ScheduleFailureReason = CancelFailureReason | "period_changed";
+
+export type ScheduleResult =
+  | {
+      ok: true;
+      outcome: "scheduled" | "already_scheduled";
+      accessEndsAt: number;
+      subscriptionIds: string[];
+      emailSent: boolean;
+    }
+  /** No paid period to honour: delegated to the immediate cancellation. */
+  | { ok: true; outcome: "cancelled" | "already_cancelled"; immediate: CancelResult & { ok: true } }
+  | { ok: false; reason: ScheduleFailureReason };
+
+/** Idempotency key: one schedule per subscription per period end. */
+export function scheduleIdempotencyKey(orgId: string, subId: string, periodEnd: number, value: boolean): string {
+  return `crewflow-cancel-${value ? "schedule" : "resume"}:${orgId}:${subId}:${periodEnd}`;
+}
+
+async function verifySchedule(
+  deps: CancellationDeps,
+  sub: SubscriptionSnapshot,
+  value: boolean,
+  orgId: string,
+): Promise<SubscriptionSnapshot> {
+  try {
+    const out = await deps.stripe.setCancelAtPeriodEnd(sub.id, value, {
+      idempotencyKey: scheduleIdempotencyKey(orgId, sub.id, sub.currentPeriodEnd ?? 0, value),
+    });
+    if (out.cancelAtPeriodEnd !== value) throw new Error(`stripe returned cancel_at_period_end=${out.cancelAtPeriodEnd}`);
+    return out;
+  } catch (e) {
+    // Ask Stripe what IS true: a retried or raced request may already have landed.
+    let after: SubscriptionSnapshot | null = null;
+    try {
+      after = await deps.stripe.retrieveSubscription(sub.id);
+    } catch {
+      after = null;
+    }
+    if (after && after.cancelAtPeriodEnd === value && isLiveStripeSubscriptionStatus(after.status)) return after;
+    throw e;
+  }
+}
+
+/**
+ * The owner's (and HQ's) cancel for a PAYING company: schedule the end-of-period
+ * cancellation in Stripe. The company stays active; nothing is refunded.
+ *
+ * `expectedAccessEndsAt` is the date the confirmation dialog SHOWED. If Stripe's
+ * period has moved since (the subscription renewed between render and click),
+ * nothing changes and the owner is asked to confirm the new date — they must
+ * never be committed to a date they were not shown.
+ */
+export async function scheduleOrgCancellation(
+  deps: CancellationDeps,
+  args: {
+    orgId: string;
+    actor: CancelActor;
+    reason?: string | null;
+    initiator?: CancelInitiator;
+    expectedAccessEndsAt?: number | null;
+  },
+): Promise<ScheduleResult> {
+  const initiator: CancelInitiator = args.initiator ?? "owner";
+  if (initiator === "owner" && deps.isDisabled()) return { ok: false, reason: "disabled" };
+  const org = await deps.loadOrg(args.orgId);
+  if (!org) return { ok: false, reason: "org_not_found" };
+  const reason = args.reason?.trim() ? args.reason.trim().slice(0, 1000) : null;
+
+  const t = await scheduleTargets(deps, org);
+  if (t.kind === "fail") {
+    await deps.recordAudit({
+      action: "billing.subscription_cancel_failed",
+      orgId: org.id,
+      actor: args.actor,
+      metadata: { reason: t.reason, detail: t.detail ?? null, mode: "end_of_period" },
+    });
+    return { ok: false, reason: t.reason };
+  }
+  if (t.kind === "immediate") {
+    const r = await cancelOrgSubscription(deps, { orgId: org.id, actor: args.actor, reason, initiator });
+    if (!r.ok) return { ok: false, reason: r.reason };
+    return { ok: true, outcome: r.outcome, immediate: r };
+  }
+
+  if (
+    args.expectedAccessEndsAt !== undefined &&
+    args.expectedAccessEndsAt !== null &&
+    args.expectedAccessEndsAt !== t.accessEndsAt
+  ) {
+    return { ok: false, reason: "period_changed" };
+  }
+
+  const pending = t.subs.filter((sub) => !sub.cancelAtPeriodEnd);
+  if (pending.length === 0) {
+    return {
+      ok: true,
+      outcome: "already_scheduled",
+      accessEndsAt: t.accessEndsAt,
+      subscriptionIds: t.subs.map((sub) => sub.id),
+      emailSent: false,
+    };
+  }
+
+  const changed: SubscriptionSnapshot[] = [];
+  for (const sub of pending) {
+    try {
+      const out = await verifySchedule(deps, sub, true, org.id);
+      changed.push(out);
+    } catch (e) {
+      // Put back any subscription this call already scheduled, so a refusal
+      // really means "nothing changed".
+      for (const done of changed) {
+        try {
+          await verifySchedule(deps, done, false, org.id);
+        } catch (undoErr) {
+          console.error("[subscription-cancellation] could not undo a partial schedule", {
+            org_id: org.id,
+            subscription_id: done.id,
+            error: errText(undoErr),
+          });
+        }
+      }
+      const kind = classifyStripeCancelError(e);
+      await deps.recordAudit({
+        action: "billing.subscription_cancel_failed",
+        orgId: org.id,
+        actor: args.actor,
+        metadata: {
+          reason: kind === "timeout" ? "stripe_timeout" : "stripe_error",
+          mode: "end_of_period",
+          stripe_subscription_id: sub.id,
+          detail: errText(e),
+        },
+      });
+      return { ok: false, reason: kind === "timeout" ? "stripe_timeout" : "stripe_error" };
+    }
+  }
+
+  for (const sub of changed) {
+    try {
+      await deps.projectSubscription(org.id, sub.shape);
+    } catch (e) {
+      console.error("[subscription-cancellation] projection failed", { org_id: org.id, error: errText(e) });
+    }
+  }
+
+  const ids = t.subs.map((sub) => sub.id);
+  const endsIso = new Date(t.accessEndsAt * 1000).toISOString();
+  await deps.recordAudit({
+    action:
+      initiator === "hq"
+        ? "billing.subscription_cancellation_scheduled_by_hq"
+        : "billing.subscription_cancellation_scheduled_by_owner",
+    orgId: org.id,
+    actor: args.actor,
+    metadata: { stripe_subscription_ids: ids, access_ends_at: endsIso, reason_given: reason !== null },
+  });
+  await deps.notifyHq(
+    hqNotice(
+      org,
+      "stripe.subscription_cancellation_scheduled",
+      "high",
+      initiator === "hq" ? "Cancellation scheduled by HQ" : "Owner scheduled a cancellation",
+      `${initiator === "hq" ? `HQ (${args.actor.email ?? "operator"})` : "The owner"} scheduled cancellation for the end of the paid period (${endsIso.slice(0, 10)}). The workspace stays active until then; Stripe will not renew. No refund is due under the policy unless the customer's contract or the law requires one.${reason ? ` Reason given: ${reason}` : ""}`,
+      ids[0] ?? null,
+      { access_ends_at: endsIso, stripe_subscription_ids: ids },
+    ),
+  );
+
+  let emailSent = false;
+  if (initiator === "owner" && args.actor.email) {
+    try {
+      emailSent = (
+        await deps.sendScheduleEmail({ to: args.actor.email, orgName: org.name, kind: "scheduled", at: t.accessEndsAt })
+      ).sent;
+    } catch (e) {
+      console.error("[subscription-cancellation] schedule email failed", { org_id: org.id, error: errText(e) });
+    }
+  }
+  return { ok: true, outcome: "scheduled", accessEndsAt: t.accessEndsAt, subscriptionIds: ids, emailSent };
+}
+
+export type ResumeResult =
+  | { ok: true; outcome: "resumed" | "not_scheduled"; renewsAt: number | null; emailSent: boolean }
+  | { ok: false; reason: CancelFailureReason | "expired" };
+
+/**
+ * Withdraw a scheduled cancellation before it takes effect. Only possible while
+ * the subscription is still live; after expiry the owner asks for reactivation.
+ */
+export async function resumeOrgSubscription(
+  deps: CancellationDeps,
+  args: { orgId: string; actor: CancelActor; initiator?: CancelInitiator },
+): Promise<ResumeResult> {
+  const initiator: CancelInitiator = args.initiator ?? "owner";
+  if (initiator === "owner" && deps.isDisabled()) return { ok: false, reason: "disabled" };
+  const org = await deps.loadOrg(args.orgId);
+  if (!org) return { ok: false, reason: "org_not_found" };
+  if (org.status !== "active" && org.status !== "trial") return { ok: false, reason: "expired" };
+  const t = await scheduleTargets(deps, org);
+  if (t.kind === "fail") return { ok: false, reason: t.reason };
+  if (t.kind === "immediate") {
+    return t.why === "no_subscription" ? { ok: false, reason: "expired" } : { ok: true, outcome: "not_scheduled", renewsAt: null, emailSent: false };
+  }
+  const scheduled = t.subs.filter((sub) => sub.cancelAtPeriodEnd);
+  if (scheduled.length === 0) return { ok: true, outcome: "not_scheduled", renewsAt: t.accessEndsAt, emailSent: false };
+
+  const changed: SubscriptionSnapshot[] = [];
+  for (const sub of scheduled) {
+    try {
+      changed.push(await verifySchedule(deps, sub, false, org.id));
+    } catch (e) {
+      const kind = classifyStripeCancelError(e);
+      await deps.recordAudit({
+        action: "billing.subscription_resume_failed",
+        orgId: org.id,
+        actor: args.actor,
+        metadata: { stripe_subscription_id: sub.id, detail: errText(e), resumed_before_failure: changed.map((c) => c.id) },
+      });
+      return { ok: false, reason: kind === "timeout" ? "stripe_timeout" : "stripe_error" };
+    }
+  }
+  for (const sub of changed) {
+    try {
+      await deps.projectSubscription(org.id, sub.shape);
+    } catch (e) {
+      console.error("[subscription-cancellation] projection failed", { org_id: org.id, error: errText(e) });
+    }
+  }
+  await deps.recordAudit({
+    action: initiator === "hq" ? "billing.subscription_resumed_by_hq" : "billing.subscription_resumed_by_owner",
+    orgId: org.id,
+    actor: args.actor,
+    metadata: { stripe_subscription_ids: changed.map((c) => c.id), renews_at: new Date(t.accessEndsAt * 1000).toISOString() },
+  });
+  await deps.notifyHq(
+    hqNotice(
+      org,
+      "stripe.subscription_cancellation_withdrawn",
+      "medium",
+      "Scheduled cancellation withdrawn",
+      `${initiator === "hq" ? "HQ" : "The owner"} withdrew the scheduled cancellation. The subscription renews on ${new Date(t.accessEndsAt * 1000).toISOString().slice(0, 10)}.`,
+      changed[0]?.id ?? null,
+      {},
+    ),
+  );
+  let emailSent = false;
+  if (initiator === "owner" && args.actor.email) {
+    try {
+      emailSent = (await deps.sendScheduleEmail({ to: args.actor.email, orgName: org.name, kind: "resumed", at: t.accessEndsAt })).sent;
+    } catch (e) {
+      console.error("[subscription-cancellation] resume email failed", { org_id: org.id, error: errText(e) });
+    }
+  }
+  return { ok: true, outcome: "resumed", renewsAt: t.accessEndsAt, emailSent };
+}
+
+// ---------------------------------------------------------------------------
 // HQ-initiated cancellation — stop billing BEFORE the org is marked cancelled
 // ---------------------------------------------------------------------------
 
@@ -771,7 +1122,14 @@ export const HQ_CANCEL_ERROR_COPY: Record<CancelFailureReason, string> = {
 };
 
 export type HqCancelResult =
-  | { ok: true; result: Extract<CancelResult, { ok: true }> }
+  /** Billing stopped now: the caller may mark the organisation cancelled. */
+  | { ok: true; kind: "cancelled"; result: Extract<CancelResult, { ok: true }> }
+  /**
+   * A paying company: cancellation SCHEDULED for the period end (policy). The
+   * caller must NOT mark the organisation cancelled — the customer keeps access
+   * until `accessEndsAt`, and the Stripe webhook applies the cancelled state then.
+   */
+  | { ok: true; kind: "scheduled"; accessEndsAt: number; message: string }
   | { ok: false; reason: CancelFailureReason; message: string };
 
 /**
@@ -799,9 +1157,11 @@ export async function stopBillingForHqCancellation(
   deps: CancellationDeps,
   args: { orgId: string; actor: CancelActor; reason?: string | null },
 ): Promise<HqCancelResult> {
-  let result: CancelResult;
+  let result: ScheduleResult;
   try {
-    result = await cancelOrgSubscription(deps, { ...args, initiator: "hq" });
+    // Same policy as the owner: a paying company is cancelled at the END of its
+    // paid period. Immediate termination happens only when nothing can renew.
+    result = await scheduleOrgCancellation(deps, { ...args, initiator: "hq" });
   } catch (e) {
     console.error("[subscription-cancellation] HQ cancel threw", {
       org_id: args.orgId,
@@ -815,9 +1175,19 @@ export async function stopBillingForHqCancellation(
     };
   }
   if (!result.ok) {
-    return { ok: false, reason: result.reason, message: HQ_CANCEL_ERROR_COPY[result.reason] };
+    const reason: CancelFailureReason = result.reason === "period_changed" ? "stripe_error" : result.reason;
+    return { ok: false, reason, message: HQ_CANCEL_ERROR_COPY[reason] };
   }
-  return { ok: true, result };
+  if (result.outcome === "scheduled" || result.outcome === "already_scheduled") {
+    const day = new Date(result.accessEndsAt * 1000).toISOString().slice(0, 10);
+    return {
+      ok: true,
+      kind: "scheduled",
+      accessEndsAt: result.accessEndsAt,
+      message: `Cancellation scheduled for ${day} (end of the paid period). The workspace stays active until then and Stripe will not renew; it becomes cancelled automatically when the subscription ends.`,
+    };
+  }
+  return { ok: true, kind: "cancelled", result: result.immediate };
 }
 
 // ---------------------------------------------------------------------------
@@ -915,6 +1285,7 @@ function snapshot(sub: Stripe.Subscription): SubscriptionSnapshot {
     unitAmountMinor: item?.price?.unit_amount ?? null,
     quantity: item?.quantity ?? null,
     currency: sub.currency ?? item?.price?.currency ?? null,
+    cancelAtPeriodEnd: sub.cancel_at_period_end === true,
     shape: sub as unknown as StripeSubscriptionShape,
   };
 }
@@ -1151,6 +1522,32 @@ export async function sendCancellationConfirmationEmail(args: {
   return { sent: true };
 }
 
+export async function sendCancellationScheduleEmail(args: {
+  to: string;
+  orgName: string;
+  kind: "scheduled" | "resumed";
+  at: number;
+}): Promise<{ sent: boolean; reason?: string }> {
+  const mail = buildCancellationScheduleEmail({
+    orgName: args.orgName,
+    appUrl: env.NEXT_PUBLIC_APP_URL,
+    kind: args.kind,
+    at: args.at,
+  });
+  const result = await sendEmail({
+    to: args.to,
+    from: env.RESEND_NOTIFICATIONS_FROM || "CrewFlow Notifications <notify@crewflow.uk>",
+    subject: mail.subject,
+    html: mail.html,
+    text: mail.text,
+  });
+  if (!result.sent) {
+    console.warn("[subscription-cancellation] schedule email not sent", { reason: result.reason });
+    return { sent: false, reason: result.reason };
+  }
+  return { sent: true };
+}
+
 async function auditEntry(entry: CancellationAudit): Promise<void> {
   await recordAdminActivity({
     actorId: entry.actor?.userId ?? null,
@@ -1247,6 +1644,16 @@ export function wireCancellationDeps(): CancellationDeps {
         );
         return snapshot(sub);
       },
+      setCancelAtPeriodEnd: async (subscriptionId, value, { idempotencyKey }) => {
+        // proration_behavior "none": scheduling or withdrawing a cancellation
+        // never creates a credit or an invoice — no money moves.
+        const sub = await requireStripe().subscriptions.update(
+          subscriptionId,
+          { cancel_at_period_end: value, proration_behavior: "none" },
+          { ...STRIPE_REQ, idempotencyKey },
+        );
+        return snapshot(sub);
+      },
       stopInvoiceCollection: async (subscriptionId) => {
         const stripe = requireStripe();
         const out: InvoiceCollectionResult = { stopped: [], failed: [] };
@@ -1296,6 +1703,7 @@ export function wireCancellationDeps(): CancellationDeps {
       await emitNotifications([notice]);
     },
     sendOwnerEmail: sendCancellationConfirmationEmail,
+    sendScheduleEmail: sendCancellationScheduleEmail,
   };
 }
 

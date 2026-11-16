@@ -53,9 +53,9 @@ describe("cancellation confirmation email — via the email abstraction", () => 
     const arg = h.sendEmail.mock.calls[0]![0];
     expect(arg.to).toBe("owner@example.test");
     expect(arg.from).toBe("CrewFlow Notifications <notify@example.test>");
-    expect(arg.subject).toBe("Your CrewFlow subscription for Acme Builders is cancelled");
+    expect(arg.subject).toBe("Your CrewFlow subscription for Acme Builders has ended");
     expect(arg.text).toContain("https://app.example.test/account/billing");
-    expect(arg.html).toContain("Your subscription is cancelled");
+    expect(arg.html).toContain("Your subscription has ended");
   });
 
   it("an unsent email (no provider key) is reported, not thrown — cancelling never fails on email", async () => {

@@ -223,7 +223,8 @@ describeIntegration("stripe · subscription cancellation → entitlement state",
   type Snap = import("@/server/services/subscription-cancellation").SubscriptionSnapshot;
   function fakeStripe(customer: string, subs: Array<{ id: string; status: string }>, opts: { delayMs?: number; fail?: unknown } = {}) {
     const state = new Map(subs.map((s) => [s.id, s.status]));
-    const calls = { cancel: [] as string[] };
+    const cap = new Map<string, boolean>();
+    const calls = { cancel: [] as string[], schedule: [] as Array<[string, boolean]> };
     const now = Math.floor(Date.now() / 1000);
     const snap = (id: string): Snap => ({
       id,
@@ -235,13 +236,15 @@ describeIntegration("stripe · subscription cancellation → entitlement state",
       unitAmountMinor: 50_000,
       quantity: 1,
       currency: "gbp",
+      cancelAtPeriodEnd: cap.get(id) === true,
       shape: {
         id,
         status: state.get(id)!,
         customer,
         current_period_start: now - 10 * 86400,
         current_period_end: now + 20 * 86400,
-      },
+        cancel_at_period_end: cap.get(id) === true,
+      } as never,
     });
     return {
       calls,
@@ -259,7 +262,14 @@ describeIntegration("stripe · subscription cancellation → entitlement state",
         },
         stopInvoiceCollection: async () => ({ stopped: [], failed: [] }),
         countPendingInvoiceItems: async () => 0,
+        setCancelAtPeriodEnd: async (id: string, value: boolean) => {
+          calls.schedule.push([id, value]);
+          if (opts.fail) throw opts.fail;
+          cap.set(id, value);
+          return snap(id);
+        },
       },
+      periodEnd: now + 20 * 86400,
     };
   }
   function depsWith(stripe: ReturnType<typeof fakeStripe>) {
@@ -268,6 +278,7 @@ describeIntegration("stripe · subscription cancellation → entitlement state",
       isDisabled: () => false,
       stripeAvailable: () => true,
       stripe: stripe.api,
+      sendScheduleEmail: async () => ({ sent: false, reason: "test" }),
     };
   }
   const actor = () => ({ userId: owner.id, email: owner.email });
@@ -613,6 +624,59 @@ describeIntegration("stripe · subscription cancellation → entitlement state",
     expect(await status(o.id)).toBe("active");
   });
 
+  // ── END-OF-PERIOD policy on real Postgres ─────────────────────────────────
+  it("SCHEDULED: the owner's cancel keeps the company ACTIVE (staff keep access) until Stripe ends the subscription; then D-17 cancelled applies", async () => {
+    const o = await mkOrg("active");
+    const stripe = fakeStripe(o.customer!, [{ id: o.sub!, status: "active" }]);
+    const r = await m.svcMod.scheduleOrgCancellation(depsWith(stripe), {
+      orgId: o.id,
+      actor: actor(),
+      expectedAccessEndsAt: stripe.periodEnd,
+    });
+    expect(r).toMatchObject({ ok: true, outcome: "scheduled", accessEndsAt: stripe.periodEnd });
+    expect(stripe.calls.schedule).toEqual([[o.sub, true]]);
+    expect(stripe.calls.cancel).toEqual([]);
+    expect(await status(o.id)).toBe("active");
+    // No cancellation ledger row is confirmed while access continues.
+    const ledger = (await svc().from("subscription_cancellations").select("state").eq("org_id", o.id)) as Res<Array<{ state: string }>>;
+    expect((ledger.data ?? []).filter((x) => x.state === "confirmed")).toEqual([]);
+
+    // Stripe tells us about the schedule (customer.subscription.updated) — still active.
+    await m.processStripeEvent(subEvent("customer.subscription.updated", o.customer!, o.sub!, "active"));
+    expect(await status(o.id)).toBe("active");
+
+    // Period end: Stripe deletes the subscription → cancelled (owner read-only, staff locked out).
+    await m.processStripeEvent(subEvent("customer.subscription.deleted", o.customer!, o.sub!, "canceled"));
+    expect(await status(o.id)).toBe("cancelled");
+    // Cancellation never deletes company data.
+    const orgRow = (await svc().from("organizations").select("id").eq("id", o.id)) as Res<unknown[]>;
+    expect(orgRow.data).toHaveLength(1);
+  });
+
+  it("SCHEDULED then UNDONE: resume withdraws cancel_at_period_end; the company stays active and is not cancelled by a later renewal", async () => {
+    const o = await mkOrg("active");
+    const stripe = fakeStripe(o.customer!, [{ id: o.sub!, status: "active" }]);
+    await m.svcMod.scheduleOrgCancellation(depsWith(stripe), { orgId: o.id, actor: actor() });
+    const r = await m.svcMod.resumeOrgSubscription(depsWith(stripe), { orgId: o.id, actor: actor() });
+    expect(r).toMatchObject({ ok: true, outcome: "resumed" });
+    expect(stripe.calls.schedule).toEqual([[o.sub, true], [o.sub, false]]);
+    await m.processStripeEvent(invoiceEvent("invoice.paid", o.customer!, o.sub!, 50_000));
+    expect(await status(o.id)).toBe("active");
+  });
+
+  it("HQ 'Cancel' on a paying company schedules, never cuts it off early", async () => {
+    const o = await mkOrg("active");
+    const stripe = fakeStripe(o.customer!, [{ id: o.sub!, status: "active" }]);
+    const r = await m.svcMod.stopBillingForHqCancellation(depsWith(stripe), {
+      orgId: o.id,
+      actor: { userId: owner.id, email: "ops@hq.example.test" },
+      reason: "requested by phone",
+    });
+    expect(r).toMatchObject({ ok: true, kind: "scheduled" });
+    expect(await status(o.id)).toBe("active");
+    expect(stripe.calls.cancel).toEqual([]);
+  });
+
   it("ACCOUNTING PRESERVED: cancelling deletes/rewrites no billing_events or billing_invoices row", async () => {
     const o = await mkOrg("active");
     await m.processStripeEvent(invoiceEvent("invoice.paid", o.customer!, o.sub!, 50_000));
@@ -812,9 +876,9 @@ describeIntegration("stripe · subscription cancellation → entitlement state",
   // 4b. HQ-initiated cancellation (F2) — same path, source 'hq'
   // ══════════════════════════════════════════════════════════════════════════
 
-  it("HQ CANCEL: billing stopped through the same path → ledger source 'hq', refund review, audited as HQ, org cancelled; NO 'you cancelled' email", async () => {
-    const o = await mkOrg("active");
-    const stripe = fakeStripe(o.customer!, [{ id: o.sub!, status: "active" }]);
+  it("HQ CANCEL of a SUSPENDED company (nothing to honour): billing stopped immediately → ledger source 'hq', refund review, audited as HQ, org cancelled; NO 'you cancelled' email", async () => {
+    const o = await mkOrg("suspended");
+    const stripe = fakeStripe(o.customer!, [{ id: o.sub!, status: "past_due" }]);
     const r = await m.svcMod.stopBillingForHqCancellation(depsWith(stripe), {
       orgId: o.id,
       actor: actor(),
@@ -829,7 +893,8 @@ describeIntegration("stripe · subscription cancellation → entitlement state",
       source: "hq",
       confirmed_via: "action",
       access_revoked: true,
-      refund_review: "pending",
+      // past_due: the current period was never paid, so there is no prepaid time to review.
+      refund_review: "not_applicable",
       requested_by: owner.id,
     });
     expect(await audit(o.id, "billing.subscription_cancelled_by_hq")).toHaveLength(1);
@@ -840,27 +905,27 @@ describeIntegration("stripe · subscription cancellation → entitlement state",
     expect(wh).toMatchObject({ actions: ["subscription_deleted:already_confirmed"] });
   });
 
-  it("HQ CANCEL, Stripe refuses → FAILS LOUDLY: org stays ACTIVE (never locked-out-and-billed), claim released", async () => {
-    const o = await mkOrg("active");
-    const stripe = fakeStripe(o.customer!, [{ id: o.sub!, status: "active" }], {
+  it("HQ CANCEL, Stripe refuses → FAILS LOUDLY: org stays as it was (never cancelled-and-billed), claim released", async () => {
+    const o = await mkOrg("suspended");
+    const stripe = fakeStripe(o.customer!, [{ id: o.sub!, status: "past_due" }], {
       fail: Object.assign(new Error("nope"), { type: "StripeInvalidRequestError" }),
     });
     const r = await m.svcMod.stopBillingForHqCancellation(depsWith(stripe), { orgId: o.id, actor: actor() });
     expect(r).toMatchObject({ ok: false, reason: "stripe_error" });
     expect(!r.ok && r.message).toMatch(/^NOT cancelled\./);
-    expect(await status(o.id)).toBe("active");
+    expect(await status(o.id)).toBe("suspended");
     expect((await org(o.id)).cancelled_at).toBeNull();
     expect((await ledger(o.id)).map((x) => [x.state, x.source])).toEqual([["failed", "hq"]]);
   });
 
   it("HQ CANCEL times out, Stripe had accepted it → the webhook revokes; the HQ operator is NOT emailed a customer confirmation", async () => {
-    const o = await mkOrg("active");
-    const stripe = fakeStripe(o.customer!, [{ id: o.sub!, status: "active" }], {
+    const o = await mkOrg("suspended");
+    const stripe = fakeStripe(o.customer!, [{ id: o.sub!, status: "past_due" }], {
       fail: Object.assign(new Error("Request timed out"), { type: "StripeConnectionError" }),
     });
     const r = await m.svcMod.stopBillingForHqCancellation(depsWith(stripe), { orgId: o.id, actor: actor() });
     expect(r).toMatchObject({ ok: false, reason: "stripe_timeout" });
-    expect(await status(o.id)).toBe("active");
+    expect(await status(o.id)).toBe("suspended");
     await m.processStripeEvent(subEvent("customer.subscription.deleted", o.customer!, o.sub!, "canceled"));
     expect(await status(o.id)).toBe("cancelled");
     expect((await ledger(o.id))[0]).toMatchObject({ source: "hq", confirmed_via: "webhook" });
