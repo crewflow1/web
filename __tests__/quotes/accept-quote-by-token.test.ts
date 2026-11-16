@@ -394,6 +394,35 @@ describe("acceptQuoteByToken", () => {
     errorSpy.mockRestore();
   });
 
+  it("a concurrent duplicate submit that LOSES the race is told the quote is accepted (not 'couldn't record')", async () => {
+    // Both submits read status 'sent'; the other one's conditional write landed first, so this
+    // write matches no row. The quote IS accepted — the customer must not be shown a failure.
+    mockAdmin.enqueue("maybeSingle", { data: SAMPLE_QUOTE, error: null });
+    mockAdmin.enqueue("update", { data: [], error: null }); // conditional write matched nothing
+    mockAdmin.enqueue("maybeSingle", { data: { status: "accepted" }, error: null }); // re-read
+
+    const res = await actions.acceptQuoteByToken("public-token-1", "Customer Name", null);
+
+    expect(res).toEqual({ ok: true, quoteId: SAMPLE_QUOTE.id });
+    // the winner owns the signature + job/invoice step; the loser writes nothing more
+    expect(mockAdmin.inserts).toHaveLength(0);
+    expect(ensureCalls()).toHaveLength(0);
+    expect(sendInvoiceEmailMock).not.toHaveBeenCalled();
+  });
+
+  it("a lost race to a DECLINE (or an edit) is still refused", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockAdmin.enqueue("maybeSingle", { data: SAMPLE_QUOTE, error: null });
+    mockAdmin.enqueue("update", { data: [], error: null });
+    mockAdmin.enqueue("maybeSingle", { data: { status: "declined" }, error: null });
+
+    const res = await actions.acceptQuoteByToken("public-token-1", "Customer Name", null);
+
+    expect(res).toEqual({ ok: false, error: "Couldn't record acceptance" });
+    expect(ensureCalls()).toHaveLength(0);
+    errorSpy.mockRestore();
+  });
+
   it("returns error and does NOT run the job+invoice step when quote is already declined", async () => {
     mockAdmin.enqueue("maybeSingle", {
       data: { ...SAMPLE_QUOTE, status: "declined" },
