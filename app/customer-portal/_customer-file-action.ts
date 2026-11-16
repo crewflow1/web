@@ -8,6 +8,7 @@ import { recordAdminActivity } from "@/server/services/hq-audit";
 import { consume, DEFAULT_LIMITS } from "@/lib/security/rate-limit";
 import { emitNotifications } from "@/server/services/notifications-service";
 import { notifyOnCustomerFileUploaded } from "@/lib/notifications/events";
+import { cleanUploadBytes } from "@/lib/uploads/strip-image-metadata";
 
 /**
  * Portal — general customer file upload ("send us a file").
@@ -93,7 +94,12 @@ export async function uploadCustomerFile(formData: FormData): Promise<void> {
   // Path keyed by the TOKEN-RESOLVED org → customer, never request input.
   const storagePath = `${customer.org_id}/${customer.id}/${uploadId}.${ext}`;
 
-  const bytes = await file.arrayBuffer();
+  let bytes: Uint8Array;
+  try {
+    bytes = await cleanUploadBytes(await file.arrayBuffer()); // PD-4
+  } catch {
+    backTo(token, "bad_file_type");
+  }
   const { error: uErr } = await admin.storage
     .from("portal-uploads")
     .upload(storagePath, bytes, { contentType: file.type, upsert: false });
@@ -117,7 +123,7 @@ export async function uploadCustomerFile(formData: FormData): Promise<void> {
     filename: file.name || `file.${ext}`,
     storage_path: storagePath,
     mime_type: file.type,
-    size_bytes: file.size,
+    size_bytes: bytes.byteLength,
     notes: notes || null,
   });
   if (insErr) {

@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
 import { storagePathBelongsToOrg } from "@/lib/storage/owned-path";
+import { cleanUploadBytes } from "@/lib/uploads/strip-image-metadata";
 
 /**
  * Job photos — upload + list.
@@ -156,7 +157,16 @@ export async function POST(request: NextRequest, { params }: Ctx) {
   const uploaded: string[] = [];
   for (const f of files) {
     const path = `${ctx.org.id}/${jobId}/${Date.now()}-${safeFilename(f.name)}`;
-    const buf = await f.arrayBuffer();
+    let buf: Uint8Array;
+    try {
+      // PD-4: site photos carry the camera's EXIF (GPS, device serial) — strip first.
+      buf = await cleanUploadBytes(await f.arrayBuffer());
+    } catch {
+      if (uploaded.length > 0) {
+        await admin.storage.from("job-photos").remove(uploaded);
+      }
+      return NextResponse.json({ error: `${f.name} could not be processed as an image` }, { status: 415 });
+    }
     const { error: upErr } = await admin.storage
       .from("job-photos")
       .upload(path, buf, { contentType: f.type, upsert: false });

@@ -11,6 +11,7 @@ import {
 } from "@/lib/blueprints/schema";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { cleanUploadBytes } from "@/lib/uploads/strip-image-metadata";
 
 /**
  * Blueprint Centre service — the drawing register (Phase 2 WOW).
@@ -77,6 +78,12 @@ export async function createBlueprint(input: {
   file: UploadFile;
 }): Promise<BlueprintResult> {
   const { ctx, user } = await requireOrgContext();
+  try {
+    // PD-4: strip EXIF/GPS from image drawings/site sketches BEFORE sniff + hash (PDFs pass through).
+    input = { ...input, file: { ...input.file, bytes: await cleanUploadBytes(input.file.bytes) } };
+  } catch {
+    return { ok: false, error: "That file isn't a valid PDF or image." };
+  }
   const checked = checkBytes(input.file);
   if (!checked.ok) return { ok: false, error: checked.error };
 
@@ -138,6 +145,12 @@ export async function addBlueprintRevision(input: {
   file: UploadFile;
 }): Promise<BlueprintResult> {
   const { ctx, user } = await requireOrgContext();
+  try {
+    // PD-4: strip EXIF/GPS from image drawings/site sketches BEFORE sniff + hash (PDFs pass through).
+    input = { ...input, file: { ...input.file, bytes: await cleanUploadBytes(input.file.bytes) } };
+  } catch {
+    return { ok: false, error: "That file isn't a valid PDF or image." };
+  }
   const checked = checkBytes(input.file);
   if (!checked.ok) return { ok: false, error: checked.error };
 

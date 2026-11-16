@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { env } from "@/lib/env";
 import type { WhatsAppMediaDescriptor } from "@/lib/comms/providers/meta-whatsapp";
+import { cleanUploadBytes } from "@/lib/uploads/strip-image-metadata";
 
 /**
  * WhatsApp inbound MEDIA pipeline — fetch bytes from the Meta media API into the
@@ -163,11 +164,14 @@ export async function downloadInboundWhatsAppMedia(input: {
 
   // 4/5. FETCH + STORE.
   try {
-    const bytes = await fetchMetaMediaBytes(media.media_id);
+    let bytes = await fetchMetaMediaBytes(media.media_id);
     if (bytes.byteLength > MAX_WHATSAPP_MEDIA_BYTES) {
       await table.update({ status: "failed", error_message: "media_too_large" }).eq("id", rowId);
       return { status: "failed", error: "media_too_large", mediaRowId: rowId };
     }
+    // PD-4: customer WhatsApp photos carry phone EXIF/GPS — strip before hash + store.
+    // A decode failure throws into the catch below (row marked failed), never stored raw.
+    bytes = await cleanUploadBytes(bytes);
     const contentHash = createHash("sha256").update(bytes).digest("hex");
     const ext = mimeToExt(media.mime_type);
     const storagePath = `${orgId}/${wamid}/${media.media_id}.${ext}`;

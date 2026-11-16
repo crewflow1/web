@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOrgContext } from "@/server/auth/session";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { cleanUploadBytes } from "@/lib/uploads/strip-image-metadata";
 
 /**
  * Phase F — Universal tenant-side attachments.
@@ -112,6 +113,13 @@ export async function uploadTenantAttachment(input: {
     return { ok: false, error: "file_too_large" };
   }
 
+  // PD-4: strip metadata BEFORE hashing so the frozen content_hash matches the stored bytes.
+  try {
+    input = { ...input, bytes: await cleanUploadBytes(input.bytes) };
+  } catch {
+    return { ok: false, error: "bad_file_type" };
+  }
+
   const { ctx, user } = await requireOrgContext();
   const admin = createAdminClient();
 
@@ -204,6 +212,13 @@ export async function uploadTenantAttachmentAsService(input: {
   }
   if (input.bytes.byteLength > MAX_ATTACHMENT_BYTES) {
     return { ok: false, error: "file_too_large" };
+  }
+
+  // PD-4: strip metadata BEFORE hashing (dedupe + evidence hash are over the stored bytes).
+  try {
+    input = { ...input, bytes: await cleanUploadBytes(input.bytes) };
+  } catch {
+    return { ok: false, error: "bad_file_type" };
   }
 
   const admin = createAdminClient();

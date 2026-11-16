@@ -8,6 +8,7 @@ import {
   signatureStorageKey,
   type SignatureScope,
 } from "@/lib/signatures/data-url";
+import { cleanUploadBytes } from "@/lib/uploads/strip-image-metadata";
 
 /**
  * Drawn e-signature storage service — the ONE server path that turns a
@@ -46,10 +47,17 @@ export async function storeSignatureImage(args: {
   // second reader of the invariant the DB CHECK + storage RLS both enforce.)
   if (!storagePathBelongsToOrg(key, args.orgId)) return null;
 
+  // PD-4: canvas-drawn PNG; passed through the shared helper for uniformity.
+  let sigBytes: Uint8Array;
+  try {
+    sigBytes = await cleanUploadBytes(parsed.bytes);
+  } catch {
+    return null;
+  }
   const admin = createAdminClient();
   const { error } = await admin.storage
     .from(SIGNATURE_BUCKET)
-    .upload(key, parsed.bytes, { contentType: "image/png", upsert: false });
+    .upload(key, sigBytes, { contentType: "image/png", upsert: false });
   if (error) {
     console.error("[signatures] image upload failed", error.message);
     return null;
