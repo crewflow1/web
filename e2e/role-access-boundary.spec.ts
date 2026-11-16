@@ -89,6 +89,7 @@ const STAFF_DENIED_PAGES = [
   { path: "/sites", name: "Sites" },
   { path: "/operations", name: "Operations overview" },
   // other people's personal data / administrative functions
+  { path: "/settings/ai-features", name: "Company AI switch" },
   { path: "/staff", name: "Staff roster" },
   { path: "/reviews", name: "Reviews" },
   { path: "/reviews/new", name: "Request a review" },

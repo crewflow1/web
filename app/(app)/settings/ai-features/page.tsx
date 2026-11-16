@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireManagementContext } from "@/server/auth/session";
 import { readOrgAiEnabled } from "@/lib/ai/org-switch";
 import { setAiEnabledAction } from "./actions";
 
@@ -14,7 +14,8 @@ export default async function AiFeaturesSettingsPage({
 }: {
   searchParams: Promise<{ saved?: string; error?: string }>;
 }) {
-  const { ctx } = await requireOrgContext();
+  // Management-only (D-17): staff are bounced like every other company setting.
+  const { ctx } = await requireManagementContext();
   const sp = await searchParams;
   const supabase = await createClient();
   const enabled = await readOrgAiEnabled(supabase, ctx.org.id);
