@@ -5,7 +5,7 @@ import { describeIntegration, serviceClient } from "../_harness";
 /**
  * BILLING POLICY — a company is activated only once BOTH the £1,000 setup fee and the
  * £500/month subscription have succeeded. Real Postgres, the real webhook handler and the real
- * apply_stripe_subscription_state function (migration 20261352000000); Stripe events are
+ * apply_stripe_subscription_state function (migration 20261356000000); Stripe events are
  * fixtures, and the one Stripe read the handler makes (is the held subscription live?) is a
  * fake. Before the fix, a paid subscription activated a company whose setup fee was unpaid.
  */

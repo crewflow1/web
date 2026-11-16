@@ -14,9 +14,9 @@
 --     'owner'). The 6-argument version is DROPPED first: leaving both would make
 --     a named-argument call ambiguous (the new parameter has a default).
 --
--- Forward-only on top of 20261351000000 / 20261352000000. To roll back (after
+-- Forward-only on top of 20261355000000 / 20261356000000. To roll back (after
 -- reverting the application code), re-create the 6-argument function from
--- 20261352000000 and:
+-- 20261356000000 and:
 --   drop function public.claim_subscription_cancellation(uuid, text, uuid, text, text, integer, text);
 --   alter table public.subscription_cancellations
 --     drop constraint subscription_cancellations_source_check,

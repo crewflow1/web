@@ -11,7 +11,7 @@ describe("billing activation policy", () => {
     for (const s of ["pending", "sent", "refunded", "", null, undefined]) expect(setupFeeSatisfied(s)).toBe(false);
   });
   it("the database function holds activation on exactly the same values", () => {
-    const sql = readFileSync(resolve(__dirname, "../../supabase/migrations/20261352000000_subscription_cancellation_state_functions.sql"), "utf8");
+    const sql = readFileSync(resolve(__dirname, "../../supabase/migrations/20261356000000_subscription_cancellation_state_functions.sql"), "utf8");
     expect(sql).toMatch(/not in \('paid', 'waived'\)/);
     expect(sql).toContain("return 'held_setup_fee_unpaid'");
   });

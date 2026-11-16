@@ -1,7 +1,7 @@
 # Self-serve subscription cancellation — design
 
-Branch `billing/self-serve-cancellation` · migrations `20261351000000`,
-`20261352000000`, `20261353000000` · evidence: `CANCELLATION-EVIDENCE.md`.
+Branch `billing/self-serve-cancellation` · migrations `20261355000000`,
+`20261356000000`, `20261357000000` · evidence: `CANCELLATION-EVIDENCE.md`.
 
 Evidence labels follow AGENT-RULES §5. Nothing here has been run against Stripe:
 this workstream had no Stripe key by design, so every statement about Stripe's
@@ -258,7 +258,7 @@ cancel (every live subscription terminated, invoice collection stopped, refund
 review flagged, ledger tombstoned, org revoked by
 `confirm_subscription_cancellation`), with `initiator: "hq"`:
 
-- ledger `source = 'hq'` (migration `20261353000000`); audit action
+- ledger `source = 'hq'` (migration `20261357000000`); audit action
   `billing.subscription_cancelled_by_hq`; HQ notification titled "Subscription
   cancelled by HQ";
 - no "your subscription is cancelled" email to the operator, from the action or

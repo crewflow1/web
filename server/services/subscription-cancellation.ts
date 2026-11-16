@@ -53,7 +53,7 @@ import { buildCancellationEmail } from "@/lib/billing/cancellation-email";
  *      human (refund_review = 'pending').
  *  I6  Revocation and the owner's confirmation email happen ONCE, whichever of
  *      this action and the Stripe webhook confirms first
- *      (confirm_subscription_cancellation, migration 20261352000000). HQ is
+ *      (confirm_subscription_cancellation, migration 20261356000000). HQ is
  *      told at least once; if the webhook wins the race it sends its generic
  *      alert and this action still sends the detailed one (refund review,
  *      invoices) — two HQ notices for one cancellation, never zero.
@@ -979,7 +979,7 @@ export async function confirmCancellationRpc(args: {
 export type ApplySubscriptionStateOutcome =
   | "applied"
   | "ignored_cancelled_subscription"
-  /** Billing policy: a never-active company waits for its setup fee (migration 20261352000000). */
+  /** Billing policy: a never-active company waits for its setup fee (migration 20261356000000). */
   | "held_setup_fee_unpaid"
   | "org_not_found";
 

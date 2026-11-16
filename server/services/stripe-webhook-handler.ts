@@ -679,7 +679,7 @@ async function handleSubscriptionUpsert(
   // ACCESS-CONTROLLING WRITE (activates / suspends the tenant). The RPC wrapper
   // THROWS on a database error, so a failed write leaves the event retryable.
   // The org-status write is atomic with the cancellation TOMBSTONE check
-  // (apply_stripe_subscription_state, migration 20261352000000). Stripe delivers
+  // (apply_stripe_subscription_state, migration 20261356000000). Stripe delivers
   // at-least-once and out of order: an `updated` (active / past_due) created
   // just before a cancel can land long after it. Applying it would lift a
   // cancelled org back to active — free access forever — so an event for a
@@ -753,7 +753,7 @@ async function handleSubscriptionDeleted(
  * orgHasActiveAccess) authorises only on `organizations.status` (active/trial),
  * so a terminated subscription must flip it to `cancelled` or a churned tenant
  * keeps full product access. The flip is done by
- * confirm_subscription_cancellation (migration 20261352000000), under the org
+ * confirm_subscription_cancellation (migration 20261356000000), under the org
  * row lock, and only for the FIRST confirmation of this subscription id:
  *
  *   • the owner cancelled in-app and the action already confirmed → this is a
