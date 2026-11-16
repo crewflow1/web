@@ -28,6 +28,7 @@ import type { QuoteWriterReadiness } from "@/lib/ai/quote-writer-readiness";
 import { quoteWriterStatusLine } from "@/lib/ai/quote-writer-readiness";
 import type { QuoteDraft } from "@/lib/ai/quote-draft-schema";
 import { toQuoteLineItems } from "@/lib/ai/quote-draft-schema";
+import { aiRefusalMessage } from "@/lib/ai/governor/refusal-copy";
 import {
   applyQuoteDraftAction,
   discardQuoteDraftAction,
@@ -170,11 +171,10 @@ function ActiveSurface({
           setStatus({ kind: "error", message: "AI drafting is not switched on." });
           return;
         case "blocked":
+          // The true refusal reason — budget figures only for the org ceiling.
           setStatus({
             kind: "error",
-            message: `This month's AI budget is used up (${GBP.format(
-              outcome.spentPence / 100,
-            )} of ${GBP.format(outcome.ceilingPence / 100)}). Write the quote as usual.`,
+            message: aiRefusalMessage(outcome.reason, outcome, "Write the quote as usual."),
           });
           return;
         case "duplicate":

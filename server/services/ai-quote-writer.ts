@@ -55,6 +55,7 @@ import {
   invocationHash,
   invokeWithGovernor,
   isTierActivated,
+  type BlockReason,
   type GovernedCall,
 } from "@/lib/ai/governor";
 import {
@@ -414,8 +415,12 @@ export type GenerateQuoteDraftOutcome =
    * the live state today and the honest one.
    */
   | { status: "unavailable"; blockers: string[] }
-  /** The org is at its £100 monthly ceiling. The model was NOT called. */
-  | { status: "blocked"; spentPence: number; ceilingPence: number }
+  /**
+   * The governor refused (org ceiling, CrewFlow-wide ceiling, employee limit,
+   * rate limit, …). The model was NOT called. `reason` says which, so the panel
+   * never shows budget figures for a refusal that was not about the org budget.
+   */
+  | { status: "blocked"; spentPence: number; ceilingPence: number; reason: BlockReason }
   /** The identical request ran minutes ago. The model was NOT called. */
   | { status: "duplicate" }
   /** The model answered, and the answer was refused. Nothing was stored. */
@@ -491,6 +496,7 @@ export async function generateQuoteDraft(
       status: "blocked",
       spentPence: outcome.spentPence,
       ceilingPence: outcome.ceilingPence,
+      reason: outcome.reason,
     };
   }
   if (outcome.status === "duplicate") return { status: "duplicate" };
