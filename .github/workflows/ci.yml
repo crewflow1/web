@@ -127,7 +127,7 @@ jobs:
       # repository secret and no Docker Hub account are involved, so there is no
       # fork-secret exposure surface.
       - name: Authenticate to GHCR (Supabase image registry)
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -264,7 +264,7 @@ jobs:
       # as the integration job (ghcr.io/supabase/* pulls, built-in GITHUB_TOKEN,
       # no repository secret, no fork-secret surface).
       - name: Authenticate to GHCR (Supabase image registry)
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
