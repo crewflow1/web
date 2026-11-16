@@ -2,7 +2,7 @@
 
 Nothing in this list could be established from the code, the database or public endpoints, and none of it may be guessed. Each item says **why it is needed** and **where it is used**. IDs F-1…F-15 are the placeholders in `PRIVACY-POLICY-DRAFT.md`.
 
-Status of every item: **NEEDS-FOUNDER**. Items marked ⚖ should be answered with, or by, a qualified data-protection adviser.
+Status of every item: **NEEDS-FOUNDER** unless marked otherwise. **2026-11-16:** F-8 resolved (functions run in `dub1`); F-19 still open (`/api/health` `comms.whatsapp=true` on 2026-11-16); the retention decisions under F-11 are now itemised as **PD-1…PD-17** in `COMPLIANCE-GAPS.md` §Decisions. Items marked ⚖ should be answered with, or by, a qualified data-protection adviser.
 
 ## A. Identity of the controller (blocks publishing any policy)
 
@@ -31,7 +31,7 @@ Status of every item: **NEEDS-FOUNDER**. Items marked ⚖ should be answered wit
 
 | ID | Fact needed | Why it is needed | Used in |
 |---|---|---|---|
-| F-8 | **Decision:** move Vercel serverless functions out of the USA (`iad1`) to London (`lhr1`) or Dublin (`dub1`), or keep them there and document the transfer | Verified from response headers: application code runs in Washington DC while the database is in Ireland. Either the policy must disclose a US transfer and the safeguard, or the region must change (Vercel project setting or `vercel.json`) | Policy §6–§7; G-2 |
+| F-8 | ~~**Decision:** move Vercel serverless functions out of the USA~~ **RESOLVED 2026-11-15** — `regions: ["dub1"]`; VERIFIED `x-vercel-id: lhr1::dub1` on 2026-11-16 | Verified from response headers: application code runs in Washington DC while the database is in Ireland. Either the policy must disclose a US transfer and the safeguard, or the region must change (Vercel project setting or `vercel.json`) | Policy §6–§7; G-2 |
 | F-9 | For **each** active provider — Supabase, Vercel, Resend, Stripe, Anthropic, OpenAI, Sentry, PostHog, Backblaze, Vercel KV/Upstash, Meta (WhatsApp): (a) is a DPA signed or accepted, (b) the region configured on the account (Resend, Backblaze bucket, KV, Stripe account country are unknown to me), (c) the transfer mechanism if outside the UK | The sub-processor table and the transfers section cannot be completed, and the Art. 28 chain to tenants cannot be evidenced, without this | Policy §6–§7; `PROVIDER-REGISTER.md` |
 | F-16 | Log/event retention actually configured: Vercel logs, Sentry events, PostHog events, Resend message logs; Supabase backup retention (stated as 7 days) | The retention schedule lists these as "plan-dependent". The live page claims a 90-day roll-off I could not confirm | `RETENTION-SCHEDULE.md` §2.4 |
 | F-17 | Supabase Auth dashboard settings: session lifetime / inactivity timeout; that custom SMTP points at Resend; whether auth audit logs are kept anywhere (the `auth.audit_log_entries` table is empty in production) | Sessions hold raw IP + user agent; an empty auth audit trail matters for incident investigation | `RETENTION-SCHEDULE.md`; G-20 |
@@ -42,7 +42,7 @@ Status of every item: **NEEDS-FOUNDER**. Items marked ⚖ should be answered wit
 
 | ID | Fact needed | Why it is needed | Used in |
 |---|---|---|---|
-| F-11 | **Decisions** on retention: (i) what happens to a company's data when it cancels, and after how long; (ii) how long demo requests and sales contacts are kept; (iii) whether ex-staff sensitive fields should be cleared on removal; (iv) how long import staging is kept; (v) the activity-log window | The live pages promise periods nothing enforces. The mechanisms mostly exist and are switched off | Policy §9; `RETENTION-SCHEDULE.md` §4 |
+| F-11 | **Decisions** on retention (itemised as PD-1…PD-17 in `COMPLIANCE-GAPS.md`; note the founder policy of 2026-11-16 that cancelling never deletes data — PD-1 / G-25): (i) what happens to a company's data when it cancels, and after how long; (ii) how long demo requests and sales contacts are kept; (iii) whether ex-staff sensitive fields should be cleared on removal; (iv) how long import staging is kept; (v) the activity-log window | The live pages promise periods nothing enforces. The mechanisms mostly exist and are switched off | Policy §9; `RETENTION-SCHEDULE.md` §4 |
 | F-12 | Who has administrator access to the Supabase, Vercel, Stripe, Resend, Sentry, PostHog, Backblaze and domain/DNS accounts, and whether multi-factor sign-in is enforced on each | The live page claims "only the on-call engineer can access production infrastructure, and access is logged" — not verifiable from code | Policy §10 |
 | F-18 | The backup operator machine: is full-disk encryption (FileVault) on; who else can log in; where the backup encryption key is escrowed; whether the 8 **plaintext** local dump directories are needed | The backup script keeps plaintext copies of the whole production database, auth data and files on that machine | G-6 |
 | F-23 | Whether any tenant is expected to record workers under 18 (apprentices) | Determines whether the children section needs more than one sentence | Policy §12 |
@@ -53,4 +53,4 @@ Status of every item: **NEEDS-FOUNDER**. Items marked ⚖ should be answered wit
 
 - **Publishing a corrected policy:** F-1, F-2, F-3, F-4, F-5, F-6, F-8 (or disclose), F-9, F-10, F-11, F-13, F-15.
 - **Onboarding a paying customer as a processor:** F-20, F-9, F-21.
-- **Engineering work waiting on a decision:** F-8 (region), F-11 (retention build), F-24 (staged SQL), F-19 (WhatsApp state).
+- **Engineering work waiting on a decision:** F-11 / PD-1, PD-4, PD-14, PD-15 (retention builds, photo EXIF), F-24 (staged SQL — re-numbering needed), F-19 (WhatsApp state).

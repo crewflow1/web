@@ -1,10 +1,12 @@
-# CrewFlow — privacy compliance gaps and remediation plan (2026-11-13)
+# CrewFlow — privacy compliance gaps and remediation plan (2026-11-13, refreshed 2026-11-16)
 
 Prioritised list of what stands between the product as built and an honest, defensible data-protection position. Written by an engineer; items marked ⚖ need a qualified UK data-protection adviser and nothing here is legal advice.
 
 **Severity** (per `AGENT-RULES.md` §5): **P0** critical security/data loss · **P1** must fix before paying customers · **P2** launch with a documented limitation · **P3** post-launch.
 **Evidence label** per finding: VERIFIED / IMPLEMENTED-UNTESTED / NEEDS-FOUNDER / NOT-IMPLEMENTED.
-Founder facts (F-n) are in `FOUNDER-FACTS-NEEDED.md`.
+Founder facts (F-n) are in `FOUNDER-FACTS-NEEDED.md`. Open lawful-basis and retention **decisions** are numbered **PD-n** in §Decisions at the end (prefix PD so they do not collide with the programme's founder decisions D-15 / D-17).
+
+**2026-11-16 refresh** against main `d24295e8` and the pending PRs (#1090 billing, #1091 deletion, #1092 consent, AI spend governance, security branch): statuses below are updated in place; new gaps G-24…G-26; decisions list added.
 
 No P0 was found: nothing in this audit showed personal data exposed across tenants or to the public.
 
@@ -13,28 +15,31 @@ No P0 was found: nothing in this audit showed personal data exposed across tenan
 | ID | Sev | Gap | State | Owner |
 |---|---|---|---|---|
 | G-1 | **P1** | Live privacy policy and terms make statements the code contradicts | Draft ready; blocked on founder facts | Founder + ⚖ |
-| G-2 | **P1** | Application code runs in the USA; undisclosed transfer | Config decision | Founder |
+| G-2 | ~~P1~~ | Application code ran in the USA | **RESOLVED** 2026-11-15: `dub1` (VERIFIED `x-vercel-id: lhr1::dub1`, 2026-11-16) | — |
 | G-3 | **P1** | No tenant DPA and no published sub-processor list | NOT-IMPLEMENTED | Founder + ⚖ |
 | G-4 | **P1** | Controller identity, ICO registration, lawful bases not established | NEEDS-FOUNDER | Founder + ⚖ |
-| G-5 | **P1** | No deletion at end of contract; no per-person access/erasure tooling; promises unmet | Mechanism exists, switched off | Engineering + founder |
+| G-5 | **P1** | No per-person access/erasure tooling; live promises unmet | Account/company/staff erasure BUILT in #1091 (dark, flag); per-person export + customer anonymise still GAP; cancellation deliberately never deletes (founder policy) → PD-1 | Engineering + founder |
 | G-6 | P2 | Plaintext production dumps kept on the backup operator's machine | NEEDS-FOUNDER | Founder / ops |
 | G-7 | P2 | Ex-staff sensitive data survives removal indefinitely | NOT-IMPLEMENTED | Engineering (after F-11) |
-| G-8 | P2 | Sentry received bearer tokens and identifiers in free text | **Fixed on branch**, not deployed | Lead (merge) |
-| G-9 | P2 | Consent banner/analytics can load on the external-worker page; no "change my choice" control | For the consent workstream | Sibling workstream |
-| G-10 | P3 | Email address placed in a redirect URL on failed sign-in | Proposed | Engineering |
-| G-11 | P2 | Rate-limit table held raw IPs, emails and portal tokens, never expired | **Fixed on branch**, not deployed | Lead (merge) |
+| G-8 | P2 | Sentry received bearer tokens and identifiers in free text | Fix moved to the SECURITY branch (`be7140af`, `a0c26962`), not deployed | Lead (merge) |
+| G-9 | P2 | Consent banner/analytics could load on the external-worker page; no "change my choice" control | Fixed in #1092 (worker-portal + `/l` excluded; Cookie settings control); not released | Lead (merge) |
+| G-10 | **P2** | Email address in a URL — on **every magic-link sign-in** (`/check-email?email=`), not only failed bootstrap (M-7) | Proposed; needs a cookie-register entry (#1092) | Engineering + consent workstream |
+| G-11 | P2 | Rate-limit table held raw IPs, emails and portal tokens, never expired | **Fixed on `privacy/data-minimisation`** (`afdbc459`), not deployed | Lead (merge) |
 | G-12 | P2 | Prospecting/outreach: no Art. 14 notice, PECR position unrecorded | NEEDS-FOUNDER | Founder + ⚖ |
-| G-13 | P2 | AI processing undisclosed to tenants; no per-tenant off switch; provider terms unconfirmed | Partly NEEDS-FOUNDER | Founder + engineering |
+| G-13 | P2 | AI processing undisclosed to tenants; no per-tenant off switch; provider terms unconfirmed | Per-org spend ceiling exists; platform ceiling pending (AI workstream); off switch still absent → PD-6 | Founder + engineering |
 | G-14 | P2 | Activity log copies customer contact details, is append-only and never purged | Purge exists, unscheduled | Engineering |
 | G-15 | P2 | Data-import staging keeps the raw imported rows and files forever | NOT-IMPLEMENTED | Engineering |
 | G-16 | P3 | Raw provider webhook payloads and email-event rows never purged | NOT-IMPLEMENTED | Engineering |
 | G-17 | P2 | WhatsApp is switched on and credentialed in production, contrary to the records | NEEDS-FOUNDER | Founder |
-| G-18 | P3 | Password sign-in overwrites the user's name and phone with nothing (accuracy) | Static evidence; proposed fix | Engineering |
+| G-18 | ~~P3~~ | Password / magic-link sign-in overwrote the saved name and phone (accuracy) | **FIXED** on `privacy/data-minimisation` (`6ed8e7cf`), reproduced + verified on local PostgREST | Lead (merge) |
 | G-19 | P3 | Customer-portal tokens stored in plaintext; no default expiry; quote links not revocable | For the security workstream | Sibling workstream |
 | G-20 | P3 | Supabase Auth audit table is empty in production | NEEDS-FOUNDER | Founder |
 | G-21 | P2 | DPIA needed before activating call recording, AI voice, vehicle tracking, WhatsApp | Not started | Founder + ⚖ |
-| G-22 | P3 | No Art. 30 record, breach procedure or DSAR procedure as documents | This package is the raw material | Founder + ⚖ |
-| G-23 | P3 | Unused personal-data columns and an orphan table remain | Staged SQL awaiting approval | Founder |
+| G-22 | P3 | No Art. 30 record, breach procedure or DSAR procedure as documents | DSAR procedure drafted (`DSAR-PROCEDURE.md`); breach procedure still absent (F-21) | Founder + ⚖ |
+| G-23 | P3 | Unused personal-data columns and an orphan table remain | Staged SQL awaiting approval (version numbers obsolete — lead re-allocates) | Founder |
+| G-24 | P2 | Uploaded photos keep EXIF metadata, which can include GPS position | NEW — decision PD-4 | Founder → engineering |
+| G-25 | **P1** ⚖ | "Cancelling never deletes data" vs the processor duty to delete or return at the end of the service (Art. 28(3)(g)) | NEW — needs terms/DPA wording and a retention period (PD-1) | Founder + ⚖ |
+| G-26 | P2 | No self-service "download my account data" for a CrewFlow user; no in-app login-email change | NEW — manual today (`DSAR-PROCEDURE.md` 3.1, 3.2) | Engineering |
 
 ---
 
@@ -47,7 +52,8 @@ No P0 was found: nothing in this audit showed personal data exposed across tenan
 - **Fix (proposed):** fill the placeholders (F-1…F-15), have the draft reviewed ⚖, transcribe Part E into `app/privacy/page.tsx`, align the terms' "Your data" paragraph, bump `CURRENT_TOS_VERSION` if the terms change. Two corrections need no new facts and can ship first: the analytics sentence and removing the unkept deletion periods.
 - **Acceptance:** every factual sentence on the page maps to a line in the provider register or retention schedule; a reviewer re-runs Part A and finds no INACCURATE/OVER-CLAIM row.
 
-### G-2 · Server code executes in the United States — VERIFIED
+### G-2 · Server code executed in the United States — RESOLVED 2026-11-15
+- **2026-11-16:** `vercel.json` `"regions": ["dub1"]` (commit `e3773aa1`); `curl -sI https://crewflow.uk/login` → `x-vercel-id: lhr1::dub1::…`. The finding below is kept for the record. The policy still needs a transfers section for the AI providers and US-parented processors.
 - **Evidence:** `curl -sI https://crewflow.uk/login` → `x-vercel-id: lhr1::iad1::…` (also `/q/[token]`, `/api/v1/openapi.json`). `vercel.json` has no `regions`; three webhook routes pin `lhr1`. Database: `aws-0-eu-west-1`.
 - **Impact:** every request that renders or accepts personal data is processed in the USA — a restricted transfer that is neither disclosed nor (as far as I can see) covered by a recorded safeguard; plus a transatlantic hop on every database query.
 - **Fix (proposed, founder decision F-8):** set the function region to `dub1` (same city as the database — best latency) or `lhr1` (UK) in Vercel project settings, or add `"regions": ["dub1"]` to `vercel.json`. No code change. I did not change `vercel.json`: it alters production routing and is a known merge-conflict point.
@@ -71,6 +77,7 @@ No P0 was found: nothing in this audit showed personal data exposed across tenan
   2. A per-person "find everything about this customer/staff member" export for the tenant admin (the search index and `customer_id`/`user_id` links in `data-register.csv` are the map).
   3. A per-person anonymise action for a customer with financial history (keep the invoice, scrub the identity — the same PII-column rule the org erasure uses).
 - **Acceptance:** integration test: cancel → N days → erasure log row, storage empty, statutory rows anonymised; a customer with invoices can be anonymised and the invoice totals are unchanged.
+- **2026-11-16:** item 1 is superseded by founder policy (cancellation never deletes; #1090 cancels at the end of the paid period and leaves the owner read-only). Deletion is a separate, explicit request: #1091 builds account, company (7-day cooling-off) and staff erasure behind `FEATURE_ACCOUNT_DELETION` (default off) and proves the old `gdpr_erase_org` path unusable. Items 2–3 remain GAPs. See G-25 for the processor-duty consequence.
 
 ## P2 — launch with a documented limitation
 
@@ -86,16 +93,17 @@ No P0 was found: nothing in this audit showed personal data exposed across tenan
 - **Fix (proposed, needs F-11):** on removal, delete the emergency contact immediately; schedule NI/DOB/tax profile for deletion after the tenant's chosen payroll-records period; show ex-staff in an "archived" list until then.
 - **Acceptance:** integration test: remove staff → `staff_compensation.emergency_contact` is null; after the window the secrets row is gone; payroll lines remain.
 
-### G-8 · Sentry scrubbing — fixed on branch — VERIFIED (fix), not deployed
-- **Evidence:** synthetic event through `scrubEvent` before the change kept `/customer-portal/<token>/…`, an email in `exception.values[].value` and an email + phone in a console breadcrumb. Commit `932c189a`; tests `__tests__/monitoring/scrub-free-text.test.ts` (6) + existing `scrub.test.ts` (9) pass.
+### G-8 · Sentry scrubbing — fix owned by the SECURITY workstream — VERIFIED (fix, 2026-11-13), not deployed
+- **Evidence:** synthetic event through `scrubEvent` before the change kept `/customer-portal/<token>/…`, an email in `exception.values[].value` and an email + phone in a console breadcrumb. The commit was handed to the SECURITY workstream on 2026-11-16 and lives on `security/injection-secrets-hardening` (`be7140af`, `a0c26962`); `lib/monitoring/scrub.ts` is that workstream's file.
 - **Residual:** names and addresses in free text are not pattern-detectable; the policy should say reports "may incidentally include" such text.
 
 ### G-9 · Consent surfaces — for the cookie-consent workstream — VERIFIED
 - **Evidence:** `isFirstPartySurface()` in `lib/analytics/consent.ts` excludes only `/q` and `/customer-portal`. `/worker-portal/<token>` (external worker sign-off) therefore shows the banner and, on Accept, sends a page view whose URL contains the bearer token unless it happens to be UUID-shaped (only UUIDs are masked; the worker-token format was not verified). There is no in-product control to withdraw consent; the live policy says "clear the cookie".
 - **Fix (proposed):** add `/worker-portal` (and any future bearer route) to the exclusion; mask by route pattern, not by UUID shape; add a "Cookie settings" link in the footer.
+- **2026-11-16:** done in #1092 (`EXTERNAL_SURFACE_PREFIXES` = `/q`, `/customer-portal`, `/worker-portal`, `/l`; Cookie settings dialog; Sentry performance consent-gated). `/a/<token>` no longer exists as a route on main. Residual: PostHog URL masking covers UUIDs only, so query values such as `?email=` still pass (G-10).
 
 ### G-11 · Rate-limit identifiers — fixed on branch — VERIFIED (fix), not deployed
-- **Evidence:** `consume("portal_write", token, …)`, `consume("auth", email, …)`, `consume("quote_action", ip, …)` → `rate_limit_counters.key = "<route>:<identifier>"`; `rate_limit_sweep()` had no caller; production held 11 rows, oldest window 115 days. Commit `253aece3`: keyed digest + daily sweep; `__tests__/security/rate-limit.test.ts` 18 pass.
+- **Evidence:** `consume("portal_write", token, …)`, `consume("auth", email, …)`, `consume("quote_action", ip, …)` → `rate_limit_counters.key = "<route>:<identifier>"`; `rate_limit_sweep()` had no caller; production held 11 rows, oldest window 115 days. Commit `afdbc459`: keyed digest + daily sweep; `__tests__/security/rate-limit.test.ts` 18 pass.
 
 ### G-12 · Prospecting and outreach ⚖ — NEEDS-FOUNDER
 - **Evidence:** the product has a sales CRM (`hq_sales_*`), an approval-gated outreach sender with a suppression list (`hq_communications`, `hq_comms_suppressions`) and a Companies House sourcing pipeline; all hold 0 prospect rows in production. Outreach also happens outside the product.
@@ -126,13 +134,14 @@ Call recording and transcription (`calls.recording_url`, `ai_receptionist_setups
 
 ## P3 — post-launch
 
-### G-10 · Email address in a URL — VERIFIED
-`bounceToLogin()` (`app/auth/callback/route.ts`) appends `?email=<address>` on bootstrap failure → hosting logs, browser history, referrer. **Fix:** drop the hint or carry it in a short-lived cookie.
+### G-10 · Email address in a URL — VERIFIED (raised to P2 on 2026-11-16)
+`bounceToLogin()` (`app/auth/callback/route.ts`) appends `?email=<address>` on bootstrap failure, and — far more often — `signInWithMagicLink` redirects **every** magic-link request to `/check-email?email=<address>` (`app/(auth)/actions.ts:120`) → hosting logs, browser history, PostHog page-view URL after analytics consent, Sentry breadcrumbs until the security scrub ships. **Fix:** carry the address in a short-lived HttpOnly cookie scoped to `/check-email` (needed by the resend button) and drop it from both URLs; add the cookie to the #1092 cookie register / e2e exempt list in the same change; update `__tests__/security/auth-completion.test.ts:473` to assert the address is **absent** from the redirect. **Acceptance:** no `email=` in any auth redirect (source guard + e2e on the magic-link flow).
 
 ### G-16 · Raw webhook payloads and `comm_events` — VERIFIED
 `billing_events.payload`, `whatsapp_webhook_events.payload`, `email_webhook_events.payload`, `call_events.payload`, `comm_events.payload` have no age rule. **Fix:** null the payload once processed + N days; keep the envelope.
 
-### G-18 · Password sign-in clears name and phone — static evidence
+### G-18 · Password sign-in clears name and phone — FIXED 2026-11-16 (`6ed8e7cf`)
+- **Resolution:** `ensureUserRow` writes `full_name` / `phone` only when a non-empty value is supplied. Reproduced on the local PostgREST with a synthetic user (old shape cleared both; new shape keeps them); `__tests__/security/user-profile-accuracy.test.ts` (4). The magic-link callback without OAuth metadata had the same effect and is covered by the same fix. Original finding:
 - **Evidence:** `ensureUserRow` upserts `full_name: input.fullName ?? null, phone: input.phone ?? null`; `signInWithPassword`/`signUpWithPassword` call it with only `{id, email}` (`app/(auth)/actions.ts`), so each password sign-in writes NULL over both. Production aggregate is consistent: 2 of 3 email-identity users have a NULL `full_name`. Not reproduced end-to-end — IMPLEMENTED-UNTESTED as a finding.
 - **Impact:** inaccurate personal data (Art. 5(1)(d)); staff names disappear from rotas, payslips, audit entries.
 - **Fix (proposed):** include `full_name`/`phone` in the upsert only when a value is supplied. **Acceptance:** integration test — set a name, password sign-in, name unchanged. Outside this workstream's remit; raised for the lead.
@@ -151,10 +160,53 @@ An Art. 30 record (this package supplies the content), a breach-response procedu
 
 ---
 
-## Suggested order of work
+## New gaps (2026-11-16)
 
-1. Founder: F-1…F-5 and ICO registration; decide G-2 (region) — a settings change that removes the largest undisclosed transfer.
-2. Lead: merge this branch (G-8, G-11 fixes; GPS and avatar minimisation).
-3. Founder + ⚖: DPA, lawful bases, AI terms, transfers → publish the policy (G-1, G-3, G-4).
-4. Engineering: end-of-contract erasure job and ex-staff clean-up (G-5, G-7) once F-11 is decided; import-staging purge (G-15); activity-log trigger + purge (G-14).
+### G-24 · Photo EXIF location — VERIFIED (code)
+- **Evidence:** `app/api/jobs/[id]/photos/route.ts` uploads `await f.arrayBuffer()` unchanged; no EXIF handling anywhere in `app/ lib/ server/ components/`; the job-documents picker uses `capture="environment"`. Phone cameras commonly embed GPS coordinates and timestamps when location tagging is on.
+- **Impact:** a photo can record where a worker (or a customer's home) was at a moment in time, contrary to "we do not track location"; it travels with exports and downloads.
+- **Fix:** PD-4. If "strip": re-encode or remove the GPS IFD server-side on upload for image types (all upload routes listed in `DATA-MINIMISATION.md` M-6), keep orientation; acceptance = an uploaded JPEG with a GPS tag is stored without it. If "keep": notice wording in the policy draft §3.2 and the DPA.
+
+### G-25 · No automatic deletion vs the processor's end-of-service duty ⚖
+- **Evidence:** founder policy 2026-11-16 and #1090: cancelling never deletes data; after the paid period the owner keeps read-only export access; D-17 "never auto-erases" (`server/auth/session.ts`). No retention period after cancellation exists (RETENTION-SCHEDULE §3).
+- **Impact:** for tenant data CrewFlow is a processor; Art. 28(3)(g) requires it to delete or return the data at the end of the service, at the controller's choice, unless law requires storage. Indefinite retention after a subscription ends needs either the controller's documented choice (terms/DPA) or a period after which the data is deleted or returned. Storage limitation (Art. 5(1)(e)) applies to CrewFlow's own copy too.
+- **Fix:** PD-1 — set the post-cancellation period and the end-of-period action, put it in the terms/DPA (#1090's terms draft "Your data" clause has a placeholder for exactly this) and the policy §9; then a scheduled reminder/teardown using the #1091 engine once enabled.
+
+### G-26 · Account-level self-service rights — NOT-IMPLEMENTED
+- No "download my account data" (Art. 15/20 for CrewFlow-controller data) and no in-app login-email change (Art. 16). Both are manual service-role work today. Small build: the account tables are few (`DSAR-PROCEDURE.md` 3.1).
+
+---
+
+## Decisions — open lawful-basis and retention decisions (founder, with an adviser ⚖)
+
+Each is referenced from the policy draft (⟦DECISION PD-n⟧), `DSAR-PROCEDURE.md` and `DATA-FLOW-MAP.md`. None is decided by engineering.
+
+| # | Decision | Why it is open / what depends on it |
+|---|---|---|
+| PD-1 | **Retention of company data after a subscription ends**: period, and the action at its end (delete, return, anonymise, or keep until the owner asks) — and how that is documented as the controller's choice | G-25; policy §9; terms "Your data" (#1090 draft); Art. 28(3)(g), Art. 5(1)(e) |
+| PD-2 | Retention period and basis for the **cancellation ledger** (`subscription_cancellations`: requester email, reason, refund-review flag) | #1090; CrewFlow accounting record vs personal data of the requester |
+| PD-3 | Period for the **minimised billing archive** after a company deletion (#1091 proposes 6 years after the year end) and whether to redact the Stripe customer after it | #1091 L2; policy §9 |
+| PD-4 | **Photo EXIF location**: strip on upload, or keep as site evidence with notice | G-24; policy §3.2 |
+| PD-5 | **Lawful basis for consent-free error reporting** (Sentry errors outside the banner) and confirmation that performance telemetry needs consent | #1092 design; policy §3.4, §4 |
+| PD-6 | **AI**: CrewFlow's role for AI on tenant data (processor under tenant instructions) and the DPA wording; basis for HQ AI over tenant-level information; whether to ship a per-company AI off switch before publishing; provider training/retention terms (F-10) | G-13; policy §5 |
+| PD-7 | **Backups**: whether "deleted data ages out of backups within ~8 weeks (B2) / ~7 days (Supabase)" is acceptable and disclosed; whether local plaintext dump copies may exist at all | G-6; #1091 L10; policy §9 |
+| PD-8 | Retention and basis for **deletion tombstones** (`privacy_deletion_requests`: opaque ids of deleted people kept indefinitely so restores can re-apply deletions) | #1091; pseudonymous ids are still personal data |
+| PD-9 | **Statutory records on company deletion**: CrewFlow (processor) deletes after offering an export (as #1091 implements) vs retains anonymised | #1091 L1; policy §9 |
+| PD-10 | **Prospects / demo requests / sales contacts**: retention for non-responders, Art. 14 notice, PECR basis for B2B email to sole traders/partnerships | G-12; F-7; policy §3.3, §9 |
+| PD-11 | **DSAR response time** to publish (live page says 14 days; legal maximum one month) and who staffs it | F-13; DSAR procedure §2 |
+| PD-12 | **Restriction (Art. 18)**: build a per-person restriction state or handle manually | DSAR procedure §3.4 |
+| PD-13 | **Security and audit log retention**: `admin_activity_log` (immutable), `impersonation_sessions` (raw IP), `activity_log` (24-month purge exists, unscheduled), `hq_events` partitions, provider logs | G-14, G-20; #1091 L11, L14 |
+| PD-14 | **Ex-staff sensitive data** (NI number, date of birth, emergency contact, pay) after removal from a company — clear on removal, after a payroll-records period, or only on an erasure request (#1091) | G-7; #1091 L4–L5 |
+| PD-15 | Age limits for **import staging** (raw imported rows/files) and **raw provider webhook payloads / email events** | G-15, G-16 |
+| PD-16 | Adopt or amend #1091's deletion legal judgements L1–L14 (`docs/programme/deletion/DELETION-DESIGN.md` §8) — employee self-erasure scope, authored-by pseudonymisation, cooling-off, members' accounts on company deletion | #1091 activation |
+| PD-17 | **Sign-in session lifetime** (Supabase auth cookie default 400 days, rolling; sessions hold raw IP + user agent) | F-17; storage limitation |
+
+---
+
+## Suggested order of work (2026-11-16)
+
+1. Founder: F-1…F-5 and ICO registration; PD-1 (with G-25) before the cancellation terms are published.
+2. Lead: merge `privacy/data-minimisation` (GPS, avatar, rate-limit keys, sign-in accuracy fix), the security branch (G-8), #1092 (G-9).
+3. Founder + ⚖: DPA, lawful bases (F-6, PD-5, PD-6), AI terms (F-10), transfers → publish the policy (G-1, G-3, G-4).
+4. Engineering: G-10 (with the consent workstream), G-24 once PD-4 is decided, G-26; ex-staff clean-up and import/webhook ageing once PD-14 / PD-15 are decided.
 5. Before any dormant channel is activated: G-21.

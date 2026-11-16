@@ -115,7 +115,7 @@ hosts are also allowed), `vitals.vercel-insights.com` (unused), `vercel.live`, `
 - **Region / transfer:** Germany (DSN host `*.ingest.de.sentry.io`, VERIFIED 2026-11-13). Functional Software Inc. is US ⚖.
 - **Terms to verify:** DPA; event retention (F-16); AI/ML data-use settings in the Sentry organisation.
 - **Retention / deletion:** events expire on plan retention; an event that shows PII can be deleted in the UI.
-- **Pre-consent:** **on main today, browser errors *and* performance traces are sent before any choice.** Pending **#1092**: error reports stay consent-free (classed strictly necessary — lawful basis ⚖, decision D-5 in `COMPLIANCE-GAPS.md`), performance telemetry only after the visitor enables "Performance monitoring"; nothing optional on `/q`, `/customer-portal`, `/worker-portal`, `/l`.
+- **Pre-consent:** **on main today, browser errors *and* performance traces are sent before any choice.** Pending **#1092**: error reports stay consent-free (classed strictly necessary — lawful basis ⚖, decision PD-5 in `COMPLIANCE-GAPS.md`), performance telemetry only after the visitor enables "Performance monitoring"; nothing optional on `/q`, `/customer-portal`, `/worker-portal`, `/l`.
 - **AI training:** verify organisation AI settings.
 
 ## 8. PostHog — product analytics
