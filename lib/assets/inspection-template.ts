@@ -99,7 +99,7 @@ export const ITEM_SEVERITIES = ["minor", "major"] as const;
 export type ItemSeverity = (typeof ITEM_SEVERITIES)[number];
 
 const blankToUndefined = (v: unknown) =>
-  typeof v === "string" && v.trim() === "" ? undefined : v;
+  v === null || (typeof v === "string" && v.trim() === "") ? undefined : v;
 
 const keySchema = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/, "Invalid key");
 

@@ -13,12 +13,12 @@ const createServiceScheduleSchema = z
   .object({
     asset_id: z.string().uuid(),
     maintenance_type: z.enum(["preventive", "service", "calibration"] as const),
-    title: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().trim().max(160).optional()),
+    title: z.preprocess((v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v), z.string().trim().max(160).optional()),
     cadence: z.enum(SCHEDULE_CADENCES),
-    custom_days: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.coerce.number().int().min(1).max(3660).optional()),
+    custom_days: z.preprocess((v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v), z.coerce.number().int().min(1).max(3660).optional()),
     next_due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a due date"),
-    lead_time_days: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.coerce.number().int().min(0).max(365).default(14)),
-    supplier_id: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().uuid().optional()),
+    lead_time_days: z.preprocess((v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v), z.coerce.number().int().min(0).max(365).default(14)),
+    supplier_id: z.preprocess((v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v), z.string().uuid().optional()),
   })
   .superRefine((v, ctx) => {
     if (v.cadence === "custom_days" && v.custom_days == null) {

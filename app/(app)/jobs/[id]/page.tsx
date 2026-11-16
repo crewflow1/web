@@ -582,6 +582,36 @@ export default async function EditJobPage({
         const recurring =
           (job.recurring as { pattern?: string; end_date?: string } | null) ??
           null;
+        // Editing a job is an owner/admin duty (jobs UPDATE RLS). A field worker used to be
+        // shown the edit form anyway and every save was refused; they get the same details
+        // read-only instead — the instructions are what they open this page for.
+        if (!isAdmin) {
+          const statusLabel = job.status === "in-progress" ? "In progress" : job.status.charAt(0).toUpperCase() + job.status.slice(1);
+          return (
+            <section data-testid="job-details-readonly" className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="text-base font-semibold text-slate-900">Job details</h2>
+              <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-3">
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-slate-600">Status</dt>
+                  <dd className="mt-1 text-slate-900">{statusLabel}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-slate-600">Start</dt>
+                  <dd className="mt-1 text-slate-900">{job.scheduled_date ? formatDayKeyUK(job.scheduled_date) : "Not scheduled"}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium uppercase tracking-wide text-slate-600">End</dt>
+                  <dd className="mt-1 text-slate-900">{job.scheduled_end_date ? formatDayKeyUK(job.scheduled_end_date) : "—"}</dd>
+                </div>
+              </dl>
+              <div className="mt-4">
+                <h3 className="text-xs font-medium uppercase tracking-wide text-slate-600">Instructions</h3>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-900">{job.notes?.trim() ? job.notes : "No instructions have been added for this job."}</p>
+              </div>
+              <p className="mt-4 text-xs text-slate-600">Only an owner or admin can change these details.</p>
+            </section>
+          );
+        }
         return (
           <JobForm
             action={updateAction}

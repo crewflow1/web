@@ -44,6 +44,9 @@ function makeSlug(name: string): string {
   return `${base || "crew"}-${suffix}`;
 }
 
+/** Control flow only: skips the first-time stamps when the company already existed. */
+class AlreadyOnboarded extends Error {}
+
 export async function createOrg(formData: FormData) {
   const user = await requireUser();
 
@@ -74,6 +77,7 @@ export async function createOrg(formData: FormData) {
   try {
     const result = await createOrgWithOwner({
       userId: user.id,
+      singleCompany: true,
       userEmail: user.email ?? null,
       name,
       slug: makeSlug(name),
@@ -81,6 +85,10 @@ export async function createOrg(formData: FormData) {
       vatNumber: vat_number ?? null,
       postcode,
     });
+
+    // A repeat submit (double click, back button, second tab): the company already exists —
+    // go on to setup without stamping, notifying or seeding a second time.
+    if (result.existing) throw new AlreadyOnboarded();
 
     // Patch the public.users row with their first name for UI greetings.
     const admin = createAdminClient();
@@ -119,8 +127,10 @@ export async function createOrg(formData: FormData) {
       }),
     );
   } catch (e) {
-    console.error("[onboarding/company] createOrg failed", e);
-    redirect("/onboarding/company?error=create_failed");
+    if (!(e instanceof AlreadyOnboarded)) {
+      console.error("[onboarding/company] createOrg failed", e);
+      redirect("/onboarding/company?error=create_failed");
+    }
   }
 
   revalidatePath("/dashboard", "layout");

@@ -76,17 +76,17 @@ export type LeadSource = (typeof LEAD_SOURCES)[number];
 
 const optionalString = (max: number) =>
   z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(max).optional(),
   );
 
 const optionalUuid = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
   z.string().uuid().optional(),
 );
 
 const optionalNumber = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
   z.coerce.number().nonnegative().max(99_999_999).optional(),
 );
 
@@ -109,7 +109,7 @@ const requiredName = z
   .max(200, "Name is too long");
 
 const contactEmail = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
   z
     .string()
     .trim()
@@ -119,7 +119,7 @@ const contactEmail = z.preprocess(
 );
 
 const contactPhone = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
   z.string().trim().max(50).optional(),
 );
 

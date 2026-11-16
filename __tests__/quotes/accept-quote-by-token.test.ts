@@ -101,13 +101,21 @@ function makeMockSupabase() {
 
     chain.update = (payload: unknown) => {
       updates.push(payload);
+      // `.update(...).eq(...).select("id")` returns the rows it matched. The public accept /
+      // decline writes are conditional on the status that was read and treat "no row matched"
+      // as a refusal, so a queued plain success stands for "one row matched".
+      let returning = false;
+      const settle = (): QueueEntry => {
+        const e = pop("update") as QueueEntry & { data?: unknown; error?: unknown };
+        return returning && !e.error && e.data == null ? ({ ...e, data: [{ id: "matched-row" }] } as QueueEntry) : e;
+      };
       const updateChain: Record<string, unknown> = {
         eq: () => updateChain,
-        select: () => updateChain,
+        select: () => { returning = true; return updateChain; },
         single: async () => pop("update"),
       };
       Object.defineProperty(updateChain, "then", {
-        value: (resolve: (v: QueueEntry) => unknown) => resolve(pop("update")),
+        value: (resolve: (v: QueueEntry) => unknown) => resolve(settle()),
       });
       return updateChain;
     };
