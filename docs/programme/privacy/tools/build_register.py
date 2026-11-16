@@ -27,6 +27,11 @@ Limits, stated honestly:
     The integration RLS suites are the proof.
   * A column absent from this register was judged not to hold personal data. A new
     column is NOT classified until this script is re-run and reviewed.
+  * The shared local DB also holds tables from PENDING PRs. Those listed in PENDING are
+    registered with status "PENDING — PR #…" and the disposition their PR declares; any
+    other table this branch's migrations do not create is reported and skipped.
+  * prod_rows_table comes from prod-row-counts.json, captured 2026-11-13 (aggregate
+    COUNT(*) only). It is NOT refreshed by this script; treat it as dated.
 """
 import collections
 import csv
@@ -306,6 +311,16 @@ reg("admin_activity_log internal_notes admin_alert_state", CFADMIN, C, HQ)
 reg("ai_invocations ai_cost_reservations ai_budget_control_audit ai_employee_budget_limits ai_org_budget_ceilings", STAFF, C,
     note="AI usage ledger: user id + hashes/tokens/cost; no prompt or response text")
 reg("cron_runs ops_backup_runs rate_limit_counters health_score_events dead_events", MIXED, C, note="platform telemetry")
+
+# — pending PRs (registered ahead of merge; status/disposition come from PENDING below) —
+reg("subscription_cancellations", OWNER, C,
+    note="cancellation ledger: claim + tombstone + refund-review flag; service-role only (RLS on, no policy)")
+reg("privacy_deletion_requests", STAFF, C,
+    note="deletion ledger / tombstone: opaque ids, step state, per-table counts; no names or emails; work set cleared on completion")
+reg("privacy_retained_billing_records", OWNER, C,
+    note="minimised archive of a deleted company's CrewFlow billing (Stripe handles, amounts, dates); no name/address/email")
+reg("ai_platform_budget ai_platform_budget_audit", CFADMIN, C, HQ,
+    "CrewFlow-wide monthly AI ceiling + its change audit (HQ super-admin id/email)")
 for t in public_tables:
     if t.startswith("hq_") or t.startswith("ai_employee"):
         TABLES.setdefault(t, (CFADMIN, C, HQ, "HQ operating system (AI boardroom, event spine, memory)"))
@@ -475,6 +490,18 @@ EXPLICIT = {
     "accounting_connections": {"external_tenant_id": ("online identifier (accounting tenant)", I)},
     "sso_provisioning_audit": {"subject": ("identity (SSO subject / email)", D)},
     "mfa_recovery_codes": {"code_hash": ("credential (hashed)", I)},
+    # pending PRs
+    "subscription_cancellations": {"stripe_subscription_id": ("financial (payment-provider reference)", I),
+                                   "details": ("structured blob (Stripe period bounds + pro-rata estimate; HQ-only)", I)},
+    "privacy_deletion_requests": {"target_org_id": ("subject link (company being deleted)", I),
+                                  "actor_user_id": ("user identifier (who requested the deletion)", I),
+                                  "work": ("structured blob (transient: member ids + Stripe handles; cleared on completion)", I)},
+    "privacy_retained_billing_records": {"former_org_id": ("subject link (deleted company)", I),
+                                         "stripe_customer_id": ("financial (payment-provider reference)", I),
+                                         "stripe_subscription_id": ("financial (payment-provider reference)", I),
+                                         "stripe_invoice_id": ("financial (payment-provider reference)", I),
+                                         "stripe_payment_intent_id": ("financial (payment-provider reference)", I),
+                                         "amount_gbp": ("financial (what the company paid CrewFlow)", I)},
 }
 
 # auth / storage (Supabase-managed schemas)
@@ -565,7 +592,33 @@ SKIP_TABLES = {t for t in public_tables if re.match(r"hq_events_(\d{4}_\d{2}|def
 _all_mig = "".join(open(os.path.join(mig_dir, f)).read().lower() for f in sorted(os.listdir(mig_dir)))
 FOREIGN_TABLES = {t for t in public_tables if t not in SKIP_TABLES and not re.search(
     r"(table|view)\s+(if not exists\s+)?(public\.)?\"?" + re.escape(t) + r"\"?[\s(]", _all_mig)}
-SKIP_TABLES |= FOREIGN_TABLES
+
+# Foreign tables that belong to a KNOWN pending PR are registered (marked PENDING) rather than
+# skipped, so the inventory is ready the day that PR merges. Their export/erasure disposition is
+# the one the owning PR declares (its own lib/gdpr/org-tables.json / design doc), quoted here
+# because this branch's org-tables.json does not contain them. Any OTHER foreign table is still
+# reported and skipped.  (status, export, erasure)
+PENDING = {
+    "subscription_cancellations": (
+        "PENDING — PR #1090 billing (migration 20261355000000), not on main",
+        "EXCLUDED from the export ZIP (per #1090 org-tables.json: platform billing)",
+        "anonymise per #1090 org-tables.json (row kept; requested_by_email + reason scrubbed)"),
+    "privacy_deletion_requests": (
+        "PENDING — PR #1091 deletion (migration 20261359000000), not on main; feature DARK (FEATURE_ACCOUNT_DELETION)",
+        "not org-scoped (platform deletion ledger)",
+        "this IS the deletion ledger: the completed row is the tombstone (ids + counts, work set cleared)"),
+    "privacy_retained_billing_records": (
+        "PENDING — PR #1091 deletion (migration 20261359000000), not on main; written only by a company deletion",
+        "not org-scoped (archive of a deleted company's CrewFlow billing)",
+        "retained until retention_until (6 y after year end per #1091 [LEGAL]); purge SQL staged, approval-only"),
+    "ai_platform_budget": (
+        "PENDING — AI workstream ai/spend-governance (migration 20261358000000), not on main",
+        "not org-scoped", "not org-scoped (platform setting)"),
+    "ai_platform_budget_audit": (
+        "PENDING — AI workstream ai/spend-governance (migration 20261358000000), not on main",
+        "not org-scoped", "not org-scoped (append-only HQ audit)"),
+}
+SKIP_TABLES |= (FOREIGN_TABLES - set(PENDING))
 
 # where a table's data leaves the system (besides backups, which apply to ALL rows)
 BACKUPS = "Supabase managed backups + weekly encrypted off-platform backup (Backblaze B2)"
@@ -600,6 +653,9 @@ LEAVES = {
     "ai_invocations": "none (ledger only; the PROMPT went to the AI provider at call time)",
     "rate_limit_counters": "none",
     "cron_runs": "none",
+    "subscription_cancellations": "Stripe (the cancel / schedule call carries the subscription id); HQ notification + owner confirmation email via Resend",
+    "privacy_deletion_requests": "none (tombstone export to a separate append-only object beside the off-platform backup — staged, not wired)",
+    "privacy_retained_billing_records": "none",
 }
 
 # ───────────────────────────── 5. emit rows ─────────────────────────────
@@ -651,6 +707,10 @@ for schema, table, column, dtype, ttype in cols:
             note = (note + "; " if note else "") + "VIEW over base tables"
         ref = refs.get(table, {"r": [], "w": [], "heur": False})
         exp, era = disposition(table)
+        if table in PENDING:
+            status, exp, era = PENDING[table]
+            if not (ref["r"] or ref["w"]):
+                ref = {"r": ["(code is on the owning PR branch)"], "w": [], "heur": False}
         rows.append([schema, table, column, dtype, "view" if is_view else "table", cat, lik, subject, role, status,
                      paths(ref["w"]) or ("" if not sqlw.get(table) else "(no app-code writer found)"),
                      paths(ref["r"]),
@@ -696,6 +756,7 @@ json.dump({"generated_from": "local catalogue + static code scan", "tables": sum
 
 unclassified = sorted(t for t in public_tables if t not in TABLES and t not in SKIP_TABLES and t in tables_seen)
 print(f"rows={len(rows)} tables={len(summary)} direct={sum(1 for r in rows if r[6]=='direct')}")
-print("skipped (in the shared local DB but not created by this branch's migrations):", " ".join(sorted(FOREIGN_TABLES)) or "none")
+print("registered as PENDING (in the shared local DB, created by a known pending PR):", " ".join(sorted(FOREIGN_TABLES & set(PENDING))) or "none")
+print("skipped (in the shared local DB but not created by this branch's migrations):", " ".join(sorted(FOREIGN_TABLES - set(PENDING))) or "none")
 print("tables with personal-data columns but NO curated TABLES entry (defaulted to mixed/processor/ACTIVE):")
 print("  " + " ".join(unclassified))

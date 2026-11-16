@@ -277,6 +277,30 @@
    "purgeable": "no",
    "note": "AI usage ledger: user id + hashes/tokens/cost; no prompt or response text; static-scan match is heuristic"
   },
+  "public.ai_platform_budget": {
+   "columns": 2,
+   "direct": 0,
+   "subject": "CrewFlow operator (HQ staff)",
+   "role": "controller (CrewFlow's own purposes)",
+   "status": "PENDING \u2014 AI workstream ai/spend-governance (migration 20261358000000), not on main",
+   "prod_rows": "",
+   "export": "not org-scoped",
+   "erasure": "not org-scoped (platform setting)",
+   "purgeable": "no",
+   "note": "CrewFlow-wide monthly AI ceiling + its change audit (HQ super-admin id/email)"
+  },
+  "public.ai_platform_budget_audit": {
+   "columns": 3,
+   "direct": 1,
+   "subject": "CrewFlow operator (HQ staff)",
+   "role": "controller (CrewFlow's own purposes)",
+   "status": "PENDING \u2014 AI workstream ai/spend-governance (migration 20261358000000), not on main",
+   "prod_rows": "",
+   "export": "not org-scoped",
+   "erasure": "not org-scoped (append-only HQ audit)",
+   "purgeable": "no",
+   "note": "CrewFlow-wide monthly AI ceiling + its change audit (HQ super-admin id/email)"
+  },
   "public.ai_quote_drafts": {
    "columns": 5,
    "direct": 0,
@@ -512,7 +536,7 @@
    "role": "processor (tenant is controller)",
    "status": "ACTIVE",
    "prod_rows": 1,
-   "export": "included",
+   "export": "included (service-role lane)",
    "erasure": "hard delete",
    "purgeable": "no",
    "note": ""
@@ -932,7 +956,7 @@
    "role": "processor (tenant is controller)",
    "status": "ACTIVE",
    "prod_rows": 0,
-   "export": "included",
+   "export": "included (service-role lane)",
    "erasure": "hard delete",
    "purgeable": "no",
    "note": ""
@@ -956,7 +980,7 @@
    "role": "processor (tenant is controller)",
    "status": "ACTIVE",
    "prod_rows": 602,
-   "export": "included",
+   "export": "included (service-role lane)",
    "erasure": "hard delete",
    "purgeable": "no",
    "note": ""
@@ -1052,7 +1076,7 @@
    "role": "processor (tenant is controller)",
    "status": "ACTIVE",
    "prod_rows": 0,
-   "export": "included",
+   "export": "included (service-role lane)",
    "erasure": "hard delete",
    "purgeable": "no",
    "note": ""
@@ -2449,6 +2473,30 @@
    "purgeable": "no",
    "note": "operational configuration; personal data limited to the acting user's id / free text"
   },
+  "public.privacy_deletion_requests": {
+   "columns": 4,
+   "direct": 0,
+   "subject": "tenant staff / workspace user",
+   "role": "controller (CrewFlow's own purposes)",
+   "status": "PENDING \u2014 PR #1091 deletion (migration 20261359000000), not on main; feature DARK (FEATURE_ACCOUNT_DELETION)",
+   "prod_rows": "",
+   "export": "not org-scoped (platform deletion ledger)",
+   "erasure": "this IS the deletion ledger: the completed row is the tombstone (ids + counts, work set cleared)",
+   "purgeable": "no",
+   "note": "deletion ledger / tombstone: opaque ids, step state, per-table counts; no names or emails; work set cleared on completion"
+  },
+  "public.privacy_retained_billing_records": {
+   "columns": 6,
+   "direct": 0,
+   "subject": "tenant owner / account holder",
+   "role": "controller (CrewFlow's own purposes)",
+   "status": "PENDING \u2014 PR #1091 deletion (migration 20261359000000), not on main; written only by a company deletion",
+   "prod_rows": "",
+   "export": "not org-scoped (archive of a deleted company's CrewFlow billing)",
+   "erasure": "retained until retention_until (6 y after year end per #1091 [LEGAL]); purge SQL staged, approval-only",
+   "purgeable": "no",
+   "note": "minimised archive of a deleted company's CrewFlow billing (Stripe handles, amounts, dates); no name/address/email"
+  },
   "public.properties": {
    "columns": 3,
    "direct": 1,
@@ -3145,6 +3193,18 @@
    "purgeable": "no",
    "note": ""
   },
+  "public.subscription_cancellations": {
+   "columns": 5,
+   "direct": 1,
+   "subject": "tenant owner / account holder",
+   "role": "controller (CrewFlow's own purposes)",
+   "status": "PENDING \u2014 PR #1090 billing (migration 20261355000000), not on main",
+   "prod_rows": "",
+   "export": "EXCLUDED from the export ZIP (per #1090 org-tables.json: platform billing)",
+   "erasure": "anonymise per #1090 org-tables.json (row kept; requested_by_email + reason scrubbed)",
+   "purgeable": "no",
+   "note": "cancellation ledger: claim + tombstone + refund-review flag; service-role only (RLS on, no policy)"
+  },
   "public.supplier_payment_allocations": {
    "columns": 2,
    "direct": 0,
@@ -3459,8 +3519,8 @@
   }
  },
  "totals": {
-  "rows": 1077,
-  "tables": 288,
-  "direct_columns": 402
+  "rows": 1097,
+  "tables": 293,
+  "direct_columns": 404
  }
 }
