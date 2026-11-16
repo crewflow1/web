@@ -63,7 +63,9 @@ const STAFF_CAN_READ: ReadonlySet<string> = new Set([
   "service_booking_slots", "service_bookings", "service_catalog", "signatures",
   "site_inductions", "site_visitors", "sites", "staff_qualifications", "stock_items",
   "stocktake_lines", "stocktake_sessions", "suppliers", "support_messages", "support_tickets",
-  "telematics_readings", "tenant_attachments", "voice_notes", "whatsapp_assistant_actions",
+  // tenant_attachments removed 2026-11-16 (migration 20261354000000): a staff member now sees an
+  // attachment only when they can see its parent record, uploaded it, or it is on their own staff record.
+  "telematics_readings", "voice_notes", "whatsapp_assistant_actions",
   "whatsapp_inbound_media", "whatsapp_number_routes", "whatsapp_optouts",
   "worker_signoff_tokens",
 ]);
