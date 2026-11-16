@@ -1,5 +1,7 @@
--- STAGED — NOT A MIGRATION. Needs a version number from the lead (>= 20261363000000)
--- and founder approval before it is moved to supabase/migrations/.
+-- IMPLEMENTED 2026-11-16 as supabase/migrations/20261364000000_route_tables_service_role_write.sql
+-- (slot assigned by the lead; renumbered at ship time if the release order changes).
+-- Tests updated in the same branch to assert the NEW rule. This file is kept as the
+-- staging record only — the migration is the source of truth.
 --
 -- Inbound routing tables are provisioned by HQ only: phone_numbers and
 -- email_inbound_routes become service-role-write, matching the posture
@@ -12,7 +14,7 @@
 --   * tenant members keep their org-scoped SELECT policies (untouched), so an
 --     operator can still see which number / address is wired.
 --
--- Tests to update in the same PR (they pin the old admin-write posture):
+-- Tests updated (they pinned the old admin-write posture; now assert service-role-only write):
 --   __tests__/integration/telephony/phone-numbers-rls.test.ts   (owner inserts → service client;
 --                                                                 add: owner/admin insert+update refused)
 --   __tests__/security/telephony-voice-invariants.test.ts:86     (admin-write source pin)
