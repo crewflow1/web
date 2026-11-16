@@ -115,6 +115,31 @@ from lt_users u
 where u.role <> 'hq'
 on conflict do nothing;
 
+-- Office administrators: ADMIN is default-deny under the capability model
+-- (server/auth/capabilities.ts — only the owner's explicit grants apply), so
+-- each synthetic admin gets the bundle a real owner would give an office
+-- manager: day-to-day commercial + scheduling modules, no settings / payroll /
+-- integrations / AI / tax. Owners are a wildcard and staff are role-derived.
+insert into public.membership_permissions (org_id, membership_id, module, action)
+select u.org_id,
+       pg_temp.lt_id(:'tag' || ':membership:' || u.org_idx || ':' || u.role || ':' || u.n),
+       m.module, a.action
+from lt_users u
+cross join unnest(array['jobs','quotes','sales','customers','leads','price_book','invoices','payments',
+                        'staff','rota','site_safety','documents','inbox','reports']) as m(module)
+cross join unnest(array['view','create','edit']) as a(action)
+where u.role = 'admin'
+on conflict do nothing;
+
+insert into public.membership_permissions (org_id, membership_id, module, action)
+select u.org_id,
+       pg_temp.lt_id(:'tag' || ':membership:' || u.org_idx || ':' || u.role || ':' || u.n),
+       g.module, g.action
+from lt_users u
+cross join (values ('quotes','approve'), ('invoices','approve'), ('jobs','manage'), ('rota','manage')) as g(module, action)
+where u.role = 'admin'
+on conflict do nothing;
+
 insert into public.staff_compensation (user_id, hourly_pay)
 select u.user_id, round((12.5 + pg_temp.lt_r(:'tag' || ':pay:' || u.org_idx || ':' || u.role || ':' || u.n) * 19.5)::numeric, 2)
 from lt_users u

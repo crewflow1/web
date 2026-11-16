@@ -192,6 +192,7 @@ export function thresholdsFor(profile) {
     // Sessions dying means the harness is no longer measuring the product.
     auth_bounces: [{ threshold: "rate<0.02", abortOnFail: true, delayAbortEval: "60s" }],
     login_failures: ["count>=0"],
+    other_redirects: ["count>=0"],
     server_errors: [
       { threshold: `rate<${profile.errRate}` },
       { threshold: "rate<0.10", abortOnFail: true, delayAbortEval: "60s" },

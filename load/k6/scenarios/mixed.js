@@ -50,6 +50,10 @@ export const options = {
   },
   thresholds: thresholds(profile),
   summaryTrendStats: ["avg", "min", "med", "p(90)", "p(95)", "p(99)", "max"],
+  // A VU is one person with ONE long-lived session across many iterations
+  // (one task per iteration) — k6's default per-iteration cookie reset would
+  // silently sign every VU out between tasks.
+  noCookiesReset: true,
   setupTimeout: "180s",
   teardownTimeout: "60s",
   userAgent: "crewflow-load-harness/1 (k6)",

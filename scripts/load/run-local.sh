@@ -57,7 +57,7 @@ trap cleanup EXIT
 CREWFLOW_SUPERADMIN_EMAILS="$HQ_EMAILS" \
 LOAD_TRACE_FILE="$OUT/trace.jsonl" \
 NODE_OPTIONS="--require $REPO/scripts/load/trace-fetch.cjs" \
-PORT=$PORT nohup npx next start -p $PORT > "$OUT/next.log" 2>&1 &
+PORT=$PORT nohup "$REPO/node_modules/.bin/next" start -p $PORT > "$OUT/next.log" 2>&1 &
 NEXT_PID=$!
 for i in $(seq 1 60); do
   curl -fsS -o /dev/null "http://localhost:${PORT}/api/health" 2>/dev/null && break

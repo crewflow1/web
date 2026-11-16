@@ -12,9 +12,9 @@
  *     docs/connection-pooling-and-scale.md);
  *   - LOCAL ONLY: `docker stats` CPU / memory for the Supabase containers and
  *     `ps` CPU / RSS for the Next.js server process.
- * And once at the end: the pg_stat_statements DELTA over the run (snapshot at
- * start, diff at end — the shared database's statistics are never reset), top
- * statements by total execution time.
+ * And once at the end: the pg_stat_statements DELTA over the run for the
+ * PostgREST roles (snapshot at start, diff at end — the shared database's
+ * statistics are never reset), top statements by total execution time.
  *
  * Read-only: only SELECTs against catalog/statistics views. Target-guarded
  * (production refused) via ./_guard.mjs; no secret is read or printed.
@@ -57,7 +57,9 @@ select json_build_object(
 
 const STATEMENTS_SQL = `
 select coalesce(json_agg(json_build_object('id', queryid::text, 'calls', calls, 'total', total_exec_time, 'rows', rows, 'q', left(regexp_replace(query, '\\s+', ' ', 'g'), 160))), '[]'::json)
-from pg_stat_statements where dbid = (select oid from pg_database where datname = current_database());`;
+from pg_stat_statements
+where dbid = (select oid from pg_database where datname = current_database())
+  and userid in (select oid from pg_roles where rolname in ('authenticated', 'anon', 'service_role', 'authenticator'));`;
 
 function hasStatements() {
   try {
@@ -189,7 +191,7 @@ function toMarkdown(s) {
   }
   if (s.next) L.push(`- Next.js server process tree: CPU max ${s.next.maxCpuPct?.toFixed(0)}% / avg ${s.next.avgCpuPct?.toFixed(0)}% (100% = one core), RSS max ${s.next.maxRssMb} MB`);
   if (s.statements) {
-    L.push(`- pg_stat_statements delta over the run: ${s.statements.calls} statements, ${s.statements.totalExecMs} ms total execution.`);
+    L.push(`- pg_stat_statements delta over the run, PostgREST roles only (authenticated / anon / service_role): ${s.statements.calls} statements, ${s.statements.totalExecMs} ms total execution. NOTE: the local database is shared, so this can include other clients' PostgREST traffic during the window.`);
     L.push("");
     L.push("| calls | total ms | mean ms | rows | statement (truncated) |");
     L.push("|---|---|---|---|---|");

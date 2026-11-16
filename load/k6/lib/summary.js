@@ -100,6 +100,7 @@ export function buildReport(data, meta) {
       businessErrorRate: v(data, "business_errors", "rate"),
       checksPassRate: v(data, "checks", "rate"),
       rateLimited: v(data, "rate_limited", "count") || 0,
+      otherRedirects: v(data, "other_redirects", "count") || 0,
       logins: v(data, "logins", "count") || 0,
       loginFailures: v(data, "login_failures", "count") || 0,
     },
@@ -166,7 +167,7 @@ function toMarkdown(j, meta) {
   L.push("");
   const e = j.errors;
   L.push(`- transport/HTTP failures ${pct(e.httpReqFailedRate)} · 5xx ${pct(e.serverErrorRate)} (peak ${pct(e.serverErrorRatePeak)}) · auth bounces ${pct(e.authBounceRate)} · business errors ${pct(e.businessErrorRate)} · checks passed ${pct(e.checksPassRate)}`);
-  L.push(`- sign-ins ${e.logins} ok / ${e.loginFailures} failed · 429 rate-limited responses ${e.rateLimited} (measured, not failures)`);
+  L.push(`- sign-ins ${e.logins} ok / ${e.loginFailures} failed · 429 rate-limited responses ${e.rateLimited} (measured, not failures) · non-auth redirects ${e.otherRedirects} (targets in k6.log)`);
   const i = j.isolation;
   L.push(`- tenant isolation: **${i.violations} violations** in ${i.scans} scanned responses · cross-tenant canaries ${i.canaryRefused}/${i.canaryProbes} refused, **${i.canaryLeaks} leaks**`);
   L.push(`- writes confirmed ${j.writes.confirmed} · outcome unknown ${j.writes.unknown} · iterations ${j.iterations}`);

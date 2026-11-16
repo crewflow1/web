@@ -26,6 +26,8 @@ export const canaryProbes = new Counter("canary_probes");
 export const canaryRefused = new Counter("canary_refused");
 /** A cross-tenant probe that returned the foreign tenant's data. Must stay at zero. */
 export const canaryLeaks = new Counter("canary_leaks");
+/** 3xx on a page/api request that was not an auth bounce, tagged with where it pointed. */
+export const otherRedirects = new Counter("other_redirects");
 /** Uncompressed response size per endpoint. */
 export const bodyBytes = new Trend("response_bytes");
 /** Upload bytes accepted by Storage (through the app). */
@@ -57,6 +59,7 @@ export function scanIsolation(res, ownMarker, name) {
 }
 
 let lastBounce = false;
+const seenRedirect = {};
 /** True once after any authenticated request was bounced to /login (the session is gone). */
 export function consumeBounce() {
   const b = lastBounce;
@@ -76,6 +79,14 @@ function account(res, name, ctx, { authed = true } = {}) {
     const bounced = (res.status === 307 || res.status === 302 || res.status === 303) && loc.indexOf("/login") !== -1;
     authBounces.add(bounced, { name });
     if (bounced) lastBounce = true;
+    else if (res.status >= 300 && res.status < 400 && loc) {
+      const to = loc.split("?")[0].replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, "[id]");
+      otherRedirects.add(1, { name, to });
+      if (!seenRedirect[name + to]) {
+        seenRedirect[name + to] = true; // once per VU per (request, target) — diagnostics, not noise
+        console.warn(`redirect ${res.status} on ${name} → ${to}`);
+      }
+    }
   }
   if (typeof res.body === "string") bodyBytes.add(res.body.length, { name });
   if (ctx && ctx.marker && Math.random() < SCAN_RATE) scanIsolation(res, ctx.marker, name);
