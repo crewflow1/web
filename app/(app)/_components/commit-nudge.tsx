@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 
 /**
- * CommitNudge — works around a framework bug that left saved changes off the screen for ~10 s.
+ * CommitNudge — TEMPORARY workaround for a framework bug that left saved changes off the screen
+ * for ~10 s. Removal condition and rules: docs/engineering/CORRECTNESS-GUARDS.md ("TEMPORARY —
+ * CommitNudge"). Side-effect proof: e2e/commit-nudge-safety.spec.ts.
  *
  * WHAT USERS SAW. On many pages (staff profile, holiday entitlement, qualifications, rota, record
  * payment, job crew, settings …) a save wrote its row at once, but the confirmation and the new
@@ -26,7 +28,8 @@ import { useEffect, useState } from "react";
  * that renders nothing; the cost is negligible. Forms keep their normal behaviour (revalidatePath,
  * router.refresh, StateForm) — nothing about what is saved or authorised changes.
  *
- * Remove when the framework is fixed: e2e/form-saves-confirm-promptly.spec.ts fails without it.
+ * REMOVE at the first Next.js / React upgrade where e2e/form-saves-confirm-promptly.spec.ts passes
+ * without this component (it fails without it today).
  */
 const NUDGE_AFTER_MS = [100, 200, 400, 700, 1000, 1500, 2000, 3000, 4000, 5500, 7000, 9000, 11500, 15000];
 
