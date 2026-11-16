@@ -1,6 +1,6 @@
 # Account & data deletion — design
 
-Workstream: `privacy/account-deletion` · worktree `cf-wt/deletion` · migrations `20261311000000`–`20261314000000`.
+Workstream: `privacy/account-deletion` · worktree `cf-wt/deletion` · migrations `20261356000000`–`20261359000000`.
 Evidence for every claim marked VERIFIED is in [`DELETION-EVIDENCE.md`](./DELETION-EVIDENCE.md).
 
 > **Status of the capability: built and tested, DARK.** The ledger / tombstone, the three deletion engines,
@@ -316,8 +316,8 @@ a one-line registry or constant change if counsel decides otherwise.
 ## 9. Activation (founder)
 
 1. Counsel reviews §8.
-2. Apply migrations `20261311`–`20261314` (additive; the only change to existing objects is the
-   sanctioned-teardown escape added to 19 guard functions — listed in `20261312`; precondition queries in
+2. Apply migrations `20261356`–`20261359` (additive; the only change to existing objects is the
+   sanctioned-teardown escape added to 19 guard functions — listed in `20261357`; precondition queries in
    EVIDENCE §10).
 3. Set `FEATURE_ACCOUNT_DELETION=true`. The daily `retention-purge` cron then also drains due requests.
 4. Update the privacy notice (backups, sub-processors, cooling-off) and the restore runbook (§7.3).

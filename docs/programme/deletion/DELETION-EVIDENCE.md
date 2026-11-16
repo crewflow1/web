@@ -141,7 +141,7 @@ is append-only and partition-retained.
 
 ### 2.2 What had to change in existing objects — and the escape that was wrong first time
 
-`20261312` re-creates **19** guard functions (`tg_comm_events_frozen`, 15 `receptionist_*_block_mutation`,
+`20261357` re-creates **19** guard functions (`tg_comm_events_frozen`, 15 `receptionist_*_block_mutation`,
 3 `ai_reply_*_block_mutation`) so that a company holding their rows can be deleted at all.
 
 **First version (withdrawn).** It gave them the existing 20261052 idiom — "let the DELETE through when the
@@ -311,11 +311,11 @@ Apply in numeric order (312–314 use `_privacy_require_service_role` from 311).
 
 | Migration | Changes existing objects? | Safe before code? | Precondition query (read-only, catalogue) | Expect |
 |---|---|---|---|---|
-| `20261311` ledger, tombstone, retained-billing table, request lifecycle | No | Yes | `select to_regclass('public.privacy_deletion_requests'), to_regclass('public.privacy_retained_billing_records'), (select count(*) from pg_proc where pronamespace='public'::regnamespace and (proname like 'privacy\_%' or proname like '\_privacy\_%'))` | `NULL, NULL, 0` — the names are free |
-| `20261312` teardown-safe guards, lockout, teardown | **Yes — `create or replace` of 19 guard functions** | Yes: with no marker set they behave exactly as now | `select p.proname, (p.prosrc ilike '%organizations%' or p.prosrc ilike '%current_setting%') as already_conditional, p.proconfig from pg_proc p where p.pronamespace='public'::regnamespace and (p.proname ~ '^(receptionist_.*|ai_reply_.*)_block_mutation$' or p.proname='tg_comm_events_frozen') order by 1` | 19 rows, `already_conditional = false` on every row (i.e. production still has the unconditional bodies this migration replaces — if any row is `true`, someone changed a guard since and the migration must be re-read against it); `proconfig` NULL except `{search_path=public}` on `tg_comm_events_frozen` |
+| `20261356` ledger, tombstone, retained-billing table, request lifecycle | No | Yes | `select to_regclass('public.privacy_deletion_requests'), to_regclass('public.privacy_retained_billing_records'), (select count(*) from pg_proc where pronamespace='public'::regnamespace and (proname like 'privacy\_%' or proname like '\_privacy\_%'))` | `NULL, NULL, 0` — the names are free |
+| `20261357` teardown-safe guards, lockout, teardown | **Yes — `create or replace` of 19 guard functions** | Yes: with no marker set they behave exactly as now | `select p.proname, (p.prosrc ilike '%organizations%' or p.prosrc ilike '%current_setting%') as already_conditional, p.proconfig from pg_proc p where p.pronamespace='public'::regnamespace and (p.proname ~ '^(receptionist_.*|ai_reply_.*)_block_mutation$' or p.proname='tg_comm_events_frozen') order by 1` | 19 rows, `already_conditional = false` on every row (i.e. production still has the unconditional bodies this migration replaces — if any row is `true`, someone changed a guard since and the migration must be re-read against it); `proconfig` NULL except `{search_path=public}` on `tg_comm_events_frozen` |
 | | | | `select c.relname from pg_trigger t join pg_proc p on p.oid=t.tgfoid join pg_class c on c.oid=t.tgrelid where not t.tgisinternal and (p.proname ~ '^(receptionist_.*|ai_reply_.*)_block_mutation$' or p.proname='tg_comm_events_frozen') and ((t.tgtype & 1)=0 or not exists (select 1 from pg_attribute a where a.attrelid=c.oid and a.attname='org_id' and not a.attisdropped))` | 0 rows — every such trigger is row-level on a table that has `org_id` (the guards read `old.org_id`) |
-| `20261313` per-person erasure | No | Yes | none beyond 311 | — |
-| `20261314` residue scan, drift introspection, tombstone export / re-apply | No | Yes | none beyond 311. `privacy_residue_scan` sequentially scans every text column — an operator tool, never to be run at peak. | — |
+| `20261358` per-person erasure | No | Yes | none beyond 356 | — |
+| `20261359` residue scan, drift introspection, tombstone export / re-apply | No | Yes | none beyond 356. `privacy_residue_scan` sequentially scans every text column — an operator tool, never to be run at peak. | — |
 
 After applying, confirm the lockdown (expect every row `false, false`, and both tables RLS on / 0 policies):
 

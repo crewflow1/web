@@ -89,7 +89,7 @@ begin
       create or replace function public.%I() returns trigger
       language plpgsql as $body$
       begin
-        -- Sanctioned-teardown escape — see the header of 20261312000000.
+        -- Sanctioned-teardown escape — see the header of 20261357000000.
         if tg_op = 'DELETE'
            and coalesce(current_setting('crewflow.privacy_teardown_org', true), '') = old.org_id::text then
           if auth.role() = 'service_role'
@@ -112,7 +112,7 @@ end $patch$;
 create or replace function public.tg_comm_events_frozen() returns trigger
 language plpgsql set search_path = public as $$
 begin
-  -- Sanctioned-teardown escape — see the header of 20261312000000.
+  -- Sanctioned-teardown escape — see the header of 20261357000000.
   if tg_op = 'DELETE'
      and coalesce(current_setting('crewflow.privacy_teardown_org', true), '') = old.org_id::text then
     if auth.role() = 'service_role'
