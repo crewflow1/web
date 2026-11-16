@@ -26,7 +26,7 @@ import {
  * HOW A DELETION RUNS (and why it survives a crash).
  * ─────────────────────────────────────────────────────────────────────────────
  * Every deletion is a row in `privacy_deletion_requests` (migration
- * 20261356000000) — the request, the job ledger and, once sealed, the tombstone.
+ * 20261359000000) — the request, the job ledger and, once sealed, the tombstone.
  * `runDeletionRequest` CLAIMS the row (an atomic, leased, single-runner claim),
  * then walks an ordered list of steps. A step is either
  *   - a single-transaction, service_role-only SQL primitive that records itself
