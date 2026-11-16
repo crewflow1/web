@@ -357,6 +357,33 @@ export async function snapshotOrg(orgId: string, userIds: string[]): Promise<str
   return JSON.stringify(out);
 }
 
+/**
+ * Canonical strings of every row, in every org-scoped table of `orgId`, that does
+ * NOT mention `userId` anywhere. A person's deletion may only touch rows that
+ * reference that person, so every string in a "before" set must still be in the
+ * "after" set (rows may be ADDED — e.g. audit entries — but none may change or go).
+ */
+export async function orgRowsNotReferencing(orgId: string, userId: string): Promise<Set<string>> {
+  const t = await db().rpc("_introspect_org_scoped_tables");
+  expect(t.error, t.error?.message).toBeNull();
+  const tables = ((t.data as Array<string | { table_name?: string; relname?: string }> | null) ?? [])
+    .map((x) => (typeof x === "string" ? x : (x.table_name ?? x.relname ?? "")))
+    .filter(Boolean);
+  expect(tables.length).toBeGreaterThan(100);
+  const out = new Set<string>();
+  for (const table of tables) {
+    const r = await db().from(table).select("*").eq("org_id", orgId).limit(1000);
+    expect(r.error, `${table}: ${r.error?.message}`).toBeNull();
+    for (const row of (r.data as Array<Record<string, unknown>> | null) ?? []) {
+      const text = JSON.stringify(row, Object.keys(row).sort());
+      if (!text.includes(userId)) out.add(`${table}:${text}`);
+    }
+  }
+  const org = await db().from("organizations").select("*").eq("id", orgId).single();
+  out.add(`organizations:${JSON.stringify(org.data)}`);
+  return out;
+}
+
 export type StripeMock = StripeSubscriptionsApi & { calls: string[] };
 
 /** A recording Stripe stand-in (SIMULATED — no network, no real Stripe). */

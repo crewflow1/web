@@ -10,6 +10,7 @@ import {
   mkOrg,
   mkUser,
   newMarkers,
+  orgRowsNotReferencing,
   residue,
   seedMemberFootprint,
   seedOrgBusinessData,
@@ -114,6 +115,67 @@ describeIntegration("privacy · self-service account deletion", () => {
     expect(await countOrgObjects(w.org.id)).toBe(4);
     expect((await serviceClient().auth.admin.getUserById(w.owner.id)).data.user?.email).toBe(w.owner.email);
   }, 120_000);
+
+  it("CASE A — deleting your own login never erases the company's shared jobs, invoices or anyone else's data", async () => {
+    const w = await buildWorld("shared", { withPayroll: true });
+    // The owner's own personal footprint in the same company (other people's data).
+    await seedMemberFootprint(w.org, w.seed, w.owner, w.om, { withPayroll: true });
+    // A shared invoice for the job the subject worked on, and a message the
+    // subject wrote in the company's job conversation.
+    const inv = await db()
+      .from("invoices")
+      .insert({ org_id: w.org.id, number: `INV-${w.m.tag}`, customer_id: w.seed.customer, job_id: w.seed.job, amount: 1200, vat_total: 240, notes: "Stage 1 of 3" })
+      .select("id")
+      .single();
+    expect(inv.error, inv.error?.message).toBeNull();
+    const invoiceId = String((inv.data as { id: string }).id);
+    const msg = await db()
+      .from("messages")
+      .insert({ org_id: w.org.id, conversation_id: w.seed.conversation, direction: "outbound", body: "On site at 8, gate code from the office.", created_by: w.subject.id })
+      .select("id")
+      .single();
+    expect(msg.error, msg.error?.message).toBeNull();
+
+    const rowJson = async (table: string, id: string) => {
+      const r = await db().from(table).select("*").eq("id", id).single();
+      expect(r.error, r.error?.message).toBeNull();
+      return JSON.stringify(r.data, Object.keys(r.data ?? {}).sort());
+    };
+    const jobBefore = await rowJson("jobs", w.seed.job);
+    const invoiceBefore = await rowJson("invoices", invoiceId);
+    const before = await orgRowsNotReferencing(w.org.id, w.subject.id);
+    const othersBefore = (await residue(w.om)).map((r) => JSON.stringify(r)).sort();
+    expect(othersBefore.length, "the others' markers must be present or the check proves nothing").toBeGreaterThan(10);
+
+    const r = await del(w.subject);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.run?.status).toBe("completed");
+
+    // Not one company row that does not mention the subject changed or vanished.
+    const after = await orgRowsNotReferencing(w.org.id, w.subject.id);
+    const changedOrGone = [...before].filter((row) => !after.has(row));
+    expect(changedOrGone, changedOrGone.slice(0, 3).join("\n")).toEqual([]);
+    // Every other person's (and the company's) personal data is exactly where it was.
+    expect((await residue(w.om)).map((x) => JSON.stringify(x)).sort()).toEqual(othersBefore);
+    // The shared job and invoice are byte-for-byte unchanged.
+    expect(await rowJson("jobs", w.seed.job)).toBe(jobBefore);
+    expect(await rowJson("invoices", invoiceId)).toBe(invoiceBefore);
+    // What the subject wrote for the company stays (pseudonymised), the subject does not.
+    const kept = await db().from("messages").select("body, created_by").eq("id", String((msg.data as { id: string }).id)).single();
+    expect(kept.data).toEqual({ body: "On site at 8, gate code from the office.", created_by: w.subject.id });
+    expect(await residue(w.m)).toEqual([]);
+    expect(await countRows("organizations", { id: w.org.id })).toBe(1);
+    expect(await countRows("memberships", { org_id: w.org.id, user_id: w.owner.id })).toBe(1);
+    expect((await serviceClient().auth.admin.getUserById(w.owner.id)).data.user?.email).toBe(w.owner.email);
+    // A personal deletion opens no processor work for the company: no Stripe
+    // customer, analytics identity or provider numbers of the company are touched.
+    const procs = await db().from("privacy_processor_requests").select("processor, disposition, status").eq("request_id", r.requestId);
+    const rows = (procs.data ?? []) as Array<{ processor: string; disposition: string; status: string }>;
+    expect(rows.find((p) => p.processor === "stripe")?.disposition).toBe("not_held");
+    expect(rows.find((p) => p.processor === "posthog")?.disposition).toBe("not_held");
+    expect(rows.filter((p) => p.status === "open")).toEqual([]);
+  }, 180_000);
 
   it("statutory footprint → retained records survive, pointing at an anonymous placeholder", async () => {
     const w = await buildWorld("stat", { withPayroll: true });
