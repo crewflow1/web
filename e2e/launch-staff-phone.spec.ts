@@ -13,7 +13,8 @@ import { navForRole, utilityForRole, areaLandingHref } from "../app/(app)/_nav/n
  *      header's landing), the D-17 field surfaces, and every job tab shown on an assigned job:
  *      renders (< 400), is not bounced home or to sign-in, is not a "not found" page, does not
  *      scroll sideways, and throws no hydration error;
- *   2. assigned jobs — the worker's list shows their job and not a colleague's;
+ *   2. assigned jobs — the worker's list shows their job and not a colleague's, fits a 320 px
+ *      phone with long job details, and offers no create/template/import actions they are refused;
  *   3. while a job streams in, its loading skeleton fits the phone;
  *   4. clock in on the assigned job, then clock out — both confirm and persist;
  *   5. progress — a worker records progress on their job;
@@ -28,7 +29,13 @@ const db = createClient(assertLocalE2eTarget("launch-staff-phone.spec.ts"), proc
   auth: { persistSession: false, autoRefreshToken: false },
 }) as any;
 
-const S = { org: "", staffId: "", mine: "", notMine: "", mineCustomer: `Mine ${TAG}`, otherCustomer: `Other ${TAG}` };
+const S = {
+  org: "", staffId: "", mine: "", notMine: "", long: "",
+  mineCustomer: `Mine ${TAG}`, otherCustomer: `Other ${TAG}`,
+  // long content a real job list carries: a long customer name, an unbroken site-address token
+  // and an unbroken note (a pasted reference) — none may push the list past the screen edge
+  longCustomer: `Long ${TAG} Northern Ireland Housing Executive Planned Maintenance Contract Phase Two`,
+};
 
 /** D-17 field surfaces staff keep that are reached from pages rather than the menu. */
 const FIELD_PAGES = ["/expenses/new", "/assets/scan", "/stock/vans", "/stock/stocktake", "/fleet/fuel", "/site-reports"];
@@ -70,6 +77,15 @@ test.describe("staff launch journeys on a phone (browser)", () => {
     const b = await db.from("jobs").insert({ org_id: S.org, customer_id: c2, status: "in-progress", scheduled_date: "2026-12-01" }).select("id").single();
     if (b.error) throw new Error(`other job: ${b.error.message}`);
     S.notMine = b.data.id;
+    const c3 = (await db.from("customers").insert({ org_id: S.org, name: S.longCustomer }).select("id").single()).data.id;
+    const l = await db.from("jobs").insert({
+      org_id: S.org, customer_id: c3, assigned_to: S.staffId, status: "new", scheduled_date: "2026-12-02",
+      site_address_line1: "Unit-14B-Northgate-Industrial-Estate-Ballymena-Road-Antrim", site_postcode: "BT41 1AA",
+      notes: `Ref:WO-2026-000000000000000000000000000000000000000000000000-${TAG}`,
+    }).select("id").single();
+    if (l.error) throw new Error(`long job: ${l.error.message}`);
+    S.long = l.data.id;
+    await db.from("job_assignments").insert({ org_id: S.org, job_id: S.long, user_id: S.staffId });
     // a shift left open by an earlier run of another spec would block clock-in; close it
     await db.from("time_entries").update({ ended_at: new Date().toISOString() }).eq("user_id", S.staffId).is("ended_at", null);
   });
@@ -114,6 +130,22 @@ test.describe("staff launch journeys on a phone (browser)", () => {
     await page.goto(`/jobs/${S.notMine}`);
     await expect(page.getByRole("heading", { name: "That page doesn't exist" })).toBeVisible();
     await expect(page.getByText(S.otherCustomer)).toHaveCount(0);
+  });
+
+  test("the jobs list fits a small phone with long job details, and offers staff no dead-end actions", async ({ page }) => {
+    // 320 px (smallest common phone) rather than 390: margin for platform font widths, which
+    // differ between macOS and the Linux CI runner (the header overflowed 7 px only on CI)
+    await page.setViewportSize({ width: 320, height: 720 });
+    await page.goto("/jobs");
+    await settled(page);
+    await expect(page.getByText(S.longCustomer).filter({ visible: true }).first()).toBeVisible();
+    expect(await overflowPx(page), "/jobs at 320px with long job details").toBeLessThanOrEqual(1);
+    // creating a job and job templates are refused to staff (/jobs/new, /jobs/templates send them
+    // home), so the list must not offer them
+    await expect(page.getByRole("link", { name: /new job/i })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Templates", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^import/i })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Calendar", exact: true }).filter({ visible: true })).toHaveCount(1);
   });
 
   test("while a job streams in, its loading skeleton fits the phone (no sideways scroll)", async ({ page }) => {
