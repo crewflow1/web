@@ -131,6 +131,7 @@ Run time (daily cron once due, or operator), in this order — each step recorde
 |---|---|---|---|
 | 0 | claim | Atomic leased claim. **Re-verifies the requester is still an owner**; if not, the request is cancelled (`requester_not_owner`), not run. | Row lock + lease. |
 | 1 | `stripe_cancel` | Cancel every subscription id on `organizations` / `org_subscriptions` (`invoice_now:false, prorate:false`). Fails **closed** if a subscription exists and Stripe is unconfigured. Customer object kept (§6). | Already-cancelled / missing = done; Stripe idempotency key per request+subscription. |
+| 1b | `processors` | Census of what third parties hold (Stripe customer, telephony numbers / call & SMS logs, WhatsApp routes) read **from the ledger target** while the rows still exist; one `privacy_processor_requests` row per processor, recorded with the step in one transaction. No provider called (§6). | Step + rows recorded in the same transaction; first write wins. |
 | 2 | `lockout` | One transaction: capture member ids, set `status='cancelled'`, delete memberships (+ permissions, qualifications) and API keys. | Step recorded in the same transaction. |
 | 3 | `storage` | Remove every object under `<org_id>/` across the bucket census via the Storage API. | Re-listing an empty prefix removes 0. |
 | 4 | `teardown` | One transaction: refuse unless Storage is verifiably empty → count rows per table → archive minimised billing → clear non-cascading references → raise the transaction-local teardown marker → `delete from organizations` → **sweep** the ledgers that carry `org_id` with no foreign key → **verify from the catalogue that no table still holds the org id**, else roll back. | Step recorded in the same transaction; org-absent is a no-op. |
@@ -236,6 +237,15 @@ Company deletion needs no class table: every org-scoped row goes, verified again
 
 ## 6. External providers
 
+Every deletion request (all three kinds) now records a **processor manifest** — one row per processor in
+`privacy_processor_requests` (migration `20261359000000` §8, step `processors`): disposition `retained_legal` /
+`manual_request` / `ages_out` / `not_held` (`api_done` reserved), opaque provider handles and counts only (a CHECK
+refuses `@`, `+` and spaces). Providers that hold data but offer no API path CrewFlow may call become **open manual
+requests** with a 30-day deadline, worked from [PROCESSOR-DELETION-RUNBOOK.md](./PROCESSOR-DELETION-RUNBOOK.md) and
+closed with `privacy_processor_request_resolve`. The per-processor decisions and the legal-retention table are in
+[LEGAL-RETENTION-DECISIONS.md](./LEGAL-RETENTION-DECISIONS.md). Subscription **cancellation** never deletes data
+(founder policy 2026-11-16) — pinned by `cancellation-never-deletes.test.ts` + `no-silent-company-deletion.test.ts`.
+
 | Provider | Holds | Done by code | Not possible via API | Manual / founder step |
 |---|---|---|---|---|
 | **Stripe** (live) | Customer (name, email, address), subscription, invoices, payment method | Subscriptions **cancelled first**, fail-closed. Customer / subscription / invoice ids archived (minimised). | — | **Customer is deliberately not deleted**: its invoices are CrewFlow's own accounting records (6 y **[LEGAL]**). Deleting a Stripe customer is permanent and does not remove invoices anyway. After retention: redact via Stripe's data-redaction tooling (Dashboard). Detach the saved payment method if wanted sooner (Dashboard). |
@@ -243,9 +253,9 @@ Company deletion needs no class table: every org-scoped row goes, verified again
 | **Supabase Storage** | Tenant files | Removed through the Storage API (object + bytes); teardown refuses to run while any remain. | — | — |
 | **Resend** (live) | Sent-email log: recipient, subject, body | Nothing. CrewFlow uses no Resend audiences / contacts. Local queue rows (`notification_email_queue`) are deleted. | No endpoint deletes an individual sent email. | Logs expire on Resend's plan retention. Put the period in the privacy notice. A bespoke request goes to Resend support. **[LEGAL]** |
 | **Sentry** (live) | Error events | Nothing needed by design: `sendDefaultPii:false`, `scrubEvent` on every event, no `setUser`, replays off. | — | If an incident ever shows PII in an event: delete that issue in the Sentry UI. Events expire on plan retention. |
-| **PostHog** | Product events | Nothing needed: the server sink keys events by a **hash of the org id**; no person profile. | — | — |
+| **PostHog** | Product events | The server sink keys events by a **hash of the org id**; the browser SDK never identifies a person. On company deletion, if analytics is configured, an open manual request carries that hash. | No API call from the engine. | Delete the `org_<hash>` person (runbook). |
 | **Anthropic** (keys disarmed locally; tiers armed in prod) | Prompts / outputs in transit | Local AI history deleted (`ai_quote_drafts`; `ai_invocations` holds hashes and token counts only). | No API deletes individual requests; provider-side retention is contractual. | Record Anthropic's retention period in the sub-processor list. **[LEGAL]** |
-| **Twilio / Meta WhatsApp** (dormant) | Call / message logs, recordings, media | Local rows go with the org. No provider call — the integrations are dark and must stay dark. | — | **Before either is activated**, add a provider step (Twilio: delete recordings / messages by SID; Meta: none available). Recorded as a pre-activation condition (§10). |
+| **Twilio / Vapi / Meta WhatsApp** (dormant) | Numbers, call / message logs, recordings, media | Local rows go with the org. The census records number SIDs / route ids and call / SMS counts as an open manual request (only when any exist). No provider call — the integrations are dark and must stay dark. | — | Runbook (release number, delete logs / recordings; Meta: deregister only). **Before activation**, decide whether to automate (§10). |
 | **Vercel** | Request logs (IP, path) | — | Not editable. | Age out on plan retention. |
 
 ---
@@ -337,5 +347,5 @@ a one-line registry or constant change if counsel decides otherwise.
 | `hq_events` payload audit for incidental personal data (the activity dual-write is whitelisted; the domain producers were not reviewed). | P3 | Requires reviewing every producer. |
 | No admin entry point to erase a person **already removed** from the team. | P2 | Needs the UI; the engine's org discovery is already catalogue-driven. |
 | Purge of `privacy_retained_billing_records` after `retention_until`. | P3 (first due 2032) | Irreversible; staged for approval. |
-| Twilio / Meta provider deletion step. | Pre-activation condition | Integrations are dark and must stay dark. |
-| Coordination: another workstream added `subscription_cancellations` concurrently. The teardown verifier is catalogue-driven, so it will **refuse** to complete if that table neither cascades from `organizations` nor is handled — by design. Reconcile at merge. | Note | Not this workstream's table. |
+| Twilio / Vapi / Meta provider deletion step — today an open manual request + runbook. | Pre-activation condition | Integrations are dark and must stay dark. |
+| Coordination (reconciled 2026-11-16): `subscription_cancellations` (#1090) has `org_id … ON DELETE CASCADE`, so the teardown removes it (shared local DB has it applied; the full suite passes with it present). Keeping a minimal cancellation record after deletion is legal question L15. | Note | Not this workstream's table. |

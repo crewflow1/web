@@ -12,6 +12,12 @@ import {
   USER_ERASE_RETAIN_REFS,
   USER_ERASE_SCRUB_REFS,
 } from "@/lib/gdpr/user-erasure";
+import {
+  buildProcessorManifest,
+  processorEnvFromProcess,
+  type ProcessorEnv,
+  type ProcessorFacts,
+} from "@/server/services/privacy-processors";
 
 /**
  * ACCOUNT & DATA DELETION — the executor.
@@ -127,6 +133,8 @@ export type DeletionDeps = {
    * Throwing here simulates the process dying at that exact point.
    */
   afterStep?: (step: string) => void | Promise<void>;
+  /** Deployment configuration the processor manifest depends on (defaults to process.env). */
+  processorEnv?: ProcessorEnv;
 };
 
 export type DeletionKind = "user_account" | "staff_erasure" | "org";
@@ -467,6 +475,9 @@ async function runOrgDeletion(
     await stepDone(admin, deps, requestId, "stripe_cancel", detail);
   }
 
+  // 1b. What third parties hold — read while the company's rows still exist.
+  if (!done("processors")) await recordProcessors(admin, deps, claim);
+
   // 2. Lock the doors: memberships + API keys gone, member ids captured.
   if (!done("lockout")) {
     await rpc(admin, "lockout", "privacy_org_lockout", { p_request_id: requestId });
@@ -515,7 +526,7 @@ async function runOrgDeletion(
 
   await rpc(admin, "complete", "privacy_request_complete", {
     p_request_id: requestId,
-    p_required_steps: ["stripe_cancel", "lockout", "storage", "teardown", "identities"],
+    p_required_steps: ["stripe_cancel", "processors", "lockout", "storage", "teardown", "identities"],
     p_retention_until: null,
   });
 }
@@ -583,6 +594,38 @@ async function cancelOrgSubscriptions(
     }
   }
   return { subscriptions: ids.size, cancelled, already_cancelled: already, org_present: true };
+}
+
+// ─── processors ──────────────────────────────────────────────────────────────
+
+/**
+ * Record what each third-party processor holds for the target and what is done
+ * about it (`privacy_processor_requests`). The census reads the target FROM THE
+ * LEDGER; the manifest is pure (server/services/privacy-processors.ts); the
+ * record call writes the rows and the `processors` step in one transaction. No
+ * provider is called here — open rows are manual requests for an operator.
+ */
+async function recordProcessors(
+  admin: DeletionAdminClient,
+  deps: DeletionDeps | undefined,
+  claim: Claim,
+): Promise<void> {
+  const requestId = claim.request_id;
+  const facts = await rpc<ProcessorFacts>(admin, "processors", "privacy_processor_census", {
+    p_request_id: requestId,
+  });
+  const now = deps?.now?.() ?? new Date();
+  const entries = buildProcessorManifest(
+    { kind: claim.kind, orgId: claim.target_org_id },
+    facts,
+    deps?.processorEnv ?? processorEnvFromProcess(),
+    { now, billingRetentionUntil: billingRetentionUntil(now) },
+  );
+  await rpc(admin, "processors", "privacy_processor_record", {
+    p_request_id: requestId,
+    p_entries: entries,
+  });
+  await deps?.afterStep?.("processors");
 }
 
 // ─── identity ────────────────────────────────────────────────────────────────
@@ -715,6 +758,8 @@ async function runAccountDeletion(
   }
 
   const { steps, work } = await readRequestWork(admin, requestId);
+  // Before any per-org erasure removes the rows the census reads.
+  if (!("processors" in steps)) await recordProcessors(admin, deps, claim);
   const orgIds = Array.isArray(work.org_ids) ? (work.org_ids as string[]) : [];
   for (const orgId of orgIds) {
     if (`erase_org:${orgId}` in steps) continue;
@@ -728,7 +773,7 @@ async function runAccountDeletion(
 
   await rpc(admin, "complete", "privacy_request_complete", {
     p_request_id: requestId,
-    p_required_steps: ["lockout", "identity", ...orgIds.map((o) => `erase_org:${o}`)],
+    p_required_steps: ["lockout", "processors", "identity", ...orgIds.map((o) => `erase_org:${o}`)],
     p_retention_until: null,
   });
   return null;
@@ -742,12 +787,13 @@ async function runStaffErasure(
   const requestId = claim.request_id;
   const orgId = claim.target_org_id as string;
   const userId = claim.target_user_id as string;
+  if (!("processors" in claim.steps)) await recordProcessors(admin, deps, claim);
   if (!(`erase_org:${orgId}` in claim.steps)) {
     await eraseUserInOrg(admin, deps, requestId, orgId, userId);
   }
   await rpc(admin, "complete", "privacy_request_complete", {
     p_request_id: requestId,
-    p_required_steps: [`erase_org:${orgId}`],
+    p_required_steps: ["processors", `erase_org:${orgId}`],
     p_retention_until: null,
   });
 }

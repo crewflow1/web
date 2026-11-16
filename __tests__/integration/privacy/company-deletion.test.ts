@@ -25,6 +25,7 @@ import {
 } from "./_fixtures";
 import {
   cancelOrgDeletion,
+  requestAccountDeletion,
   requestOrgDeletion,
   runDeletionRequest,
   ORG_DELETION_COOLING_OFF_SECONDS,
@@ -57,6 +58,24 @@ async function seedReceptionistLedgerRow(orgId: string): Promise<string> {
   });
   expect(rec, "receptionist execution ledger row recorded").not.toBeNull();
   return correlationId;
+}
+
+type ProcessorRow = {
+  id: string;
+  processor: string;
+  disposition: string;
+  status: string;
+  held_count: number;
+  external_refs: string[];
+  retention_until: string | null;
+  due_by: string | null;
+  resolution: string | null;
+};
+
+async function processorRows(requestId: string): Promise<ProcessorRow[]> {
+  const r = await db().from("privacy_processor_requests").select<ProcessorRow>("*").eq("request_id", requestId).order("processor");
+  expect(r.error, r.error?.message).toBeNull();
+  return r.data ?? [];
 }
 
 /**
@@ -181,12 +200,13 @@ describeIntegration("privacy · company deletion", () => {
     const run = await runDeletionRequest(req.requestId, {
       admin: admin(),
       stripe,
+      processorEnv: { posthogConfigured: false },
       afterStep: (s) => {
         order.push(s);
       },
     });
     expect(run.status).toBe("completed");
-    expect(order).toEqual(["stripe_cancel", "lockout", "storage", "teardown", "identities"]);
+    expect(order).toEqual(["stripe_cancel", "processors", "lockout", "storage", "teardown", "identities"]);
     // Stripe was cancelled FIRST, once, with an idempotency key bound to the request.
     expect(stripe.calls).toEqual([
       "retrieve:sub_TESTdeletion0001",
@@ -235,6 +255,16 @@ describeIntegration("privacy · company deletion", () => {
     const kept = await db().from("privacy_retained_billing_records").select("*").eq("former_org_id", w.org.id);
     const rows = (kept.data ?? []) as Array<Record<string, unknown>>;
     expect(rows.map((r) => r.record_kind).sort()).toEqual(["billing_invoice", "org_account"]);
+    // EXACTLY the fields LEGAL-RETENTION-DECISIONS.md §2 lists — a new column
+    // must go through that table (and counsel) before it can be retained.
+    expect(Object.keys(rows[0] ?? {}).sort()).toEqual(
+      [
+        "amount_gbp", "created_at", "currency", "due_date", "former_org_id", "id", "invoice_kind", "invoice_status",
+        "paid_at", "period_end", "period_start", "plan", "record_kind", "request_id", "retention_until",
+        "source_created_at", "source_id", "stripe_customer_id", "stripe_invoice_id", "stripe_payment_intent_id",
+        "stripe_subscription_id",
+      ],
+    );
     const account = rows.find((r) => r.record_kind === "org_account");
     expect(account?.stripe_customer_id).toBe("cus_TESTdeletion0001");
     expect(account?.stripe_subscription_id).toBe("sub_TESTdeletion0001");
@@ -243,6 +273,18 @@ describeIntegration("privacy · company deletion", () => {
     expect(invoice?.currency).toBe("GBP");
     expect(String(invoice?.retention_until)).toMatch(/^20\d\d-12-31$/);
     expect(JSON.stringify(rows)).not.toContain(w.m.name);
+
+    // ── processors: the Stripe customer is RETAINED for tax, recorded as such ─
+    const procs = await processorRows(req.requestId);
+    const stripeRow = procs.find((p) => p.processor === "stripe");
+    expect(stripeRow).toMatchObject({
+      disposition: "retained_legal",
+      status: "closed",
+      external_refs: ["cus_TESTdeletion0001"],
+      retention_until: account?.retention_until,
+    });
+    expect(procs.filter((p) => p.status === "open"), "nothing at a provider needs an operator here").toEqual([]);
+    expect(JSON.stringify(procs)).not.toContain(w.m.name);
 
     // ── tombstone: evidence without the data ────────────────────────────────
     const tomb = await ledger(req.requestId);
@@ -290,6 +332,86 @@ describeIntegration("privacy · company deletion", () => {
       expect(await countRows(t, { org_id: w.org.id }), t).toBe(0);
     }
     expect(await countOrgObjects(w.org.id), "storage objects").toBe(0);
+  }, 180_000);
+
+  it("processors: what third parties hold is recorded per request; providers with no API path become open manual requests an operator resolves", async () => {
+    const w = await buildWorld("procs", orgB, { subscription: true, shareWithBystander: false });
+    const hex = () => crypto.randomUUID().replace(/-/g, "");
+    const numberSid = `PN${hex()}`;
+    const e164 = `+4428${String(Math.floor(Math.random() * 1e7)).padStart(7, "0")}`;
+    const pn = await db().from("phone_numbers").insert({ org_id: w.org.id, provider: "twilio", e164, provider_number_sid: numberSid, active: true });
+    expect(pn.error, pn.error?.message).toBeNull();
+    const call = await db().from("calls").insert({ org_id: w.org.id, direction: "inbound", status: "completed", provider: "twilio", provider_call_id: `CA${hex()}`, caller_number: w.m.phone });
+    expect(call.error, call.error?.message).toBeNull();
+    const waId = String(Date.now()) + String(Math.floor(Math.random() * 1e4));
+    const wa = await db().from("whatsapp_number_routes").insert({ org_id: w.org.id, phone_number_id: waId, display_phone_number: w.m.phone });
+    expect(wa.error, wa.error?.message).toBeNull();
+
+    const req = await requestOrgDeletion({ orgId: w.org.id, actorUserId: w.owner.id, confirmName: w.org.name }, { admin: admin() });
+    expect(req.ok).toBe(true);
+    if (!req.ok) return;
+    await makeDue(req.requestId);
+
+    // The DATABASE refuses a processor ref that is not an opaque handle (an email
+    // or phone number), whatever the caller sends — and records nothing.
+    const claim = await db().rpc("privacy_request_claim", { p_request_id: req.requestId, p_lease_seconds: 60 });
+    expect(claim.error, claim.error?.message).toBeNull();
+    for (const ref of [w.m.email, w.m.phone, "two words"]) {
+      const bad = await db().rpc("privacy_processor_record", {
+        p_request_id: req.requestId,
+        p_entries: [{ processor: "twilio", disposition: "manual_request", due_by: "2026-12-16", external_refs: [ref] }],
+      });
+      expect(bad.error, `ref ${ref} must be refused`).not.toBeNull();
+    }
+    const openNoDeadline = await db().rpc("privacy_processor_record", {
+      p_request_id: req.requestId,
+      p_entries: [{ processor: "twilio", disposition: "manual_request" }],
+    });
+    expect(openNoDeadline.error, "an open manual request without a deadline must be refused").not.toBeNull();
+    expect(await processorRows(req.requestId)).toEqual([]);
+    expect((await ledger(req.requestId)).steps).toEqual({});
+    await db().rpc("privacy_request_fail", { p_request_id: req.requestId, p_error_code: "test:probe" });
+
+    const now = new Date("2026-11-16T10:00:00.000Z");
+    const run = await runDeletionRequest(req.requestId, {
+      admin: admin(),
+      stripe: stripeMock(),
+      now: () => now,
+      processorEnv: { posthogConfigured: true },
+    });
+    expect(run.status, JSON.stringify(run)).toBe("completed");
+    // The provider-side facts were read BEFORE the teardown removed the rows.
+    expect(await countRows("phone_numbers", { org_id: w.org.id })).toBe(0);
+
+    const procs = await processorRows(req.requestId);
+    const by = Object.fromEntries(procs.map((p) => [p.processor, p]));
+    expect(Object.keys(by).sort()).toEqual(
+      ["anthropic", "posthog", "resend", "sentry", "stripe", "supabase_platform_logs", "twilio", "vapi", "vercel", "whatsapp_meta"],
+    );
+    expect(by.stripe).toMatchObject({ disposition: "retained_legal", status: "closed", external_refs: ["cus_TESTdeletion0001"], retention_until: "2032-12-31" });
+    expect(by.twilio).toMatchObject({ disposition: "manual_request", status: "open", held_count: 2, external_refs: [numberSid], due_by: "2026-12-16" });
+    expect(by.whatsapp_meta).toMatchObject({ disposition: "manual_request", status: "open", held_count: 1, external_refs: [waId] });
+    expect(by.posthog).toMatchObject({ disposition: "manual_request", status: "open", held_count: 1 });
+    expect(by.posthog.external_refs[0]).toMatch(/^org_[0-9a-f]{32}$/);
+    expect(by.posthog.external_refs[0]).not.toContain(w.org.id);
+    for (const p of ["resend", "anthropic", "supabase_platform_logs", "vercel"]) expect(by[p]).toMatchObject({ disposition: "ages_out", status: "closed" });
+    for (const p of ["sentry", "vapi"]) expect(by[p]).toMatchObject({ disposition: "not_held", status: "closed" });
+    // No personal data in the processor ledger — opaque handles only.
+    const text = JSON.stringify(procs);
+    for (const s of [w.m.name, w.m.email, w.m.phone, e164, w.org.slug]) expect(text).not.toContain(s);
+    // The tombstone records the step and how many manual requests it opened.
+    const tomb = await ledger(req.requestId);
+    expect((tomb.steps as Record<string, { open_manual?: number }>).processors?.open_manual).toBe(3);
+
+    // An operator works the manual request, recording a symbolic outcome; it closes once.
+    const res = await db().rpc("privacy_processor_request_resolve", { p_id: by.twilio.id, p_resolution: "released_number_and_deleted_logs" });
+    expect(res.error, res.error?.message).toBeNull();
+    const again = await db().rpc("privacy_processor_request_resolve", { p_id: by.twilio.id, p_resolution: "x" });
+    expect(again.error, "an already-resolved request cannot be re-resolved").not.toBeNull();
+    const after = (await processorRows(req.requestId)).find((p) => p.processor === "twilio");
+    expect(after).toMatchObject({ status: "closed", resolution: "released_number_and_deleted_logs" });
+    const badCode = await db().rpc("privacy_processor_request_resolve", { p_id: by.posthog.id, p_resolution: "Deleted by Jane <jane@x>" });
+    expect(badCode.error, "the resolution is a symbolic code, never free text").not.toBeNull();
   }, 180_000);
 
   it("append-only evidence stays append-only: the teardown escape is unusable outside a sanctioned teardown", async () => {
@@ -397,6 +519,9 @@ describeIntegration("privacy · company deletion", () => {
       ["privacy_user_auth_audit_purge", { p_request_id: w.org.id, p_user_id: w.owner.id }],
       ["privacy_residue_scan", { p_markers: [w.m.name] }],
       ["privacy_tombstone_reapply", { p_tombstone: { id: w.org.id, kind: "org", target_org_id: w.org.id } }],
+      ["privacy_processor_census", { p_request_id: w.org.id }],
+      ["privacy_processor_record", { p_request_id: w.org.id, p_entries: [] }],
+      ["privacy_processor_request_resolve", { p_id: w.org.id, p_resolution: "deleted_via_dashboard" }],
     ];
     for (const [fn, args] of calls) {
       for (const [label, client] of [["anon", anon], ["owner JWT", ownerJwt]] as const) {
@@ -414,6 +539,8 @@ describeIntegration("privacy · company deletion", () => {
       expect(write.error?.message ?? "", `ledger write as ${label}`).toMatch(/permission denied/i);
       const billing = await client.from("privacy_retained_billing_records").select("id").limit(1);
       expect(billing.error?.message ?? "", `archive read as ${label}`).toMatch(/permission denied/i);
+      const procs = await client.from("privacy_processor_requests").select("id").limit(1);
+      expect(procs.error?.message ?? "", `processor ledger read as ${label}`).toMatch(/permission denied/i);
     }
     expect(await countRows("customers", { org_id: w.org.id })).toBe(1);
   }, 120_000);
@@ -510,7 +637,7 @@ describeIntegration("privacy · company deletion", () => {
   // case and it could approach the timeout when the shared database was busy).
   // Nothing is asserted less: each boundary still gets its own company, its own
   // crash, its own resume, a full residue scan and a bystander snapshot.
-  it.each(["stripe_cancel", "lockout", "storage", "teardown", "identities"] as const)(
+  it.each(["stripe_cancel", "processors", "lockout", "storage", "teardown", "identities"] as const)(
     "interrupted right after `%s`, then resumed: finishes exactly once, bystander untouched",
     async (dieAfter) => {
       const before = await snapshotOrg(orgB.id, [bOwner.id]);
@@ -618,6 +745,147 @@ describeIntegration("privacy · company deletion", () => {
     expect([r1.status, r2.status].sort()).toEqual(["completed", "not_claimed"]);
     expect(await countRows("organizations", { id: w.org.id })).toBe(0);
     expect((await ledger(req.requestId)).status).toBe("completed");
+  }, 180_000);
+
+  it("killed MID-storage (some files gone, step not recorded): the DB is intact, nobody can reach it, and the resume finishes cleanly", async () => {
+    const w = await buildWorld("midst", orgB, { shareWithBystander: false });
+    const req = await requestOrgDeletion(
+      { orgId: w.org.id, actorUserId: w.owner.id, confirmName: w.org.name },
+      { admin: admin() },
+    );
+    expect(req.ok).toBe(true);
+    if (!req.ok) return;
+    await makeDue(req.requestId);
+    expect(await countOrgObjects(w.org.id)).toBe(4);
+
+    // The process dies right AFTER Storage has deleted the second batch — after
+    // bytes are gone, before the step can be recorded.
+    const real = admin();
+    let removes = 0;
+    const dying: DeletionAdminClient = {
+      ...real,
+      rpc: real.rpc.bind(real),
+      from: real.from.bind(real),
+      auth: real.auth,
+      storage: {
+        from: (bucket: string) => {
+          const b = real.storage.from(bucket);
+          return {
+            list: (path: string, opts: { limit: number; offset: number }) => b.list(path, opts),
+            remove: async (paths: string[]) => {
+              const out = await b.remove(paths);
+              if (++removes === 2) throw new Error("process killed mid-storage");
+              return out;
+            },
+          };
+        },
+      },
+    };
+    const crashed = await runDeletionRequest(req.requestId, { admin: dying, stripe: stripeMock() });
+    expect(crashed).toMatchObject({ status: "failed", errorCode: "storage:storage_error" });
+    const mid = await ledger(req.requestId);
+    expect(Object.keys(mid.steps as object).sort()).toEqual(["lockout", "processors", "stripe_cancel"]);
+    expect(await countOrgObjects(w.org.id), "half the files are gone").toBe(2);
+    // Every database row is still there, and nobody can reach it: the lockout
+    // committed before Storage was touched.
+    expect(await countRows("organizations", { id: w.org.id })).toBe(1);
+    expect(await countRows("customers", { org_id: w.org.id })).toBe(1);
+    expect(await countRows("memberships", { org_id: w.org.id })).toBe(0);
+    const ownerToken = await signIn(w.owner);
+    const read = await userClient(ownerToken).from("customers").select("id").eq("org_id", w.org.id);
+    expect(read.data ?? [], "a former owner sees nothing of the half-deleted company").toEqual([]);
+
+    const seen: string[] = [];
+    const resumed = await runDeletionRequest(req.requestId, {
+      admin: admin(),
+      stripe: stripeMock(),
+      afterStep: (s) => {
+        seen.push(s);
+      },
+    });
+    expect(resumed.status).toBe("completed");
+    expect(seen).toEqual(["storage", "teardown", "identities"]);
+    const tomb = await ledger(req.requestId);
+    expect((tomb.steps as Record<string, { objects?: number }>).storage?.objects, "the resume removed only what was left").toBe(2);
+    expect(await countRows("organizations", { id: w.org.id })).toBe(0);
+    expect(await countOrgObjects(w.org.id)).toBe(0);
+    expect(await residue(w.m)).toEqual([]);
+  }, 180_000);
+
+  it("account deletion and company deletion of the same people interleave safely — the account run frozen mid-way while the company goes", async () => {
+    const w = await buildWorld("ilva", orgB, { shareWithBystander: false });
+    // The staff member starts deleting their own account; the run is frozen right after its lockout.
+    const created1 = await db().rpc("privacy_request_create", {
+      p_kind: "user_account",
+      p_target_org_id: null,
+      p_target_user_id: w.staff.id,
+      p_actor_user_id: w.staff.id,
+      p_confirm: w.staff.email,
+      p_cooling_off_seconds: 0,
+    });
+    expect(created1.error, created1.error?.message).toBeNull();
+    const accountReq = String((created1.data as { request_id: string }).request_id);
+    const frozen = await runDeletionRequest(accountReq, {
+      admin: admin(),
+      afterStep: (s) => {
+        if (s === "lockout") throw new Error("frozen");
+      },
+    });
+    expect(frozen.status).toBe("failed");
+
+    // Meanwhile the owner's company deletion runs to completion.
+    const req = await requestOrgDeletion({ orgId: w.org.id, actorUserId: w.owner.id, confirmName: w.org.name }, { admin: admin() });
+    expect(req.ok).toBe(true);
+    if (!req.ok) return;
+    await makeDue(req.requestId);
+    const company = await runDeletionRequest(req.requestId, { admin: admin(), stripe: stripeMock() });
+    expect(company.status, JSON.stringify(company)).toBe("completed");
+    expect(await countRows("organizations", { id: w.org.id })).toBe(0);
+
+    // The account deletion resumes against a company that no longer exists and still seals.
+    const resumed = await runDeletionRequest(accountReq, { admin: admin() });
+    expect(resumed.status, JSON.stringify(resumed)).toBe("completed");
+    expect((await ledger(accountReq)).status).toBe("completed");
+    for (const u of [w.owner, w.adminUser, w.staff, w.shared]) {
+      expect((await serviceClient().auth.admin.getUserById(u.id)).data.user).toBeNull();
+    }
+    expect(await residue(w.m)).toEqual([]);
+  }, 180_000);
+
+  it("account deletion and company deletion of the same people interleave safely — the company run frozen after its lockout while the account goes", async () => {
+    const w = await buildWorld("ilvb", orgB, { shareWithBystander: false });
+    const req = await requestOrgDeletion({ orgId: w.org.id, actorUserId: w.owner.id, confirmName: w.org.name }, { admin: admin() });
+    expect(req.ok).toBe(true);
+    if (!req.ok) return;
+    await makeDue(req.requestId);
+    const frozen = await runDeletionRequest(req.requestId, {
+      admin: admin(),
+      stripe: stripeMock(),
+      afterStep: (s) => {
+        if (s === "lockout") throw new Error("frozen");
+      },
+    });
+    expect(frozen.status).toBe("failed");
+    expect(await countRows("memberships", { org_id: w.org.id })).toBe(0);
+
+    // While the company is locked out but not yet torn down, the staff member deletes their account.
+    const acct = await requestAccountDeletion({ userId: w.staff.id, confirmEmail: w.staff.email }, { admin: admin() });
+    expect(acct.ok, JSON.stringify(acct)).toBe(true);
+    if (!acct.ok) return;
+    expect(acct.run?.status).toBe("completed");
+    // Their statutory payroll line is still retained for the company until the teardown.
+    expect(await countRows("payroll_lines", { org_id: w.org.id, user_id: w.staff.id })).toBe(1);
+
+    const company = await runDeletionRequest(req.requestId, { admin: admin(), stripe: stripeMock() });
+    expect(company.status, JSON.stringify(company)).toBe("completed");
+    const tomb = await ledger(req.requestId);
+    const identities = (tomb.steps as Record<string, Record<string, number>>).identities;
+    expect(identities.hard_deleted + identities.anonymised_placeholder + identities.already_gone).toBe(4);
+    expect(await countRows("organizations", { id: w.org.id })).toBe(0);
+    for (const u of [w.owner, w.adminUser, w.staff, w.shared]) {
+      expect((await serviceClient().auth.admin.getUserById(u.id)).data.user).toBeNull();
+    }
+    expect(await residue(w.m)).toEqual([]);
   }, 180_000);
 
   it("teardown refuses while a storage object remains, and rolls back completely", async () => {

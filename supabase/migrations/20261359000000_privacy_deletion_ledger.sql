@@ -18,6 +18,9 @@
 --      organisation row is removed.
 --   3. The request lifecycle primitives (create / cancel / claim / step / fail /
 --      complete). All service_role-only.
+--   4. public.privacy_processor_requests — per request, what each third-party
+--      processor holds and what was done; open rows are the manual processor
+--      deletion requests an operator works through (section 8).
 --
 -- ── WHY THE TARGET COLUMNS ARE NOT FOREIGN KEYS ──────────────────────────────
 -- target_org_id / target_user_id / actor_user_id are OPAQUE uuids with NO FK. A
@@ -29,13 +32,13 @@
 -- predicate may ever be written against it.
 --
 -- ── DATA-API POSTURE ─────────────────────────────────────────────────────────
--- Both tables are SERVICE-ROLE ONLY: RLS enabled, NO policy, NO client grant.
+-- All three tables are SERVICE-ROLE ONLY: RLS enabled, NO policy, NO client grant.
 -- data-api:exempt:privacy_deletion_requests
 -- data-api:exempt:privacy_retained_billing_records
 -- The app reads them through the admin client in server code, pinned to the
 -- caller's own authorised org / user.
 --
--- Additive and reversible (drop the functions, then the two tables).
+-- Additive and reversible (drop the functions, then the three tables).
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1. THE LEDGER / TOMBSTONE
@@ -655,3 +658,240 @@ grant  execute on function public.privacy_request_complete(uuid, text[], date) t
 
 revoke all on function public.tg_privacy_deletion_requests_tombstone() from public;
 revoke execute on function public.tg_privacy_deletion_requests_tombstone() from anon, authenticated;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 8. PROCESSOR DELETION REQUESTS (third parties that hold copies)
+-- ─────────────────────────────────────────────────────────────────────────────
+-- data-api:exempt:privacy_processor_requests
+-- One row per (deletion request, processor): what each third party holds for
+-- the target and what was done about it — the per-request manifest an operator
+-- answers a data-subject or customer from, and the work queue for providers that
+-- offer NO deletion API CrewFlow may call (disposition 'manual_request', status
+-- 'open' until an operator records the outcome — runbook:
+-- docs/programme/deletion/PROCESSOR-DELETION-RUNBOOK.md).
+--
+--   api_done        a provider API deleted it (none wired today; Stripe
+--                   subscription cancellation is its own step).
+--   retained_legal  kept deliberately for a legal duty (Stripe customer =
+--                   CrewFlow's own tax record), until retention_until.
+--   manual_request  the provider holds it and an operator must act: due_by.
+--   ages_out        the provider's own retention expires it; nothing to call.
+--   not_held        by design the provider holds nothing for this target.
+--
+-- NO personal data: external_refs are opaque provider handles only (the CHECK
+-- refuses '@', '+', spaces — so no email or phone number can be stored), the
+-- counts are integers and the resolution is a symbolic code. Like the ledger,
+-- the request id is the only link; the table is not org-scoped.
+create table if not exists public.privacy_processor_requests (
+  id              uuid primary key default gen_random_uuid(),
+  request_id      uuid not null references public.privacy_deletion_requests(id),
+  processor       text not null check (processor ~ '^[a-z][a-z0-9_]{1,39}$'),
+  disposition     text not null check (disposition in
+                    ('api_done', 'retained_legal', 'manual_request', 'ages_out', 'not_held')),
+  status          text not null check (status in ('open', 'closed')),
+  held_count      integer not null default 0 check (held_count >= 0),
+  external_refs   text[] not null default '{}',
+  retention_until date,
+  due_by          date,
+  resolved_at     timestamptz,
+  resolution      text check (resolution is null or resolution ~ '^[a-z0-9_:.-]{1,80}$'),
+  created_at      timestamptz not null default now(),
+  constraint privacy_processor_requests_key unique (request_id, processor),
+  constraint privacy_processor_requests_refs_opaque check (
+    cardinality(external_refs) <= 50
+    and array_to_string(external_refs, ',') ~ '^[A-Za-z0-9_.,-]*$'
+  ),
+  -- Only a manual request is ever open, and an open one always has a deadline.
+  constraint privacy_processor_requests_open_shape check (
+    status = 'closed' or (disposition = 'manual_request' and due_by is not null)
+  ),
+  constraint privacy_processor_requests_retained_shape check (
+    disposition <> 'retained_legal' or retention_until is not null
+  )
+);
+
+create index if not exists privacy_processor_requests_open_idx
+  on public.privacy_processor_requests (due_by) where status = 'open';
+
+alter table public.privacy_processor_requests enable row level security;
+revoke all on table public.privacy_processor_requests from public, anon, authenticated;
+grant select on table public.privacy_processor_requests to service_role;
+
+comment on table public.privacy_processor_requests is
+  'Per deletion request: what each third-party processor holds and what was done '
+  '(opaque handles + counts only). Open rows = manual processor deletion requests. '
+  'Service-role only; written via privacy_processor_record / _resolve.';
+
+-- Record the manifest for a RUNNING request and mark its `processors` step done,
+-- in one transaction (first write wins, like every other step).
+create or replace function public.privacy_processor_record(
+  p_request_id uuid,
+  p_entries    jsonb
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_row    public.privacy_deletion_requests%rowtype;
+  v_e      jsonb;
+  v_open   integer := 0;
+  v_disp   jsonb := '{}'::jsonb;
+  v_detail jsonb;
+begin
+  perform public._privacy_require_service_role('privacy_processor_record');
+  select * into v_row from public.privacy_deletion_requests where id = p_request_id for update;
+  if not found or v_row.status <> 'running' then
+    raise exception 'privacy_processor_record: request is not running' using errcode = 'check_violation';
+  end if;
+  if v_row.steps ? 'processors' then
+    return v_row.steps -> 'processors';
+  end if;
+  if jsonb_typeof(p_entries) is distinct from 'array' then
+    raise exception 'privacy_processor_record: entries must be an array' using errcode = 'check_violation';
+  end if;
+
+  for v_e in select * from jsonb_array_elements(p_entries) loop
+    insert into public.privacy_processor_requests
+      (request_id, processor, disposition, status, held_count, external_refs, retention_until, due_by)
+    values (
+      p_request_id,
+      v_e ->> 'processor',
+      v_e ->> 'disposition',
+      case when v_e ->> 'disposition' = 'manual_request' then 'open' else 'closed' end,
+      coalesce((v_e ->> 'held_count')::integer, 0),
+      coalesce(array(select jsonb_array_elements_text(coalesce(v_e -> 'external_refs', '[]'::jsonb))), '{}'),
+      (v_e ->> 'retention_until')::date,
+      (v_e ->> 'due_by')::date
+    )
+    on conflict (request_id, processor) do nothing;
+    if v_e ->> 'disposition' = 'manual_request' then v_open := v_open + 1; end if;
+    v_disp := v_disp || jsonb_build_object(v_e ->> 'processor', v_e ->> 'disposition');
+  end loop;
+
+  v_detail := jsonb_build_object('open_manual', v_open, 'dispositions', v_disp, 'done_at', now());
+  update public.privacy_deletion_requests
+     set steps = steps || jsonb_build_object('processors', v_detail)
+   where id = p_request_id;
+  return v_detail;
+end;
+$$;
+
+-- An operator records the outcome of an open manual request (symbolic code,
+-- e.g. 'deleted_via_dashboard', 'provider_confirmed', 'nothing_found').
+create or replace function public.privacy_processor_request_resolve(
+  p_id         uuid,
+  p_resolution text
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_r public.privacy_processor_requests%rowtype;
+begin
+  perform public._privacy_require_service_role('privacy_processor_request_resolve');
+  update public.privacy_processor_requests
+     set status = 'closed', resolved_at = now(), resolution = p_resolution
+   where id = p_id and status = 'open'
+  returning * into v_r;
+  if not found then
+    raise exception 'privacy_processor_request_resolve: no open request with that id' using errcode = 'no_data_found';
+  end if;
+  return jsonb_build_object('id', v_r.id, 'status', v_r.status, 'resolution', v_r.resolution);
+end;
+$$;
+
+-- What the target has at each processor, read from the TARGET IN THE LEDGER (never
+-- from the caller) while the rows still exist — i.e. before the teardown or the
+-- per-org erasure removes them. Opaque handles + counts only. Tables absent in
+-- an environment (migrate-first skew) read as zero.
+create or replace function public.privacy_processor_census(p_request_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_row       public.privacy_deletion_requests%rowtype;
+  v_org       uuid;
+  v_user      uuid;
+  v_customers text[] := '{}';
+  v_tw_nums   text[] := '{}';
+  v_vapi_nums text[] := '{}';
+  v_wa_routes text[] := '{}';
+  v_tw_calls  bigint := 0;
+  v_vapi_calls bigint := 0;
+  v_sms       bigint := 0;
+begin
+  perform public._privacy_require_service_role('privacy_processor_census');
+  select * into v_row from public.privacy_deletion_requests where id = p_request_id;
+  if not found or v_row.status <> 'running' then
+    raise exception 'privacy_processor_census: request is not running' using errcode = 'check_violation';
+  end if;
+  v_org  := v_row.target_org_id;
+  v_user := v_row.target_user_id;
+
+  if v_row.kind = 'org' then
+    select coalesce(array_agg(distinct x) filter (where x is not null), '{}') into v_customers from (
+      select stripe_customer_id as x from public.organizations where id = v_org
+      union all
+      select stripe_customer_id from public.org_subscriptions where org_id = v_org
+    ) s;
+    if to_regclass('public.phone_numbers') is not null then
+      select coalesce(array_agg(provider_number_sid order by provider_number_sid)
+                        filter (where provider = 'twilio' and provider_number_sid is not null), '{}'),
+             coalesce(array_agg(provider_number_sid order by provider_number_sid)
+                        filter (where provider = 'vapi' and provider_number_sid is not null), '{}')
+        into v_tw_nums, v_vapi_nums
+        from public.phone_numbers where org_id = v_org;
+    end if;
+    if to_regclass('public.calls') is not null then
+      select count(*) filter (where coalesce(provider, 'twilio') <> 'vapi'),
+             count(*) filter (where provider = 'vapi')
+        into v_tw_calls, v_vapi_calls
+        from public.calls where org_id = v_org and provider_call_id is not null;
+    end if;
+    if to_regclass('public.whatsapp_number_routes') is not null then
+      select coalesce(array_agg(phone_number_id order by phone_number_id), '{}') into v_wa_routes
+        from public.whatsapp_number_routes where org_id = v_org;
+    end if;
+    if to_regclass('public.sms_deliveries') is not null then
+      select count(*) into v_sms from public.sms_deliveries
+       where org_id = v_org and provider_message_id is not null;
+    end if;
+  elsif to_regclass('public.sms_deliveries') is not null then
+    -- A person: only the texts sent TO them (staff erasure: in that one company).
+    select count(*) into v_sms from public.sms_deliveries
+     where user_id = v_user and provider_message_id is not null
+       and (v_row.kind <> 'staff_erasure' or org_id = v_org);
+  end if;
+
+  return jsonb_build_object(
+    'stripe_customer_ids', to_jsonb(v_customers),
+    'twilio_number_sids',  to_jsonb(v_tw_nums),
+    'twilio_calls',        v_tw_calls,
+    'twilio_sms',          v_sms,
+    'vapi_number_sids',    to_jsonb(v_vapi_nums),
+    'vapi_calls',          v_vapi_calls,
+    'whatsapp_route_ids',  to_jsonb(v_wa_routes)
+  );
+end;
+$$;
+
+revoke all on function public.privacy_processor_census(uuid) from public;
+revoke execute on function public.privacy_processor_census(uuid) from anon, authenticated;
+grant  execute on function public.privacy_processor_census(uuid) to service_role;
+
+revoke all on function public.privacy_processor_record(uuid, jsonb) from public;
+revoke execute on function public.privacy_processor_record(uuid, jsonb) from anon, authenticated;
+grant  execute on function public.privacy_processor_record(uuid, jsonb) to service_role;
+
+revoke all on function public.privacy_processor_request_resolve(uuid, text) from public;
+revoke execute on function public.privacy_processor_request_resolve(uuid, text) from anon, authenticated;
+grant  execute on function public.privacy_processor_request_resolve(uuid, text) to service_role;
