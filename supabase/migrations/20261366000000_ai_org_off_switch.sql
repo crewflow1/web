@@ -34,7 +34,7 @@ create table if not exists public.ai_org_switches (
   updated_at timestamptz not null default now()
 );
 comment on table public.ai_org_switches is
-  'Per-company AI off switch. Absent row = AI on. ai_enabled=false => ai_reserve_invocation refuses every call (block_reason ai_disabled). Members read; writes only via ai_owner_set_ai_enabled / ai_hq_set_ai_enabled (audited).';
+  'Per-company AI off switch. Absent row = AI on. ai_enabled=false => ai_reserve_invocation refuses every call (block_reason ai_disabled). Owner/admin read (the only user-session reader is the owner settings page; enforcement reads it inside ai_reserve_invocation); writes only via ai_owner_set_ai_enabled / ai_hq_set_ai_enabled (audited).';
 
 create table if not exists public.ai_org_switch_audit (
   id               uuid primary key default gen_random_uuid(),
@@ -63,7 +63,7 @@ grant select, insert on table public.ai_org_switch_audit to service_role;
 drop policy if exists ai_org_switches_member_read on public.ai_org_switches;
 create policy ai_org_switches_member_read on public.ai_org_switches
   for select to authenticated
-  using (org_id in (select public.current_org_ids()));
+  using (public.is_org_admin(org_id));
 
 -- HQ super-admin write (service-role only). Role/identity is enforced by the
 -- /admin action (isSuperAdminEmail); here only the transaction + audit.

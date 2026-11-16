@@ -28,6 +28,11 @@ const TOKEN = `it-aioff-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 describeIntegration("per-company AI off switch · real Postgres", () => {
   let orgA = "", orgB = "", orgHeld = "";
   const users: Record<string, { id: string; token: string }> = {};
+  const u = (who: string) => {
+    const x = users[who];
+    if (!x) throw new Error(`test user ${who} not created`);
+    return x;
+  };
   const svc = () => db(serviceClient());
 
   async function makeUser(label: string) {
@@ -48,7 +53,7 @@ describeIntegration("per-company AI off switch · real Postgres", () => {
     return String(r.data?.id ?? "");
   }
   async function member(org: string, who: string, role: string) {
-    const r = await svc().from("memberships").insert({ org_id: org, user_id: users[who].id, role }).select("user_id").single();
+    const r = await svc().from("memberships").insert({ org_id: org, user_id: u(who).id, role }).select("user_id").single();
     expect(r.error, r.error?.message).toBeNull();
   }
   async function reserve(org: string) {
@@ -60,7 +65,7 @@ describeIntegration("per-company AI off switch · real Postgres", () => {
     return (r.data?.[0] ?? {}) as Row;
   }
   const owner = (who: string, org: string, enabled: boolean) =>
-    db(userClient(users[who].token)).rpc("ai_owner_set_ai_enabled", { p_org_id: org, p_enabled: enabled });
+    db(userClient(u(who).token)).rpc("ai_owner_set_ai_enabled", { p_org_id: org, p_enabled: enabled });
   async function liveClaims(org: string) {
     const r = await svc().from("ai_cost_reservations").select("id").eq("org_id", org);
     return (r.data ?? []).length;
@@ -115,21 +120,24 @@ describeIntegration("per-company AI off switch · real Postgres", () => {
 
   it("anon cannot call the owner RPC or the HQ RPC; authenticated cannot call the HQ RPC", async () => {
     expect((await db(anonClient()).rpc("ai_owner_set_ai_enabled", { p_org_id: orgA, p_enabled: true })).error).not.toBeNull();
-    const hq = await db(userClient(users.ownerA.token)).rpc("ai_hq_set_ai_enabled", { p_org_id: orgA, p_enabled: true });
+    const hq = await db(userClient(u("ownerA").token)).rpc("ai_hq_set_ai_enabled", { p_org_id: orgA, p_enabled: true });
     expect(hq.error).not.toBeNull();
     expect((await reserve(orgA)).block_reason).toBe("ai_disabled");
   });
 
-  it("tenant cannot write the switch table directly; members can read their own row only", async () => {
-    const t = db(userClient(users.staffA.token));
+  it("tenant cannot write the switch table directly; only the company's owner/admin can read its row", async () => {
+    const t = db(userClient(u("staffA").token));
     const ins = await t.from("ai_org_switches").insert({ org_id: orgA, ai_enabled: true });
     expect(ins.error).not.toBeNull();
     const upd = await t.from("ai_org_switches").update({ ai_enabled: true }).eq("org_id", orgA);
     expect(upd.error).not.toBeNull();
     expect((await reserve(orgA)).block_reason).toBe("ai_disabled");
-    const own = await t.from("ai_org_switches").select("ai_enabled").eq("org_id", orgA);
+    // Staff: least privilege (D-17 STAFF_CAN_READ ledger) — the switch row is admin-read only.
+    const staffRead = await t.from("ai_org_switches").select("ai_enabled").eq("org_id", orgA);
+    expect(staffRead.data ?? []).toHaveLength(0);
+    const own = await db(userClient(u("ownerA").token)).from("ai_org_switches").select("ai_enabled").eq("org_id", orgA);
     expect(own.data).toEqual([{ ai_enabled: false }]);
-    const other = await db(userClient(users.ownerB.token)).from("ai_org_switches").select("ai_enabled").eq("org_id", orgA);
+    const other = await db(userClient(u("ownerB").token)).from("ai_org_switches").select("ai_enabled").eq("org_id", orgA);
     expect(other.data ?? []).toHaveLength(0);
   });
 
@@ -152,7 +160,7 @@ describeIntegration("per-company AI off switch · real Postgres", () => {
     const ba = await svc().from("ai_org_switch_audit").select("actor_kind").eq("org_id", orgB);
     expect((ba.data ?? []).map((r) => r.actor_kind)).toEqual(["hq", "hq"]);
     // Audit is not tenant-readable.
-    const leak = await db(userClient(users.ownerA.token)).from("ai_org_switch_audit").select("id").eq("org_id", orgA);
+    const leak = await db(userClient(u("ownerA").token)).from("ai_org_switch_audit").select("id").eq("org_id", orgA);
     expect(leak.data ?? []).toHaveLength(0);
   });
 
