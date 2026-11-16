@@ -61,7 +61,7 @@ export async function createSupportTicket(formData: FormData): Promise<void> {
     .insert({
       org_id: ctx.membership.org_id,
       subject: parsed.data.subject,
-      body: parsed.data.body, // unused on the table but kept for symmetry
+      // NO `body` here: support_tickets has no such column and PostgREST rejects an unknown key (PGRST204) — the text is the first support_message below.
       priority: parsed.data.priority,
       category: parsed.data.category,
       created_by: user.id,
