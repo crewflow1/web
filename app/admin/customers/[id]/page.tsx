@@ -49,7 +49,7 @@ import { InternalNotesPanel } from "./_internal-notes-panel";
  */
 
 type Params = Promise<{ id: string }>;
-type SP = Promise<{ saved?: string; error?: string; detail?: string; stripe?: string; kind?: string }>;
+type SP = Promise<{ saved?: string; error?: string; notice?: string; detail?: string; stripe?: string; kind?: string }>;
 
 export default async function HqCustomerDetailPage({
   params,
@@ -180,6 +180,11 @@ export default async function HqCustomerDetailPage({
           className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
         >
           {errorMsg}
+        </div>
+      ) : null}
+      {sp.notice ? (
+        <div role="status" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          {sp.notice}
         </div>
       ) : null}
       {saved ? (

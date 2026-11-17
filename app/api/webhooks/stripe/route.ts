@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { isMaintenanceMode } from "@/lib/maintenance";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe/client";
@@ -76,6 +77,18 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   try {
     const result = await processStripeEvent(event);
+    if (result.status === "in_flight") {
+      // Another delivery of this event is still being processed. Answering 2xx
+      // would tell Stripe "delivered" on the strength of an attempt that has not
+      // succeeded — and if that attempt is killed mid-flight the event is never
+      // retried and stays unprocessed for good. A non-2xx keeps Stripe's retry
+      // schedule alive; the next delivery finds the event completed (→ 200
+      // duplicate) or reclaims it. Nothing was run on this request.
+      return NextResponse.json(
+        { ok: false, event_id: event.id, event_type: event.type, status: "in_flight" },
+        { status: 409, headers: { "retry-after": "60", "cache-control": "no-store" } },
+      );
+    }
     return NextResponse.json({
       ok: true,
       event_type: event.type,
@@ -88,6 +101,15 @@ export async function POST(request: Request): Promise<NextResponse> {
       event.type,
       e instanceof Error ? e.message : String(e),
     );
+    // ALERT, not just a log line: a failed write here means a payment, an
+    // activation or a revocation has not landed yet. Stripe retries (500 below)
+    // and the event stays unprocessed in billing_events until one succeeds; the
+    // fingerprint groups every retry of the same event into one Sentry issue.
+    Sentry.captureException(e instanceof Error ? e : new Error(String(e)), {
+      tags: { route: "webhooks/stripe", stripe_event_type: event.type },
+      extra: { stripe_event_id: event.id },
+      fingerprint: ["stripe-webhook-handler-failed", event.type],
+    });
     // 500 → Stripe retries. We've already stored the event in
     // billing_events so the retry will hit the dedupe path.
     return NextResponse.json(

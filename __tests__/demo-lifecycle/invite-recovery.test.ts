@@ -38,6 +38,8 @@ const fromMock = vi.fn((table: string) => ({
   }),
   update: () => ({ eq: async () => ({ error: null }) }),
   delete: () => ({ eq: async () => ({ error: null }) }),
+  // provisioning reads the demo's own setup-fee status (carried onto the new company)
+  select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { stripe_payment_status: null, setup_fee_paid_at: null }, error: null }) }) }),
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
