@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, it, describe } from "vitest";
 import { anonClient, describeIntegration, serviceClient, ukTodayIso, userClient } from "../_harness";
+import { liftPlatformCeilingForThisFile } from "./_platform-ceiling";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -212,7 +213,10 @@ describeIntegration("AI budget reservation · atomic ceiling on real Postgres", 
     expect(i.error, i.error?.message).toBeNull();
   }
 
+  let restorePlatformCeiling: (() => Promise<void>) | null = null;
+
   beforeAll(async () => {
+    restorePlatformCeiling = await liftPlatformCeilingForThisFile();
     const svc = db(serviceClient());
     const a = await svc
       .from("organizations")
@@ -244,6 +248,7 @@ describeIntegration("AI budget reservation · atomic ceiling on real Postgres", 
   }, 60_000);
 
   afterAll(async () => {
+    await restorePlatformCeiling?.();
     const svc = db(serviceClient());
     for (const org of [orgA, orgB]) {
       if (org) await svc.from("organizations").delete().eq("id", org);

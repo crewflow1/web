@@ -11,6 +11,7 @@ import {
 import { CompletionCertificatePdf } from "@/lib/pdf/completion-certificate-pdf";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 import { resolveJobAddress, formatAddressLines } from "@/lib/address";
+import { contentDisposition } from "@/lib/http/content-disposition";
 
 // react-pdf renders on Node, not edge.
 export const runtime = "nodejs";
@@ -131,7 +132,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
   return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${cert.certificate_number}.pdf"`,
+      "Content-Disposition": contentDisposition("inline", `${cert.certificate_number}.pdf`, "certificate"),
       "Cache-Control": "private, no-store",
     },
   });

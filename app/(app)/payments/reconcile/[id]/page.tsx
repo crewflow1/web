@@ -90,7 +90,7 @@ export default async function ReconcilePage({
     });
   }
 
-  const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
+  const errorMessage = sp.error ? sp.error : null;
   const savedMessage = sp.saved
     ? sp.saved === "matched"
       ? "Match confirmed — invoice payment recorded."

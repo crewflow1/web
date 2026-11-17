@@ -148,7 +148,7 @@ export default async function PublicQuotePage({
       reference?: string;
     } | null) ?? null;
 
-  const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
+  const errorMessage = sp.error ? sp.error : null;
   const acceptedMessage = sp.saved === "accepted" || quote.status === "accepted";
   const declinedMessage = sp.saved === "declined" || quote.status === "declined";
 

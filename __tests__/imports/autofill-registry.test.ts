@@ -75,7 +75,7 @@ describe("autofill registry alignment", () => {
     }
   });
 
-  it("auth mirrors the create action: customer needs capability, staff is admin-only, the rest are member-open", () => {
+  it("auth mirrors the create action: customer / lead / job / variation need a capability, staff is admin-only, the rest are member-open", () => {
     expect(AUTOFILL_FORMS.customer.auth).toEqual({
       mode: "capability",
       module: "customers",
@@ -84,6 +84,12 @@ describe("autofill registry alignment", () => {
     expect(AUTOFILL_FORMS.lead.auth).toEqual({
       mode: "capability",
       module: "leads",
+      action: "create",
+    });
+    // job create = createJob → hasCapability(jobs, create) (D-17, 20261365000000).
+    expect(AUTOFILL_FORMS.job.auth).toEqual({
+      mode: "capability",
+      module: "jobs",
       action: "create",
     });
     // variation create = createVariation → requireCapabilityFor(quotes, create).
@@ -100,7 +106,6 @@ describe("autofill registry alignment", () => {
     expect(AUTOFILL_FORMS.qualification.auth).toEqual({ mode: "orgAdmin" });
     for (const t of [
       "supplier",
-      "job",
       "risk_assessment",
       "permit",
       "toolbox_talk",

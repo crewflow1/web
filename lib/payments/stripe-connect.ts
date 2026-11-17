@@ -49,6 +49,7 @@ function toShape(account: Stripe.Account): StripeAccountShape {
     business_profile: account.business_profile
       ? { name: account.business_profile.name ?? null }
       : null,
+    metadata: account.metadata ?? null,
   };
 }
 
