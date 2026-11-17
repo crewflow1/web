@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { operatorDisclosure } from "@/lib/legal/operator";
 import { NOINDEX_METADATA } from "@/lib/seo/metadata";
 import { orgHasActiveAccess } from "@/server/auth/session";
 import { requireBillingAccount } from "@/server/auth/billing-account";
@@ -58,6 +59,7 @@ export default async function AccountBillingPage({
   if (!isOwner || (ctx.org.status !== "cancelled" && ctx.org.status !== "suspended")) {
     redirect("/access-pending");
   }
+  const disclosure = operatorDisclosure();
   const sp = await searchParams;
   const orgId = ctx.org.id;
   const cancelled = ctx.org.status === "cancelled";
@@ -247,6 +249,9 @@ export default async function AccountBillingPage({
             Sign out / switch account
           </Link>
         </p>
+        {disclosure ? (
+          <p className="text-center text-xs text-slate-500">{disclosure.line}</p>
+        ) : null}
       </main>
     </div>
   );

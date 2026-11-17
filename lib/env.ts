@@ -193,6 +193,14 @@ const envSchema = z.object({
   // app/admin/actions.ts; unset ⇒ "CrewFlow Notifications <notify@crewflow.uk>".
   // Not a secret; was consumed-but-undeclared until the 2026-10 env census.
   RESEND_NOTIFICATIONS_FROM: z.string().optional(),
+  // -- Operator business-name disclosure (Companies Act 2006 Part 41) --------
+  // CrewFlow trades as a sole trader: billing documents must show the
+  // individual's legal name + an address for service. Both set => the line is
+  // rendered on CrewFlow's own billing documents; either missing => nothing is
+  // rendered (never a placeholder). VAT number is optional. See lib/legal/operator.ts.
+  CREWFLOW_OPERATOR_LEGAL_NAME: z.string().optional(),
+  CREWFLOW_OPERATOR_SERVICE_ADDRESS: z.string().optional(),
+  CREWFLOW_OPERATOR_VAT_NUMBER: z.string().optional(),
   // Where demo-request notifications are sent. Read by app/api/demo/route.ts;
   // unset ⇒ hello@crewflow.uk. Not a secret; was consumed-but-undeclared until
   // the 2026-10 env census.

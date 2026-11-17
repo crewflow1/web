@@ -3,6 +3,7 @@ import {
   CANCELLATION_COPY,
   formatAccessDate,
 } from "./cancellation";
+import { operatorDisclosure } from "@/lib/legal/operator";
 
 /**
  * The cancellation CONFIRMATION email — pure builder (no send, no env).
@@ -51,7 +52,8 @@ export function buildCancellationEmail(input: CancellationEmailInput): Cancellat
     "If you didn't ask for this, reply to this email straight away.",
   ];
 
-  const text = ["Hi,", ...paragraphs, "CrewFlow"].join("\n\n");
+  const op = operatorDisclosure();
+  const text = ["Hi,", ...paragraphs, "CrewFlow", ...(op ? [op.line] : [])].join("\n\n");
 
   const htmlParagraphs = paragraphs
     .map((p) => {
@@ -66,7 +68,7 @@ export function buildCancellationEmail(input: CancellationEmailInput): Cancellat
   <p>Hi,</p>
   <h1 style="margin:16px 0;font-size:20px">Your subscription has ended</h1>
   ${htmlParagraphs}
-  <p style="color:#475569;font-size:12px;margin-top:32px">CrewFlow</p>
+  <p style="color:#475569;font-size:12px;margin-top:32px">CrewFlow</p>${op ? `\n  <p style="color:#475569;font-size:12px">${esc(op.line)}</p>` : ""}
 </div>`;
 
   return { subject, html, text };
@@ -110,7 +112,8 @@ export function buildCancellationScheduleEmail(input: CancellationScheduleEmailI
         `Billing page: ${billingUrl}`,
         "If you didn't ask for this, reply to this email straight away.",
       ];
-  const text = ["Hi,", ...paragraphs, "CrewFlow"].join("\n\n");
+  const op = operatorDisclosure();
+  const text = ["Hi,", ...paragraphs, "CrewFlow", ...(op ? [op.line] : [])].join("\n\n");
   const htmlParagraphs = paragraphs
     .map((p) => {
       const safe = esc(p)
@@ -124,7 +127,7 @@ export function buildCancellationScheduleEmail(input: CancellationScheduleEmailI
   <p>Hi,</p>
   <h1 style="margin:16px 0;font-size:20px">${heading}</h1>
   ${htmlParagraphs}
-  <p style="color:#475569;font-size:12px;margin-top:32px">CrewFlow</p>
+  <p style="color:#475569;font-size:12px;margin-top:32px">CrewFlow</p>${op ? `\n  <p style="color:#475569;font-size:12px">${esc(op.line)}</p>` : ""}
 </div>`;
   return { subject, html, text };
 }

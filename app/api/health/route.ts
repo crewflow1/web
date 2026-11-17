@@ -1,3 +1,4 @@
+import { operatorDisclosure } from "@/lib/legal/operator";
 import { NextResponse } from "next/server";
 import { getCommsReadiness } from "@/lib/comms/readiness";
 import { getIntegrationsReadiness } from "@/lib/integrations/readiness";
@@ -149,6 +150,9 @@ export async function GET() {
         // the operator surface authorises nobody.
         operatorConfigured: migration.operatorAllowlistConfigured,
       },
+      // Sole-trader business-name disclosure (name + service address) configured?
+      // Boolean only — never the values. false => billing documents omit the line.
+      operatorDisclosureConfigured: operatorDisclosure() !== null,
       timestamp: new Date().toISOString(),
     },
     {

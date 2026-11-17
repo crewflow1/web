@@ -1,5 +1,6 @@
 import "server-only";
 import { env } from "@/lib/env";
+import { operatorDisclosure } from "@/lib/legal/operator";
 
 /**
  * Demo lifecycle email templates.
@@ -19,11 +20,15 @@ function shell({
   heading,
   body,
   cta,
+  disclosure,
 }: {
   heading: string;
   body: string;
   cta?: { href: string; label: string } | null;
+  /** Sole-trader business-name disclosure (billing documents only). */
+  disclosure?: boolean;
 }): string {
+  const op = disclosure ? operatorDisclosure() : null;
   return `<div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;color:#0f172a;line-height:1.55;max-width:560px">
   <h1 style="margin:0 0 16px;font-size:22px">${heading}</h1>
   ${body}
@@ -31,7 +36,7 @@ function shell({
     ? `<p style="margin:24px 0"><a href="${escapeAttr(cta.href)}" style="background:#0f172a;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none;font-weight:600;display:inline-block">${escapeText(cta.label)}</a></p>`
     : ""}
   <p style="color:#475569;font-size:12px;margin-top:32px">Reply to this email if you need anything — we read every one.</p>
-  <p style="color:#94a3b8;font-size:11px">${escapeText(APP_NAME)} · UK construction operating system</p>
+  <p style="color:#94a3b8;font-size:11px">${escapeText(APP_NAME)} · UK construction operating system</p>${op ? `\n  <p style="color:#94a3b8;font-size:11px">${escapeText(op.line)}</p>` : ""}
 </div>`;
 }
 
@@ -43,6 +48,11 @@ function escapeText(s: string): string {
 }
 function escapeAttr(s: string): string {
   return escapeText(s).replace(/"/g, "&quot;");
+}
+/** Plain-text footer for billing documents: "\n\n<line>" or "" when unconfigured. */
+function disclosureText(): string {
+  const op = operatorDisclosure();
+  return op ? `\n\n${op.line}` : "";
 }
 function firstName(name: string | null | undefined): string {
   return (name?.split(" ")[0] ?? "there").trim() || "there";
@@ -165,6 +175,7 @@ export function setupPaymentEmail(input: {
     subject: `Setup payment for ${APP_NAME} — ${input.company}`,
     html: shell({
       heading: `One-off setup payment.`,
+      disclosure: true,
       body,
       cta: input.paymentLinkUrl
         ? { href: input.paymentLinkUrl, label: `Pay setup fee (${amount})` }
@@ -178,7 +189,7 @@ ${input.paymentLinkUrl
   ? `Pay here: ${input.paymentLinkUrl}\n\nAs soon as it lands we'll provision your workspace and email you a sign-in link.`
   : `Reply to this email and we'll send you payment instructions (bank transfer or card link, your choice). As soon as payment lands we'll provision your workspace and email you a sign-in link.`}
 
-— The ${APP_NAME} team`,
+— The ${APP_NAME} team${disclosureText()}`,
   };
 }
 
@@ -205,6 +216,7 @@ export function paymentReceivedEmail(input: {
     subject: `Payment received — your ${APP_NAME} workspace is on the way`,
     html: shell({
       heading: `Payment received.`,
+      disclosure: true,
       body,
       cta: null,
     }),
@@ -214,7 +226,7 @@ Payment of ${amount} received — thank you. We're now setting up your ${input.c
 
 You'll get a separate email with a magic-link to sign in shortly.
 
-— The ${APP_NAME} team`,
+— The ${APP_NAME} team${disclosureText()}`,
   };
 }
 
