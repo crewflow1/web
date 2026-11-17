@@ -19,7 +19,7 @@ export default async function NewToolboxTalkPage({ searchParams }: { searchParam
   const options = await loadToolboxFormOptions(ctx.org.id);
   const prefill = sp.import ? await loadImportDraftDefaults("toolbox_talk", sp.import) : null;
 
-  const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)) : null;
+  const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? sp.error) : null;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">

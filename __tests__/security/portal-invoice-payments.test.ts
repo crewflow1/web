@@ -125,6 +125,10 @@ describe("createInvoiceCheckout REFUSES before any Stripe call when dark", () =>
           stripeCalled = true;
           throw new Error("Stripe must not be reached while dark");
         },
+        retrieveAccount: async () => {
+          stripeCalled = true;
+          throw new Error("Stripe must not be reached while dark");
+        },
       },
       saveIntent: async () => undefined,
     };
@@ -149,6 +153,10 @@ describe("createInvoiceCheckout REFUSES before any Stripe call when dark", () =>
       loadInvoice: async () => null,
       stripe: {
         createSession: async () => {
+          stripeCalled = true;
+          throw new Error("unreachable");
+        },
+        retrieveAccount: async () => {
           stripeCalled = true;
           throw new Error("unreachable");
         },
@@ -192,6 +200,9 @@ function invoiceOf(overrides: Partial<InvoiceForPayment> = {}): InvoiceForPaymen
   };
 }
 
+/** The bound account as Stripe reports it: created by the platform FOR o1. */
+const ownAccount = async (id: string) => ({ id, metadata: { crewflow_org_id: "o1" } });
+
 describe("createInvoiceCheckout ownership + balance guards", () => {
   const base = (over: Partial<CreateCheckoutDeps> = {}): CreateCheckoutDeps => ({
     isConfigured: () => true,
@@ -203,6 +214,7 @@ describe("createInvoiceCheckout ownership + balance guards", () => {
         url: "https://checkout.stripe/cs_1",
         paymentIntentId: "pi_1",
       }),
+      retrieveAccount: ownAccount,
     },
     saveIntent: async () => undefined,
     ...over,
@@ -228,7 +240,10 @@ describe("createInvoiceCheckout ownership + balance guards", () => {
     const res = await createInvoiceCheckout(
       base({
         loadInvoice: async () => ({ invoice: invoiceOf({ total: 100 }), paid: 100 }),
-        stripe: { createSession: async () => { called = true; throw new Error("x"); } },
+        stripe: {
+          createSession: async () => { called = true; throw new Error("x"); },
+          retrieveAccount: async () => { called = true; throw new Error("x"); },
+        },
       }),
       input,
     );
@@ -247,6 +262,7 @@ describe("createInvoiceCheckout ownership + balance guards", () => {
             sessionArgs = { amountMinor: a.amountMinor, connectedAccountId: a.connectedAccountId };
             return { id: "cs_1", url: "https://checkout/cs_1", paymentIntentId: "pi_1" };
           },
+          retrieveAccount: ownAccount,
         },
         saveIntent: async (r) => {
           saved = { amount: r.amount, stripeAccountId: r.stripeAccountId };
@@ -260,6 +276,54 @@ describe("createInvoiceCheckout ownership + balance guards", () => {
     expect(sessionArgs!.connectedAccountId).toBe("acct_123");
     expect(saved!.amount).toBe(60);
     expect(saved!.stripeAccountId).toBe("acct_123");
+  });
+
+  for (const [label, metadata] of [
+    ["another org's account", { crewflow_org_id: "o2" }],
+    ["an account with no platform metadata", null],
+  ] as const) {
+    it(`REFUSES to charge on ${label} bound to this org's row (no session, no intent)`, async () => {
+      let sessionCreated = false;
+      let intentSaved = false;
+      const res = await createInvoiceCheckout(
+        base({
+          stripe: {
+            createSession: async () => {
+              sessionCreated = true;
+              return { id: "cs_x", url: "https://checkout/cs_x", paymentIntentId: "pi_x" };
+            },
+            retrieveAccount: async (id) => ({ id, metadata: metadata as never }),
+          },
+          saveIntent: async () => {
+            intentSaved = true;
+          },
+        }),
+        input,
+      );
+      expect(res).toEqual({ ok: false, reason: "org_not_connected" });
+      expect(sessionCreated).toBe(false);
+      expect(intentSaved).toBe(false);
+    });
+  }
+
+  it("maps an ownership re-read failure to stripe_error (no session)", async () => {
+    let sessionCreated = false;
+    const res = await createInvoiceCheckout(
+      base({
+        stripe: {
+          createSession: async () => {
+            sessionCreated = true;
+            return { id: "cs_x", url: "u", paymentIntentId: null };
+          },
+          retrieveAccount: async () => {
+            throw new Error("stripe down");
+          },
+        },
+      }),
+      input,
+    );
+    expect(res).toMatchObject({ ok: false, reason: "stripe_error" });
+    expect(sessionCreated).toBe(false);
   });
 });
 

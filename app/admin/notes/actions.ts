@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireUser } from "@/server/auth/session";
+import { safeInternalPath } from "@/server/auth/safe-path";
 import { isSuperAdminEmail } from "@/server/auth/superadmin";
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { emitNotifications } from "@/server/services/notifications-service";
@@ -96,10 +97,10 @@ const idOnlySchema = z.object({
 // --------------------------------------------------------------------
 
 function safeRedirect(input: string | undefined, fallback: string): string {
-  if (!input) return fallback;
-  // Only allow same-origin paths starting with "/" (not "//").
-  if (input.startsWith("/") && !input.startsWith("//")) return input;
-  return fallback;
+  // Same-origin local path only — via the single source of truth, which also
+  // rejects the `/\host` form a bare `startsWith("/") && !startsWith("//")`
+  // check lets through (browsers resolve it off-origin).
+  return safeInternalPath(input) ?? fallback;
 }
 
 // --------------------------------------------------------------------

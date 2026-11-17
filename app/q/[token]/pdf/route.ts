@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { QuotePdf, type QuotePdfInput } from "@/lib/pdf/quote-pdf";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
+import { contentDisposition } from "@/lib/http/content-disposition";
 
 export const runtime = "nodejs";
 
@@ -104,7 +105,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${quote.number}.pdf"`,
+      "Content-Disposition": contentDisposition("inline", `${quote.number}.pdf`, "quote"),
       "Cache-Control": "no-store",
     },
   });
