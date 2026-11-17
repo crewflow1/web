@@ -12,6 +12,7 @@ import {
   getInvoiceStripe,
   isPortalPaymentsConfigured,
 } from "@/lib/payments/portal-stripe";
+import { stripeConnectOps } from "@/lib/payments/stripe-connect";
 import {
   createInvoiceCheckout,
   type CreateCheckoutDeps,
@@ -148,6 +149,8 @@ export async function startInvoicePayment(formData: FormData): Promise<void> {
           paymentIntentId: typeof pi === "string" ? pi : (pi?.id ?? null),
         };
       },
+      // Same dedicated Connect client; used to prove the bound account is this org's.
+      retrieveAccount: (accountId) => stripeConnectOps().retrieveAccount(accountId),
     },
 
     saveIntent: async (row) => {

@@ -68,12 +68,12 @@ export default async function HqCustomerDetailPage({
   const setupFee = org.setup_fee_status as SetupFeeStatus;
 
   const saved = sp.saved
-    ? prettySaved(decodeURIComponent(sp.saved))
+    ? prettySaved(sp.saved)
     : null;
   const errorMsg = sp.error
     ? prettyCheckoutError(
-        decodeURIComponent(sp.error),
-        sp.detail ? decodeURIComponent(sp.detail) : null,
+        sp.error,
+        sp.detail ? sp.detail : null,
       )
     : null;
 

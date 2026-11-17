@@ -6,6 +6,7 @@
  * roll's own stable arrival-time order is preserved.
  */
 
+import { csvEscape } from "@/lib/csv";
 import type { MusterRoll } from "./muster";
 
 export type MusterPerson = {
@@ -39,11 +40,10 @@ export function musterPeople(roll: MusterRoll): MusterPerson[] {
   return [...workers, ...visitors];
 }
 
-/** RFC-4180 field escape: quote when the value holds a comma, quote or newline. */
-function csvField(v: string): string {
-  if (/[",\n\r]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
-  return v;
-}
+// Field serialisation is the shared authoritative escaper (lib/csv): RFC-4180
+// quoting PLUS formula-injection neutralisation. The register's cells are free
+// text any member types at visitor sign-in, so a private quoter that skipped the
+// neutralisation let `=HYPERLINK(…)` evaluate when an admin opened the export.
 
 /**
  * Serialise a roll to CSV. Header row + one row per present person, plus a
@@ -55,7 +55,7 @@ export function musterToCsv(roll: MusterRoll, meta: { siteName: string; generate
   for (const p of musterPeople(roll)) {
     rows.push([p.name, p.kind, p.company ?? "", p.onSince]);
   }
-  const body = rows.map((r) => r.map((c) => csvField(c)).join(",")).join("\r\n");
+  const body = rows.map((r) => r.map((c) => csvEscape(c)).join(",")).join("\r\n");
   // A single header comment line as the first CSV row would break parsers; the
   // context instead lives in the download filename (see the route).
   void meta;

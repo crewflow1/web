@@ -5,6 +5,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { listAcknowledgements } from "@/app/(app)/health-safety/_signoff-data";
 import { ToolboxTalkPdf, type ToolboxTalkPdfInput } from "@/lib/pdf/toolbox-talk-pdf";
 import type { ToolboxTalkSnapshot } from "@/lib/toolbox-talks/snapshot";
+import { contentDisposition } from "@/lib/http/content-disposition";
 
 /**
  * Toolbox Talk evidence PDF (M4). RLS-scoped (the talk read + org header + acks all
@@ -78,7 +79,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${input.reference}.pdf"`,
+      "Content-Disposition": contentDisposition("inline", `${input.reference}.pdf`, "document"),
       "Cache-Control": "private, no-store",
     },
   });

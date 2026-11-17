@@ -136,3 +136,49 @@ export function combineOr(
   if (present.length === 0) return null;
   return present.join(",");
 }
+
+// ---------------------------------------------------------------------------
+// EXACT (case-insensitive) match helpers.
+//
+// PostgREST has no case-insensitive equality operator, so "find the row whose
+// column equals this value, ignoring case" is written as `ilike` with a pattern
+// that contains NO wildcards. If the value is interpolated raw, its own LIKE
+// metacharacters turn back into wildcards: a scanned code `SKU_A1` also matches
+// `SKUXA1`, and `%` matches every row — so a `.limit(1)` lookup returns an
+// arbitrary WRONG row. That is a data-integrity injection (a hostile barcode /
+// imported name selects a record its author should not be able to select).
+//
+// The sanitiser above (strip the characters) is right for a SEARCH BOX; it is
+// wrong here, because these are identifiers where `_`, `(`, `,` are legitimate
+// and must match literally. So: ENCODE, do not strip.
+// ---------------------------------------------------------------------------
+
+/**
+ * Turn a literal value into an `ilike` pattern that matches ONLY that literal.
+ * `\`, `%` and `_` are backslash-escaped (Postgres' default LIKE escape). `*`
+ * cannot be escaped — PostgREST rewrites every `*` in a like/ilike value to `%`
+ * before Postgres sees it — so it is narrowed to `_` (exactly one character) and
+ * the caller MUST confirm the hit with {@link equalsIgnoringCase}.
+ */
+export function exactIlikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&").replace(/\*/g, "_");
+}
+
+/**
+ * Double-quote a value for use INSIDE an `.or()` / `.filter()` string, where
+ * `,` `(` `)` are structural. Inside the quotes only `"` and `\` are special,
+ * and both are backslash-escaped — so the value can carry any character and can
+ * never open a new OR branch or close a group.
+ */
+export function quoteFilterValue(value: string): string {
+  return `"${value.replace(/[\\"]/g, "\\$&")}"`;
+}
+
+/** The post-read confirmation for an {@link exactIlikePattern} lookup. */
+export function equalsIgnoringCase(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  return a.toLowerCase() === b.toLowerCase();
+}

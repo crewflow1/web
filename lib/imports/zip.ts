@@ -64,9 +64,86 @@ function guessMime(name: string): string {
 }
 
 /**
+ * DECOMPRESSION-BOMB LIMITS. An archive is attacker-shaped input: a 50 MB upload
+ * (the bucket cap) of highly-compressible bytes inflates to tens of GB, and the
+ * previous loop inflated EVERY supported entry fully into memory with no bound —
+ * an out-of-memory kill of the function for one small request. All three limits
+ * are enforced on the ACTUAL inflated byte count while streaming (a zip's
+ * declared sizes are attacker-written), and breaching any of them rejects the
+ * whole archive rather than importing a silently-truncated subset.
+ *
+ * The per-file cap mirrors the `imports` bucket's 50 MB object limit: an inner
+ * file larger than that could not be stored as a direct upload either.
+ */
+export const ZIP_MAX_ENTRIES = 500;
+export const ZIP_MAX_ENTRY_BYTES = 50 * 1024 * 1024;
+export const ZIP_MAX_TOTAL_BYTES = 200 * 1024 * 1024;
+
+export class ZipLimitError extends Error {
+  reason: "too_many_entries" | "entry_too_large" | "archive_too_large";
+  constructor(reason: ZipLimitError["reason"]) {
+    super(`zip rejected: ${reason}`);
+    this.name = "ZipLimitError";
+    this.reason = reason;
+  }
+}
+
+type InflateStream = {
+  on(event: "data", cb: (chunk: Uint8Array) => void): InflateStream;
+  on(event: "error", cb: (e: Error) => void): InflateStream;
+  on(event: "end", cb: () => void): InflateStream;
+  resume(): InflateStream;
+  pause(): InflateStream;
+};
+type InternalStreamable = { internalStream(type: "uint8array"): InflateStream };
+
+/** Inflate one entry, aborting the moment it exceeds `cap` bytes. */
+function inflateCapped(entry: JSZip.JSZipObject, cap: number): Promise<Uint8Array> {
+  return new Promise<Uint8Array>((resolve, reject) => {
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    let done = false;
+    // `internalStream` is JSZip's documented streaming reader; its typings omit
+    // it from JSZipObject (only `nodeStream` is declared), hence the narrow cast.
+    const stream = (entry as unknown as InternalStreamable).internalStream("uint8array");
+    stream
+      .on("data", (chunk: Uint8Array) => {
+        if (done) return;
+        total += chunk.byteLength;
+        if (total > cap) {
+          done = true;
+          stream.pause();
+          reject(new ZipLimitError("entry_too_large"));
+          return;
+        }
+        chunks.push(chunk);
+      })
+      .on("error", (e: Error) => {
+        if (!done) {
+          done = true;
+          reject(e);
+        }
+      })
+      .on("end", () => {
+        if (done) return;
+        done = true;
+        const out = new Uint8Array(total);
+        let offset = 0;
+        for (const c of chunks) {
+          out.set(c, offset);
+          offset += c.byteLength;
+        }
+        resolve(out);
+      })
+      .resume();
+  });
+}
+
+/**
  * Expand any ZIP archives in the upload set into their supported inner files,
  * leaving non-zip files untouched. Nested folders are flattened to the entry's
  * base name. Unsupported and hidden (__MACOSX, dotfile) entries are skipped.
+ * Throws {@link ZipLimitError} when an archive breaches a decompression limit.
  */
 export async function expandZips(files: UploadItem[]): Promise<UploadItem[]> {
   const out: UploadItem[] = [];
@@ -76,13 +153,28 @@ export async function expandZips(files: UploadItem[]): Promise<UploadItem[]> {
       continue;
     }
     const zip = await JSZip.loadAsync(await file.arrayBuffer());
-    for (const entry of Object.values(zip.files)) {
+    const entries = Object.values(zip.files);
+    if (entries.length > ZIP_MAX_ENTRIES) throw new ZipLimitError("too_many_entries");
+    let archiveBytes = 0;
+    for (const entry of entries) {
       if (entry.dir) continue;
-      const base = entry.name.split("/").pop() ?? entry.name;
+      // Flatten on BOTH separators: a Windows-built (or hostile) archive can
+      // carry `..\..\name.csv`, which must never survive as a "base name".
+      const base = entry.name.split(/[\\/]/).pop() ?? entry.name;
       if (!base || base.startsWith(".")) continue;
       if (entry.name.startsWith("__MACOSX")) continue;
       if (!SUPPORTED_INNER.test(base)) continue;
-      const bytes = await entry.async("uint8array");
+      const remaining = ZIP_MAX_TOTAL_BYTES - archiveBytes;
+      let bytes: Uint8Array;
+      try {
+        bytes = await inflateCapped(entry, Math.min(ZIP_MAX_ENTRY_BYTES, remaining));
+      } catch (e) {
+        if (e instanceof ZipLimitError && remaining < ZIP_MAX_ENTRY_BYTES) {
+          throw new ZipLimitError("archive_too_large");
+        }
+        throw e;
+      }
+      archiveBytes += bytes.byteLength;
       out.push({
         name: base,
         type: guessMime(base),

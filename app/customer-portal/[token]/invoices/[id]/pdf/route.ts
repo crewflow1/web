@@ -10,6 +10,7 @@ import {
   type InvoiceCustomerContactShape,
 } from "@/lib/invoices/customer";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
+import { contentDisposition } from "@/lib/http/content-disposition";
 
 export const runtime = "nodejs";
 
@@ -141,7 +142,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${invoice.number}.pdf"`,
+      "Content-Disposition": contentDisposition("inline", `${invoice.number}.pdf`, "invoice"),
       "Cache-Control": "private, no-store",
     },
   });
