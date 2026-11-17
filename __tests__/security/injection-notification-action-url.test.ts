@@ -146,3 +146,32 @@ describe("render sites route action_url through the guard (no raw href)", () => 
     expect(prefs).not.toMatch(/\$\{BASE_URL\}\$\{(escapeHtml\()?n\.action_url/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Push + SMS share the same guard (they previously used a bare
+// `startsWith("/") && !startsWith("//")`, which admits `/\host` — a form the
+// browser resolves OFF-origin when the service worker opens it).
+// ---------------------------------------------------------------------------
+import { buildPushPayload } from "@/lib/notifications/types";
+
+describe("push payload — a poisoned action_url falls back to the notifications centre", () => {
+  const base = { id: "n1", title: "t", category: "other" as const };
+
+  it("never emits an off-origin deep link", () => {
+    for (const bad of POISONED) {
+      expect(buildPushPayload({ ...base, action_url: bad }).url, JSON.stringify(bad)).toBe("/notifications");
+    }
+  });
+
+  it("keeps a legitimate relative path", () => {
+    expect(buildPushPayload({ ...base, action_url: "/jobs/abc" }).url).toBe("/jobs/abc");
+  });
+
+  it("no notification surface hand-rolls the same-origin check any more", () => {
+    for (const p of ["lib/notifications/types.ts", "lib/notifications/sms.ts"]) {
+      const src = read(p);
+      expect(src, p).toContain("safeActionPath(n.action_url)");
+      expect(src, p).not.toMatch(/startsWith\("\/"\) && !\w+\.startsWith\("\/\/"\)/);
+    }
+  });
+});

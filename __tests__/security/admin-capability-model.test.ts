@@ -253,8 +253,9 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       // R5 — assignment reconciliation. assignWorker/removeWorker gate
       // jobs:manage before routing an assignment change through the admin-only
       // reconciliation RPCs (set_job_primary_assignment / add_job_worker /
-      // remove_job_worker); jobs/actions.ts createJob gates the *assignee*
-      // up-front (F2: hasCapability("jobs","manage")) so a non-admin can never
+      // remove_job_worker); jobs/actions.ts createJob gates the create itself
+      // on jobs:create (D-17, 20261365000000) and the *assignee* up-front
+      // (F2: hasCapability("jobs","manage")) so a non-admin can never
       // silently create an unassigned/mis-assigned job. Legitimate R5 capability
       // enforcement, not early adoption of the dark R2/R3 surface.
       "app/(app)/jobs/[id]/assignment-actions.ts",
@@ -353,6 +354,11 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       "app/(app)/stock/valuation/layout.tsx",
       "app/api/assets/[id]/label/pdf/route.ts",
       "server/services/private-columns.ts",
+      // D-17 job creation (20261365000000): these pages use hasCapability(jobs, create)
+      // ONLY to show/hide the "add job" entry points (presentation; the boundary is the
+      // /jobs/new segment guard, createJob and the jobs INSERT policy).
+      "app/(app)/dashboard/page.tsx",
+      "app/(app)/customers/[id]/page.tsx",
     ]);
     const SYMBOLS =
       /\b(requireCapability|requireCapabilityApi|requireCapabilityFor|hasCapability|resolveCapabilityContext|loadCapabilities|canWith|grantAllows|recordPermissionEvent)\b/;

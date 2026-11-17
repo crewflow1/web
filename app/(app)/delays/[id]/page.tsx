@@ -68,7 +68,7 @@ export default async function DelayEventPage({
   const event = await getDelayEvent(ctx.org.id, id);
   if (!event) notFound();
 
-  const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
+  const errorMessage = sp.error ? sp.error : null;
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
 
   const categoryLabel = isDelayCategory(event.category)

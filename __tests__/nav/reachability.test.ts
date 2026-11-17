@@ -141,8 +141,9 @@ describe("role-aware visibility", () => {
     const staffCmds = buildCommands("staff", "/dashboard").map((c) => c.href);
     // A staff user gets no "Create invoice" action (admin-only).
     expect(staffCmds).not.toContain("/invoices/new");
-    // …but does get "New job".
-    expect(staffCmds).toContain("/jobs/new");
+    // …nor "New job": creating a job needs jobs:create (D-17), which staff never hold.
+    expect(staffCmds).not.toContain("/jobs/new");
+    expect(buildCommands("owner", "/dashboard").map((c) => c.href)).toContain("/jobs/new");
   });
 
   it("utility (settings/help) is visible to all roles", () => {

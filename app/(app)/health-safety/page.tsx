@@ -148,7 +148,7 @@ export default async function HealthSafetyPage({
   }
 
   const errorMessage = sp.error
-    ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
+    ? (ERROR_MAP[sp.error] ?? sp.error)
     : null;
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
 

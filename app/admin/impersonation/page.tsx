@@ -65,7 +65,7 @@ export default async function HqImpersonationPage({
     if (sp.error)
       return {
         tone: "err" as const,
-        msg: `Error: ${decodeURIComponent(sp.error)}`,
+        msg: `Error: ${sp.error}`,
       };
     return null;
   })();

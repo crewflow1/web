@@ -177,7 +177,7 @@ export default async function InspectionPlanPage({
     label: "Current job",
   }));
 
-  const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)) : null;
+  const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? sp.error) : null;
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
   const today = new Date().toISOString().slice(0, 10);
   const nextItemNumber = items.reduce((n, i) => Math.max(n, i.item_number), 0) + 1;

@@ -396,8 +396,8 @@ export const AUTOFILL_FORMS: Readonly<Record<AutofillFormType, AutofillFormConfi
   job: {
     type: "job",
     recordLabel: "job",
-    // createJob is member-open (requireOrgContext); jobs:manage only gates assignee.
-    auth: { mode: "member" },
+    // createJob gates jobs:create via hasCapability (D-17); jobs:manage gates assignee.
+    auth: { mode: "capability", module: "jobs", action: "create" },
     target: { kind: "route", newPath: "/jobs/new" },
     schema: jobExtractionSchema,
     fields: JOB_FIELDS,

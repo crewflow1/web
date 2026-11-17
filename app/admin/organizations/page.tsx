@@ -267,10 +267,10 @@ export default async function AdminOrganizationsPage({
         ? "Couldn't update. Try again."
         : sp.error === "demo_not_found"
           ? "That demo request no longer exists."
-          : decodeURIComponent(sp.error)
+          : sp.error
     : null;
   const savedMessage = sp.saved
-    ? `Marked ${decodeURIComponent(sp.saved).replace(/^demo_/, "demo: ")}.`
+    ? `Marked ${sp.saved.replace(/^demo_/, "demo: ")}.`
     : null;
 
   return (
