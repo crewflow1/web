@@ -23,7 +23,7 @@ export default async function NewComplianceDocPage({
 }) {
   await requireOrgContext();
   const sp = await searchParams;
-  const errorMessage = sp.error ? ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error) : null;
+  const errorMessage = sp.error ? ERROR_MAP[sp.error] ?? sp.error : null;
   const prefill = sp.import ? await loadImportDraftDefaults("compliance_document", sp.import) : null;
   const pf = prefill?.fields ?? {};
 

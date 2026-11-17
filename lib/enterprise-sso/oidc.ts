@@ -1,4 +1,6 @@
 import "server-only";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { assertPublicWebhookUrl, isPrivateHost, WebhookUrlError } from "@/lib/webhooks/ssrf";
 import {
   createPublicKey,
   createVerify,
@@ -205,17 +207,67 @@ export type OidcDiscovery = {
   userinfo_endpoint?: string;
 };
 
+/**
+ * SSRF GUARD for every IdP URL we fetch server-side.
+ *
+ * The issuer / discovery URL is TENANT-SUPPLIED (an org admin types it), and the
+ * `jwks_uri` + `token_endpoint` are whatever that tenant-controlled discovery
+ * document says — so all three are untrusted egress targets. The settings form's
+ * `https://` prefix check is not a boundary: it says nothing about WHERE the name
+ * resolves, and the discovery document's own URLs never pass through it. Without
+ * this, an admin could point discovery at a host they control, have it return
+ * `jwks_uri: "http://169.254.169.254/…"` (or 302 to it), and make the
+ * unauthenticated /api/sso/oidc/<org>/start route fetch it from inside our
+ * network.
+ *
+ * Policy = the outbound-webhook policy (lib/webhooks/ssrf): https only, a DNS
+ * name (no IP literal / numeric host form), no internal TLD, no platform host, no
+ * private range — and every address the name resolves to must be public.
+ * Redirects are refused by the callers (`redirect: "error"`): a 3xx is a second,
+ * unvetted URL. Residual: the connection is not pinned to the vetted address
+ * (fetch re-resolves), so a sub-second DNS rebind is not closed here; SSO is dark
+ * and admin-configured, and the response is only ever parsed as an OIDC document.
+ */
+export async function vetIdpUrl(raw: string, what: string): Promise<string> {
+  let url: URL;
+  try {
+    url = assertPublicWebhookUrl(raw);
+  } catch (e) {
+    const reason = e instanceof WebhookUrlError ? e.reason : "invalid-url";
+    throw new Error(`OIDC ${what} URL rejected by SSRF policy: ${reason}`);
+  }
+  let resolved: { address: string }[];
+  try {
+    resolved = await dnsLookup(url.hostname, { all: true });
+  } catch {
+    throw new Error(`OIDC ${what} URL rejected by SSRF policy: dns-failed`);
+  }
+  if (resolved.length === 0 || resolved.some((a) => isPrivateHost(a.address))) {
+    throw new Error(`OIDC ${what} URL rejected by SSRF policy: dns-private`);
+  }
+  return url.toString();
+}
+
+/** Shared fetch options for IdP calls: never follow a redirect, bounded wait. */
+export function idpFetchInit(): { redirect: "error"; signal: AbortSignal } {
+  return { redirect: "error", signal: AbortSignal.timeout(IDP_FETCH_TIMEOUT_MS) };
+}
+
+const IDP_FETCH_TIMEOUT_MS = 10_000;
+
 /** Fetch the OIDC discovery document. Derives the well-known URL from issuer
  *  when no explicit discovery URL is configured. */
 export async function fetchDiscovery(
   issuer: string,
   discoveryUrl?: string | null,
 ): Promise<OidcDiscovery> {
-  const url =
+  const url = await vetIdpUrl(
     discoveryUrl && discoveryUrl.trim().length > 0
       ? discoveryUrl.trim()
-      : `${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`;
-  const res = await fetch(url, { headers: { accept: "application/json" } });
+      : `${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`,
+    "discovery",
+  );
+  const res = await fetch(url, { headers: { accept: "application/json" }, ...idpFetchInit() });
   if (!res.ok) throw new Error(`OIDC discovery failed: ${res.status}`);
   const doc = (await res.json()) as OidcDiscovery;
   // The discovery issuer MUST match the configured issuer (mix-up defence).
@@ -224,7 +276,8 @@ export async function fetchDiscovery(
 }
 
 export async function fetchJwks(jwksUri: string): Promise<{ keys: Jwk[] }> {
-  const res = await fetch(jwksUri, { headers: { accept: "application/json" } });
+  const url = await vetIdpUrl(jwksUri, "jwks_uri");
+  const res = await fetch(url, { headers: { accept: "application/json" }, ...idpFetchInit() });
   if (!res.ok) throw new Error(`JWKS fetch failed: ${res.status}`);
   return (await res.json()) as { keys: Jwk[] };
 }

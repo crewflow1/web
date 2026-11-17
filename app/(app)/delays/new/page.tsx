@@ -50,7 +50,7 @@ export default async function NewDelayEventPage({ searchParams }: { searchParams
       ])
     : [null, null];
 
-  const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
+  const errorMessage = sp.error ? sp.error : null;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">

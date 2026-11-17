@@ -154,7 +154,7 @@ export default async function ToolboxTalkPage({
   const jobName = talk.job_id ? (jobRow?.data?.customer?.name ?? "Job") : null;
 
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
-  const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)) : null;
+  const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? sp.error) : null;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">

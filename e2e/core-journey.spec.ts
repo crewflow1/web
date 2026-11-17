@@ -1,7 +1,7 @@
 import { test, expect, type Page, type Browser } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalE2eTarget } from "./_guard";
-import { mintState, asActor } from "./_actors";
+import { mintState, asActor, findAuthUserId } from "./_actors";
 
 /**
  * CORE CUSTOMER JOURNEY (authenticated OWNER, real browser) — the launch-gate
@@ -112,8 +112,7 @@ async function seedApprover(): Promise<void> {
   const created = await svc.auth.admin.createUser({ email: APPROVER_EMAIL, password: PASSWORD, email_confirm: true });
   let id = created.data.user?.id;
   if (!id) {
-    const list = await svc.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    id = list.data.users.find((u) => u.email === APPROVER_EMAIL)?.id;
+    id = await findAuthUserId(svc, APPROVER_EMAIL);
     if (id) await svc.auth.admin.updateUserById(id, { password: PASSWORD, email_confirm: true });
   }
   if (!id) throw new Error(`[core-journey] could not seed approver ${APPROVER_EMAIL}`);
