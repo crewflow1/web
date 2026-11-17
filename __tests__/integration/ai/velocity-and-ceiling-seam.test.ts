@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { durableKey } from "@/lib/security/rate-limit";
 import { describeIntegration, serviceClient, ukTodayIso } from "../_harness";
+import { liftPlatformCeilingForThisFile } from "./_platform-ceiling";
 
 /**
  * THE GOVERNOR SEAM ON REAL POSTGRES — velocity limit + ceiling, under
@@ -107,7 +108,11 @@ describeIntegration("AI governor seam · velocity + ceiling on real Postgres", (
     }
   }
 
+  // Per-company semantics: lift the CrewFlow-wide £100 ceiling for this (serial) file only.
+  let restorePlatformCeiling: (() => Promise<void>) | null = null;
+
   beforeAll(async () => {
+    restorePlatformCeiling = await liftPlatformCeilingForThisFile();
     const a = await db(serviceClient())
       .from("organizations")
       .insert({ name: "sec-secrets velocity org A", slug: `${TOKEN}-a` })
@@ -125,6 +130,7 @@ describeIntegration("AI governor seam · velocity + ceiling on real Postgres", (
   });
 
   afterAll(async () => {
+    await restorePlatformCeiling?.();
     await clearCounters();
     for (const org of [orgId, orgB]) {
       if (!org) continue;
