@@ -5,6 +5,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { getRiskAssessment, listAssessors } from "@/app/(app)/health-safety/_data";
 import { listAcknowledgements } from "@/app/(app)/health-safety/_signoff-data";
 import { RamsPdf, type RamsPdfInput } from "@/lib/pdf/rams-pdf";
+import { contentDisposition } from "@/lib/http/content-disposition";
 
 /**
  * RAMS evidence PDF (H&S M4). RLS-scoped via the user JWT (requireOrgContext). Only
@@ -61,7 +62,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${input.reference}.pdf"`,
+      "Content-Disposition": contentDisposition("inline", `${input.reference}.pdf`, "document"),
       "Cache-Control": "private, no-store",
     },
   });

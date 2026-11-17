@@ -442,7 +442,7 @@ export default async function EditJobPage({
       ? "Couldn't delete the job."
       : error === "delete_denied"
         ? "Only admins/owners can delete jobs."
-        : decodeURIComponent(error)
+        : error
     : null;
 
   const updateAction = updateJob.bind(null, job.id);

@@ -7,6 +7,7 @@ import { describeVerificationNumber } from "@/lib/cis/statements";
 import { cisTaxMonthLabel } from "@/lib/cis/tax-month";
 import { CisStatementPdf, type CisStatementPdfInput } from "@/lib/pdf/cis-statement-pdf";
 import { formatGbp, round2, toPounds } from "@/lib/money";
+import { contentDisposition } from "@/lib/http/content-disposition";
 
 /**
  * CIS payment and deduction statement PDF.
@@ -126,7 +127,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${statement.statement_number}.pdf"`,
+      "Content-Disposition": contentDisposition("inline", `${statement.statement_number}.pdf`, "cis-statement"),
       "Cache-Control": "private, no-store",
     },
   });

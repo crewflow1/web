@@ -3,6 +3,7 @@ import type { createAdminClient } from "@/lib/supabase/admin";
 import { buildInvoiceImportPlan } from "@/lib/imports/invoice-row";
 import { buildFinanceImportPlan } from "@/lib/imports/vat";
 import type { EntityType } from "@/lib/imports/detect";
+import { exactIlikePattern, equalsIgnoringCase } from "@/lib/search/filters";
 
 /**
  * Migration OS — commit primitives, shared by the customer wizard
@@ -297,14 +298,18 @@ async function resolveCustomerByName(
   orgId: string,
   name: string,
 ): Promise<string | null> {
+  // EXACT case-insensitive match. `name` is a cell from an imported file, so its
+  // LIKE metacharacters must not act as wildcards (a row named `%` would link to
+  // an arbitrary existing customer). Encode, then confirm the hit.
   const { data } = await admin
     .from("customers")
-    .select("id")
+    .select("id, name")
     .eq("org_id", orgId)
-    .ilike("name", name)
+    .ilike("name", exactIlikePattern(name))
     .limit(1)
     .maybeSingle();
-  return (data as { id?: string } | null)?.id ?? null;
+  const hit = data as { id?: string; name?: string } | null;
+  return hit && equalsIgnoringCase(hit.name, name) ? (hit.id ?? null) : null;
 }
 
 async function resolveInvoiceByNumber(
@@ -312,14 +317,16 @@ async function resolveInvoiceByNumber(
   orgId: string,
   number: string,
 ): Promise<string | null> {
+  // EXACT case-insensitive match — see resolveCustomerByName.
   const { data } = await admin
     .from("invoices")
-    .select("id")
+    .select("id, number")
     .eq("org_id", orgId)
-    .ilike("number", number)
+    .ilike("number", exactIlikePattern(number))
     .limit(1)
     .maybeSingle();
-  return (data as { id?: string } | null)?.id ?? null;
+  const hit = data as { id?: string; number?: string } | null;
+  return hit && equalsIgnoringCase(hit.number, number) ? (hit.id ?? null) : null;
 }
 
 type InvoiceStatusEnum =

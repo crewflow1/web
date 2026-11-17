@@ -65,3 +65,28 @@ export async function asActor<T>(
     await ctx.close();
   }
 }
+
+/**
+ * Find an auth user's id by email across EVERY page of the Auth admin list.
+ *
+ * A single `listUsers({ page: 1, perPage: 1000 })` silently misses the user once the local stack
+ * holds more than 1,000 accounts (the shared stack passed that on 2026-11-16: integration tiers,
+ * load tests and sign-up specs all add accounts) — globalSetup then aborted the whole tier with
+ * "could not create or find seed user" although the user existed.
+ */
+export async function findAuthUserId(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- any service-role client shape
+  svc: { auth: { admin: { listUsers: (p: { page: number; perPage: number }) => Promise<any> } } },
+  email: string,
+): Promise<string | undefined> {
+  const want = email.toLowerCase();
+  for (let page = 1; page <= 100; page++) {
+    const { data, error } = await svc.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) throw new Error(`[e2e _actors] listUsers failed: ${error.message}`);
+    const users = (data?.users ?? []) as { id: string; email?: string | null }[];
+    const hit = users.find((u) => u.email?.toLowerCase() === want);
+    if (hit) return hit.id;
+    if (users.length < 1000) return undefined;
+  }
+  return undefined;
+}

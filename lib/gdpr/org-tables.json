@@ -17,6 +17,7 @@
     "ai_reply_delivery_receipts",
     "ai_reply_send_claims",
     "ai_reply_transports",
+    "ai_spend_alert_marks",
     "api_keys",
     "api_request_log",
     "asset_assignments",
@@ -215,6 +216,7 @@
     "stock_movements",
     "stocktake_lines",
     "stocktake_sessions",
+    "subscription_cancellations",
     "supplier_payment_allocations",
     "supplier_payments",
     "suppliers",
@@ -240,6 +242,7 @@
     "worker_signoff_tokens"
   ],
   "excluded": {
+    "ai_spend_alert_marks": "service telemetry: AI budget governance internals (which 80%/100% spend alerts HQ has been sent this month) — HQ-side control record, not tenant business data",
     "tenant_search_documents": "derived search index: a denormalized, rebuildable copy of the org's OWN records (job/customer/etc. text chunks + opaque embedding vectors) built solely to serve semantic search. Every piece of subject-access-relevant content is the source record's, exported via its own table (jobs, customers, …); including this index would duplicate that content (and leak raw embeddings) without adding subject-access value. Rebuilt from source on demand — not a primary record.",
     "membership_permissions": "access-control configuration: per-admin module×action permission grants (authorization metadata, not data-subject personal data); keyed by membership and cascades on membership delete",
     "permission_audit": "security accountability trail: append-only log of permission/admin/ownership changes (actor + target references, module/action, no tenant business data) — authorization audit metadata, not data-subject personal data",
@@ -293,7 +296,8 @@
     "webhook_endpoints": "credentials: webhook signing secret",
     "whatsapp_number_routes": "credentials/provider routing + secrets",
     "whatsapp_webhook_events": "provider webhook payloads/secrets (service-internal)",
-    "worker_signoff_tokens": "credentials: hashed external-worker sign-off link tokens (access-token material) + issuance metadata; the resulting H&S evidence is exported via worker_acknowledgements"
+    "worker_signoff_tokens": "credentials: hashed external-worker sign-off link tokens (access-token material) + issuance metadata; the resulting H&S evidence is exported via worker_acknowledgements",
+    "subscription_cancellations": "platform billing (CrewFlow-side record of a SaaS subscription cancellation: claim, tombstone, refund-review flag); not tenant business data"
   },
   "_service_side_export_comment": "Org-scoped tables that ARE subject-access-relevant but are service-role-only (RLS on, no authenticated client grant), so the normal user-JWT export loop cannot read them. They are NOT excluded from the DSAR — they are read via a SEPARATE service-role (admin-client) lane in server/services/gdpr-export.ts that is MANDATORILY pinned to the caller's authorised active org (the route gates owner/admin of that org; the pin is the only tenant boundary once RLS is bypassed) and passes through the same redactRow. Keeps a dark table from being permanently invisible to legitimate data-subject access. ORG_EXPORT_TABLES = KNOWN − EXCLUDED − SERVICE_SIDE; the hermetic invariant is EXPORT ∪ SERVICE_SIDE ∪ EXCLUDED === KNOWN.",
   "service_side_export": {
@@ -355,7 +359,8 @@
     "cis_payment_snapshots": "statutory CIS payment snapshot (HMRC) — keep amounts/period, scrub UTR/verification PII",
     "cis_monthly_returns": "statutory CIS300 monthly return (HMRC) — keep period/status, scrub PII",
     "cis_monthly_return_lines": "part of the statutory CIS300 return — keep amounts, scrub PII",
-    "cis_bill_details": "CIS labour/materials split on a bill (feeds the statutory deduction) — keep amounts, scrub PII"
+    "cis_bill_details": "CIS labour/materials split on a bill (feeds the statutory deduction) — keep amounts, scrub PII",
+    "subscription_cancellations": "CrewFlow platform billing record of a cancellation — the ROW is kept (state, timestamps, Stripe subscription handle, refund-review flag: CrewFlow accounting + the tombstone that stops a dead subscription re-granting access); the PII columns requested_by_email and reason are scrubbed"
   },
   "erasure_retain": {
     "accounting_export_log": "integration bookkeeping (accounting push high-water-mark) — service-internal, no tenant PII; left intact",
@@ -365,6 +370,7 @@
     "ai_cost_reservations": "HQ-side AI budget internals — CrewFlow control record; left intact",
     "ai_employee_budget_limits": "HQ-side AI budget governance config — CrewFlow control record; left intact",
     "ai_org_budget_ceilings": "HQ-side AI budget ceiling override — CrewFlow control record; left intact",
+    "ai_spend_alert_marks": "HQ-side AI spend-alert idempotency marks — CrewFlow control record (cascade-deleted with the org); left intact",
     "billing_events": "CrewFlow platform billing (the PROCESSOR's own financial records) — CrewFlow must retain for its accounting; not the tenant's to erase",
     "billing_invoices": "CrewFlow platform billing (the PROCESSOR's own invoices) — CrewFlow must retain; not the tenant's to erase",
     "org_subscriptions": "CrewFlow platform SaaS subscription state — CrewFlow-side; not the tenant's to erase",

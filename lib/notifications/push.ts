@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
+import { safeWebhookFetch, validateWebhookUrl } from "@/lib/webhooks/ssrf";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { getPreferencesForUserKeys } from "@/server/services/notification-preferences-service";
 import { resolvePushDelivery } from "./preferences";
@@ -282,7 +283,6 @@ export type PushSendResult = {
 };
 
 const PUSH_TTL_SECONDS = 24 * 60 * 60; // how long the push service holds it.
-const PUSH_SEND_TIMEOUT_MS = 10_000;
 
 /**
  * Encrypt + POST one push to one subscription. Never throws: any failure is
@@ -294,30 +294,44 @@ export async function sendOnePush(
   sub: PushSubscriptionRecord,
   payloadJson: string,
 ): Promise<PushSendResult> {
+  // Vet the stored endpoint BEFORE any work (pure, no DNS). A refused URL is a
+  // row that can never be delivered to — prune it like a 410.
+  const vetted = validateWebhookUrl(sub.endpoint);
+  if (!vetted.ok) {
+    return { ok: false, statusCode: null, gone: true, error: `push_endpoint_blocked:${vetted.reason}` };
+  }
   try {
     const { body } = encryptWebPushPayload({
       payload: payloadJson,
       userPublicKey: sub.p256dh,
       userAuth: sub.auth,
     });
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), PUSH_SEND_TIMEOUT_MS);
-    let res: Response;
-    try {
-      res = await fetch(sub.endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: buildVapidAuthHeader(keys, sub.endpoint),
-          "Content-Encoding": "aes128gcm",
-          "Content-Type": "application/octet-stream",
-          TTL: String(PUSH_TTL_SECONDS),
-          Urgency: "normal",
-        },
-        body: new Uint8Array(body),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
+    // SSRF BOUNDARY. `sub.endpoint` is TENANT-SUPPLIED: a member registers it
+    // from the browser, and push_subscriptions is client-writable under RLS, so
+    // the https check in the settings action is not a boundary — a row can carry
+    // any URL. A raw fetch() would POST to it (following redirects) from inside
+    // our network. Egress therefore goes through the same vetted door outbound
+    // webhooks use: https only, DNS name only (no IP literals / internal TLDs /
+    // platform hosts), every resolved address public, the connection PINNED to
+    // the vetted address (rebind-proof), redirects refused, 10s timeout.
+    const res = await safeWebhookFetch(sub.endpoint, {
+      body: new Uint8Array(body),
+      headers: {
+        authorization: buildVapidAuthHeader(keys, sub.endpoint),
+        "content-encoding": "aes128gcm",
+        "content-type": "application/octet-stream",
+        ttl: String(PUSH_TTL_SECONDS),
+        urgency: "normal",
+      },
+    });
+    if (res.error?.startsWith("blocked:")) {
+      // A policy-refused endpoint can never be delivered to — prune it, exactly
+      // like a 410. (A transient DNS failure is NOT pruned; it just fails.)
+      const transient = res.error === "blocked:dns-failed";
+      return { ok: false, statusCode: null, gone: !transient, error: `push_endpoint_${res.error}` };
+    }
+    if (res.status === 0) {
+      return { ok: false, statusCode: null, gone: false, error: res.error ?? "push_send_failed" };
     }
 
     // 201/200/202 = accepted. 404/410 = subscription gone (prune).

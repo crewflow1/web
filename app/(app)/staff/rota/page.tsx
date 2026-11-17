@@ -150,7 +150,7 @@ export default async function RotaPage({ searchParams }: { searchParams: SP }) {
   const nextHref = `/staff/rota?week=${isoDate(shiftWeek(monday, 1))}`;
 
   const prefill = readPrefill(sp);
-  const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
+  const errorMessage = sp.error ? sp.error : null;
   const savedMessage = sp.saved
     ? sp.saved === "created"
       ? "Shift added."

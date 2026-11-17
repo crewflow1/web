@@ -138,7 +138,7 @@ export default async function ImportWizardPage({
             ? "The direct sync couldn't reach your accounting software. Try again shortly."
             : sp.error === "connector_empty"
               ? "The connected account returned no records to import."
-              : decodeURIComponent(sp.error)
+              : sp.error
     : null;
   // Rows we couldn't classify confidently — surfaced for the operator to
   // confirm / re-classify / skip. Never silently dropped from the import.
