@@ -43,7 +43,7 @@ Legend: ✅ allowed · 🔑 allowed with the named grant (admin) / owner · ⛔ 
 | Financial reporting, cash, payroll, CIS, tax, bank / HMRC details | ⛔ | 🔑 | ✅ | unchanged (R4 modules) |
 | Company settings, integrations, API keys, SSO, retention | ⛔ | 🔑 `settings:manage` | ✅ | unchanged |
 | Compliance documents (insurance, contracts), document library | ⛔ | 🔑 `documents` | ✅ | **new gate** |
-| Create a job / job templates | ⛔ | 🔑 `jobs:create` / `jobs:manage` | ✅ | **new gate** |
+| Create a job / job templates | ⛔ | 🔑 `jobs:create` / `jobs:manage` | ✅ | **new gate** — create: page + `createJob` (`jobs:create`) + database `20261365` (insert needs `is_org_admin` or `has_org_capability(jobs, create)`; before it, the jobs INSERT policy admitted any member). DB layer is coarser for admins (any admin); proved in `adversarial/job-create-capability.test.ts` |
 | Rota generate / conflicts | ⛔ | 🔑 `rota:edit` | ✅ | **new gate** |
 | H&S worker links | ⛔ | 🔑 `site_safety:manage` | ✅ | **new gate** |
 | Staff add / role / edit / remove, owner-record changes | ⛔ | per #1096 rules | ✅ | held company: refused |

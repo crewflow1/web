@@ -10,6 +10,7 @@ import {
   processMetaWhatsAppPayload,
   isWhatsAppInboundLive,
 } from "@/server/services/whatsapp-webhook-handler";
+import { constantTimeEqual } from "@/lib/security/constant-time";
 
 /**
  * Meta WhatsApp Business Cloud API webhook — the inbound edge.
@@ -54,7 +55,9 @@ export async function GET(request: Request): Promise<NextResponse> {
   const expected = process.env.WHATSAPP_VERIFY_TOKEN;
 
   // Fail closed: unset token, wrong mode, or mismatch → 403, no challenge echo.
-  if (!expected || mode !== "subscribe" || !token || token !== expected) {
+  // constantTimeEqual is false for an unset/empty side, so an unset
+  // WHATSAPP_VERIFY_TOKEN can never match an absent/blank hub.verify_token.
+  if (!expected || mode !== "subscribe" || !token || !constantTimeEqual(token, expected)) {
     return new NextResponse("forbidden", { status: 403 });
   }
   // Meta expects the raw challenge string echoed with 200.

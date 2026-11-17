@@ -68,7 +68,7 @@ export default async function EditToolboxTalkPage({
   if (talk.status !== "draft") redirect(`/toolbox/${id}?error=not_editable`);
 
   const options = await loadToolboxFormOptions(ctx.org.id);
-  const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
+  const errorMessage = sp.error ? sp.error : null;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
