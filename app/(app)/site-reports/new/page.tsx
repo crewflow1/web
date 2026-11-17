@@ -69,7 +69,7 @@ export default async function NewSiteReportPage({
   }));
 
   const errorMessage = sp.error
-    ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
+    ? (ERROR_MAP[sp.error] ?? sp.error)
     : null;
 
   const today = new Date();

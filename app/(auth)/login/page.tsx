@@ -65,7 +65,7 @@ export default async function LoginPage({
   const errorMessage = errorEntry
     ? errorEntry.msg
     : sp.error
-      ? decodeURIComponent(sp.error)
+      ? sp.error
       : null;
   const isRecoverableError = errorEntry?.recoverable ?? false;
   const nextHint = sp.next ?? "";

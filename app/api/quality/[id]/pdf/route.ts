@@ -5,6 +5,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { getPlan, listPlanNcrs, loadUserNames } from "@/app/(app)/quality/_data";
 import { isLive } from "@/lib/quality/ncr";
 import { ItpPdf, type ItpPdfInput } from "@/lib/pdf/itp-pdf";
+import { contentDisposition } from "@/lib/http/content-disposition";
 
 /**
  * ITP evidence PDF (Works Quality M2). RLS-scoped via the user JWT
@@ -123,7 +124,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${input.reference}.pdf"`,
+      "Content-Disposition": contentDisposition("inline", `${input.reference}.pdf`, "document"),
       "Cache-Control": "private, no-store",
     },
   });

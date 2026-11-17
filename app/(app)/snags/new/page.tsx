@@ -73,7 +73,7 @@ export default async function NewSnagPage({
   }));
 
   const errorMessage = sp.error
-    ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
+    ? (ERROR_MAP[sp.error] ?? sp.error)
     : null;
   // Deep-linking a job is LIVE: every job detail page renders a "Log a snag"
   // button (jobs/[id]/_job-snags.tsx → /snags/new?job=<id>). The form

@@ -77,7 +77,7 @@ export default async function RaiseNcrPage({ searchParams }: { searchParams: SP 
           aria-live="assertive"
           className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
         >
-          {decodeURIComponent(sp.error)}
+          {sp.error}
         </div>
       ) : null}
 

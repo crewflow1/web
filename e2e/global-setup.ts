@@ -3,9 +3,9 @@
 import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { findAuthUserId } from "./_actors";
 import { dirname, join } from "node:path";
 import { assertLocalE2eTarget } from "./_guard";
-import { findAuthUserByEmail } from "./_find-auth-user";
 
 /**
  * Authenticated-E2E harness (task #25) — CI-SAFE, zero production-reachable code.
@@ -81,9 +81,10 @@ export default async function globalSetup(): Promise<void> {
     // already exists → find it. perPage must beat the default 50: a local
     // stack accumulates integration-tier auth users across runs, and the seed
     // user silently fell past the first page (fixture-only fix).
-    const found = await findAuthUserByEmail(svc, EMAIL);
+    // (every page: a single 1,000-row page misses the user once the stack holds more accounts)
+    const found = await findAuthUserId(svc, EMAIL);
     if (!found) throw new Error(`[e2e harness] could not create or find seed user: ${created.error?.message}`);
-    userId = found.id;
+    userId = found;
     await svc.auth.admin.updateUserById(userId, { password: PASSWORD, email_confirm: true });
   }
   const db = svc as unknown as { from: (t: string) => any };
@@ -188,7 +189,7 @@ export default async function globalSetup(): Promise<void> {
   async function seedMember(email: string, fullName: string, stateFile: string): Promise<void> {
     const created = await svc.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
     let id = created.data.user?.id;
-    if (!id) { id = (await findAuthUserByEmail(svc, email))?.id; if (id) await svc.auth.admin.updateUserById(id, { password: PASSWORD, email_confirm: true }); }
+    if (!id) { id = await findAuthUserId(svc, email); if (id) await svc.auth.admin.updateUserById(id, { password: PASSWORD, email_confirm: true }); }
     if (!id) throw new Error(`[e2e harness] could not seed member ${email}: ${created.error?.message}`);
     await db.from("users").upsert({ id, email, full_name: fullName });
     await db.from("memberships").upsert({ org_id: orgId, user_id: id, role: "staff" }, { onConflict: "org_id,user_id" });
@@ -229,7 +230,7 @@ export default async function globalSetup(): Promise<void> {
   const hqEmail = "e2e-hq@crewflow.test";
   const hqCreated = await svc.auth.admin.createUser({ email: hqEmail, password: PASSWORD, email_confirm: true });
   let hqId = hqCreated.data.user?.id;
-  if (!hqId) { hqId = (await findAuthUserByEmail(svc, hqEmail))?.id; if (hqId) await svc.auth.admin.updateUserById(hqId, { password: PASSWORD, email_confirm: true }); }
+  if (!hqId) { hqId = await findAuthUserId(svc, hqEmail); if (hqId) await svc.auth.admin.updateUserById(hqId, { password: PASSWORD, email_confirm: true }); }
   if (!hqId) throw new Error(`[e2e harness] could not seed hq user: ${hqCreated.error?.message}`);
   await db.from("users").upsert({ id: hqId, email: hqEmail, full_name: "E2E HQ" });
   await mintState(hqEmail, PASSWORD, STATE_PATH.replace("owner.json", "hq.json"));
