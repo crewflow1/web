@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import JSZip from "jszip";
 import { resolveBillingOwner } from "@/server/auth/billing-account";
 import { buildOrgExport, recordGdprExport } from "@/server/services/gdpr-export";
+import { contentDisposition } from "@/lib/http/content-disposition";
 
 /**
  * GET /api/account/export — the OWNER's data export, reachable WITHOUT active
@@ -82,7 +83,7 @@ export async function GET() {
     status: 200,
     headers: {
       "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="crewflow-data-export-${generatedAt.slice(0, 10)}.zip"`,
+      "Content-Disposition": contentDisposition("attachment", `crewflow-data-export-${generatedAt.slice(0, 10)}.zip`),
       "Cache-Control": "private, no-store",
       "X-Gdpr-Export-Tables": String(exported.manifest.table_count),
       "X-Gdpr-Export-Rows": String(exported.manifest.total_rows),
