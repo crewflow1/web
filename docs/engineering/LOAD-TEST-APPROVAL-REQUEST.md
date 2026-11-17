@@ -128,3 +128,10 @@ final billed amounts against this request within 24 h of teardown, and again aft
 ## 9. Approval wording (reply with exactly one)
 **Full ladder to 50,000:** "I approve the CrewFlow load-test staging described in docs/engineering/LOAD-TEST-APPROVAL-REQUEST.md: new Supabase and Vercel accounts and Hetzner VMs, hard cap USD 2,500 total released in tranches of 400 / 1,100 / 2,500 cumulative, on a dedicated USD 2,500 virtual card, with teardown at the end. Run G1-G5 now; ask me again before G6 and G7. Use Vercel only with Vercel's written approval, otherwise use Fallback F."
 **Smaller:** "...approve G1-G5 only, cap USD 400."
+
+## 10. Readiness evidence (local only; NOT hosted capacity)
+Local smoke 2026-11-17 via `heavy.sh` on the production build, local Supabase, 25 synthetic tenants: 12 sessions, 146 s wall (120 s profile + graceful stop),
+1.7 requests/s at peak hold (8.6 requests/session/min), p50/p95/p99 94/185/244 ms, 0 failures, 0 auth bounces, 11/11 sign-ins, 22 writes confirmed,
+tenant isolation 0 violations in 98 scanned responses, 3/3 canaries refused. **PASS**. `run-staging.sh` pointed at the production host/ref was refused before any
+network call; `__tests__/load` 58+11 tests pass (shell wrappers refuse production, missing env, local targets, bad names; `seed.mjs --plan` proves 6,000 orgs / 50,500
+users cover every gate and flags the old 2,000-org seed as short). The dataset was torn down afterwards (`clean: true`). These numbers validate the harness only.
