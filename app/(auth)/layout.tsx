@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CookieSettingsButton } from "@/app/_components/cookie-settings-button";
 
 export default function AuthLayout({
   children,
@@ -20,14 +21,22 @@ export default function AuthLayout({
       </main>
 
       <footer className="container py-4 text-center text-xs text-slate-500">
-        Never miss another construction lead.
-        <span className="mt-1 block">
-          <a href="/privacy" className="underline underline-offset-2">Privacy</a>
-          {" · "}
-          <a href="/terms" className="underline underline-offset-2">Terms</a>
-          {" · "}
-          <a href="mailto:hello@crewflow.uk" className="underline underline-offset-2">hello@crewflow.uk</a>
-        </span>
+        <p>Never miss another construction lead.</p>
+        <p className="mt-2">
+          <Link href="/privacy" className="underline underline-offset-2 hover:text-slate-700">
+            Privacy
+          </Link>
+          <span aria-hidden="true"> · </span>
+          <Link href="/terms" className="underline underline-offset-2 hover:text-slate-700">
+            Terms
+          </Link>
+          <span aria-hidden="true"> · </span>
+          <a href="mailto:hello@crewflow.uk" className="underline underline-offset-2 hover:text-slate-700">
+            hello@crewflow.uk
+          </a>
+          <span aria-hidden="true"> · </span>
+          <CookieSettingsButton className="rounded underline underline-offset-2 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400" />
+        </p>
       </footer>
     </div>
   );
