@@ -154,7 +154,7 @@ export default async function CompanyDetailPage({
   const channelTypeBySlug = new Map(channelTypes.map((t) => [t.slug, t]));
 
   const saved = sp.saved ? prettySaved(sp.saved) : null;
-  const errorMsg = sp.error ? decodeURIComponent(sp.error) : null;
+  const errorMsg = sp.error ? sp.error : null;
   const activeReco = recommendations.find((r) => r.status === "active") ?? null;
   const pastRecos = recommendations.filter((r) => r.id !== activeReco?.id);
 

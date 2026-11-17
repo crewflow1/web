@@ -9,6 +9,7 @@ import {
 } from "@/lib/payroll/compute";
 import { getPayrollTaxProfile } from "@/server/services/payroll-tax-profile";
 import { getPensionEnrolment } from "@/server/services/pension-enrolment";
+import { contentDisposition } from "@/lib/http/content-disposition";
 
 export const runtime = "nodejs";
 
@@ -134,7 +135,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="payslip-${input.full_name.replace(/\s+/g, "_")}-${input.period_start}.pdf"`,
+      "Content-Disposition": contentDisposition("inline", `payslip-${input.full_name.replace(/\s+/g, "_")}-${input.period_start}.pdf`, "payslip"),
       "Cache-Control": "private, no-store",
     },
   });

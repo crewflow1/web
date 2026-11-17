@@ -257,7 +257,7 @@ export default async function EditCustomerPage({
                 ? "This customer has no email on file. Add one above, then send their statement."
                 : error === "statement_send_failed"
                   ? "Couldn't send the statement just now. Try again."
-                  : decodeURIComponent(error)
+                  : error
     : null;
 
   const portalSaved = saved === "portal_link";

@@ -16,9 +16,19 @@
 const UUID_RE =
   /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
+/**
+ * Capability tokens carried as a PATH segment. Analytics never mounts on the
+ * portal/quote surfaces (lib/analytics/consent.ts), but `$referrer` /
+ * `$initial_referrer` on the NEXT page can still carry such a URL, and
+ * `/a/<token>` (asset label scan) lives inside the app. These tokens are not
+ * UUID-shaped, so the UUID mask alone leaves them intact. Defence in depth.
+ */
+const PATH_TOKEN_RE =
+  /((?:^|https?:\/\/[^/\s]+)\/(?:customer-portal|worker-portal|q|a)\/)([^/?#\s]+)/g;
+
 /** Replace every UUID in a string (path or query) with the literal `:id`. */
 export function maskUuidsInUrl(value: string): string {
-  return value.replace(UUID_RE, ":id");
+  return value.replace(PATH_TOKEN_RE, "$1:token").replace(UUID_RE, ":id");
 }
 
 /** The PostHog property keys that carry a URL and must be masked. */

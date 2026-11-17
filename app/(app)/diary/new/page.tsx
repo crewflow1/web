@@ -25,7 +25,7 @@ export default async function NewDiaryEntryPage({
   const jobs = await listJobOptions(ctx.org.id);
 
   const errorMessage = sp.error
-    ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
+    ? (ERROR_MAP[sp.error] ?? sp.error)
     : null;
   const today = new Date().toISOString().slice(0, 10);
   const entryDate = sp.date ?? today;

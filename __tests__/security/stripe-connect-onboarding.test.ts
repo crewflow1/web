@@ -5,6 +5,7 @@ import {
   beginStripeConnectOnboarding,
   refreshStripeConnectStatus,
   statusForAccount,
+  accountBelongsToOrg,
   type BeginOnboardingDeps,
   type RefreshStatusDeps,
   type OnboardingConnectionRow,
@@ -65,6 +66,8 @@ function accountShape(over: Partial<StripeAccountShape> = {}): StripeAccountShap
     details_submitted: false,
     default_currency: "gbp",
     business_profile: { name: "Acme Ltd" },
+    // Every account the platform creates is stamped with its org (createAccount).
+    metadata: { crewflow_org_id: "o1" },
     ...over,
   };
 }
@@ -113,6 +116,10 @@ describe("onboarding is DARK without the two-switch gate", () => {
           throw new Error("Stripe must not be reached while dark");
         },
         createAccountLink: async () => {
+          stripeCalled = true;
+          throw new Error("Stripe must not be reached while dark");
+        },
+        retrieveAccount: async () => {
           stripeCalled = true;
           throw new Error("Stripe must not be reached while dark");
         },
@@ -168,6 +175,9 @@ describe("beginStripeConnectOnboarding create + persist", () => {
           linkArgs = a;
           return { url: "https://connect.stripe.com/setup/acct_NEW" };
         },
+        retrieveAccount: async () => {
+          throw new Error("a brand-new account needs no ownership re-read");
+        },
       },
       upsertConnection: async (r) => {
         saved = { status: r.status, stripeAccountId: r.stripeAccountId, orgId: r.orgId };
@@ -203,6 +213,7 @@ describe("beginStripeConnectOnboarding create + persist", () => {
           return accountShape({ id: "acct_SHOULD_NOT" });
         },
         createAccountLink: async () => ({ url: "https://connect.stripe.com/setup/acct_EXISTING" }),
+        retrieveAccount: async (id) => accountShape({ id }),
       },
       upsertConnection: async () => undefined,
     };
@@ -220,11 +231,102 @@ describe("beginStripeConnectOnboarding create + persist", () => {
           throw new Error("stripe boom");
         },
         createAccountLink: async () => ({ url: "x" }),
+        retrieveAccount: async (id) => accountShape({ id }),
       },
       upsertConnection: async () => undefined,
     };
     const res = await beginStripeConnectOnboarding(deps, beginInput);
     expect(res).toMatchObject({ ok: false, reason: "stripe_error" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2b. OWNERSHIP — a bound account id is honoured only for an account the
+// platform created for THIS org (platform metadata), never by id alone.
+// ---------------------------------------------------------------------------
+
+describe("a bound connected account must belong to the org", () => {
+  for (const [label, metadata] of [
+    ["another org's account", { crewflow_org_id: "o2" }],
+    ["an account with no platform metadata", null],
+    ["an account with an empty org stamp", { crewflow_org_id: "" }],
+  ] as const) {
+    it(`begin REFUSES to mint an onboarding link for ${label}`, async () => {
+      let linkMinted = false;
+      let upserted = false;
+      let created = false;
+      const deps: BeginOnboardingDeps = {
+        isConfigured: () => true,
+        loadConnection: async () => connectionRow({ stripe_account_id: "acct_FOREIGN" }),
+        stripe: {
+          createAccount: async () => {
+            created = true;
+            return accountShape({ id: "acct_NEW" });
+          },
+          createAccountLink: async () => {
+            linkMinted = true;
+            return { url: "https://connect.stripe.com/setup/acct_FOREIGN" };
+          },
+          retrieveAccount: async (id) => accountShape({ id, metadata: metadata as never }),
+        },
+        upsertConnection: async () => {
+          upserted = true;
+        },
+      };
+      const res = await beginStripeConnectOnboarding(deps, beginInput);
+      expect(res).toEqual({ ok: false, reason: "account_not_owned" });
+      expect(linkMinted).toBe(false);
+      expect(upserted).toBe(false);
+      expect(created).toBe(false);
+    });
+
+    it(`refresh does NOT adopt the state of ${label} and closes the pay-now gate`, async () => {
+      let written: {
+        status: string;
+        chargesEnabled: boolean;
+        payoutsEnabled: boolean;
+        accountName: string | null;
+        lastError: string | null;
+      } | null = null;
+      const deps: RefreshStatusDeps = {
+        isConfigured: () => true,
+        loadConnection: async () =>
+          connectionRow({ stripe_account_id: "acct_FOREIGN", account_name: "Our Name" }),
+        stripe: {
+          retrieveAccount: async (id) =>
+            accountShape({
+              id,
+              charges_enabled: true,
+              payouts_enabled: true,
+              business_profile: { name: "Someone Else Ltd" },
+              metadata: metadata as never,
+            }),
+        },
+        updateStatus: async (r) => {
+          written = r;
+        },
+      };
+      const res = await refreshStripeConnectStatus(deps, { orgId: "o1" });
+      expect(res).toEqual({ ok: false, reason: "account_not_owned" });
+      expect(written!.status).toBe("error");
+      expect(written!.chargesEnabled).toBe(false);
+      expect(written!.payoutsEnabled).toBe(false);
+      expect(written!.accountName).toBe("Our Name"); // never the foreign account's name
+      expect(written!.lastError).toBe("account_not_owned");
+    });
+  }
+
+  it("accountBelongsToOrg matches the platform stamp exactly", () => {
+    expect(accountBelongsToOrg(accountShape({ metadata: { crewflow_org_id: "o1" } }), "o1")).toBe(true);
+    expect(accountBelongsToOrg(accountShape({ metadata: { crewflow_org_id: "o1" } }), "o2")).toBe(false);
+    expect(accountBelongsToOrg(accountShape({ metadata: { crewflow_org_id: "o1" } }), "")).toBe(false);
+    expect(accountBelongsToOrg(accountShape({ metadata: undefined }), "o1")).toBe(false);
+  });
+
+  it("the Stripe adapter carries the account's metadata into the shape", () => {
+    const code = read("lib/payments/stripe-connect.ts");
+    expect(code).toMatch(/metadata:\s*\{\s*crewflow_org_id:\s*orgId\s*\}/);
+    expect(code).toMatch(/metadata:\s*account\.metadata\s*\?\?\s*null/);
   });
 });
 
