@@ -224,24 +224,31 @@ export async function drainDueSchedules(
   const admin = createAdminClient();
   const nowIso = now.toISOString();
 
-  // Due = enabled AND next_run_at <= now. Read across all orgs; each fire is
-  // org-scoped below.
+  // Due = enabled AND next_run_at <= now, for a KNOWN rule, owned by an ACTIVE
+  // company. Read across all orgs; each fire is org-scoped below.
+  //
+  // The unknown-rule and non-active-company exclusions MUST happen in the query,
+  // before the LIMIT: those rows are skipped without advancing next_run_at, so
+  // they stay due forever. Filtered after the LIMIT, a backlog of them older than
+  // everything else (cancelled companies are never deleted) fills every batch
+  // and starves every active company's schedules.
+  type DueQuery = {
+    eq: (k: string, v: unknown) => DueQuery;
+    lte: (k: string, v: unknown) => DueQuery;
+    in: (k: string, v: readonly unknown[]) => DueQuery;
+    order: (k: string, o: { ascending: boolean }) => DueQuery;
+    limit: (n: number) => Promise<{ data: Row[] | null; error: { message: string } | null }>;
+  };
   const due = await (
     admin.from("automation_schedules" as never) as unknown as {
-      select: (c: string) => {
-        eq: (k: string, v: unknown) => {
-          lte: (k: string, v: unknown) => {
-            order: (k: string, o: { ascending: boolean }) => {
-              limit: (n: number) => Promise<{ data: Row[] | null; error: { message: string } | null }>;
-            };
-          };
-        };
-      };
+      select: (c: string) => DueQuery;
     }
   )
-    .select(COLS)
+    .select(`${COLS}, organizations!inner(status)`)
     .eq("enabled", true)
     .lte("next_run_at", nowIso)
+    .in("rule_key", AUTOMATION_RULES.map((r) => r.id))
+    .in("organizations.status", ["active", "trial"])
     .order("next_run_at", { ascending: true })
     .limit(Math.min(limit, 1000)); // F-1: provable cap; PostgREST clamps to 1000
 

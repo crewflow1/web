@@ -3,6 +3,7 @@ import { renderToBuffer } from "@react-pdf/renderer";
 import { requireOrgContext } from "@/server/auth/session";
 import { loadEotNotice } from "@/server/services/eot-notice";
 import { EotNoticePdf, type EotNoticePdfInput } from "@/lib/pdf/eot-notice-pdf";
+import { contentDisposition } from "@/lib/http/content-disposition";
 
 // PDF rendering is Node.js only — opt out of edge runtime.
 export const runtime = "nodejs";
@@ -46,7 +47,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="eot-notice-${result.notice.reference.replace("/", "-")}.pdf"`,
+      "Content-Disposition": contentDisposition("inline", `eot-notice-${result.notice.reference.replace("/", "-")}.pdf`, "eot-notice"),
       "Cache-Control": "private, no-store",
     },
   });

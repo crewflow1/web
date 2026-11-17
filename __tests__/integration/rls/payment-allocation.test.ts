@@ -160,6 +160,12 @@ describeIntegration("payment allocation · DB invariants", () => {
   });
 
   it("rejects over-allocation and rolls the whole payment back (atomic)", async () => {
+    // Fresh invoices with room to spare, so the payment's OWN amount is the binding rule here
+    // (invA1 / invA2 were settled in full by the test above, and since 20261350000000 an
+    // invoice cannot take more than it is still owed — that rule has its own suite in
+    // integration/invoices/over-payment-guard.test.ts).
+    const roomy1 = await makeInvoice(orgA, `${TOKEN}-OVER1`, 1000, 0);
+    const roomy2 = await makeInvoice(orgA, `${TOKEN}-OVER2`, 1000, 0);
     const before = await db(serviceClient()).from("payments").select("id").eq("org_id", orgA);
     const beforeCount = before.data?.length ?? 0;
 
@@ -172,8 +178,8 @@ describeIntegration("payment allocation · DB invariants", () => {
       p_source: "manual",
       p_notes: null,
       p_allocations: [
-        { invoice_id: invA1, amount: 700 },
-        { invoice_id: invA2, amount: 400 }, // 1100 > 1000
+        { invoice_id: roomy1, amount: 700 },
+        { invoice_id: roomy2, amount: 400 }, // 1100 > 1000
       ],
     });
     expect(res.error).not.toBeNull();

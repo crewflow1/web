@@ -12,7 +12,7 @@ import { z } from "zod";
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 const blankToUndefined = (v: unknown) =>
-  typeof v === "string" && v.trim() === "" ? undefined : v;
+  v === null || (typeof v === "string" && v.trim() === "") ? undefined : v;
 
 const optionalText = (max: number) =>
   z.preprocess(blankToUndefined, z.string().trim().max(max).optional());

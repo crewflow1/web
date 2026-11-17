@@ -19,7 +19,7 @@ const INVOICE = "77777777-7777-4777-8777-777777777777";
 
 const model = {
   payments: [] as Record<string, unknown>[],
-  faults: { probe: false, insert: false, invoiceRead: false },
+  faults: { probe: false, insert: false, invoiceRead: false, balanceRead: false },
 };
 
 function table(name: string) {
@@ -59,6 +59,12 @@ function table(name: string) {
   };
   c.maybeSingle = exec;
   c.single = exec;
+  // The over-payment guard pages the invoice's existing payments: `.order(...).range(from, to)`.
+  c.order = () => c;
+  c.range = async () => {
+    if (model.faults.balanceRead) return { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
+    return { data: model.payments.filter((p) => p.invoice_id === filters.invoice_id).map((p) => ({ amount: p.amount })), error: null };
+  };
   return c;
 }
 
@@ -76,17 +82,17 @@ vi.mock("@/server/services/automation-dispatcher", () => ({ dispatchAutomation: 
 
 const { addInvoicePayment } = await import("@/app/(app)/invoices/[id]/payment-actions");
 
-const submit = () => {
+const submit = (amount = "120", reference = "BACS 1") => {
   const fd = new FormData();
-  fd.set("amount", "120");
+  fd.set("amount", amount);
   fd.set("paid_at", "2026-11-01");
-  fd.set("reference", "BACS 1");
+  fd.set("reference", reference);
   return addInvoicePayment(INVOICE, { ok: true, submittedAt: 0 } as never, fd);
 };
 
 beforeEach(() => {
   model.payments = [];
-  model.faults = { probe: false, insert: false, invoiceRead: false };
+  model.faults = { probe: false, insert: false, invoiceRead: false, balanceRead: false };
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -135,6 +141,39 @@ describe("addInvoicePayment — behaviour when the database fails", () => {
     const res = await submit();
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/couldn't load the invoice/i);
+    expect(model.payments).toHaveLength(0);
+  });
+});
+
+describe("addInvoicePayment — a payment cannot exceed what the invoice still owes", () => {
+  // the invoice total in this model is £120.00
+  it("more than the whole invoice (a slipped digit: £1,200 for £120) → refused, nothing written, amount named", async () => {
+    const res = await submit("1200");
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/more than the £120\.00 still owed/);
+    expect(model.payments).toHaveLength(0);
+  });
+  it("after a part-payment only the remainder can be recorded: £50 paid → £70.01 refused, £70.00 accepted", async () => {
+    expect((await submit("50", "part 1")).ok).toBe(true);
+    const over = await submit("70.01", "part 2");
+    expect(over.ok).toBe(false);
+    expect(over.error).toMatch(/more than the £70\.00 still owed/);
+    expect(model.payments).toHaveLength(1);
+    expect((await submit("70", "part 2")).ok).toBe(true);
+    expect(model.payments).toHaveLength(2);
+  });
+  it("an invoice already paid in full takes no further payment", async () => {
+    expect((await submit("120", "full")).ok).toBe(true);
+    const again = await submit("0.01", "extra");
+    expect(again.ok).toBe(false);
+    expect(again.error).toMatch(/already paid in full/);
+    expect(model.payments).toHaveLength(1);
+  });
+  it("FAULT: the balance cannot be read → FAILS CLOSED, nothing written", async () => {
+    model.faults.balanceRead = true;
+    const res = await submit("10");
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/couldn't check what is still owed/i);
     expect(model.payments).toHaveLength(0);
   });
 });

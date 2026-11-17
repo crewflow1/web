@@ -129,9 +129,9 @@ export default async function PortalQuotesPage({
         className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
       >
         <div>
-          <label className="block text-xs font-medium text-slate-700">Status</label>
+          <label className="block text-xs font-medium text-slate-700" htmlFor="filter-status">Status</label>
           <select
-            name="status"
+            id="filter-status" name="status"
             defaultValue={sp.status ?? ""}
             className="mt-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
           >

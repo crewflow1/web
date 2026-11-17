@@ -110,7 +110,7 @@ export default async function ReviewsPage({ searchParams }: { searchParams: SP }
 
   const savedMessage = sp.saved ? SAVED_MAP[sp.saved] ?? null : null;
   const errorMessage = sp.error
-    ? ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)
+    ? ERROR_MAP[sp.error] ?? sp.error
     : null;
 
   return (

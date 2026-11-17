@@ -1,5 +1,6 @@
 "use server";
 
+import { findOrCreateConversation, type ConversationClient } from "@/lib/inbox/find-or-create-conversation";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -51,16 +52,6 @@ function normaliseContact(channel: InboxChannel, contact: string): string {
 /** Chainable insert/update shims — the new columns are not yet in the generated types. */
 type InsertReturning = {
   insert: (row: unknown) => {
-    select: (cols: string) => {
-      single: () => Promise<{ data: { id: string } | null; error: { message: string } | null }>;
-    };
-  };
-};
-type Upsert = {
-  upsert: (
-    row: unknown,
-    opts: { onConflict: string },
-  ) => {
     select: (cols: string) => {
       single: () => Promise<{ data: { id: string } | null; error: { message: string } | null }>;
     };
@@ -179,27 +170,17 @@ export async function startConversation(formData: FormData): Promise<void> {
   const contactRef = normaliseContact(channel, contact);
 
   const supabase = await createClient();
-  const upsertClient = supabase.from("conversations" as never) as unknown as Upsert;
-  const { data: conv, error: convErr } = await upsertClient
-    .upsert(
-      {
-        org_id: ctx.membership.org_id,
-        channel,
-        contact_ref: contactRef,
-        contact_name: contact_name ?? null,
-        subject: subject ?? null,
-        status: "active",
-        last_message_at: new Date().toISOString(),
-      },
-      { onConflict: "org_id,channel,contact_ref" },
-    )
-    .select("id")
-    .single();
-  if (convErr || !conv?.id) {
-    console.error("[inbox] conversation upsert failed", convErr);
+  // find-or-create (NOT upsert: the unique index on this key is partial — see the helper)
+  const conv = await findOrCreateConversation(
+    supabase as unknown as ConversationClient,
+    { org_id: ctx.membership.org_id, channel, contact_ref: contactRef },
+    { contact_name: contact_name ?? null, subject: subject ?? null, status: "active", last_message_at: new Date().toISOString() },
+  );
+  if ("error" in conv) {
+    console.error("[inbox] conversation find-or-create failed", conv.error);
     redirect("/inbox/conversations/new?error=create_failed");
   }
-  const conversationId = conv!.id;
+  const conversationId = (conv as { id: string }).id;
 
   const send = await sendInboxReply({ channel, destination: contactRef, body, subject });
 

@@ -11,10 +11,11 @@ import {
   reportReadFailure,
 } from "@/lib/supabase/read-failure";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { isValidLifecycleStatus } from "@/lib/hq/demo-lifecycle";
 import {
-  DEMO_LIFECYCLE_STATUSES,
-  isValidLifecycleStatus,
-} from "@/lib/hq/demo-lifecycle";
+  ONBOARD_CONFIRM_TOKEN,
+  parseMoveDemoFormData,
+} from "./_move-form";
 import {
   onDemoApproved,
   onDemoContacted,
@@ -48,28 +49,9 @@ async function requireAdmin(): Promise<{ id: string; email: string }> {
 // Status transitions (kanban drag-and-drop + button presses)
 // --------------------------------------------------------------------
 
-const moveSchema = z.object({
-  demo_id: z.string().uuid(),
-  status: z.enum(DEMO_LIFECYCLE_STATUSES),
-  reason: z.string().trim().max(2000).optional(),
-  // Explicit confirmation token for the one irreversible/outbound transition:
-  // moving to active_onboarding provisions a REAL auth user + org + membership
-  // and emails a magic-link invite. The UI must send confirm="ONBOARD"; without
-  // it we show a confirm interstitial and provision nothing. This makes a stray
-  // kanban drag or a direct POST unable to create a customer by accident.
-  confirm: z.string().optional(),
-});
-
-/** The typed token the onboarding confirm interstitial must submit. */
-const ONBOARD_CONFIRM_TOKEN = "ONBOARD";
-
 export async function moveDemoToStatus(formData: FormData): Promise<void> {
   const admin = await requireAdmin();
-  const parsed = moveSchema.safeParse({
-    demo_id: formData.get("demo_id"),
-    status: formData.get("status"),
-    reason: formData.get("reason") ?? "",
-  });
+  const parsed = parseMoveDemoFormData(formData);
   if (!parsed.success) redirect("/admin/demos?error=invalid_input");
 
   const supabase = createAdminClient();

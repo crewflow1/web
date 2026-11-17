@@ -4,7 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/paginate";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { getRequestI18n } from "@/server/i18n/request";
-import { computeReceivables } from "@/lib/invoices/receivables";
+import { hasCapability } from "@/server/auth/capabilities";
+import { computeReceivables } from "@/lib/invoices/receivables"; import { isIssuedStatus } from "@/lib/invoices/schema";
 import { computeRetentionDueRollup } from "@/lib/retentions/rollup";
 import { loadOrgHourlyPay } from "@/lib/profitability/labour-rates";
 import { ActivityFeed } from "./_activity-feed";
@@ -518,6 +519,10 @@ export default async function DashboardPage() {
     }),
   );
 
+  // Offer "add job" only to a jobs:create holder (D-17): /jobs/new sends anyone else
+  // home. Owner → no I/O; an admin → one grant read.
+  const canCreateJobs = await hasCapability(ctx, user, "jobs", "create");
+
   // First-run state: the org has nothing yet. Show a welcome screen with CTAs.
   if (
     jobs.length === 0 &&
@@ -526,7 +531,9 @@ export default async function DashboardPage() {
     quotes.length === 0 &&
     allLeads.length === 0
   ) {
-    return <FirstRun userEmail={user.email ?? ""} orgName={ctx.org.name} />;
+    return (
+      <FirstRun userEmail={user.email ?? ""} orgName={ctx.org.name} canCreateJobs={canCreateJobs} />
+    );
   }
 
   // --- aggregations -------------------------------------------------------
@@ -561,7 +568,7 @@ export default async function DashboardPage() {
     // "paid" with no invoice_payments rows) used to inflate "Revenue this month"
     // to figures that money-in never backs. Cash actually collected is tracked
     // separately via cashInThisMonth (sum of invoice_payments).
-    if (inv.created_at && inv.created_at >= monthStart) {
+    if (isIssuedStatus(inv.status) && inv.created_at && inv.created_at >= monthStart) { // issued only: a draft is not billed, a void is not revenue
       invoicedThisMonth += Number(inv.total ?? 0);
     }
   }
@@ -917,12 +924,14 @@ export default async function DashboardPage() {
           >
             {t("dashboard.action.add_lead")}
           </Link>
-          <Link
-            href="/jobs/new"
-            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
-          >
-            {t("dashboard.action.add_job")}
-          </Link>
+          {canCreateJobs ? (
+            <Link
+              href="/jobs/new"
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+            >
+              {t("dashboard.action.add_job")}
+            </Link>
+          ) : null}
           <Link
             href="/staff"
             className="rounded-md border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
@@ -1642,7 +1651,15 @@ function ProfitTable({
   );
 }
 
-function FirstRun({ userEmail, orgName }: { userEmail: string; orgName: string }) {
+function FirstRun({
+  userEmail,
+  orgName,
+  canCreateJobs,
+}: {
+  userEmail: string;
+  orgName: string;
+  canCreateJobs: boolean;
+}) {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <header>
@@ -1665,15 +1682,17 @@ function FirstRun({ userEmail, orgName }: { userEmail: string; orgName: string }
           Name, email, phone — that&apos;s enough to start. You can add jobs
           and invoices to them once they exist.
         </FirstRunStep>
-        <FirstRunStep
-          n={2}
-          title="Create your first job"
-          href="/jobs/new"
-          cta="Create job"
-        >
-          Pick the customer, assign a staff member, set a status and date.
-          Field staff can attach photos later.
-        </FirstRunStep>
+        {canCreateJobs ? (
+          <FirstRunStep
+            n={2}
+            title="Create your first job"
+            href="/jobs/new"
+            cta="Create job"
+          >
+            Pick the customer, assign a staff member, set a status and date.
+            Field staff can attach photos later.
+          </FirstRunStep>
+        ) : null}
         <FirstRunStep
           n={3}
           title="Log your first expense"

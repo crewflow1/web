@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { env } from "@/lib/env";
+import { constantTimeEqual } from "@/lib/security/constant-time";
 
 /**
  * Dev/preview-only sign-in shortcut.
@@ -51,7 +52,7 @@ export async function GET(request: NextRequest) {
 
   const url = request.nextUrl;
   const providedToken = url.searchParams.get("token") ?? "";
-  if (providedToken !== token) {
+  if (!constantTimeEqual(providedToken, token)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 

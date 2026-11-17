@@ -151,7 +151,7 @@ export const cisBillDetailsSchema = z
      */
     reverse_charge_vat_rate: z
       .preprocess(
-        (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+        (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
         z.coerce.number().optional(),
       )
       .refine((v) => v === undefined || v === 0 || v === 5 || v === 20, {
@@ -199,11 +199,11 @@ export const cisPaymentSchema = z.object({
     errorMap: () => ({ message: "Choose how the payment was made." }),
   }),
   reference: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(120).optional(),
   ),
   notes: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(2000).optional(),
   ),
   expected_rate: z.coerce

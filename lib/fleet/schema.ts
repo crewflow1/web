@@ -103,7 +103,7 @@ export const FINANCE_TYPE_LABELS: Record<FinanceType, string> = {
 };
 
 const blankToUndefined = (v: unknown) =>
-  typeof v === "string" && v.trim() === "" ? undefined : v;
+  v === null || (typeof v === "string" && v.trim() === "") ? undefined : v;
 
 const optionalText = (max: number) =>
   z.preprocess(blankToUndefined, z.string().trim().max(max).optional());

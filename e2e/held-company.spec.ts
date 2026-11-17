@@ -65,6 +65,8 @@ test.describe("D-17 held companies", () => {
 
   test("ACTIVE · the owner works normally (control)", async ({ browser }) => {
     await asActor(browser, STATE("owner"), async (page) => {
+      await page.goto("/dashboard");
+      await expect(page.getByTestId("held-company-banner")).toHaveCount(0); // no banner for an active company
       await addItem(page, `Active item ${sfx}`);
       await expect.poll(itemCount, { timeout: 15_000 }).toBe(1);
     });
@@ -80,6 +82,11 @@ test.describe("D-17 held companies", () => {
           // read-only app access (NOT bounced to the lock screen)
           await page.goto("/dashboard");
           await expect(page).not.toHaveURL(/access-pending/);
+          // the owner is told WHY nothing can be changed, with the two things they may still do
+          const banner = page.getByTestId("held-company-banner");
+          await expect(banner).toContainText(new RegExp(`${status} — read-only`, "i"));
+          await expect(banner.getByRole("link", { name: "Billing" })).toHaveAttribute("href", "/settings/billing");
+          await expect(banner.getByRole("link", { name: "Contact support" })).toBeVisible();
           // recovery surfaces still work
           for (const path of ["/settings", "/settings/billing"]) {
             await page.goto(path);
