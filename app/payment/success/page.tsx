@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { env } from "@/lib/env";
+import { operatorDisclosure } from "@/lib/legal/operator";
 
 /**
  * Public Stripe Checkout success landing.
@@ -26,6 +27,7 @@ export default async function PaymentSuccessPage({
   const sp = await searchParams;
   const company = (sp.company ?? "").trim();
   const appName = env.NEXT_PUBLIC_APP_NAME || "CrewFlow";
+  const disclosure = operatorDisclosure();
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-16">
@@ -68,6 +70,9 @@ export default async function PaymentSuccessPage({
         >
           Back to {appName}
         </Link>
+        {disclosure ? (
+          <p className="mt-6 text-xs text-slate-500">{disclosure.line}</p>
+        ) : null}
       </div>
     </main>
   );

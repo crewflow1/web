@@ -193,6 +193,14 @@ const envSchema = z.object({
   // app/admin/actions.ts; unset ⇒ "CrewFlow Notifications <notify@crewflow.uk>".
   // Not a secret; was consumed-but-undeclared until the 2026-10 env census.
   RESEND_NOTIFICATIONS_FROM: z.string().optional(),
+  // -- Operator business-name disclosure (Companies Act 2006 Part 41) --------
+  // CrewFlow trades as a sole trader: billing documents must show the
+  // individual's legal name + an address for service. Both set => the line is
+  // rendered on CrewFlow's own billing documents; either missing => nothing is
+  // rendered (never a placeholder). VAT number is optional. See lib/legal/operator.ts.
+  CREWFLOW_OPERATOR_LEGAL_NAME: z.string().optional(),
+  CREWFLOW_OPERATOR_SERVICE_ADDRESS: z.string().optional(),
+  CREWFLOW_OPERATOR_VAT_NUMBER: z.string().optional(),
   // Where demo-request notifications are sent. Read by app/api/demo/route.ts;
   // unset ⇒ hello@crewflow.uk. Not a secret; was consumed-but-undeclared until
   // the 2026-10 env census.
@@ -617,6 +625,17 @@ const envSchema = z.object({
   // P2 portal invoice payments (STRIPE_CONNECT_SECRET_KEY). Never flip to "true"
   // before the plan prices exist in Stripe.
   NEXT_PUBLIC_FEATURE_SELF_SERVE_BILLING: z.enum(["true", "false"]).default("false"),
+
+  // Self-serve subscription CANCELLATION kill switch (20261355). DEFAULTS OFF =
+  // cancellation is AVAILABLE. An owner can cancel from Settings → Billing whenever
+  // this is unset/"false" — deliberately NOT tied to the self-serve-billing flag
+  // above, because the published terms promise "cancel at any time from the
+  // settings page" to founder-provisioned customers too. Set to "true" ONLY as an
+  // incident rollback lever: the control is hidden and the server action refuses
+  // BEFORE any Stripe call, and the surface falls back to "email us to cancel".
+  // Read from process.env at request time (lib/billing/cancellation.ts), so the
+  // flip needs a redeploy/restart of the serving runtime but no code change.
+  BILLING_SELF_SERVE_CANCELLATION_DISABLED: z.enum(["true", "false"]).default("false"),
 
   // Builders' merchant connect surface (20261124). DEFAULTS OFF. Switch 1 of two:
   // while off, isMerchantConnectable() returns false regardless of credentials and

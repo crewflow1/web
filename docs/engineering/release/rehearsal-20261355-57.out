@@ -1,0 +1,15 @@
+pre: tip=20261354000000 table=false fns=0 held_guards=230 policy_tables=206 orgs=2
+== apply 355, 356, 357
+post-apply: table=true rls=true fns=3 client_exec=0 client_table_grants=0 held_guards=231 policy_tables=206 orgs_unchanged=2
+== behaviour (synthetic org, rolled back): claim → confirm revokes access exactly once
+claim1=claimed claim2=in_flight
+confirm1_revoked=true confirm2_newly=false (status read in the same statement — start-of-statement snapshot; see below)
+== rollback
+post-rollback: table=false fns=0 held_guards=230 policy_tables=206
+== re-apply (idempotent)
+post-reapply: table=true fns=3
+
+== separate-statement check (same restored copy)
+revoked=true
+status_after=cancelled cancelled_at_set=true
+second_confirm_newly=false

@@ -140,7 +140,11 @@ describe("Sprint A item 5 — read-only billing/trial section in Settings", () =
     expect(SETTINGS).toMatch(/href="\/settings\/billing"/);
     const BILLING = read("app/(app)/settings/billing/page.tsx");
     expect(BILLING).toMatch(/mailto:hello@crewflow\.uk/);
-    expect(BILLING).toMatch(/Email us to change plan/);
+    expect(BILLING).toMatch(/Email us about billing/);
+    // Founder-provisioned customers see the ONE commercial plan (no tier catalogue, no seat caps):
+    expect(BILLING).toMatch(/MONTHLY_PRICE_GBP/);
+    expect(BILLING).toMatch(/SETUP_FEE_GBP/);
+    expect(BILLING).toMatch(/\{configured \? \(\s*<section/);
   });
 });
 

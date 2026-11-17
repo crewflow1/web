@@ -4,6 +4,7 @@ import { resolveSetupFeePrice } from "./prices";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { env } from "@/lib/env";
 import type { CheckoutSessionMetadata } from "./events";
+import { checkoutCustomText } from "@/lib/billing/checkout-disclosure";
 
 /**
  * CrewFlow — demo setup-fee Stripe Checkout.
@@ -154,6 +155,7 @@ export async function createOrReuseDemoSetupCheckout(args: {
       // Mirror metadata onto the PaymentIntent so a charge-level webhook
       // (payment_intent.succeeded) can also resolve the demo if needed.
       payment_intent_data: { metadata },
+      custom_text: checkoutCustomText("setup_fee"),
       success_url: `${APP_URL}/payment/success?company=${encodeURIComponent(demo.company)}`,
       cancel_url: `${APP_URL}/payment/cancelled`,
     });

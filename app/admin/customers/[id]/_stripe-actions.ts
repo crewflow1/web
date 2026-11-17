@@ -14,6 +14,8 @@ import {
 import { recordAdminActivity } from "@/server/services/hq-audit";
 import { env } from "@/lib/env";
 import type { CheckoutSessionMetadata } from "@/lib/stripe/events";
+import { setupFeeSatisfied } from "@/lib/billing/activation-policy";
+import { checkoutCustomText } from "@/lib/billing/checkout-disclosure";
 
 /**
  * Customer detail — Stripe checkout server actions (Stripe go-live).
@@ -94,6 +96,8 @@ type OrgCheckoutInfo = {
   name: string;
   email: string | null;
   stripe_customer_id: string | null;
+  /** pending | sent | paid | waived | refunded — the subscription checkout needs paid or waived. */
+  setup_fee_status: string;
 };
 
 async function loadOrgForCheckout(
@@ -102,7 +106,7 @@ async function loadOrgForCheckout(
   const admin = createAdminClient();
   const { data: org, error } = await admin
     .from("organizations")
-    .select("id, name, billing_email, stripe_customer_id" as never)
+    .select("id, name, billing_email, stripe_customer_id, setup_fee_status" as never)
     .eq("id", orgId)
     .maybeSingle();
   if (error) {
@@ -118,6 +122,7 @@ async function loadOrgForCheckout(
     name: string;
     billing_email: string | null;
     stripe_customer_id: string | null;
+    setup_fee_status: string | null;
   };
 
   let email = o.billing_email ?? null;
@@ -145,6 +150,7 @@ async function loadOrgForCheckout(
     name: o.name,
     email,
     stripe_customer_id: o.stripe_customer_id,
+    setup_fee_status: o.setup_fee_status ?? "pending",
   };
 }
 
@@ -243,6 +249,19 @@ async function runCheckout(
     );
   }
 
+  // 2b. Billing policy: the setup fee comes first. A company is activated only once BOTH the
+  //     setup fee (paid, or waived by HQ) and the subscription have succeeded; offering the
+  //     subscription before the fee would take the monthly payment and then hold activation.
+  if (kind === "subscription") {
+    const fee = org.setup_fee_status;
+    if (!setupFeeSatisfied(fee)) {
+      throw new CheckoutError(
+        "setup_fee_outstanding",
+        `Take the setup fee first (status: ${fee}) — send the setup-fee checkout, or waive the fee, then open the subscription checkout.`,
+      );
+    }
+  }
+
   // 3. Stripe customer.
   const customerId = await ensureStripeCustomer(org);
 
@@ -268,11 +287,13 @@ async function runCheckout(
             ...baseSession,
             mode: "payment",
             payment_intent_data: { metadata },
+            custom_text: checkoutCustomText("setup_fee"),
           })
         : await stripe.checkout.sessions.create({
             ...baseSession,
             mode: "subscription",
             subscription_data: { metadata },
+            custom_text: checkoutCustomText("subscription"),
           });
   } catch (e) {
     throw new CheckoutError(

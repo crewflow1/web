@@ -6,6 +6,7 @@ import {
   isVoiceProviderResolvable,
   selectedVoiceProvider,
 } from "@/lib/telephony/config";
+import { operatorDisclosure } from "@/lib/legal/operator";
 import type { ChecklistRow } from "./launch-readiness";
 
 /**
@@ -164,5 +165,20 @@ export async function getActivationPreflightRows(
     providerHandshakeNote: `point the ${selectedVoiceProvider() ?? "provider"}'s voice webhook at the call routes and place one real test call.`,
   });
 
-  return [whatsapp, voice];
+  // ── Sole-trader business-name disclosure (billing documents) ──────────────
+  // Presence only; never the values. Missing => billing emails/pages omit the line.
+  const disclosureOn = operatorDisclosure() !== null;
+  const operatorRow: ChecklistRow = {
+    id: "activation-operator-disclosure",
+    label: "Operator business-name disclosure",
+    status: disclosureOn ? "green" : "amber",
+    summary: disclosureOn
+      ? "Legal name + address for service are configured; billing documents show them."
+      : "Not configured: billing documents omit the sole-trader disclosure (Companies Act 2006 Part 41).",
+    detail: disclosureOn
+      ? undefined
+      : "Set CREWFLOW_OPERATOR_LEGAL_NAME and CREWFLOW_OPERATOR_SERVICE_ADDRESS (optional CREWFLOW_OPERATOR_VAT_NUMBER) before taking real payments.",
+  };
+
+  return [whatsapp, voice, operatorRow];
 }

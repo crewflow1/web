@@ -704,6 +704,18 @@ export async function promoteDemoToCustomer(args: {
   let orgId: string | null = null;
   try {
     const trialEnds = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+    // A setup fee paid at the demo stage (Demos CRM "Send setup payment" — before the company
+    // exists) belongs to this company. It used to be left on the demo row only, so the company
+    // started with setup_fee_status 'pending' and HQ had to re-record a fee the customer had
+    // already paid. Carry it over; the billing policy needs it to activate the company.
+    const { data: feeRaw, error: feeErr } = await admin
+      .from("demo_requests")
+      .select("stripe_payment_status, setup_fee_paid_at" as never)
+      .eq("id", args.demo.id)
+      .maybeSingle();
+    if (feeErr) throw new Error(`demo setup-fee read failed: ${feeErr.message}`);
+    const fee = feeRaw as unknown as { stripe_payment_status: string | null; setup_fee_paid_at: string | null } | null;
+    const feePaid = fee?.stripe_payment_status === "paid";
     const { data: orgRow, error: orgErr } = await admin
       .from("organizations")
       .insert({
@@ -714,6 +726,7 @@ export async function promoteDemoToCustomer(args: {
         plan: "starter",
         trial_ends_at: trialEnds,
         onboarding_state: { started_at: new Date().toISOString() },
+        ...(feePaid ? { setup_fee_status: "paid", setup_fee_paid_at: fee?.setup_fee_paid_at ?? new Date().toISOString() } : {}),
       } as never)
       .select("id")
       .single();

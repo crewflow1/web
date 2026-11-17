@@ -263,7 +263,9 @@ describe("/access-pending — cancelled copy contract", () => {
     expect(ACCESS_PENDING).toMatch(/cancelled:\s*\{\s*\n?\s*title:/);
   });
 
-  it("cancelled copy references the 30-day data retention so users know what to do", () => {
-    expect(ACCESS_PENDING).toMatch(/30 days/);
+  it("cancelled copy says data is kept (never auto-deleted) and how the owner gets it (founder policy 2026-11-16)", () => {
+    expect(ACCESS_PENDING).toMatch(/Cancelling doesn't delete your data/);
+    expect(ACCESS_PENDING).toMatch(/download an export/);
+    expect(ACCESS_PENDING).not.toMatch(/deleted within 30 days/);
   });
 });
