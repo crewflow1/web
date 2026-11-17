@@ -69,7 +69,8 @@ export async function GET(request: NextRequest) {
     if (result.reason === "not_connected") {
       return backToIntegrations(origin, "not_connected");
     }
-    // stripe_error — the status was already persisted as 'error' by the service.
+    // stripe_error / account_not_owned — the status was already persisted as
+    // 'error' by the service (pay-now gate closed).
     return backToIntegrations(origin, "error");
   }
 

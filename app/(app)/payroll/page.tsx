@@ -89,7 +89,7 @@ export default async function PayrollPage({ searchParams }: { searchParams: SP }
   const weekly = defaultPeriod("weekly");
   const monthly = defaultPeriod("monthly");
 
-  const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
+  const errorMessage = sp.error ? sp.error : null;
   const savedMessage = sp.saved
     ? sp.saved === "created"
       ? "Draft run created — review the lines, then finalise."
