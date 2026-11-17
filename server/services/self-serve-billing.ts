@@ -8,6 +8,7 @@ import {
   reduceStripeSubscription,
   type StripeSubscriptionShape,
 } from "@/lib/billing/subscription-state";
+import { checkoutCustomText } from "@/lib/billing/checkout-disclosure";
 
 /**
  * Self-serve billing SERVICE — plan changes, the Stripe Billing Portal, the SaaS
@@ -368,6 +369,7 @@ export function wireSelfServeBillingDeps(): SelfServeBillingDeps {
           subscription_data: {
             metadata: { org_id: orgId, kind: "subscription", plan_key: planKey },
           },
+          custom_text: checkoutCustomText("subscription"),
           success_url: successUrl,
           cancel_url: cancelUrl,
         });
