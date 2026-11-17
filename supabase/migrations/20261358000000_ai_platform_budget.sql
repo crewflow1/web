@@ -12,8 +12,9 @@
 -- code path that skips the governor; provider-side caps remain a founder
 -- console setting (docs/programme/security-secrets/AI-SPEND-GOVERNANCE.md §6).
 --
--- Default: 50000p (£500) per Europe/London month across all orgs — a founder
--- decision to confirm; production spend was £2.74 in the 30 days to 2026-11-13.
+-- Default: 10000p (£100) per Europe/London month across all orgs — FINAL founder
+-- decision (2026-11-17); production spend was £2.74 in the 30 days to 2026-11-13.
+-- It takes precedence over any higher per-company ceiling (both gates must pass).
 -- Changing it is a super-admin action through ai_set_platform_ceiling, which
 -- clamps to 1,000,000p and writes an audit row in the same transaction.
 --
@@ -35,7 +36,7 @@ comment on table public.ai_platform_budget is
   'Single row: CrewFlow-wide monthly AI application budget (pence). Service-role only; read by ai_reserve_invocation.';
 
 insert into public.ai_platform_budget (id, ceiling_pence, note)
-values (true, 50000, 'initial default (20261358000000)')
+values (true, 10000, 'initial default £100/month (founder decision 2026-11-17, 20261358000000)')
 on conflict (id) do nothing;
 
 create table if not exists public.ai_platform_budget_audit (
@@ -120,7 +121,7 @@ as $function$
            ((date_trunc('month', (now() at time zone 'Europe/London')) + interval '1 month') at time zone 'Europe/London') as e
   )
   select
-    least(coalesce((select b.ceiling_pence from public.ai_platform_budget b where b.id), 50000), 1000000),
+    least(coalesce((select b.ceiling_pence from public.ai_platform_budget b where b.id), 10000), 1000000),
     (select coalesce(sum(i.estimated_cost_pence), 0)::bigint from public.ai_invocations i, m
       where i.created_at >= m.s and i.created_at < m.e),
     (select coalesce(sum(r.estimate_pence), 0)::bigint from public.ai_cost_reservations r, m
@@ -221,13 +222,13 @@ begin
   -- the per-org ceiling and the per-employee limit. Taken AFTER the org lock —
   -- every caller locks org → platform in the same order, so no deadlock — and
   -- held to COMMIT, so the platform sum cannot race. A missing row means the
-  -- built-in default (50000p = £500), never "unlimited"; a non-positive ceiling means no
+  -- built-in default (10000p = £100), never "unlimited"; a non-positive ceiling means no
   -- AI anywhere. The clamp (1,000,000p) is authoritative.
   perform pg_advisory_xact_lock(hashtext('ai_platform_budget'), 0);
 
   select least(coalesce(
            (select b.ceiling_pence from public.ai_platform_budget b where b.id),
-           50000), 1000000)
+           10000), 1000000)
     into v_plat_ceiling;
 
   if v_plat_ceiling is null or v_plat_ceiling <= 0 then

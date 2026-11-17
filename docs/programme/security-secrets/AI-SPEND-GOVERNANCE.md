@@ -250,7 +250,7 @@ See §4b for the 2026-11-16 bypass audit.
 ## 4b. Additions on `ai/spend-governance` (2026-11-16)
 
 ### G-11 · CrewFlow-wide monthly ceiling — **FIXED** (migration `20261358000000`)
-One platform budget (`ai_platform_budget`, default **50,000p = £500 / Europe-London
+One platform budget (`ai_platform_budget`, default **10,000p = £100 / Europe-London
 month, pending founder confirmation**, clamped at 1,000,000p) enforced inside
 `ai_reserve_invocation` under the org lock then a platform lock (fixed order, no
 deadlock): a call must fit org **and** employee **and** platform headroom; refusal
@@ -403,7 +403,7 @@ what makes it a cap.
 production `ANTHROPIC_API_KEY` (the default workspace cannot carry a spend
 limit, so production must not live there); (2) a **workspace monthly spend
 limit** slightly above the application's worst case — at the current
-application settings that is the CrewFlow-wide ceiling, **£500 = US$625** at
+application settings that is the CrewFlow-wide ceiling, **£100 = US$125** at
 the governor's `USD_TO_GBP = 0.8`, so ≈ **US$650–700**; (3) an **organisation spend
 limit** a little above that as the outer wall; (4) lower workspace rate limits to
 what production needs; (5) local/test keys in a separate workspace with a small
@@ -453,7 +453,7 @@ not go through it.
 | 5 | Decide per-employee limits | None are configured; the velocity limit is now the only per-user bound. |
 | 6 | Approve the velocity numbers, or ask for different shares | They are a reasoned default (25 % / 10 % per hour), not tuned. |
 | 7 | Prioritise G-5 (render-path call) and G-6 (penny rounding) | Both need product/schema decisions I did not take unilaterally. |
-| 8 | **Confirm the CrewFlow-wide ceiling: £500 / month** (default in `20261358000000`; change on `/admin/ai-costs`) | It caps the sum of every org's AI spend; production spent £2.74 in 30 days to 2026-11-13. |
+| 8 | **CrewFlow-wide ceiling: £100 / month — CONFIRMED (founder, 2026-11-17, final)** (default in `20261358000000`; change on `/admin/ai-costs`) | It caps the sum of every org's AI spend; production spent £2.74 in 30 days to 2026-11-13. |
 | 9 | Configure **HQ e-mail recipients** on `/admin/settings` | Without them the 80% / 100% alerts (G-12) are in-app HQ notifications only. |
 | 10 | Accept **`AI_SDK_MAX_RETRIES = 0`** or choose 1–2 | 0 = one governed call is one provider request (exact ledger); each retry step re-admits up to one unrecorded billed request per reservation in the worst case, in exchange for riding out transient 429/5xx. |
 | 11 | Set the provider caps in §6 with the **enforcing** options (Anthropic workspace + org spend limits; OpenAI project + org spend limit with *Enforce a hard limit* ON) | Vendor docs confirm both are hard stops; alerts alone are not. |

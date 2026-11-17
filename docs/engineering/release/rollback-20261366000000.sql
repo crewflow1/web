@@ -91,13 +91,13 @@ begin
   -- the per-org ceiling and the per-employee limit. Taken AFTER the org lock —
   -- every caller locks org → platform in the same order, so no deadlock — and
   -- held to COMMIT, so the platform sum cannot race. A missing row means the
-  -- built-in default (50000p = £500), never "unlimited"; a non-positive ceiling means no
+  -- built-in default (10000p = £100), never "unlimited"; a non-positive ceiling means no
   -- AI anywhere. The clamp (1,000,000p) is authoritative.
   perform pg_advisory_xact_lock(hashtext('ai_platform_budget'), 0);
 
   select least(coalesce(
            (select b.ceiling_pence from public.ai_platform_budget b where b.id),
-           50000), 1000000)
+           10000), 1000000)
     into v_plat_ceiling;
 
   if v_plat_ceiling is null or v_plat_ceiling <= 0 then

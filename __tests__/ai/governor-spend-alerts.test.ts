@@ -260,7 +260,7 @@ describe("raiseSpendAlerts — claim, notify once, never throw", () => {
 describe("invokeWithGovernor — alert wiring, refusal behaviour unchanged", () => {
   it("a CrewFlow-wide refusal still blocks without running fn, and raises the platform 100% alert", async () => {
     state.reserveRow = { outcome: "blocked", block_reason: "platform_ceiling", committed_pence: 10, reserved_pence: 0, ceiling_pence: 10_000 };
-    state.claimRows = [mark({ scope: "platform", orgId: null, threshold: 100, spentPence: 49_990, ceilingPence: 50_000 })];
+    state.claimRows = [mark({ scope: "platform", orgId: null, threshold: 100, spentPence: 9_990, ceilingPence: 10_000 })];
     const fn = vi.fn(async () => ({ value: "x", usage: null }));
     const out = await invokeWithGovernor("quote.writer_draft", "drafting", fn, { orgId: ORG, userId: "u1" });
     expect(out.status).toBe("blocked");
