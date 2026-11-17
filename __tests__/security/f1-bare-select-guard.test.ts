@@ -683,9 +683,13 @@ const RPC_ALLOWLIST: Record<string, string> = {
   // FOR UPDATE ... SKIP LOCKED. The drains call with p_limit = PUSH/SMS_DRAIN_
   // BATCH_SIZE = 50, far below the 1000 cap; the queue self-drains across ticks.
   // Same bounded class as the former `.from(...).select()...limit(BATCH)` drain.
-  "lib/notifications/push.ts:380":
+  // RE-KEYED 380 → 394 and 386 → 387 (security/injection-surface-hardening): the
+  // SAME two unchanged .rpc() claim calls moved down because the SSRF-vetted
+  // send (INJ-03) and the safeActionPath import (INJ-07) were added ABOVE them.
+  // Neither call, its p_limit, nor its bounded-claim reasoning changed.
+  "lib/notifications/push.ts:394":
     "bounded: push_claim_deliveries claims ≤ p_limit (PUSH_DRAIN_BATCH_SIZE=50) rows per call (SQL LIMIT greatest(p_limit,1)), far below 1000; self-draining queue claim, not a completeness scan.",
-  "lib/notifications/sms.ts:386":
+  "lib/notifications/sms.ts:387":
     "bounded: sms_claim_deliveries claims ≤ p_limit (SMS_DRAIN_BATCH_SIZE=50) rows per call (SQL LIMIT greatest(p_limit,1)), far below 1000; self-draining queue claim, not a completeness scan.",
 };
 

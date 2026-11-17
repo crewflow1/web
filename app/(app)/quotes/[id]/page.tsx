@@ -321,7 +321,7 @@ export default async function EditQuotePage({
   // which still redirect with ?error/?saved. Form-level update errors
   // surface inline via useActionState inside QuoteBuilder.
   const errorMessage = sp.error
-    ? ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)
+    ? ERROR_MAP[sp.error] ?? sp.error
     : null;
   const savedMessage = sp.saved
     ? SAVED_MAP[sp.saved] ?? "Saved."
