@@ -5,6 +5,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { QuotePdf, type QuotePdfInput } from "@/lib/pdf/quote-pdf";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
+import { contentDisposition } from "@/lib/http/content-disposition";
 
 // PDF rendering is Node.js only — opt out of edge runtime.
 export const runtime = "nodejs";
@@ -123,7 +124,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${quote.number}.pdf"`,
+      "Content-Disposition": contentDisposition("inline", `${quote.number}.pdf`, "quote"),
       "Cache-Control": "private, no-store",
     },
   });

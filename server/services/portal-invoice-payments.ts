@@ -24,6 +24,10 @@
 import { round2, toPounds } from "@/lib/money";
 import { computeInvoiceBalance } from "@/lib/payments/allocation";
 import { invoiceCustomerId } from "@/lib/invoices/customer";
+import {
+  accountBelongsToOrg,
+  type StripeAccountShape,
+} from "@/server/services/stripe-connect-onboarding";
 
 // Stripe's smallest currency unit (pence for GBP). Invoice money is pounds
 // (numeric(12,2)); Stripe amounts are integer minor units.
@@ -110,6 +114,8 @@ export type CreateCheckoutDeps = {
       /** Stripe idempotency key so a double-click reuses the same session. */
       idempotencyKey: string;
     }) => Promise<{ id: string; url: string | null; paymentIntentId: string | null }>;
+    /** Re-read the bound connected account (ownership check before charging on it). */
+    retrieveAccount: (accountId: string) => Promise<StripeAccountShape>;
   };
   /** Persist the intent ledger row. */
   saveIntent: (row: {
@@ -201,6 +207,21 @@ export async function createInvoiceCheckout(
     invoice_id: input.invoiceId,
     customer_id: input.customerId,
   };
+
+  // GUARD 5 — the bound account must be one THIS org owns (platform metadata
+  // stamped at account creation). The connection row alone is not proof.
+  try {
+    const bound = await deps.stripe.retrieveAccount(connection.stripe_account_id);
+    if (!accountBelongsToOrg(bound, input.orgId)) {
+      return { ok: false, reason: "org_not_connected" };
+    }
+  } catch (e) {
+    return {
+      ok: false,
+      reason: "stripe_error",
+      message: e instanceof Error ? e.message : String(e),
+    };
+  }
 
   let session: { id: string; url: string | null; paymentIntentId: string | null };
   try {

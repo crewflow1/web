@@ -10,7 +10,7 @@ import { requireCapabilityFor } from "@/server/auth/capabilities";
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { parseBankCsv, scoreInvoiceMatch } from "@/lib/payments/schema";
 import { OUTSTANDING_STATUSES } from "@/lib/invoices/schema";
-import { formError, formSuccess, type FormState } from "@/lib/forms/state";
+import { formError, formSuccess, type FormState } from "@/lib/forms/state"; import { overPaymentMessage } from "@/lib/payments/over-payment";
 
 const uuid = z.string().uuid();
 
@@ -332,7 +332,7 @@ export async function confirmBankMatch(
       payment = again.payment;
     } else if (payErr || !inserted) {
       console.error("[payments] match payment insert failed", payErr);
-      return formError("Couldn't record the payment — try again.");
+      return formError(overPaymentMessage(payErr) ?? "Couldn't record the payment — try again.");
     } else {
       payment = inserted as LinkedPayment;
       createdPayment = true;

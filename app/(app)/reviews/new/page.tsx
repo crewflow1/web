@@ -89,7 +89,7 @@ export default async function NewReviewRequestPage({
     notes: "Selected job",
   }));
   const errorMessage = sp.error
-    ? ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)
+    ? ERROR_MAP[sp.error] ?? sp.error
     : null;
 
   return (

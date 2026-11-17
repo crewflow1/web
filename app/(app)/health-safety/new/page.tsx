@@ -46,7 +46,7 @@ export default async function NewRiskAssessmentPage({
   const presetJob = sp.job && jobs.some((j) => j.id === sp.job) ? sp.job : "";
 
   const errorMessage = sp.error
-    ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error))
+    ? (ERROR_MAP[sp.error] ?? sp.error)
     : null;
 
   // Document-autofill prefill (RLS-scoped to this operator + org). An absent or
