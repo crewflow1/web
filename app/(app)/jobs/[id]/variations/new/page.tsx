@@ -76,7 +76,7 @@ export default async function NewVariationPage({
   const errorMessage = error
     ? error === "create_failed"
       ? "Couldn't create the variation. Try again."
-      : decodeURIComponent(error)
+      : error
     : null;
 
   return (

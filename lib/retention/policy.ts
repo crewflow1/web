@@ -219,6 +219,9 @@ export const RETENTION_EXCLUDED: Readonly<Record<string, string>> = Object.freez
   gdpr_erasure_log: "GDPR erasure accountability trail (Art. 5(2))",
   retention_purge_log:
     "this system's OWN append-only audit of every purge — must never be purged by it",
+  // ── Platform billing ledger (GDPR-statutory: anonymise) ─────────────────────
+  subscription_cancellations:
+    "CrewFlow's record of a subscription cancellation + the tombstone that stops a cancelled Stripe subscription re-granting access — purging it would let a late webhook reopen a cancelled workspace (GDPR anonymise class)",
 });
 
 /** The excluded table names, sorted. */

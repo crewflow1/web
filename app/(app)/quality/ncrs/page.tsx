@@ -94,7 +94,7 @@ export default async function NcrRegisterPage({ searchParams }: { searchParams: 
   const liveRows = rows.filter((r) => isLive(r.status));
   const criticals = liveRows.filter((r) => r.severity === "critical");
 
-  const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)) : null;
+  const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? sp.error) : null;
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
 
   return (

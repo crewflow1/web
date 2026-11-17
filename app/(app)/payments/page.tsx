@@ -99,7 +99,7 @@ export default async function PaymentsPage({ searchParams }: { searchParams: SP 
   const outstandingTotal = receivables.outstandingTotal;
   const outstandingCount = receivables.outstandingCount;
 
-  const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
+  const errorMessage = sp.error ? sp.error : null;
   const savedMessage = sp.saved
     ? sp.saved === "payment"
       ? "Payment recorded and allocated."

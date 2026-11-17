@@ -8,6 +8,7 @@ import { createServerClient } from "@supabase/ssr";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { assertLocalE2eTarget } from "./_guard";
+import { findAuthUserId } from "./_actors";
 
 /**
  * FIRST-CUSTOMER SIMULATION (multi-actor, real browser) — a realistic rehearsal
@@ -184,8 +185,7 @@ async function seedMember(email: string, fullName: string, role: string): Promis
   const created = await svc.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
   let id = created.data.user?.id;
   if (!id) {
-    const list = await svc.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    id = list.data.users.find((u) => u.email === email)?.id;
+    id = await findAuthUserId(svc, email);
     if (id) await svc.auth.admin.updateUserById(id, { password: PASSWORD, email_confirm: true });
   }
   if (!id) throw new Error(`[first-customer-sim] could not seed member ${email}: ${created.error?.message}`);

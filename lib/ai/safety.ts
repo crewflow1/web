@@ -78,6 +78,15 @@ export function aiDisclosure(): string {
   ].join(" ");
 }
 
+/** A model-supplied deep link is kept only when it is a same-origin relative
+ *  path: one leading `/`, not `//` or `/\`, no whitespace / control chars. */
+function safeSourceHref(href: unknown): string | null {
+  if (typeof href !== "string") return null;
+  if (!/^\/(?![/\\])/.test(href)) return null;
+  if (/[\s\\]/.test(href) || /\p{Cc}/u.test(href)) return null;
+  return href;
+}
+
 /**
  * Defensive guard for AI response shapes coming from the LLM. The
  * caller passes the raw object the model returned; we validate the
@@ -93,11 +102,21 @@ export function validateAiResponse(raw: unknown): AiResponse | null {
     r.confidence === "high" || r.confidence === "medium" || r.confidence === "low"
       ? r.confidence
       : "medium";
-  const sources = Array.isArray(r.sources)
-    ? r.sources.filter(
-        (s): s is AiSource =>
-          !!s && typeof (s as AiSource).label === "string",
-      )
+  // MODEL OUTPUT IS UNTRUSTED. A source is rebuilt field by field — never passed
+  // through — so the model cannot attach arbitrary properties, and a `href` it
+  // supplies survives ONLY as a same-origin relative path. (The model's context
+  // contains tenant free text — customer names, notes — so an injected "cite
+  // https://evil.example" must never become a link on an AI surface.)
+  const sources: AiSource[] = Array.isArray(r.sources)
+    ? r.sources
+        .filter(
+          (s): s is AiSource =>
+            !!s && typeof (s as AiSource).label === "string",
+        )
+        .map((s) => {
+          const href = safeSourceHref((s as { href?: unknown }).href);
+          return href ? { label: s.label, href } : { label: s.label };
+        })
     : [];
   const generated_by: AiResponse["generated_by"] =
     r.generated_by === "anthropic" ||

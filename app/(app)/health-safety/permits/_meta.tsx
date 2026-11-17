@@ -153,7 +153,7 @@ export const SAVED_MAP: Record<string, string> = {
 /** Resolve a ?error= value to friendly copy, falling back to the raw message. */
 export function errorMessage(raw: string | undefined): string | null {
   if (!raw) return null;
-  return ERROR_MAP[raw] ?? decodeURIComponent(raw);
+  return ERROR_MAP[raw] ?? raw;
 }
 
 export function savedMessage(raw: string | undefined): string | null {

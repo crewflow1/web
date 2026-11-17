@@ -25,6 +25,7 @@ import { resolve } from "node:path";
 const ROOT = resolve(__dirname, "..", "..");
 const read = (p: string) => readFileSync(resolve(ROOT, p), "utf8");
 const MIGRATION = "supabase/migrations/20261126000000_inbound_email_ingestion.sql";
+const ROUTE_HARDENING_MIG = "supabase/migrations/20261364000000_route_tables_service_role_write.sql";
 const ROUTE = "app/api/webhooks/email/route.ts";
 
 const codeOf = (ts: string) =>
@@ -82,10 +83,25 @@ describe("migration — RLS posture and channel widening", () => {
     expect(mig).not.toMatch(/create policy\s+"[^"]*"\s+on public\.email_webhook_events/);
   });
 
-  it("email_inbound_routes is member-read, admin-write", () => {
+  it("email_inbound_routes is member-read, SERVICE-ROLE-write (admin-write dropped by 20261364)", () => {
     expect(mig).toMatch(/email_inbound_routes: members can select[\s\S]*?current_org_ids\(\)/);
-    expect(mig).toMatch(/email_inbound_routes: admins can insert[\s\S]*?is_org_admin/);
-    expect(mig).toMatch(/email_inbound_routes: admins can update[\s\S]*?is_org_admin/);
+    // The routing key must not be tenant-writable: the base admin-write policies
+    // are dropped and client write privileges revoked (executable statements only).
+    const hardening = read(ROUTE_HARDENING_MIG)
+      .split("\n")
+      .map((l) => (l.indexOf("--") === -1 ? l : l.slice(0, l.indexOf("--"))))
+      .join("\n");
+    for (const cmd of ["insert", "update"]) {
+      expect(hardening).toMatch(
+        new RegExp(
+          `drop policy if exists "email_inbound_routes: admins can ${cmd}" on public\\.email_inbound_routes;`,
+          "i",
+        ),
+      );
+    }
+    expect(hardening).toMatch(
+      /revoke insert, update, delete, truncate on table public\.email_inbound_routes from authenticated, anon;/i,
+    );
   });
 
   it("widens the channel CHECK to admit 'email' on all three receptionist tables", () => {

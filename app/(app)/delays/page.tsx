@@ -83,7 +83,7 @@ export default async function DelaysRegisterPage({ searchParams }: { searchParam
   const recorded = rows.filter((r) => r.status === "recorded");
   const claimedDays = recorded.reduce((n, r) => n + (r.working_days_lost ?? 0), 0);
 
-  const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)) : null;
+  const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? sp.error) : null;
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
 
   return (

@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { loadCustomerStatement } from "@/server/services/customer-statement";
 import { StatementPdf } from "@/lib/pdf/statement-pdf";
+import { contentDisposition } from "@/lib/http/content-disposition";
 
 // react-pdf renders on Node, not edge.
 export const runtime = "nodejs";
@@ -43,7 +44,7 @@ export async function GET(request: NextRequest, { params }: Ctx) {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${view.filename}.pdf"`,
+      "Content-Disposition": contentDisposition("inline", `${view.filename}.pdf`, "statement"),
       "Cache-Control": "private, no-store",
     },
   });

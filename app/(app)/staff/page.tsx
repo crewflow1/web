@@ -136,7 +136,7 @@ export default async function StaffPage({
       case "invite_email_failed":
         return "Couldn't send the invite email. Check that the address is valid, then try again.";
       default:
-        return decodeURIComponent(sp.error);
+        return sp.error;
     }
   })();
   const savedMessage = (() => {
