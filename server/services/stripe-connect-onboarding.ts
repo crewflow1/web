@@ -57,7 +57,28 @@ export type StripeAccountShape = {
   details_submitted?: boolean | null;
   default_currency?: string | null;
   business_profile?: { name?: string | null } | null;
+  /** Platform-set metadata. Connected-account holders cannot edit it. */
+  metadata?: Record<string, string> | null;
 };
+
+/** The metadata key `createAccount` stamps on every connected account it creates. */
+export const CONNECT_ORG_METADATA_KEY = "crewflow_org_id" as const;
+
+/**
+ * OWNERSHIP of a bound connected account.
+ *
+ * `org_payment_connections.stripe_account_id` is a public handle stored in a
+ * tenant-scoped row, so the row alone is not proof that the account belongs to
+ * the org. Every connected account this platform creates is stamped with the
+ * org's id in PLATFORM metadata (see lib/payments/stripe-connect.ts
+ * `createAccount`), which only the platform key can set. A bound id is honoured
+ * — for minting an onboarding link, copying its capability state, or creating a
+ * Checkout Session on it — only when Stripe's own record carries THIS org's id.
+ */
+export function accountBelongsToOrg(account: StripeAccountShape, orgId: string): boolean {
+  if (typeof orgId !== "string" || orgId.length === 0) return false;
+  return account.metadata?.[CONNECT_ORG_METADATA_KEY] === orgId;
+}
 
 /**
  * Map Stripe's capability flags onto a connection status.
@@ -94,6 +115,8 @@ export type BeginOnboardingDeps = {
       refreshUrl: string;
       returnUrl: string;
     }) => Promise<{ url: string }>;
+    /** Re-read an already-bound account (ownership check before reuse). */
+    retrieveAccount: (accountId: string) => Promise<StripeAccountShape>;
   };
   /** Upsert the org's connection row (status + account + capability state). */
   upsertConnection: (row: {
@@ -124,7 +147,11 @@ export type BeginOnboardingInput = {
 
 export type BeginOnboardingResult =
   | { ok: true; url: string; accountId: string; created: boolean }
-  | { ok: false; reason: "feature_disabled" | "stripe_error"; message?: string };
+  | {
+      ok: false;
+      reason: "feature_disabled" | "stripe_error" | "account_not_owned";
+      message?: string;
+    };
 
 /**
  * Begin (or continue) tenant Stripe Connect onboarding.
@@ -161,6 +188,15 @@ export async function beginStripeConnectOnboarding(
     let chargesEnabled = existing?.charges_enabled ?? false;
     let payoutsEnabled = existing?.payouts_enabled ?? false;
     let detailsSubmitted = existing?.details_submitted ?? false;
+
+    // A reused id must be an account THIS org owns — never mint an onboarding
+    // link for (or adopt the state of) an account bound by id alone.
+    if (accountId) {
+      const bound = await deps.stripe.retrieveAccount(accountId);
+      if (!accountBelongsToOrg(bound, input.orgId)) {
+        return { ok: false, reason: "account_not_owned" };
+      }
+    }
 
     if (!accountId) {
       const account = await deps.stripe.createAccount({
@@ -255,7 +291,7 @@ export type RefreshStatusResult =
     }
   | {
       ok: false;
-      reason: "feature_disabled" | "not_connected" | "stripe_error";
+      reason: "feature_disabled" | "not_connected" | "stripe_error" | "account_not_owned";
       message?: string;
     };
 
@@ -297,6 +333,22 @@ export async function refreshStripeConnectStatus(
       lastError: message,
     });
     return { ok: false, reason: "stripe_error", message };
+  }
+
+  // Never adopt the identity or capability state of an account this org does
+  // not own. Close the pay-now gate (status 'error', capabilities off) instead.
+  if (!accountBelongsToOrg(account, input.orgId)) {
+    await deps.updateStatus({
+      orgId: input.orgId,
+      status: "error",
+      accountName: connection.account_name,
+      defaultCurrency: connection.default_currency,
+      chargesEnabled: false,
+      payoutsEnabled: false,
+      detailsSubmitted: false,
+      lastError: "account_not_owned",
+    });
+    return { ok: false, reason: "account_not_owned" };
   }
 
   const chargesEnabled = account.charges_enabled === true;

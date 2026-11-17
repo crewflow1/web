@@ -13,6 +13,7 @@ import type {
   SnagLite,
   ToolboxLite,
 } from "@/lib/site-reports/aggregate";
+import { contentDisposition } from "@/lib/http/content-disposition";
 
 // react-pdf renders on Node, not edge.
 export const runtime = "nodejs";
@@ -176,7 +177,7 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${filename}"`,
+      "Content-Disposition": contentDisposition("inline", filename, "site-report"),
     },
   });
 }

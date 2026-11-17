@@ -40,4 +40,16 @@ describe("sanitizeAnalyticsProperties", () => {
   it("is a no-op when no URL property is present", () => {
     expect(sanitizeAnalyticsProperties({ $screen_width: 1024 })).toEqual({ $screen_width: 1024 });
   });
+
+  it("masks capability tokens carried as path segments (not UUID-shaped)", () => {
+    expect(maskUuidsInUrl("https://crewflow.uk/worker-portal/aB3_d-9xYz/")).toBe(
+      "https://crewflow.uk/worker-portal/:token/",
+    );
+    expect(maskUuidsInUrl("/customer-portal/tok_123/invoices")).toBe("/customer-portal/:token/invoices");
+    expect(maskUuidsInUrl("https://crewflow.uk/q/abc.def/pdf")).toBe("https://crewflow.uk/q/:token/pdf");
+    expect(maskUuidsInUrl("/a/asset-scan-token")).toBe("/a/:token");
+    // An ordinary app route is untouched; a deeper `/q/` is not a token route.
+    expect(maskUuidsInUrl("/quotes/new")).toBe("/quotes/new");
+    expect(maskUuidsInUrl("https://crewflow.uk/api/v1/q/x")).toBe("https://crewflow.uk/api/v1/q/x");
+  });
 });

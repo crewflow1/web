@@ -93,7 +93,7 @@ export default async function QualityRegisterPage({ searchParams }: { searchPara
   const totalOpenHoldPoints = blocked.reduce((n, r) => n + r.progress.openHoldPoints, 0);
   const breaches = rows.filter((r) => r.progress.holdPointBreaches > 0);
 
-  const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)) : null;
+  const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? sp.error) : null;
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
 
   return (
