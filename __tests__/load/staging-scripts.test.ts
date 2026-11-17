@@ -7,7 +7,9 @@ import { describe, expect, it } from "vitest";
 const ROOT = resolve(__dirname, "..", "..");
 function sh(script: string, args: string[], env: Record<string, string>) {
   const r = spawnSync("bash", [resolve(ROOT, script), ...args], {
-    env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", ...env },
+    // Deliberately minimal env (no inherited secrets). Next augments ProcessEnv with a
+    // required NODE_ENV, so the literal is typed explicitly.
+    env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", ...env } as NodeJS.ProcessEnv,
     encoding: "utf8",
     timeout: 30_000,
   });
