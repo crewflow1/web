@@ -89,6 +89,13 @@ describe("isFirstPartySurface — portal/quote exclusion", () => {
     expect(isFirstPartySurface("/customer-portal")).toBe(false);
     expect(isFirstPartySurface("/customer-portal/token/invoices")).toBe(false);
   });
+
+  it("excludes the worker portal — a tokenised third-party surface, like the customer portal", () => {
+    expect(isFirstPartySurface("/worker-portal")).toBe(false);
+    expect(isFirstPartySurface("/worker-portal/some-base64url-token")).toBe(false);
+    // …without catching an unrelated app route that merely shares a prefix.
+    expect(isFirstPartySurface("/worker-portals-report")).toBe(true);
+  });
 });
 
 describe("cookie read/write round-trip", () => {

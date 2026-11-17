@@ -6,6 +6,7 @@
  */
 
 import type { NotificationAudienceScope } from "./eligibility";
+import { safeActionPath } from "./action-url";
 
 export const NOTIFICATION_AUDIENCES = ["customer", "hq", "both"] as const;
 export type NotificationAudience = (typeof NOTIFICATION_AUDIENCES)[number];
@@ -155,13 +156,11 @@ export function buildPushPayload(n: {
   source_module?: string | null;
   source_id?: string | null;
 }): PushPayload {
-  const rawUrl = typeof n.action_url === "string" ? n.action_url.trim() : "";
   // Only accept a same-origin RELATIVE path as the deep link — never an absolute
   // URL from stored data, so a poisoned action_url can't redirect the click off
-  // to another origin when the SW opens it.
-  const url = rawUrl.startsWith("/") && !rawUrl.startsWith("//")
-    ? rawUrl
-    : PUSH_FALLBACK_URL;
+  // to another origin when the SW opens it. safeActionPath also rejects the
+  // `/\host` form, which the browser resolves OFF-origin in openWindow().
+  const url = safeActionPath(n.action_url) ?? PUSH_FALLBACK_URL;
   const tag =
     n.source_module && n.source_id
       ? `${n.source_module}:${n.source_id}`

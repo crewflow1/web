@@ -66,7 +66,7 @@ export default async function JoinPage({
     redirect("/onboarding/company?error=invite_org_missing");
   }
 
-  const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
+  const errorMessage = sp.error ? sp.error : null;
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">

@@ -317,7 +317,11 @@ function pinnedLookup(vetted: LookupAddress[]) {
  */
 export async function safeWebhookFetch(
   rawUrl: string,
-  init: { body: string; headers: Record<string, string> },
+  // `body` is a string for the JSON webhook path; a Uint8Array is accepted so the
+  // OTHER tenant-supplied egress target — a Web Push subscription endpoint, whose
+  // body is the aes128gcm ciphertext — goes through this same vetted, pinned,
+  // redirect-refusing door instead of a raw fetch (lib/notifications/push.ts).
+  init: { body: string | Uint8Array; headers: Record<string, string> },
 ): Promise<SafeFetchResult> {
   let url: URL;
   try {
@@ -343,7 +347,8 @@ export async function safeWebhookFetch(
     }
   }
 
-  const bodyBuf = Buffer.from(init.body, "utf8");
+  const bodyBuf =
+    typeof init.body === "string" ? Buffer.from(init.body, "utf8") : Buffer.from(init.body);
   return new Promise<SafeFetchResult>((resolve) => {
     let settled = false;
     const done = (r: SafeFetchResult) => {

@@ -2,6 +2,7 @@ import "server-only";
 
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows } from "@/lib/supabase/paginate";
+import { exactIlikePattern, equalsIgnoringCase, quoteFilterValue } from "@/lib/search/filters";
 import {
   buildLinePositions,
   type StocktakeItemRefInput,
@@ -174,6 +175,10 @@ export type StocktakeItemLookup = {
   active: boolean;
 };
 
+/** A barcode is unique per org and a SKU is expected to be; the small headroom
+ *  only matters when the code contains `*` (narrowed to a one-char wildcard). */
+const STOCK_CODE_LOOKUP_LIMIT = 20;
+
 export async function findStockItemByCode(
   db: StocktakeClient,
   orgId: string,
@@ -181,17 +186,27 @@ export async function findStockItemByCode(
 ): Promise<StocktakeItemLookup | null> {
   const trimmed = code.trim();
   if (!trimmed) return null;
-  // Case-insensitive exact match on either identifier. PostgREST `or` with
-  // `ilike` — the value is escaped for the filter grammar (commas/parens/stars
-  // would otherwise break it, and `*` is a wildcard we do not want here).
-  const safe = trimmed.replace(/[(),*]/g, " ");
+  // Case-insensitive EXACT match on either identifier. PostgREST has no `ieq`,
+  // so this is `ilike` with a wildcard-free pattern — and the scanned code is
+  // DATA, so its own LIKE metacharacters must not become wildcards. Stripping
+  // only `( ) , *` (the previous form) left `%` and `_` live: scanning `SKU_A1`
+  // also matched `SKUXA1`, `%` matched every item, and `.limit(1)` then counted
+  // stock against an arbitrary wrong item. The value is now ENCODED, not
+  // stripped (exactIlikePattern escapes `\ % _`; quoteFilterValue makes
+  // `, ( ) "` inert inside the or-string), so codes containing those characters
+  // are findable too. `*` cannot be escaped in PostgREST, so the hit is confirmed
+  // in memory before it is returned.
+  const safe = quoteFilterValue(exactIlikePattern(trimmed));
   const { data, error } = await db
     .from("stock_items")
     .select("id, name, unit, sku, barcode, active")
     .eq("org_id", orgId) // ACTIVE-ORG PIN
     .or(`barcode.ilike.${safe},sku.ilike.${safe}`)
-    .limit(1);
+    .limit(STOCK_CODE_LOOKUP_LIMIT);
   if (error) throw readFailure("stocktake: item by code", error);
-  const row = (data ?? [])[0];
-  return row ? (row as unknown as StocktakeItemLookup) : null;
+  const rows = (data ?? []) as unknown as StocktakeItemLookup[];
+  const row = rows.find(
+    (r) => equalsIgnoringCase(r.barcode, trimmed) || equalsIgnoringCase(r.sku, trimmed),
+  );
+  return row ?? null;
 }
