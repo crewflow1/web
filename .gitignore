@@ -71,3 +71,17 @@ public/pdf.worker.min.mjs
 
 # Authenticated-E2E harness storageState (live JWT — never commit)
 /e2e/.auth/
+
+# Licensed marketing fonts (Clash Display, Satoshi): the ITF Free Font License
+# forbids putting the files in a public repository. They are supplied at build
+# time by scripts/fonts/provision-marketing-fonts.mjs (see
+# docs/compliance/FONT-LICENCE-RESOLUTION.md); guarded by
+# __tests__/security/restricted-font-binaries.test.ts.
+/app/_marketing/fonts/active/
+/.fonts-private/
+*[Cc]lash[Dd]isplay*.woff
+*[Cc]lash[Dd]isplay*.woff2
+*[Cc]lash[Dd]isplay*.[ot]tf
+*[Ss]atoshi*.woff
+*[Ss]atoshi*.woff2
+*[Ss]atoshi*.[ot]tf

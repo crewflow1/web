@@ -19,8 +19,8 @@
     "test:e2e": "playwright test",
     "test:e2e:cross-browser": "playwright test --config playwright.matrix.config.ts",
     "test:e2e:visual": "playwright test --config playwright.visual.config.ts",
-    "predev": "node scripts/copy-pdf-worker.mjs",
-    "prebuild": "node scripts/copy-pdf-worker.mjs",
+    "predev": "node scripts/copy-pdf-worker.mjs && node scripts/fonts/provision-marketing-fonts.mjs",
+    "prebuild": "node scripts/copy-pdf-worker.mjs && node scripts/fonts/provision-marketing-fonts.mjs",
     "db:types": "supabase gen types typescript --linked > lib/supabase/types.ts"
   },
   "dependencies": {
