@@ -7,6 +7,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { loadCustomerFinancials } from "@/lib/customers/financials";
 import { loadCustomerCommsTimeline } from "@/lib/customers/comms-timeline";
 import { requireOrgContext } from "@/server/auth/session";
+import { hasCapability } from "@/server/auth/capabilities";
 import { readCustomerPortalToken } from "@/server/services/private-columns";
 import {
   updateCustomer,
@@ -43,8 +44,10 @@ export default async function EditCustomerPage({
   const { id } = await params;
   const { error, saved, import: importId } = await searchParams;
 
-  const { ctx } = await requireOrgContext();
+  const { ctx, user } = await requireOrgContext();
   const supabase = await createClient();
+  // "Add a job" is offered only to a jobs:create holder (D-17) — /jobs/new refuses anyone else.
+  const canCreateJobs = await hasCapability(ctx, user, "jobs", "create");
   const { data: customerBase, error: customerError } = await supabase
     .from("customers")
     .select(
@@ -428,7 +431,7 @@ export default async function EditCustomerPage({
         title="Jobs"
         href={`/jobs?customer=${id}`}
         empty="No jobs yet."
-        emptyCta={{ label: "Add a job", href: `/jobs/new?customer=${id}` }}
+        emptyCta={canCreateJobs ? { label: "Add a job", href: `/jobs/new?customer=${id}` } : undefined}
         items={((jobsRes.data ?? []) as Array<{ id: string; status: string; scheduled_date: string | null; created_at: string }>).map((j) => ({
           id: j.id,
           left: `Job · ${j.id.slice(0, 8)}`,
