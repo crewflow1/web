@@ -121,27 +121,27 @@ export default async function InvoiceDetailPage({
   const customerEmail = invoiceCustomerEmail(invoice);
   const linkedJobId = invoice.job_id;
 
-  // Fetch the org's jobs for the link-to-job picker (customer surfaced
-  // for recognisability). Limit + RLS-scoped under the user JWT.
-  const { data: jobsForPicker, error: jobsError } = await supabase
-    .from("jobs")
-    .select("id, status, scheduled_date, customer:customers ( name )")
-    .order("created_at", { ascending: false })
-    .limit(50);
-  if (jobsError) throw readFailure("invoice detail: job picker", jobsError);
-
-  // Payments against this invoice.
-  const { data: paymentsRaw, error: paymentsError } = await supabase
-    .from("invoice_payments")
-    .select("id, amount, paid_at, reference, notes, source, created_at")
-    .eq("invoice_id", id)
-    .order("paid_at", { ascending: false });
-  if (paymentsError) throw readFailure("invoice detail: payments", paymentsError);
-  const payments = paymentsRaw ?? [];
-  const paidTotal = payments.reduce((s, p) => s + Number(p.amount ?? 0), 0);
-  const invTotal = Number(invoice.total ?? 0);
-  const outstanding = Math.max(0, invTotal - paidTotal);
-
+  // PERF (free-optimisation, 2026-11-17): the job picker, the payments and the
+  // line-item snapshot reads below need only this (org-pinned, just verified)
+  // invoice's id — they are mutually independent, yet ran one after another
+  // (local trace: sequential depth 8). Start all three HERE so they overlap;
+  // each is still awaited — and its error still thrown LOUDLY — at its original
+  // site below. `.catch(() => {})` only marks the in-flight promises handled so
+  // an earlier throw cannot orphan them; the awaits still receive any rejection.
+  const jobsForPickerP = Promise.resolve(
+    supabase
+      .from("jobs")
+      .select("id, status, scheduled_date, customer:customers ( name )")
+      .order("created_at", { ascending: false })
+      .limit(50),
+  );
+  const paymentsP = Promise.resolve(
+    supabase
+      .from("invoice_payments")
+      .select("id, amount, paid_at, reference, notes, source, created_at")
+      .eq("invoice_id", id)
+      .order("paid_at", { ascending: false }),
+  );
   // Line items from the invoice's own immutable snapshot (Issue #349 Phase 2),
   // not the live quote — so a later quote edit or deletion can't rewrite this
   // historical invoice. The snapshot is created atomically by the
@@ -160,7 +160,7 @@ export default async function InvoiceDetailPage({
     line_total: number | string | null;
     sort_order: number | null;
   };
-  const lineItemsRes = await fetchAllRows<LineItemRow>(
+  const lineItemsP = fetchAllRows<LineItemRow>(
     (from, to) =>
       supabase
         .from("invoice_line_items")
@@ -173,6 +173,25 @@ export default async function InvoiceDetailPage({
         error: unknown;
       }>,
   );
+  for (const p of [jobsForPickerP, paymentsP, lineItemsP]) {
+    p.catch(() => {});
+  }
+
+  // Fetch the org's jobs for the link-to-job picker (customer surfaced
+  // for recognisability). Limit + RLS-scoped under the user JWT.
+  const { data: jobsForPicker, error: jobsError } = await jobsForPickerP;
+  if (jobsError) throw readFailure("invoice detail: job picker", jobsError);
+
+  // Payments against this invoice.
+  const { data: paymentsRaw, error: paymentsError } = await paymentsP;
+  if (paymentsError) throw readFailure("invoice detail: payments", paymentsError);
+  const payments = paymentsRaw ?? [];
+  const paidTotal = payments.reduce((s, p) => s + Number(p.amount ?? 0), 0);
+  const invTotal = Number(invoice.total ?? 0);
+  const outstanding = Math.max(0, invTotal - paidTotal);
+
+  // Line items (immutable snapshot, F-1 paged) — started above as `lineItemsP`.
+  const lineItemsRes = await lineItemsP;
   if (lineItemsRes.error) throw readFailure("invoice detail: line items", lineItemsRes.error);
   const lineItems = lineItemsRes.data;
 

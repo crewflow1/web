@@ -411,6 +411,36 @@ export default async function DashboardPage() {
     }),
   ]);
 
+  // PERF (free-optimisation, 2026-11-17): the VAT-quarter, payroll-tax-profile and
+  // stock-COGS reads need only ctx.org.id + the quarter bounds (all known HERE),
+  // yet each used to start only after the five waves resolved AND after the one
+  // before it — four more back-to-back round trips on the landing page (local
+  // trace: dashboard sequential depth 20). Start them now so they overlap the
+  // waves. Same queries, same scoping; each is still AWAITED at its original site
+  // below, so LOUD reads still throw there. The VAT inputs keep their one real
+  // dependency (the org's vat_scheme) by chaining on the settings read.
+  // `.catch(() => {})` only marks the in-flight promises handled: the first-run
+  // early return below never awaits them, and a wave throw must not orphan them.
+  const quarterEndExclusive = endOfQuarterExclusiveIso(quarterStart);
+  const dashOrgSettingsP = readOrgSettings(supabase, ctx.org.id);
+  const vatInputsP = dashOrgSettingsP.then((s) =>
+    gatherVatQuarterInputs(
+      supabase as unknown as VatInputsDb,
+      ctx.org.id,
+      quarterStart,
+      quarterEndExclusive,
+      s.vat_scheme,
+    ),
+  );
+  const taxProfilesP = getPayrollTaxProfilesForOrg(ctx.org.id);
+  const dashboardStockCogsP = loadStockCogsCostRows(
+    supabase as unknown as StockClient,
+    ctx.org.id,
+  );
+  for (const p of [dashOrgSettingsP, vatInputsP, taxProfilesP, dashboardStockCogsP]) {
+    p.catch(() => {});
+  }
+
   // ONE overlapped await — every wave is already in flight; Promise.all here just
   // collects them, so a rejection in any wave is still awaited (no orphan).
   const [
@@ -610,18 +640,12 @@ export default async function DashboardPage() {
   // included on the day the cash landed) and domestic reverse-charge VAT is
   // self-accounted into boxes 1 AND 4 (net-neutral) — both from the ONE paged
   // read layer the /tax tile, the PDF and the frozen HMRC return share.
-  const quarterEndExclusive = endOfQuarterExclusiveIso(quarterStart);
+  // (quarterEndExclusive + both reads are started above, overlapping the waves.)
   // Scheme (cash/standard) + FRS come from org_settings so the dashboard tile
   // reconciles with /tax, the PDF and the frozen return. LOUD read: a config error
   // must not silently fall back to a divergent basis. Cash + disabled FRS ⇒ inert.
-  const dashOrgSettings = await readOrgSettings(supabase, ctx.org.id);
-  const vatInputs = await gatherVatQuarterInputs(
-    supabase as unknown as VatInputsDb,
-    ctx.org.id,
-    quarterStart,
-    quarterEndExclusive,
-    dashOrgSettings.vat_scheme,
-  );
+  const dashOrgSettings = await dashOrgSettingsP;
+  const vatInputs = await vatInputsP;
   const vat = computeVatQuarter(
     vatInputs.invoicePayments,
     finances,
@@ -655,7 +679,7 @@ export default async function DashboardPage() {
   const hourlyByUser = payHourlyByUser;
   // Per-user annual salary sacrifice (£) — outside the employer NI + pension base, so
   // it lowers the TRUE cost of employment. Empty map ⇒ no sacrifice, figures unchanged.
-  const taxProfiles = await getPayrollTaxProfilesForOrg(ctx.org.id);
+  const taxProfiles = await taxProfilesP; // started above, overlapping the waves
   const sacrificeByUser = new Map<string, number>();
   for (const [uid, p] of taxProfiles) {
     const pounds = Number(p.salary_sacrifice_annual_pence ?? 0) / 100;
@@ -763,10 +787,7 @@ export default async function DashboardPage() {
   // matching this leaderboard's all-time invoices/revenue basis. It is NOT added
   // to the `profitByMonth` / `totalProfitThisMonth` tiles, which read `finances`
   // directly as the company GL — COGS is a management overlay, never a GL posting.
-  const dashboardStockCogs = await loadStockCogsCostRows(
-    supabase as unknown as StockClient,
-    ctx.org.id,
-  );
+  const dashboardStockCogs = await dashboardStockCogsP; // started above, overlapping the waves
   const dashboardCostInput = buildJobCostInput({
     finances,
     timeEntries,
