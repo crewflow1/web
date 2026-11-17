@@ -143,7 +143,7 @@ begin
   if v_plat_marks < 2 then
     select least(coalesce(
              (select b.ceiling_pence from public.ai_platform_budget b where b.id),
-             50000), 1000000)
+             10000), 1000000)
       into v_ceiling;
 
     if v_ceiling is not null and v_ceiling > 0 then
