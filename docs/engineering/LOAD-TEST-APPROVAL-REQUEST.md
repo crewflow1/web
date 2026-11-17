@@ -1,5 +1,8 @@
 # 50,000-user load test: approval request (cost, hard cap, schedule)
 
+> **STATUS: CANCELLED — founder decision 2026-11-17.** No paid staging is to be provisioned and no Vercel, Supabase or Hetzner resources purchased; the proposed $2,500 budget is not spent. This document and the harness are kept for future use only. Paid 50,000-user testing is NOT a launch blocker, and CrewFlow is NOT claimed verified for 50,000 concurrent users. Any future run needs fresh, explicit founder approval.
+
+
 **Status: REQUEST. Nothing has been provisioned, bought, signed up for or run against any hosted system.**
 Date 2026-11-16. Branch `perf/load-harness-and-staging` (PR #1114). Companion docs: `STAGING-AND-LOAD-PLAN.md` (method),
 `scripts/load/provision-staging.md` (exact post-approval steps), `scripts/load/cost-model.mjs` (reproduces every number below:
