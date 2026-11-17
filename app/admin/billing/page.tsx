@@ -120,7 +120,7 @@ export default async function HqBillingPage({
   );
 
   const banner = (() => {
-    if (sp.error) return { tone: "err" as const, msg: decodeURIComponent(sp.error) };
+    if (sp.error) return { tone: "err" as const, msg: sp.error };
     if (sp.saved) return { tone: "ok" as const, msg: prettySaved(sp.saved) };
     return null;
   })();
@@ -712,7 +712,7 @@ function Field({
 }
 
 function prettySaved(saved: string): string {
-  const s = decodeURIComponent(saved);
+  const s = saved;
   if (s === "invoice_created") return "Invoice recorded.";
   if (s.startsWith("invoice_")) return `Invoice → ${s.slice("invoice_".length)}.`;
   if (s === "renewal") return "Renewal date saved.";

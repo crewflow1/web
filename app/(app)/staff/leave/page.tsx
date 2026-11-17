@@ -122,7 +122,7 @@ export default async function LeavePage({ searchParams }: { searchParams: SP }) 
   const myHoliday = await getHolidayBalanceForUser(ctx.org.id, user.id);
 
   const errorMessage = sp.error
-    ? ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)
+    ? ERROR_MAP[sp.error] ?? sp.error
     : null;
   const savedMessage = sp.saved
     ? sp.saved === "requested"

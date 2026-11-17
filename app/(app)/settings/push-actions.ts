@@ -5,6 +5,7 @@ import {
   savePushSubscription,
   deletePushSubscription,
 } from "@/lib/notifications/push";
+import { validateWebhookUrl } from "@/lib/webhooks/ssrf";
 
 /**
  * Settings → Web Push device subscription actions (MP Wave R4).
@@ -36,8 +37,12 @@ export async function savePushSubscriptionAction(input: {
   if (!endpoint || !p256dh || !auth) {
     return { ok: false, error: "invalid_subscription" };
   }
-  // Only https push-service endpoints are ever accepted.
-  if (!endpoint.startsWith("https://")) {
+  // Only a PUBLIC https push-service endpoint is ever accepted: https, a DNS
+  // name (no IP literal), no internal TLD / platform host / private range — the
+  // same policy the outbound-webhook URL passes. This is the early, friendly
+  // refusal; the BOUNDARY is the vetted send in lib/notifications/push.ts
+  // (the table is client-writable, so a row can exist that never came here).
+  if (!validateWebhookUrl(endpoint).ok) {
     return { ok: false, error: "invalid_endpoint" };
   }
   const userAgent = nonEmptyString(input.userAgent);
