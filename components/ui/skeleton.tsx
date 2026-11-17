@@ -114,10 +114,13 @@ export function SkeletonDetail({ cards = 3 }: { cards?: number }) {
 
 /** A simple header (title + subtitle) skeleton — drop above the table skeleton. */
 export function SkeletonHeader() {
+  // min-w-0 + max-w-full: beside a detail page's action button on a 390px phone the fixed bar
+  // widths (288px + 112px) pushed the loading page ~40px past the screen edge (sideways scroll on
+  // every drill-down while it streams in).
   return (
-    <div>
-      <Skeleton className="h-7 w-48" />
-      <Skeleton className="mt-2 h-4 w-72" />
+    <div className="min-w-0">
+      <Skeleton className="h-7 w-48 max-w-full" />
+      <Skeleton className="mt-2 h-4 w-72 max-w-full" />
     </div>
   );
 }

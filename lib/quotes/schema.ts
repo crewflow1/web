@@ -57,6 +57,13 @@ export const PUBLIC_VISIBLE_STATUSES: ReadonlyArray<QuoteStatus> = [
 /** Statuses from which sendQuote() is allowed to fire. */
 export const SENDABLE_STATUSES: ReadonlyArray<QuoteStatus> = ["approved"];
 
+/**
+ * Statuses from which the quote may be EMAILED to the customer
+ * (lib/email/send-quote.ts): an approved quote, or a re-send of one already sent.
+ * Mirrors the quote page, which only offers "Email quote PDF" for these.
+ */
+export const EMAILABLE_STATUSES: ReadonlyArray<QuoteStatus> = ["approved", "sent", "viewed"];
+
 /** Statuses where editing reverts to pending_approval (re-approval required). */
 export const APPROVED_OR_BEYOND: ReadonlyArray<QuoteStatus> = [
   "approved",

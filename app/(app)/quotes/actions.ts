@@ -1439,6 +1439,14 @@ export async function acceptQuoteByToken(
       customer_comment: customerComment,
     })
     .eq("id", quote.id).eq("status", quote.status).select("id");
+  if (!updErr && !updRows?.length) {
+    // The status moved between the read and this conditional write. When a concurrent submit of
+    // the SAME acceptance won (a double-submit, a second tab) the customer's decision IS recorded:
+    // answer as the idempotent re-accept does rather than telling them it failed. Anything else
+    // (declined / edited meanwhile, or the re-read failing) still falls through to the refusal.
+    const { data: moved, error: movedErr } = await admin.from("quotes").select("status").eq("id", quote.id).maybeSingle();
+    if (!movedErr && (moved as { status?: string } | null)?.status === "accepted") return { ok: true, quoteId: quote.id };
+  }
   if (updErr || !updRows?.length) {
     console.error("[quotes] public accept failed", updErr ?? "status changed since it was read (concurrent accept / decline / edit)");
     return { ok: false, error: "Couldn't record acceptance" };

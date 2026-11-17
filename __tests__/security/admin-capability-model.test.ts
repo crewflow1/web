@@ -260,6 +260,10 @@ describe("helpers are server-only and enforcement is NOT yet wired (dark)", () =
       // enforcement, not early adoption of the dark R2/R3 surface.
       "app/(app)/jobs/[id]/assignment-actions.ts",
       "app/(app)/jobs/actions.ts",
+      // The /jobs list shows "+ New job" / "Import" only with jobs:create and
+      // "Templates" only with jobs:manage (staff saw dead-end buttons). Read-side
+      // presentation of the same R5 gates, not early adoption.
+      "app/(app)/jobs/page.tsx",
       // R4 — settings/billing (self-serve tenant plan mgmt; DARK). Page gates
       // settings:view; openBillingPortal + changePlan gate settings:manage.
       "app/(app)/settings/billing/page.tsx",
