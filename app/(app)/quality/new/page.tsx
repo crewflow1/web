@@ -49,7 +49,7 @@ export default async function NewInspectionPlanPage({ searchParams }: { searchPa
     label: "Selected job",
   }));
 
-  const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)) : null;
+  const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? sp.error) : null;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">

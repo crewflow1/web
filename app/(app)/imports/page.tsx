@@ -40,7 +40,7 @@ export default async function ImportsPage({ searchParams }: { searchParams: SP }
     .limit(20);
   if (importsError) throw readFailure("imports: register", importsError);
 
-  const errorMessage = sp.error ? decodeURIComponent(sp.error) : null;
+  const errorMessage = sp.error ? sp.error : null;
   const savedMessage = sp.saved
     ? sp.saved === "rolled_back"
       ? "Import rolled back — every row deleted."

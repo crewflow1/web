@@ -1,0 +1,191 @@
+{
+  "workstream": "security-injection",
+  "branch": "security/injection-surface-hardening",
+  "base": "8cec66a7",
+  "code_tip": "d7698dff",
+  "generated": "2026-11-14",
+  "findings": [
+    {
+      "id": "INJ-01",
+      "severity": "P1",
+      "class": "7 mass assignment (Data API) + 1 XSS/href",
+      "title": "Notification content and deep link rewritable by any org member",
+      "evidence": "VERIFIED",
+      "status": "fixed-on-branch; production migration NOT applied (NEEDS-FOUNDER)",
+      "live_in_prod": true,
+      "fix_commits": [
+        "c1bb59df",
+        "d3037999"
+      ],
+      "migration": "supabase/migrations/20261305000000_notifications_content_immutable.sql",
+      "regression_tests": [
+        "__tests__/integration/rls/notifications-column-immutability.test.ts",
+        "__tests__/security/injection-notification-action-url.test.ts"
+      ],
+      "repro": "npx vitest run --config vitest.integration.config.ts __tests__/integration/rls/notifications-column-immutability.test.ts (5/7 fail on the pre-migration catalogue)"
+    },
+    {
+      "id": "INJ-03",
+      "severity": "P2",
+      "class": "3 SSRF",
+      "title": "SSRF via web-push endpoint and OIDC IdP URLs",
+      "evidence": "VERIFIED",
+      "status": "fixed-on-branch",
+      "live_in_prod": false,
+      "note": "web push and enterprise SSO are dark",
+      "fix_commits": [
+        "62bf818a"
+      ],
+      "regression_tests": [
+        "__tests__/security/injection-ssrf-egress.test.ts"
+      ],
+      "repro": "run the regression test against the pre-fix lib/notifications/push.ts + lib/enterprise-sso/oidc.ts (8/10 fail)"
+    },
+    {
+      "id": "INJ-06",
+      "severity": "P2",
+      "class": "6 header injection",
+      "title": "Data in Content-Disposition => 500 on PDF downloads for non-Latin-1 names/numbers",
+      "evidence": "VERIFIED",
+      "status": "fixed-on-branch",
+      "live_in_prod": true,
+      "fix_commits": [
+        "625ce369"
+      ],
+      "regression_tests": [
+        "__tests__/security/injection-content-disposition.test.ts"
+      ],
+      "repro": "node -e 'new Response(\"x\",{headers:{\"Content-Disposition\":`inline; filename=\"payslip-\\u0141ukasz.pdf\"`}})' throws TypeError"
+    },
+    {
+      "id": "INJ-09",
+      "severity": "P2",
+      "class": "9 AI prompt injection",
+      "title": "Prompt-injection link relay through the AI auto-reply lane; model-supplied source hrefs",
+      "evidence": "SIMULATED-ONLY",
+      "status": "fixed-on-branch",
+      "live_in_prod": false,
+      "note": "SMS/WhatsApp/voice/inbound email are dark",
+      "fix_commits": [
+        "6359fb8b",
+        "eb3604ff"
+      ],
+      "regression_tests": [
+        "__tests__/security/injection-ai-reply-link-relay.test.ts"
+      ]
+    },
+    {
+      "id": "CSP-01",
+      "severity": "P2",
+      "class": "1 XSS (defence in depth)",
+      "title": "CSP is report-only with no report endpoint and allows unsafe-inline",
+      "evidence": "VERIFIED",
+      "status": "NOT-IMPLEMENTED (rollout decision)",
+      "live_in_prod": true,
+      "fix_commits": [],
+      "regression_tests": []
+    },
+    {
+      "id": "INJ-02",
+      "severity": "P3",
+      "class": "2 PostgREST filter",
+      "title": "LIKE-wildcard injection in exact case-insensitive lookups (stocktake code, import resolvers)",
+      "evidence": "VERIFIED",
+      "status": "fixed-on-branch",
+      "live_in_prod": true,
+      "fix_commits": [
+        "8b826bd5"
+      ],
+      "regression_tests": [
+        "__tests__/integration/injection/exact-ilike-lookup.test.ts"
+      ]
+    },
+    {
+      "id": "INJ-04",
+      "severity": "P3",
+      "class": "4 file handling",
+      "title": "Decompression bomb in import ZIP expansion",
+      "evidence": "VERIFIED",
+      "status": "fixed-on-branch",
+      "live_in_prod": true,
+      "fix_commits": [
+        "7342e2e0",
+        "5d714a5a"
+      ],
+      "regression_tests": [
+        "__tests__/security/injection-zip-bomb.test.ts"
+      ]
+    },
+    {
+      "id": "INJ-05",
+      "severity": "P3",
+      "class": "5 CSV formula",
+      "title": "Formula injection in the muster (fire register) CSV",
+      "evidence": "VERIFIED",
+      "status": "fixed-on-branch",
+      "live_in_prod": true,
+      "fix_commits": [
+        "1b3ee6a4"
+      ],
+      "regression_tests": [
+        "__tests__/security/injection-csv-formula.test.ts"
+      ]
+    },
+    {
+      "id": "INJ-07",
+      "severity": "P3",
+      "class": "6 open redirect",
+      "title": "Weak same-origin path check admits /\\host (push, SMS, HQ notes redirect)",
+      "evidence": "VERIFIED",
+      "status": "fixed-on-branch",
+      "live_in_prod": true,
+      "fix_commits": [
+        "4ecd3187"
+      ],
+      "regression_tests": [
+        "__tests__/security/injection-notification-action-url.test.ts"
+      ]
+    },
+    {
+      "id": "INJ-08",
+      "severity": "P3",
+      "class": "8 webhook forgery",
+      "title": "Non-constant-time secret comparisons (cron bearer, WhatsApp verify token, dev login)",
+      "evidence": "VERIFIED",
+      "status": "fixed-on-branch",
+      "live_in_prod": true,
+      "fix_commits": [
+        "1d33d631"
+      ],
+      "regression_tests": [
+        "__tests__/security/injection-webhook-forgery.test.ts"
+      ]
+    },
+    {
+      "id": "INJ-10",
+      "severity": "P3",
+      "class": "1 reflected input",
+      "title": "Double-decoding search params => reflected 500 on 60 pages",
+      "evidence": "VERIFIED",
+      "status": "fixed-on-branch",
+      "live_in_prod": true,
+      "fix_commits": [
+        "d7698dff"
+      ],
+      "regression_tests": [
+        "__tests__/security/injection-searchparam-double-decode.test.ts"
+      ]
+    },
+    {
+      "id": "OBS-01",
+      "severity": "unrated (handed to RLS/authz owner)",
+      "class": "7 mass assignment (Data API)",
+      "title": "70 of 148 UPDATE policies admit any org member with a full-column authenticated UPDATE grant",
+      "evidence": "IMPLEMENTED-UNTESTED (only notifications was exploited; restrictive policies/triggers on the other 69 not checked)",
+      "status": "NOT-IMPLEMENTED",
+      "fix_commits": [],
+      "regression_tests": [],
+      "repro_sql": "select c.relname, p.polname from pg_policy p join pg_class c on c.oid=p.polrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and p.polcmd in ('w','*') and p.polpermissive and coalesce(pg_get_expr(p.polqual,p.polrelid),'') !~ 'is_org_admin|has_capability|is_super|admin|false|can_' and has_table_privilege('authenticated', c.oid, 'UPDATE') order by 1"
+    }
+  ]
+}

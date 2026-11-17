@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 
 /**
@@ -45,6 +45,14 @@ const codeOf = (ts: string) =>
 
 const MIG = "supabase/migrations/20261098000000_voice_telephony_phone_numbers.sql";
 const sql = sqlOnly(read(MIG));
+const ROUTE_HARDENING_MIG = "supabase/migrations/20261364000000_route_tables_service_role_write.sql";
+/** Migration files that sort AFTER the given one (forward-only order). */
+const migrationsAfter = (mig: string) => {
+  const base = mig.split("/").pop()!;
+  return readdirSync(resolve(ROOT, "supabase/migrations"))
+    .filter((f) => f.endsWith(".sql") && f > base)
+    .sort();
+};
 
 const CONFIG = "lib/telephony/config.ts";
 const INDEX = "lib/telephony/index.ts";
@@ -83,10 +91,25 @@ describe("phone_numbers — RLS, tenancy, no fake provisioned", () => {
       /create policy[^;]*members can select[^;]*for select[\s\S]*current_org_ids\(\)/i,
     );
   });
-  it("is admin-write: insert / update / delete gated on is_org_admin()", () => {
-    expect(sql).toMatch(/create policy[^;]*admins can insert[^;]*for insert[\s\S]*is_org_admin\(/i);
-    expect(sql).toMatch(/create policy[^;]*admins can update[^;]*for update[\s\S]*is_org_admin\(/i);
-    expect(sql).toMatch(/create policy[^;]*admins can delete[^;]*for delete[\s\S]*is_org_admin\(/i);
+  it("is SERVICE-ROLE-write: the base admin-write policies are dropped and client writes revoked (20261364)", () => {
+    // The base migration once granted INSERT/UPDATE/DELETE to is_org_admin(); the
+    // routing key must not be tenant-writable, so 20261364 drops those policies and
+    // revokes the client write privileges. Assert the EXECUTABLE statements.
+    const hardening = sqlOnly(read(ROUTE_HARDENING_MIG));
+    for (const cmd of ["insert", "update", "delete"]) {
+      expect(hardening).toMatch(
+        new RegExp(`drop policy if exists "phone_numbers: admins can ${cmd}" on public\\.phone_numbers;`, "i"),
+      );
+    }
+    expect(hardening).toMatch(
+      /revoke insert, update, delete, truncate on table public\.phone_numbers from authenticated, anon;/i,
+    );
+    // No LATER migration re-opens a client write path on the routing table.
+    for (const f of migrationsAfter(ROUTE_HARDENING_MIG)) {
+      const later = sqlOnly(read(`supabase/migrations/${f}`));
+      expect(later, f).not.toMatch(/create policy[^;]*on public\.phone_numbers[^;]*for (insert|update|delete|all)/i);
+      expect(later, f).not.toMatch(/grant[^;]*(insert|update|delete|all)[^;]*on (table )?public\.phone_numbers[^;]*to[^;]*(authenticated|anon)/i);
+    }
   });
   it("is org-pinned with cascade + composite candidate key", () => {
     expect(sql).toMatch(

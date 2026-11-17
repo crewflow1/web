@@ -33,7 +33,7 @@ export default async function EditCompanyPage({
   ]);
   if (!company) notFound();
 
-  const errorMsg = sp.error ? decodeURIComponent(sp.error) : null;
+  const errorMsg = sp.error ? sp.error : null;
 
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 shadow-xl">

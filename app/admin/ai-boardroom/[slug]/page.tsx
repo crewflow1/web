@@ -169,7 +169,7 @@ export default async function AiEmployeeDetailPage({
   const failuresClean = failedTasks.length === 0 && !showHealthReasons;
 
   const saved = sp.saved ? prettySaved(sp.saved) : null;
-  const errorMsg = sp.error ? decodeURIComponent(sp.error) : null;
+  const errorMsg = sp.error ? sp.error : null;
 
   return (
     <div className="space-y-6">

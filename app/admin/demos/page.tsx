@@ -99,7 +99,7 @@ export default async function DemosPage({ searchParams }: { searchParams: SP }) 
   // steps render in an emerald banner, failed steps in a red banner.
   // The activity timeline still has the per-step audit trail.
   const banner = (() => {
-    if (sp.error) return { tone: "err" as const, msg: decodeURIComponent(sp.error) };
+    if (sp.error) return { tone: "err" as const, msg: sp.error };
     // Blocker 2: onboarding is atomic. When provisioning fails the demo is
     // NOT moved — surface a distinct, actionable banner (the generic
     // "moved but N steps failed" message would be misleading because
@@ -177,7 +177,7 @@ export default async function DemosPage({ searchParams }: { searchParams: SP }) 
 }
 
 function prettySaved(saved: string): string {
-  const s = decodeURIComponent(saved);
+  const s = saved;
   if (s === "note") return "Note added.";
   if (s === "scheduled") return "Scheduled — demo moved to Booked.";
   return `Moved to ${s.replace(/_/g, " ")}.`;
