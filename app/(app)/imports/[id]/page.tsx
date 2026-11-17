@@ -138,7 +138,7 @@ export default async function ImportWizardPage({
             ? "The direct sync couldn't reach your accounting software. Try again shortly."
             : sp.error === "connector_empty"
               ? "The connected account returned no records to import."
-              : decodeURIComponent(sp.error)
+              : sp.error
     : null;
   // Rows we couldn't classify confidently — surfaced for the operator to
   // confirm / re-classify / skip. Never silently dropped from the import.
@@ -245,7 +245,7 @@ export default async function ImportWizardPage({
           >
             <input
               type="file"
-              name="file"
+              name="file" aria-label="Files to import"
               multiple
               accept=".csv,.tsv,.tab,.txt,.psv,.xlsx,.xlsm,.xlsb,.xls,.xlt,.xltx,.ods,.fods,.numbers,.dif,.prn,.slk,.dbf,.pdf,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif,.zip,text/csv,application/csv,text/tab-separated-values,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet,application/pdf,image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,application/zip,application/x-zip-compressed"
               required

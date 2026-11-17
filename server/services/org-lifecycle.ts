@@ -74,3 +74,27 @@ export async function loadNonActiveOrgIds(): Promise<Set<string>> {
   if (error) throw new Error(`org-lifecycle: could not load non-active companies: ${(error as { message?: string }).message ?? String(error)}`);
   return new Set(((data ?? []) as Array<{ id: string }>).map((o) => o.id));
 }
+
+/**
+ * Cached view of loadNonActiveOrgIds for the notification chokepoint (called on almost every user
+ * action — it must not add a query each time). 60-second TTL per server instance. FAILS OPEN:
+ * notifications are not a security boundary, so if the status read fails we deliver as before
+ * rather than risk dropping a billing notice.
+ */
+let _heldCache: { at: number; ids: Set<string> } | null = null;
+export async function nonActiveOrgIdsForNotifications(): Promise<Set<string>> {
+  const now = Date.now();
+  if (_heldCache && now - _heldCache.at < 60_000) return _heldCache.ids;
+  try {
+    _heldCache = { at: now, ids: await loadNonActiveOrgIds() };
+    return _heldCache.ids;
+  } catch (e) {
+    console.error("[org-lifecycle] held-company lookup failed — notifications delivered unfiltered", e instanceof Error ? e.message : String(e));
+    return new Set();
+  }
+}
+
+/** Drop the cached list (tests; and callers that have just changed a company's status). */
+export function clearNonActiveOrgCache(): void {
+  _heldCache = null;
+}

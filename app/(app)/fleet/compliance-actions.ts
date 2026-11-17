@@ -53,7 +53,7 @@ type RpcChain = {
 };
 
 const blankToUndefined = (v: unknown) =>
-  typeof v === "string" && v.trim() === "" ? undefined : v;
+  v === null || (typeof v === "string" && v.trim() === "") ? undefined : v;
 const isoDate = z
   .string()
   .trim()

@@ -32,7 +32,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Treat blank/whitespace as absent BEFORE validation (see lib/snags/schema.ts).
 const blankToUndefined = (v: unknown) =>
-  typeof v === "string" && v.trim() === "" ? undefined : v;
+  v === null || (typeof v === "string" && v.trim() === "") ? undefined : v;
 
 const optionalText = (max: number) =>
   z.preprocess(blankToUndefined, z.string().trim().max(max).optional());

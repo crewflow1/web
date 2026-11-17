@@ -3,7 +3,7 @@ import {
   loadLiveSsoConfig,
   decryptOidcClientSecret,
 } from "@/lib/enterprise-sso/config";
-import { fetchDiscovery, fetchJwks, verifyIdToken } from "@/lib/enterprise-sso/oidc";
+import { fetchDiscovery, fetchJwks, verifyIdToken, vetIdpUrl, idpFetchInit } from "@/lib/enterprise-sso/oidc";
 import { oidcRedirectUri } from "@/lib/enterprise-sso/urls";
 import {
   findActiveMembershipByEmail,
@@ -71,7 +71,10 @@ export async function GET(request: NextRequest, { params }: Ctx) {
       client_secret: clientSecret,
       code_verifier: verifier,
     });
-    const tokenRes = await fetch(disco.token_endpoint, {
+    // token_endpoint comes from the tenant-controlled discovery document — vet it
+    // (SSRF policy + public DNS) and refuse redirects before POSTing the secret.
+    const tokenRes = await fetch(await vetIdpUrl(disco.token_endpoint, "token_endpoint"), {
+      ...idpFetchInit(),
       method: "POST",
       headers: {
         "content-type": "application/x-www-form-urlencoded",

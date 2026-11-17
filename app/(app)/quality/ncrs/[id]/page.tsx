@@ -93,7 +93,7 @@ export default async function NcrDetailPage({
 
   const members = steps.canPropose || status === "open" ? await listMembers(ctx.org.id) : [];
 
-  const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? decodeURIComponent(sp.error)) : null;
+  const errorMessage = sp.error ? (ERROR_MAP[sp.error] ?? sp.error) : null;
   const savedMessage = sp.saved ? (SAVED_MAP[sp.saved] ?? null) : null;
 
   return (

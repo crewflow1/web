@@ -24,7 +24,7 @@ test.describe.configure({ mode: "serial" });
 test.describe("D-17 staff field operations (browser)", () => {
   test.use({ storageState: "e2e/.auth/staff.json" });
   const db = svc();
-  let jobId = "", org = "", staffId = "", siteId = "", itemId = "", poId = "", assetId = "", vehicleId = "", sessionId = "";
+  let vanSiteId = "", jobId = "", org = "", staffId = "", siteId = "", itemId = "", poId = "", assetId = "", vehicleId = "", sessionId = "";
 
   test.beforeAll(async () => {
     org = (await db.from("organizations").select("id").eq("slug", SLUG).maybeSingle()).data?.id;
@@ -43,6 +43,7 @@ test.describe("D-17 staff field operations (browser)", () => {
     const customer = (await db.from("customers").insert({ org_id: org, name: `Cust ${TAG}` }).select("id").single()).data.id;
     jobId = (await db.from("jobs").insert({ org_id: org, customer_id: customer, assigned_to: staffId, status: "new" }).select("id").single()).data.id;
     await db.from("job_assignments").insert({ org_id: org, job_id: jobId, user_id: staffId });
+    vanSiteId = (await db.from("sites").insert({ org_id: org, name: `Van stock ${TAG}`, kind: "vehicle", vehicle_asset_id: vehicleId }).select("id").single()).data.id;
     sessionId = (await db.from("stocktake_sessions").insert({ org_id: org, site_id: siteId, reference: `ST-${TAG}`, status: "counting", opened_by: staffId }).select("id").single()).data.id;
     await db.from("stocktake_lines").insert({ org_id: org, session_id: sessionId, stock_item_id: itemId, expected_qty: 40 });
   });
@@ -106,6 +107,62 @@ test.describe("D-17 staff field operations (browser)", () => {
     expect((await db.from("asset_assignments").select("assigned_by").eq("asset_id", assetId).limit(1)).data?.[0]?.assigned_by).toBe(staffId);
   });
 
+  test("INSPECTION · staff start an inspection on an asset and complete it themselves", async ({ page }) => {
+    await page.goto(`/assets/${assetId}`);
+    const create = page.locator("form", { has: page.locator('input[name="title"][placeholder*="LOLER"]') });
+    await create.locator('input[name="title"]').fill(`Pre-use check ${TAG}`);
+    const start = create.getByRole("button");
+    await waitForHydrated(start);
+    await start.click();
+    await expect.poll(async () => (await db.from("asset_inspections").select("status, created_by").eq("asset_id", assetId).eq("title", `Pre-use check ${TAG}`)).data?.[0]?.created_by, { timeout: 15_000 }).toBe(staffId);
+    expect((await db.from("asset_inspections").select("status").eq("asset_id", assetId).eq("title", `Pre-use check ${TAG}`).limit(1)).data?.[0]?.status).toBe("draft");
+    // …and completes (issues) their OWN draft with an outcome.
+    await page.goto(`/assets/${assetId}`);
+    const issue = page.locator("form", { has: page.locator('select[name="outcome"]') }).first();
+    await issue.locator('select[name="outcome"]').selectOption({ index: 1 });
+    const issueBtn = issue.getByRole("button");
+    await waitForHydrated(issueBtn);
+    await issueBtn.click();
+    await expect.poll(async () => (await db.from("asset_inspections").select("status").eq("asset_id", assetId).eq("title", `Pre-use check ${TAG}`)).data?.[0]?.status, { timeout: 15_000 }).toBe("issued");
+  });
+
+  test("VAN STOCK · staff load stock from the depot onto a van; a conserving transfer in their name", async ({ page }) => {
+    await page.goto("/stock/vans");
+    await page.getByRole("tab", { name: /load onto van/i }).click();
+    await page.locator("#vehicle_site_id").selectOption(vanSiteId);
+    await page.locator("#depot_site_id").selectOption(siteId);
+    await page.locator("#stock_item_id").selectOption(itemId);
+    await page.locator("#qty").fill("4");
+    const load = page.getByRole("button", { name: /^load 4/i });
+    await waitForHydrated(load);
+    await load.click();
+    await expect.poll(async () => ((await db.from("stock_movements").select("movement_type, actor_id, site_id, qty").eq("org_id", org).eq("stock_item_id", itemId).in("movement_type", ["transfer_out", "transfer_in"])).data ?? []).length, { timeout: 15_000 }).toBe(2);
+    const legs = (await db.from("stock_movements").select("movement_type, actor_id, site_id, qty").eq("stock_item_id", itemId).in("movement_type", ["transfer_out", "transfer_in"])).data as any[];
+    expect(legs.every((l) => l.actor_id === staffId && Number(l.qty) === 4)).toBe(true);
+    expect(legs.find((l) => l.movement_type === "transfer_in")?.site_id).toBe(vanSiteId);
+    expect(legs.find((l) => l.movement_type === "transfer_out")?.site_id).toBe(siteId);
+  });
+
+  test("PENDING COST · staff upload a receipt; a PENDING entry + the file are stored and they see a confirmation", async ({ page }) => {
+    const before = ((await db.from("expense_drafts").select("id").eq("org_id", org)).data ?? []).length;
+    await page.goto("/expenses/new");
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+    await page.locator('input[type="file"][name="file"]').setInputFiles({ name: `receipt-${TAG}.png`, mimeType: "image/png", buffer: png });
+    await page.getByRole("button", { name: /upload/i }).click();
+    // a field submitter is NOT bounced to "forbidden": they land on a confirmation
+    await expect(page).toHaveURL(/\/expenses\/new\?saved=submitted/, { timeout: 30_000 });
+    await expect(page.getByRole("status")).toContainText(/submitted/i);
+    const rows = ((await db.from("expense_drafts").select("id, status, approved_by, upload_id").eq("org_id", org).order("created_at", { ascending: false })).data ?? []) as any[];
+    expect(rows.length).toBe(before + 1);
+    expect(rows[0].status).toBe("extracted");   // pending — never approved by the submitter
+    expect(rows[0].approved_by).toBeNull();
+    const files = await (db as any).storage.from("receipts").list(`${org}/drafts`, { search: rows[0].upload_id });
+    expect((files.data ?? []).length).toBe(1);
+    // and the management review screen stays closed to them
+    await page.goto(`/expenses/${rows[0].id}`);
+    await expect(page).not.toHaveURL(new RegExp(`/expenses/${rows[0].id}`));
+  });
+
   test("SITE SAFETY · staff draft a risk assessment (a DRAFT — publishing is refused)", async ({ page }) => {
     await page.goto("/health-safety/new");
     const gen = page.locator("form", { has: page.locator('select[name="templateKey"]') });
@@ -118,9 +175,4 @@ test.describe("D-17 staff field operations (browser)", () => {
     expect((await db.from("risk_assessments").select("status").eq("job_id", jobId).limit(1)).data?.[0]?.status).toBe("draft");
   });
 
-  test("PENDING COST · staff reach the cost-submission page", async ({ page }) => {
-    await page.goto("/expenses/new");
-    await expect(page).toHaveURL(/\/expenses\/new/);
-    await expect(page.getByRole("heading").first()).toBeVisible();
-  });
 });

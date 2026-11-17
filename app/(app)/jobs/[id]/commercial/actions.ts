@@ -42,7 +42,7 @@ const money = z.coerce
   .max(100_000_000, "Unrealistic value");
 
 const optionalMoney = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+  (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
   money.optional(),
 );
 
@@ -56,7 +56,7 @@ const budgetSchema = z
     subcontractors_cost: optionalMoney,
     misc_cost: optionalMoney,
     target_margin_pct: z.preprocess(
-      (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+      (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
       z.coerce
         .number()
         .min(0, "A target margin cannot be negative")
@@ -64,7 +64,7 @@ const budgetSchema = z
         .optional(),
     ),
     note: z.preprocess(
-      (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+      (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
       z.string().trim().max(2000).optional(),
     ),
   })

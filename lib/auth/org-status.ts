@@ -49,3 +49,28 @@ export function publicWriteAllowed(status: string | null | undefined, kind: Publ
 /** What a member of the public is told. Deliberately says nothing about WHY. */
 export const PUBLIC_WRITE_REFUSED_MESSAGE =
   "This company isn't taking online requests at the moment. Please contact them directly.";
+
+/**
+ * Notifications for a company that is NOT active (D-17 follow-up).
+ *
+ * A suspended / cancelled / pending / rejected company's crew is locked out, so operational
+ * notifications to them (job, stock, safety, automation — categories "system", "other", "alert",
+ * "health") are noise at best and a nudge to use a locked product at worst. What the company still
+ * needs is everything about its ACCOUNT: billing, Stripe, support, onboarding, sign-up, migration.
+ * CrewFlow HQ is never muted.
+ *
+ *   audience "hq"        → send (unchanged)
+ *   account categories   → send (unchanged)
+ *   audience "both"      → "hq_only" (HQ still sees it; the tenant copy is withheld)
+ *   audience "customer"  → "drop"
+ */
+export const HELD_COMPANY_ACCOUNT_CATEGORIES = ["billing", "stripe", "support", "onboarding", "signup", "migration", "demo"] as const;
+
+export function heldCompanyNotificationDisposition(
+  audience: "customer" | "hq" | "both",
+  category: string,
+): "send" | "hq_only" | "drop" {
+  if (audience === "hq") return "send";
+  if ((HELD_COMPANY_ACCOUNT_CATEGORIES as readonly string[]).includes(category)) return "send";
+  return audience === "both" ? "hq_only" : "drop";
+}

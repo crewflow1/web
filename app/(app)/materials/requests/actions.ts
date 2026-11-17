@@ -647,7 +647,7 @@ const fulfilFromStockSchema = z.object({
     .positive("The quantity must be above zero")
     .max(9_999_999, "That's too big"),
   notes: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(2000).optional(),
   ),
 });

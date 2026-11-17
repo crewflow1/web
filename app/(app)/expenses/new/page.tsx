@@ -10,7 +10,7 @@ const ERROR_MAP: Record<string, string> = {
   draft_failed: "Couldn't create the expense draft. Try again.",
 };
 
-type SP = Promise<{ error?: string }>;
+type SP = Promise<{ error?: string; saved?: string }>;
 
 export default async function NewExpensePage({
   searchParams,
@@ -33,6 +33,11 @@ export default async function NewExpensePage({
 
       <h1 className="text-2xl font-bold text-slate-900">Upload receipt</h1>
 
+      {sp.saved === "submitted" ? (
+        <div role="status" className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
+          Receipt submitted. It is now waiting for approval by your office — you don&apos;t need to do anything else.
+        </div>
+      ) : null}
       {errorMessage ? (
         <div
           role="alert"

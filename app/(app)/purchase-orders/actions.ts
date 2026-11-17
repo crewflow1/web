@@ -427,19 +427,19 @@ const supplierBillSchema = z.object({
     .number()
     .refine((v) => [0, 5, 20].includes(v), "VAT must be 0, 5 or 20"),
   reference: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(120).optional(),
   ),
   bill_date: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").optional(),
   ),
   category: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(60).optional(),
   ),
   notes: z.preprocess(
-    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    (v) => (v === null || (typeof v === "string" && v.trim() === "") ? undefined : v),
     z.string().trim().max(2000).optional(),
   ),
 });

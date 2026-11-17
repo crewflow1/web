@@ -1,6 +1,7 @@
 import "server-only";
 import { env } from "@/lib/env";
 import { isMaintenanceMode } from "@/lib/maintenance";
+import { constantTimeEqual } from "@/lib/security/constant-time";
 
 /**
  * Vercel Cron auth.
@@ -28,5 +29,7 @@ export function isCronAuthorised(request: Request): boolean {
     return false;
   }
   const header = request.headers.get("authorization") ?? "";
-  return header === `Bearer ${secret}`;
+  // Constant-time: `===` would leak, via response timing, how much of the
+  // bearer secret a caller has guessed. This is the single gate for all crons.
+  return constantTimeEqual(header, `Bearer ${secret}`);
 }

@@ -1,0 +1,16 @@
+pre: tip=20261350000000 held_guards=230 policy_tables=206
+== apply 354
+post-apply: fn=1 uidx=1 gated_bucket_policies=7 untouched_same=true held_guards=230 policy_tables=206 anon_exec_fn=false
+== behaviour (synthetic, rolled back)
+{"sub":"00000000-0000-4000-8000-00000000a002","role":"authenticated"}
+staff: rows=1 (expect 1) objects=1 (expect 1: assigned only)
+psql:/tmp/rehearsal.sql:84: ERROR:  duplicate key value violates unique constraint "tenant_attachments_storage_path_uidx"
+staff after forged insert attempt: invoice object readable=false (expect false)
+{"sub":"00000000-0000-4000-8000-00000000a001","role":"authenticated"}
+owner: rows=4 (expect 4) objects=5 (expect 5)
+{"sub":"00000000-0000-4000-8000-00000000a003","role":"authenticated"}
+other-company owner: rows=0 (expect 0) objects=0 (expect 0)
+== rollback
+post-rollback: definitions_restored=true fn=0 uidx=0
+== re-apply (idempotent)
+post-reapply: fn=1 uidx=1 untouched_same=true

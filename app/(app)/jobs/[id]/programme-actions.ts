@@ -50,7 +50,7 @@ const jobUrl = (jobId: string, params: string): string => `/jobs/${jobId}?${para
 const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
 
 const blankToUndefined = (v: unknown) =>
-  typeof v === "string" && v.trim() === "" ? undefined : v;
+  v === null || (typeof v === "string" && v.trim() === "") ? undefined : v;
 
 const daySchema = z
   .string()
