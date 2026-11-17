@@ -383,6 +383,10 @@ test.describe("owner & admin management persists, and lesser roles are refused",
         // next goto is then interrupted by the pending navigation to /me.
         await page.waitForURL(/\/me(\?|$)/, { timeout: 15_000 });
         await page.waitForLoadState("networkidle");
+        // The refusal ends in a full-page same-URL reload to /me that can land AFTER the
+        // waits above are already satisfied (same-URL reload race) and abort the next goto.
+        // Continue in a FRESH page of the same signed-in session: nothing is in flight there.
+        page = await page.context().newPage();
       }
 
       await page.goto("/staff");
