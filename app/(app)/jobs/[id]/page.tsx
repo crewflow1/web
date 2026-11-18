@@ -143,6 +143,64 @@ export default async function EditJobPage({
 
   if (!job) notFound();
 
+  // PERF (free-optimisation, 2026-11-17): every job-scoped read below depends only
+  // on job.id + ctx.org.id, both known HERE. The cost wave (time entries / org
+  // hourly pay / stock COGS) and the commitment wave (retention releases /
+  // purchase orders) used to start only after the summary wave resolved — three
+  // back-to-back round-trip waves before any panel could render (local trace:
+  // sequential depth 11). Start them now so all three overlap. Queries, scoping
+  // and LOUD error handling are unchanged and still applied at the original await
+  // sites below; `.catch(() => {})` only marks each in-flight promise as handled,
+  // so a throw from the summary wave (readFailure / notFound) cannot leave an
+  // unhandled rejection behind — the later awaits still receive any rejection.
+  const costWave = Promise.all([
+    fetchAllRows((from, to) =>
+      supabase
+        .from("time_entries")
+        .select("id, user_id, job_id, started_at, ended_at, breaks")
+        .eq("org_id", ctx.org.id)
+        .eq("job_id", job.id)
+        .order("id", { ascending: true })
+        .range(from, to),
+    ),
+    loadOrgHourlyPay(supabase, ctx.org.id),
+    loadStockCogsCostRows(supabase as unknown as StockClient, ctx.org.id, {
+      jobId: job.id,
+    }),
+  ]);
+  const commitWave = Promise.all([
+    (
+      supabase.from("retention_releases" as never) as unknown as {
+        select: (c: string) => {
+          eq: (k: string, v: unknown) => {
+            order: (
+              k: string,
+              o: { ascending: boolean },
+            ) => Promise<{ data: Array<{ id: string; amount: number | string | null; released_on: string; note: string | null }> | null }>;
+          };
+        };
+      }
+    )
+      .select("id, amount, released_on, note")
+      .eq("job_id", job.id)
+      .order("released_on", { ascending: false }),
+    // Committed costs (Programme C) — the job's purchase orders. Not yet typed.
+    // `id` + `subtotal` ride along beside `total`: the tile reports the EX-VAT
+    // commitment (see below), and a forgotten column is exactly how that figure
+    // silently reverts to £0. Pinned on source in the job-budgets test.
+    (
+      supabase.from("purchase_orders" as never) as unknown as {
+        select: (c: string) => {
+          eq: (k: string, v: unknown) => Promise<{ data: Array<{ id: string; status: string; subtotal: number | string | null; total: number | string | null }> | null }>;
+        };
+      }
+    )
+      .select("id, status, subtotal, total")
+      .eq("job_id", job.id),
+  ]);
+  costWave.catch(() => {});
+  commitWave.catch(() => {});
+
   // F-1: these are all job-scoped SET reads — a long-running, well-invoiced job
   // can cross the 1000-row PostgREST cap, so a bare `.select()` would silently
   // truncate and under-state cost / over-state profit. Page every one through
@@ -282,21 +340,8 @@ export default async function EditJobPage({
   // the same stream the dashboard, commercial page, reports and company-health
   // compose. The COGS fold runs over the whole org ledger (a correction reversing
   // an issue is a job-less row), then narrows to this job's rows.
-  const [teRes, hourlyByUser, stockCogs] = await Promise.all([
-    fetchAllRows((from, to) =>
-      supabase
-        .from("time_entries")
-        .select("id, user_id, job_id, started_at, ended_at, breaks")
-        .eq("org_id", ctx.org.id)
-        .eq("job_id", job.id)
-        .order("id", { ascending: true })
-        .range(from, to),
-    ),
-    loadOrgHourlyPay(supabase, ctx.org.id),
-    loadStockCogsCostRows(supabase as unknown as StockClient, ctx.org.id, {
-      jobId: job.id,
-    }),
-  ]);
+  // (Started above as `costWave`, overlapping the summary wave — see PERF note there.)
+  const [teRes, hourlyByUser, stockCogs] = await costWave;
   if (teRes.error) throw readFailure("job summary: time entries", teRes.error);
   const jobTimeEntries = (teRes.data ?? []) as unknown as TimeEntry[];
   const costInput = buildJobCostInput({
@@ -314,36 +359,8 @@ export default async function EditJobPage({
   // dedup); the releases live in the ledger below. The held figure is DERIVED.
   // This previously issued a SECOND `jobs` read (same id+org, retention cols
   // only) in this wave — a pure re-fetch of a row already in hand, removed.
-  const [retentionReleases, jobPurchaseOrders] = await Promise.all([
-    (
-      supabase.from("retention_releases" as never) as unknown as {
-        select: (c: string) => {
-          eq: (k: string, v: unknown) => {
-            order: (
-              k: string,
-              o: { ascending: boolean },
-            ) => Promise<{ data: Array<{ id: string; amount: number | string | null; released_on: string; note: string | null }> | null }>;
-          };
-        };
-      }
-    )
-      .select("id, amount, released_on, note")
-      .eq("job_id", job.id)
-      .order("released_on", { ascending: false }),
-    // Committed costs (Programme C) — the job's purchase orders. Not yet typed.
-    // `id` + `subtotal` ride along beside `total`: the tile reports the EX-VAT
-    // commitment (see below), and a forgotten column is exactly how that figure
-    // silently reverts to £0. Pinned on source in the job-budgets test.
-    (
-      supabase.from("purchase_orders" as never) as unknown as {
-        select: (c: string) => {
-          eq: (k: string, v: unknown) => Promise<{ data: Array<{ id: string; status: string; subtotal: number | string | null; total: number | string | null }> | null }>;
-        };
-      }
-    )
-      .select("id, status, subtotal, total")
-      .eq("job_id", job.id),
-  ]);
+  // (Started above as `commitWave`, overlapping the summary wave.)
+  const [retentionReleases, jobPurchaseOrders] = await commitWave;
   // Bills already posted against each PO, so a received-and-billed order is not
   // counted twice. One pass over the finance rows already read — no extra query.
   // Identical to /jobs/[id]/commercial, so both surfaces report the same figure.

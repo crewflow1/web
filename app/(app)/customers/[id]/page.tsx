@@ -74,33 +74,17 @@ export default async function EditCustomerPage({
     portal_token: await readCustomerPortalToken(customerBase.id),
   };
 
-  // B2B roll-up + firmographics. Business customers offered as parent options
-  // (excluding self); direct children (sites/contacts) rolled up under this
-  // record; and the parent's name when this record itself rolls up. All loud +
-  // active-org pinned inside the loaders.
-  const [parentOptions, childCustomers] = await Promise.all([
-    loadBusinessOptions(supabase, ctx.org.id, customer.id),
-    loadChildCustomers(supabase, ctx.org.id, customer.id),
-  ]);
-  let parentCustomer: { id: string; name: string } | null = null;
-  if (customer.parent_customer_id) {
-    const { data: parent, error: parentError } = await supabase
-      .from("customers")
-      .select("id, name")
-      .eq("id", customer.parent_customer_id)
-      .eq("org_id", ctx.org.id)
-      .maybeSingle();
-    if (parentError) throw readFailure("customer detail: parent", parentError);
-    parentCustomer = parent;
-  }
-
-  // Wave 6 — rollups. PAGED (F-1): these are per-customer histories with no cap,
-  // rendered in full. A long-running commercial customer can carry more than the
-  // 1000-row PostgREST cap of quotes/jobs/leads, so a bare read would silently
-  // drop the oldest rows from the history (and, for quotes, understate the money
-  // totals derived from them). fetchAllRows pages the complete set on a stable
-  // created_at+id order — matching the invoice/payment paging already below.
-  const [quotesRes, jobsRes, leadsRes] = await Promise.all([
+  // PERF (free-optimisation, 2026-11-17): everything below is keyed only on the
+  // customer just verified above (id + active org + contact details) — the
+  // history rollups, the money rollup, the portal files and the comms timeline
+  // are mutually independent, yet each used to wait for the one before it (local
+  // trace: sequential depth 13 — the page was effectively one long chain). Start
+  // them all HERE, behind the same org-pinned existence gate, so they overlap.
+  // Queries, scoping and LOUD handling are unchanged: each is awaited at its
+  // original site below and its error still throws there. `.catch(() => {})`
+  // only marks the in-flight promises handled so an earlier throw cannot orphan
+  // them — the later awaits still receive any rejection.
+  const historyWave = Promise.all([
     fetchAllRows<{
       id: string;
       number: string;
@@ -146,6 +130,45 @@ export default async function EditCustomerPage({
         .range(from, to),
     ),
   ]);
+  const financialsP = loadCustomerFinancials(supabase, id);
+  const customerFilesP = listStaffCustomerFiles(ctx.org.id, customer.id);
+  const commsEventsP = loadCustomerCommsTimeline(supabase, ctx.org.id, {
+    id: customer.id,
+    email: customer.email,
+    phone: customer.phone,
+  });
+  for (const p of [historyWave, financialsP, customerFilesP, commsEventsP]) {
+    p.catch(() => {});
+  }
+
+  // B2B roll-up + firmographics. Business customers offered as parent options
+  // (excluding self); direct children (sites/contacts) rolled up under this
+  // record; and the parent's name when this record itself rolls up. All loud +
+  // active-org pinned inside the loaders.
+  const [parentOptions, childCustomers] = await Promise.all([
+    loadBusinessOptions(supabase, ctx.org.id, customer.id),
+    loadChildCustomers(supabase, ctx.org.id, customer.id),
+  ]);
+  let parentCustomer: { id: string; name: string } | null = null;
+  if (customer.parent_customer_id) {
+    const { data: parent, error: parentError } = await supabase
+      .from("customers")
+      .select("id, name")
+      .eq("id", customer.parent_customer_id)
+      .eq("org_id", ctx.org.id)
+      .maybeSingle();
+    if (parentError) throw readFailure("customer detail: parent", parentError);
+    parentCustomer = parent;
+  }
+
+  // Wave 6 — rollups. PAGED (F-1): these are per-customer histories with no cap,
+  // rendered in full. A long-running commercial customer can carry more than the
+  // 1000-row PostgREST cap of quotes/jobs/leads, so a bare read would silently
+  // drop the oldest rows from the history (and, for quotes, understate the money
+  // totals derived from them). fetchAllRows pages the complete set on a stable
+  // created_at+id order — matching the invoice/payment paging already below.
+  // (Started above as `historyWave`, overlapping the other customer reads.)
+  const [quotesRes, jobsRes, leadsRes] = await historyWave;
   if (quotesRes.error) throw readFailure("customer detail: quotes", quotesRes.error);
   if (jobsRes.error) throw readFailure("customer detail: jobs", jobsRes.error);
   if (leadsRes.error) throw readFailure("customer detail: leads", leadsRes.error);
@@ -164,13 +187,13 @@ export default async function EditCustomerPage({
     totalPaid,
     outstanding,
     lifetimeRevenue,
-  } = await loadCustomerFinancials(supabase, id);
+  } = await financialsP; // loadCustomerFinancials, started above
 
   // Files this customer sent through their portal ("send us a file"). Read on
   // the admin client (portal_uploads is service-role only) scoped by the ACTIVE
   // org + this customer + kind — the same isolation boundary the payment-proof
   // reader uses. Each carries a short-lived signed URL for staff to open it.
-  const customerFiles = await listStaffCustomerFiles(ctx.org.id, customer.id);
+  const customerFiles = await customerFilesP; // started above
 
   // Communications — inbound + outbound email / SMS / WhatsApp / voice (call
   // logs) / live-chat for this customer, read from the EXISTING unified-inbox
@@ -179,11 +202,7 @@ export default async function EditCustomerPage({
   // customer_id), ACTIVE-org pinned, paged and loud inside the loader. The
   // receptionist substrate already projects into these same rows, so this covers
   // AI-receptionist activity too without a second read path.
-  const commsEvents = await loadCustomerCommsTimeline(supabase, ctx.org.id, {
-    id: customer.id,
-    email: customer.email,
-    phone: customer.phone,
-  });
+  const commsEvents = await commsEventsP; // started above
 
   // Timeline — merge quotes / invoices / jobs / payments / leads / comms.
   const COMMS_KIND: Record<string, string> = {

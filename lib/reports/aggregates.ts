@@ -192,6 +192,12 @@ export async function vatPerQuarter(
   // ONCE over the whole span (PAGED + loud) and each window's compute re-gates them
   // on created_at; the cash path ignores this finances arg (box 4/7 come from the
   // ledger) — no separate summing, no double-count, no drop.
+  // PERF (free-optimisation, 2026-11-17): the org-settings read (below) is
+  // independent of the finances read — start it now so the two overlap instead
+  // of costing two back-to-back round trips. Still awaited (LOUD) at its original
+  // site; `.catch(() => {})` only marks it handled if the finances read throws first.
+  const orgSettingsP = readOrgSettings(supabase, orgId);
+  orgSettingsP.catch(() => {});
   const finRes = await fetchAllRows<{
     created_at: string;
     vat_total: number | null;
@@ -226,7 +232,7 @@ export async function vatPerQuarter(
   // the PDF and the frozen return. Read ONCE; each quarter re-resolves FRS on its
   // own start (effective-date gating handles quarters before FRS began). Cash +
   // disabled FRS ⇒ inert opts ⇒ the trend is byte-for-byte the pre-scheme figures.
-  const orgSettings = await readOrgSettings(supabase, orgId);
+  const orgSettings = await orgSettingsP; // started above, overlapping the finances read
   const vatDb = supabase as unknown as VatInputsDb;
   const rows = await Promise.all(
     quarterStarts.map(async (quarterStartIso) => {

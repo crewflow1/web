@@ -1,0 +1,52 @@
+-- Performance (free-optimisation, 2026-11-17) — index the per-org activity FEED
+-- order exactly: activity_log (org_id, created_at desc, id desc).
+--
+-- ROOT CAUSE (local laptop evidence, cffresh stack, 25-tenant synthetic dataset)
+-- ---------------------------------------------------------------------------
+-- The dashboard activity feed (app/(app)/dashboard/page.tsx, every owner/admin
+-- landing) reads
+--     select id, actor_id, actor_name, action, … from activity_log
+--      where org_id = $1 order by created_at desc, id desc  limit 25 offset 0
+-- The only org-leading index is activity_log_org_created_idx (org_id,
+-- created_at desc), which cannot supply the `id desc` tiebreak, so the planner
+-- instead walks the GLOBAL activity_log_created_at_idx (added by the F-8
+-- retention migration 20260710000000) backwards and FILTERS on org_id. For a
+-- quiet tenant that means scanning every other tenant's recent activity until
+-- 25 of its own rows turn up — cost grows with the WHOLE table, not the tenant:
+--   small org, 16.8K-row table:  Index Scan Backward on created_at_idx,
+--                                 Rows Removed by Filter: 2976, 6.2 ms
+--   with this index:              Index Scan on the new index, 0.16 ms (no sort)
+-- Under the local 100-session k6 run this feed read (and its activity-summary
+-- sibling) had the highest mean execution time of any app query (~15 ms vs
+-- ~1-2 ms for everything else). activity_log is the fastest-growing table
+-- (append-only, purge is operator-invoked only), so the gap widens with every
+-- tenant added. Production cannot show it yet: activity_log holds 24 rows there.
+--
+-- FIX: an ADDITIVE btree whose key order matches the feed's ORDER BY exactly,
+-- giving an O(page) index scan per tenant regardless of other tenants' volume.
+-- The QUERY IS UNCHANGED, so results are identical — an index changes only the
+-- plan. It also serves every predicate the existing (org_id, created_at desc)
+-- index serves (strict key-prefix superset); that older index is left in place
+-- (forward-only doctrine) — dropping it is a separate, reviewed follow-up once
+-- production idx_scan confirms it is unused.
+--
+-- WRITE OVERHEAD: one extra index entry per activity_log insert (~ org uuid +
+-- timestamptz + uuid). created_at ≈ now() so entries land near the right edge
+-- of each org's key range. Characterised as low, not zero.
+--
+-- DEPLOY NOTE: production activity_log is tiny (24 rows at 2026-11-17), so a
+-- plain in-transaction build is instantaneous — same convention as
+-- 20261232000000_cron_runs_started_idx. For a large table, build it first as an
+-- ops step OUTSIDE a transaction:
+--     create index concurrently activity_log_org_created_id_idx
+--       on public.activity_log (org_id, created_at desc, id desc);
+-- after which this `if not exists` statement no-ops on deploy.
+--
+-- SEMANTICS UNCHANGED: no columns, data, RLS, grants, triggers, functions or
+-- retention behaviour are touched. Additive + idempotent.
+--
+-- ROLLBACK: docs/engineering/release/rollback-20261367000000.sql
+--           (drop index if exists public.activity_log_org_created_id_idx;)
+
+create index if not exists activity_log_org_created_id_idx
+  on public.activity_log (org_id, created_at desc, id desc);
