@@ -1,0 +1,84 @@
+{
+  "startedAt": "2026-10-25T15:11:46.040Z",
+  "productionBaseline": {
+    "provider": "openai",
+    "model": "whisper-1"
+  },
+  "whisperBin": "whisper-cli",
+  "models": [
+    {
+      "model": "whisper.cpp tiny.en",
+      "file": "ggml-tiny.en.bin",
+      "licence": "MIT (whisper.cpp) + MIT (OpenAI Whisper weights)",
+      "avgWer": 0.077,
+      "medRealtimeFactor": 37.89,
+      "items": [
+        {
+          "id": "stt-1",
+          "wer": 0.085,
+          "refWords": 47,
+          "wallMs": 14266,
+          "audioSec": 16.117438,
+          "realtimeFactor": 1.13,
+          "hypothesis": "Right, quick note for the Maple Rise Loft job. Plastic Board is back ordered until Monday so I have moved first fixed to Tuesday. Electration is confirmed for Thursday. We still need three more sheets"
+        },
+        {
+          "id": "stt-2",
+          "wer": 0.045,
+          "refWords": 44,
+          "wallMs": 354,
+          "audioSec": 14.327563,
+          "realtimeFactor": 40.49,
+          "hypothesis": "Site meeting update for the kitchen job. The client wants to move the sink to the island which means a new plumbing run, roughly 600 pounds extra, proceed with the screed now and connect the underfloo"
+        },
+        {
+          "id": "stt-3",
+          "wer": 0.102,
+          "refWords": 49,
+          "wallMs": 441,
+          "audioSec": 16.698375,
+          "realtimeFactor": 37.89,
+          "hypothesis": "End of week recap, three quotes went out worth £48,000 and one was accepted. Two jobs completed and both paid. Chase the overdue invoice again. The client promised payment on Friday. The new laborer s"
+        }
+      ]
+    },
+    {
+      "model": "whisper.cpp base.en",
+      "file": "ggml-base.en.bin",
+      "licence": "MIT (whisper.cpp) + MIT (OpenAI Whisper weights)",
+      "avgWer": 0.071,
+      "medRealtimeFactor": 27.65,
+      "items": [
+        {
+          "id": "stt-1",
+          "wer": 0.021,
+          "refWords": 47,
+          "wallMs": 742,
+          "audioSec": 16.117438,
+          "realtimeFactor": 21.71,
+          "hypothesis": "Right. Quick note for the maple-rise loft job. Plasterboard is back-ordered until Monday so I have moved first fixed to Tuesday. Electrician is confirmed for Thursday. We still need three more sheets "
+        },
+        {
+          "id": "stt-2",
+          "wer": 0.091,
+          "refWords": 44,
+          "wallMs": 518,
+          "audioSec": 14.327563,
+          "realtimeFactor": 27.65,
+          "hypothesis": "Site meeting update for the kitchen jog. The client wants to move the sink to the island which means a new plumbing run. Roughly £600 extra. Proceed with the screed now and connect the underfloor heat"
+        },
+        {
+          "id": "stt-3",
+          "wer": 0.102,
+          "refWords": 49,
+          "wallMs": 474,
+          "audioSec": 16.698375,
+          "realtimeFactor": 35.25,
+          "hypothesis": "End of week recap. Three quotes went out worth £48,000 and one was accepted. Two jobs completed and both paid. Chase the overdue invoice again. The client promised payment on Friday. The new labourer "
+        }
+      ]
+    }
+  ],
+  "notRun": [],
+  "finishedAt": "2026-10-25T15:12:03.585Z"
+}

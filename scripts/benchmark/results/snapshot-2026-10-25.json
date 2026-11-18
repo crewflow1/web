@@ -1,0 +1,4376 @@
+{
+  "startedAt": "2026-10-25T14:31:28.230Z",
+  "host": "http://127.0.0.1:11434",
+  "ollamaUp": true,
+  "repeats": 1,
+  "installedModels": [
+    "qwen3:4b",
+    "phi4-mini:latest",
+    "bge-m3:latest",
+    "phi3.5:latest",
+    "qwen2.5:3b",
+    "nomic-embed-text:latest"
+  ],
+  "environment": {
+    "note": "Benchmarked on Moe's Mac (local dev machine) — NOT production infrastructure."
+  },
+  "textModels": [
+    {
+      "model": "phi4-mini",
+      "label": "Phi-4-mini (3.8B)",
+      "params": "3.8B",
+      "licence": "MIT",
+      "commercialSafe": true,
+      "notes": "Microsoft. MIT is clean for commercial use.",
+      "workloads": [
+        {
+          "workload": "job_summary",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 0.973,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 56.869604000000436,
+          "medTotalMs": 3895.1814585,
+          "medTokensPerSec": 32.30042643473391,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "job-1",
+              "error": null,
+              "firstTokenMs": 73.50662499999999,
+              "totalMs": 5188.3751250000005,
+              "tokensPerSec": 31.66928817996601,
+              "outputTokens": 162,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 84,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Current Progress: Week 4 of 7 in loft conversion at 14 Maple Rise, Leeds. Budget: GBP 32,400. Costs to Date: GBP 21,850 (Labour: GBP 12,300, Materials: GBP 8,200, Plant: GBP 1,350). Invoiced: GBP 18,000, Paid: GBP 18,000. Open Tasks: Velux fitting delayed by 3 days, first-fix ele"
+            },
+            {
+              "id": "job-2",
+              "error": null,
+              "firstTokenMs": 62.022666000000754,
+              "totalMs": 4174.584375,
+              "tokensPerSec": 32.336824259410584,
+              "outputTokens": 133,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 77,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Current Progress: On hold due to building control issues with steel beam calculation. Costs incurred: GBP 39,100. Invoiced: GBP 42,000. Paid: GBP 30,000 (GBP 12,000 overdue). Labour halted. Client concerned.\n\nFinancial Position: Budget GBP 58,000. Expenditure GBP 39,100. Income G"
+            },
+            {
+              "id": "job-3",
+              "error": null,
+              "firstTokenMs": 51.71654200000012,
+              "totalMs": 3615.778542,
+              "tokensPerSec": 32.26402861005723,
+              "outputTokens": 115,
+              "score": {
+                "quality": 0.89,
+                "parts": {
+                  "coverage": 0.8,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 87,
+                  "missedTerms": [
+                    "snagging"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "The bathroom refit job in Flat 2, Dock Street, Hull is nearly finished. The total cost was GBP 9,800, but final costs came to GBP 9,240. Half of the budget, GBP 4,900, has been paid as a deposit. The remaining tasks are sealing the shower tray, touching up the grout, and removing"
+            },
+            {
+              "id": "job-4",
+              "error": null,
+              "firstTokenMs": 51.62016699999913,
+              "totalMs": 2493.365749999999,
+              "tokensPerSec": 32.7588790894342,
+              "outputTokens": 80,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 49,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Job: Driveway resurfacing at Unit 7 Brookside Trading Estate, Doncaster. Progress: Not started. Financial: Budget GBP 14,200, Deposit GBP 4,260 received. Blockers: Tarmac supplier shortage delayed start date twice, now booked in 9 days. Weather: Dry weather needed for a two-day j"
+            }
+          ]
+        },
+        {
+          "workload": "quote_summary",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 0.897,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 54.77083350000066,
+          "medTotalMs": 3450.6591664999996,
+          "medTokensPerSec": 32.27710871764896,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "quote-1",
+              "error": null,
+              "firstTokenMs": 52.72337499999958,
+              "totalMs": 3196.6509579999984,
+              "tokensPerSec": 32.43901306528956,
+              "outputTokens": 102,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 61,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "(1) Summary for Mrs Patel: \"We're supplying and fitting 6 double-glazed uPVC windows in anthracite grey for you, removing and disposing of old window frames and repairing the internal plaster. The total cost, including VAT, is £7,495.20 and is valid for 30 days.\"\n\n(2) Internal no"
+            },
+            {
+              "id": "quote-2",
+              "error": null,
+              "firstTokenMs": 62.51362499999959,
+              "totalMs": 2949.015958,
+              "tokensPerSec": 32.2156690085957,
+              "outputTokens": 93,
+              "score": {
+                "quality": 0.863,
+                "parts": {
+                  "coverage": 0.75,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 49,
+                  "missedTerms": [
+                    "reverse-charge"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "(1) Client-facing summary: \"Harlow Builders Ltd will carry out groundworks for a 6m x 4m extension, including digging, concrete footings, and decking. The total cost is £7,314, with a 50% deposit required upfront.\"\n\n(2) Internal margin note: \"Quote QU-1108, Harlow Builders Ltd, g"
+            },
+            {
+              "id": "quote-3",
+              "error": null,
+              "firstTokenMs": 56.0502919999999,
+              "totalMs": 3704.667375000001,
+              "tokensPerSec": 32.33854842670221,
+              "outputTokens": 118,
+              "score": {
+                "quality": 0.725,
+                "parts": {
+                  "coverage": 0.5,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 71,
+                  "missedTerms": [
+                    "rewire",
+                    "5k"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "(1) Summary for Mr Osei: Your quote for a comprehensive electrical upgrade includes rewiring your 3-bedroom semi, updating the consumer unit, adding 24 points, setting up 8 lighting circuits, and conducting an EICR. The total cost, including materials, labor, and VAT, comes to £6"
+            },
+            {
+              "id": "quote-4",
+              "error": null,
+              "firstTokenMs": 53.491375000001426,
+              "totalMs": 4713.998749999999,
+              "tokensPerSec": 31.754484623641773,
+              "outputTokens": 148,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 90,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "(1) Summary: Greenfield Care Home's annual gutter maintenance includes clearing, minor repairs, and replacing 12m of leaking gutters across 4 blocks. Access is via cherry-picker, with materials costing GBP 340, labour GBP 760, and access equipment GBP 650. Total cost before VAT i"
+            }
+          ]
+        },
+        {
+          "workload": "invoice_extraction",
+          "mode": "json",
+          "tier": "mid",
+          "productionModel": "claude-sonnet-5",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 1,
+          "schemaComplianceRate": 1,
+          "medFirstTokenMs": 62.74262500000259,
+          "medTotalMs": 5292.866957999999,
+          "medTokensPerSec": 31.55582830422923,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "inv-1",
+              "error": null,
+              "firstTokenMs": 62.74262500000259,
+              "totalMs": 7534.338125000002,
+              "tokensPerSec": 31.853152150462517,
+              "outputTokens": 238,
+              "score": {
+                "quality": 1,
+                "parsed": true,
+                "schemaValid": true,
+                "schemaErrors": [],
+                "fieldAccuracy": 1,
+                "fieldResults": {
+                  "supplier_name": true,
+                  "invoice_number": true,
+                  "invoice_date": true,
+                  "currency": true,
+                  "net_amount": true,
+                  "vat_amount": true,
+                  "gross_amount": true,
+                  "category": true
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "```json\n{\n  \"supplier_name\": \"Buildbase Trade Supplies Ltd\",\n  \"invoice_number\": \"BB-88213\",\n  \"invoice_date\": \"2026-03-12\",\n  \"currency\": \"GBP\",\n  \"net_amount\": 679,\n  \"vat_amount\": 135.8,\n  \"gross_amount\": 814.8,\n  \"category\": \"materials\",\n  \"line_items\": [\n    {\n      \"descrip"
+            },
+            {
+              "id": "inv-2",
+              "error": null,
+              "firstTokenMs": 81.15037499999744,
+              "totalMs": 7940.054166999995,
+              "tokensPerSec": 31.55582830422923,
+              "outputTokens": 248,
+              "score": {
+                "quality": 1,
+                "parsed": true,
+                "schemaValid": true,
+                "schemaErrors": [],
+                "fieldAccuracy": 1,
+                "fieldResults": {
+                  "supplier_name": true,
+                  "invoice_number": true,
+                  "invoice_date": true,
+                  "currency": true,
+                  "net_amount": true,
+                  "vat_amount": true,
+                  "gross_amount": true,
+                  "category": true
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "{\n  \"supplier_name\": \"A-Plant Hire Solutions\",\n  \"invoice_number\": \"2026/PH/4471\",\n  \"invoice_date\": \"2026-04-03\",\n  \"currency\": \"GBP\",\n  \"net_amount\": 411.00,\n  \"vat_amount\": 82.20,\n  \"gross_amount\": 493.20,\n  \"category\": \"plant_hire\",\n  \"line_items\": [\n    {\n      \"description\""
+            },
+            {
+              "id": "inv-3",
+              "error": null,
+              "firstTokenMs": 61.93895799999882,
+              "totalMs": 5292.866957999999,
+              "tokensPerSec": 31.352481032704844,
+              "outputTokens": 164,
+              "score": {
+                "quality": 1,
+                "parsed": true,
+                "schemaValid": true,
+                "schemaErrors": [],
+                "fieldAccuracy": 1,
+                "fieldResults": {
+                  "supplier_name": true,
+                  "invoice_number": true,
+                  "invoice_date": true,
+                  "currency": true,
+                  "net_amount": true,
+                  "vat_amount": true,
+                  "gross_amount": true,
+                  "category": true
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "{\n  \"supplier_name\": \"Fuelcard Services\",\n  \"invoice_number\": \"FC-2026-0099\",\n  \"invoice_date\": \"2026-02-28\",\n  \"currency\": \"GBP\",\n  \"net_amount\": 272.12,\n  \"vat_amount\": 54.42,\n  \"gross_amount\": 326.54,\n  \"category\": \"fuel\",\n  \"line_items\": [\n    {\"description\": \"Diesel - 180 li"
+            },
+            {
+              "id": "inv-4",
+              "error": null,
+              "firstTokenMs": 68.41333299999678,
+              "totalMs": 4508.646166999999,
+              "tokensPerSec": 31.755068874717473,
+              "outputTokens": 141,
+              "score": {
+                "quality": 1,
+                "parsed": true,
+                "schemaValid": true,
+                "schemaErrors": [],
+                "fieldAccuracy": 1,
+                "fieldResults": {
+                  "supplier_name": true,
+                  "invoice_number": true,
+                  "invoice_date": true,
+                  "currency": true,
+                  "net_amount": true,
+                  "vat_amount": true,
+                  "gross_amount": true,
+                  "category": true
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "{\n  \"supplier_name\": \"Thornton & Rowe Structural Engineers\",\n  \"invoice_number\": \"TR-SE-3310\",\n  \"invoice_date\": \"2026-01-09\",\n  \"currency\": \"GBP\",\n  \"net_amount\": 650.00,\n  \"vat_amount\": 130.00,\n  \"gross_amount\": 780.00,\n  \"category\": \"professional_fees\",\n  \"line_items\": [\n    {"
+            },
+            {
+              "id": "inv-5",
+              "error": null,
+              "firstTokenMs": 60.29545900000085,
+              "totalMs": 5206.880334000001,
+              "tokensPerSec": 31.47581346034018,
+              "outputTokens": 162,
+              "score": {
+                "quality": 1,
+                "parsed": true,
+                "schemaValid": true,
+                "schemaErrors": [],
+                "fieldAccuracy": 1,
+                "fieldResults": {
+                  "supplier_name": true,
+                  "invoice_number": true,
+                  "invoice_date": true,
+                  "currency": true,
+                  "net_amount": true,
+                  "vat_amount": true,
+                  "gross_amount": true,
+                  "category": true
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "{\n  \"supplier_name\": \"J. Okafor Bricklaying (subcontractor)\",\n  \"invoice_number\": \"JOB-2026-14\",\n  \"invoice_date\": \"2026-05-20\",\n  \"currency\": \"GBP\",\n  \"net_amount\": 935.00,\n  \"vat_amount\": 0.00,\n  \"gross_amount\": 935.00,\n  \"category\": \"labour_subcontractor\",\n  \"line_items\": [\n  "
+            }
+          ]
+        },
+        {
+          "workload": "customer_message_draft",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 1,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 54.38341650000075,
+          "medTotalMs": 3867.4979585000037,
+          "medTokensPerSec": 30.77144531300686,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "msg-1",
+              "error": null,
+              "firstTokenMs": 52.9096669999999,
+              "totalMs": 3838.2501670000056,
+              "tokensPerSec": 31.96311931515451,
+              "outputTokens": 121,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 104,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Dear Mr Dunn,\n\nI hope this message finds you well. I am writing to inform you that there has been an unexpected delay with our plasterboard delivery. Unfortunately, we will now be receiving the materials on Monday instead of Monday.\n\nI sincerely apologise for any inconvenience th"
+            },
+            {
+              "id": "msg-2",
+              "error": null,
+              "firstTokenMs": 51.30500000000029,
+              "totalMs": 2545.1597080000065,
+              "tokensPerSec": 31.675069915700213,
+              "outputTokens": 79,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 67,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Dear Ms Reilly,\n\nThank you very much for accepting our quote for the bathroom refit. We are delighted to have the opportunity to work with you on this project. We will be in touch within the next 2 working days to arrange a suitable start date for the work.\n\nPlease expect to rece"
+            },
+            {
+              "id": "msg-3",
+              "error": null,
+              "firstTokenMs": 55.8571660000016,
+              "totalMs": 6048.880124999996,
+              "tokensPerSec": 29.86782071031351,
+              "outputTokens": 179,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 135,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Dear [Client's Name],\n\nI hope this message finds you well. I am writing to bring to your attention that the invoice INV-3092, amounting to GBP 2,400, is now 21 days overdue. As a valued client, we understand that circumstances can sometimes delay payments, but we kindly request t"
+            },
+            {
+              "id": "msg-4",
+              "error": null,
+              "firstTokenMs": 56.028625000006286,
+              "totalMs": 3896.745750000002,
+              "tokensPerSec": 29.68042771058459,
+              "outputTokens": 114,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 95,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Dear [Client's Name],\n\nThank you for choosing Meadowcroft Landscaping for your recent project. We are delighted to inform you that the job is now complete. We hope you are pleased with the results.\n\nPlease take a moment to check the work carefully. If you notice any issues or hav"
+            }
+          ]
+        },
+        {
+          "workload": "release_notes",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 0.833,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 55.61099999998987,
+          "medTotalMs": 2944.9851250000065,
+          "medTokensPerSec": 28.26200411338189,
+          "fallbackWorthyRate": 0.667,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "rel-1",
+              "error": null,
+              "firstTokenMs": 55.61099999998987,
+              "totalMs": 4230.464957999997,
+              "tokensPerSec": 28.26200411338189,
+              "outputTokens": 118,
+              "score": {
+                "quality": 0.75,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 0,
+                  "lengthScore": 1,
+                  "words": 95,
+                  "missedTerms": [],
+                  "violations": [
+                    "#901",
+                    "#905"
+                  ]
+                },
+                "fallbackWorthy": true
+              },
+              "sample": "# Release Notes: Week of [Insert Date]\n\n## New Features\n- Bulk document download added to the client portal for easier access to files (#901)\n\n## Performance Improvements\n- Job list now loads approximately three times faster for large accounts, enhancing user experience (#905)\n\n#"
+            },
+            {
+              "id": "rel-2",
+              "error": null,
+              "firstTokenMs": 56.86295799999789,
+              "totalMs": 2438.6243329999998,
+              "tokensPerSec": 28.55779762264734,
+              "outputTokens": 68,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 48,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "**New Features:**\n- Offline mode now queues site-diary entries and syncs when back online.\n- Quote builder remembers your last-used margin per client type.\n- Improved search on the materials list.\n- Added two-factor authentication for all accounts.\n\n**Improvements:**\n- Fixed cras"
+            },
+            {
+              "id": "rel-3",
+              "error": null,
+              "firstTokenMs": 54.87108400001307,
+              "totalMs": 2944.9851250000065,
+              "tokensPerSec": 26.641616627136735,
+              "outputTokens": 77,
+              "score": {
+                "quality": 0.75,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 0,
+                  "lengthScore": 1,
+                  "words": 54,
+                  "missedTerms": [],
+                  "violations": [
+                    "#860"
+                  ]
+                },
+                "fallbackWorthy": true
+              },
+              "sample": "New Features:\n- Weather Forecast: View weather forecasts on each job's schedule, with rain days flagged for outdoor tasks (#860)\n\nImprovements:\n- Invoices: Void invoices with an audit trail for better tracking (#862)\n- Mobile Experience: Enhanced mobile layout for the dashboard ("
+            }
+          ]
+        },
+        {
+          "workload": "design_review",
+          "mode": "text",
+          "tier": "high",
+          "productionModel": "claude-opus-5",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 1,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 74.11195900000166,
+          "medTotalMs": 8640.948417000007,
+          "medTokensPerSec": 22.57315378689808,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "dr-1",
+              "error": null,
+              "firstTokenMs": 74.11195900000166,
+              "totalMs": 8640.948417000007,
+              "tokensPerSec": 24.97981187633639,
+              "outputTokens": 214,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 175,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Risks:\n- Lack of tenant isolation: The `shared_templates` table is not tenant-aware, which means that users from different organizations could potentially access and modify each other's templates.\n- Data integrity: Without RLS policies, there's a risk of accidental or malicious d"
+            },
+            {
+              "id": "dr-2",
+              "error": null,
+              "firstTokenMs": 75.25354199999128,
+              "totalMs": 7827.879083999986,
+              "tokensPerSec": 22.57315378689808,
+              "outputTokens": 175,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 148,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Risks:\n- Potential for data inconsistency if the cron job fails or is delayed.\n- Security risks if the SECURITY DEFINER function is compromised.\n- Performance degradation if the materialized view becomes too large.\n- Difficulty in maintaining and debugging the SECURITY DEFINER fu"
+            },
+            {
+              "id": "dr-3",
+              "error": null,
+              "firstTokenMs": 67.32737500000803,
+              "totalMs": 8727.661709000007,
+              "tokensPerSec": 21.132549935464887,
+              "outputTokens": 183,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 160,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Risks:\n- Potential for session hijacking or session fixation attacks if session management is not properly implemented.\n- Risk of data leakage between tenants if the session handling is not robust and isolated.\n- Potential for race conditions if multiple users are generating PDFs"
+            }
+          ]
+        },
+        {
+          "workload": "construction_insight",
+          "mode": "text",
+          "tier": "mid",
+          "productionModel": "claude-sonnet-5",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 0.961,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 79.06552050000028,
+          "medTotalMs": 8600.272604000005,
+          "medTokensPerSec": 20.30747034887711,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "ins-1",
+              "error": null,
+              "firstTokenMs": 77.84733299999789,
+              "totalMs": 4742.632207999995,
+              "tokensPerSec": 20.797487148975403,
+              "outputTokens": 97,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 78,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "The most important insight is that the average gross margin is 19%, which is below the target of 25%. This is a significant issue that needs to be addressed to improve profitability.\n\nNumber: Average gross margin is 19%, below the target of 25%.\n\nRecommended action: Review pricin"
+            },
+            {
+              "id": "ins-2",
+              "error": null,
+              "firstTokenMs": 80.28370800000266,
+              "totalMs": 5014.464749999999,
+              "tokensPerSec": 20.267929872151925,
+              "outputTokens": 100,
+              "score": {
+                "quality": 0.863,
+                "parts": {
+                  "coverage": 0.75,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 79,
+                  "missedTerms": [
+                    "vat"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "The most important insight is the overdue receivables amounting to GBP 28,900, with the oldest invoice being 47 days overdue. This indicates a potential cash flow issue that could impact the business's ability to meet upcoming payables.\n\nRecommended action: Prioritize collecting "
+            },
+            {
+              "id": "ins-3",
+              "error": null,
+              "firstTokenMs": 75.00983300000371,
+              "totalMs": 15168.219041000004,
+              "tokensPerSec": 19.612242120549826,
+              "outputTokens": 296,
+              "score": {
+                "quality": 0.982,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.909,
+                  "words": 240,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "The most important insight is that there is a high risk of rain affecting the scheduled outdoor jobs, particularly the roof job at 22 Larch Close, which is booked for two days. With rain forecasted for 6 out of the next 10 working days, including the days booked for the roof job,"
+            },
+            {
+              "id": "ins-4",
+              "error": null,
+              "firstTokenMs": 95.32887500000652,
+              "totalMs": 12186.080458000011,
+              "tokensPerSec": 20.347010825602297,
+              "outputTokens": 246,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 186,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "The most important insight for the business owner is that Buildbase is charging significantly higher prices for identical products compared to Jewson, with prices being 6-11% above Jewson's for the same SKUs. This results in a higher spend of GBP 25,600 on Buildbase alone, which "
+            }
+          ]
+        },
+        {
+          "workload": "hq_prospect_analysis",
+          "mode": "text",
+          "tier": "high",
+          "productionModel": "claude-opus-5",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 1,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 70.30483400000958,
+          "medTotalMs": 4838.0404160000035,
+          "medTokensPerSec": 21.598693341961628,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "pros-1",
+              "error": null,
+              "firstTokenMs": 98.634584000014,
+              "totalMs": 6632.806834000017,
+              "tokensPerSec": 20.966436408262737,
+              "outputTokens": 137,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 109,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Fit Assessment: Moderate fit. Hartley & Sons Roofing could benefit from CrewFlow's construction/trades ERP, especially for managing job sheets and invoicing. However, the owner's technical comfort level and budget constraints may pose challenges.\n\nObjection 1: Cost concerns due t"
+            },
+            {
+              "id": "pros-2",
+              "error": null,
+              "firstTokenMs": 70.30483400000958,
+              "totalMs": 3847.4995840000047,
+              "tokensPerSec": 21.71083497753193,
+              "outputTokens": 82,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 61,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Fit: Moderate. Verdant Facilities Group's existing systems suggest a need for integration and mobile capabilities, which aligns with CrewFlow's offerings.\n\nObjection 1: Integration complexity with existing SAP system.\nObjection 2: Cost-benefit analysis for replacing or integratin"
+            },
+            {
+              "id": "pros-3",
+              "error": null,
+              "firstTokenMs": 68.8954580000136,
+              "totalMs": 4838.0404160000035,
+              "tokensPerSec": 21.598693341961628,
+              "outputTokens": 103,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 79,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Fit: High - CrewFlow's app features for quotes and invoices are directly relevant to the prospect's needs.\n\nObjection 1: Price - The prospect is price-sensitive and has already mentioned a free competitor.\n\nObjection 2: Transition - The prospect is new to self-employment and may "
+            }
+          ]
+        },
+        {
+          "workload": "support_response",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 0.933,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 83.06529150001006,
+          "medTotalMs": 8559.99783349999,
+          "medTokensPerSec": 23.947691043126618,
+          "fallbackWorthyRate": 0.25,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "sup-1",
+              "error": null,
+              "firstTokenMs": 68.61016599999857,
+              "totalMs": 7355.568541000015,
+              "tokensPerSec": 22.779659081817808,
+              "outputTokens": 166,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 135,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Hello! I'd be happy to help you with adding VAT to your quote. Here's a step-by-step guide:\n\n1. Log in to your CrewFlow account and go to Settings > Tax.\n2. Ensure that VAT is set up correctly for your organisation. If it's not, please set it up there.\n3. Once VAT is set up, it w"
+            },
+            {
+              "id": "sup-2",
+              "error": null,
+              "firstTokenMs": 329.2113750000135,
+              "totalMs": 11478.732958000008,
+              "tokensPerSec": 23.771519279957992,
+              "outputTokens": 265,
+              "score": {
+                "quality": 0.983,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.917,
+                  "words": 195,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Certainly! You can set up your site to allow your Foreman to view jobs without giving them access to financial details or staff pay. Here's how you can do it:\n\n1. **Create a Member Role for Foreman:**\n   - Go to your site's administration area.\n   - Navigate to 'System' and then "
+            },
+            {
+              "id": "sup-3",
+              "error": null,
+              "firstTokenMs": 87.73841600000742,
+              "totalMs": 7798.191499999986,
+              "tokensPerSec": 24.12386280629524,
+              "outputTokens": 186,
+              "score": {
+                "quality": 0.75,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 0,
+                  "lengthScore": 1,
+                  "words": 161,
+                  "missedTerms": [],
+                  "violations": [
+                    "as an ai"
+                  ]
+                },
+                "fallbackWorthy": true
+              },
+              "sample": "Hello! I'm delighted to assist you with your inquiries about CrewFlow. I understand that you're interested in knowing whether we can make phone calls for you as an AI receptionist. I can certainly help clarify this for you.\n\nCurrently, CrewFlow does not offer a live phone answeri"
+            },
+            {
+              "id": "sup-4",
+              "error": null,
+              "firstTokenMs": 78.3921670000127,
+              "totalMs": 9321.804166999995,
+              "tokensPerSec": 24.99045818869159,
+              "outputTokens": 231,
+              "score": {
+                "quality": 0.998,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.989,
+                  "words": 182,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Hello! I'm sorry to hear that there's an issue with your invoice PDF. It sounds like the active organisation might indeed be set incorrectly. Let's try to fix this together.\n\nHere are the steps you can follow:\n\n1. **Switch Active Organisation:**\n   - Look for the 'Org Switcher' i"
+            }
+          ]
+        },
+        {
+          "workload": "memory_summarisation",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 1,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 65.28979199999594,
+          "medTotalMs": 3906.3169580000103,
+          "medTokensPerSec": 25.665598444052527,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "mem-1",
+              "error": null,
+              "firstTokenMs": 82.59549999999581,
+              "totalMs": 3906.3169580000103,
+              "tokensPerSec": 25.628828142754667,
+              "outputTokens": 98,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 71,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "- Supplier plasterboard back-ordered until Monday, rebooked first fix to Tuesday.\n- Mr Dunn agrees to Tuesday.\n- Electrician confirmed Thursday.\n- Order 3 more sheets of ply, missed last time.\n- Skip full, booked collection.\n- Mrs Patel accepted invoice QU-1042, deposit due.\n- Dr"
+            },
+            {
+              "id": "mem-2",
+              "error": null,
+              "firstTokenMs": 63.584875000000466,
+              "totalMs": 4310.4155420000025,
+              "tokensPerSec": 25.665598444052527,
+              "outputTokens": 109,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 72,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Summary:\n\n- Kitchen layout change: sink moved to island, new plumbing required (GBP 600 extra), verbal agreement to be confirmed in writing.\n- Tiler available for work on 12th week only.\n- Damaged underfloor heating manifold; replacement expected in 7-10 days.\n- Decision to proce"
+            },
+            {
+              "id": "mem-3",
+              "error": null,
+              "firstTokenMs": 65.28979199999594,
+              "totalMs": 3624.696708000003,
+              "tokensPerSec": 26.12860104098594,
+              "outputTokens": 93,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 63,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "- Sent 3 quotes (total GBP 48k pipeline), 1 accepted.\n- Completed 2 jobs, both paid.\n- Chased overdue invoice twice; client promised payment Friday.\n- Hired new labourer, starts Monday; CSCS card check and insurance addition required.\n- Diesel costs increased.\n- Considering switc"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "model": "phi3.5",
+      "label": "Phi-3.5-mini (3.8B)",
+      "params": "3.8B",
+      "licence": "MIT",
+      "commercialSafe": true,
+      "notes": "Microsoft. Fallback if phi4-mini unavailable.",
+      "workloads": [
+        {
+          "workload": "job_summary",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 0.858,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 685.9124164999957,
+          "medTotalMs": 18498.5452085,
+          "medTokensPerSec": 32.1224246547766,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "job-1",
+              "error": null,
+              "firstTokenMs": 2320.1984999999986,
+              "totalMs": 12150.10708300001,
+              "tokensPerSec": 32.45043069554395,
+              "outputTokens": 319,
+              "score": {
+                "quality": 0.89,
+                "parts": {
+                  "coverage": 0.8,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 182,
+                  "missedTerms": [
+                    "week 4"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Current Progress: Loft conversion at 14 Maple Rise, Leeds is in its fourth week, with three weeks remaining.\n\nFinancial Position: Budget is GBP 32,400. Expenditure to date is GBP 21,850, with GBP 18,000 invoiced and paid.\n\nBlockers: Delay in Velux fitting due to supplier, expecte"
+            },
+            {
+              "id": "job-2",
+              "error": null,
+              "firstTokenMs": 662.8065409999981,
+              "totalMs": 6751.219375000015,
+              "tokensPerSec": 32.52131870990885,
+              "outputTokens": 198,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 115,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Current Progress: Project on hold due to building control issues with steel beam calculations.\n\nFinancial Position: GBP 39,100 spent, GBP 42,000 invoiced, GBP 30,000 paid, GBP 12,000 overdue.\n\nBlockers: Building control refusing steel beam calculations, pending revised structural"
+            },
+            {
+              "id": "job-3",
+              "error": null,
+              "firstTokenMs": 680.5072079999954,
+              "totalMs": 25002.347416000004,
+              "tokensPerSec": 31.576255856151736,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.88,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.4,
+                  "words": 461,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Current Progress: Bathroom refit at Flat 2 on Dock Street is nearly finished, but there's a minor issue (snagging) that needs addressing.\n\nFinancial Position: The project's budget is GBP 9,800. So far, GBP 9,800 has been invoiced, with GBP 4,900 paid as a 50% deposit. The remaini"
+            },
+            {
+              "id": "job-4",
+              "error": null,
+              "firstTokenMs": 691.317624999996,
+              "totalMs": 24846.98333399999,
+              "tokensPerSec": 31.794418614009256,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.66,
+                "parts": {
+                  "coverage": 0.6,
+                  "hygiene": 1,
+                  "lengthScore": 0.4,
+                  "words": 453,
+                  "missedTerms": [
+                    "not started",
+                    "supplier"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Current Progress: Project not yet started; resurfacing of the driveway at Unit 7 is pending.\n\nFinancial Position: Budget set at £14,200. Deposit of £4,260 has been paid.\n\nBlockers: Delayed start date caused by a shortage of tarmac supplies. The start date has been postponed twice"
+            }
+          ]
+        },
+        {
+          "workload": "quote_summary",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 0.901,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 842.9875624999986,
+          "medTotalMs": 7858.798416999984,
+          "medTokensPerSec": 31.649161072715017,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "quote-1",
+              "error": null,
+              "firstTokenMs": 1091.3707920000306,
+              "totalMs": 6544.340292000037,
+              "tokensPerSec": 31.000596532188894,
+              "outputTokens": 169,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 88,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Client Summary:\nMrs Patel, we have prepared a quote for the installation of 6 double-glazed uPVC windows in your home, including the removal of old frames and internal plaster repairs. The cost for materials is £3,100, and labour charges are £1,800 for a 3-day job by two fitters,"
+            },
+            {
+              "id": "quote-2",
+              "error": null,
+              "firstTokenMs": 730.180624999979,
+              "totalMs": 7473.437624999962,
+              "tokensPerSec": 32.624811406345884,
+              "outputTokens": 220,
+              "score": {
+                "quality": 0.863,
+                "parts": {
+                  "coverage": 0.75,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 121,
+                  "missedTerms": [
+                    "50%"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Client-Facing Summary:\nHarlow Builders Ltd have received a quote for the groundwork required for a single-storey extension measuring 6 meters by 4 meters. The work includes excavation, removal of spoil, concrete strip footings, and the application of an underfloor heating system "
+            },
+            {
+              "id": "quote-3",
+              "error": null,
+              "firstTokenMs": 906.0792089999886,
+              "totalMs": 8244.159209000005,
+              "tokensPerSec": 32.29772561324114,
+              "outputTokens": 237,
+              "score": {
+                "quality": 0.863,
+                "parts": {
+                  "coverage": 0.75,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 114,
+                  "missedTerms": [
+                    "5k"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Client-Facing Summary:\nMr Osei has been quoted GBP 6,414.48 for a comprehensive rewire of his 3-bed semi-detached property, which includes updating the 18th edition consumer unit, servicing 24 points, and installing 8 lighting circuits. An Electrical Installation Condition Report"
+            },
+            {
+              "id": "quote-4",
+              "error": null,
+              "firstTokenMs": 779.8959160000086,
+              "totalMs": 26088.127541000023,
+              "tokensPerSec": 30.346124817641723,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.88,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.4,
+                  "words": 413,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Client-Facing Summary:\nGreenfield Care Home has received a quote for annual gutter maintenance, including clearance and minor repairs for four blocks, with cherry-picker access and the replacement of 12 meters of leaking guttering. The materials cost GBP 340, labour is estimated "
+            }
+          ]
+        },
+        {
+          "workload": "invoice_extraction",
+          "mode": "json",
+          "tier": "mid",
+          "productionModel": "claude-sonnet-5",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 0.375,
+          "schemaComplianceRate": 0.2,
+          "medFirstTokenMs": 834.1249589999788,
+          "medTotalMs": 11610.319000000018,
+          "medTokensPerSec": 30.623507104028675,
+          "fallbackWorthyRate": 0.8,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "inv-1",
+              "error": null,
+              "firstTokenMs": 1786.7175830000197,
+              "totalMs": 12265.385666000016,
+              "tokensPerSec": 29.781629068473595,
+              "outputTokens": 312,
+              "score": {
+                "quality": 0.438,
+                "parsed": true,
+                "schemaValid": false,
+                "schemaErrors": [
+                  "$.invoice_date: does not match pattern ^\\d{4}-\\d{2}-\\d{2}$"
+                ],
+                "fieldAccuracy": 0.875,
+                "fieldResults": {
+                  "supplier_name": true,
+                  "invoice_number": true,
+                  "invoice_date": false,
+                  "currency": true,
+                  "net_amount": true,
+                  "vat_amount": true,
+                  "gross_amount": true,
+                  "category": true
+                },
+                "fallbackWorthy": true
+              },
+              "sample": "{\n  \"supplier_name\": \"Buildbase Trade Supplies Ltd\",\n  \"invoice_number\": \"BB-88213\",\n  \"invoice_date\": \"2dict('2026-03-12')\",\n  \"currency\": \"GBP\",\n  \"net_amount\": 679,\n  \"vat_amount\": 135.8,\n  \"gross_amount\": 814.8,\n  \"category\": \"materials\",\n  \"line_items\": [\n    {\n      \"descri"
+            },
+            {
+              "id": "inv-2",
+              "error": null,
+              "firstTokenMs": 1097.776416000037,
+              "totalMs": 11610.319000000018,
+              "tokensPerSec": 30.34273209764538,
+              "outputTokens": 319,
+              "score": {
+                "quality": 0.438,
+                "parsed": true,
+                "schemaValid": false,
+                "schemaErrors": [
+                  "$.invoice_date: does not match pattern ^\\d{4}-\\d{2}-\\d{2}$"
+                ],
+                "fieldAccuracy": 0.875,
+                "fieldResults": {
+                  "supplier_name": true,
+                  "invoice_number": true,
+                  "invoice_date": false,
+                  "currency": true,
+                  "net_amount": true,
+                  "vat_amount": true,
+                  "gross_amount": true,
+                  "category": true
+                },
+                "fallbackWorthy": true
+              },
+              "sample": "{\n  \"supplier_name\": \"A-Plant Hire Solutions\",\n  \"invoice_number\": \"2026/PH/4471\",\n  \"invoice_date\": \"2dict('2026-04-03')\",\n  \"currency\": \"GBP\",\n  \"net_amount\": 411.00,\n  \"vat_amount\": 82.20,\n  \"gross_amount\": 493.20,\n  \"category\": \"plant_hire\",\n  \"line_items\": [\n    {\n      \"des"
+            },
+            {
+              "id": "inv-3",
+              "error": null,
+              "firstTokenMs": 718.7650419999845,
+              "totalMs": 8545.279959000007,
+              "tokensPerSec": 30.920637711320836,
+              "outputTokens": 242,
+              "score": {
+                "quality": 0,
+                "parsed": false,
+                "schemaValid": false,
+                "schemaErrors": [
+                  "could not parse any JSON object from output"
+                ],
+                "fieldAccuracy": 0,
+                "fallbackWorthy": true
+              },
+              "sample": "{\n  \"supplier_name\": \"Fuelcard Services\",\n  \"invoice_number\": \"FC-2026-0099\",\n  \"invoice_date\": \"2026-02-28\",\ndict_shape:\n  \"currency\": \"GBP\",\n  \"net_amount\": 272.12,\n  \"vat_amount\": 54.42,\n  \"gross_amount\": 326.54,\n  \"category\": \"fuel\",\n  \"line_items\": [\n    {\n      \"description"
+            },
+            {
+              "id": "inv-4",
+              "error": null,
+              "firstTokenMs": 610.8229580000043,
+              "totalMs": 9857.225915999967,
+              "tokensPerSec": 30.824996974283188,
+              "outputTokens": 285,
+              "score": {
+                "quality": 0,
+                "parsed": false,
+                "schemaValid": false,
+                "schemaErrors": [
+                  "could not parse any JSON object from output"
+                ],
+                "fieldAccuracy": 0,
+                "fallbackWorthy": true
+              },
+              "sample": "{\n  \"supplier_name\": \"Thornton & Rowe Structural Engineers\",\n  \"invoice_number\": \"TR-SE-3310\",\n  \"invoice_date\": \"2dict('2026-01-09')\",\n  \"currency\": \"GBP\",\n  \"net_amount\": 650.00,\n  \"vat_amount\": 130.0dict(\"2026-01-09\"),\n  \"gross_amount\": 780.00,\n  \"category\": \"professional_fees"
+            },
+            {
+              "id": "inv-5",
+              "error": null,
+              "firstTokenMs": 834.1249589999788,
+              "totalMs": 12034.766917,
+              "tokensPerSec": 30.623507104028675,
+              "outputTokens": 343,
+              "score": {
+                "quality": 1,
+                "parsed": true,
+                "schemaValid": true,
+                "schemaErrors": [],
+                "fieldAccuracy": 1,
+                "fieldResults": {
+                  "supplier_name": true,
+                  "invoice_number": true,
+                  "invoice_date": true,
+                  "currency": true,
+                  "net_amount": true,
+                  "vat_amount": true,
+                  "gross_amount": true,
+                  "category": true
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "{\n  \"supplier_name\": \"J. Okafor Bricklaying (subcontractor)\",\n  \"invoice_number\": \"JOB-2026-14\",\n  \"invoice_date\": \"2026-05-20\",\n  \"currency\": \"GBP\",\n  \"net_amount\": 935,\n  \"vat_amount\": 0,\n  \"gross_amount\": 935,\n  \"category\": \"labour_subcontractor\",\n  \"line_items\": [\n    {\n     "
+            }
+          ]
+        },
+        {
+          "workload": "customer_message_draft",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 0.811,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 572.5494999999937,
+          "medTotalMs": 24253.754520999995,
+          "medTokensPerSec": 30.631484810971433,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "msg-1",
+              "error": null,
+              "firstTokenMs": 818.816708999977,
+              "totalMs": 26746.677833999973,
+              "tokensPerSec": 29.620219039205715,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.88,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.4,
+                  "words": 503,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Dear Mr Dunn,\n\nI hope this message finds you well. I am writing to inform you of a slight adjustment to our schedule concerning the delivery of plasterboard for your project at Dunbar Interiors. Due to unforeseen circumstances, the delivery has been delayed and is now expected to"
+            },
+            {
+              "id": "msg-2",
+              "error": null,
+              "firstTokenMs": 579.2697499999776,
+              "totalMs": 25651.796375000034,
+              "tokensPerSec": 30.631484810971433,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.743,
+                "parts": {
+                  "coverage": 0.75,
+                  "hygiene": 1,
+                  "lengthScore": 0.4,
+                  "words": 479,
+                  "missedTerms": [
+                    "2 working days"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Dear Ms Reilly,\n\n\nI am delighted to hear that you have accepted our quote for the bathroom refit at your property. We are eager to commence work and are looking forward to bringing your vision to life.\n\n\nWe will be in touch within the next two working days to finalise the details"
+            },
+            {
+              "id": "msg-3",
+              "error": null,
+              "firstTokenMs": 565.8292500000098,
+              "totalMs": 22855.712666999956,
+              "tokensPerSec": null,
+              "outputTokens": null,
+              "score": {
+                "quality": 0.88,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.4,
+                  "words": 364,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Dear Valued Client,\n\n\nI hope this message finds you well. We are writing to bring your attention to an outstanding invoice INV-3092, which, as of today, is 21 days overdue. The amount due is GBP 2,400, and we kindly request its prompt settlement to maintain the integrity of our f"
+            },
+            {
+              "id": "msg-4",
+              "error": null,
+              "firstTokenMs": 473.34250000002794,
+              "totalMs": 12767.951292000012,
+              "tokensPerSec": 32.290670037910225,
+              "outputTokens": 397,
+              "score": {
+                "quality": 0.743,
+                "parts": {
+                  "coverage": 0.75,
+                  "hygiene": 1,
+                  "lengthScore": 0.4,
+                  "words": 270,
+                  "missedTerms": [
+                    "7 days"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Dear Valued Client,\n\nI am delighted to inform you that the landscaping project at your property has been completed to the highest standard. We sincerely appreciate your trust in Meadowcroft Landscaping to bring your vision to life.\n\nWe kindly request that you take a moment to rev"
+            }
+          ]
+        },
+        {
+          "workload": "release_notes",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 0.963,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 604.6962090000161,
+          "medTotalMs": 5250.747999999963,
+          "medTokensPerSec": 32.286858839485454,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "rel-1",
+              "error": null,
+              "firstTokenMs": 911.5595420000027,
+              "totalMs": 5310.348707999976,
+              "tokensPerSec": 32.2826028144064,
+              "outputTokens": 142,
+              "score": {
+                "quality": 0.89,
+                "parts": {
+                  "coverage": 0.8,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 74,
+                  "missedTerms": [
+                    "faster"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "**New Features:**\n- Introduced bulk document download directly from the client portal for enhanced document management.\n\n**Performance Enhancements:**\n- Job list now features pagination, significantly improving load times for large account portfolios.\n\n**Bug Fixes:**\n- Corrected "
+            },
+            {
+              "id": "rel-2",
+              "error": null,
+              "firstTokenMs": 604.6962090000161,
+              "totalMs": 5250.747999999963,
+              "tokensPerSec": 32.286858839485454,
+              "outputTokens": 150,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 83,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "**New Features:**\n- Offline mode now queues site-diary entries and syncs when back online, enhancing your journaling experience.\n- Quote builder now remembers your last-used margin per client type, streamlining your design process.\n\n**Improvements:**\n- Search functionality on the"
+            },
+            {
+              "id": "rel-3",
+              "error": null,
+              "firstTokenMs": 497.553917000012,
+              "totalMs": 4796.112250000006,
+              "tokensPerSec": 32.80214028149354,
+              "outputTokens": 141,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 73,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "**New Features:**\n- Weather forecast integration: Now includes weather predictions for each job's schedule, highlighting rainy days for outdoor work.\n\n**Enhancements:**\n- Invoice Management: Enhanced invoices can now be voided with a clear audit trail, replacing the previous dele"
+            }
+          ]
+        },
+        {
+          "workload": "design_review",
+          "mode": "text",
+          "tier": "high",
+          "productionModel": "claude-opus-5",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 0.884,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 643.5830410000635,
+          "medTotalMs": 26149.90425000002,
+          "medTokensPerSec": 30.035777773727816,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "dr-1",
+              "error": null,
+              "firstTokenMs": 849.5812090000254,
+              "totalMs": 26036.226874999993,
+              "tokensPerSec": 30.493976208822115,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.88,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.4,
+                  "words": 525,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Risks:\n- Tenant Isolation: Without proper row-level security (RLS), there is a risk that tenants could inadthy access or modify another tenant's data, leading to data leakage or corruption.\n- Data Integrity: Allowing unrestricted access to the `shared_templates` table without RLS"
+            },
+            {
+              "id": "dr-2",
+              "error": null,
+              "firstTokenMs": 580.462583000015,
+              "totalMs": 26149.90425000002,
+              "tokensPerSec": 30.035777773727816,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.88,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.4,
+                  "words": 502,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Risks:\n- Tenant Isolation: The use of a single materialized view for all organizations could lead to data leakage between tenants if proper isolation is not enforced at the database level.\n- Data Integrity: The SECURITY DEFINER function must be carefully crafted to ensure it only"
+            },
+            {
+              "id": "dr-3",
+              "error": null,
+              "firstTokenMs": 643.5830410000635,
+              "totalMs": 26324.566624999978,
+              "tokensPerSec": 29.904477389469957,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.891,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.453,
+                  "words": 464,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Risks:\n- Tenant Isolation:\n  - Cross-tenant data leakage if session IDs are not properly isolated between tenants.\n  - Potential for unauthorized access if session management is compromised.\n- Data Integrity:\n  - Risk of incomplete or corrupt data being used for PDF generation if"
+            }
+          ]
+        },
+        {
+          "workload": "construction_insight",
+          "mode": "text",
+          "tier": "mid",
+          "productionModel": "claude-sonnet-5",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 0.919,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 657.3576035000151,
+          "medTotalMs": 12534.073728999996,
+          "medTokensPerSec": 31.295375951653803,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "ins-1",
+              "error": null,
+              "firstTokenMs": 907.9412500000326,
+              "totalMs": 12065.739208000014,
+              "tokensPerSec": 31.54790984790412,
+              "outputTokens": 352,
+              "score": {
+                "quality": 0.979,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.895,
+                  "words": 243,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "The most critical insight for the business owner is the below-target average gross margin of 19%, which is significantly lower than the target of 25%. Specifically, this issue is concentrated in three fixed-price bathroom refit jobs where material costs have exceeded estimates by"
+            },
+            {
+              "id": "ins-2",
+              "error": null,
+              "firstTokenMs": 712.8292910000309,
+              "totalMs": 11898.416457999963,
+              "tokensPerSec": 31.290568781184966,
+              "outputTokens": 350,
+              "score": {
+                "quality": 0.849,
+                "parts": {
+                  "coverage": 0.75,
+                  "hygiene": 1,
+                  "lengthScore": 0.932,
+                  "words": 235,
+                  "missedTerms": [
+                    "vat"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "The most critical insight for the business owner is the urgent need to address the overdue receivables, particularly from the two clients who account for GBP 21,000 of the total GBP 28,900. Here's the actionable insight with the associated number:\n\nInsight: Immediate attention is"
+            },
+            {
+              "id": "ins-3",
+              "error": null,
+              "firstTokenMs": 542.1592919999966,
+              "totalMs": 13002.408249999979,
+              "tokensPerSec": 31.30018312212264,
+              "outputTokens": 390,
+              "score": {
+                "quality": 0.943,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.714,
+                  "words": 283,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "The most critical insight for the business owner is the potential impact of rain on the roof job scheduled for 22 Larch Close within the next two weeks. With a forecast predicting rain on 6 of the next 10 working days, and considering that the roof job falls on one of these rainy"
+            },
+            {
+              "id": "ins-4",
+              "error": null,
+              "firstTokenMs": 601.8859159999993,
+              "totalMs": 18654.10520800005,
+              "tokensPerSec": 30.91210143955662,
+              "outputTokens": 558,
+              "score": {
+                "quality": 0.907,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.536,
+                  "words": 322,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "The most critical insight for the business owner is the significant cost disparity in purchasing from Buildbase compared to Jewson, despite the higher expenditure with Buildbase. Specifically, the total spend on Buildbase last quarter was GBP 25,600, which is 42% of the overall s"
+            }
+          ]
+        },
+        {
+          "workload": "hq_prospect_analysis",
+          "mode": "text",
+          "tier": "high",
+          "productionModel": "claude-opus-5",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 0.92,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 620.3165830000071,
+          "medTotalMs": 25962.582957999897,
+          "medTokensPerSec": 30.20867349230595,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "pros-1",
+              "error": null,
+              "firstTokenMs": 983.4161249999888,
+              "totalMs": 26515.351334000006,
+              "tokensPerSec": 30.080869362191958,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.88,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.4,
+                  "words": 507,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Fit Assessment: High Fit\n\nObjections:\n1. Lack of specialized job management software: Hartley & Sons Roofing is using a combination of paper job sheets and basic accounting software, which indicates a need for a more integrated solution.\n2. Time-consumthy VAT returns: The current"
+            },
+            {
+              "id": "pros-2",
+              "error": null,
+              "firstTokenMs": 620.3165830000071,
+              "totalMs": 7229.570165999932,
+              "tokensPerSec": 31.923635033874607,
+              "outputTokens": 211,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 131,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Fit Assessment: Likely a good fit for CrewFlow as they manage a significant number of staff and have a substantial turnover, indicating a need for efficient project management and resource allocation. The interest in mobile job tracking aligns with CrewFlow's capabilities.\n\nLikel"
+            },
+            {
+              "id": "pros-3",
+              "error": null,
+              "firstTokenMs": 538.7564999999013,
+              "totalMs": 25962.582957999897,
+              "tokensPerSec": 30.20867349230595,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.88,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.4,
+                  "words": 458,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Fit for CrewFlow: Moderate Fit\n\nObjections:\n1. Budget Concerns: The prospect is price-sensitive and has considered a free alternative, indicating a potential concern about the cost of a premium ERP solution.\n2. Trust in Technology: While the prospect is comfortable with tech, the"
+            }
+          ]
+        },
+        {
+          "workload": "support_response",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 0.92,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 570.4654375000391,
+          "medTotalMs": 21389.815750000067,
+          "medTokensPerSec": 30.342301458824664,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "sup-1",
+              "error": null,
+              "firstTokenMs": 762.5030829999596,
+              "totalMs": 17082.074250000063,
+              "tokensPerSec": null,
+              "outputTokens": null,
+              "score": {
+                "quality": 0.919,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.594,
+                  "words": 253,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Hello there! I'm glad you reached out for assistance with adding VAT to your quote. Here's a step-by-step guide to help you through the process:\n\n1. Log in to your CrewFlow account.\n2. Navigate to the 'Settings' section. You can usually find this by clicking on your profile pictu"
+            },
+            {
+              "id": "sup-2",
+              "error": null,
+              "firstTokenMs": 572.907542000059,
+              "totalMs": 26664.341375000076,
+              "tokensPerSec": 29.45222203401264,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.88,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.4,
+                  "words": 511,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Certainly! Here's how you can set up your site foreman to have the appropriate access:\n\n1. **Define Roles:** Ensure that your system has clearly defined roles with specific permissions. In your case, you'll need at least two roles: one for the site foreman and another for financi"
+            },
+            {
+              "id": "sup-3",
+              "error": null,
+              "firstTokenMs": 568.0233330000192,
+              "totalMs": 5199.910999999964,
+              "tokensPerSec": 32.391769380967375,
+              "outputTokens": 150,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 119,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Thank you for reaching out to CrewFlow. I must clarify that we do not offer a live phone answering service with an AI receptionist. Our platform does not include voice or telephony features for direct phone calls.\n\nHowever, we do provide robust SMS and inbound message handling ca"
+            },
+            {
+              "id": "sup-4",
+              "error": null,
+              "firstTokenMs": 383.847916000057,
+              "totalMs": 25697.55725000007,
+              "tokensPerSec": 30.342301458824664,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.88,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.4,
+                  "words": 500,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Hello there! It seems like there's been a mix-up with the company name on your invoice. Here's a step-by-step guide to help you correct this:\n\n1. Locate the 'Org Switcher' icon, which is typically found at the top-left corner of your screen. This feature allows you to change your"
+            }
+          ]
+        },
+        {
+          "workload": "memory_summarisation",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": null,
+          "vramMb": null,
+          "avgQuality": 0.991,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 791.470250000013,
+          "medTotalMs": 8955.290833999985,
+          "medTokensPerSec": 29.498031989632423,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "mem-1",
+              "error": null,
+              "firstTokenMs": 1005.7682090000017,
+              "totalMs": 8955.290833999985,
+              "tokensPerSec": 30.821517998760093,
+              "outputTokens": 245,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 123,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "- Supplier replasterboard back-ordered until Monday.\n- First-fix rebooked for Tuesday; Mr Dunn informed.\n- Electrician confirmation received on Thursday.\n- Order 3 additional sheets of ply; oversight noted.\n- Van requires MOT by month-end deadline.\n- Building control chasing Wake"
+            },
+            {
+              "id": "mem-2",
+              "error": null,
+              "firstTokenMs": 667.7767079999903,
+              "totalMs": 13070.712458000053,
+              "tokensPerSec": 27.09558766902385,
+              "outputTokens": 336,
+              "score": {
+                "quality": 0.973,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.865,
+                  "words": 193,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Key Points:\n\n- Client requests sink relocation to island, necessitating additional plumbing cost of approximately GBP 60 extraneous.\n\n- Client's agreement is informal; formal written consent required.\n\n- Tiler availability restricted to the week of the 12th.\n\n- Underfloor heating"
+            },
+            {
+              "id": "mem-3",
+              "error": null,
+              "firstTokenMs": 791.470250000013,
+              "totalMs": 5875.343041999964,
+              "tokensPerSec": 29.498031989632423,
+              "outputTokens": 150,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 86,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "- Sent 3 quotes, totaling GBP 48,000; 1 quote accepted.\n- Completed and handed over 2 jobs, both paid.\n- Chased overdue invoice twice; client committed to payment by Friday.\n- Hired new labourer starting Monday; CSCS card verification required.\n- Diesel costs have risthy increase"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "model": "qwen3:4b",
+      "label": "Qwen3 4B",
+      "params": "4B",
+      "licence": "Apache-2.0",
+      "commercialSafe": true,
+      "notes": "Alibaba. Qwen3 line is Apache-2.0.",
+      "workloads": [
+        {
+          "workload": "job_summary",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": 3034,
+          "vramMb": 3034,
+          "avgQuality": 0.345,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 35297.05806249997,
+          "medTotalMs": 37736.33347900002,
+          "medTokensPerSec": 21.64178976514463,
+          "fallbackWorthyRate": 1,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "job-1",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 38642.15966700006,
+              "tokensPerSec": 21.987550923511492,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.25,
+                "parts": {
+                  "coverage": 0,
+                  "hygiene": 1,
+                  "lengthScore": 0,
+                  "words": 0,
+                  "missedTerms": [
+                    "week 4",
+                    "32,400",
+                    "21,850",
+                    "velux",
+                    "next"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            },
+            {
+              "id": "job-2",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 36830.50729099999,
+              "tokensPerSec": 21.296028606777764,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.25,
+                "parts": {
+                  "coverage": 0,
+                  "hygiene": 1,
+                  "lengthScore": 0,
+                  "words": 0,
+                  "missedTerms": [
+                    "on hold",
+                    "building control",
+                    "12,000",
+                    "overdue",
+                    "next"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            },
+            {
+              "id": "job-3",
+              "error": null,
+              "firstTokenMs": 36488.604082999984,
+              "totalMs": 38976.64058300003,
+              "tokensPerSec": 20.06417400654907,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.613,
+                "parts": {
+                  "coverage": 0.4,
+                  "hygiene": 1,
+                  "lengthScore": 0.714,
+                  "words": 25,
+                  "missedTerms": [
+                    "4,900",
+                    "handover",
+                    "friday"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": true
+              },
+              "sample": "Here's the plain British English summary for the owner:\n\n**Progress:** Near complete with snagging (final touches).  \n**Financials:** Under budget (£9,240 vs £9,800). Invoiced £9,800 (50%"
+            },
+            {
+              "id": "job-4",
+              "error": null,
+              "firstTokenMs": 34105.51204199996,
+              "totalMs": 34333.905333,
+              "tokensPerSec": 22.717850654683787,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.267,
+                "parts": {
+                  "coverage": 0,
+                  "hygiene": 1,
+                  "lengthScore": 0.086,
+                  "words": 3,
+                  "missedTerms": [
+                    "not started",
+                    "14,200",
+                    "deposit",
+                    "supplier",
+                    "date"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": true
+              },
+              "sample": "**CrewFlow Summary for"
+            }
+          ]
+        },
+        {
+          "workload": "quote_summary",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": 3034,
+          "vramMb": 3034,
+          "avgQuality": 0.58,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 27465.32739599998,
+          "medTotalMs": 34080.54258349998,
+          "medTokensPerSec": 23.082811168007645,
+          "fallbackWorthyRate": 0.5,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "quote-1",
+              "error": null,
+              "firstTokenMs": 23101.965791999944,
+              "totalMs": 26236.363624999998,
+              "tokensPerSec": 23.1825265148169,
+              "outputTokens": 586,
+              "score": {
+                "quality": 0.975,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.875,
+                  "words": 35,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "(1) Client summary: We'll fit 6 new anthracite grey double-glazed uPVC windows, remove old frames and make good the internal plaster. Total: £7,495.20 (includes VAT).  \n\n(2) Internal margin note: 22% margin applied to £5,120 subtotal."
+            },
+            {
+              "id": "quote-2",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 34147.22904200002,
+              "tokensPerSec": 23.01114218680637,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.25,
+                "parts": {
+                  "coverage": 0,
+                  "hygiene": 1,
+                  "lengthScore": 0,
+                  "words": 0,
+                  "missedTerms": [
+                    "groundwork",
+                    "7,314",
+                    "reverse-charge",
+                    "50%"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            },
+            {
+              "id": "quote-3",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 34013.85612499993,
+              "tokensPerSec": 23.154480149208915,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.25,
+                "parts": {
+                  "coverage": 0,
+                  "hygiene": 1,
+                  "lengthScore": 0,
+                  "words": 0,
+                  "missedTerms": [
+                    "rewire",
+                    "6,414",
+                    "margin",
+                    "5k"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            },
+            {
+              "id": "quote-4",
+              "error": null,
+              "firstTokenMs": 31828.689000000013,
+              "totalMs": 34202.804208999965,
+              "tokensPerSec": 22.899826498033296,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.845,
+                "parts": {
+                  "coverage": 0.75,
+                  "hygiene": 1,
+                  "lengthScore": 0.914,
+                  "words": 32,
+                  "missedTerms": [
+                    "margin"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "(1) Client summary:  \nWe’ll clear gutters and fix minor leaks across 4 blocks at Greenfield Care Home, including replacing 12m of leaking guttering with cherry-picker access. Total cost: £2,625 inclusive of VAT"
+            }
+          ]
+        },
+        {
+          "workload": "invoice_extraction",
+          "mode": "json",
+          "tier": "mid",
+          "productionModel": "claude-sonnet-5",
+          "memoryMb": 3034,
+          "vramMb": 3034,
+          "avgQuality": 0,
+          "schemaComplianceRate": 0,
+          "medFirstTokenMs": null,
+          "medTotalMs": 36329.10266699991,
+          "medTokensPerSec": 21.77579140470385,
+          "fallbackWorthyRate": 1,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "inv-1",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 36826.81241700007,
+              "tokensPerSec": 21.77579140470385,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0,
+                "parsed": false,
+                "schemaValid": false,
+                "schemaErrors": [
+                  "could not parse any JSON object from output"
+                ],
+                "fieldAccuracy": 0,
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            },
+            {
+              "id": "inv-2",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 36414.96237500012,
+              "tokensPerSec": 21.576302881397254,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0,
+                "parsed": false,
+                "schemaValid": false,
+                "schemaErrors": [
+                  "could not parse any JSON object from output"
+                ],
+                "fieldAccuracy": 0,
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            },
+            {
+              "id": "inv-3",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 35840.35725000012,
+              "tokensPerSec": 21.8535460707751,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0,
+                "parsed": false,
+                "schemaValid": false,
+                "schemaErrors": [
+                  "could not parse any JSON object from output"
+                ],
+                "fieldAccuracy": 0,
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            },
+            {
+              "id": "inv-4",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 35299.166833000025,
+              "tokensPerSec": 22.104193122263045,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0,
+                "parsed": false,
+                "schemaValid": false,
+                "schemaErrors": [
+                  "could not parse any JSON object from output"
+                ],
+                "fieldAccuracy": 0,
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            },
+            {
+              "id": "inv-5",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 36329.10266699991,
+              "tokensPerSec": 21.552943458546956,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0,
+                "parsed": false,
+                "schemaValid": false,
+                "schemaErrors": [
+                  "could not parse any JSON object from output"
+                ],
+                "fieldAccuracy": 0,
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            }
+          ]
+        },
+        {
+          "workload": "customer_message_draft",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": 3034,
+          "vramMb": 3034,
+          "avgQuality": 0.744,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 24511.309000000125,
+          "medTotalMs": 29725.503145999974,
+          "medTokensPerSec": 21.828728365482515,
+          "fallbackWorthyRate": 0.25,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "msg-1",
+              "error": null,
+              "firstTokenMs": 25244.772624999983,
+              "totalMs": 29262.039374999935,
+              "tokensPerSec": 22.213140293331687,
+              "outputTokens": 635,
+              "score": {
+                "quality": 0.863,
+                "parts": {
+                  "coverage": 0.75,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 65,
+                  "missedTerms": [
+                    "apolog"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Dear Mr Dunn,  \n\nWe’re sorry for the inconvenience caused by the plasterboard delivery being delayed to Monday – first-fix will now begin on Tuesday instead of Monday. Please rest assured that your project’s completion date remains unchanged, and we’ve confirmed this won’t impact"
+            },
+            {
+              "id": "msg-2",
+              "error": null,
+              "firstTokenMs": 19095.982333999826,
+              "totalMs": 20926.351374999853,
+              "tokensPerSec": 22.01644166478903,
+              "outputTokens": 453,
+              "score": {
+                "quality": 0.863,
+                "parts": {
+                  "coverage": 0.75,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 35,
+                  "missedTerms": [
+                    "2 working days"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Thank you for accepting our bathroom refit quote, Ms Reilly. We’ll be in touch within two working days to book a start date, and your deposit invoice will follow by email. Crestwood Plumbing & Heating"
+            },
+            {
+              "id": "msg-3",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 36022.56041699997,
+              "tokensPerSec": 21.641015066176,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.25,
+                "parts": {
+                  "coverage": 0,
+                  "hygiene": 1,
+                  "lengthScore": 0,
+                  "words": 0,
+                  "missedTerms": [
+                    "inv-3092",
+                    "2,400",
+                    "21 days",
+                    "halewood"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            },
+            {
+              "id": "msg-4",
+              "error": null,
+              "firstTokenMs": 24511.309000000125,
+              "totalMs": 30188.966917000012,
+              "tokensPerSec": 20.316750929045664,
+              "outputTokens": 604,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 86,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Dear [Client Name],  \n\nWe’re delighted to confirm your landscaping project with Meadowcroft Landscaping is now complete. Thank you for trusting us with your garden – we’ve truly enjoyed bringing your vision to life.  \n\nCould you please check the work over the next 7 days and let "
+            }
+          ]
+        },
+        {
+          "workload": "release_notes",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": 3034,
+          "vramMb": 3034,
+          "avgQuality": 0.25,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": null,
+          "medTotalMs": 40164.439625000115,
+          "medTokensPerSec": 19.465739955507097,
+          "fallbackWorthyRate": 1,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "rel-1",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 39688.151541,
+              "tokensPerSec": 19.776401006083205,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.25,
+                "parts": {
+                  "coverage": 0,
+                  "hygiene": 1,
+                  "lengthScore": 0,
+                  "words": 0,
+                  "missedTerms": [
+                    "portal",
+                    "faster",
+                    "cis",
+                    "vat",
+                    "overdue"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            },
+            {
+              "id": "rel-2",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 40201.02500000014,
+              "tokensPerSec": 19.39011816964152,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.25,
+                "parts": {
+                  "coverage": 0,
+                  "hygiene": 1,
+                  "lengthScore": 0,
+                  "words": 0,
+                  "missedTerms": [
+                    "offline",
+                    "quote",
+                    "search",
+                    "heic",
+                    "two-factor"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            },
+            {
+              "id": "rel-3",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 40164.439625000115,
+              "tokensPerSec": 19.465739955507097,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.25,
+                "parts": {
+                  "coverage": 0,
+                  "hygiene": 1,
+                  "lengthScore": 0,
+                  "words": 0,
+                  "missedTerms": [
+                    "weather",
+                    "void",
+                    "mobile",
+                    "reminder"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            }
+          ]
+        },
+        {
+          "workload": "design_review",
+          "mode": "text",
+          "tier": "high",
+          "productionModel": "claude-opus-5",
+          "memoryMb": 3034,
+          "vramMb": 3034,
+          "avgQuality": 0.567,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 33015.40533350012,
+          "medTotalMs": 38134.76249999995,
+          "medTokensPerSec": 20.429281448704188,
+          "fallbackWorthyRate": 0.333,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "dr-1",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 44130.40549999988,
+              "tokensPerSec": 17.81056570994863,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.25,
+                "parts": {
+                  "coverage": 0,
+                  "hygiene": 1,
+                  "lengthScore": 0,
+                  "words": 0,
+                  "missedTerms": [
+                    "rls",
+                    "verdict"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            },
+            {
+              "id": "dr-2",
+              "error": null,
+              "firstTokenMs": 33146.978792000096,
+              "totalMs": 38134.76249999995,
+              "tokensPerSec": 20.429281448704188,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.725,
+                "parts": {
+                  "coverage": 0.5,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 58,
+                  "missedTerms": [
+                    "verdict"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "### Risks\n- **Tenant data leakage via security-definer function**: The cron-triggered `SECURITY DEFINER` function loops over *all* `org_id` tenants to populate the materialized view. This bypasses RLS enforcement at the function level, risking cross-tenant data exposure (e.g., a "
+            },
+            {
+              "id": "dr-3",
+              "error": null,
+              "firstTokenMs": 32883.83187500015,
+              "totalMs": 37371.77945800009,
+              "tokensPerSec": 20.85718466462462,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.725,
+                "parts": {
+                  "coverage": 0.5,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 67,
+                  "missedTerms": [
+                    "verdict"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "### Risks\n- **Tenant isolation breach**: Session tokens lack tenant-scoped context, enabling cross-tenant PDF uploads (e.g., a user from Tenant A could write to Tenant B's storage path via shared session tokens). Postgres RLS policies cannot enforce this at the storage layer sinc"
+            }
+          ]
+        },
+        {
+          "workload": "construction_insight",
+          "mode": "text",
+          "tier": "mid",
+          "productionModel": "claude-sonnet-5",
+          "memoryMb": 3034,
+          "vramMb": 3034,
+          "avgQuality": 0.591,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 31294.258417000063,
+          "medTotalMs": 40449.062125000055,
+          "medTokensPerSec": 19.31235169065084,
+          "fallbackWorthyRate": 0.5,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "ins-1",
+              "error": null,
+              "firstTokenMs": 27480.87537500006,
+              "totalMs": 37523.55512500019,
+              "tokensPerSec": 20.45167301110556,
+              "outputTokens": 748,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 146,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "The single most important, actionable insight for the business owner is that **fixed-price bathroom refits are incurring unsustainable material cost overruns (31% average)**, directly causing three jobs to operate below 10% gross margin despite labour being on target.  \n\n**Justif"
+            },
+            {
+              "id": "ins-2",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 39665.59850000008,
+              "tokensPerSec": 19.718732816716226,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.25,
+                "parts": {
+                  "coverage": 0,
+                  "hygiene": 1,
+                  "lengthScore": 0,
+                  "words": 0,
+                  "missedTerms": [
+                    "overdue",
+                    "28,900",
+                    "vat",
+                    "action"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            },
+            {
+              "id": "ins-3",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 46852.89754200005,
+              "tokensPerSec": 16.603173579888733,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.25,
+                "parts": {
+                  "coverage": 0,
+                  "hygiene": 1,
+                  "lengthScore": 0,
+                  "words": 0,
+                  "missedTerms": [
+                    "rain",
+                    "roof",
+                    "action"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            },
+            {
+              "id": "ins-4",
+              "error": null,
+              "firstTokenMs": 35107.641459000064,
+              "totalMs": 41232.52575000003,
+              "tokensPerSec": 18.905970564585452,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.863,
+                "parts": {
+                  "coverage": 0.75,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 70,
+                  "missedTerms": [
+                    "discount"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "The single most important, actionable insight for your business is that **Buildbase’s 6–11% price premium on 3 key SKUs versus Jewson represents a significant cost leakage opportunity**, justified by the £25,600 spend on Buildbase (42% of total spend).  \n\n**Why this is critical**"
+            }
+          ]
+        },
+        {
+          "workload": "hq_prospect_analysis",
+          "mode": "text",
+          "tier": "high",
+          "productionModel": "claude-opus-5",
+          "memoryMb": 3034,
+          "vramMb": 3034,
+          "avgQuality": 0.46,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 35256.06237499998,
+          "medTotalMs": 39261.25858299993,
+          "medTokensPerSec": 19.863340733031244,
+          "fallbackWorthyRate": 1,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "pros-1",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 41149.89691699995,
+              "tokensPerSec": 19.07892561502022,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.25,
+                "parts": {
+                  "coverage": 0,
+                  "hygiene": 1,
+                  "lengthScore": 0,
+                  "words": 0,
+                  "missedTerms": [
+                    "fit",
+                    "objection",
+                    "next step"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            },
+            {
+              "id": "pros-2",
+              "error": null,
+              "firstTokenMs": 33117.76637500012,
+              "totalMs": 39261.25858299993,
+              "tokensPerSec": 19.863340733031244,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.633,
+                "parts": {
+                  "coverage": 0.333,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 68,
+                  "missedTerms": [
+                    "objection",
+                    "next step"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": true
+              },
+              "sample": "### Fit Assessment  \n**Moderate fit** (UK SMB-focused ERP, but prospect is larger than typical CrewFlow clients and has complex existing systems).  \n- **Why moderate?**  \n  - ✅ **Strengths**: Clear need for mobile job tracking (CrewFlow’s core strength), SSO/API compatibility (Cr"
+            },
+            {
+              "id": "pros-3",
+              "error": null,
+              "firstTokenMs": 37394.358374999836,
+              "totalMs": 38696.43149999995,
+              "tokensPerSec": 20.04499422597155,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.496,
+                "parts": {
+                  "coverage": 0.333,
+                  "hygiene": 1,
+                  "lengthScore": 0.311,
+                  "words": 14,
+                  "missedTerms": [
+                    "objection",
+                    "next step"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": true
+              },
+              "sample": "**Fit Assessment**: Medium  \n*Why?* They need core quote/invoice functionality (CrewFlow covers this), are tech-com"
+            }
+          ]
+        },
+        {
+          "workload": "support_response",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": 3034,
+          "vramMb": 3034,
+          "avgQuality": 0.984,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 23382.861832999974,
+          "medTotalMs": 37031.660728999996,
+          "medTokensPerSec": 20.245791644790224,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "sup-1",
+              "error": null,
+              "firstTokenMs": 32746.790708999848,
+              "totalMs": 39292.28749999986,
+              "tokensPerSec": 19.92853699290469,
+              "outputTokens": 768,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 89,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Hello! I'm glad you're asking about VAT on quotes – this is a common point of confusion for many users. Let me walk you through it clearly and warmly.\n\n**Here’s exactly what you need to do:**\n\n1. **First, ensure VAT is set up at the organisation level** (this is where it’s *actua"
+            },
+            {
+              "id": "sup-2",
+              "error": null,
+              "firstTokenMs": 22101.030458000023,
+              "totalMs": 37702.410292000044,
+              "tokensPerSec": 20.0344764642641,
+              "outputTokens": 747,
+              "score": {
+                "quality": 0.972,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.861,
+                  "words": 205,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Absolutely, that's **exactly** what the member role is designed for — and it’s a standard, secure setup in our system. Here’s how it works clearly:\n\n### ✅ What the member role gives your site foreman:\n- **Can see**: All jobs (details, status, progress, etc.)\n- **Can do**: Log cos"
+            },
+            {
+              "id": "sup-3",
+              "error": null,
+              "firstTokenMs": 24465.937040999997,
+              "totalMs": 36360.91116599995,
+              "tokensPerSec": 20.457106825316348,
+              "outputTokens": 736,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 168,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "I'm sorry to say that CrewFlow **does not** make phone calls or handle live voice interactions for businesses—there’s no AI receptionist feature for answering phone lines in our current offering. We’ve been clear about this in our product documentation, and it’s something we’re a"
+            },
+            {
+              "id": "sup-4",
+              "error": null,
+              "firstTokenMs": 22299.78662499995,
+              "totalMs": 35918.86291699996,
+              "tokensPerSec": 21.009767685689148,
+              "outputTokens": 747,
+              "score": {
+                "quality": 0.966,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.828,
+                  "words": 211,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "I'm sorry to hear your invoice shows the wrong company name – that can be quite confusing! Don’t worry, this is a common issue when you belong to multiple organisations and the active one isn’t set correctly. Here’s how to fix it quickly and simply:\n\n1. **Locate the Org Switcher*"
+            }
+          ]
+        },
+        {
+          "workload": "memory_summarisation",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": 3034,
+          "vramMb": 3034,
+          "avgQuality": 0.704,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 24225.931791500072,
+          "medTotalMs": 33334.54345800006,
+          "medTokensPerSec": 21.590493117048933,
+          "fallbackWorthyRate": 0.333,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "mem-1",
+              "error": null,
+              "firstTokenMs": null,
+              "totalMs": 36433.194875000045,
+              "tokensPerSec": 21.60730130968099,
+              "outputTokens": 768,
+              "score": {
+                "quality": 0.25,
+                "parts": {
+                  "coverage": 0,
+                  "hygiene": 1,
+                  "lengthScore": 0,
+                  "words": 0,
+                  "missedTerms": [
+                    "plasterboard",
+                    "tuesday",
+                    "building control",
+                    "mot"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": true
+              },
+              "sample": ""
+            },
+            {
+              "id": "mem-2",
+              "error": null,
+              "firstTokenMs": 19588.25283299992,
+              "totalMs": 23799.191915999865,
+              "tokensPerSec": 21.52040633638547,
+              "outputTokens": 498,
+              "score": {
+                "quality": 0.863,
+                "parts": {
+                  "coverage": 0.75,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 45,
+                  "missedTerms": [
+                    "underfloor"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Client requires sink relocation to island (new plumbing: GBP 600 extra; verbal agreement to be written). Tiler available week commencing 12th. UFH manifold damaged (7–10 day replacement). Decision: proceed with screed now; UFH connection deferred. Budget: GBP 41,200 (was GBP 40,6"
+            },
+            {
+              "id": "mem-3",
+              "error": null,
+              "firstTokenMs": 28863.610750000225,
+              "totalMs": 33334.54345800006,
+              "tokensPerSec": 21.590493117048933,
+              "outputTokens": 704,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 58,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Week recap:  \n- 3 quotes sent (GBP 48k pipeline), 1 accepted.  \n- 2 jobs completed and paid.  \n- 1 overdue invoice chased; client promises payment Friday.  \n- Hired labourer (starts Monday); CSCS card check required and insurance update.  \n- Considering merchant switch from Build"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "model": "qwen2.5:3b",
+      "label": "Qwen2.5 3B",
+      "params": "3B",
+      "licence": "Qwen Research License (NOT Apache)",
+      "commercialSafe": false,
+      "notes": "Qwen2.5 3B & 72B ship under the Qwen licence, not Apache-2.0 (unlike the other Qwen2.5 sizes). Commercial use is permitted under conditions but it is NOT a clean MIT/Apache grant — flag for legal review before production. Benchmarked for reference only.",
+      "workloads": [
+        {
+          "workload": "job_summary",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": 2063,
+          "vramMb": 2063,
+          "avgQuality": 0.963,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 443.731541500194,
+          "medTotalMs": 4627.803750000196,
+          "medTokensPerSec": 33.47528894554178,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "job-1",
+              "error": null,
+              "firstTokenMs": 16332.162250000052,
+              "totalMs": 19538.638999999966,
+              "tokensPerSec": 41.148068519015546,
+              "outputTokens": 132,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 82,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Current progress: Week 4 of 7 for the loft conversion at 14 Maple Rise, Leeds. Budget is GBP 32,400. Costs to date are GBP 21,850, with GBP 18,000 invoiced and GBP 18,000 paid. Open tasks include waiting for Velux fittings (3 days late), scheduled first-fix electrics for Thursday"
+            },
+            {
+              "id": "job-2",
+              "error": null,
+              "firstTokenMs": 291.97570799989626,
+              "totalMs": 4668.011582999956,
+              "tokensPerSec": 29.942980336833386,
+              "outputTokens": 131,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 75,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Current progress: Work is on hold. Budget is GBP 58,000. Costs to date are GBP 39,100. Invoiced GBP 42,000, with GBP 30,000 paid (GBP 12,000 overdue for 21 days). Blocker: Building control refused steel beam calculations, revised SE drawings are due in 5 days. Labour has stood do"
+            },
+            {
+              "id": "job-3",
+              "error": null,
+              "firstTokenMs": 519.3249580003321,
+              "totalMs": 4587.595917000435,
+              "tokensPerSec": 30.727048676807243,
+              "outputTokens": 125,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 84,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Current Progress: Bathroom refit in Flat 2, Dock Street, Hull, is nearly complete with some snagging issues. Financially, the budget was GBP 9,800, and the final costs were GBP 9,240. Payments have been made for GBP 4,900 (50% deposit). Remaining tasks are sealing the shower tray"
+            },
+            {
+              "id": "job-4",
+              "error": null,
+              "firstTokenMs": 368.1381250000559,
+              "totalMs": 1500.2367910002358,
+              "tokensPerSec": 36.22352921427631,
+              "outputTokens": 41,
+              "score": {
+                "quality": 0.85,
+                "parts": {
+                  "coverage": 0.8,
+                  "hygiene": 1,
+                  "lengthScore": 0.8,
+                  "words": 28,
+                  "missedTerms": [
+                    "14,200"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Current progress: Not started yet. Financial position: Deposit received, balance due. Blockers: Tarmac supplier shortage causing delays. Next action: Confirm firm start date with client within 9 days."
+            }
+          ]
+        },
+        {
+          "workload": "quote_summary",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": 2063,
+          "vramMb": 2063,
+          "avgQuality": 0.897,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 684.3428545000497,
+          "medTotalMs": 5333.2957709999755,
+          "medTokensPerSec": 28.268566860223537,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "quote-1",
+              "error": null,
+              "firstTokenMs": 672.77116700029,
+              "totalMs": 5304.491667000111,
+              "tokensPerSec": 29.581116279049684,
+              "outputTokens": 137,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 94,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Client-facing summary:\nMrs Patel, we are pleased to provide you with a quote for the installation of 6 double-glazed uPVC windows in anthracite grey. This includes the removal and disposal of the old frames, along with the repair of any internal plaster damage. The total cost for"
+            },
+            {
+              "id": "quote-2",
+              "error": null,
+              "firstTokenMs": 721.3482920001261,
+              "totalMs": 5362.09987499984,
+              "tokensPerSec": 28.2280498899537,
+              "outputTokens": 131,
+              "score": {
+                "quality": 0.863,
+                "parts": {
+                  "coverage": 0.75,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 80,
+                  "missedTerms": [
+                    "reverse-charge"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Client-facing summary:\nWe are providing groundworks for your single-storey extension measuring 6m x 4m. This includes digging and carting away the spoil, laying concrete strip footings, and site oversite. The total cost for this project, including materials, labour, and plant hir"
+            },
+            {
+              "id": "quote-3",
+              "error": null,
+              "firstTokenMs": 679.2451250003651,
+              "totalMs": 7224.767875000369,
+              "tokensPerSec": 27.348966858399727,
+              "outputTokens": 179,
+              "score": {
+                "quality": 0.863,
+                "parts": {
+                  "coverage": 0.75,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 83,
+                  "missedTerms": [
+                    "5k"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Client-facing Summary: Mr Osei, we will fully rewire your 3-bed semi, including a 18th edition consumer unit, 24 points, and 8 lighting circuits. The total cost is £4,530, which includes materials, labor for 5 days, and building control notification. The total cost, including a 1"
+            },
+            {
+              "id": "quote-4",
+              "error": null,
+              "firstTokenMs": 689.4405839997344,
+              "totalMs": 4116.22883399995,
+              "tokensPerSec": 28.30908383049338,
+              "outputTokens": 97,
+              "score": {
+                "quality": 0.863,
+                "parts": {
+                  "coverage": 0.75,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 58,
+                  "missedTerms": [
+                    "2,625"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Client-facing Summary: We will be providing annual gutter clearance and minor repairs across 4 blocks of your Greenfield Care Home. This includes replacing 12m of leaking guttering. We will be using a cherry-picker for access. The total cost for this service is £1,750, including "
+            }
+          ]
+        },
+        {
+          "workload": "invoice_extraction",
+          "mode": "json",
+          "tier": "mid",
+          "productionModel": "claude-sonnet-5",
+          "memoryMb": 2063,
+          "vramMb": 2063,
+          "avgQuality": 1,
+          "schemaComplianceRate": 1,
+          "medFirstTokenMs": 651.9850420001894,
+          "medTotalMs": 6368.529250000138,
+          "medTokensPerSec": 26.41648588627846,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "inv-1",
+              "error": null,
+              "firstTokenMs": 1320.6856249999255,
+              "totalMs": 8611.790374999866,
+              "tokensPerSec": 27.1543403333017,
+              "outputTokens": 198,
+              "score": {
+                "quality": 1,
+                "parsed": true,
+                "schemaValid": true,
+                "schemaErrors": [],
+                "fieldAccuracy": 1,
+                "fieldResults": {
+                  "supplier_name": true,
+                  "invoice_number": true,
+                  "invoice_date": true,
+                  "currency": true,
+                  "net_amount": true,
+                  "vat_amount": true,
+                  "gross_amount": true,
+                  "category": true
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "{\"supplier_name\":\"Buildbase Trade Supplies Ltd\",\"invoice_number\":\"BB-88213\",\"invoice_date\":\"2026-03-12\",\"currency\":\"GBP\",\"net_amount\":679.0,\"vat_amount\":135.8,\"gross_amount\":814.8,\"category\":\"materials\",\"line_items\":[{\"description\":\"50 x Plasterboard 12.5mm 2400x1200\",\"quantity\":"
+            },
+            {
+              "id": "inv-2",
+              "error": null,
+              "firstTokenMs": 680.3971669999883,
+              "totalMs": 8041.491208000109,
+              "tokensPerSec": 25.541493242644727,
+              "outputTokens": 188,
+              "score": {
+                "quality": 1,
+                "parsed": true,
+                "schemaValid": true,
+                "schemaErrors": [],
+                "fieldAccuracy": 1,
+                "fieldResults": {
+                  "supplier_name": true,
+                  "invoice_number": true,
+                  "invoice_date": true,
+                  "currency": true,
+                  "net_amount": true,
+                  "vat_amount": true,
+                  "gross_amount": true,
+                  "category": true
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "{\"supplier_name\":\"A-Plant Hire Solutions\",\"invoice_number\":\"2026/PH/4471\",\"invoice_date\":\"2026-04-03\",\"currency\":\"GBP\",\"net_amount\":411.00,\"vat_amount\":82.20,\"gross_amount\":493.20,\"category\":\"plant_hire\",\"line_items\":[{\"description\":\"1 x Mini excavator 1.5t - 3 day hire\",\"quantit"
+            },
+            {
+              "id": "inv-3",
+              "error": null,
+              "firstTokenMs": 574.0472920001484,
+              "totalMs": 6368.529250000138,
+              "tokensPerSec": 27.268591484053392,
+              "outputTokens": 158,
+              "score": {
+                "quality": 1,
+                "parsed": true,
+                "schemaValid": true,
+                "schemaErrors": [],
+                "fieldAccuracy": 1,
+                "fieldResults": {
+                  "supplier_name": true,
+                  "invoice_number": true,
+                  "invoice_date": true,
+                  "currency": true,
+                  "net_amount": true,
+                  "vat_amount": true,
+                  "gross_amount": true,
+                  "category": true
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "{\"supplier_name\":\"Fuelcard Services\",\"invoice_number\":\"FC-2026-0099\",\"invoice_date\":\"2026-02-28\",\"currency\":\"GBP\",\"net_amount\":272.12,\"vat_amount\":54.42,\"gross_amount\":326.54,\"category\":\"fuel\",\"line_items\":[{\"description\":\"Diesel - 180 litres @ 1.459\",\"quantity\":180,\"unit_price\":"
+            },
+            {
+              "id": "inv-4",
+              "error": null,
+              "firstTokenMs": 651.9850420001894,
+              "totalMs": 6254.718583000358,
+              "tokensPerSec": 26.41648588627846,
+              "outputTokens": 148,
+              "score": {
+                "quality": 1,
+                "parsed": true,
+                "schemaValid": true,
+                "schemaErrors": [],
+                "fieldAccuracy": 1,
+                "fieldResults": {
+                  "supplier_name": true,
+                  "invoice_number": true,
+                  "invoice_date": true,
+                  "currency": true,
+                  "net_amount": true,
+                  "vat_amount": true,
+                  "gross_amount": true,
+                  "category": true
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "{\n  \"supplier_name\": \"Thornton & Rowe Structural Engineers\",\n  \"invoice_number\": \"TR-SE-3310\",\n  \"invoice_date\": \"2026-01-09\",\n  \"currency\": \"GBP\",\n  \"net_amount\": 650,\n  \"vat_amount\": 130,\n  \"gross_amount\": 780,\n  \"category\": \"professional_fees\",\n  \"line_items\": [\n    {\n      \"d"
+            },
+            {
+              "id": "inv-5",
+              "error": null,
+              "firstTokenMs": 624.1959159998223,
+              "totalMs": 6097.455457999837,
+              "tokensPerSec": 23.606148431801472,
+              "outputTokens": 129,
+              "score": {
+                "quality": 1,
+                "parsed": true,
+                "schemaValid": true,
+                "schemaErrors": [],
+                "fieldAccuracy": 1,
+                "fieldResults": {
+                  "supplier_name": true,
+                  "invoice_number": true,
+                  "invoice_date": true,
+                  "currency": true,
+                  "net_amount": true,
+                  "vat_amount": true,
+                  "gross_amount": true,
+                  "category": true
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "{\"supplier_name\":\"J. Okafor Bricklaying (subcontractor)\",\"invoice_number\":\"JOB-2026-14\",\"invoice_date\":\"2026-05-20\",\"currency\":\"GBP\",\"net_amount\":935,\"vat_amount\":0,\"gross_amount\":935,\"category\":\"labour_subcontractor\",\"line_items\":[{\"description\":\"Bricklaying - 1,100 bricks laid,"
+            }
+          ]
+        },
+        {
+          "workload": "customer_message_draft",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": 2063,
+          "vramMb": 2063,
+          "avgQuality": 0.931,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 489.1840000001248,
+          "medTotalMs": 5568.736416500062,
+          "medTokensPerSec": 20.299024630019066,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "msg-1",
+              "error": null,
+              "firstTokenMs": 746.7490000003017,
+              "totalMs": 4949.933250000235,
+              "tokensPerSec": 18.360843997923553,
+              "outputTokens": 77,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 65,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Dear Mr Dunn,\n\nI hope this message finds you well.\n\nI am writing to inform you that the delivery of the plasterboard has been delayed to Monday, which means that the first-fix will now commence on Tuesday instead of Monday.\n\nI apologize for any inconvenience this may cause and wo"
+            },
+            {
+              "id": "msg-2",
+              "error": null,
+              "firstTokenMs": 269.07904199976474,
+              "totalMs": 2860.730624999851,
+              "tokensPerSec": 20.832489424618213,
+              "outputTokens": 54,
+              "score": {
+                "quality": 0.863,
+                "parts": {
+                  "coverage": 0.75,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 45,
+                  "missedTerms": [
+                    "2 working days"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Dear Ms Reilly,\n\nThank you for your acceptance of the quote for your bathroom refit. We look forward to confirming your start date within two working days and will also be sending your deposit invoice by email shortly thereafter.\n\nBest regards,\n\nCrestwood Plumbing & Heating"
+            },
+            {
+              "id": "msg-3",
+              "error": null,
+              "firstTokenMs": 615.6715000001714,
+              "totalMs": 6927.3146250001155,
+              "tokensPerSec": 21.872997451795793,
+              "outputTokens": 138,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 108,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Dear [Client's Name],\n\nI hope this message finds you well. I am writing to follow up on the overdue invoice INV-3092 for GBP 2,400, which is now 21 days past due. We have a strong history of working together and I am keen to resolve this matter promptly.\n\nIf there are any issues "
+            },
+            {
+              "id": "msg-4",
+              "error": null,
+              "firstTokenMs": 362.69650000007823,
+              "totalMs": 6187.539582999889,
+              "tokensPerSec": 19.765559835419918,
+              "outputTokens": 115,
+              "score": {
+                "quality": 0.863,
+                "parts": {
+                  "coverage": 0.75,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 93,
+                  "missedTerms": [
+                    "7 days"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Dear Client,\n\nI am writing to inform you that the landscaping project at Meadowcroft Landscaping has been completed. We are grateful for your trust and support.\n\nPlease take a moment to review the work and let us know if you have any concerns or need any adjustments. We are here "
+            }
+          ]
+        },
+        {
+          "workload": "release_notes",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": 2063,
+          "vramMb": 2063,
+          "avgQuality": 1,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 535.1019999999553,
+          "medTotalMs": 4927.208333000075,
+          "medTokensPerSec": 23.33610194659341,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "rel-1",
+              "error": null,
+              "firstTokenMs": 857.3090409999713,
+              "totalMs": 4927.208333000075,
+              "tokensPerSec": 22.35748088681071,
+              "outputTokens": 91,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 80,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "### New\n- Weekly email digest of overdue invoices sent to keep track of unpaid invoices.\n\n### Improved\n- Bulk document download feature added to the client portal for easier management.\n- Job list now loads faster and more efficiently, especially for larger accounts.\n\n### Fixed\n-"
+            },
+            {
+              "id": "rel-2",
+              "error": null,
+              "firstTokenMs": 535.1019999999553,
+              "totalMs": 4950.15716700023,
+              "tokensPerSec": 23.33610194659341,
+              "outputTokens": 103,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 82,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "### New Features\n- Offline mode now queues site-diary entries and syncs when back online, ensuring no data loss.\n- Quote builder remembers your last-used margin per client type, saving time and effort.\n\n### Improvements\n- Improved search functionality on the materials list, makin"
+            },
+            {
+              "id": "rel-3",
+              "error": null,
+              "firstTokenMs": 478.0909170000814,
+              "totalMs": 3401.947416999843,
+              "tokensPerSec": 25.65776239680448,
+              "outputTokens": 75,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 55,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "- **New**: Weather forecast added to each job's schedule, flags rain days for outdoor work.\n- **Improved**: Mobile layout of the dashboard optimized for better user experience.\n- **Fixed**: Timezone bug in appointment reminders resolved, ensuring accurate reminders.\n- **Improved*"
+            }
+          ]
+        },
+        {
+          "workload": "design_review",
+          "mode": "text",
+          "tier": "high",
+          "productionModel": "claude-opus-5",
+          "memoryMb": 2063,
+          "vramMb": 2063,
+          "avgQuality": 0.999,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 487.8937909998931,
+          "medTotalMs": 13586.560749999713,
+          "medTokensPerSec": 25.950847420736903,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "dr-1",
+              "error": null,
+              "firstTokenMs": 1007.3234579996206,
+              "totalMs": 15952.36941699963,
+              "tokensPerSec": 24.624438832124426,
+              "outputTokens": 368,
+              "score": {
+                "quality": 0.998,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 0.99,
+                  "words": 303,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Risks:\n- **Data Integrity Issues**: If users can copy and modify templates, there is a risk of introducing data inconsistencies or errors into the shared pool. This could lead to incorrect or misleading information being used by other users.\n- **Security Concerns**: Allowing user"
+            },
+            {
+              "id": "dr-2",
+              "error": null,
+              "firstTokenMs": 445.65033299988136,
+              "totalMs": 13586.560749999713,
+              "tokensPerSec": 25.950847420736903,
+              "outputTokens": 341,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 269,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Risks:\n- **Data Inconsistency**: If the cron job fails or is delayed, the materialized view may not be up-to-date, leading to stale data in the dashboard.\n- **Concurrency Issues**: If multiple users access the dashboard simultaneously, the view might not reflect the most recent c"
+            },
+            {
+              "id": "dr-3",
+              "error": null,
+              "firstTokenMs": 487.8937909998931,
+              "totalMs": 12616.89587499993,
+              "tokensPerSec": 27.04354819267473,
+              "outputTokens": 328,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 267,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Risks:\n- **Data Integrity**: Client-side PDF generation might introduce inconsistencies if the browser fails to complete the generation process. The uploaded PDF might not match the expected data, leading to data integrity issues.\n- **Tenant Isolation**: If the client-side code i"
+            }
+          ]
+        },
+        {
+          "workload": "construction_insight",
+          "mode": "text",
+          "tier": "mid",
+          "productionModel": "claude-sonnet-5",
+          "memoryMb": 2063,
+          "vramMb": 2063,
+          "avgQuality": 0.931,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 480.35843749996275,
+          "medTotalMs": 5775.407062499784,
+          "medTokensPerSec": 27.063679713350417,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "ins-1",
+              "error": null,
+              "firstTokenMs": 701.2620000001043,
+              "totalMs": 6158.7717500003055,
+              "tokensPerSec": 27.3036692100004,
+              "outputTokens": 149,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 116,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "The single most important, actionable insight for the business owner is that the average gross margin across the 14 jobs is 19%, which is below the target of 25%. This margin shortfall is exacerbated by three jobs with gross margins under 10%, specifically fixed-price bathroom re"
+            },
+            {
+              "id": "ins-2",
+              "error": null,
+              "firstTokenMs": 415.7802920001559,
+              "totalMs": 6030.521416999865,
+              "tokensPerSec": 27.964429957563535,
+              "outputTokens": 157,
+              "score": {
+                "quality": 0.725,
+                "parts": {
+                  "coverage": 0.5,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 103,
+                  "missedTerms": [
+                    "28,900",
+                    "vat"
+                  ],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "The single most important, actionable insight for the business owner is that the business has a cash deficit of GBP 1,100 (GBP 14,200 - GBP 25,300), where GBP 25,300 is the sum of overdue receivables and upcoming payables. This deficit necessitates immediate attention to improve "
+            },
+            {
+              "id": "ins-3",
+              "error": null,
+              "firstTokenMs": 501.38254200015217,
+              "totalMs": 4802.202167000156,
+              "tokensPerSec": 26.82369021670043,
+              "outputTokens": 115,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 86,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "The single most important, actionable insight for the business owner is:\n\n**Number:** 10\n\n**Insight:** The weather forecast predicts rain on 6 out of the next 10 working days, including the days booked for the roof job at 22 Larch Close. This significantly impacts the outdoor job"
+            },
+            {
+              "id": "ins-4",
+              "error": null,
+              "firstTokenMs": 459.3343329997733,
+              "totalMs": 5520.2927079997025,
+              "tokensPerSec": 25.884903074869612,
+              "outputTokens": 131,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 93,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "The single most important, actionable insight for the business owner is to negotiate a trade discount with Buildbase. The cost of goods from Buildbase is 6-11% above Jewson for identical products, indicating a significant price inefficiency. Given that Buildbase accounts for 42% "
+            }
+          ]
+        },
+        {
+          "workload": "hq_prospect_analysis",
+          "mode": "text",
+          "tier": "high",
+          "productionModel": "claude-opus-5",
+          "memoryMb": 2063,
+          "vramMb": 2063,
+          "avgQuality": 1,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 433.8558750003576,
+          "medTotalMs": 7392.9398750001565,
+          "medTokensPerSec": 27.367337162041345,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "pros-1",
+              "error": null,
+              "firstTokenMs": 779.9270830000751,
+              "totalMs": 7392.9398750001565,
+              "tokensPerSec": 27.218146640789268,
+              "outputTokens": 180,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 144,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Fit Assessment: Hartley & Sons Roofing appears to be a good fit for CrewFlow, as they are looking for better job management and accounting solutions, which CrewFlow offers. The prospect's current system is inadequate, and they are actively seeking a solution that can integrate wi"
+            },
+            {
+              "id": "pros-2",
+              "error": null,
+              "firstTokenMs": 433.8558750003576,
+              "totalMs": 7366.21566700004,
+              "tokensPerSec": 27.8414709529068,
+              "outputTokens": 193,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 152,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "**Fit Assessment:** Verdant Facilities Group appears to be a good fit for CrewFlow. Their need for mobile job tracking aligns with CrewFlow's capabilities in managing field teams. Their existing systems (a bespoke in-house system and SAP for finance) suggest they are looking for "
+            },
+            {
+              "id": "pros-3",
+              "error": null,
+              "firstTokenMs": 297.6688749999739,
+              "totalMs": 7893.254834000021,
+              "tokensPerSec": 27.367337162041345,
+              "outputTokens": 208,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 164,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "**Fit Assessment:** \nCrewFlow can be a good fit for this prospect as it offers an app for sending quotes and invoices, which aligns with their needs. The platform could also potentially handle basic project management and invoicing, which might appeal to their future growth plans"
+            }
+          ]
+        },
+        {
+          "workload": "support_response",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": 2063,
+          "vramMb": 2063,
+          "avgQuality": 1,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 297.32808350003324,
+          "medTotalMs": 5981.37497949996,
+          "medTokensPerSec": 28.215712276482318,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "sup-1",
+              "error": null,
+              "firstTokenMs": 528.4433339997195,
+              "totalMs": 7518.30387499975,
+              "tokensPerSec": 28.042227588716095,
+              "outputTokens": 196,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 161,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Hello! I understand you're having trouble adding VAT to a quote. Here’s how you can do it:\n\n1. **Navigate to Settings > Tax**: This is where you can set up your VAT rates per organisation. Ensure that your VAT settings are configured correctly here.\n\n2. **Apply VAT Automatically*"
+            },
+            {
+              "id": "sup-2",
+              "error": null,
+              "firstTokenMs": 297.1147090001032,
+              "totalMs": 4444.44608400017,
+              "tokensPerSec": 28.4532408430486,
+              "outputTokens": 118,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 101,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Yes, you can control access for your site foreman to see jobs but not see financials or staff pay. In your roles setup, you can create a member role that allows them to see jobs and log costs. For the financial and pay-related aspects, you would then set up an admin role that has"
+            },
+            {
+              "id": "sup-3",
+              "error": null,
+              "firstTokenMs": 274.92224999982864,
+              "totalMs": 2916.863125000149,
+              "tokensPerSec": 28.38919696424854,
+              "outputTokens": 75,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 64,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "I'm sorry, but CrewFlow does not offer a feature where it makes phone calls for you. It does not have a live phone answering service. However, we do have capabilities for handling SMS and inbound messages. If you need assistance with managing these, I can guide you through how to"
+            },
+            {
+              "id": "sup-4",
+              "error": null,
+              "firstTokenMs": 297.5414579999633,
+              "totalMs": 7651.5787080000155,
+              "tokensPerSec": 27.061369201931665,
+              "outputTokens": 199,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 166,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "I'm sorry to hear about the issue with your invoice. It sounds like the company name might be incorrect due to the active organisation being set incorrectly. Here’s how you can resolve this:\n\n1. **Navigate to the Organisation Switcher**: Locate the top-left corner of your dashboa"
+            }
+          ]
+        },
+        {
+          "workload": "memory_summarisation",
+          "mode": "text",
+          "tier": "cheap",
+          "productionModel": "claude-haiku-4-5-20251001",
+          "memoryMb": 2063,
+          "vramMb": 2063,
+          "avgQuality": 1,
+          "schemaComplianceRate": null,
+          "medFirstTokenMs": 546.8187500000931,
+          "medTotalMs": 5070.788124999963,
+          "medTokensPerSec": 29.374098105324414,
+          "fallbackWorthyRate": 0,
+          "errorRate": 0,
+          "items": [
+            {
+              "id": "mem-1",
+              "error": null,
+              "firstTokenMs": 747.3597499998286,
+              "totalMs": 5070.788124999963,
+              "tokensPerSec": 29.374098105324414,
+              "outputTokens": 127,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 102,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Supplier has reported a back-order for plasterboard until Monday. The first fix appointment has been rescheduled to Tuesday and communicated to Mr Dunn, who is fine with the change. The electrician's appointment is confirmed for Thursday. Additional purchase of three sheets of pl"
+            },
+            {
+              "id": "mem-2",
+              "error": null,
+              "firstTokenMs": 529.7405410003848,
+              "totalMs": 9249.763791000005,
+              "tokensPerSec": 27.524640287357247,
+              "outputTokens": 240,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 160,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "**Summary of Site Meeting Decisions and Updates:**\n\n- **Client Request:** The client requested a change in the kitchen layout, specifically moving the sink to the island. This necessitates new plumbing work, estimated at GBP 600.\n- **Client's Agreement:** The client verbally agre"
+            },
+            {
+              "id": "mem-3",
+              "error": null,
+              "firstTokenMs": 546.8187500000931,
+              "totalMs": 4356.4056669999845,
+              "tokensPerSec": 29.399319405755758,
+              "outputTokens": 112,
+              "score": {
+                "quality": 1,
+                "parts": {
+                  "coverage": 1,
+                  "hygiene": 1,
+                  "lengthScore": 1,
+                  "words": 79,
+                  "missedTerms": [],
+                  "violations": []
+                },
+                "fallbackWorthy": false
+              },
+              "sample": "Week Recap:\n- Sent 3 quotes for a total pipeline value of GBP 48k, 1 accepted.\n- Completed and handed over 2 jobs, both paid.\n- Overdue invoice from a client is being chased, promised payment Friday.\n- Hired a new labourer, insurance needs to be updated with the CSCS card.\n- Dies"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "embeddings": [
+    {
+      "model": "nomic-embed-text",
+      "label": "nomic-embed-text v1.5",
+      "licence": "Apache-2.0",
+      "commercialSafe": true,
+      "dimension": 768,
+      "corpusEmbedMs": 13368,
+      "perTextMs": 607.6,
+      "memoryMb": null,
+      "metrics": {
+        "k": 3,
+        "precisionAtK": 0.361,
+        "recallAtK": 0.958,
+        "mrr": 1,
+        "meanFirstRelevantRank": 1,
+        "perQuery": [
+          {
+            "id": "q1",
+            "precisionAtK": 0.333,
+            "recallAtK": 0.5,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d01",
+              "d15",
+              "d02"
+            ]
+          },
+          {
+            "id": "q2",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d06",
+              "d15",
+              "d03"
+            ]
+          },
+          {
+            "id": "q3",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d04",
+              "d08",
+              "d18"
+            ]
+          },
+          {
+            "id": "q4",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d05",
+              "d11",
+              "d14"
+            ]
+          },
+          {
+            "id": "q5",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d15",
+              "d12",
+              "d03"
+            ]
+          },
+          {
+            "id": "q6",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d02",
+              "d18",
+              "d04"
+            ]
+          },
+          {
+            "id": "q7",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d07",
+              "d15",
+              "d03"
+            ]
+          },
+          {
+            "id": "q8",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d11",
+              "d21",
+              "d17"
+            ]
+          },
+          {
+            "id": "q9",
+            "precisionAtK": 0.667,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d08",
+              "d04",
+              "d12"
+            ]
+          },
+          {
+            "id": "q10",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d10",
+              "d02",
+              "d05"
+            ]
+          },
+          {
+            "id": "q11",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d19",
+              "d13",
+              "d17"
+            ]
+          },
+          {
+            "id": "q12",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d18",
+              "d08",
+              "d02"
+            ]
+          }
+        ]
+      },
+      "baseline": {
+        "provider": "openai",
+        "model": "text-embedding-3-small",
+        "dimension": 1536,
+        "note": "Current CrewFlow embedding path per lib/ai/embeddings/openai.ts. Not called in this benchmark."
+      }
+    },
+    {
+      "model": "bge-m3",
+      "label": "BGE-M3",
+      "licence": "MIT",
+      "commercialSafe": true,
+      "dimension": 1024,
+      "corpusEmbedMs": 2080,
+      "perTextMs": 94.5,
+      "memoryMb": null,
+      "metrics": {
+        "k": 3,
+        "precisionAtK": 0.389,
+        "recallAtK": 1,
+        "mrr": 1,
+        "meanFirstRelevantRank": 1,
+        "perQuery": [
+          {
+            "id": "q1",
+            "precisionAtK": 0.667,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d01",
+              "d13",
+              "d15"
+            ]
+          },
+          {
+            "id": "q2",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d06",
+              "d07",
+              "d15"
+            ]
+          },
+          {
+            "id": "q3",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d04",
+              "d12",
+              "d08"
+            ]
+          },
+          {
+            "id": "q4",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d05",
+              "d11",
+              "d17"
+            ]
+          },
+          {
+            "id": "q5",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d15",
+              "d02",
+              "d13"
+            ]
+          },
+          {
+            "id": "q6",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d02",
+              "d15",
+              "d17"
+            ]
+          },
+          {
+            "id": "q7",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d07",
+              "d15",
+              "d06"
+            ]
+          },
+          {
+            "id": "q8",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d11",
+              "d17",
+              "d09"
+            ]
+          },
+          {
+            "id": "q9",
+            "precisionAtK": 0.667,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d12",
+              "d08",
+              "d04"
+            ]
+          },
+          {
+            "id": "q10",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d10",
+              "d09",
+              "d14"
+            ]
+          },
+          {
+            "id": "q11",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d19",
+              "d17",
+              "d13"
+            ]
+          },
+          {
+            "id": "q12",
+            "precisionAtK": 0.333,
+            "recallAtK": 1,
+            "firstRelevantRank": 1,
+            "topK": [
+              "d18",
+              "d04",
+              "d15"
+            ]
+          }
+        ]
+      },
+      "baseline": {
+        "provider": "openai",
+        "model": "text-embedding-3-small",
+        "dimension": 1536,
+        "note": "Current CrewFlow embedding path per lib/ai/embeddings/openai.ts. Not called in this benchmark."
+      }
+    }
+  ],
+  "notRun": [],
+  "finishedAt": "2026-10-25T15:11:19.288Z"
+}

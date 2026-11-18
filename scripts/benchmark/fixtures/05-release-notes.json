@@ -1,0 +1,41 @@
+{
+  "workload": "release_notes",
+  "title": "Release notes",
+  "description": "Turn a list of merged changes into short, user-facing release notes grouped by theme. Internal engineering workload.",
+  "taskClass": "insight_narrative",
+  "tier": "cheap",
+  "mode": "text",
+  "system": "You are CrewFlow's release-notes writer. Turn the merged changes into concise, user-facing release notes in British English, grouped under short headings (e.g. New, Improved, Fixed). Keep each bullet one line, benefit-oriented, no internal jargon or PR numbers in the prose.",
+  "items": [
+    {
+      "id": "rel-1",
+      "input": "Merged this week:\n- Added bulk document download to the client portal (#901)\n- Job list now paginates and loads ~3x faster on large accounts (#905)\n- Fixed a bug where CIS deductions rounded incorrectly on statements (#908)\n- Fixed VAT PDF showing the wrong company when a user belonged to two orgs (#910)\n- New: weekly email digest of overdue invoices (#912)",
+      "rubric": {
+        "mustInclude": ["portal", "faster", "cis", "vat", "overdue"],
+        "mustNotInclude": ["as an ai", "#901", "#905"],
+        "minWords": 40,
+        "maxWords": 220
+      }
+    },
+    {
+      "id": "rel-2",
+      "input": "Merged:\n- Offline mode now queues site-diary entries and syncs when back online (#840)\n- Quote builder remembers your last-used margin per client type (#842)\n- Improved search on the materials list (#845)\n- Fixed crash when uploading HEIC photos from iPhone (#849)\n- Added two-factor authentication for all accounts (#851)",
+      "rubric": {
+        "mustInclude": ["offline", "quote", "search", "heic", "two-factor"],
+        "mustNotInclude": ["as an ai", "#840"],
+        "minWords": 40,
+        "maxWords": 220
+      }
+    },
+    {
+      "id": "rel-3",
+      "input": "Merged:\n- New: weather forecast on each job's schedule, flags rain days for outdoor work (#860)\n- Invoices can now be voided with an audit trail instead of deleted (#862)\n- Improved mobile layout of the dashboard (#865)\n- Fixed timezone bug in appointment reminders (#868)",
+      "rubric": {
+        "mustInclude": ["weather", "void", "mobile", "reminder"],
+        "mustNotInclude": ["as an ai", "#860"],
+        "minWords": 35,
+        "maxWords": 200
+      }
+    }
+  ]
+}

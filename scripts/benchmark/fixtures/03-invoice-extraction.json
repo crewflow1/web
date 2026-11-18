@@ -1,0 +1,82 @@
+{
+  "workload": "invoice_extraction",
+  "title": "Invoice extraction and classification (structured JSON)",
+  "description": "Extract a supplier invoice into strict JSON conforming to schemas/invoice.schema.json and classify its spend category. This is the canonical structured-output / schema-compliance workload.",
+  "taskClass": "structured_extraction",
+  "tier": "mid",
+  "mode": "json",
+  "schema": "invoice.schema.json",
+  "system": "You are CrewFlow's document extractor. Extract the supplier invoice into a SINGLE JSON object matching this exact shape and nothing else (no prose, no markdown fences): {\"supplier_name\":string,\"invoice_number\":string,\"invoice_date\":\"YYYY-MM-DD\",\"currency\":\"GBP\"|\"EUR\"|\"USD\",\"net_amount\":number,\"vat_amount\":number,\"gross_amount\":number,\"category\":\"materials\"|\"plant_hire\"|\"labour_subcontractor\"|\"fuel\"|\"professional_fees\"|\"utilities\"|\"other\",\"line_items\":[{\"description\":string,\"quantity\":number,\"unit_price\":number,\"line_total\":number}]}. Amounts are numbers without currency symbols. Output ONLY the JSON object.",
+  "items": [
+    {
+      "id": "inv-1",
+      "input": "INVOICE\nBuildbase Trade Supplies Ltd\nInvoice No: BB-88213\nDate: 12 March 2026\nBill to: CrewFlow demo contractor\n--------------------------------\n50 x Plasterboard 12.5mm 2400x1200  @ GBP 9.80 = GBP 490.00\n20 x Bag plaster multi-finish 25kg @ GBP 7.20 = GBP 144.00\n10 x Timber stud 2.4m 47x75 CLS    @ GBP 4.50 = GBP 45.00\n--------------------------------\nNet: GBP 679.00\nVAT @ 20%: GBP 135.80\nTotal due: GBP 814.80",
+      "expected": {
+        "supplier_name": "Buildbase Trade Supplies Ltd",
+        "invoice_number": "BB-88213",
+        "invoice_date": "2026-03-12",
+        "currency": "GBP",
+        "net_amount": 679.0,
+        "vat_amount": 135.8,
+        "gross_amount": 814.8,
+        "category": "materials"
+      }
+    },
+    {
+      "id": "inv-2",
+      "input": "A-Plant Hire Solutions\nTax Invoice 2026/PH/4471\nInvoice date: 2026-04-03\n1 x Mini excavator 1.5t - 3 day hire @ 95.00/day = 285.00\n1 x Breaker attachment - 3 days @ 22.00/day = 66.00\n1 x Delivery & collection = 60.00\nSubtotal (net): 411.00 GBP\nVAT 20%: 82.20\nGrand total: 493.20 GBP",
+      "expected": {
+        "supplier_name": "A-Plant Hire Solutions",
+        "invoice_number": "2026/PH/4471",
+        "invoice_date": "2026-04-03",
+        "currency": "GBP",
+        "net_amount": 411.0,
+        "vat_amount": 82.2,
+        "gross_amount": 493.2,
+        "category": "plant_hire"
+      }
+    },
+    {
+      "id": "inv-3",
+      "input": "Fuelcard Services\nStatement/Invoice: FC-2026-0099\nDated 28/02/2026\nDiesel - 180 litres @ 1.459 = 262.62\nAdBlue - 10 litres @ 0.95 = 9.50\n-----\nNet 272.12\nVAT 54.42\nTotal 326.54 (GBP)",
+      "expected": {
+        "supplier_name": "Fuelcard Services",
+        "invoice_number": "FC-2026-0099",
+        "invoice_date": "2026-02-28",
+        "currency": "GBP",
+        "net_amount": 272.12,
+        "vat_amount": 54.42,
+        "gross_amount": 326.54,
+        "category": "fuel"
+      }
+    },
+    {
+      "id": "inv-4",
+      "input": "Thornton & Rowe Structural Engineers\nFee note ref TR-SE-3310\nDate: 9 January 2026\nStructural calculations - single storey rear extension\nFixed fee: 650.00\nVAT (20%): 130.00\nAmount payable: 780.00 GBP",
+      "expected": {
+        "supplier_name": "Thornton & Rowe Structural Engineers",
+        "invoice_number": "TR-SE-3310",
+        "invoice_date": "2026-01-09",
+        "currency": "GBP",
+        "net_amount": 650.0,
+        "vat_amount": 130.0,
+        "gross_amount": 780.0,
+        "category": "professional_fees"
+      }
+    },
+    {
+      "id": "inv-5",
+      "input": "J. Okafor Bricklaying (subcontractor)\nInvoice JOB-2026-14\nDate: 2026-05-20\nCIS registered. Labour only.\nBricklaying - 1,100 bricks laid, garden wall @ 0.85/brick = 935.00\nNet: 935.00\nVAT: reverse charge (CIS) - 0.00\nTotal: 935.00 GBP",
+      "expected": {
+        "supplier_name": "J. Okafor Bricklaying",
+        "invoice_number": "JOB-2026-14",
+        "invoice_date": "2026-05-20",
+        "currency": "GBP",
+        "net_amount": 935.0,
+        "vat_amount": 0.0,
+        "gross_amount": 935.0,
+        "category": "labour_subcontractor"
+      }
+    }
+  ]
+}
