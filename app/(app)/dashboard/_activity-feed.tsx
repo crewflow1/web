@@ -122,7 +122,13 @@ export function ActivityFeed({
                     <span className="text-slate-700">{body}</span>
                   </div>
                   <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
-                    <span>{relativeTime(row.created_at)}</span>
+                    {/* Relative time is computed from `new Date()`, which differs
+                        between the SSR render and client hydration whenever the
+                        value crosses a minute boundary in between ("10 minutes
+                        ago" vs "11 minutes ago") — a benign but real hydration
+                        mismatch. suppressHydrationWarning is React's sanctioned
+                        escape hatch for intentionally time-dependent text. */}
+                    <span suppressHydrationWarning>{relativeTime(row.created_at)}</span>
                     {href ? (
                       <Link
                         href={href}
