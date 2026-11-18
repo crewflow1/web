@@ -216,10 +216,22 @@ describe("Rule 9 — customer users are NEVER redirected to HQ", () => {
 });
 
 describe("Rule 10 — the boundary is regression-locked by automated tests", () => {
-  it("this consolidated file plus the focused suites pin every rule above", () => {
-    // Sentinel: if this file is ever deleted/emptied the suite count drops and
-    // CI flags the missing coverage. The assertion is trivially true; its job
-    // is to make Rule 10's intent explicit and grep-able.
-    expect(true).toBe(true);
+  it("every companion suite named above exists on disk and is non-empty", () => {
+    // Sentinel for Rule 10: the boundary is only "regression-locked" while the
+    // focused suites referenced in this file's header actually exist. Asserting
+    // their presence (rather than a tautology) makes the guard real — delete or
+    // empty any of them and this test fails, surfacing the lost coverage.
+    const companions = [
+      "__tests__/access-gate/contract.test.ts",
+      "__tests__/access-gate/super-admin-routing.test.ts",
+      "__tests__/hq/impersonation.test.ts",
+      "__tests__/hq/impersonation-rls.test.ts",
+      "__tests__/auth-flow/customer-onboarding.test.ts",
+    ];
+    for (const rel of companions) {
+      const src = read(rel);
+      expect(src, `${rel} must exist`).not.toBe("");
+      expect(src, `${rel} must contain real test suites`).toMatch(/\bdescribe\(/);
+    }
   });
 });

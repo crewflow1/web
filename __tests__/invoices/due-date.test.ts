@@ -1,5 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { invoiceDueDate, INVOICE_DUE_DAYS } from "@/lib/invoices/due-date";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 /**
  * Regression test for BUG-03 (auto-generated invoice due date missing).
@@ -35,14 +39,23 @@ describe("invoiceDueDate", () => {
   });
 
   it("falls back to a valid date when the input cannot be parsed", () => {
+    // Pin the clock: the fallback anchors on `new Date()` INSIDE the lib, and
+    // the expected value below also reads the clock. Without a fixed `now`,
+    // the two reads can straddle a UTC-midnight tick and the date-only strings
+    // disagree by a day — a genuine (if rare) wall-clock flake. Freezing it
+    // makes the exact-date assertion deterministic in any CI timezone.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-31T23:59:59.999Z"));
+
     const result = invoiceDueDate("not-a-real-date");
     // Defensive fallback: never emit NaN/Invalid Date into a `date` column.
     expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(result).not.toContain("NaN");
 
-    // The fallback anchors on "now", so it should be ~14 days out.
+    // The fallback anchors on "now" (+14 days), in UTC: 2026-05-31 → 2026-06-14.
     const expected = new Date();
     expected.setUTCDate(expected.getUTCDate() + INVOICE_DUE_DAYS);
     expect(result).toBe(expected.toISOString().slice(0, 10));
+    expect(result).toBe("2026-06-14");
   });
 });
