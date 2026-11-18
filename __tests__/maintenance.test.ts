@@ -38,18 +38,22 @@ describe("isMaintenanceMode", () => {
   });
 });
 
+// Bypass tokens shorter than 16 URL-safe characters are ignored by design
+// (final launch audit F6; __tests__/security/maintenance-bypass-hardening.test.ts).
+const TOKEN = "s3cret-bypass-token-0001";
+
 describe("isMaintenanceBypassed", () => {
   it("is false when no bypass token is configured", () => {
     expect(isMaintenanceBypassed(req("https://x/app"))).toBe(false);
   });
   it("accepts the token via query param, header, or cookie", () => {
-    process.env.MAINTENANCE_BYPASS = "s3cret";
-    expect(isMaintenanceBypassed(req("https://x/app?maint_bypass=s3cret"))).toBe(true);
-    expect(isMaintenanceBypassed(req("https://x/app", { "x-maintenance-bypass": "s3cret" }))).toBe(true);
-    expect(isMaintenanceBypassed(req("https://x/app", { cookie: "a=1; maint_bypass=s3cret" }))).toBe(true);
+    process.env.MAINTENANCE_BYPASS = TOKEN;
+    expect(isMaintenanceBypassed(req(`https://x/app?maint_bypass=${TOKEN}`))).toBe(true);
+    expect(isMaintenanceBypassed(req("https://x/app", { "x-maintenance-bypass": TOKEN }))).toBe(true);
+    expect(isMaintenanceBypassed(req("https://x/app", { cookie: `a=1; maint_bypass=${TOKEN}` }))).toBe(true);
   });
   it("rejects a wrong or absent token", () => {
-    process.env.MAINTENANCE_BYPASS = "s3cret";
+    process.env.MAINTENANCE_BYPASS = TOKEN;
     expect(isMaintenanceBypassed(req("https://x/app?maint_bypass=nope"))).toBe(false);
     expect(isMaintenanceBypassed(req("https://x/app"))).toBe(false);
     expect(isMaintenanceBypassed(req("https://x/app", { cookie: "maint_bypass=nope" }))).toBe(false);

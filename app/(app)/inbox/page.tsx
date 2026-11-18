@@ -4,6 +4,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { InboxTabs } from "./_components/inbox-tabs";
 import { markEnquiryStatus } from "./actions";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /inbox — every inbound enquiry the AI receptionist captured.
@@ -72,6 +73,9 @@ type EnquiryQuery = {
 } & Promise<{ data: EnquiryRow[] | null }>;
 
 export default async function InboxPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("inbox", "view");
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();

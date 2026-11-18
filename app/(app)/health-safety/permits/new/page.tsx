@@ -8,6 +8,7 @@ import { errorMessage, primaryBtn } from "../_meta";
 import { StateForm } from "@/components/forms/StateForm";
 import { loadImportDraftDefaults } from "@/server/services/document-autofill";
 import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 /**
  * /health-safety/permits/new — draft a new permit.
@@ -27,6 +28,9 @@ export default async function NewPermitPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["site_safety", "view"], ["site_safety_field", "view"]]);
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
 

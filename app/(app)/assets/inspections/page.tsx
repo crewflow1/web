@@ -9,6 +9,7 @@ import {
   type BlockableInspection,
   type OverrideRow,
 } from "@/lib/assets/inspection-override";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 export const metadata = { title: "Inspections · CrewFlow" };
 
@@ -49,6 +50,9 @@ type InspQuery<T> = {
 };
 
 export default async function InspectionsOverviewPage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["assets", "view"], ["assets_field", "view"]]);
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const today = new Date().toISOString().slice(0, 10);

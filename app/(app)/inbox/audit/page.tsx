@@ -4,6 +4,7 @@ import { listOutboundAudit } from "@/server/services/outbound-audit";
 import { pageOutboundAudit, type OutboundAuditEntry } from "@/lib/inbox/outbound-audit";
 import { EmptyState } from "../../_components/empty-state";
 import { InboxTabs } from "../_components/inbox-tabs";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /inbox/audit — the UNIFIED outbound delivery audit.
@@ -33,6 +34,9 @@ const STATUS_PILL: Record<string, string> = {
 type SP = Promise<{ page?: string }>;
 
 export default async function OutboundAuditPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("inbox", "view");
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const requestedPage = Number.parseInt(sp.page ?? "1", 10);

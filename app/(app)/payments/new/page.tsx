@@ -6,6 +6,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { computeInvoiceBalance } from "@/lib/payments/allocation";
 import { OUTSTANDING_STATUSES } from "@/lib/invoices/schema";
 import { AllocatePaymentForm, type OutstandingInvoice } from "./_allocate-form";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * Record one payment and allocate it across outstanding invoices.
@@ -16,6 +17,9 @@ import { AllocatePaymentForm, type OutstandingInvoice } from "./_allocate-form";
  * `allocate_payment` RPC (see `allocate-actions.ts`).
  */
 export default async function NewPaymentPage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("payments", "view");
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 

@@ -8,6 +8,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { withPreservedOption } from "@/lib/quotes/preserve-option";
 import { loadImportDraftDefaults } from "@/server/services/document-autofill";
 import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 const ERROR_MAP: Record<string, string> = {
   record_failed: "Couldn't create the report. Try again.",
@@ -29,6 +30,9 @@ export default async function NewSiteReportPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["site_safety", "view"], ["site_safety_field", "view"]]);
   const { ctx, user } = await requireOrgContext();
   const sp = await searchParams;
   const prefill = sp.import ? await loadImportDraftDefaults("site_report", sp.import) : null;

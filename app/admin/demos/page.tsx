@@ -6,6 +6,7 @@ import { DemosBoard } from "./_board";
 import { DemosFilters } from "./_filters";
 import type { DemoRow } from "./_card";
 import { toLifecycleStatus } from "@/lib/hq/demo-lifecycle";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Demos CRM — HQ-2.
@@ -36,6 +37,9 @@ type SP = Promise<{
 }>;
 
 export default async function DemosPage({ searchParams }: { searchParams: SP }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const admin = createAdminClient();
 

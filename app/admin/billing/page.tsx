@@ -25,6 +25,7 @@ import {
 } from "./actions";
 import { getSettings } from "@/server/services/hq-settings";
 import { ClientConfirmForm } from "../_client-confirm";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Billing OS — HQ-4.
@@ -68,6 +69,9 @@ export default async function HqBillingPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const rows = await listCustomersForBilling();
 

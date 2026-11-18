@@ -29,6 +29,7 @@ import {
 } from "@/lib/sales/comms";
 import { EmptyState, Pill, Section, TimelineItem, Tile } from "../_components";
 import { inputCls } from "../_styles";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Sales AI — AI Communication Centre (CEO Directive 004, Phase 5).
@@ -92,6 +93,9 @@ export default async function CommunicationsPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const requested = Number.parseInt(sp.show ?? "120", 10);
   const limit: WindowSize = WINDOWS.includes(requested as WindowSize)

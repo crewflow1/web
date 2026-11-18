@@ -8,6 +8,7 @@ import {
   type AssetOwnership,
   type AssetStatus,
 } from "@/lib/assets/schema";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /a/[token] — the QR scan landing.
@@ -26,6 +27,9 @@ export default async function ScanPage({
 }: {
   params: Promise<{ token: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("assets", "view");
   const { ctx } = await requireOrgContext();
   const { token } = await params;
   const asset = await resolveScannedAsset(token, ctx.org.id);

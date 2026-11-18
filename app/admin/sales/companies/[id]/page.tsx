@@ -107,6 +107,7 @@ import {
   promoteResearchAction,
   setCompanyStatusAction,
 } from "../../actions";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Sales AI — company detail (CEO Directive 003, Phase 1).
@@ -130,6 +131,9 @@ export default async function CompanyDetailPage({
   params: Params;
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const { id } = await params;
   const sp = await searchParams;
 

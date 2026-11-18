@@ -23,6 +23,7 @@ import { getCeoDashboard } from "@/server/services/hq-ceo";
 import { formatExec, type ExecAccent, type ExecCard, type ExecTrend } from "@/lib/hq/executive";
 import type { DeptCard, DeptHealth, DeptHealthTone, DeptStat } from "@/lib/hq/ceo";
 import { ExecCounter, LiveDot } from "../command-centre/_counter";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * CrewFlow HQ — CEO Dashboard (CEO Directive 004, Phase 8).
@@ -98,7 +99,10 @@ const HEALTH: Record<DeptHealthTone, { dot: string; pill: string }> = {
   },
 };
 
-export default function CeoDashboardPage() {
+export default async function CeoDashboardPage() {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 shadow-xl">
       <Header />

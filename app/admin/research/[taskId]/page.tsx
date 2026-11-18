@@ -9,6 +9,7 @@ import { STATUS_LABEL, STATUS_PILL } from "../_styles";
 import { BackToResearch, ProvenanceBadge } from "../_components";
 import { LiveRun } from "./_live";
 import { ResearchReport } from "./_report";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Research AI — single run view (CEO Directive 005).
@@ -26,6 +27,9 @@ export default async function ResearchRunPage({
 }: {
   params: Promise<{ taskId: string }>;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const { taskId } = await params;
   const state = await getResearchRunState(taskId);
   if (!state) notFound();

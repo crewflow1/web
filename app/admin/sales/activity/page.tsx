@@ -4,6 +4,7 @@ import { listActivityFeed } from "@/server/services/hq-sales";
 import { eventCategory } from "@/lib/sales/model";
 import { EmptyState, Section, TimelineItem, Tile } from "../_components";
 import { inputCls } from "../_styles";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Sales AI — global Activity Feed (CEO Directive 003, Phase 1).
@@ -46,6 +47,9 @@ export default async function SalesActivityPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const requested = Number.parseInt(sp.show ?? "60", 10);
   const limit = WINDOWS.includes(requested as (typeof WINDOWS)[number])

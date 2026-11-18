@@ -38,6 +38,7 @@ import {
 } from "../../_components/ui";
 import { errorMessage, savedMessage } from "../../_components/messages";
 import { withPreservedOption } from "@/lib/quotes/preserve-option";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +64,9 @@ export default async function VehiclePage({
   params: Params;
   searchParams: SP;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["fleet", "view"], ["fuel_field", "view"]]);
   const { ctx } = await requireOrgContext();
   const { id } = await params;
   const sp = await searchParams;

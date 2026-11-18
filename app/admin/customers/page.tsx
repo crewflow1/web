@@ -7,6 +7,7 @@ import {
   SUBSCRIPTION_PILL,
   type SetupFeeStatus,
 } from "@/lib/hq/customer-financials";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Customers OS — list view (HQ-3).
@@ -37,6 +38,9 @@ export default async function HqCustomersListPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const allRows = await listCustomersForHq();
 

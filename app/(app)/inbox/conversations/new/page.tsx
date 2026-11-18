@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
 import { INBOX_CHANNELS, INBOX_CHANNEL_LABELS } from "@/lib/inbox/channels";
 import { startConversation } from "../actions";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /inbox/conversations/new — start a new outbound conversation with a contact.
@@ -21,6 +22,9 @@ const ERROR_MAP: Record<string, string> = {
 type SP = Promise<{ error?: string }>;
 
 export default async function NewConversationPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("inbox", "view");
   await requireOrgContext();
   const sp = await searchParams;
   const error = sp.error ? ERROR_MAP[sp.error] ?? "Something went wrong." : null;

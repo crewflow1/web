@@ -2,7 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
-import { requireCapability } from "@/server/auth/capabilities";
+import { requireCapability, requireAnyCapability } from "@/server/auth/capabilities";
 import { EmptyState } from "../_components/empty-state";
 
 /**
@@ -46,6 +46,9 @@ const SAVED_MAP: Record<string, string> = {
 type SP = Promise<{ status?: string; saved?: string }>;
 
 export default async function ExpensesPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["expenses", "view"], ["job_costs_field", "view"]]);
   const { ctx } = await requireOrgContext();
   // Requires the expenses:view capability (R4); the layout enforces it too —
   // this page-level gate is defence-in-depth. RLS is the last line.

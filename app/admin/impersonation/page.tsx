@@ -13,6 +13,7 @@ import {
   forceEndImpersonation,
 } from "./actions";
 import { ClientConfirmForm } from "../_client-confirm";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * HQ Impersonation centre — /admin/impersonation (HQ-10).
@@ -32,6 +33,9 @@ export default async function HqImpersonationPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const user = await requireUser();
   const myActive = await getActiveImpersonation(user.email ?? null);

@@ -19,6 +19,7 @@ import {
   type SupportCategory,
   type SupportSort,
 } from "@/lib/hq/support";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * HQ Support queue — /admin/support (HQ-7).
@@ -46,6 +47,9 @@ export default async function HqSupportListPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const q = (sp.q ?? "").trim();
   const status =

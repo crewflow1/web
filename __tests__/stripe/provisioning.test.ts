@@ -104,9 +104,12 @@ describe("/api/admin/stripe/provision endpoint", () => {
     expect(PROVISION_ROUTE).toMatch(/status: 404/);
   });
 
-  it("supports both GET (browser convenience) and POST (form submit)", () => {
-    expect(PROVISION_ROUTE).toMatch(/export async function GET/);
+  it("is POST-only (a GET must never create Stripe objects) and same-origin gated", () => {
+    // Contract changed by the final launch audit (F5): the old GET convenience
+    // let a plain navigation provision. Behaviour: stripe-provision-post-only.test.ts.
+    expect(PROVISION_ROUTE).not.toMatch(/export async function GET/);
     expect(PROVISION_ROUTE).toMatch(/export async function POST/);
+    expect(PROVISION_ROUTE).toMatch(/isSameOriginRequest\(request\)/);
   });
 
   it("clears the in-process price cache so the next checkout re-discovers", () => {

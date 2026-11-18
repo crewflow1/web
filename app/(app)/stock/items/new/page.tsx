@@ -6,6 +6,7 @@ import { createStockItem } from "../../actions";
 import { StockItemForm } from "../_form";
 import { loadImportDraftDefaults } from "@/server/services/document-autofill";
 import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
+import { requireAnyCapability, requireCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,10 @@ export default async function NewStockItemPage({
 }: {
   searchParams: Promise<{ import?: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["stock", "view"], ["stock_field", "view"]]);
+  await requireCapability("stock", "create");
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const suppliers = await listSuppliersForOrg<{ id: string; name: string }>(

@@ -24,6 +24,7 @@ import {
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * HQ Internal Notes — /admin/notes (HQ-9).
@@ -55,6 +56,9 @@ export default async function HqNotesPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const q = (sp.q ?? "").trim();
   const orgId = (sp.org_id ?? "").trim();

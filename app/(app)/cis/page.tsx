@@ -36,6 +36,7 @@ import {
   prepareCisReturn,
   saveContractorProfile,
 } from "./actions";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * CIS monthly centre — payment & deduction statements and the CIS300-shape
@@ -94,6 +95,9 @@ export default async function CisPage({
 }: {
   searchParams: Promise<{ month?: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("cis", "view");
   const { ctx } = await requireOrgContext();
   const isAdmin = ctx.membership.role === "owner" || ctx.membership.role === "admin";
 

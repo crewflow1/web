@@ -41,6 +41,7 @@ import {
 } from "../_components";
 import { importancePill } from "../_styles";
 import { purgeMemoryAction, setStatusAction, togglePinAction } from "../actions";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Shared Memory Engine — memory detail (CEO Directive 002, Phase 2).
@@ -71,6 +72,9 @@ export default async function MemoryDetailPage({
   params: Params;
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const { id } = await params;
   const sp = await searchParams;
 

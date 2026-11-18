@@ -9,6 +9,7 @@ import {
 import { EmptyState } from "../_components/empty-state";
 import { DataTable, type DataTableColumn } from "@/components/ui/data-table";
 import { ImportButton } from "@/components/import/import-button";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /suppliers — list suppliers for the ACTIVE org.
@@ -44,6 +45,9 @@ const SUPPLIER_COLUMNS: DataTableColumn[] = [
 ];
 
 export default async function SuppliersPage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("suppliers", "view");
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
 

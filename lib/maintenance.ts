@@ -16,27 +16,58 @@
  *                                `x-maintenance-bypass` header, or a
  *                                `maint_bypass=<tok>` cookie.
  *
+ * The bypass token must be at least 16 URL-safe characters (e.g. `openssl rand
+ * -hex 24`); a shorter configured token is ignored (fail closed).
+ *
  * When MAINTENANCE_MODE is unset (the default in every environment), every
  * function here is inert and the app behaves exactly as before.
  */
+
+import { constantTimeEqualEdge } from "@/lib/security/constant-time-edge";
 
 export function isMaintenanceMode(): boolean {
   return process.env.MAINTENANCE_MODE === "on";
 }
 
-/** True when the caller presents the operator bypass token (any of 3 channels). */
-export function isMaintenanceBypassed(request: Request): boolean {
-  const token = process.env.MAINTENANCE_BYPASS;
-  if (!token) return false;
+/**
+ * Bypass-token shape. A configured token shorter than 16 characters is treated
+ * as unset (fail closed — a guessable operator credential must never open the
+ * gate); presented values must have the same URL-safe shape and are bounded at
+ * 256 characters BEFORE any comparison.
+ */
+const BYPASS_TOKEN_SHAPE = /^[A-Za-z0-9._~-]{16,256}$/;
+
+function presentedTokens(request: Request): string[] {
+  const out: string[] = [];
   try {
     const q = new URL(request.url).searchParams.get("maint_bypass");
-    if (q && q === token) return true;
+    if (q) out.push(q);
   } catch {
     // non-absolute URL (shouldn't happen in middleware) — fall through
   }
-  if (request.headers.get("x-maintenance-bypass") === token) return true;
-  const cookie = request.headers.get("cookie") ?? "";
-  return cookie.split(/;\s*/).includes(`maint_bypass=${token}`);
+  const h = request.headers.get("x-maintenance-bypass");
+  if (h) out.push(h);
+  for (const part of (request.headers.get("cookie") ?? "").split(/;\s*/)) {
+    if (part.startsWith("maint_bypass=")) out.push(part.slice("maint_bypass=".length));
+  }
+  return out;
+}
+
+/**
+ * True when the caller presents the operator bypass token (query param, header
+ * or cookie). Constant-time comparison through the shared Edge-safe helper;
+ * nothing here ever echoes the token.
+ */
+export function isMaintenanceBypassed(request: Request): boolean {
+  const token = process.env.MAINTENANCE_BYPASS;
+  if (!token || !BYPASS_TOKEN_SHAPE.test(token)) return false;
+  let matched = false;
+  for (const candidate of presentedTokens(request)) {
+    if (!BYPASS_TOKEN_SHAPE.test(candidate)) continue;
+    // No early exit: every well-formed candidate is compared.
+    if (constantTimeEqualEdge(candidate, token)) matched = true;
+  }
+  return matched;
 }
 
 /**

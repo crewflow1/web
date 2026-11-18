@@ -4,6 +4,7 @@ import { buildReportDocument } from "@/lib/reports/report-data";
 import type { ReportDocument } from "@/lib/reports/documents";
 import { AreaChart, compactNumber, type ChartSeries } from "@/components/ui/charts";
 import { ReportView } from "../_report-view";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /reports/cashflow — Cashflow forecast. Composes the forecasting cash-timeline
@@ -51,6 +52,9 @@ function cumulativeSeries(doc: ReportDocument): ChartSeries[] {
 }
 
 export default async function CashflowReportPage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("reports", "view");
   const { ctx } = await requireOrgContext();
   const isAdmin =
     ctx.membership.role === "owner" || ctx.membership.role === "admin";

@@ -6,6 +6,7 @@ import { JobForm } from "../_form";
 import { requireOrgContext } from "@/server/auth/session";
 import { loadImportDraftDefaults } from "@/server/services/document-autofill";
 import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * Create-job page.
@@ -21,6 +22,9 @@ export default async function NewJobPage({
 }: {
   searchParams: Promise<{ import?: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("jobs", "create");
   const { ctx } = await requireOrgContext();
   const [customers, staff, templates] = await Promise.all([
     listCustomersForOrg(ctx.org.id),

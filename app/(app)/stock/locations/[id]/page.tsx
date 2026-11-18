@@ -12,6 +12,7 @@ import { foldSiteBalances, stockLevel } from "@/lib/stock/balance";
 import { formatQuantity } from "@/lib/stock/movements";
 import { formatSiteAddress, siteKindLabel } from "@/lib/sites/schema";
 import { AccountingNote, Card, CardHeader, Effect, LevelPill, MovementPill, Qty } from "../../_components/ui";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,9 @@ export const metadata = { title: "Stock at a location · CrewFlow" };
 type Params = Promise<{ id: string }>;
 
 export default async function StockLocationPage({ params }: { params: Params }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["stock", "view"], ["stock_field", "view"]]);
   const { id } = await params;
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();

@@ -4,6 +4,7 @@ import { listSalesSources } from "@/server/services/hq-sales";
 import { Banner } from "../../_components";
 import { CompanyForm } from "../../_form";
 import { createCompanyAction } from "../../actions";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Sales AI — add a company to the master intelligence database (CEO
@@ -21,6 +22,9 @@ export default async function NewCompanyPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const sources = await listSalesSources(true);
   const errorMsg = sp.error ? sp.error : null;

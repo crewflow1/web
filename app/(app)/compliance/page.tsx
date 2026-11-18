@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../_components/empty-state";
 import { deleteComplianceDocument } from "./actions";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /compliance — library of insurance, certificates, permits, contracts.
@@ -58,6 +59,9 @@ type DocQuery = {
 } & Promise<{ data: DocRow[] | null }>;
 
 export default async function CompliancePage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("documents", "view");
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();

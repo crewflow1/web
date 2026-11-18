@@ -7,6 +7,7 @@ import {
   deleteComplianceDocument,
   getComplianceDocSignedUrl,
 } from "../actions";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /compliance/[id] — view a compliance document.
@@ -36,6 +37,9 @@ export default async function ComplianceDocPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("documents", "view");
   const { id } = await params;
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();

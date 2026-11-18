@@ -11,6 +11,7 @@ import { createAsset } from "../actions";
 import { StateForm } from "@/components/forms/StateForm";
 import { loadImportDraftDefaults } from "@/server/services/document-autofill";
 import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
+import { requireAnyCapability, requireCapability } from "@/server/auth/capabilities";
 
 const ERROR_MAP: Record<string, string> = {
   record_failed: "Couldn't save the asset. Try again.",
@@ -20,6 +21,10 @@ const ERROR_MAP: Record<string, string> = {
 type SP = Promise<{ error?: string; import?: string }>;
 
 export default async function NewAssetPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["assets", "view"], ["assets_field", "view"]]);
+  await requireCapability("assets", "create");
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();

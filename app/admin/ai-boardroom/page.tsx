@@ -32,6 +32,7 @@ import { buttonClass } from "@/components/ui/button";
 import { statusStyle, accentClasses } from "./_styles";
 import { EmployeeIcon } from "./_icon";
 import { ApprovalLevelBadge } from "./_cards";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * AI Boardroom — roster grid (CEO Directive 001, Phase 1).
@@ -74,6 +75,9 @@ export default async function AiBoardroomPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const [employees, workforce] = await Promise.all([
     listAiEmployees(),

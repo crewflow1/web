@@ -12,6 +12,7 @@ import { VehicleForm } from "../../../_components/vehicle-form";
 import { StateForm } from "../../../_components/state-form";
 import { Banner, secondaryButtonClass } from "../../../_components/ui";
 import { errorMessage } from "../../../_components/messages";
+import { requireAnyCapability, requireCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,10 @@ export default async function EditVehiclePage({
   params: Params;
   searchParams: SP;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["fleet", "view"], ["fuel_field", "view"]]);
+  await requireCapability("fleet", "edit");
   const { ctx } = await requireOrgContext();
   const { id } = await params;
   const sp = await searchParams;

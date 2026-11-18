@@ -15,6 +15,7 @@ import {
   invoiceBusinessToday,
   invoiceDisplayStatus,
 } from "@/lib/invoices/overdue";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * Invoice detail view.
@@ -46,6 +47,9 @@ export default async function InvoiceDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ error?: string; saved?: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("invoices", "view");
   const { id } = await params;
   const sp = await searchParams;
   // Void-flow feedback (20261219): the voidInvoice action redirects back here

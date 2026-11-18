@@ -33,6 +33,7 @@ import {
   type BlockableInspection,
   type OverrideRow,
 } from "@/lib/assets/inspection-override";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 type AssetRow = {
   id: string;
@@ -133,6 +134,9 @@ export default async function AssetDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ saved?: string; error?: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["assets", "view"], ["assets_field", "view"]]);
   const { id } = await params;
   const sp = await searchParams;
   const { ctx } = await requireOrgContext();

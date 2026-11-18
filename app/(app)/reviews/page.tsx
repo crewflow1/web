@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, requireManagementContext } from "@/server/auth/session";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { EmptyState } from "../_components/empty-state";
 import {
@@ -70,6 +70,9 @@ type ReviewQuery = {
 } & Promise<{ data: ReviewRow[] | null; error: SupabaseReadError | null }>;
 
 export default async function ReviewsPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireManagementContext();
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();

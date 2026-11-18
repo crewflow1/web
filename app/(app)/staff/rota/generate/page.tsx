@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
-import { hasCapability } from "@/server/auth/capabilities";
+import { hasCapability, requireCapability } from "@/server/auth/capabilities";
 import { buildRotaPlan } from "@/server/services/schedule-integrity";
 import { persistGeneratedRota } from "../../actions";
 import { ApproveRotaForm } from "./_approve-form";
@@ -166,6 +166,9 @@ function UnfilledCard({ job }: { job: UnfilledJob }) {
 }
 
 export default async function GenerateRotaPage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("rota", "edit");
   const { ctx, user } = await requireOrgContext();
   const { plan, window } = await buildRotaPlan(ctx.org.id);
   const { assignments, unfilled, summary, insufficient, notes } = plan;

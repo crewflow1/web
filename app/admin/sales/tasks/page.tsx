@@ -28,6 +28,7 @@ import {
 } from "../_components";
 import { inputCls, selectCls } from "../_styles";
 import { enqueueAiTaskAction } from "../actions";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Sales AI — AI Task Queue (CEO Directive 003, scale expansion).
@@ -52,6 +53,9 @@ export default async function SalesTasksPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
 
   const statusFilter = (AI_TASK_STATUSES as readonly string[]).includes(

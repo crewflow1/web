@@ -29,6 +29,7 @@ import {
 } from "../actions";
 import { LeadForm } from "../_form";
 import { AttachmentsPanel } from "@/components/attachments/AttachmentsPanel";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * Lead detail.
@@ -83,6 +84,9 @@ export default async function LeadDetailPage({
   params: Promise<{ id: string }>;
   searchParams: SP;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("leads", "view");
   const { id } = await params;
   const sp = await searchParams;
   const { ctx } = await requireOrgContext();

@@ -7,6 +7,7 @@ import {
   computeMetrics,
   sparklinePoints,
 } from "@/lib/hq/metrics";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * CrewFlow HQ — Section 1, OVERVIEW.
@@ -22,6 +23,9 @@ import {
 const GBP = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
 
 export default async function HqOverviewPage() {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const user = await requireUser();
 
   // Pull the user's first name from public.users for the greeting.

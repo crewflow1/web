@@ -16,6 +16,7 @@ import {
 } from "@/lib/expenses/budget";
 import { FINANCE_CATEGORIES } from "@/lib/finances/schema";
 import { setExpenseBudget, deleteExpenseBudget } from "./actions";
+import { requireAnyCapability, requireCapability } from "@/server/auth/capabilities";
 
 /**
  * /expenses/budgets — org/category operational spend vs a standing budget.
@@ -75,6 +76,10 @@ const SAVED_MAP: Record<string, string> = {
 type SP = Promise<{ error?: string; saved?: string }>;
 
 export default async function ExpenseBudgetsPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["expenses", "view"], ["job_costs_field", "view"]]);
+  await requireCapability("expenses", "view");
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const isManager = ctx.membership.role === "owner" || ctx.membership.role === "admin";

@@ -9,6 +9,7 @@ import {
   type CheckLevel,
   type TemplateStatus,
 } from "@/lib/assets/inspection-template";
+import { requireAnyCapability, requireCapability } from "@/server/auth/capabilities";
 
 export const metadata = { title: "Inspection templates · CrewFlow" };
 
@@ -44,6 +45,10 @@ const ERROR_MAP: Record<string, string> = {
  * versions. History lives on the template page.
  */
 export default async function TemplatesPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["assets", "view"], ["assets_field", "view"]]);
+  await requireCapability("assets", "view");
   const sp = await searchParams;
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();

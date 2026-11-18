@@ -11,6 +11,7 @@ import {
   type CalibrationExpiryState,
   type CalibrationResult,
 } from "@/lib/assets/calibration";
+import { requireAnyCapability, requireCapability } from "@/server/auth/capabilities";
 
 export const metadata = { title: "Calibration register · CrewFlow" };
 
@@ -50,6 +51,10 @@ const EXPIRY_RANK: Record<CalibrationExpiryState, number> = {
  * classified deterministically by the pure module and sorted worst-first.
  */
 export default async function CalibrationRegisterPage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["assets", "view"], ["assets_field", "view"]]);
+  await requireCapability("assets", "view");
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const today = new Date().toISOString().slice(0, 10);

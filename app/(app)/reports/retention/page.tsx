@@ -13,6 +13,7 @@ import { formatGbp } from "@/lib/money";
 import { formatDateShortUK } from "@/lib/time/format";
 import { Badge, StatTile, Table, THead, TBody, TR, TH, TD, type Tone } from "@/components/ui";
 import { EmptyState } from "../../_components/empty-state";
+import { requireCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -75,6 +76,9 @@ function DateCell({ line }: { line: RetentionRegisterLine }) {
 }
 
 export default async function RetentionRegisterPage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("reports", "view");
   const { ctx } = await requireOrgContext();
   if (ctx.membership.role === "staff") redirect("/me");
 

@@ -6,6 +6,7 @@ import { requireOrgContext } from "@/server/auth/session";
 import { ConfirmForm } from "@/components/forms/ConfirmForm";
 import { updateJobTemplate, deleteJobTemplate } from "../actions";
 import { TemplateForm, type TemplateDefaults } from "../_template-form";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * Edit-template page. Admin-only. Loads the template + its milestone/checklist
@@ -18,6 +19,9 @@ export default async function EditJobTemplatePage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("jobs", "manage");
   const { id } = await params;
   const { ctx } = await requireOrgContext();
   const isAdmin =

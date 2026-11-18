@@ -18,6 +18,7 @@ import {
   type WorkType,
 } from "@/lib/weather";
 import { Badge, Table, THead, TBody, TR, TH, TD } from "@/components/ui";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -66,6 +67,9 @@ export const metadata = { title: "Weather · CrewFlow" };
  * STRICTLY READ-ONLY. No form, no server action, no mutation.
  */
 export default async function WeatherPage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["site_safety", "view"], ["site_safety_field", "view"]]);
   const { ctx } = await requireOrgContext();
   const watches = await readWeatherWatches(ctx.org.id);
   // Fold the runtime watch signal into readiness so `available` cannot report

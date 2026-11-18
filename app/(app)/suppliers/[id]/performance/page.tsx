@@ -20,6 +20,7 @@ import {
   PriceSection,
   SettlementSection,
 } from "../../_performance-sections";
+import { requireCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -58,6 +59,9 @@ export default async function SupplierPerformancePage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("suppliers", "view");
   const { id } = await params;
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();

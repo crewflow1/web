@@ -12,6 +12,7 @@ import {
 import { compareSites, formatSiteAddress, siteKindLabel } from "@/lib/sites/schema";
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui";
 import { EmptyState } from "../_components/empty-state";
+import { requireCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,9 @@ const SAVED_MESSAGES: Record<string, string> = {
 type SP = Promise<{ saved?: string; error?: string }>;
 
 export default async function SitesPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("sites", "view");
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const db = supabase as unknown as SitesClient;

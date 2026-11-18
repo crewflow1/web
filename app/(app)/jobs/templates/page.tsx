@@ -4,6 +4,7 @@ import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { EmptyState } from "../../_components/empty-state";
 import { PAGE_SIZE, parsePage, offsetForPage, pageWindow } from "@/lib/jobs/list";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * Job templates list — reusable milestone + checklist blueprints by job type.
@@ -25,6 +26,9 @@ type TemplateRow = {
 };
 
 export default async function JobTemplatesPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("jobs", "manage");
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const isAdmin =

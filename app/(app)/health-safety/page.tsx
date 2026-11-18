@@ -14,6 +14,7 @@ import {
   type RaStatus,
   type RiskBand,
 } from "@/lib/health-safety/rams";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 const RA_FILTERS = [
   { key: "all", label: "All" },
@@ -85,6 +86,9 @@ export default async function HealthSafetyPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["site_safety", "view"], ["site_safety_field", "view"]]);
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
 

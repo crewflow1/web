@@ -26,6 +26,7 @@ import {
 import type { SalesLearningItem } from "@/lib/sales/model";
 import { Chip, EmptyState, Pill, Section, Tile } from "../_components";
 import { inputCls, tonerPill } from "../_styles";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Sales AI — Learning Engine (CEO Directive 004, Phase 7).
@@ -73,6 +74,9 @@ export default async function LearningPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const query = sp.q?.trim() ?? "";
 

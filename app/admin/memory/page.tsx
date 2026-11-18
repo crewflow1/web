@@ -13,6 +13,7 @@ import {
   Tile,
   buildTypeMap,
 } from "./_components";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Shared Memory Engine — CEO dashboard (CEO Directive 002, Phase 2).
@@ -28,6 +29,9 @@ import {
 export const dynamic = "force-dynamic";
 
 export default async function MemoryDashboardPage() {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const [stats, types] = await Promise.all([
     getDashboardStats(),
     listMemoryTypes(),

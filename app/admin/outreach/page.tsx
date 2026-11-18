@@ -14,6 +14,7 @@ import {
 import { searchCompanies } from "@/server/services/hq-sales";
 import { RELATIVE_TIME_PRESETS, relativeTime } from "@/lib/time/relative";
 import { OutreachLauncher, QuickDraftButton, type OutreachCandidate } from "./_launcher";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Outreach AI — section home (CEO Directive 010, Phase 4).
@@ -61,6 +62,9 @@ export default async function OutreachHomePage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const [{ error }, metrics, candidatePage] = await Promise.all([
     searchParams,
     getOutreachMetrics(),

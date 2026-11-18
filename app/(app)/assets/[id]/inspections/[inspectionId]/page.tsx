@@ -17,6 +17,7 @@ import {
 } from "@/lib/assets/inspection-template";
 import { completeTemplatedInspection, saveInspectionAnswers } from "../../../inspection-actions";
 import { InspectionRunForm } from "./_run-form";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 export const metadata = { title: "Inspection · CrewFlow" };
 
@@ -60,6 +61,9 @@ export default async function InspectionRunPage({
   params: Promise<{ id: string; inspectionId: string }>;
   searchParams: Promise<{ saved?: string; error?: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["assets", "view"], ["assets_field", "view"]]);
   const { id: assetId, inspectionId } = await params;
   const sp = await searchParams;
   const { ctx } = await requireOrgContext();

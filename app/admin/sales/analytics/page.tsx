@@ -3,6 +3,7 @@ import { BarChart3, TrendingUp } from "lucide-react";
 import { getSalesAnalytics } from "@/server/services/hq-sales";
 import { formatGbp } from "@/lib/sales/model";
 import { FacetBars, FunnelChart, Section, Tile } from "../_components";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Sales AI — Analytics (CEO Directive 003, Phase 1).
@@ -17,6 +18,9 @@ import { FacetBars, FunnelChart, Section, Tile } from "../_components";
 export const dynamic = "force-dynamic";
 
 export default async function SalesAnalyticsPage() {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const a = await getSalesAnalytics();
 
   const decided = a.counts.won + a.counts.lost + a.counts.disqualified;

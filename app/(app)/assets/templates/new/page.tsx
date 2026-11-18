@@ -3,10 +3,15 @@ import { requireOrgContext } from "@/server/auth/session";
 import { CHECK_LEVELS, CHECK_LEVEL_LABELS } from "@/lib/assets/inspection-template";
 import { StateForm } from "@/components/forms/StateForm";
 import { createTemplate } from "../../template-actions";
+import { requireAnyCapability, requireCapability } from "@/server/auth/capabilities";
 
 export const metadata = { title: "New inspection template · CrewFlow" };
 
 export default async function NewTemplatePage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["assets", "view"], ["assets_field", "view"]]);
+  await requireCapability("assets", "view");
   await requireOrgContext();
 
   return (

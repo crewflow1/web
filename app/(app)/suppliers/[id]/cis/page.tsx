@@ -30,6 +30,7 @@ import {
   requestCisReverification,
   verifyCisWithHmrc,
 } from "./actions";
+import { requireCapability } from "@/server/auth/capabilities";
 
 /**
  * CIS subcontractor profile — the admin surface for a supplier's Construction
@@ -84,6 +85,9 @@ export default async function SupplierCisPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("suppliers", "view");
   const { id } = await params;
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();

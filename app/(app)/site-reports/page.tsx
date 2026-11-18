@@ -11,6 +11,7 @@ import {
   SITE_REPORT_STATUSES,
   type SiteReportStatus,
 } from "@/lib/site-reports/state";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 /**
  * /site-reports — formal, client-ready progress reports. One org-scoped read;
@@ -64,6 +65,9 @@ type ReportQuery = PromiseLike<{ data: ReportRow[] | null; error: SupabaseReadEr
 type SP = Promise<{ status?: string; job?: string; saved?: string; error?: string }>;
 
 export default async function SiteReportsPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["site_safety", "view"], ["site_safety_field", "view"]]);
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();

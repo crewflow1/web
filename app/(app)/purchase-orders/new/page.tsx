@@ -6,12 +6,17 @@ import { createPurchaseOrder } from "../actions";
 import { listPoFormOptions } from "../_data";
 import { loadImportDraftDefaults } from "@/server/services/document-autofill";
 import { ImportPrefillBanner } from "@/components/import/import-prefill-banner";
+import { requireAnyCapability, requireCapability } from "@/server/auth/capabilities";
 
 export default async function NewPurchaseOrderPage({
   searchParams,
 }: {
   searchParams: Promise<{ import?: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["purchase_orders", "view"], ["goods_receiving_field", "view"]]);
+  await requireCapability("purchase_orders", "create");
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const { import: importId } = await searchParams;

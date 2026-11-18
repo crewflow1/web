@@ -2,7 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
 import { readFailure } from "@/lib/supabase/read-failure";
-import { requireOrgContext } from "@/server/auth/session";
+import { requireOrgContext, requireManagementContext } from "@/server/auth/session";
 import { withPreservedOption } from "@/lib/quotes/preserve-option";
 import { CustomerCombobox } from "../../_components/customer-combobox";
 import { createReviewRequestAction } from "../actions";
@@ -28,6 +28,9 @@ export default async function NewReviewRequestPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireManagementContext();
   const { ctx } = await requireOrgContext();
   const sp = await searchParams;
   const supabase = await createClient();

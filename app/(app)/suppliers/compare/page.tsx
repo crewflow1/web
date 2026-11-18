@@ -17,6 +17,7 @@ import { formatGbp } from "@/lib/money";
 import { Badge, Table, THead, TBody, TR, TH, TD } from "@/components/ui";
 import { HowMeasured, NotMeasuredSection } from "../_performance-sections";
 import { EmptyState } from "../../_components/empty-state";
+import { requireCapability } from "@/server/auth/capabilities";
 
 export const dynamic = "force-dynamic";
 
@@ -117,6 +118,9 @@ const SORT_EXPLANATION: Record<SortKey, string> = {
 type SP = Promise<{ sort?: string }>;
 
 export default async function CompareSuppliersPage({ searchParams }: { searchParams: SP }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("suppliers", "view");
   const { ctx } = await requireOrgContext();
   const supabase = await createClient();
   const sp = await searchParams;

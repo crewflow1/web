@@ -7,7 +7,7 @@ import { fetchAllRows } from "@/lib/supabase/paginate";
 import { loadCustomerFinancials } from "@/lib/customers/financials";
 import { loadCustomerCommsTimeline } from "@/lib/customers/comms-timeline";
 import { requireOrgContext } from "@/server/auth/session";
-import { hasCapability } from "@/server/auth/capabilities";
+import { hasCapability, requireCapability } from "@/server/auth/capabilities";
 import { readCustomerPortalToken } from "@/server/services/private-columns";
 import {
   updateCustomer,
@@ -41,6 +41,9 @@ export default async function EditCustomerPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ error?: string; saved?: string; import?: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireCapability("customers", "view");
   const { id } = await params;
   const { error, saved, import: importId } = await searchParams;
 

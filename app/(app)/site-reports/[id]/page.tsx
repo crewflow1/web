@@ -27,6 +27,7 @@ import {
   withdrawFromPortal,
 } from "../actions";
 import { ReportPhotoPicker } from "./_photo-picker";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 type ReportRow = {
   id: string;
@@ -86,6 +87,9 @@ export default async function SiteReportDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ saved?: string; error?: string }>;
 }) {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["site_safety", "view"], ["site_safety_field", "view"]]);
   const { id } = await params;
   const sp = await searchParams;
   const { ctx } = await requireOrgContext();

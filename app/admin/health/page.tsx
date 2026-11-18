@@ -9,6 +9,7 @@ import {
   HEALTH_FILTER_LABEL,
   type HealthDeepDiveFilter,
 } from "@/lib/hq/health-deep-dive";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * Customer Health Deep Dive — /admin/health (HQ-11).
@@ -36,6 +37,9 @@ export default async function HqHealthPage({
 }: {
   searchParams: SP;
 }) {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const sp = await searchParams;
   const filter = (sp.filter as HealthDeepDiveFilter | undefined) ?? "all";
   const q = (sp.q ?? "").trim().toLowerCase();

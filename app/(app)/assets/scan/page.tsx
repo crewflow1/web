@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireOrgContext } from "@/server/auth/session";
 import { AssetScanner } from "./_scanner";
+import { requireAnyCapability } from "@/server/auth/capabilities";
 
 export const metadata = { title: "Scan asset · CrewFlow" };
 
@@ -12,6 +13,9 @@ export const metadata = { title: "Scan asset · CrewFlow" };
  * + RLS.
  */
 export default async function AssetScanPage() {
+  // Page-level copy of the segment gate: a layout's gate does not stop this
+  // page from rendering in parallel, so the page enforces it before any data.
+  await requireAnyCapability([["assets", "view"], ["assets_field", "view"]]);
   await requireOrgContext();
 
   return (

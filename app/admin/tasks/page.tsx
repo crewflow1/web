@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import type { Tone } from "@/components/ui/tokens";
 import { presentTaskState } from "@/lib/hq/presentation-state";
 import { DecisionStateBadge } from "@/app/admin/_components/decision-state";
+import { requireHqPage } from "@/server/auth/hq";
 
 /**
  * AI Task Queue — the unified operator read model for the Generic Task Engine
@@ -69,6 +70,9 @@ const SUMMARY_BUCKETS: ReadonlyArray<QueueBucket> = [
 ];
 
 export default async function TaskQueuePage() {
+  // Page-level HQ gate: the admin layout's gate does not stop this page from
+  // rendering in parallel, so the page enforces it before loading any data.
+  await requireHqPage();
   const overview = await getTaskQueueOverview();
   const { totals, byType, recent, windowSize, windowCap } = overview;
 
