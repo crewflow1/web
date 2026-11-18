@@ -17,6 +17,7 @@ import { OrgSwitcher } from "./_components/org-switcher";
 import { MobileNav } from "./_components/mobile-nav";
 import { NotificationsBell, type Notification } from "./_components/notifications";
 import { SearchPalette } from "./_components/search-palette";
+import { CookieSettingsButton } from "@/app/_components/cookie-settings-button";
 import { HeldCompanyBanner } from "./_components/held-company-banner";
 import { CommitNudge } from "./_components/commit-nudge";
 
@@ -134,6 +135,18 @@ export default async function AppLayout({
           <HeldCompanyBanner status={ctx.org.status} />
           <CommitNudge />
           {children}
+          {/* Legal + the persistent cookie-settings entry point: a signed-in
+              user must be able to review or withdraw their cookie choice from
+              any page, not only from the marketing site's footer. */}
+          <footer className="mt-12 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-200 pt-4 text-xs text-slate-600">
+            <Link href="/privacy" className="hover:text-slate-900 hover:underline">
+              Privacy
+            </Link>
+            <Link href="/terms" className="hover:text-slate-900 hover:underline">
+              Terms
+            </Link>
+            <CookieSettingsButton className="rounded hover:text-slate-900 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400" />
+          </footer>
         </main>
       </div>
       <MobileNav role={ctx.membership.role} locale={locale} flags={navFlags} />

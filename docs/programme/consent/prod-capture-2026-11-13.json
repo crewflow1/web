@@ -1,0 +1,168 @@
+{
+  "capturedAt": "2026-11-13T22:47Z",
+  "target": "https://crewflow.uk (prod sha 8cec66a)",
+  "method": "fresh headless Chromium context per page, no interaction, networkidle + 6s",
+  "sentryEnvelopeOnLoad": {
+    "itemTypes": [
+      "session"
+    ],
+    "payloadKeys": [
+      "sid",
+      "init",
+      "started",
+      "timestamp",
+      "status",
+      "errors",
+      "attrs.release",
+      "attrs.environment",
+      "attrs.user_agent"
+    ]
+  },
+  "pages": [
+    {
+      "path": "/",
+      "status": 200,
+      "totalRequests": 42,
+      "hosts": {
+        "crewflow.uk": 41,
+        "o<org>.ingest.de.sentry.io": 1
+      },
+      "thirdParty": [
+        {
+          "host": "o<org>.ingest.de.sentry.io",
+          "path": "/api/<project>/envelope/",
+          "method": "POST",
+          "type": "fetch"
+        }
+      ],
+      "setCookieResponses": 0,
+      "cookies": [],
+      "localStorage": [],
+      "sessionStorage": [],
+      "indexedDB": [],
+      "cacheStorage": [],
+      "serviceWorkers": [],
+      "bannerVisible": true,
+      "bannerButtons": [
+        "Reject",
+        "Accept"
+      ]
+    },
+    {
+      "path": "/features",
+      "status": 200,
+      "totalRequests": 36,
+      "hosts": {
+        "crewflow.uk": 35,
+        "o<org>.ingest.de.sentry.io": 1
+      },
+      "thirdParty": [
+        {
+          "host": "o<org>.ingest.de.sentry.io",
+          "path": "/api/<project>/envelope/",
+          "method": "POST",
+          "type": "fetch"
+        }
+      ],
+      "setCookieResponses": 0,
+      "cookies": [],
+      "localStorage": [],
+      "sessionStorage": [],
+      "indexedDB": [],
+      "cacheStorage": [],
+      "serviceWorkers": [],
+      "bannerVisible": true,
+      "bannerButtons": [
+        "Reject",
+        "Accept"
+      ]
+    },
+    {
+      "path": "/pricing",
+      "status": 200,
+      "totalRequests": 33,
+      "hosts": {
+        "crewflow.uk": 32,
+        "o<org>.ingest.de.sentry.io": 1
+      },
+      "thirdParty": [
+        {
+          "host": "o<org>.ingest.de.sentry.io",
+          "path": "/api/<project>/envelope/",
+          "method": "POST",
+          "type": "fetch"
+        }
+      ],
+      "setCookieResponses": 0,
+      "cookies": [],
+      "localStorage": [],
+      "sessionStorage": [],
+      "indexedDB": [],
+      "cacheStorage": [],
+      "serviceWorkers": [],
+      "bannerVisible": true,
+      "bannerButtons": [
+        "Reject",
+        "Accept"
+      ]
+    },
+    {
+      "path": "/login",
+      "status": 200,
+      "totalRequests": 28,
+      "hosts": {
+        "crewflow.uk": 27,
+        "o<org>.ingest.de.sentry.io": 1
+      },
+      "thirdParty": [
+        {
+          "host": "o<org>.ingest.de.sentry.io",
+          "path": "/api/<project>/envelope/",
+          "method": "POST",
+          "type": "fetch"
+        }
+      ],
+      "setCookieResponses": 0,
+      "cookies": [],
+      "localStorage": [],
+      "sessionStorage": [],
+      "indexedDB": [],
+      "cacheStorage": [],
+      "serviceWorkers": [],
+      "bannerVisible": true,
+      "bannerButtons": [
+        "Reject",
+        "Accept"
+      ]
+    },
+    {
+      "path": "/privacy",
+      "status": 200,
+      "totalRequests": 28,
+      "hosts": {
+        "crewflow.uk": 27,
+        "o<org>.ingest.de.sentry.io": 1
+      },
+      "thirdParty": [
+        {
+          "host": "o<org>.ingest.de.sentry.io",
+          "path": "/api/<project>/envelope/",
+          "method": "POST",
+          "type": "fetch"
+        }
+      ],
+      "setCookieResponses": 0,
+      "cookies": [],
+      "localStorage": [],
+      "sessionStorage": [],
+      "indexedDB": [],
+      "cacheStorage": [],
+      "serviceWorkers": [],
+      "bannerVisible": true,
+      "bannerButtons": [
+        "Reject",
+        "Accept"
+      ]
+    }
+  ]
+}

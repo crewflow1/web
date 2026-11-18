@@ -28,6 +28,12 @@
  *     one-way hashed, org-derived distinct id (never the raw org UUID — see
  *     `lib/analytics/identity.ts`).
  *   - No secret leakage: the key is read from env only and is NEVER logged.
+ *   - CONSENT-GATED PER REQUEST: even when enabled, an event is captured ONLY
+ *     if the request that caused it carries a stored consent record that
+ *     explicitly granted the analytics category ({@link requestHasAnalyticsConsent}).
+ *     No request context (cron, webhook, background job), no cookie, a denied
+ *     or malformed record, or a withdrawn choice → the event is DROPPED. A
+ *     server emit therefore can never bypass what the browser gate promises.
  *   - Failure isolation: capture is wrapped so a provider/network error can
  *     never propagate into the product action (`trackEvent` also wraps the sink,
  *     giving defence in depth).
@@ -42,6 +48,12 @@ import {
   type SafeEventProperties,
 } from "@/lib/analytics/events";
 import { hashOrgId } from "@/lib/analytics/identity";
+import {
+  CONSENT_COOKIE,
+  categoryAllowed,
+  parseConsentRecord,
+} from "@/lib/analytics/consent";
+import { cookies } from "next/headers";
 
 /**
  * Minimal structural type for the capture client the sink drives. Kept tiny and
@@ -88,6 +100,21 @@ export function serverAnalyticsEnabled(env: ServerAnalyticsEnv): boolean {
 }
 
 /**
+ * Does the CURRENT request carry a consent record that granted analytics?
+ * Reads the same `cf_cookie_consent` record the browser gate reads, through the
+ * same pure decision function. Fails CLOSED: no request scope (cron/webhook),
+ * missing cookie or any error → false.
+ */
+export async function requestHasAnalyticsConsent(): Promise<boolean> {
+  try {
+    const raw = (await cookies()).get(CONSENT_COOKIE)?.value;
+    return categoryAllowed(parseConsentRecord(raw), "analytics", ["analytics"]);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Build an {@link AnalyticsSink} over a capture client. The properties arriving
  * here are ALREADY sanitised by `trackEvent` → `sanitizeEventProperties`, so no
  * PII/money/free-text can reach the client. Org-first: the distinct id is a
@@ -95,8 +122,28 @@ export function serverAnalyticsEnabled(env: ServerAnalyticsEnv): boolean {
  * fixed non-identifying fallback — we never mint a per-person identity
  * server-side. Never throws.
  */
-export function createServerSink(client: ServerCaptureClient): AnalyticsSink {
+export function createServerSink(
+  client: ServerCaptureClient,
+  consentGate: () => Promise<boolean> = requestHasAnalyticsConsent,
+): AnalyticsSink {
   return (event: AnalyticsEventName, properties: SafeEventProperties): void => {
+    try {
+      // Invoke the gate SYNCHRONOUSLY so the request context is still bound.
+      const allowed = consentGate();
+      void allowed
+        .then((ok) => {
+          if (ok) send(event, properties);
+        })
+        .catch(() => {});
+    } catch {
+      // Swallow — a telemetry failure must never surface to the caller.
+    }
+  };
+
+  function send(
+    event: AnalyticsEventName,
+    properties: SafeEventProperties,
+  ): void {
     try {
       const org = properties.org_id;
       // De-identify: the distinct id is a stable one-way hash of the org, never
@@ -107,7 +154,7 @@ export function createServerSink(client: ServerCaptureClient): AnalyticsSink {
     } catch {
       // Swallow — a telemetry/provider failure must never surface to the caller.
     }
-  };
+  }
 }
 
 // ---------------------------------------------------------------------------

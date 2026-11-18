@@ -41,7 +41,30 @@ vi.mock("posthog-node", () => ({
   },
 }));
 
+/**
+ * Per-request consent cookie as seen by `next/headers`. `undefined` = no cookie;
+ * `"throw"` = no request scope at all (cron / webhook / background job).
+ */
+let cookieValue: string | undefined | "throw" = undefined;
+vi.mock("next/headers", () => ({
+  cookies: async () => {
+    if (cookieValue === "throw") {
+      throw new Error("cookies() was called outside a request scope");
+    }
+    return {
+      get: (name: string) =>
+        name === "cf_cookie_consent" && cookieValue !== undefined
+          ? { name, value: cookieValue }
+          : undefined,
+    };
+  },
+}));
+
+const GRANTED = "v2.t1794609958.analytics1.performance0";
+const flush = () => new Promise((r) => setTimeout(r, 0));
+
 beforeEach(() => {
+  cookieValue = GRANTED;
   __resetServerAnalyticsForTest();
   posthogCaptures.length = 0;
   posthogCtor.mockClear();
@@ -103,6 +126,7 @@ describe("ensureServerAnalyticsSink — no-op while dark", () => {
     expect((opts as { host: string }).host).toBe("https://eu.i.posthog.com");
 
     trackEvent(ANALYTICS_EVENTS.PAYMENT_RECORDED, { org_id: "org_42", method: "card" });
+    await flush();
     expect(posthogCaptures).toEqual([
       {
         // De-identified: a stable one-way hash, never the raw org id.
@@ -122,7 +146,7 @@ describe("ensureServerAnalyticsSink — no-op while dark", () => {
 });
 
 describe("createServerSink", () => {
-  it("(c) forwards a typed event with the right (sanitised) shape to the client", () => {
+  it("(c) forwards a typed event with the right (sanitised) shape to the client", async () => {
     const calls: Array<{
       distinctId: string;
       event: string;
@@ -138,6 +162,7 @@ describe("createServerSink", () => {
       customer_email: "leak@no.com", // PII — must be stripped
       invoice_amount: 999, // money — must be stripped
     });
+    await flush();
 
     expect(calls).toHaveLength(1);
     expect(calls[0]).toEqual({
@@ -150,16 +175,17 @@ describe("createServerSink", () => {
     expect(calls[0]!.distinctId.startsWith("org_")).toBe(true);
   });
 
-  it("uses a non-identifying fallback distinct id when org_id is absent", () => {
+  it("uses a non-identifying fallback distinct id when org_id is absent", async () => {
     const calls: Array<{ distinctId: string }> = [];
     const sink = createServerSink({ capture: (p) => calls.push(p) });
     sink(ANALYTICS_EVENTS.AI_GOVERNOR_REJECTED as AnalyticsEventName, {
       outcome: "ceiling",
     } as SafeEventProperties);
+    await flush();
     expect(calls[0]!.distinctId).toBe("server");
   });
 
-  it("(d) a throwing client never propagates out of the sink", () => {
+  it("(d) a throwing client never propagates out of the sink", async () => {
     const sink = createServerSink({
       capture: () => {
         throw new Error("provider boom");
@@ -174,5 +200,50 @@ describe("createServerSink", () => {
     // …and the same via trackEvent (defence in depth) never breaks the caller.
     setAnalyticsSink(sink);
     expect(() => trackEvent(ANALYTICS_EVENTS.PAYMENT_RECORDED, { org_id: "o" })).not.toThrow();
+    await flush();
+  });
+});
+
+describe("server capture is gated on the request's recorded consent", () => {
+  async function emitWith(value: typeof cookieValue): Promise<number> {
+    cookieValue = value;
+    const calls: unknown[] = [];
+    setAnalyticsSink(createServerSink({ capture: (p) => calls.push(p) }));
+    trackEvent(ANALYTICS_EVENTS.JOB_CREATED, { org_id: "org_1" });
+    await flush();
+    return calls.length;
+  }
+
+  it("captures when the request carries analytics=granted", async () => {
+    expect(await emitWith(GRANTED)).toBe(1);
+  });
+
+  it("captures nothing without a consent cookie", async () => {
+    expect(await emitWith(undefined)).toBe(0);
+  });
+
+  it("captures nothing when analytics is denied (performance-only grant too)", async () => {
+    expect(await emitWith("v2.t1794609958.analytics0.performance0")).toBe(0);
+    expect(await emitWith("v2.t1794609958.analytics0.performance1")).toBe(0);
+  });
+
+  it("captures nothing for a malformed or tampered record (fails closed)", async () => {
+    expect(await emitWith("granted-ish")).toBe(0);
+    expect(await emitWith("v2.t1794609958.analytics2")).toBe(0);
+    expect(await emitWith("")).toBe(0);
+  });
+
+  it("captures nothing with no request scope (cron / webhook / background)", async () => {
+    expect(await emitWith("throw")).toBe(0);
+  });
+
+  it("end-to-end: an ENABLED server sink still drops events without consent", async () => {
+    await ensureServerAnalyticsSink({ enabled: "true", key: "phc_x" });
+    cookieValue = undefined;
+    trackEvent(ANALYTICS_EVENTS.QUOTE_ACCEPTED, { org_id: "o", channel: "portal_token" });
+    cookieValue = "v2.t1794609958.analytics0.performance0";
+    trackEvent(ANALYTICS_EVENTS.QUOTE_SENT, { org_id: "o" });
+    await flush();
+    expect(posthogCaptures).toHaveLength(0);
   });
 });
