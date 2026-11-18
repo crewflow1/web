@@ -568,6 +568,15 @@ const envSchema = z.object({
   // service_role-only and enforces the statutory/financial/audit exclusion
   // allowlist regardless. Activation is a single, reversible config flip.
   FEATURE_RETENTION_PURGE: z.enum(["true", "false"]).default("false"),
+  // Account & data deletion (self-service account deletion, owner company
+  // deletion, admin staff erasure) — DEFAULTS OFF (server-only; never inlined
+  // into a client bundle). While off the daily drain of due deletion requests is
+  // inert and no deletion entry point may run. Flipping it to "true" is NOT
+  // enough to delete anything: every deletion additionally requires the right
+  // role and a typed confirmation that are re-proved in the database
+  // (privacy_request_create), and a company deletion waits out a 7-day
+  // cancellable cooling-off. See docs/programme/deletion/DELETION-DESIGN.md.
+  FEATURE_ACCOUNT_DELETION: z.enum(["true", "false"]).default("false"),
   // HMRC MTD connect surface — DEFAULTS OFF. While off the HMRC connect/callback
   // routes 503, isHmrcConnectable() returns false regardless of credentials, and
   // the settings surface renders "not configured". The SECOND switch is the HMRC
