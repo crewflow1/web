@@ -98,6 +98,15 @@ export async function PUT(request: NextRequest, { params }: Ctx) {
     .eq("org_id", ctx.org.id);
 
   if (error) {
+    // A move that would put the start after the job's end date (or clear the
+    // start of a multi-day job) violates jobs_span_forward. That is the
+    // caller's input, not a server fault: answer 422 with what to do instead.
+    if (error.code === "23514" && /jobs_span_forward/.test(error.message ?? "")) {
+      return respond.error(
+        422,
+        "That date is after this job's end date. Change the job's end date first, or pick an earlier start.",
+      );
+    }
     console.error("[schedule] update failed", error);
     return respond.error(500, "Failed to update");
   }

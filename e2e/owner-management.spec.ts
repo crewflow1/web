@@ -383,6 +383,10 @@ test.describe("owner & admin management persists, and lesser roles are refused",
         // next goto is then interrupted by the pending navigation to /me.
         await page.waitForURL(/\/me(\?|$)/, { timeout: 15_000 });
         await page.waitForLoadState("networkidle");
+        // The refusal ends in a full-page same-URL reload to /me that can land AFTER the
+        // waits above are already satisfied (same-URL reload race) and abort the next goto.
+        // Continue in a FRESH page of the same signed-in session: nothing is in flight there.
+        page = await page.context().newPage();
       }
 
       await page.goto("/staff");
@@ -486,6 +490,9 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await page.waitForLoadState("networkidle");
       await expect(page).not.toHaveURL(/saved=role/);
       expect(await memRole(orgA, "profileTarget")).toBe("staff");
+      // A refused form submission can end in a same-URL reload that lands after networkidle and
+      // aborts the next goto (same-URL reload race). Continue in a fresh page of the same session.
+      page = await page.context().newPage();
 
       // Change a fellow admin's role -> refused.
       await page.goto(`/staff/${ids.adminTarget}`);
@@ -495,6 +502,7 @@ test.describe("owner & admin management persists, and lesser roles are refused",
       await page.waitForLoadState("networkidle");
       await expect(page).not.toHaveURL(/saved=role/);
       expect(await memRole(orgA, "adminTarget")).toBe("admin");
+      page = await page.context().newPage(); // same-URL reload race (see above)
 
       // The owner's record offers no Remove and a disabled role control.
       await page.goto(`/staff/${ids.owner}`);
