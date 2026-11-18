@@ -5,7 +5,7 @@ import {
   type SetupFeeStatus,
 } from "@/lib/hq/customer-financials";
 import { readFailure, reportReadFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
-import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
+import { fetchAllRows, fetchAllRowsForIds, IN_ID_CHUNK, type PageResult } from "@/lib/supabase/paginate";
 import type {
   AlertOrg,
   AlertInvoice,
@@ -203,13 +203,14 @@ export async function buildAlertsSnapshot(): Promise<AlertsSnapshotResult> {
   //    (.in on the full estate id set) folds into the alert money rules; a
   //    max_rows=1000 clamp silently drops invoices. Stable total order
   //    (created_at, id).
-  const invRes = await fetchAllRows<InvoiceRow>(
-    (from, to) =>
+  const invRes = await fetchAllRowsForIds<InvoiceRow>(
+    orgIds,
+    (chunk, from, to) =>
       untypedAdminTable("billing_invoices")
         .select(
           "id, org_id, kind, status, amount_gbp, due_date, sent_at, paid_at, failed_at, created_at",
         )
-        .in("org_id", orgIds)
+        .in("org_id", chunk)
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to) as PromiseLike<PageResult<InvoiceRow>>,
@@ -219,10 +220,16 @@ export async function buildAlertsSnapshot(): Promise<AlertsSnapshotResult> {
 
   // 3. Imports — most-recent per-org slice. We pull every row for
   // these orgs and let the rules engine pick the in-flight ones.
-  const impRes = await untypedAdminTable("imports")
-    .select("id, org_id, status, created_at, committed_at")
-    .in("org_id", orgIds)
-    .order("created_at", { ascending: false });
+  // Id-chunked + PAGED: the estate id list in one `.in()` overflows the URL at
+  // ~200 orgs ("URI too long"), and a bare read is clamped at max_rows=1000.
+  const impRes = await fetchAllRowsForIds<ImportRow>(orgIds, (chunk, from, to) =>
+    untypedAdminTable("imports")
+      .select("id, org_id, status, created_at, committed_at")
+      .in("org_id", chunk)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to) as unknown as PromiseLike<PageResult<ImportRow>>,
+  );
   if (impRes.error) throw readFailure("hq alerts: imports", impRes.error);
   const importsRaw = (impRes.data ?? []) as unknown as ImportRow[];
 
@@ -232,16 +239,20 @@ export async function buildAlertsSnapshot(): Promise<AlertsSnapshotResult> {
   const importIds = importsRaw.map((i) => i.id);
   const lastRowByOrg = new Map<string, string>();
   if (importIds.length > 0) {
-    const rowsRes = await untypedAdminTable("import_rows")
-      .select("import_id, updated_at")
-      .in("import_id", importIds)
-      .order("updated_at", { ascending: false })
-      .limit(1000);
-    if (rowsRes.error) throw readFailure("hq alerts: import rows", rowsRes.error);
-    const rows = (rowsRes.data ?? []) as unknown as Array<{
-      import_id: string;
-      updated_at: string | null;
-    }>;
+    // Chunked so the import-id list never overflows the URL; each chunk keeps
+    // the existing bounded "most recent 1000 rows" approximation.
+    const rows: Array<{ import_id: string; updated_at: string | null }> = [];
+    for (let i = 0; i < importIds.length; i += IN_ID_CHUNK) {
+      const rowsRes = await untypedAdminTable("import_rows")
+        .select("import_id, updated_at")
+        .in("import_id", importIds.slice(i, i + IN_ID_CHUNK))
+        .order("updated_at", { ascending: false })
+        .limit(1000);
+      if (rowsRes.error) throw readFailure("hq alerts: import rows", rowsRes.error);
+      rows.push(
+        ...((rowsRes.data ?? []) as unknown as Array<{ import_id: string; updated_at: string | null }>),
+      );
+    }
     // Map import_id → org_id once.
     const importIdToOrg = new Map<string, string>();
     for (const imp of importsRaw) importIdToOrg.set(imp.id, imp.org_id);
@@ -259,12 +270,13 @@ export async function buildAlertsSnapshot(): Promise<AlertsSnapshotResult> {
   // PAGED (F-1): `orgIds` is the estate roster, so this cross-tenant demo read
   // returns up to one row per estate org and a bare select clamped at max_rows
   // (1000) would silently drop demos past the cap from the alerts board. Page it.
-  const demoRes = await fetchAllRows<DemoRow>(
-    (from, to) =>
+  const demoRes = await fetchAllRowsForIds<DemoRow>(
+    orgIds,
+    (chunk, from, to) =>
       untypedAdminTable("demo_requests")
         // linked_org_id is the real column; alias it to org_id for the row shape.
         .select("id, org_id:linked_org_id, email, company, status, created_at, approved_at")
-        .in("linked_org_id", orgIds)
+        .in("linked_org_id", chunk)
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to) as unknown as PromiseLike<PageResult<DemoRow>>,
@@ -273,12 +285,17 @@ export async function buildAlertsSnapshot(): Promise<AlertsSnapshotResult> {
   const demosRaw = (demoRes.data ?? []) as unknown as DemoRow[];
 
   // 6. Alert state overlay.
-  const stateRes = await untypedAdminTable("admin_alert_state")
-    .select(
-      "rule_id, org_id, read_at, snoozed_until, resolved_at, assigned_to, resolution_note",
-    )
-    .in("org_id", orgIds)
-    .order("updated_at", { ascending: false });
+  const stateRes = await fetchAllRowsForIds<AlertStateRow>(orgIds, (chunk, from, to) =>
+    untypedAdminTable("admin_alert_state")
+      .select(
+        "rule_id, org_id, read_at, snoozed_until, resolved_at, assigned_to, resolution_note",
+      )
+      .in("org_id", chunk)
+      .order("updated_at", { ascending: false })
+      .order("rule_id", { ascending: true })
+      .order("org_id", { ascending: true })
+      .range(from, to) as unknown as PromiseLike<PageResult<AlertStateRow>>,
+  );
   if (stateRes.error) throw readFailure("hq alerts: alert state", stateRes.error);
   const statesRaw = (stateRes.data ?? []) as unknown as AlertStateRow[];
 
@@ -359,12 +376,13 @@ export async function getOwnerContactsForOrgs(
   // max_rows (1000) once the estate crosses 1000 alerting orgs. A bare select
   // would then silently drop the owner contact for the overflow orgs from the
   // action row. Page the complete set on the unique `user_id` order.
-  const { data, error } = await fetchAllRows<OwnerContactPageRow>(
-    (from, to) =>
+  const { data, error } = await fetchAllRowsForIds<OwnerContactPageRow>(
+    orgIds as string[],
+    (chunk, from, to) =>
       admin
         .from("memberships")
         .select("org_id, user_id, user:users ( full_name, email, phone )")
-        .in("org_id", orgIds as string[])
+        .in("org_id", chunk)
         .eq("role", "owner")
         .order("user_id", { ascending: true })
         .range(from, to) as unknown as PromiseLike<PageResult<OwnerContactPageRow>>,

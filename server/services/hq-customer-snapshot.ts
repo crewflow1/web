@@ -11,7 +11,7 @@ import {
 } from "@/lib/hq/customer-financials";
 import type { OrgStatus } from "@/server/auth/session";
 import { readFailure } from "@/lib/supabase/read-failure";
-import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
+import { fetchAllRows, fetchAllRowsForIds, type PageResult } from "@/lib/supabase/paginate";
 
 /**
  * CrewFlow HQ — Customers OS per-customer snapshot.
@@ -502,12 +502,13 @@ export async function listCustomersForHq(): Promise<CustomerListRow[]> {
   // above), so this cross-tenant owner read returns ~1 row per org over the whole
   // estate. A bare select clamped at max_rows (1000) would drop the owner email
   // for every org past 1000 from the customer snapshot with no error. Page it.
-  const { data: ownerships } = await fetchAllRows<OwnerRow>(
-    (from, to) =>
+  const { data: ownerships } = await fetchAllRowsForIds<OwnerRow>(
+    ids,
+    (chunk, from, to) =>
       admin
         .from("memberships")
         .select("org_id, user:users ( full_name, email )")
-        .in("org_id", ids)
+        .in("org_id", chunk)
         .eq("role", "owner")
         .order("id", { ascending: true })
         .range(from, to) as unknown as PromiseLike<PageResult<OwnerRow>>,

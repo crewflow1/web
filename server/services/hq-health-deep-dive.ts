@@ -1,6 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
+import { fetchAllRows, fetchAllRowsForIds, type PageResult } from "@/lib/supabase/paginate";
 import type { HealthDeepDiveRow } from "@/lib/hq/health-deep-dive";
 
 /**
@@ -116,11 +116,12 @@ export async function listHealthDeepDive(): Promise<HealthDeepDiveRow[]> {
   //    orgs (1000 / 5-per-org), silently starved the tail of the estate of ANY
   //    trend. Paging reads the complete cross-tenant set; the global desc order
   //    (recomputed_at, id) still puts each org's newest 5 first for the slice.
-  const { data: events, error: eventsError } = await fetchAllRows<HealthEventRow>(
-    (from, to) =>
+  const { data: events, error: eventsError } = await fetchAllRowsForIds<HealthEventRow>(
+    orgIds,
+    (chunk, from, to) =>
       table("health_score_events")
         .select("org_id, new_score, recomputed_at")
-        .in("org_id", orgIds)
+        .in("org_id", chunk)
         .order("recomputed_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to) as PromiseLike<PageResult<HealthEventRow>>,
@@ -145,11 +146,12 @@ export async function listHealthDeepDive(): Promise<HealthDeepDiveRow[]> {
   //    Best-effort like the sibling reads: on a mid-page error we log and use the
   //    partial set fetchAllRows hands back rather than throwing the whole snapshot.
   //    Stable total order on the unique `id` so no row shifts across a page edge.
-  const { data: tickets, error: ticketsError } = await fetchAllRows<TicketRow>(
-    (from, to) =>
+  const { data: tickets, error: ticketsError } = await fetchAllRowsForIds<TicketRow>(
+    orgIds,
+    (chunk, from, to) =>
       table("support_tickets")
         .select("org_id, status, priority")
-        .in("org_id", orgIds)
+        .in("org_id", chunk)
         .order("id", { ascending: true })
         .range(from, to) as PromiseLike<PageResult<TicketRow>>,
   );
@@ -176,11 +178,12 @@ export async function listHealthDeepDive(): Promise<HealthDeepDiveRow[]> {
   //    into the outstanding_gbp / failed_90d money figures; a max_rows=1000 clamp
   //    silently understates the estate's arrears. Stable total order
   //    (created_at, id).
-  const { data: invoices, error: invoicesError } = await fetchAllRows<InvoiceRow>(
-    (from, to) =>
+  const { data: invoices, error: invoicesError } = await fetchAllRowsForIds<InvoiceRow>(
+    orgIds,
+    (chunk, from, to) =>
       table("billing_invoices")
         .select("id, org_id, status, amount_gbp, failed_at")
-        .in("org_id", orgIds)
+        .in("org_id", chunk)
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to) as PromiseLike<PageResult<InvoiceRow>>,
@@ -217,11 +220,12 @@ export async function listHealthDeepDive(): Promise<HealthDeepDiveRow[]> {
   //    the 7-day cutoff is still applied in JS. Stable total order
   //    (created_at, id).
   const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
-  const { data: notifs, error: notifsError } = await fetchAllRows<NotificationRow>(
-    (from, to) =>
+  const { data: notifs, error: notifsError } = await fetchAllRowsForIds<NotificationRow>(
+    orgIds,
+    (chunk, from, to) =>
       table("notifications")
         .select("id, org_id, created_at, audience")
-        .in("org_id", orgIds)
+        .in("org_id", chunk)
         .in("audience", ["hq", "both"])
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })

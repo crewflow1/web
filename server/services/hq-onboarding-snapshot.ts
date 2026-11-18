@@ -1,6 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { fetchAllRows, type PageResult } from "@/lib/supabase/paginate";
+import { fetchAllRows, fetchAllRowsForIds, type PageResult } from "@/lib/supabase/paginate";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import type { OrgStatus } from "@/server/auth/session";
 import {
@@ -39,19 +39,26 @@ type HqBuilder = PromiseLike<{ data: HqRow[] | null; error: unknown }> & {
 type HqLoose = { from: (t: string) => HqBuilder };
 
 /** Page a cross-tenant set read on a stable `orderKey` (default unique `id`). */
-function hqPaged(
+/**
+ * `hqPaged` for an estate-wide id list: the ids are chunked (lib/supabase/paginate
+ * IN_ID_CHUNK) so the `.in()` never overflows the request URL ("URI too long" at
+ * ~200 orgs), and each chunk is fully paged.
+ */
+function hqPagedForIds(
   loose: HqLoose,
   table: string,
   cols: string,
-  apply: (b: HqBuilder) => HqBuilder,
+  ids: readonly string[],
+  apply: (b: HqBuilder, chunk: string[]) => HqBuilder,
   orderKey = "id",
 ): Promise<{ data: HqRow[]; error: unknown }> {
-  return fetchAllRows<HqRow>((from, to) =>
-    apply(loose.from(table).select(cols))
+  return fetchAllRowsForIds<HqRow>(ids, (chunk, from, to) =>
+    apply(loose.from(table).select(cols), chunk)
       .order(orderKey, { ascending: true })
       .range(from, to),
   );
 }
+
 
 export type OnboardingRow = {
   org_id: string;
@@ -162,11 +169,10 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
     org_id: string;
     user: { full_name: string | null; email: string } | null;
   };
-  const { data: ownerships } = await hqPaged(
+  const { data: ownerships } = await hqPagedForIds(
     loose,
     "memberships",
-    "org_id, user:users ( full_name, email )",
-    (b) => b.in("org_id", ids).eq("role", "owner"),
+    "org_id, user:users ( full_name, email )", ids, (b, chunk) => b.in("org_id", chunk).eq("role", "owner"),
   );
   const ownerByOrg = new Map(
     ((ownerships ?? []) as unknown as OwnerRow[]).map((r) => [
@@ -187,11 +193,10 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
     committed_at: string | null;
     rolled_back_at: string | null;
   };
-  const { data: importsRaw, error: importsError } = await hqPaged(
+  const { data: importsRaw, error: importsError } = await hqPagedForIds(
     loose,
     "imports",
-    "id, org_id, status, created_at, committed_at, rolled_back_at",
-    (b) => b.in("org_id", ids),
+    "id, org_id, status, created_at, committed_at, rolled_back_at", ids, (b, chunk) => b.in("org_id", chunk),
   );
   if (importsError) throw readFailure("hq-onboarding-snapshot: imports", importsError as SupabaseReadError);
   const imports = ((importsRaw ?? []) as unknown as ImportRow[]);
@@ -205,11 +210,10 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
 
   // ---------- Files (count per org via FK) ----------
   type FileRow = { id: string; org_id: string };
-  const { data: filesRaw, error: filesError } = await hqPaged(
+  const { data: filesRaw, error: filesError } = await hqPagedForIds(
     loose,
     "import_files",
-    "id, org_id",
-    (b) => b.in("org_id", ids),
+    "id, org_id", ids, (b, chunk) => b.in("org_id", chunk),
   );
   if (filesError) throw readFailure("hq-onboarding-snapshot: import files", filesError as SupabaseReadError);
   const files = ((filesRaw ?? []) as unknown as FileRow[]);
@@ -223,11 +227,10 @@ export async function listOnboardingForHq(): Promise<OnboardingRow[]> {
   // bucket. RLS doesn't apply with service-role; we filter via the
   // org_ids we already know.
   type ImportRowRow = { org_id: string; status: string };
-  const { data: rowRowsRaw, error: rowRowsError } = await hqPaged(
+  const { data: rowRowsRaw, error: rowRowsError } = await hqPagedForIds(
     loose,
     "import_rows",
-    "id, org_id, status",
-    (b) => b.in("org_id", ids),
+    "id, org_id, status", ids, (b, chunk) => b.in("org_id", chunk),
   );
   if (rowRowsError) throw readFailure("hq-onboarding-snapshot: import rows", rowRowsError as SupabaseReadError);
   const rowRows = ((rowRowsRaw ?? []) as unknown as ImportRowRow[]);
@@ -338,14 +341,14 @@ async function buildHqChecklistProgress(
   const loose = admin as unknown as HqLoose;
   const [membersRes, customersRes, invoicesRes, quotesRes, importsCommittedRes] =
     await Promise.all([
-      hqPaged(loose, "memberships", "org_id, role", (b) =>
-        b.in("org_id", ids).neq("role", "owner"),
+      hqPagedForIds(loose, "memberships", "org_id, role", ids, (b, chunk) =>
+        b.in("org_id", chunk).neq("role", "owner"),
       ),
-      hqPaged(loose, "customers", "org_id", (b) => b.in("org_id", ids)),
-      hqPaged(loose, "invoices", "org_id", (b) => b.in("org_id", ids)),
-      hqPaged(loose, "quotes", "org_id", (b) => b.in("org_id", ids)),
-      hqPaged(loose, "imports", "org_id", (b) =>
-        b.in("org_id", ids).eq("status", "committed"),
+      hqPagedForIds(loose, "customers", "org_id", ids, (b, chunk) => b.in("org_id", chunk)),
+      hqPagedForIds(loose, "invoices", "org_id", ids, (b, chunk) => b.in("org_id", chunk)),
+      hqPagedForIds(loose, "quotes", "org_id", ids, (b, chunk) => b.in("org_id", chunk)),
+      hqPagedForIds(loose, "imports", "org_id", ids, (b, chunk) =>
+        b.in("org_id", chunk).eq("status", "committed"),
       ),
     ]);
 
