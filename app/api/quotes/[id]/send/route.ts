@@ -79,6 +79,14 @@ export async function POST(request: NextRequest, { params }: Ctx) {
         );
       case "not_found":
         return NextResponse.json({ error: "not_found" }, { status: 404 });
+      case "not_sendable":
+        return NextResponse.json(
+          {
+            error: "not_sendable",
+            detail: "Only an approved quote can be emailed. Request approval first.",
+          },
+          { status: 409 },
+        );
       case "no_recipient":
         return NextResponse.json(
           {

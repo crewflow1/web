@@ -9,6 +9,7 @@ import { sendEmail } from "@/lib/email/send";
 import { buildQuoteEmail } from "@/lib/email/templates/quote";
 import { resolveOrgLogoSrc } from "@/server/services/company-logo";
 import { env } from "@/lib/env";
+import { EMAILABLE_STATUSES, type QuoteStatus } from "@/lib/quotes/schema";
 
 /**
  * Render + email a quote PDF, with a portal link the customer uses to view,
@@ -21,7 +22,7 @@ import { env } from "@/lib/env";
 
 export type SendQuoteEmailResult =
   | { sent: true; emailId: string; to: string; sent_at: string; new_status: string; portal_url: string }
-  | { sent: false; reason: "no_resend_key" | "not_found" | "no_recipient" | "invalid_recipient" | "load_failed" | "send_failed"; detail?: string };
+  | { sent: false; reason: "no_resend_key" | "not_found" | "not_sendable" | "no_recipient" | "invalid_recipient" | "load_failed" | "send_failed"; detail?: string };
 
 type QuoteJoined = {
   id: string;
@@ -98,6 +99,15 @@ export async function sendQuoteEmail(
     return { sent: false, reason: "load_failed", detail: "Couldn't load the quote." };
   }
   if (!quote) return { sent: false, reason: "not_found" };
+  // APPROVAL GATE — the same rule as sendQuote(): only an approved quote goes to the
+  // customer (and a sent/viewed one may be re-sent). Emailing flips the status to
+  // "sent" and mints the portal link, and a "sent" quote can be accepted online —
+  // so without this a draft, an unapproved or a rejected price could be emailed and
+  // accepted, creating a job and an invoice nobody approved. The page only shows the
+  // button for these statuses; the server must refuse the rest.
+  if (!EMAILABLE_STATUSES.includes(quote.status as QuoteStatus)) {
+    return { sent: false, reason: "not_sendable", detail: quote.status };
+  }
 
   const recipient = options.to ?? quote.customer?.email ?? null;
   if (!recipient) return { sent: false, reason: "no_recipient" };

@@ -20,8 +20,19 @@ export type QuoteTotals = {
   lines: Array<{ line_total: number; line_vat: number }>;
 };
 
+/**
+ * Round to the penny, half away from zero — the same rule Postgres `round(x, 2)`
+ * applies to the VAT the database computes itself (billing-plan stages, cost log).
+ *
+ * `Math.round(n * 100)` alone is NOT that rule: the scaled value is binary
+ * floating point and often lands a hair below .5, so some halves went down and
+ * others up (2.90 × 5% = 0.145 → 0.14, while 0.10 × 5% = 0.005 → 0.01). Snapping
+ * the scaled value to 6 decimal places first removes that representation error
+ * (many orders of magnitude below a penny) before the half-up decision.
+ */
 function round2(n: number): number {
-  return Math.round(n * 100) / 100;
+  const pence = Math.round(Number((Math.abs(n) * 100).toFixed(6)));
+  return (n < 0 ? -pence : pence) / 100;
 }
 
 export function computeTotals(items: LineItem[]): QuoteTotals {

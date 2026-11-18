@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getRequestI18n } from "@/server/i18n/request";
+import { hasCapability } from "@/server/auth/capabilities";
 import { EmptyState } from "../_components/empty-state";
 import { HelpLink } from "../_components/help-link";
 import { ImportButton } from "@/components/import/import-button";
@@ -78,8 +79,14 @@ const JOB_SELECT = `
 const CUSTOMER_MATCH_LIMIT = 200;
 
 export default async function JobsPage({ searchParams }: { searchParams: SP }) {
-  const { ctx, t } = await getRequestI18n();
+  const { ctx, user, t } = await getRequestI18n();
   const sp = await searchParams;
+  // Offer only what the server allows (D-17): /jobs/new + job import need jobs:create and
+  // /jobs/templates needs jobs:manage, so plain staff were shown three buttons that sent them home.
+  const [canCreateJobs, canManageJobs] = await Promise.all([
+    hasCapability(ctx, user, "jobs", "create"),
+    hasCapability(ctx, user, "jobs", "manage"),
+  ]);
   const customerFilter =
     sp.customer && UUID_RE.test(sp.customer) ? sp.customer : null;
   const term = (sp.q ?? "").trim();
@@ -206,26 +213,32 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
               : `${totalCount} ${totalCount === 1 ? "job" : "jobs"}`}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Link
             href="/jobs/calendar"
             className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
             Calendar
           </Link>
-          <Link
-            href="/jobs/templates"
-            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            Templates
-          </Link>
-          <ImportButton formType="job" />
-          <Link
-            href="/jobs/new"
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-          >
-            {t("jobs.action.new")}
-          </Link>
+          {canManageJobs ? (
+            <Link
+              href="/jobs/templates"
+              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Templates
+            </Link>
+          ) : null}
+          {canCreateJobs ? (
+            <>
+              <ImportButton formType="job" />
+              <Link
+                href="/jobs/new"
+                className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+              >
+                {t("jobs.action.new")}
+              </Link>
+            </>
+          ) : null}
         </div>
       </header>
 
@@ -316,8 +329,8 @@ export default async function JobsPage({ searchParams }: { searchParams: SP }) {
             icon="🔧"
             title={t("jobs.empty.title")}
             body={t("jobs.empty.body")}
-            primary={{ href: "/jobs/new", label: t("jobs.empty.primary") }}
-            secondary={{ href: "/customers/new", label: t("jobs.empty.secondary") }}
+            primary={canCreateJobs ? { href: "/jobs/new", label: t("jobs.empty.primary") } : undefined}
+            secondary={canCreateJobs ? { href: "/customers/new", label: t("jobs.empty.secondary") } : undefined}
           />
         </div>
       ) : rows.length === 0 ? (
@@ -506,13 +519,13 @@ function MobileJobCard({ job }: { job: JobRow }) {
       </div>
 
       {address ? (
-        <p className="mt-2 text-xs text-slate-600">
+        <p className="mt-2 break-words text-xs text-slate-600">
           {formatAddressOneLine(address)}
         </p>
       ) : null}
 
       {job.notes ? (
-        <p className="mt-1 line-clamp-2 text-xs text-slate-500">{job.notes}</p>
+        <p className="mt-1 line-clamp-2 break-words text-xs text-slate-500">{job.notes}</p>
       ) : null}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
