@@ -39,6 +39,7 @@ import {
   extensionForMime,
   isAllowedAutofillMime,
 } from "@/lib/imports/autofill/mime";
+import { cleanUploadBytes } from "@/lib/uploads/strip-image-metadata";
 
 const BUCKET = "form-imports";
 const DRAFTS = "form_import_drafts";
@@ -128,7 +129,13 @@ export async function startDocumentImport(
   const mime = file.type || "";
   if (!isAllowedAutofillMime(mime)) return { ok: false, error: "unsupported_file" };
 
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bytes: Uint8Array;
+  try {
+    // PD-4: strip EXIF/GPS from photographed documents before storage / extraction.
+    bytes = await cleanUploadBytes(await file.arrayBuffer());
+  } catch {
+    return { ok: false, error: "unsupported_file" };
+  }
   const draftId = crypto.randomUUID();
   // Path: `{org}/{draft}/document.{ext}`. The filename is synthesised, never the
   // user's — a crafted filename can neither traverse the path nor change the org

@@ -1,15 +1,13 @@
-import {
-  signInWithGoogle,
-  signInWithMagicLink,
-  signInWithMicrosoft,
-} from "../actions";
+import { signInWithGoogle, signInWithMicrosoft } from "../actions";
 import { EmailPasswordForm } from "../_email-password-form";
+import { MagicLinkForm } from "../_magic-link.client";
 import { env } from "@/lib/env";
 
+// No `email` parameter: an address in a URL reaches request logs, history and
+// analytics page views (privacy finding G-10). Nothing redirects here with one.
 type SearchParams = Promise<{
   error?: string;
   next?: string;
-  email?: string;
 }>;
 
 // Messages map. Errors that are recoverable by "request a new magic link"
@@ -51,6 +49,18 @@ const ERROR_MESSAGES: Record<
     msg: "Your account exists but a setup step failed. Try signing in again, if it persists, email hello@crewflow.uk.",
     recoverable: true,
   },
+  oauth_start_failed: {
+    msg: "We couldn't start the sign-in. Please try again.",
+    recoverable: false,
+  },
+  rate_limited: {
+    msg: "Too many sign-in attempts. Please wait a few minutes and try again.",
+    recoverable: false,
+  },
+  magic_link_send_failed: {
+    msg: "We couldn't send a sign-in link to that address. Check it and try again.",
+    recoverable: true,
+  },
   oauth_no_url: {
     msg: "We couldn't start the sign-in. Please try again.",
     recoverable: false,
@@ -64,13 +74,14 @@ export default async function LoginPage({
 }) {
   const sp = await searchParams;
   const errorEntry = sp.error ? ERROR_MESSAGES[sp.error] : null;
+  // Only KNOWN codes render their own text. Anything else gets a generic message —
+  // the page never echoes URL text, so a crafted link cannot put its own wording here.
   const errorMessage = errorEntry
     ? errorEntry.msg
     : sp.error
-      ? sp.error
+      ? "We couldn't complete the sign-in. Please try again."
       : null;
   const isRecoverableError = errorEntry?.recoverable ?? false;
-  const emailHint = sp.email ?? "";
   const nextHint = sp.next ?? "";
   const microsoftEnabled = env.NEXT_PUBLIC_FEATURE_MICROSOFT_SSO === "true";
 
@@ -129,39 +140,7 @@ export default async function LoginPage({
         <div className="h-px flex-1 bg-slate-200" />
       </div>
 
-      <form
-        action={signInWithMagicLink}
-        className="space-y-3"
-        data-testid="magic-link-form"
-        aria-label="Sign in with a magic link"
-      >
-        <label htmlFor="email" className="block text-sm font-medium text-slate-700">
-          Email
-        </label>
-        <input
-          id="email"
-          name="email"
-          type="email"
-          autoComplete="email"
-          required
-          // When we land here from a failed callback we pre-fill the
-          // email field so the user is one click away from a fresh link.
-          defaultValue={emailHint}
-          autoFocus={isRecoverableError}
-          placeholder="you@yourcompany.co.uk"
-          className="block w-full rounded-md border border-slate-300 px-3 py-2.5 text-sm placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
-        />
-        <button
-          type="submit"
-          className="w-full rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-        >
-          {isRecoverableError ? "Send me a fresh magic link" : "Email me a magic link"}
-        </button>
-        <p className="text-center text-[11px] text-slate-500">
-          The link can take a minute to arrive and may land in your spam or
-          junk folder.
-        </p>
-      </form>
+      <MagicLinkForm recoverable={isRecoverableError} />
 
       <div className="flex items-center gap-3 text-xs uppercase tracking-wide text-slate-500">
         <div className="h-px flex-1 bg-slate-200" />

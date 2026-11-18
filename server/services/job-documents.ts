@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { requireOrgContext } from "@/server/auth/session";
 import { storagePathBelongsToOrg } from "@/lib/storage/owned-path";
+import { cleanUploadBytes } from "@/lib/uploads/strip-image-metadata";
 
 /**
  * P4 — Job Documents service layer.
@@ -206,6 +207,13 @@ export async function addJobDocumentVersion(input: {
   }
   if (input.bytes.byteLength > JOB_DOC_MAX_BYTES) {
     return { ok: false, error: "file_too_large" };
+  }
+
+  // PD-4: strip EXIF/GPS/device metadata from image versions (PDFs pass through).
+  try {
+    input = { ...input, bytes: await cleanUploadBytes(input.bytes) };
+  } catch {
+    return { ok: false, error: "bad_file_type" };
   }
 
   const { ctx, user } = await requireOrgContext();

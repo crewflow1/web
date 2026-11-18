@@ -10,6 +10,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   type AttachmentTargetTable,
 } from "@/server/services/tenant-attachments";
+import { cleanUploadBytes } from "@/lib/uploads/strip-image-metadata";
 
 /**
  * OFFLINE PHOTO / FILE CAPTURE — the server side.
@@ -179,13 +180,20 @@ export async function dispatchOfflinePhoto(args: {
 
   // 5. STORE THE BYTES (service role, org-first path) + FREEZE the content hash.
   const admin = createAdminClient();
-  const contentHash = createHash("sha256").update(item.bytes).digest("hex");
+  // PD-4: strip EXIF/GPS/device metadata BEFORE hashing and storing.
+  let cleanBytes: Uint8Array;
+  try {
+    cleanBytes = await cleanUploadBytes(item.bytes);
+  } catch {
+    return { status: "rejected", reason: "bad_file_type" };
+  }
+  const contentHash = createHash("sha256").update(cleanBytes).digest("hex");
   const id = randomUUID();
   const storagePath = `${orgId}/${item.targetTable}/${item.targetId}/${id}.${mimeToExt(item.mimeType)}`;
 
   const { error: uErr } = await admin.storage
     .from("tenant-attachments")
-    .upload(storagePath, item.bytes, {
+    .upload(storagePath, cleanBytes, {
       contentType: item.mimeType,
       upsert: false,
     });
@@ -203,7 +211,7 @@ export async function dispatchOfflinePhoto(args: {
     filename: item.filename,
     storage_path: storagePath,
     mime_type: item.mimeType,
-    size_bytes: item.bytes.byteLength,
+    size_bytes: cleanBytes.byteLength,
     content_hash: contentHash,
     uploaded_by: args.user.id,
     client_write_key: item.clientKey,
@@ -243,7 +251,7 @@ export async function dispatchOfflinePhoto(args: {
       attachment_id: id,
       filename: item.filename,
       mime_type: item.mimeType,
-      size_bytes: item.bytes.byteLength,
+      size_bytes: cleanBytes.byteLength,
       offline: true,
     },
   });

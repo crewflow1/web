@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/server";
 import { storagePathBelongsToOrg } from "@/lib/storage/owned-path";
 import { requireOrgContext } from "@/server/auth/session"; import { assertOrgWritable } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { cleanUploadBytes } from "@/lib/uploads/strip-image-metadata";
 
 /**
  * Phase E — Compliance document actions.
@@ -86,7 +87,13 @@ export async function uploadComplianceDocument(formData: FormData): Promise<void
   const docId = randomUUID();
   const ext = mimeToExt(file.type);
   const storagePath = `${ctx.org.id}/${docId}.${ext}`;
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  // PD-4: strip EXIF/GPS/device metadata from image uploads (PDFs pass through).
+  let bytes: Uint8Array;
+  try {
+    bytes = await cleanUploadBytes(await file.arrayBuffer());
+  } catch {
+    redirect("/compliance/new?error=bad_type");
+  }
 
   const { error: uploadErr } = await admin.storage
     .from("compliance-docs")
@@ -113,7 +120,7 @@ export async function uploadComplianceDocument(formData: FormData): Promise<void
     storage_path: storagePath,
     filename: file.name,
     mime_type: file.type,
-    size_bytes: file.size,
+    size_bytes: bytes.byteLength,
     expires_at: data?.expires_at ?? null,
     notes: data?.notes ?? null,
     uploaded_by: user.id,

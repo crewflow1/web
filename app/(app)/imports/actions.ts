@@ -45,6 +45,7 @@ import {
 import { dispatchAutomation } from "@/server/services/automation-dispatcher";
 import { pullFromAccountingProvider } from "@/server/services/accounting-import";
 import type { AccountingProvider } from "@/lib/integrations/accounting/adapters";
+import { cleanUploadBytes } from "@/lib/uploads/strip-image-metadata";
 
 const uuid = z.string().uuid();
 
@@ -213,9 +214,16 @@ export async function uploadImportFiles(importId: string, formData: FormData) {
     // to the always-allowed octet-stream so every format we can parse we can
     // also store. NOTE: the OCR vision request above still uses the real
     // file.type — that path is intentionally unaffected.
+    // PD-4: archival copies of image scans (png/jpg) are stripped of EXIF/GPS too.
+    let storedBytes: Uint8Array;
+    try {
+      storedBytes = await cleanUploadBytes(buffer);
+    } catch {
+      redirect(`/imports/${importId}?error=parse_failed`);
+    }
     const { error: upErr } = await admin.storage
       .from("imports")
-      .upload(storagePath, new Uint8Array(buffer), {
+      .upload(storagePath, storedBytes, {
         contentType: "application/octet-stream",
         upsert: false,
       });

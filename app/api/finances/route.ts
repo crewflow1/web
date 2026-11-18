@@ -13,6 +13,7 @@ import {
   FINANCE_CATEGORIES,
   FINANCE_VAT_RATES,
 } from "@/lib/finances/schema";
+import { cleanUploadBytes } from "@/lib/uploads/strip-image-metadata";
 
 /**
  * Finances list + create.
@@ -189,7 +190,13 @@ export async function POST(request: NextRequest) {
     const safeName = receiptFile.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-100);
     receiptPath = `${ctx.org.id}/${financeId}/${safeName}`;
     const admin = createAdminClient();
-    const arrayBuffer = await receiptFile.arrayBuffer();
+    let arrayBuffer: Uint8Array;
+    try {
+      // PD-4: receipts photographed on a phone carry EXIF/GPS — strip before storing.
+      arrayBuffer = await cleanUploadBytes(await receiptFile.arrayBuffer());
+    } catch {
+      return respond.error(415, "Receipt image could not be processed");
+    }
     const { error: upErr } = await admin.storage
       .from("receipts")
       .upload(receiptPath, arrayBuffer, {

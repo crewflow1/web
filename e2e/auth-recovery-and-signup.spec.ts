@@ -3,6 +3,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 import { assertLocalE2eTarget } from "./_guard";
 import { waitForHydrated } from "./_hydration";
+import { findAuthUserByEmail } from "./_find-auth-user";
 
 /**
  * Account recovery and sign-up, end to end in a real browser — no mocks.
@@ -15,6 +16,9 @@ import { waitForHydrated } from "./_hydration";
  *   • A recovery link cannot be used twice.
  *   • SIGN-UP: a new person creates an account with a password and lands in onboarding to
  *     create their company — as the right auth user, with no company and no access yet.
+ *   • MAGIC LINK, PRIVACY (G-10): requesting a link never puts the email address in any URL the
+ *     browser requests or lands on; /check-email still shows the address (from this tab's
+ *     sessionStorage) and the one-click resend still works; a real email is sent.
  *
  * ONE HOP IS BRIDGED, and only because of the local harness: the emailed link goes to the Auth
  * server, which redirects back to the site with a one-time code. Locally the Auth server's site
@@ -35,6 +39,7 @@ const NEW_PW = `New-${crypto.randomUUID()}`;
 const RECOVER_EMAIL = `recover-${TAG}@example.test`;
 const SIGNUP_EMAIL = `signup-${TAG}@example.test`;
 const GHOST_EMAIL = `nobody-${TAG}@example.test`;
+const MAGIC_EMAIL = `magic-${TAG}@example.test`;
 
 function svc() {
   return createClient(assertLocalE2eTarget("auth-recovery-and-signup.spec.ts"), process.env.SUPABASE_SERVICE_ROLE_KEY!, {
@@ -76,17 +81,21 @@ test.describe("account recovery and sign-up (browser, real email)", () => {
   test.use({ storageState: { cookies: [], origins: [] } });
   const db = svc();
   let userId = "";
+  let magicUserId = "";
   let usedLink = "";
 
   test.beforeAll(async () => {
     const u = await db.auth.admin.createUser({ email: RECOVER_EMAIL, password: OLD_PW, email_confirm: true });
     if (u.error || !u.data.user) throw new Error(`user: ${u.error?.message}`);
     userId = u.data.user.id;
+    const m = await db.auth.admin.createUser({ email: MAGIC_EMAIL, email_confirm: true });
+    if (m.error || !m.data.user) throw new Error(`magic user: ${m.error?.message}`);
+    magicUserId = m.data.user.id;
   });
   test.afterAll(async () => {
     if (userId) await db.auth.admin.deleteUser(userId);
-    const list = await db.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    const s = list.data?.users?.find((x: any) => x.email === SIGNUP_EMAIL);
+    if (magicUserId) await db.auth.admin.deleteUser(magicUserId);
+    const s = await findAuthUserByEmail(db, SIGNUP_EMAIL);
     if (s) {
       const owned = (await db.from("memberships").select("org_id").eq("user_id", s.id)).data ?? [];
       for (const m of owned) await db.from("organizations").delete().eq("id", m.org_id);
@@ -168,13 +177,50 @@ test.describe("account recovery and sign-up (browser, real email)", () => {
     await page.getByRole("button", { name: "Create account", exact: true }).last().click();
     await expect(page).toHaveURL(/\/onboarding\/company|\/check-email/, { timeout: 15_000 });
 
-    const list = await db.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    const created = list.data.users.find((x: any) => x.email === SIGNUP_EMAIL);
+    const created = await findAuthUserByEmail(db, SIGNUP_EMAIL);
     expect(created, "the auth user exists").toBeTruthy();
     const memberships = (await db.from("memberships").select("org_id").eq("user_id", created.id)).data ?? [];
     expect(memberships, "no company and no membership until onboarding is completed").toHaveLength(0);
     // no company ⇒ no way into the product
     await page.goto("/dashboard");
     await expect(page).toHaveURL(/\/onboarding\/company|\/check-email|\/login/);
+  });
+  test("magic link: the email address never appears in a URL; /check-email still shows it and can resend", async ({ page, baseURL }) => {
+    test.setTimeout(60_000);
+    const urls: string[] = [];
+    page.on("request", (r) => urls.push(r.url()));
+    page.on("framenavigated", (f) => urls.push(f.url()));
+
+    await page.goto("/login");
+    const form = page.getByTestId("magic-link-form");
+    const submit = form.getByRole("button", { name: /magic link/i });
+    await waitForHydrated(submit);
+    await form.locator('input[name="email"]').fill(MAGIC_EMAIL);
+    await submit.click();
+
+    await expect(page).toHaveURL(`${baseURL}/check-email`);
+    await expect(page.getByTestId("check-email-address")).toHaveText(MAGIC_EMAIL);
+    // The hand-off key is consumed once read: nothing about the address lingers in storage.
+    expect(await page.evaluate(() => window.sessionStorage.getItem("cf_magic_link_email"))).toBeNull();
+
+    const resend = page.getByRole("button", { name: "Resend the link" });
+    await waitForHydrated(resend);
+    await page.waitForTimeout(1_200); // local Auth: at most one email per address per second
+    await resend.click();
+    await expect(page).toHaveURL(`${baseURL}/check-email`);
+    await expect(page.getByTestId("check-email-address")).toHaveText(MAGIC_EMAIL);
+    expect(await page.evaluate(() => window.sessionStorage.getItem("cf_magic_link_email"))).toBeNull();
+
+    // A real email went out.
+    await expect.poll(async () => (await mailTo(MAGIC_EMAIL)).length, { timeout: 15_000 }).toBeGreaterThan(0);
+
+    // No URL the browser requested or landed on carries the address (raw or encoded).
+    const leaking = urls.filter((u) => u.includes("@") || /%40/i.test(u) || /[?&]email=/.test(u));
+    expect(leaking).toEqual([]);
+
+    // A reload (no hand-off left) falls back to neutral wording and "Try again".
+    await page.reload();
+    await expect(page.getByTestId("check-email-address")).toHaveText("the email address you entered");
+    await expect(page.getByRole("link", { name: "Try again" })).toBeVisible();
   });
 });

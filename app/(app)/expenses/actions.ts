@@ -10,6 +10,7 @@ import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure
 import { requireOrgContext } from "@/server/auth/session";
 import { requireCapabilityFor } from "@/server/auth/capabilities";
 import { recordAdminActivity } from "@/server/services/hq-audit";
+import { cleanUploadBytes } from "@/lib/uploads/strip-image-metadata";
 
 /**
  * Phase D — Expense draft actions.
@@ -83,7 +84,13 @@ export async function uploadExpenseReceipt(formData: FormData): Promise<void> {
   // to keep it distinct from the per-finance-id receipts the books module
   // already manages.
   const storagePath = `${ctx.org.id}/drafts/${uploadId}.${ext}`;
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  // PD-4: drop EXIF/GPS/device metadata before the bytes are stored or OCR'd.
+  let bytes: Uint8Array;
+  try {
+    bytes = await cleanUploadBytes(await file.arrayBuffer());
+  } catch {
+    redirect("/expenses/new?error=bad_type");
+  }
 
   const { error: uploadErr } = await admin.storage
     .from("receipts")
@@ -124,7 +131,7 @@ export async function uploadExpenseReceipt(formData: FormData): Promise<void> {
     metadata: {
       filename: file.name,
       mime_type: file.type,
-      size_bytes: file.size,
+      size_bytes: bytes.byteLength,
     },
   });
 

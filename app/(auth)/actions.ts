@@ -56,7 +56,7 @@ export async function signInWithGoogle() {
   });
 
   if (error) {
-    redirect(`/login?error=${encodeURIComponent(error.message)}`);
+    redirect("/login?error=oauth_start_failed");
   }
 
   if (data?.url) {
@@ -96,9 +96,7 @@ export async function signInWithMagicLink(formData: FormData) {
     DEFAULT_LIMITS.auth,
   );
   if (!limit.allowed) {
-    redirect(
-      `/login?error=${encodeURIComponent("Too many sign-in attempts. Please wait a few minutes and try again.")}`,
-    );
+    redirect("/login?error=rate_limited");
   }
 
   const supabase = await createClient();
@@ -114,10 +112,12 @@ export async function signInWithMagicLink(formData: FormData) {
   });
 
   if (error) {
-    redirect(`/login?error=${encodeURIComponent(error.message)}`);
+    redirect("/login?error=magic_link_send_failed");
   }
 
-  redirect(`/check-email?email=${encodeURIComponent(parsed.data.email)}`);
+  // PRIVACY (G-10): the address is NOT put in the URL. The confirmation page
+  // shows it from the browser's sessionStorage (app/(auth)/_magic-link.client.tsx).
+  redirect("/check-email");
 }
 
 /**
@@ -452,7 +452,7 @@ export async function signInWithMicrosoft() {
   });
 
   if (error) {
-    redirect(`/login?error=${encodeURIComponent(error.message)}`);
+    redirect("/login?error=oauth_start_failed");
   }
   if (data?.url) {
     redirect(data.url);

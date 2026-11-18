@@ -1,5 +1,7 @@
 import "server-only";
 
+import { createHash, createHmac } from "node:crypto";
+
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -228,6 +230,38 @@ function persistentStoreEnabled(): boolean {
 export type RateLimitOptions = { failClosed?: boolean };
 
 /**
+ * The key a DURABLE counter is stored under: `<route>:h1_<digest>`.
+ *
+ * DATA MINIMISATION / SECRET HYGIENE. Callers identify a client by whatever is
+ * natural for the surface: the visitor's IP address (public forms, quote
+ * links), the email address being signed in (auth), or the customer-portal
+ * bearer token itself (portal writes). The in-memory store may hold those
+ * verbatim — it lives and dies with the process. The durable store must not:
+ * `rate_limit_counters` is a Postgres table that is backed up off-platform, so
+ * a verbatim key would persist raw IPs, email addresses and live portal access
+ * tokens long after the window that needed them closed.
+ *
+ * So the identifier is replaced by a keyed one-way digest before it leaves the
+ * process. Equal identifiers still map to equal keys (the limiter behaves
+ * identically); the table can no longer be read back into an address or a
+ * usable token. HMAC with a server-side secret rather than a bare hash, because
+ * the IPv4 space and a list of known email addresses are both small enough to
+ * brute-force an unkeyed digest. The route prefix stays readable so the table
+ * remains diagnosable ("which surface is being hammered?").
+ *
+ * Exported for direct testing (__tests__/security/rate-limit.test.ts).
+ */
+export function durableKey(route: string, identifier: string): string {
+  const secret = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const digest = secret
+    ? createHmac("sha256", secret).update(identifier).digest("hex")
+    : // No secret ⇒ the admin client cannot be built either, so this branch
+      // never reaches the database; it only keeps the function total.
+      createHash("sha256").update(identifier).digest("hex");
+  return `${route}:h1_${digest.slice(0, 40)}`;
+}
+
+/**
  * Durable check-and-record against the shared Postgres counter via the
  * `rate_limit_hit` RPC (service-role admin client). On an RPC error (DB blip,
  * misconfig) the outcome depends on {@link RateLimitOptions.failClosed}: open
@@ -244,7 +278,7 @@ export async function checkPersistent(
   try {
     const admin = createAdminClient();
     const { data, error } = await admin.rpc("rate_limit_hit", {
-      p_key: `${route}:${identifier}`,
+      p_key: durableKey(route, identifier),
       p_limit: cfg.limit,
       p_window_seconds: cfg.windowSeconds,
     });
@@ -273,6 +307,35 @@ export async function checkPersistent(
       remaining: cfg.limit,
       reset_at_epoch_sec: now + cfg.windowSeconds,
     };
+  }
+}
+
+/**
+ * Delete durable counters whose window closed more than a day ago, via the
+ * service-role-only `rate_limit_sweep()` function (migration 20260707000000).
+ *
+ * RETENTION: that function has existed since the durable limiter shipped but
+ * nothing ever called it, so expired counters accumulated without bound. A
+ * closed window has no further use — the next hit on the same key starts a new
+ * window in place — so keeping it is storage with no purpose. Called once a day
+ * from /api/cron/cron-runs-prune alongside the other ops-housekeeping pass.
+ *
+ * Never throws: a failed sweep is housekeeping telemetry, not an outage, and it
+ * must not fail the cron that hosts it.
+ */
+export async function sweepExpiredCounters(): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const admin = createAdminClient();
+    const { error } = await admin.rpc("rate_limit_sweep");
+    if (error) {
+      console.error("[rate-limit] sweep failed", error.message);
+      return { ok: false, error: error.message };
+    }
+    return { ok: true };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("[rate-limit] sweep threw", message);
+    return { ok: false, error: message };
   }
 }
 

@@ -13,6 +13,7 @@ import {
   logoObjectPath,
   pickLogoSource,
 } from "@/lib/branding/logo";
+import { cleanUploadBytes } from "@/lib/uploads/strip-image-metadata";
 
 /**
  * Company-logo storage service.
@@ -59,6 +60,13 @@ export async function uploadCompanyLogo(input: {
     byteLength: input.bytes.byteLength,
   });
   if (!validation.ok) return { ok: false, error: validation.error };
+
+  // PD-4: strip metadata from the logo image (SVG passes through untouched).
+  try {
+    input = { ...input, bytes: await cleanUploadBytes(input.bytes) };
+  } catch {
+    return { ok: false, error: "invalid_file" };
+  }
 
   const tenant = await createClient();
   const admin = createAdminClient();

@@ -10,6 +10,7 @@ import { emitNotifications } from "@/server/services/notifications-service";
 import { notifyOnPaymentProofUploaded } from "@/lib/notifications/events";
 import { readFailure } from "@/lib/supabase/read-failure";
 import { invoiceCustomerId } from "@/lib/invoices/customer";
+import { cleanUploadBytes } from "@/lib/uploads/strip-image-metadata";
 
 /**
  * Phase 3 — Portal payment-proof upload.
@@ -130,7 +131,12 @@ export async function uploadPaymentProof(formData: FormData): Promise<void> {
   const uploadId = crypto.randomUUID();
   const storagePath = `${customer.org_id}/${customer.id}/${uploadId}.${ext}`;
 
-  const bytes = await file.arrayBuffer();
+  let bytes: Uint8Array;
+  try {
+    bytes = await cleanUploadBytes(await file.arrayBuffer()); // PD-4
+  } catch {
+    backTo(token, invoiceId, "upload_failed");
+  }
   const { error: uErr } = await admin.storage
     .from("portal-uploads")
     .upload(storagePath, bytes, {
