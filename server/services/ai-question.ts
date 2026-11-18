@@ -74,6 +74,13 @@ const SYSTEM_PROMPT = [
 
 export async function askAi(input: {
   orgId: string;
+  /**
+   * The signed-in user who asked. Budget ATTRIBUTION and LIMITS only — it is
+   * what makes the per-employee monthly limit and the per-user velocity limit
+   * apply to this surface. It never reaches the model or the prompt. Optional
+   * so a system caller with no human can still omit it (recorded as null).
+   */
+  userId?: string | null;
   question: string;
 }): Promise<AiResponse> {
   const { orgId, question } = input;
@@ -128,10 +135,11 @@ export async function askAi(input: {
       {
         orgId,
         // A tenant asked this, at a keyboard — unlike the narrative, there IS a
-        // person. The signed-in user is not threaded this far today (the route
-        // authenticates and passes orgId only), so this stays null rather than
-        // guessing; the ledger's user_id is nullable for exactly this reason.
-        userId: null,
+        // person, and the route now threads them through. Attributing the call
+        // is what lets the per-employee limit and the per-user velocity limit
+        // bound this surface; with `null` here one account could spend the whole
+        // org's allowance un-attributed.
+        userId: input.userId ?? null,
         // The question plus the snapshot it is answered against: re-asking the
         // SAME question while nothing has changed is waste, but asking it again
         // after the data moves is not. Only the SHA-256 reaches the ledger.

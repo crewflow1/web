@@ -11,6 +11,8 @@
     "ai_employee_budget_limits",
     "ai_invocations",
     "ai_org_budget_ceilings",
+    "ai_org_switch_audit",
+    "ai_org_switches",
     "ai_quote_drafts",
     "ai_receptionist_setups",
     "ai_reply_audits",
@@ -242,6 +244,8 @@
     "worker_signoff_tokens"
   ],
   "excluded": {
+    "ai_org_switch_audit": "service telemetry: audit of the per-company AI off switch (who turned AI on/off) — CrewFlow control record, not tenant business data",
+    "ai_org_switches": "service telemetry: per-company AI off switch state — CrewFlow control config, not tenant business data",
     "ai_spend_alert_marks": "service telemetry: AI budget governance internals (which 80%/100% spend alerts HQ has been sent this month) — HQ-side control record, not tenant business data",
     "tenant_search_documents": "derived search index: a denormalized, rebuildable copy of the org's OWN records (job/customer/etc. text chunks + opaque embedding vectors) built solely to serve semantic search. Every piece of subject-access-relevant content is the source record's, exported via its own table (jobs, customers, …); including this index would duplicate that content (and leak raw embeddings) without adding subject-access value. Rebuilt from source on demand — not a primary record.",
     "membership_permissions": "access-control configuration: per-admin module×action permission grants (authorization metadata, not data-subject personal data); keyed by membership and cascades on membership delete",
@@ -370,6 +374,8 @@
     "ai_cost_reservations": "HQ-side AI budget internals — CrewFlow control record; left intact",
     "ai_employee_budget_limits": "HQ-side AI budget governance config — CrewFlow control record; left intact",
     "ai_org_budget_ceilings": "HQ-side AI budget ceiling override — CrewFlow control record; left intact",
+    "ai_org_switch_audit": "per-company AI switch audit — CrewFlow control record (cascade-deleted with the org); left intact",
+    "ai_org_switches": "per-company AI switch state — CrewFlow control config (cascade-deleted with the org); left intact",
     "ai_spend_alert_marks": "HQ-side AI spend-alert idempotency marks — CrewFlow control record (cascade-deleted with the org); left intact",
     "billing_events": "CrewFlow platform billing (the PROCESSOR's own financial records) — CrewFlow must retain for its accounting; not the tenant's to erase",
     "billing_invoices": "CrewFlow platform billing (the PROCESSOR's own invoices) — CrewFlow must retain; not the tenant's to erase",

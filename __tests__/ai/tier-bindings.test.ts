@@ -48,7 +48,9 @@ describe("TIER_MODEL — the approved production bindings", () => {
       usdPerMTokIn: 2,
       usdPerMTokOut: 10,
       reserveInputTokens: 8_000,
-      reserveOutputTokens: 2_000,
+      // 4,000 = the quote writer's real output cap (raised by #1070; the
+      // envelope was left at 2,000 until the secrets/AI-spend audit).
+      reserveOutputTokens: 4_000,
     });
   });
 
@@ -148,7 +150,7 @@ describe("TIER_MODEL — the approved production bindings", () => {
     expect(TIER_MODEL.cheap!.reserveInputTokens).toBeGreaterThanOrEqual(30_000);
     expect(TIER_MODEL.cheap!.reserveOutputTokens).toBeGreaterThanOrEqual(2_048);
     expect(TIER_MODEL.mid!.reserveInputTokens).toBeGreaterThanOrEqual(7_300);
-    expect(TIER_MODEL.mid!.reserveOutputTokens).toBeGreaterThanOrEqual(2_000);
+    expect(TIER_MODEL.mid!.reserveOutputTokens).toBeGreaterThanOrEqual(4_000);
     expect(TIER_MODEL.high!.reserveInputTokens).toBeGreaterThanOrEqual(20_000);
     expect(TIER_MODEL.high!.reserveOutputTokens).toBeGreaterThanOrEqual(3_200);
   });

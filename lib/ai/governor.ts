@@ -107,6 +107,8 @@ import * as Sentry from "@sentry/nextjs";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { limitSubjectUserId } from "./governor/attribution";
 import { resolveEffectiveCeiling } from "./governor/limits";
+import { consumeAiVelocity } from "./governor/velocity";
+import { raiseSpendAlerts } from "./governor/spend-alerts";
 import {
   featureDefinition,
   reservationEnvelopeOf,
@@ -172,6 +174,12 @@ export {
   isTierActivated,
 } from "./governor/readiness";
 export { hqBudgetOrgId, limitSubjectUserId } from "./governor/attribution";
+export {
+  AI_VELOCITY_ORG_SHARE,
+  AI_VELOCITY_USER_SHARE,
+  AI_VELOCITY_WINDOW_SECONDS,
+  velocityLimitsFor,
+} from "./governor/velocity";
 
 const LEDGER = "ai_invocations";
 const RESERVE_FN = "ai_reserve_invocation";
@@ -515,6 +523,20 @@ export type BlockReason =
    * refused. See supabase/migrations/20261147000001.
    */
   | "employee_limit"
+  /**
+   * The CrewFlow-WIDE monthly budget (all orgs, HQ included) has no headroom
+   * for a call of this size, even though this org and employee still do.
+   * Enforced inside the same `ai_reserve_invocation` transaction
+   * (supabase/migrations/20261358000000). Degrades exactly like `ceiling`.
+   */
+  | "platform_ceiling"
+  /**
+   * The company's owner (or HQ) has switched AI OFF for this company
+   * (ai_org_switches, migration 20261366000000). Refused inside
+   * `ai_reserve_invocation` before any provider request; not a budget event, so
+   * it raises no spend alert. Fails closed like every other reason.
+   */
+  | "ai_disabled"
   /** The reservation itself could not be taken. Fails CLOSED — see `reserveBudget`. */
   | "reservation_unavailable"
   /**
@@ -526,7 +548,16 @@ export type BlockReason =
    * own-tier gate. Genuinely dark (no provider for the modality) still runs the
    * caller's degraded path — see the dark short-circuit.
    */
-  | "tier_dark_provider_live";
+  | "tier_dark_provider_live"
+  /**
+   * The call was refused by the VELOCITY limiter (./governor/velocity.ts) before
+   * any budget was claimed: this org — or this one user — has issued too many
+   * calls to this feature inside the current window. Money may well remain; the
+   * refusal is about SPEED, so that a loop cannot take an org from zero to its
+   * ceiling in minutes. Identically degraded for the caller; kept distinct so
+   * the logs say a rate limit refused, not the ceiling.
+   */
+  | "rate_limited";
 
 export type ReservationResult =
   | {
@@ -651,7 +682,11 @@ export async function reserveBudget(input: {
         outcome === "blocked"
           ? row.block_reason === "employee_limit"
             ? "employee_limit"
-            : "ceiling"
+            : row.block_reason === "platform_ceiling"
+              ? "platform_ceiling"
+              : row.block_reason === "ai_disabled"
+                ? "ai_disabled"
+                : "ceiling"
           : "reservation_unavailable",
     };
   } catch (e) {
@@ -888,6 +923,9 @@ export type InvokeWithGovernorInput = {
  *      was the estate-wide state before the 2026-09-10 activation — why wiring
  *      the dark seams changed nothing — and remains the path for any tier that
  *      is unbound or credential-less in a given deploy.
+ *   3b. VELOCITY — a durable, fail-closed rate limit (./governor/velocity.ts):
+ *      per org, and per user when there is one, per feature. Refuses BEFORE any
+ *      budget is claimed, so a loop cannot burn the ceiling in minutes.
  *   4. RESERVE — ONE atomic SQL call that decides the ceiling AND the duplicate
  *      question together, under a lock, and claims the budget if it fits. Both
  *      refusals happen WITHOUT calling the function. The whole point, and the
@@ -998,6 +1036,34 @@ export async function invokeWithGovernor<T>(
   // system / HQ job with no employee to limit; see limitSubjectUserId).
   const employeeId = limitSubjectUserId(input.userId);
 
+  // 3b. THE VELOCITY LIMIT — how FAST, where the reservation below decides how
+  //     MUCH. Deliberately BEFORE the reservation: a refused call takes no claim
+  //     and writes no ledger row. Durable (shared Postgres counter) and
+  //     fail-closed; per org always, per user when there is one. Behind the dark
+  //     short-circuit above, so a dark tier still costs zero round trips.
+  const velocity = await consumeAiVelocity({
+    orgId: input.orgId,
+    userId: employeeId,
+    feature,
+    claimPence,
+  });
+  if (!velocity.allowed) {
+    console.warn(
+      `[ai/governor] RATE-LIMITED ${feature} for org ${input.orgId} ` +
+        `(${velocity.scope} window: ${velocity.limit} calls/h, claim ${claimPence}p) — refusing ` +
+        `before any budget is claimed.`,
+    );
+    return {
+      status: "blocked",
+      budget: "blocked",
+      // No ledger read was made on this path; zero is "not consulted", exactly
+      // as on `reservation_unavailable`. `reason` is what distinguishes it.
+      spentPence: 0,
+      ceilingPence: AI_MONTHLY_CEILING_PENCE,
+      reason: "rate_limited",
+    };
+  }
+
   const reservation = await reserveBudget({
     orgId: input.orgId,
     userId: employeeId,
@@ -1013,6 +1079,16 @@ export async function invokeWithGovernor<T>(
         `${reservation.committedPence}p committed + ${reservation.reservedPence}p in flight, ` +
         `claim ${claimPence}p, ceiling ${reservation.ceilingPence}p.`,
     );
+    // 100% ALERT: a refusal by the org or CrewFlow-wide ceiling is the "limit
+    // reached" event. Once per threshold per month (./governor/spend-alerts.ts);
+    // never throws, no provider call, and the caller is refused either way.
+    if (reservation.reason === "ceiling" || reservation.reason === "platform_ceiling") {
+      await raiseSpendAlerts({
+        kind: "refused",
+        orgId: input.orgId,
+        scope: reservation.reason === "platform_ceiling" ? "platform" : "org",
+      });
+    }
     return {
       status: "blocked",
       budget: "blocked",
@@ -1040,6 +1116,19 @@ export async function invokeWithGovernor<T>(
     outputTokens: 0,
   };
 
+  // 80% / 100% ALERTS after spend lands. The figures are the reservation's own
+  // (already in hand), so most calls make no extra round trip; see
+  // ./governor/spend-alerts.ts. Never throws, never calls a provider.
+  const alertAfterSettle = () =>
+    raiseSpendAlerts({
+      kind: "settled",
+      orgId: input.orgId,
+      committedPence: reservation.committedPence,
+      reservedPence: reservation.reservedPence,
+      claimPence,
+      ceilingPence: reservation.ceilingPence,
+    });
+
   // 5/6/7. Run it, time it, account for it.
   const startedAt = Date.now();
   let call: GovernedCall<T>;
@@ -1053,10 +1142,24 @@ export async function invokeWithGovernor<T>(
     // FAILURE_FLOOR_PENCE for why recording that as free would make a retry
     // storm invisible to the very ceiling that exists to stop one. Tokens are
     // recorded as 0 because we genuinely did not get a usage report.
+    //
+    // …EXCEPT WHEN THE FAILURE IS OUR OWN TIMEOUT. Every governed request is
+    // non-streaming and carries an AbortSignal. When that signal fires we stop
+    // WAITING; the vendor does not stop WORKING — the request was accepted, it
+    // runs to completion, and it is billed in full (input and every output
+    // token up to the cap). Recording that as the 1p floor under-counts by up
+    // to the whole claim, and a slow-provider incident is exactly when many
+    // calls time out at once. So a timed-out / aborted call is settled at the
+    // CLAIM — the worst case it was admitted on. That may over-report a call
+    // that died before reaching the vendor, by at most one claim; it can no
+    // longer under-report one that did reach it.
+    const failureCostPence = isTimeoutLike(err)
+      ? Math.max(claimPence, settlementCostPence(false, binding, { inputTokens: 0, outputTokens: 0 }))
+      : settlementCostPence(false, binding, { inputTokens: 0, outputTokens: 0 });
     await settleReservation({
       reservationId: reservation.reservationId,
       success: false,
-      costPence: settlementCostPence(false, binding, { inputTokens: 0, outputTokens: 0 }),
+      costPence: failureCostPence,
       usage: fallbackUsage,
       latencyMs,
       errorCode,
@@ -1071,13 +1174,11 @@ export async function invokeWithGovernor<T>(
         success: false,
         errorCode,
         contentHash,
-        estimatedCostPence: settlementCostPence(false, binding, {
-          inputTokens: 0,
-          outputTokens: 0,
-        }),
+        estimatedCostPence: failureCostPence,
         aiEmployeeId: input.aiEmployeeId ?? null,
       },
     });
+    await alertAfterSettle();
     // RETHROW: the caller's existing catch owns the degraded path.
     throw err;
   }
@@ -1115,7 +1216,35 @@ export async function invokeWithGovernor<T>(
     },
   });
 
+  await alertAfterSettle();
+
   return { status: "ran", value: call.value, budget: budgetStatus, recorded, dark: false };
+}
+
+/**
+ * Did this failure come from a timeout / abort — i.e. did WE stop waiting,
+ * rather than the vendor refusing?
+ *
+ * Matches the shapes the runtime and both vendor SDKs produce:
+ * `AbortSignal.timeout()` rejects with a DOMException named `TimeoutError`; a
+ * manual abort is `AbortError`; the Anthropic/OpenAI SDKs raise
+ * `APIUserAbortError` ("Request was aborted.") and `APIConnectionTimeoutError`
+ * ("Request timed out."). Name first, message as the fallback for errors that
+ * were re-wrapped on the way up.
+ */
+export function isTimeoutLike(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  // The vendor SDK error classes do not set `.name` (it stays "Error"), so the
+  // CONSTRUCTOR name is checked as well as the instance name.
+  const names = [
+    String((err as { name?: unknown }).name ?? ""),
+    String((err as { constructor?: { name?: unknown } }).constructor?.name ?? ""),
+  ];
+  if (names.some((n) => /^(TimeoutError|AbortError|APIUserAbortError|APIConnectionTimeoutError)$/.test(n))) {
+    return true;
+  }
+  const message = String((err as { message?: unknown }).message ?? "");
+  return /\b(timed out|timeout|aborted)\b/i.test(message);
 }
 
 /** A short, stable, PII-free code for the ledger's `error_code`. */

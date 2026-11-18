@@ -1,4 +1,5 @@
 import "server-only";
+import { AI_SDK_MAX_RETRIES } from "@/lib/ai/governor/policy";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { readFailure } from "@/lib/supabase/read-failure";
 import {
@@ -196,7 +197,7 @@ async function summariseWithProvider(
   // service through the text door would be cleaner. Recorded as debt.
   // (Previously claimed safe on the old gate, which required the bound vendor's
   // credential to be present, so this is not a bare-key assumption.
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, maxRetries: AI_SDK_MAX_RETRIES });
   // Resolve from the canonical cheap binding — execution and accounting can
   // never diverge. HARD READ, no literal fallback (2026-09-13 hardening): the
   // cheap gate above refuses before this leg when the tier is dark, so a null

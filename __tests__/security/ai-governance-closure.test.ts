@@ -421,6 +421,127 @@ describe("THE RATCHET — no ungoverned inference path may return", () => {
 });
 
 // ---------------------------------------------------------------------------
+// A1b. BYPASS AUDIT (2026-11-16) — retries, raw provider fetches, every AI
+// credential name. Each was a way a provider request could happen without its
+// own reservation, derived from source like the ratchet above.
+// ---------------------------------------------------------------------------
+
+/** Hostnames of AI vendors' APIs. A literal anywhere in app code is a transport. */
+const AI_HOST =
+  /\b(?:api\.anthropic\.com|api\.openai\.com|[a-z0-9-]+\.openai\.azure\.com|generativelanguage\.googleapis\.com|aiplatform\.googleapis\.com|bedrock-runtime\.[a-z0-9-]+\.amazonaws\.com|api\.mistral\.ai|api\.cohere\.(?:ai|com)|api\.groq\.com|openrouter\.ai|api\.together\.(?:xyz|ai)|api\.fireworks\.ai|api\.deepseek\.com|api\.x\.ai|api\.perplexity\.ai|api\.deepgram\.com|api\.assemblyai\.com|api\.elevenlabs\.io)\b/;
+/** Every env name that holds an AI vendor credential, in any access form. */
+const AI_CREDENTIAL_NAME = /\b(?:ANTHROPIC_API_KEY|OPENAI_API_KEY|TRANSCRIPTION_API_KEY)\b/;
+
+describe("BYPASS AUDIT — one governed call is at most ONE provider request", () => {
+  it("every SDK construction pins maxRetries to AI_SDK_MAX_RETRIES, which is 0", async () => {
+    // Both SDKs default to maxRetries 2 (connection errors + 408/409/429/5xx).
+    // A retry is a provider request inside one reservation: unreserved, not
+    // velocity-counted, and unledgered when the failed attempt was billed.
+    const { AI_SDK_MAX_RETRIES } = await import("@/lib/ai/governor/policy");
+    expect(AI_SDK_MAX_RETRIES).toBe(0);
+    for (const f of sdkFiles) {
+      const code = CODE.get(f)!;
+      const ctors = code.match(/\bnew\s+(?:Anthropic|OpenAI)\s*\(\s*\{[^}]*\}/g) ?? [];
+      expect(ctors.length, `${f} must construct its client with an object literal`).toBeGreaterThan(0);
+      for (const c of ctors) {
+        expect(c, `${f}: ${c} must pass maxRetries: AI_SDK_MAX_RETRIES`).toMatch(
+          /\bmaxRetries\s*:\s*AI_SDK_MAX_RETRIES\b/,
+        );
+      }
+    }
+  });
+
+  it("no per-request maxRetries override anywhere in app code", () => {
+    // `client.messages.create(body, { maxRetries: 3 })` would undo the pin.
+    const overrides = FILES.filter((f) => /\bmaxRetries\s*:/.test(CODE.get(f)!)).filter(
+      (f) => !/\bmaxRetries\s*:\s*AI_SDK_MAX_RETRIES\b/.test(CODE.get(f)!) && sdkFiles.includes(f),
+    );
+    expect(overrides).toEqual([]);
+    for (const f of sdkFiles) {
+      const all = CODE.get(f)!.match(/\bmaxRetries\s*:\s*[^,}\s]+/g) ?? [];
+      for (const m of all) expect(m, `${f}: ${m}`).toMatch(/AI_SDK_MAX_RETRIES$/);
+    }
+  });
+
+  it("the ONLY AI-vendor host literal is the transcription transport, and it never retries", () => {
+    const hostFiles = FILES.filter((f) => AI_HOST.test(CODE.get(f)!));
+    expect(hostFiles).toEqual(["lib/ai/transcription/openai.ts"]);
+    const code = CODE.get("lib/ai/transcription/openai.ts")!;
+    expect((code.match(/\bfetch\s*\(/g) ?? []).length, "exactly one raw fetch").toBe(1);
+    expect(code, "no retry loop around the paid fetch").not.toMatch(/\bfor\s*\(|\bwhile\s*\(|\bretry\w*\s*\(/);
+  });
+
+  it("the transcription transport is reached only from the governed seam (OpenAI STT)", () => {
+    const callers = FILES.filter(
+      (f) => f !== "lib/ai/transcription/openai.ts" && /\brunOpenAiTranscription\s*\(/.test(CODE.get(f)!),
+    );
+    expect(callers).toEqual(["lib/ai/transcription.ts"]);
+    // Inside the seam the transport is called from ONE private dispatcher,
+    // runBoundTranscription, and that dispatcher is called only after the
+    // governor is entered (inside the governed fn).
+    const seam = CODE.get("lib/ai/transcription.ts")!;
+    const gov = seam.indexOf("invokeWithGovernor(");
+    expect(gov, "the seam enters the governor").toBeGreaterThan(-1);
+    const dispatcher = /async function runBoundTranscription\s*\(/.exec(seam);
+    expect(dispatcher, "the private dispatcher exists").not.toBeNull();
+    expect(seam, "the dispatcher is not exported").not.toMatch(/export\s+async\s+function\s+runBoundTranscription/);
+    const transportCalls = [...seam.matchAll(/\brunOpenAiTranscription\s*\(/g)].map((m) => m.index!);
+    expect(transportCalls).toHaveLength(1);
+    const dispatcherEnd = seam.indexOf("\n}\n", dispatcher!.index);
+    expect(transportCalls[0]!).toBeGreaterThan(dispatcher!.index);
+    expect(transportCalls[0]!).toBeLessThan(dispatcherEnd);
+    const dispatchCalls = [...seam.matchAll(/\brunBoundTranscription\s*\(/g)]
+      .map((m) => m.index!)
+      .filter((i) => i !== dispatcher!.index + "async function ".length);
+    expect(dispatchCalls.length, "the dispatcher is called").toBeGreaterThan(0);
+    for (const i of dispatchCalls) expect(i, "dispatch only inside the governed call").toBeGreaterThan(gov);
+    expect(seam).toMatch(/"voice_note\.transcription"/);
+  });
+
+  it("the OpenAI embedding transport is reached only through the governed embedding door", () => {
+    const code = CODE.get(EMBEDDING_GOVERNED_DOOR)!;
+    expect(code).toMatch(GOVERNED);
+    expect(code).toMatch(/"memory\.embedding_write"\s*\|\s*"memory\.embedding_query"/);
+    const importers = FILES.filter((f) => {
+      const code = CODE.get(f)!;
+      return (
+        /from\s+["']@\/lib\/ai\/embeddings\/openai["']/.test(code) ||
+        (f.startsWith("lib/ai/embeddings/") && /from\s+["']\.\/openai["']/.test(code))
+      );
+    });
+    expect(importers, "only the embedding door constructs the OpenAI embedding transport").toEqual([EMBEDDING_DOOR]);
+  });
+
+  it("every AI credential name — incl. TRANSCRIPTION_API_KEY, bracket or destructured — is read only by pinned files", () => {
+    const readers = FILES.filter((f) => AI_CREDENTIAL_NAME.test(CODE.get(f)!)).filter(
+      // Names that appear only as data (env schema / readiness lists) are not reads.
+      (f) => /process\.env/.test(CODE.get(f)!) && new RegExp(`process\\.env(?:\\.|\\[["'])${AI_CREDENTIAL_NAME.source}`).test(CODE.get(f)!),
+    );
+    expect(readers).toEqual([
+      "lib/ai/embeddings/index.ts",
+      "lib/ai/safety.ts",
+      "lib/ai/text/index.ts",
+      "lib/ai/transcription.ts",
+      "lib/ai/transcription/openai.ts",
+      "lib/ai/vision/index.ts",
+      "server/services/lead-summary.ts",
+      "server/services/receptionist.ts",
+      "server/services/research-llm.ts",
+    ]);
+    // No indirect forms that the dotted-name pins above would miss.
+    for (const f of FILES) {
+      const code = CODE.get(f)!;
+      expect(code, `${f}: bracket access to an AI credential`).not.toMatch(
+        /process\.env\[\s*["'](?:ANTHROPIC|OPENAI|TRANSCRIPTION)_API_KEY["']\s*\]/,
+      );
+      expect(code, `${f}: destructured AI credential`).not.toMatch(
+        /\{[^}]*\b(?:ANTHROPIC|OPENAI|TRANSCRIPTION)_API_KEY\b[^}]*\}\s*=\s*process\.env/,
+      );
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A2. THE EMBEDDING MODALITY — the same ratchet, for the third door.
 // ---------------------------------------------------------------------------
 

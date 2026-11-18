@@ -1,4 +1,5 @@
 import "server-only";
+import { AI_SDK_MAX_RETRIES } from "@/lib/ai/governor/policy";
 import { createAdminClient } from "@/lib/supabase/admin"; import { assertOrgAcceptsPublicWrite } from "@/server/services/org-lifecycle";
 import { readFailure, type SupabaseReadError } from "@/lib/supabase/read-failure";
 import { recordAdminActivity } from "@/server/services/hq-audit";
@@ -3283,7 +3284,7 @@ async function extractFieldsWithProvider(
   rawText: string,
 ): Promise<GovernedCall<InboundExtraction>> {
   const { default: Anthropic } = await import("@anthropic-ai/sdk");
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, maxRetries: AI_SDK_MAX_RETRIES });
   // Canonical cheap-tier binding — execution and governor accounting can
   // never diverge. HARD READ, no literal fallback (2026-09-13 hardening): the
   // cheap gate refuses before this leg when the tier is dark, so a null

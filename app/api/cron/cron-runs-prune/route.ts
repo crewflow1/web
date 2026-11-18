@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isCronAuthorised } from "@/lib/cron/auth";
 import { pruneCronRuns } from "@/server/services/cron-runs-prune";
+import { sweepExpiredCounters } from "@/lib/security/rate-limit";
 import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
 
 /**
@@ -17,6 +18,11 @@ import { withCronTelemetry } from "@/lib/ops/cron-telemetry";
  * conflating them would put customer-data deletion and ops housekeeping behind
  * one switch.
  *
+ * The same pass also sweeps expired rate-limit counters (`rate_limit_sweep()`,
+ * one bounded in-database DELETE of windows closed for over a day). It is the
+ * same class of platform housekeeping — no tenant data — and it is fail-soft:
+ * a failed sweep is reported in the payload but never fails the prune.
+ *
  * Auth: Bearer CRON_SECRET (lib/cron/auth). Returns 401 otherwise.
  */
 
@@ -31,7 +37,8 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   const { status, payload } = await withCronTelemetry("cron-runs-prune", async () => {
     const summary = await pruneCronRuns();
-    return { ok: summary.ok, summary };
+    const rateLimitSweep = await sweepExpiredCounters();
+    return { ok: summary.ok, summary, rateLimitSweep };
   });
   return NextResponse.json(payload, { status });
 }

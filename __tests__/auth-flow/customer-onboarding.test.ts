@@ -108,8 +108,10 @@ describe("/auth/callback handles both verifyOtp and code-exchange flows", () => 
     expect(src).toMatch(/event:\s*"auth\.callback\.success"/);
   });
 
-  it("redirects to /login with email hint when known so the form pre-fills", () => {
-    expect(src).toMatch(/u\.searchParams\.set\("email", emailHint\)/);
+  it("redirects to /login with the error code only — never the email address (privacy G-10)", () => {
+    expect(src).toMatch(/u\.searchParams\.set\("error", reason\)/);
+    expect(src).not.toMatch(/searchParams\.set\("email"/);
+    expect(src).not.toMatch(/emailHint/);
   });
 
   it("super-admin always lands on /admin even with ?next=/dashboard", () => {
@@ -118,11 +120,15 @@ describe("/auth/callback handles both verifyOtp and code-exchange flows", () => 
 });
 
 describe("/login page surfaces actionable errors", () => {
-  const src = read("app/(auth)/login/page.tsx");
+  const page = read("app/(auth)/login/page.tsx");
+  // The magic-link form moved into a client component (it writes the address to
+  // sessionStorage so /check-email can show it without a URL parameter).
+  const src = page + read("app/(auth)/_magic-link.client.tsx");
 
-  it("reads ?email= query param and pre-fills the magic-link form", () => {
-    expect(src).toMatch(/email\?:\s*string/);
-    expect(src).toMatch(/defaultValue=\{emailHint\}/);
+  it("takes no ?email= parameter and does not pre-fill from the URL (privacy G-10)", () => {
+    expect(page).not.toMatch(/email\?:\s*string/);
+    expect(page).not.toMatch(/emailHint/);
+    expect(src).not.toMatch(/defaultValue=\{emailHint\}/);
   });
 
   it("handles the new error codes from the callback", () => {
@@ -132,7 +138,8 @@ describe("/login page surfaces actionable errors", () => {
   });
 
   it("autofocuses the magic-link email field when arriving from a recoverable error", () => {
-    expect(src).toMatch(/autoFocus=\{isRecoverableError\}/);
+    expect(page).toMatch(/<MagicLinkForm recoverable=\{isRecoverableError\} \/>/);
+    expect(src).toMatch(/autoFocus=\{recoverable\}/);
   });
 
   it("CTA label shifts to 'Send me a fresh magic link' on recoverable error", () => {

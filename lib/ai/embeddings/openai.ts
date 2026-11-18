@@ -1,4 +1,5 @@
 import "server-only";
+import { AI_SDK_MAX_RETRIES } from "@/lib/ai/governor/policy";
 
 /**
  * Shared Memory — OpenAI embedding provider ("Version 1").
@@ -62,7 +63,7 @@ export function createOpenAiEmbeddingProvider(apiKey: string): EmbeddingProvider
       }
 
       const { default: OpenAI } = await import("openai");
-      const client = new OpenAI({ apiKey });
+      const client = new OpenAI({ apiKey, maxRetries: AI_SDK_MAX_RETRIES });
 
       const res = await client.embeddings.create(
         { model: MODEL, input: texts, dimensions: DIMENSION },

@@ -1,0 +1,35 @@
+1. before the spend: platform marks returned (expect 0 unless the month already sits >= 80%)
+ platform_marks 
+----------------
+              0
+(1 row)
+
+2. after 1,000p: the CrewFlow-wide 80% mark, once (no org row: 1,000p is 10% of the 10,000p org default)
+  scope   | threshold | ceiling_pence 
+----------+-----------+---------------
+ platform |        80 |          1250
+(1 row)
+
+3. the same call again: nothing
+ rows_again 
+------------
+          0
+(1 row)
+
+4. a platform_ceiling refusal: the 100% mark, once
+  scope   | threshold 
+----------+-----------
+ platform |       100
+(1 row)
+
+ rows_after_second_refusal 
+---------------------------
+                         0
+(1 row)
+
+5. client roles cannot call it or read the marks
+ authenticated_exec | anon_exec | authenticated_select 
+--------------------+-----------+----------------------
+ f                  | f         | f
+(1 row)
+

@@ -29,10 +29,10 @@ import { isSuperAdminEmail } from "@/server/auth/superadmin";
  *                         /onboarding/company when no org context).
  * Explicit `?next=...` deep links survive for non-super-admins.
  *
- * On any failure we redirect to /login with:
- *   - `?error=<reason>` so the page surfaces a useful message
- *   - `?email=<user-email>` when we know it, so the form can pre-fill
- *     and the user is one click away from a fresh magic link.
+ * On any failure we redirect to /login with `?error=<reason>` so the page
+ * surfaces a useful message. The address is deliberately NOT carried in the
+ * URL (request logs, history, analytics — privacy finding G-10); the person
+ * re-types it, which the error message asks for.
  *
  * Every failure path is logged with structured context so we can
  * triage from production logs without guessing.
@@ -66,14 +66,11 @@ function classifySupabaseError(msg: string | null | undefined): ErrCode {
   return "auth_failed";
 }
 
-function bounceToLogin(
-  origin: string,
-  reason: ErrCode,
-  emailHint: string | null,
-): NextResponse {
+function bounceToLogin(origin: string, reason: ErrCode): NextResponse {
+  // PRIVACY (G-10): only the error CODE travels in the URL — never the
+  // address. An email in a URL reaches request logs, history and analytics.
   const u = new URL(`${origin}/login`);
   u.searchParams.set("error", reason);
-  if (emailHint) u.searchParams.set("email", emailHint);
   return NextResponse.redirect(u);
 }
 
@@ -95,12 +92,12 @@ export async function GET(request: NextRequest) {
       supabase_error: supabaseErr,
       supabase_error_description: supabaseErrDesc,
     });
-    return bounceToLogin(origin, reason, null);
+    return bounceToLogin(origin, reason);
   }
 
   if (!code && !tokenHash) {
     logErr("missing_code", { url: request.url });
-    return bounceToLogin(origin, "missing_code", null);
+    return bounceToLogin(origin, "missing_code");
   }
 
   const supabase = await createClient();
@@ -118,7 +115,7 @@ export async function GET(request: NextRequest) {
     ]);
     if (!validTypes.has(type)) {
       logErr("magic_link_invalid", { type });
-      return bounceToLogin(origin, "magic_link_invalid", null);
+      return bounceToLogin(origin, "magic_link_invalid");
     }
     const { data, error } = await supabase.auth.verifyOtp({
       token_hash: tokenHash,
@@ -135,7 +132,7 @@ export async function GET(request: NextRequest) {
       // We don't know the user's email here (Supabase rejected the
       // token before resolving it), so we can't pre-fill /login —
       // user types it in to request a fresh link.
-      return bounceToLogin(origin, reason, null);
+      return bounceToLogin(origin, reason);
     }
     userPayload = {
       id: data.user.id,
@@ -154,7 +151,7 @@ export async function GET(request: NextRequest) {
         supabase_message: error?.message,
         supabase_status: error?.status,
       });
-      return bounceToLogin(origin, reason, null);
+      return bounceToLogin(origin, reason);
     }
     userPayload = {
       id: data.user.id,
@@ -165,7 +162,7 @@ export async function GET(request: NextRequest) {
 
   if (!userPayload) {
     logErr("auth_failed", { reason: "no_user_payload" });
-    return bounceToLogin(origin, "auth_failed", null);
+    return bounceToLogin(origin, "auth_failed");
   }
 
   // Pull display fields from OAuth provider metadata if present.
@@ -174,10 +171,6 @@ export async function GET(request: NextRequest) {
     (typeof meta.full_name === "string" && meta.full_name) ||
     (typeof meta.name === "string" && meta.name) ||
     (typeof meta.invited_full_name === "string" && meta.invited_full_name) ||
-    null;
-  const avatarUrl =
-    (typeof meta.avatar_url === "string" && meta.avatar_url) ||
-    (typeof meta.picture === "string" && meta.picture) ||
     null;
   const phone =
     (typeof meta.phone === "string" && meta.phone) ||
@@ -189,7 +182,6 @@ export async function GET(request: NextRequest) {
       id: userPayload.id,
       email: userPayload.email ?? "",
       fullName,
-      avatarUrl,
       phone,
     });
   } catch (e) {
@@ -197,7 +189,7 @@ export async function GET(request: NextRequest) {
       user_id: userPayload.id,
       err: e instanceof Error ? e.message : String(e),
     });
-    return bounceToLogin(origin, "bootstrap_failed", userPayload.email);
+    return bounceToLogin(origin, "bootstrap_failed");
   }
 
   // Default landing per the 3-user-type auth model (source of truth):
@@ -236,7 +228,8 @@ export async function GET(request: NextRequest) {
     JSON.stringify({
       event: "auth.callback.success",
       user_id: userPayload.id,
-      email: userPayload.email,
+      // No email address: function logs are retained by the host, and the
+      // opaque user id is enough to trace a sign-in (privacy finding G-10).
       is_super_admin: isAdmin,
       landing: safeNext,
     }),

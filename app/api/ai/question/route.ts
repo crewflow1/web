@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireCapabilityApi } from "@/server/auth/capabilities";
 import { askAi } from "@/server/services/ai-question";
-import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
+import { DEFAULT_LIMITS, enforceIdentifiedStrict } from "@/lib/security/rate-limit";
 
 /**
  * POST /api/ai/question
@@ -16,9 +16,14 @@ import { DEFAULT_LIMITS, enforce } from "@/lib/security/rate-limit";
  * existing retention snapshot on the user JWT. Cross-org data leakage is
  * impossible.
  *
- * Rate limit story: deferred to Phase 7 (security). For now the
- * Claude/OpenAI provider's own rate limits + a request timeout cap
- * abuse cost.
+ * Rate limit: 20 questions per USER per hour, counted in the DURABLE shared
+ * store (Postgres `rate_limit_hit`) and FAIL-CLOSED. It was a per-IP counter
+ * held in each lambda instance's memory: instances do not share it, an office
+ * behind one NAT did, and a signed-in caller looping the route was limited only
+ * by how many instances answered. Keyed on the authenticated user — the thing
+ * that actually spends — it holds across cold starts and cannot be dodged by
+ * changing IP. The governor adds its own per-org/per-user velocity limit and
+ * the monthly ceiling underneath (lib/ai/governor/velocity.ts).
  */
 
 export const runtime = "nodejs";
@@ -41,11 +46,16 @@ export async function POST(request: Request): Promise<NextResponse> {
   const guard = await requireCapabilityApi("reports", "view");
   // The 403 is a plain Response; this route's signature is NextResponse.
   if (guard instanceof Response) return NextResponse.json({ error: "forbidden" }, { status: 403 });
-  const { ctx } = guard;
+  const { ctx, user } = guard;
 
-  // Phase 7 — rate limit AI questions: 20 per IP per hour. Caps
-  // LLM cost on abuse + keeps the request cheap.
-  const rl = enforce(request, "ai_question", DEFAULT_LIMITS.ai_question);
+  // 20 per USER per hour, durable + fail-closed (see the header note). AFTER the
+  // capability guard on purpose: the identifier is the authenticated user, and
+  // an unauthorised caller must not be able to spend another user's allowance.
+  const rl = await enforceIdentifiedStrict(
+    "ai_question",
+    `${ctx.org.id}:${user.id}`,
+    DEFAULT_LIMITS.ai_question,
+  );
   if (rl) return rl as unknown as NextResponse;
 
   let body: unknown;
@@ -72,6 +82,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     const response = await askAi({
       orgId: ctx.org.id,
+      userId: user.id,
       question: parsed.data.question,
     });
     return NextResponse.json({ ok: true, response });

@@ -470,7 +470,9 @@ describe("EXISTING flows unchanged + MFA enforcement is opt-in/default-off (cont
   it("magic-link still uses signInWithOtp with shouldCreateUser:true → /check-email", () => {
     expect(actionsSrc).toContain("signInWithOtp");
     expect(actionsSrc).toContain("shouldCreateUser: true");
-    expect(actionsSrc).toContain("/check-email?email=");
+    expect(actionsSrc).toContain('redirect("/check-email")');
+    // PRIVACY (G-10): the address is never carried in the URL.
+    expect(actionsSrc).not.toContain("/check-email?email=");
   });
 
   it("Google OAuth is untouched (provider google + select_account prompt)", () => {

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { _resetForTests as resetRateLimitStore } from "@/lib/security/rate-limit";
 import {
   AI_MONTHLY_CEILING_PENCE,
   FAILURE_FLOOR_PENCE,
@@ -446,6 +447,12 @@ const okCall = async () => ({ value: "a draft", usage: USAGE });
 beforeEach(() => {
   ledger.length = 0;
   reservations.length = 0;
+  // The velocity limiter (lib/ai/governor/velocity.ts) keeps a per-org/per-user
+  // window in the in-process store outside production. Like the fake ledger
+  // above it is per-TEST state: without this reset the window filled by one
+  // test's traffic would refuse the next test's. Isolation only — the limiter
+  // itself is proven in __tests__/ai/governor-velocity.test.ts.
+  resetRateLimitStore();
   H.seq.res = 0;
   H.seq.inv = 0;
   stats.budgetReads = 0;
@@ -821,12 +828,20 @@ describe("a failed call still cost something, and the ledger says so", () => {
     // £0 would let ten thousand failures spend real money while the ceiling saw
     // nothing. The floor is one penny: the same "never round a real cost down to
     // zero" rule estimateCostPence already applies.
+    //
+    // Re-keyed by the secrets/AI-spend audit: this used to throw
+    // `new Error("timeout")`. A TIMEOUT is now the one failure that is NOT
+    // settled at the floor — the vendor finishes and bills a call we merely
+    // stopped waiting for, so it is settled at the full claim
+    // (__tests__/ai/governor-timeout-settlement.test.ts). The floor policy
+    // pinned HERE is unchanged and is for every other failure, so the fixture
+    // is now a vendor-side failure rather than a timeout.
     await expect(
       invokeWithGovernor(
         QUOTE_WRITER_FEATURE,
         QUOTE_WRITER_TASK_CLASS,
         async () => {
-          throw new Error("timeout");
+          throw new Error("provider returned 500");
         },
         { orgId: ORG_A },
       ),

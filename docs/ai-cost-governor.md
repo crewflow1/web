@@ -2,6 +2,13 @@
 
 Migration `20261070000000`. Seam: `lib/ai/governor.ts`. Surface: `/admin/ai-costs`.
 
+> **STATUS CORRECTION (2026-11-14, secrets/AI-spend audit).** The paragraph below
+> describes the wave that introduced the reservation. It is no longer true: all
+> five tiers were bound in `lib/ai/governor/registry.ts` between 2026-09-10 and
+> 2026-09-13, and the production ledger holds real invocations. Read "dark" below
+> as history. See **ADDENDUM — VELOCITY, ENVELOPE, TIMEOUTS** at the end of this
+> file and `docs/programme/security-secrets/AI-SPEND-GOVERNANCE.md`.
+
 **The governor is still DARK.** Every cost tier maps to no model
 (`lib/ai/governor/registry.ts`), so on production this wave creates a correct and
 permanently **empty** `ai_cost_reservations` table and changes nothing a user or
@@ -519,3 +526,46 @@ surfaces as `failed`/DLQ — honest, visible — and any model/format change is 
 for `whatsapp_inbound_media` transcripts still awaits a column-scrub mode in
 the retention policy layer (the purge primitive is DELETE-only); RAMS-style
 erasure decisions stay with product/legal.
+
+
+## ADDENDUM — VELOCITY, ENVELOPE, TIMEOUTS (2026-11-14)
+
+Three changes from the secrets/AI-spend audit. Full reasoning, evidence and the
+provider-side settings only the founder can make:
+`docs/programme/security-secrets/AI-SPEND-GOVERNANCE.md`.
+
+1. **A velocity limit sits in front of the reservation**
+   (`lib/ai/governor/velocity.ts`). The reservation decides how MUCH; this decides
+   how FAST. Per org per feature always, per user per feature when the call is
+   attributed; durable (`rate_limit_hit`) and fail-closed; derived from money
+   (25 % / 10 % of the default ceiling per hour, in the call's own claim). A
+   refused call returns `blocked` with reason `rate_limited`, takes no claim and
+   writes no ledger row. Order in `invokeWithGovernor` is now: registry checks →
+   deterministic refusal → dark short-circuit → **velocity** → reserve → run →
+   settle/release.
+2. **The envelope must cover every call site's output cap.** The mid envelope is
+   4,000 output tokens (the quote writer's real cap), and
+   `__tests__/security/ai-reservation-envelope.test.ts` derives the rule from
+   source for every governed site. Raise the envelope in the same diff that
+   raises a cap.
+3. **"Failed calls settle at 1p" has one exception.** A failure that is OUR
+   timeout/abort is settled at the full CLAIM: we stopped waiting, the vendor did
+   not stop working. Every other failure keeps the 1p floor described above.
+
+None of this is a provider-side cap. An application budget protects nothing
+against a leaked key; the vendor consoles do.
+
+## Per-company AI off switch (migration 20261366000000, gap G-13)
+
+A company owner (Settings → AI features) or HQ (/admin/ai-costs → Per-company AI switch) can turn ALL AI
+features off for a company. The earlier option, a per-org ceiling of 0, was HQ-service-role only (a tenant
+could not reach it) and is a money control, so it is not used for consent.
+
+- **State:** `ai_org_switches` (absent row = ON). Owner writes via `ai_owner_set_ai_enabled` (SECURITY DEFINER,
+  `current_org_ids()` + owner membership else 42501; switching back ON also needs an active company, switching
+  OFF is always allowed). HQ writes via `ai_hq_set_ai_enabled` (service role). Each change writes `ai_org_switch_audit`.
+- **Enforcement:** inside `ai_reserve_invocation`, under the per-org lock and before the ceiling, so it covers every
+  governed entry point (text, vision, transcription, embeddings, HTTP routes). Refusal is `block_reason = ai_disabled`;
+  no reservation row, no provider request, no spend alert. A read error raises and the governor refuses (fail closed).
+- **UI:** the refusal copy says AI is switched off and where to turn it on; Settings → AI features shows state.
+- **Tests:** `__tests__/integration/ai/org-ai-switch.test.ts` (real Postgres, cross-tenant), `__tests__/security/ai-org-off-switch.test.ts`.

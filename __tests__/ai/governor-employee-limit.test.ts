@@ -190,6 +190,25 @@ describe("reserveBudget — effective-ceiling threading", () => {
     if (res.outcome === "blocked") expect(res.reason).toBe("employee_limit");
   });
 
+  it("maps a blocked/platform_ceiling row to reason platform_ceiling (CrewFlow-wide budget, 20261358)", async () => {
+    reserveState.row = {
+      outcome: "blocked",
+      block_reason: "platform_ceiling",
+      committed_pence: 100,
+      reserved_pence: 0,
+      ceiling_pence: 10000,
+    };
+    const res = await reserveBudget({
+      orgId: "o",
+      userId: "u",
+      feature: "quote.writer_draft",
+      taskClass: "drafting",
+      claimPence: 5,
+    });
+    expect(res.outcome).toBe("blocked");
+    if (res.outcome === "blocked") expect(res.reason).toBe("platform_ceiling");
+  });
+
   it("fails CLOSED on a reserve RPC error", async () => {
     reserveState.error = { message: "db down" };
     const res = await reserveBudget({

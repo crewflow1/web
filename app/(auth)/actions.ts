@@ -31,6 +31,17 @@ function getOrigin(headerList: Headers): string {
 }
 
 /**
+ * A provider error message is shown on /login via the URL. Supabase Auth
+ * messages can quote the address ("Email address \"…@…\" is invalid"), and an
+ * address in a URL reaches request logs, history and analytics page views
+ * (privacy finding G-10) — so a message containing one is replaced.
+ */
+function urlSafeMessage(message: string | null | undefined, fallback: string): string {
+  const m = message ?? "";
+  return m && !m.includes("@") ? m : fallback;
+}
+
+/**
  * Begin a Google OAuth flow.
  *
  * Returns a redirect to Google's consent screen. After the user accepts,
@@ -56,7 +67,7 @@ export async function signInWithGoogle() {
   });
 
   if (error) {
-    redirect(`/login?error=${encodeURIComponent(error.message)}`);
+    redirect(`/login?error=${encodeURIComponent(urlSafeMessage(error.message, "We couldn't start the sign-in. Please try again."))}`);
   }
 
   if (data?.url) {
@@ -114,10 +125,16 @@ export async function signInWithMagicLink(formData: FormData) {
   });
 
   if (error) {
-    redirect(`/login?error=${encodeURIComponent(error.message)}`);
+    redirect(
+      `/login?error=${encodeURIComponent(
+        urlSafeMessage(error.message, "We couldn't send a sign-in link to that address. Check it and try again."),
+      )}`,
+    );
   }
 
-  redirect(`/check-email?email=${encodeURIComponent(parsed.data.email)}`);
+  // PRIVACY (G-10): the address is NOT put in the URL. The confirmation page
+  // shows it from the browser's sessionStorage (app/(auth)/_magic-link.client.tsx).
+  redirect("/check-email");
 }
 
 /**
@@ -452,7 +469,7 @@ export async function signInWithMicrosoft() {
   });
 
   if (error) {
-    redirect(`/login?error=${encodeURIComponent(error.message)}`);
+    redirect(`/login?error=${encodeURIComponent(urlSafeMessage(error.message, "We couldn't start the sign-in. Please try again."))}`);
   }
   if (data?.url) {
     redirect(data.url);

@@ -137,7 +137,13 @@ describe("Phase 7 — rate limit is wired into abuse-prone routes", () => {
   it("/api/ai/question enforces ai_question limit", () => {
     const src = read("app/api/ai/question/route.ts");
     expect(src).toMatch(/from "@\/lib\/security\/rate-limit"/);
-    expect(src).toMatch(/enforce\(request, "ai_question"/);
+    // Re-keyed by the secrets/AI-spend audit: the limit moved from the per-IP,
+    // per-lambda-instance in-memory counter (`enforce(request, …)`) to the
+    // DURABLE, per-USER, FAIL-CLOSED one. Strictly stronger — the pin now
+    // refuses a regression back to the in-memory limiter.
+    expect(src).toMatch(/enforceIdentifiedStrict\(\s*"ai_question"/);
+    expect(src).toMatch(/`\$\{ctx\.org\.id\}:\$\{user\.id\}`/);
+    expect(src).not.toMatch(/\benforce\(request/);
   });
 });
 
