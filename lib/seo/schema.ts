@@ -30,7 +30,6 @@ export function organizationSchema(): JsonLd {
     "@type": "Organization",
     "@id": ORG_ID,
     name: SITE.name,
-    legalName: SITE.legalName,
     url: SITE.url,
     logo: {
       "@type": "ImageObject",

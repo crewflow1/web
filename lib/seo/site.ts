@@ -46,8 +46,9 @@ export const TWITTER_HANDLE = "@crewflowuk";
 
 export const SITE = {
   name: "CrewFlow",
-  /** Used in OG/Twitter `siteName` + JSON-LD. */
-  legalName: "CrewFlow",
+  // No `legalName`: CrewFlow is a trading name. The business is operated by a
+  // sole trader (Northern Ireland), whose legal name is the individual's own —
+  // never publish "CrewFlow" (or any company form) as a legal entity name.
   url: SITE_URL,
   /** One-liner used as the global default description + Organization.description. */
   tagline: "The operating system for UK construction companies.",

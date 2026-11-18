@@ -145,6 +145,13 @@ export function PortalShell({
 
       <footer className="pb-28 pt-4 text-center text-xs text-slate-600 sm:pb-8">
         Powered by CrewFlow
+        <span className="mt-1 block">
+          <a href="/privacy" className="underline underline-offset-2">Privacy</a>
+          {" · "}
+          <a href="/terms" className="underline underline-offset-2">Terms</a>
+          {" · "}
+          <a href="mailto:hello@crewflow.uk" className="underline underline-offset-2">hello@crewflow.uk</a>
+        </span>
       </footer>
 
       {/* Phone: fixed bottom navigation — 4 primary tabs + a "More" sheet. */}
