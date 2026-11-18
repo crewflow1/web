@@ -8,9 +8,17 @@ import localFont from "next/font/local";
  * request at runtime (no Fontshare dependency, no FOUT, no third-party
  * privacy leak) and zero layout shift.
  *
- * Licence: both families are free for commercial use under the Indian
- * Type Foundry (ITF) Free Font Licence, which permits web embedding and
- * self-hosting. Files live in ./fonts/.
+ * Licence: both families are under the Indian Type Foundry (ITF) Free Font
+ * License, which allows commercial use and self-hosting on our own site but
+ * forbids making the font files available through a public repository. The
+ * files are therefore NOT in git: scripts/fonts/provision-marketing-fonts.mjs
+ * (predev/prebuild) writes the six slots below into ./fonts/active/
+ * (gitignored) from a private source, sha256-verified against
+ * ./fonts/manifest.json. Builds without that source (CI, forks, local dev
+ * without the kit) get the OFL fallback pair from ./fonts/fallback/
+ * (Bricolage Grotesque + Figtree). Never commit a Clash/Satoshi file:
+ * __tests__/security/restricted-font-binaries.test.ts fails if you do.
+ * See docs/compliance/FONT-LICENCE-RESOLUTION.md.
  *
  * These export CSS variables (`--font-clash`, `--font-satoshi`) that are
  * applied to the marketing page root wrapper in app/page.tsx and consumed
@@ -20,9 +28,9 @@ import localFont from "next/font/local";
 
 export const clashDisplay = localFont({
   src: [
-    { path: "./fonts/ClashDisplay-Medium.woff2", weight: "500", style: "normal" },
-    { path: "./fonts/ClashDisplay-Semibold.woff2", weight: "600", style: "normal" },
-    { path: "./fonts/ClashDisplay-Bold.woff2", weight: "700", style: "normal" },
+    { path: "./fonts/active/display-500.woff2", weight: "500", style: "normal" },
+    { path: "./fonts/active/display-600.woff2", weight: "600", style: "normal" },
+    { path: "./fonts/active/display-700.woff2", weight: "700", style: "normal" },
   ],
   variable: "--font-clash",
   display: "swap",
@@ -36,9 +44,9 @@ export const clashDisplay = localFont({
 
 export const satoshi = localFont({
   src: [
-    { path: "./fonts/Satoshi-Regular.woff2", weight: "400", style: "normal" },
-    { path: "./fonts/Satoshi-Medium.woff2", weight: "500", style: "normal" },
-    { path: "./fonts/Satoshi-Bold.woff2", weight: "700", style: "normal" },
+    { path: "./fonts/active/body-400.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/active/body-500.woff2", weight: "500", style: "normal" },
+    { path: "./fonts/active/body-700.woff2", weight: "700", style: "normal" },
   ],
   variable: "--font-satoshi",
   display: "swap",

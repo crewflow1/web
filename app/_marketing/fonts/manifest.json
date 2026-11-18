@@ -1,0 +1,29 @@
+{
+  "$comment": "Marketing typeface slots. Clash Display and Satoshi are licensed under the ITF Free Font License, which forbids putting the font files in a public repository, so they are NOT in git: scripts/fonts/provision-marketing-fonts.mjs copies them into ./active/ at build time from a private source, verified against the sha256 below. Without that source the build uses the OFL fallback files in ./fallback/. See docs/compliance/FONT-LICENCE-RESOLUTION.md.",
+  "slots": {
+    "display-500": {
+      "licensed": { "family": "Clash Display", "file": "ClashDisplay-Medium.woff2", "bytes": 15272, "sha256": "6de911fc824613ef7325c617b359262bedba2dd6499e7e93794fc9414ca24960" },
+      "fallback": { "family": "Bricolage Grotesque", "file": "BricolageGrotesque-500.woff2", "bytes": 22476, "sha256": "b62688707e0820a9cf2a98e9b0349fbb348fd17f76b70a05b53e7a668e3f406f" }
+    },
+    "display-600": {
+      "licensed": { "family": "Clash Display", "file": "ClashDisplay-Semibold.woff2", "bytes": 15284, "sha256": "e748ea11c49f39ae2375dce4fbda8dc971c5ca8b64ac8a838b5daba96f61a10a" },
+      "fallback": { "family": "Bricolage Grotesque", "file": "BricolageGrotesque-600.woff2", "bytes": 22456, "sha256": "b34fc8c1ef0ac8798455ac2979eae4b4f90f0d327e3584d1032fa77a8a9a66ca" }
+    },
+    "display-700": {
+      "licensed": { "family": "Clash Display", "file": "ClashDisplay-Bold.woff2", "bytes": 14544, "sha256": "532795f825c5a28b807c0323e27939c638e6289d5870c05b962b6c0916407476" },
+      "fallback": { "family": "Bricolage Grotesque", "file": "BricolageGrotesque-700.woff2", "bytes": 22384, "sha256": "4c373ce3c1cca41c864eb3e27c059a59fc6310547ab9c9b6cd780d387ba24206" }
+    },
+    "body-400": {
+      "licensed": { "family": "Satoshi", "file": "Satoshi-Regular.woff2", "bytes": 25516, "sha256": "50dca57f0b77918e0fb7dac998c3f5ef6b0c2a29657da97658a04f98ac532fc5" },
+      "fallback": { "family": "Figtree", "file": "Figtree-400.woff2", "bytes": 11384, "sha256": "8f98dd642986f1fa39c45b89665a57372897c235b36028e0e4a136e43dc5f8ab" }
+    },
+    "body-500": {
+      "licensed": { "family": "Satoshi", "file": "Satoshi-Medium.woff2", "bytes": 25596, "sha256": "af02a72246f53ad49c44a591921edbd39ec8258a03d8cc2e0532aa1e497e85b4" },
+      "fallback": { "family": "Figtree", "file": "Figtree-500.woff2", "bytes": 11432, "sha256": "953a6a4294b1205a1b4d4b9e5529478e8c9e1c5a67a9aa24a551414cd85b6f51" }
+    },
+    "body-700": {
+      "licensed": { "family": "Satoshi", "file": "Satoshi-Bold.woff2", "bytes": 25328, "sha256": "353a7fbfb4475f0c31470a7449226006cb64211c71055ca9db860a8acdaa9f68" },
+      "fallback": { "family": "Figtree", "file": "Figtree-700.woff2", "bytes": 11376, "sha256": "7ec4f08d09f91d349917dd6592f6aaae66d8fe1bbd58fa24707961e79236616e" }
+    }
+  }
+}
