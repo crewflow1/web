@@ -29,7 +29,14 @@ type CookieToSet = { name: string; value: string; options?: CookieOptions };
  * anon key fails loudly here instead of every request silently shipping
  * a Supabase client with an undefined apikey.
  */
-export async function updateSession(request: NextRequest, requestId?: string) {
+export async function updateSession(
+  request: NextRequest,
+  requestId?: string,
+  /** Extra headers to forward on the REQUEST to the app (e.g. the per-request
+   * Content-Security-Policy + x-nonce minted in middleware.ts, which Next.js
+   * reads to stamp its scripts with the nonce). */
+  forwardRequestHeaders?: Readonly<Record<string, string>>,
+) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -47,6 +54,9 @@ export async function updateSession(request: NextRequest, requestId?: string) {
   const requestHeaders = new Headers(request.headers);
   if (requestId) requestHeaders.set(REQUEST_ID_HEADER, requestId);
   requestHeaders.set(PATHNAME_HEADER, request.nextUrl.pathname);
+  for (const [name, value] of Object.entries(forwardRequestHeaders ?? {})) {
+    requestHeaders.set(name, value);
+  }
   const nextInit = { request: { headers: requestHeaders } };
 
   // Stamp the correlation id on any response we hand back (passthrough OR

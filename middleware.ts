@@ -1,4 +1,4 @@
-import { type NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import { updateSession } from "@/lib/supabase/middleware";
 import {
@@ -7,6 +7,55 @@ import {
   maintenanceResponse,
 } from "@/lib/maintenance";
 import { REQUEST_ID_HEADER, resolveRequestId } from "@/lib/api/request-id";
+import {
+  NONCE_HEADER,
+  buildCsp,
+  cspClassForPath,
+  cspHeaderName,
+  generateNonce,
+  isCspClassBoundaryCrossing,
+  reportingEndpointsValue,
+  resolveCspMode,
+  resolveCspSources,
+} from "@/lib/security/csp";
+
+/**
+ * Per-request Content-Security-Policy (see lib/security/csp.ts for the policy
+ * and the nonce-vs-static rationale). Production builds only — `next dev`
+ * needs eval for React Refresh, exactly like the next.config fallback.
+ *
+ * Mode + origins are resolved once per isolate: they come from env, which is
+ * fixed for a deployment (CSP_MODE=report-only + redeploy = rollback switch).
+ */
+const CSP_ENABLED = process.env.NODE_ENV === "production";
+const CSP_MODE = resolveCspMode();
+const CSP_SOURCES = resolveCspSources();
+
+type CspPlan = { headerName: string; value: string; nonce: string | null; origin: string };
+
+function planCsp(request: NextRequest): CspPlan | null {
+  if (!CSP_ENABLED) return null;
+  const nonce = cspClassForPath(request.nextUrl.pathname) === "nonce" ? generateNonce() : null;
+  return {
+    headerName: cspHeaderName(CSP_MODE),
+    value: buildCsp({
+      nonce: nonce ?? undefined,
+      sources: CSP_SOURCES,
+      upgradeInsecureRequests: request.nextUrl.protocol === "https:",
+    }),
+    nonce,
+    origin: request.nextUrl.origin,
+  };
+}
+
+/** Stamp the policy (+ its Reporting-Endpoints companion) on a response. */
+function applyCsp<T extends Response>(res: T, plan: CspPlan | null): T {
+  if (plan) {
+    res.headers.set(plan.headerName, plan.value);
+    res.headers.set("Reporting-Endpoints", reportingEndpointsValue(plan.origin));
+  }
+  return res;
+}
 
 /**
  * Top-level middleware — request correlation + delegates to the Supabase
@@ -26,7 +75,13 @@ import { REQUEST_ID_HEADER, resolveRequestId } from "@/lib/api/request-id";
  *   smoke-tests bypass with the MAINTENANCE_BYPASS token. Inert unless
  *   MAINTENANCE_MODE=on. api/health, api/cron and api/webhooks are excluded by
  *   the matcher below and gated separately (they must stay reachable / retry-safe).
- * Block 2: session refresh + auth redirects.
+ * Block 2: CONTENT-SECURITY-POLICY. Mint the per-request nonce policy (or the
+ *   static policy for prerendered pages) and stamp it on the response — and,
+ *   for nonce routes, forward it on the request so Next.js nonces its scripts.
+ *   A client-side navigation from a static-policy document onto a nonce route
+ *   is answered with a non-RSC 204, which makes the Next router do a full
+ *   document load, so the destination runs under its own strict policy.
+ * Block 3: session refresh + auth redirects.
  */
 export async function middleware(request: NextRequest) {
   const requestId = resolveRequestId(request.headers.get(REQUEST_ID_HEADER));
@@ -38,13 +93,37 @@ export async function middleware(request: NextRequest) {
     // Never let monitoring wiring break a request.
   }
 
+  const csp = planCsp(request);
+
   if (isMaintenanceMode() && !isMaintenanceBypassed(request)) {
     const wantsHtml = (request.headers.get("accept") ?? "").includes("text/html");
     const res = maintenanceResponse(wantsHtml ? "html" : "json");
     res.headers.set(REQUEST_ID_HEADER, requestId);
-    return res;
+    return applyCsp(res, csp);
   }
-  return await updateSession(request, requestId);
+
+  if (
+    csp &&
+    isCspClassBoundaryCrossing({
+      method: request.method,
+      pathname: request.nextUrl.pathname,
+      nextUrlHeader: request.headers.get("next-url"),
+      nextActionHeader: request.headers.get("next-action"),
+    })
+  ) {
+    // Not an RSC payload → the Next router falls back to a full navigation.
+    const res = new NextResponse(null, {
+      status: 204,
+      headers: { "Cache-Control": "no-store", Vary: "RSC, Next-Url" },
+    });
+    res.headers.set(REQUEST_ID_HEADER, requestId);
+    return applyCsp(res, csp);
+  }
+
+  const forward = csp?.nonce
+    ? { [csp.headerName.toLowerCase()]: csp.value, [NONCE_HEADER]: csp.nonce }
+    : undefined;
+  return applyCsp(await updateSession(request, requestId, forward), csp);
 }
 
 export const config = {
@@ -67,6 +146,9 @@ export const config = {
   //                          instead of rendering. Static asset → must bypass
   //                          auth, and skips a wasted Supabase round-trip per
   //                          1.3 MB fetch.
+  //   - api/csp-report     → browser CSP violation reports: sent without a
+  //                          session by design; a 307 to /login would drop
+  //                          every report (rate-limited + size-capped in-route).
   //   - api/health         → public liveness probe
   //   - api/cron           → CRON_SECRET bearer (lib/cron/auth.ts)
   //   - api/demo           → public lead-capture form
@@ -94,6 +176,6 @@ export const config = {
   // verification never gets a chance to run and the webhook delivery fails
   // with 307.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|manifest.webmanifest|icon.svg|opengraph-image|pdf.worker.min.mjs|sw.js|offline|icons/|api/og|api/health|api/cron|api/demo|api/public|api/webhooks|api/receptionist|api/v1|api/sso|scim/v2).*)",
+    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|manifest.webmanifest|icon.svg|opengraph-image|pdf.worker.min.mjs|sw.js|offline|icons/|api/og|api/csp-report|api/health|api/cron|api/demo|api/public|api/webhooks|api/receptionist|api/v1|api/sso|scim/v2).*)",
   ],
 };

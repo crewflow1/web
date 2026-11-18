@@ -1,26 +1,27 @@
 import { describe, it, expect } from "vitest";
-import {
-  buildSecurityHeaders,
-  CSP_REPORT_ONLY,
-  type SecurityHeader,
-} from "@/lib/security/headers";
+import { buildSecurityHeaders, type SecurityHeader } from "@/lib/security/headers";
 
 /**
- * Security response-header contract.
+ * Security response-header contract (the next.config.ts fallback set).
  *
- * Locks the baseline hardening headers and the (currently Report-Only)
- * Content-Security-Policy so regressions — especially an ACCIDENTAL flip
- * from Report-Only to an enforcing CSP before the policy has been validated
- * in production — fail CI loudly.
+ * Locks the baseline hardening headers and that the build-time fallback CSP
+ * is ENFORCED by default in production builds, with CSP_MODE=report-only as
+ * the only (explicit) downgrade. The policy text itself is pinned in
+ * __tests__/security/csp.test.ts.
  */
 
 const byKey = (headers: SecurityHeader[]) =>
   Object.fromEntries(headers.map((h) => [h.key, h.value] as const));
 
+const PROD_ENV = {
+  NEXT_PUBLIC_APP_URL: "https://crewflow.uk",
+  NEXT_PUBLIC_SUPABASE_URL: "https://abcdefgh.supabase.co",
+};
+
 describe("buildSecurityHeaders — baseline (all environments)", () => {
   for (const env of ["production", "development", "test", undefined] as const) {
-    it(`always enforces the four safe headers in env=${String(env)}`, () => {
-      const h = byKey(buildSecurityHeaders(env));
+    it(`always sets the four safe headers in env=${String(env)}`, () => {
+      const h = byKey(buildSecurityHeaders(env, PROD_ENV));
       expect(h["X-Content-Type-Options"]).toBe("nosniff");
       expect(h["X-Frame-Options"]).toBe("DENY");
       expect(h["Referrer-Policy"]).toBe("strict-origin-when-cross-origin");
@@ -31,80 +32,47 @@ describe("buildSecurityHeaders — baseline (all environments)", () => {
   }
 
   it("never sets HSTS itself (Vercel owns Strict-Transport-Security)", () => {
-    const h = byKey(buildSecurityHeaders("production"));
+    const h = byKey(buildSecurityHeaders("production", PROD_ENV));
     expect(h["Strict-Transport-Security"]).toBeUndefined();
   });
 });
 
-describe("buildSecurityHeaders — CSP gating", () => {
-  it("attaches the Report-Only CSP in production builds", () => {
-    const h = byKey(buildSecurityHeaders("production"));
-    expect(h["Content-Security-Policy-Report-Only"]).toBe(CSP_REPORT_ONLY);
-  });
-
-  it("omits the CSP in development (keeps next dev console clean)", () => {
-    const h = byKey(buildSecurityHeaders("development"));
+describe("buildSecurityHeaders — CSP gating + rollout switch", () => {
+  it("ENFORCES the static CSP in production builds by default (CSP_MODE unset)", () => {
+    const h = byKey(buildSecurityHeaders("production", PROD_ENV));
+    expect(h["Content-Security-Policy"]).toBeDefined();
     expect(h["Content-Security-Policy-Report-Only"]).toBeUndefined();
+    // The fallback is the nonce-free static policy (there is no request here).
+    expect(h["Content-Security-Policy"]).not.toContain("'nonce-");
+    expect(h["Content-Security-Policy"]).toContain("upgrade-insecure-requests");
+    expect(h["Reporting-Endpoints"]).toBe('csp-endpoint="/api/csp-report"');
   });
 
-  it("NEVER emits an enforcing Content-Security-Policy (guard against early enforce)", () => {
-    for (const env of ["production", "development", "test"] as const) {
-      const h = byKey(buildSecurityHeaders(env));
-      expect(h["Content-Security-Policy"]).toBeUndefined();
+  it("an unrecognised CSP_MODE value still enforces (typo-safe)", () => {
+    for (const CSP_MODE of ["", "enforce", "reportonly", "off", "REPORT_ONLY"]) {
+      const h = byKey(buildSecurityHeaders("production", { ...PROD_ENV, CSP_MODE }));
+      expect(h["Content-Security-Policy"], CSP_MODE).toBeDefined();
+      expect(h["Content-Security-Policy-Report-Only"], CSP_MODE).toBeUndefined();
     }
   });
-});
 
-describe("CSP_REPORT_ONLY — directive contract", () => {
-  const directives = CSP_REPORT_ONLY.split(";").map((d) => d.trim());
-  const find = (name: string) =>
-    directives.find((d) => d === name || d.startsWith(`${name} `));
-
-  it("locks down the dangerous defaults", () => {
-    expect(find("default-src")).toBe("default-src 'self'");
-    expect(find("base-uri")).toBe("base-uri 'self'");
-    expect(find("object-src")).toBe("object-src 'none'");
-    expect(find("frame-ancestors")).toBe("frame-ancestors 'none'");
+  it("CSP_MODE=report-only downgrades to Report-Only (the no-code fallback)", () => {
+    const h = byKey(buildSecurityHeaders("production", { ...PROD_ENV, CSP_MODE: " Report-Only " }));
+    expect(h["Content-Security-Policy"]).toBeUndefined();
+    expect(h["Content-Security-Policy-Report-Only"]).toContain("default-src 'self'");
   });
 
-  it("allows the Supabase REST + realtime origins in connect-src", () => {
-    const connect = find("connect-src") ?? "";
-    expect(connect).toContain("https://*.supabase.co");
-    expect(connect).toContain("wss://*.supabase.co");
+  it("omits the CSP in development (next dev needs eval for React Refresh)", () => {
+    const h = byKey(buildSecurityHeaders("development", PROD_ENV));
+    expect(h["Content-Security-Policy"]).toBeUndefined();
+    expect(h["Content-Security-Policy-Report-Only"]).toBeUndefined();
+    expect(h["Reporting-Endpoints"]).toBeUndefined();
   });
 
-  it("allows PostHog + Sentry telemetry endpoints in connect-src", () => {
-    const connect = find("connect-src") ?? "";
-    expect(connect).toContain("https://eu.i.posthog.com");
-    expect(connect).toContain("sentry.io");
-  });
-
-  it("permits Supabase Storage images", () => {
-    const img = find("img-src") ?? "";
-    expect(img).toContain("https://*.supabase.co");
-  });
-
-  it("requires 'unsafe-inline' for scripts/styles today (Next inline + JSON-LD)", () => {
-    expect(find("script-src")).toContain("'unsafe-inline'");
-    expect(find("style-src")).toContain("'unsafe-inline'");
-  });
-
-  it("does NOT weaken script-src with 'unsafe-eval' (string→JS eval)", () => {
-    // 'wasm-unsafe-eval' does not contain the substring 'unsafe-eval' (leading
-    // quote differs), so this correctly forbids only the dangerous full eval.
-    expect(CSP_REPORT_ONLY).not.toContain("'unsafe-eval'");
-  });
-
-  it("allows 'wasm-unsafe-eval' for the pdf.js viewer's WASM image codecs (narrower than 'unsafe-inline' already shipped)", () => {
-    expect(find("script-src")).toContain("'wasm-unsafe-eval'");
-  });
-
-  it("does NOT include upgrade-insecure-requests (ignored in report-only)", () => {
-    expect(directives).not.toContain("upgrade-insecure-requests");
-  });
-
-  it("scopes Stripe to form-action only (no client-side Stripe.js)", () => {
-    expect(find("form-action")).toContain("https://checkout.stripe.com");
-    expect(CSP_REPORT_ONLY).not.toContain("js.stripe.com");
+  it("does not upgrade insecure requests when the app URL is plain http (local E2E stack)", () => {
+    const h = byKey(
+      buildSecurityHeaders("production", { ...PROD_ENV, NEXT_PUBLIC_APP_URL: "http://localhost:3000" }),
+    );
+    expect(h["Content-Security-Policy"]).not.toContain("upgrade-insecure-requests");
   });
 });

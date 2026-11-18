@@ -141,3 +141,31 @@ Status is visible at `/admin/ops`. Presence-only (never values).
 - All start / end / force-end events audit-logged.
 - The HQ-side notifications service emits a high-visibility row when
   impersonation starts so the whole HQ team sees the action.
+
+## Content-Security-Policy (enforced)
+
+Source of truth: `lib/security/csp.ts` (module doc = full rationale). Emitted
+per request by `middleware.ts`, with `next.config.ts` (`lib/security/headers.ts`)
+as the build-time fallback for responses the middleware never sees.
+
+- **Dynamic routes** (app, HQ, portals, `/q`, auth, API): fresh 128-bit nonce per
+  request, `script-src 'self' 'nonce-…' 'strict-dynamic' 'wasm-unsafe-eval'` —
+  no `'unsafe-inline'`, no `'unsafe-eval'`.
+- **Prerendered pages** (marketing/SEO, legal, `/reset-password`, `/offline`):
+  `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'` — their HTML is built
+  before any request exists, so it cannot carry a nonce. Kept static for
+  CDN/SEO delivery. A soft navigation from such a page into the app is turned
+  into a full document load by middleware, so app sessions always run under
+  the nonce policy.
+- Both: `default-src 'self'`, `object-src 'none'`, `base-uri 'self'`,
+  `frame-ancestors 'none'`, `form-action` limited to self + Supabase auth +
+  Google/Microsoft sign-in + Stripe Checkout/Billing, exact Supabase/Sentry/PostHog
+  origins (no wildcards), `upgrade-insecure-requests` over https.
+- Residual: `style-src 'unsafe-inline'` (React style attributes, framer-motion).
+- Violations → `POST /api/csp-report` (rate-limited, 16 KB cap, token/query
+  stripped, logged + Sentry warning; nothing stored).
+- **Rollback without a code change:** set `CSP_MODE=report-only` on Vercel and
+  redeploy. Unset/any other value = enforce.
+- Guards: `__tests__/security/csp.test.ts`, `csp-report.test.ts`,
+  `headers.test.ts`; browser proof `e2e/csp.spec.ts` (also fails if a newly
+  prerendered page is missing from `STATIC_POLICY_PREFIXES`).

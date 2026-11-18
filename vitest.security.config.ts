@@ -7,7 +7,7 @@ import path from "node:path";
  *
  * These are the trust-boundary proofs in __tests__/security: tenant isolation
  * on the service-role (RLS-bypass) path, cron Bearer gates, portal-upload
- * safety, the Report-Only CSP + baseline security headers, rate-limit
+ * safety, the enforced CSP + baseline security headers, rate-limit
  * behaviour, role-escalation prevention, customer-portal scoping, and the
  * "no secret env in client bundles" pins.
  *
