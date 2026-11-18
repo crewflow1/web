@@ -29,17 +29,20 @@
     <string>/Users/moetalibi/.local/bin/crewflow-off-platform-backup.sh</string>
   </array>
 
-  <!-- DAILY: every day 03:17 local (no Weekday key = fires daily). A missed run
-       (Mac asleep/off) fires once on next wake; the script's own retries absorb
-       transient Supabase/pooler blips so a daily run doesn't fail spuriously. -->
+  <!-- DAILY, with catch-up slots. At 03:17 a laptop is normally asleep: launchd then fires the job
+       inside a few-second DarkWake, and before 2026-11-15 the machine went straight back to sleep
+       mid-backup (every 03:17 run failed that way). The script now holds the machine awake
+       (caffeinate) — and because a closed lid on battery can still force sleep, three daytime slots
+       retry. A slot that finds today's verified backup already off-site exits without doing
+       anything, so at most ONE backup is taken per day. A slot missed while the Mac was asleep or
+       off is run once by launchd on the next wake. -->
   <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key>
-    <integer>3</integer>
-    <key>Minute</key>
-    <integer>17</integer>
-  </dict>
-
+  <array>
+    <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>17</integer></dict>
+    <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>17</integer></dict>
+    <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>17</integer></dict>
+    <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>17</integer></dict>
+  </array>
   <key>RunAtLoad</key>
   <false/>
 
@@ -48,6 +51,10 @@
   <dict>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <!-- RETENTION HOLD (2026-11-15): keep every existing backup until the retention policy has
+         been explicitly reviewed. Remove this key to return to the script default (last 8). -->
+    <key>CF_BACKUP_RETENTION</key>
+    <string>1000</string>
   </dict>
 
   <key>StandardOutPath</key>
